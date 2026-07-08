@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import QrScanner from 'qr-scanner'
-import { Minus, Plus } from 'lucide-react'
+import { Flashlight, FlashlightOff, Minus, Plus } from 'lucide-react'
+import { isValidTem } from '@/utils/qr'
+import { createScanEngine, drawBoxes, type Box, type ScanEngine, type ScanHit, type ExtCapabilities } from '@/utils/scanEngine'
 
 interface QRScannerProps {
   onScan: (value: string) => void
@@ -11,202 +12,177 @@ export interface QRScannerHandle {
   resume: () => void
 }
 
-const MIN_ZOOM = 1
-const MAX_ZOOM = 4
-const SCAN_FPS = 15
-const ZOOM_KEY = 'qr_scanner_zoom'
-// Cap canvas at 1080p — QR decode doesn't need 4K, and 4K costs 4× the GPU work
-const CANVAS_MAX_W = 1920
-const CANVAS_MAX_H = 1080
-
-function loadZoom(): number {
-  try {
-    const v = parseFloat(sessionStorage.getItem(ZOOM_KEY) ?? '')
-    if (isFinite(v) && v >= MIN_ZOOM) return Math.min(MAX_ZOOM, v)
-  } catch {}
-  return 1
-}
-
+// Bắt QR bằng BarcodeDetector native → fallback zxing-wasm (utils/scanEngine) + vẽ khung màu lên đúng QR:
+//   XANH = tem hợp lệ (nhận NGAY) · VÀNG = mã lạ đang xác nhận · ĐỎ = không phải tem (đã xác nhận, vẫn nhận).
+// Giữ nguyên interface (onScan/onClose/resume) → mọi màn quét đơn dùng chung không phải sửa.
+// Confirm-flow (Nhập): quét → onScan → parent hiện preview, gọi resume() cho lần kế. Instant-flow (Xuất): onScan → API.
+// KHÔNG phát bíp ở đây — parent tự bíp trong onScan (tránh bíp đôi).
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
   function QRScanner({ onScan }, ref) {
-    const videoRef     = useRef<HTMLVideoElement>(null)
-    const containerRef = useRef<HTMLDivElement>(null)
-    const rafRef       = useRef<number | null>(null)
-    const loopFnRef    = useRef<((now: number) => void) | null>(null)
-    const scanBusyRef  = useRef(false)
-    const pausedRef    = useRef(false)
-    const zoomRef      = useRef(loadZoom())
-    const lastScanRef  = useRef(0)
-    const [zoom, setZoom]   = useState(loadZoom)
-    const [error, setError] = useState<string | null>(null)
+    const videoRef   = useRef<HTMLVideoElement>(null)
+    const overlayRef = useRef<HTMLCanvasElement>(null)
+    const wrapRef    = useRef<HTMLDivElement>(null)
+
+    const streamRef  = useRef<MediaStream | null>(null)
+    const engineRef  = useRef<ScanEngine | null>(null)
+    const stoppedRef = useRef(false)
+    const pausedRef  = useRef(false)
+    const busyRef    = useRef(false)
+    const pendingRef = useRef<{ text: string; hits: number } | null>(null)   // mã lạ: cần thấy 2 lần mới nhận (lọc "bóng ma")
+
+    const [error, setError]         = useState<string | null>(null)
+    const [torchOn, setTorchOn]     = useState(false)
+    const [torchAvail, setTorchAvail] = useState(false)
+    const [zoomCap, setZoomCap]     = useState<{ min: number; max: number; step: number } | null>(null)
+    const [zoomVal, setZoomVal]     = useState(1)
 
     const pinchStartDist = useRef<number | null>(null)
     const pinchStartZoom = useRef(1)
 
-    // resume() restarts RAF only if loop is defined and not already running
+    // resume(): xóa trạng thái xác nhận + chạy tiếp. Loop luôn tự lên lịch (idle 100ms khi pause) nên chỉ cần bật cờ.
     useImperativeHandle(ref, () => ({
-      resume: () => {
-        pausedRef.current = false
-        if (loopFnRef.current && !rafRef.current) {
-          rafRef.current = requestAnimationFrame(loopFnRef.current)
-        }
-      },
+      resume: () => { pendingRef.current = null; pausedRef.current = false },
     }))
 
-    function updateZoom(raw: number) {
-      const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(raw * 10) / 10))
-      zoomRef.current = z
-      setZoom(z)
-      try { sessionStorage.setItem(ZOOM_KEY, String(z)) } catch {}
+    // Nhận 1 mã → tạm dừng loop (parent gọi resume() cho lần kế). Không bíp (parent tự bíp).
+    function handoff(text: string) {
+      if (pausedRef.current) return
+      pausedRef.current = true
+      onScan(text)
     }
 
-    // Block native page-scroll while pinching
+    // Xử lý kết quả 1 khung → khung màu + quyết định nhận. Tem hợp lệ: nhận NGAY. Mã lạ: phải thấy 2 lần (vàng→đỏ).
+    function process(hits: ScanHit[]): Box[] {
+      const boxes: Box[] = []
+      const valid = hits.find(h => isValidTem(h.text))
+      if (valid) {
+        pendingRef.current = null
+        for (const h of hits) boxes.push({ points: h.points, kind: isValidTem(h.text) ? 'valid' : 'pending' })
+        handoff(valid.text)
+        return boxes
+      }
+      let confirmedInvalid: string | null = null
+      for (const h of hits) {
+        const pend = pendingRef.current
+        const next = (pend && pend.text === h.text) ? { text: h.text, hits: pend.hits + 1 } : { text: h.text, hits: 1 }
+        pendingRef.current = next
+        const confirmed = next.hits >= 2
+        boxes.push({ points: h.points, kind: confirmed ? 'invalid' : 'pending' })
+        if (confirmed && confirmedInvalid === null) confirmedInvalid = h.text
+      }
+      if (confirmedInvalid !== null) handoff(confirmedInvalid)   // "vẫn nhận" — parent/API báo lỗi tem
+      return boxes
+    }
+
+    // Chặn cuộn trang khi pinch-zoom
     useEffect(() => {
-      const el = containerRef.current
+      const el = wrapRef.current
       if (!el) return
       const block = (e: TouchEvent) => { if (e.touches.length >= 2) e.preventDefault() }
       el.addEventListener('touchmove', block, { passive: false })
       return () => el.removeEventListener('touchmove', block)
     }, [])
 
-    // Pause RAF when tab/app goes to background; resume when visible again
     useEffect(() => {
-      const onVisibility = () => {
-        if (document.hidden) {
-          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
-        } else if (!pausedRef.current && loopFnRef.current && !rafRef.current) {
-          rafRef.current = requestAnimationFrame(loopFnRef.current)
-        }
-      }
-      document.addEventListener('visibilitychange', onVisibility)
-      return () => document.removeEventListener('visibilitychange', onVisibility)
-    }, [])
-
-    useEffect(() => {
-      const video = videoRef.current
-      if (!video) return
-
-      const canvas = document.createElement('canvas')
-      const ctx    = canvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return
-
-      const interval = 1000 / SCAN_FPS
-      let stream: MediaStream | null = null
-      let engine: Awaited<ReturnType<typeof QrScanner.createQrEngine>> | null = null
       let destroyed = false
 
+      async function loop() {
+        const video = videoRef.current, engine = engineRef.current
+        if (stoppedRef.current || !video || !engine) return
+        // Pause / chưa sẵn sàng / tab ẩn → idle-poll 100ms (giữ khung cũ đóng băng, resume() bắt được ngay)
+        if (pausedRef.current || video.readyState < 2 || document.hidden) { window.setTimeout(loop, 100); return }
+        if (!busyRef.current) {
+          busyRef.current = true
+          try {
+            const hits = await engine.detect(video)
+            const boxes = process(hits)
+            const ov = overlayRef.current, wr = wrapRef.current
+            if (ov && wr && !pausedRef.current) drawBoxes(ov, video, wr, boxes)
+          } catch { /* khung lỗi lẻ (video chưa sẵn sàng) — bỏ qua */ }
+          finally { busyRef.current = false }
+        }
+        if (!stoppedRef.current) window.setTimeout(loop, engine.kind === 'native' ? 50 : 15)
+      }
+
       async function setup() {
+        const video = videoRef.current
         if (!video) return
         try {
-          engine = await QrScanner.createQrEngine()
-          if (destroyed) { if (engine instanceof Worker) engine.terminate(); return }
+          const engine = await createScanEngine()
+          if (destroyed) return
+          engineRef.current = engine
 
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: 'environment',
-              width:  { ideal: 3840 },
-              height: { ideal: 2160 },
-            },
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
           })
           if (destroyed) { stream.getTracks().forEach(t => t.stop()); return }
+          streamRef.current = stream
           video.srcObject = stream
-
           await new Promise<void>(resolve => {
-            if (video!.readyState >= 1) { resolve(); return }
-            video!.onloadedmetadata = () => resolve()
+            if (video.readyState >= 1) { resolve(); return }
+            video.onloadedmetadata = () => resolve()
           })
-
           await video.play()
 
-          // Cap canvas at 1080p regardless of camera resolution
-          const vw = video.videoWidth  || 1280
-          const vh = video.videoHeight || 960
-          const scale = Math.min(1, CANVAS_MAX_W / vw, CANVAS_MAX_H / vh)
-          canvas.width  = Math.round(vw * scale)
-          canvas.height = Math.round(vh * scale)
+          const track = stream.getVideoTracks()[0]
+          const caps = (track.getCapabilities?.() ?? {}) as ExtCapabilities
+          setTorchAvail(!!caps.torch)
+          if (caps.zoom && caps.zoom.max > caps.zoom.min) { setZoomCap(caps.zoom); setZoomVal(caps.zoom.min) }
 
-          loopFnRef.current = loop
-          rafRef.current = requestAnimationFrame(loop)
+          stoppedRef.current = false
+          pausedRef.current = false
+          loop()
         } catch {
           setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
         }
       }
 
-      function loop(now: number) {
-        // Clear ref first — will be re-set below only if we should keep running
-        rafRef.current = null
-
-        if (!video || !ctx || !engine) return
-        // Stop RAF completely when paused — resume() will restart it
-        if (pausedRef.current) return
-
-        rafRef.current = requestAnimationFrame(loop)
-
-        if (scanBusyRef.current) return
-        if (now - lastScanRef.current < interval) return
-        if (video.readyState < 2) return
-
-        lastScanRef.current = now
-
-        // Crop center 1/zoom of video, upscale to canvas → more pixels on QR at range
-        const z  = zoomRef.current
-        const cw = canvas.width
-        const ch = canvas.height
-        const sw = cw / z
-        const sh = ch / z
-        // Source from video scaled to canvas coords
-        const scaleX = video.videoWidth  / cw
-        const scaleY = video.videoHeight / ch
-        ctx.drawImage(
-          video,
-          (video.videoWidth  - sw * scaleX) / 2,
-          (video.videoHeight - sh * scaleY) / 2,
-          sw * scaleX, sh * scaleY,
-          0, 0, cw, ch,
-        )
-
-        scanBusyRef.current = true
-        QrScanner.scanImage(canvas, { qrEngine: engine, returnDetailedScanResult: true })
-          .then(result => {
-            if (!pausedRef.current) {
-              pausedRef.current = true
-              onScan(result.data)
-            }
-          })
-          .catch(() => {})
-          .finally(() => { scanBusyRef.current = false })
-      }
-
       setup()
-
       return () => {
         destroyed = true
-        if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
-        loopFnRef.current = null
-        stream?.getTracks().forEach(t => t.stop())
-        video.srcObject = null
-        if (engine instanceof Worker) engine.terminate()
+        stoppedRef.current = true
+        streamRef.current?.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+        const v = videoRef.current
+        if (v) v.srcObject = null
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    function applyZoom(raw: number) {
+      const track = streamRef.current?.getVideoTracks()[0]
+      const caps = (track?.getCapabilities?.() ?? {}) as ExtCapabilities
+      if (!track || !caps.zoom) return
+      const v = Math.max(caps.zoom.min, Math.min(caps.zoom.max, Math.round(raw * 10) / 10))
+      setZoomVal(v)
+      track.applyConstraints({ advanced: [{ zoom: v } as MediaTrackConstraintSet] }).catch(() => {})
+    }
+
+    function toggleTorch() {
+      const track = streamRef.current?.getVideoTracks()[0]
+      if (!track) return
+      const next = !torchOn
+      setTorchOn(next)
+      track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] }).catch(() => {})
+    }
+
+    const zoomStep = zoomCap?.step || 0.5
 
     function handleTouchStart(e: React.TouchEvent) {
       if (e.touches.length === 2) {
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         pinchStartDist.current = Math.sqrt(dx * dx + dy * dy)
-        pinchStartZoom.current = zoomRef.current
+        pinchStartZoom.current = zoomVal
       }
     }
-
     function handleTouchMove(e: React.TouchEvent) {
       if (e.touches.length !== 2 || pinchStartDist.current === null) return
-      const dx   = e.touches[0].clientX - e.touches[1].clientX
-      const dy   = e.touches[0].clientY - e.touches[1].clientY
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
       const dist = Math.sqrt(dx * dx + dy * dy)
-      updateZoom(pinchStartZoom.current * (dist / pinchStartDist.current))
+      applyZoom(pinchStartZoom.current * (dist / pinchStartDist.current))
     }
-
     function handleTouchEnd(e: React.TouchEvent) {
       if (e.touches.length < 2) pinchStartDist.current = null
     }
@@ -214,52 +190,45 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     return (
       <div className="flex flex-col gap-3">
         <div
-          ref={containerRef}
+          ref={wrapRef}
           className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-[4/3]"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <video
-            ref={videoRef}
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
-            playsInline
-            muted
-          />
+          <video ref={videoRef} className="absolute inset-0 w-full h-full object-contain" playsInline muted />
+          <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
-          {!error && (
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-              <div className="w-[85%] aspect-square border-2 border-blue-400 rounded-lg animate-pulse" />
-            </div>
-          )}
           {error && (
             <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-2 p-4">
               <p className="text-slate-300 text-xs text-center">{error}</p>
             </div>
           )}
 
-          {zoom > 1 && (
+          {zoomCap && zoomVal > zoomCap.min && (
             <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] font-semibold rounded px-1.5 py-0.5 pointer-events-none">
-              {zoom.toFixed(1)}×
+              {zoomVal.toFixed(1)}×
             </div>
           )}
 
-          <div className="absolute bottom-2 right-2 flex flex-col gap-1">
-            <button
-              onClick={() => updateZoom(zoom + 0.5)}
-              disabled={zoom >= MAX_ZOOM}
-              className="bg-black/40 text-white rounded-full p-1.5 hover:bg-black/60 disabled:opacity-30 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => updateZoom(zoom - 0.5)}
-              disabled={zoom <= MIN_ZOOM}
-              className="bg-black/40 text-white rounded-full p-1.5 hover:bg-black/60 disabled:opacity-30 transition-colors"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
+          <div className="absolute bottom-2 right-2 flex flex-col gap-1.5 items-center">
+            {torchAvail && (
+              <button onClick={toggleTorch} className="bg-black/40 text-white rounded-full p-2 hover:bg-black/60">
+                {torchOn ? <FlashlightOff className="h-4 w-4" /> : <Flashlight className="h-4 w-4" />}
+              </button>
+            )}
+            {zoomCap && (
+              <>
+                <button onClick={() => applyZoom(zoomVal + zoomStep)} disabled={zoomVal >= zoomCap.max}
+                  className="bg-black/40 text-white rounded-full p-2 hover:bg-black/60 disabled:opacity-30">
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => applyZoom(zoomVal - zoomStep)} disabled={zoomVal <= zoomCap.min}
+                  className="bg-black/40 text-white rounded-full p-2 hover:bg-black/60 disabled:opacity-30">
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -17,6 +17,33 @@ export function materialCodeOf(palletCode: string | null | undefined): string {
   return s.split('_')[1] ?? ''
 }
 
+/** Kiểm 1 chuỗi có phải TEM pallet hợp lệ theo CẤU TRÚC (V1 `_` hoặc V2 `;`) — dùng cho khung màu
+ *  scanner (xanh=hợp lệ / đỏ=không phải tem) + trang quét loạt. KHÔNG gate theo cờ đơn vị (cả 2 format
+ *  đều "hợp lệ cấu trúc"); việc khớp cờ đơn vị do backend kiểm. Phải khớp backend qrParser. */
+const V2_LOT = /^[A-Z]{2}\d{6}[A-Z]\d{3}$/
+function validDdmmyy(d: string): boolean {
+  if (!/^\d{6}$/.test(d)) return false
+  const day = +d.slice(0, 2), mo = +d.slice(2, 4)
+  if (mo < 1 || mo > 12 || day < 1 || day > 31) return false
+  const dt = new Date(Date.UTC(2000 + +d.slice(4, 6), mo - 1, day))
+  return dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === day
+}
+export function isValidTem(raw: string): boolean {
+  const s = (raw ?? '').trim()
+  if (!s) return false
+  if (s.includes(';')) {                       // V2: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
+    const p = s.split(';').map(x => x.trim())
+    if (p.length < 7) return false
+    const lot = p[2] ?? ''
+    if (!V2_LOT.test(lot)) return false        // Mã lô = 2 chữ + yymmdd + Máy + 3 số
+    const mo = +lot.slice(4, 6), day = +lot.slice(6, 8)
+    return mo >= 1 && mo <= 12 && day >= 1 && day <= 31
+  }
+  const p = s.split('_')                        // V1: ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
+  if (p.length < 6) return false
+  return validDdmmyy(p[0])
+}
+
 /** Kiểm tra dd/mm/yyyy hợp lệ theo lịch thật (chống 30/02 roll-over). */
 export function isValidDMY(s: string): boolean {
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)

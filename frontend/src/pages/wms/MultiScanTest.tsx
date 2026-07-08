@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
+import { isValidTem } from '@/utils/qr'
 
 // ── BarcodeDetector chưa có trong lib.dom của TS — khai báo tối thiểu ──────────
 interface DetectedBarcode {
@@ -31,36 +32,7 @@ type ExtCapabilities = MediaTrackCapabilities & {
 }
 type ExtConstraintSet = MediaTrackConstraintSet & { zoom?: number; torch?: boolean }
 
-// ── Validate định dạng mã — nhận 1 trong 2 loại tem ───────────────────────────
-// Tem PALLET (mirror backend qrParser): ≥6 đoạn ngăn '_', đoạn 1 = ddmmyy
-function isValidPallet(raw: string): boolean {
-  const parts = raw.trim().split('_')
-  if (parts.length < 6) return false
-  const d = parts[0]
-  if (!/^\d{6}$/.test(d)) return false
-  const day = parseInt(d.slice(0, 2), 10)
-  const month = parseInt(d.slice(2, 4), 10)
-  if (month < 1 || month > 12 || day < 1 || day > 31) return false
-  const dt = new Date(Date.UTC(2000 + parseInt(d.slice(4, 6), 10), month - 1, day))
-  return dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day
-}
-
-// Tem THÙNG (2cm): ≥7 trường ngăn ';', trường 3 = serial XXyymmddXxxx
-// VD: 50033;      1;TA260705A017;05/07/2026;05/03/2027;      1;05:26
-const CARTON_SERIAL = /^[A-Z]{2}\d{6}[A-Z]\d{3}$/
-function isValidCarton(raw: string): boolean {
-  const parts = raw.trim().split(';').map(p => p.trim())
-  if (parts.length < 7) return false
-  const serial = parts[2] ?? ''
-  if (!CARTON_SERIAL.test(serial)) return false
-  const month = parseInt(serial.slice(4, 6), 10)
-  const day = parseInt(serial.slice(6, 8), 10)
-  return month >= 1 && month <= 12 && day >= 1 && day <= 31
-}
-
-function isValidFormat(raw: string): boolean {
-  return isValidCarton(raw) || isValidPallet(raw)
-}
+// Validate định dạng tem (V1 `_` pallet / V2 `;` thùng) dùng CHUNG với scanner đơn: utils/qr.ts isValidTem.
 
 interface ScannedCode {
   text: string
@@ -202,7 +174,7 @@ export default function MultiScanTest() {
     for (const f of found) {
       let entry = codesRef.current.get(f.text)
       if (!entry) {
-        entry = { text: f.text, valid: isValidFormat(f.text), at: Date.now(), hits: 0 }
+        entry = { text: f.text, valid: isValidTem(f.text), at: Date.now(), hits: 0 }
         codesRef.current.set(f.text, entry)
       }
       entry.hits++

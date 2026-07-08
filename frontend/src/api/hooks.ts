@@ -1476,6 +1476,27 @@ export function useCreateGDO() {
   })
 }
 
+// Tạo & Xuất luôn (hàng không tem): tạo đơn + tự Bắt đầu + ghi nhận SL + Hoàn thành trong 1 request.
+// Hoàn thành có thể sinh booking chuyển kho → invalidate cả tms; trừ tồn → invalidate inventory.
+export function useQuickExportGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: GDOFormPayload & { license_plate: string }) => {
+      const { data } = await apiClient.post('/wms/outbound/quick-export', body)
+      return data.data as GDO
+    },
+    onSettled: () => {   // 409 PARTIAL_EXPORT vẫn đã tạo đơn + trừ tồn một phần → invalidate cả khi lỗi
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-facets'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+    },
+  })
+}
+
 export function useUpdateGDO() {
   const qc = useQueryClient()
   return useMutation({

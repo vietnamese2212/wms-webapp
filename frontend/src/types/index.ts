@@ -663,7 +663,7 @@ export interface GDO {
   delivery_date:    string
   warehouse_id:     string | null
   warehouse_type:   string | null
-  warehouse?:       { id: string; code: string; name: string } | null
+  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null

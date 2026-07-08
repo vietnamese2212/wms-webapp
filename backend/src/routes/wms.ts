@@ -124,6 +124,7 @@ router.get('/loosepicking',                                   requirePerm('loose
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)
 router.post('/outbound',                                      requirePerm('outbound', 'create'), outbound.createGDO)
 router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadExcel)
+router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)

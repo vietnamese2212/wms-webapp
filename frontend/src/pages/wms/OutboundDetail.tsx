@@ -1165,6 +1165,9 @@ export default function OutboundDetail() {
   const { mutate: unassignGDO,  isPending: unassigning } = useUnassignGDO()
   const { mutate: unstartGDO,   isPending: unstarting  } = useUnstartGDO()
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
+  const manualCompleteMulti = useManualCompleteItem()   // "Lưu tất cả theo KH" — bulk hàng không tem
+  const [bulkErr, setBulkErr] = useState<string | null>(null)
+  const [bulkSaving, setBulkSaving] = useState(false)
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
@@ -1247,7 +1250,28 @@ export default function OutboundDetail() {
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
   // Workflow state
-  const canStart       = !!gdo.assigned_at && !gdo.started_at && can(perms, 'outbound', 'start')
+  // Kho QTY/NONE: không bắt buộc Phân công trước — BE tự gán người bấm Bắt đầu (kho QR giữ nghi thức)
+  const whInvMode = gdo.warehouse?.inventory_mode ?? null
+  const canStart       = (!!gdo.assigned_at || (whInvMode !== null && whInvMode !== 'QR')) && !gdo.started_at && can(perms, 'outbound', 'start')
+
+  // "Lưu tất cả theo kế hoạch" — ghi nhận song song mọi mã không tem chưa xong (= bấm Lưu thủ công từng mã)
+  const manualPendingItems = manualItems.filter(i => i.status !== 'COMPLETED')
+  async function bulkManualSave() {
+    const targets = manualPendingItems
+    setBulkErr(null); setBulkSaving(true)
+    const results = await Promise.allSettled(targets.map(i =>
+      manualCompleteMulti.mutateAsync({ gdoId: id!, itemId: i.id, cartons: i.cartons_ordered })
+    ))
+    setBulkSaving(false)
+    const fails: string[] = []
+    results.forEach((r, idx) => {
+      if (r.status === 'rejected') {
+        const msg = (r.reason as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'lỗi'
+        fails.push(`${targets[idx].material?.material_code ?? targets[idx].material_code_raw ?? '?'}: ${msg}`)
+      }
+    })
+    if (fails.length) setBulkErr(`Không ghi nhận được ${fails.length}/${targets.length} mã — ${fails.join(' · ')}`)
+  }
   const hasScanEntries = allItems.some(i => i.cartons_scanned > 0)
   // Nhặt lẻ chưa confirm không tính là scan cản trở gỡ bắt đầu
   const hasBlockingScans = allItems.some(i =>
@@ -1351,6 +1375,20 @@ export default function OutboundDetail() {
               {canStart && (
                 <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2" title="Bắt đầu" onClick={() => setShowStart(true)}>
                   <Play className="h-3 w-3" /><span className="hidden sm:inline">Bắt đầu</span>
+                </Button>
+              )}
+              {gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan') && (
+                <Button size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-green-300 text-green-700 hover:bg-green-50"
+                  disabled={bulkSaving}
+                  title={`Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (mã lệch thì Sửa SL lẻ sau)`}
+                  onClick={() => setPendingConfirm({
+                    title: 'Lưu tất cả theo kế hoạch',
+                    message: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch?`,
+                    onConfirm: () => { void bulkManualSave() },
+                  })}>
+                  <PenSquare className="h-3 w-3" />
+                  <span className="hidden sm:inline">{bulkSaving ? 'Đang lưu…' : 'Lưu tất cả theo KH'}</span>
                 </Button>
               )}
               {gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
@@ -1538,6 +1576,12 @@ export default function OutboundDetail() {
             <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">
               <span>{undoErr}</span>
               <button className="ml-auto" onClick={() => setUndoErr(null)}><X className="h-3 w-3" /></button>
+            </div>
+          )}
+          {bulkErr && (
+            <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">
+              <span>{bulkErr}</span>
+              <button className="ml-auto" onClick={() => setBulkErr(null)}><X className="h-3 w-3" /></button>
             </div>
           )}
           <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />

@@ -540,6 +540,159 @@ export async function createGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Tạo & Xuất luôn (quick-export — hàng không tem: mã no-QR / kho QTY) ──────
+// 1 request làm trọn cho đơn tạo tay: tạo đơn → tự gán người tạo phụ trách → Bắt đầu
+// (biển số BẮT BUỘC) → ghi nhận SL từng mã (CAS pool tồn dùng chung, như Lưu thủ công)
+// → Hoàn thành + maybeAutoCreateTransferOrder. Kho NONE hành xử như Lưu thủ công hiện tại:
+// không có dòng tồn → ghi nhận không trừ (kho không theo dõi tồn).
+// Mã hụt tồn do tranh chấp GIỮA CHỪNG → đơn dừng IN_PROGRESS + 409 kèm danh sách mã (xử tiếp trên trang chuyến).
+export async function quickExportGDO(req: Request, res: Response) {
+  try {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, items } = req.body as {
+      delivery_date: string; warehouse_id?: string; dvvt?: string
+      customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
+      items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
+    }
+    if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
+    if (!delivery_code?.trim())     return fail(res, 'Số DO là bắt buộc', 400)
+    if (!license_plate?.trim())     return fail(res, 'Biển số xe là bắt buộc', 400)
+    if (!items?.length)             return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
+    if (!warehouse_id)              return fail(res, 'Chọn kho xuất', 400)
+    if (!guardWhCreate(req, res, warehouse_id)) return
+    if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+
+    const dvvtRes = (await buildDvvtResolver())(dvvt)
+    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
+
+    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode').eq('id', warehouse_id).maybeSingle()
+    if (!wh) return fail(res, 'Không tìm thấy kho xuất', 404)
+    const whMode = (wh as { inventory_mode?: string | null }).inventory_mode ?? null
+
+    // Mọi mã phải là hàng không tem (no-QR hiệu lực) — mã có tem QR phải đi luồng quét
+    const allCodes = [...new Set(items.map(i => i.material_code))]
+    const { data: mats } = await supabase.from('Material')
+      .select('id, material_code, category, no_qr_tracking').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null; no_qr_tracking: boolean | null }>(
+      ((mats ?? []) as { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null }[])
+        .map(m => [m.material_code, { id: m.id, category: m.category, no_qr_tracking: m.no_qr_tracking }])
+    )
+    const missing = allCodes.filter(c => !matMap.has(c))
+    if (missing.length) return fail(res, `Mã hàng chưa có trong hệ thống: ${missing.join(', ')}`, 400)
+    const notEligible = allCodes.filter(c => !effectiveNoQr(matMap.get(c)!.no_qr_tracking, whMode))
+    if (notEligible.length) return fail(res, 422, 'NOT_NO_QR', `Mã có tem QR phải xuất bằng quét, không dùng được "Xuất luôn": ${notEligible.join(', ')}`)
+
+    // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ)
+    const { data: pools } = await supabase.from('InventoryEntry')
+      .select('pallet_code, cartons_remaining').eq('warehouse_id', warehouse_id).in('pallet_code', allCodes)
+    const poolMap = new Map<string, number>(
+      ((pools ?? []) as { pallet_code: string; cartons_remaining: number }[]).map(p => [p.pallet_code, Number(p.cartons_remaining)])
+    )
+    const short = items.filter(i => poolMap.has(i.material_code) && poolMap.get(i.material_code)! < Number(i.cartons_ordered))
+    if (short.length) {
+      return fail(res, 400, 'INSUFFICIENT_STOCK',
+        `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${i.cartons_ordered}, còn ${poolMap.get(i.material_code)}`).join(' · ')}`)
+    }
+
+    // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO)
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const [yr, mo, dy] = today.split('-')
+    const prefix = `${String((wh as { code?: string }).code ?? 'XX')}_X_${dy}${mo}${yr.slice(2)}_`
+    const { data: existing } = await supabase.from('GroupDeliveryOrder')
+      .select('group_code').ilike('group_code', `${prefix}%`)
+    const maxNum = Math.max(0, ...((existing ?? []) as { group_code: string }[]).map(r => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
+    const group_code = `${prefix}${String(maxNum + 1).padStart(2, '0')}`
+
+    const t = now()
+    const gdoId = randomUUID()
+    const actor = req.user?.name || null
+    const { error } = await supabase.from('GroupDeliveryOrder').insert({
+      id: gdoId, group_code, planned_date: delivery_date, delivery_date,
+      warehouse_id, dvvt: dvvtRes.name,
+      warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
+      status: 'IN_PROGRESS',
+      assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
+      started_at: t, license_plate: license_plate.trim(),
+      created_by: actor, updated_by: actor, updated_at: t,
+    })
+    if (error) return fail(res, error.message)
+
+    const doId = randomUUID()
+    const { error: doErr } = await supabase.from('OutboundDelivery').insert({
+      id: doId, gdo_id: gdoId, delivery_code: delivery_code.trim(),
+      distributor_name: customer_name ?? null, status: 'PENDING', updated_at: t,
+    })
+    if (doErr) return fail(res, doErr.message)
+
+    const itemRows = items.map(item => ({
+      id: randomUUID(), do_id: doId,
+      material_id: matMap.get(item.material_code)!.id,
+      material_code_raw: item.material_code,
+      cartons_ordered: item.cartons_ordered,
+      boxes_display: 0, weight: null, pallets_estimated: 0,
+      loose_picking: item.loose_picking ?? 0,
+      header_text: item.header_text?.trim() || null,
+      batch_required: item.batch_required?.trim() || null,
+      date_required: item.date_required || null,
+      cs_responsible: item.cs_responsible?.trim() || null,
+      material_type: matMap.get(item.material_code)!.category,
+      export_type: export_type ?? null, cartons_scanned: 0,
+      status: 'PENDING', updated_at: t,
+    }))
+    const { error: itemErr } = await supabase.from('OutboundItem').insert(itemRows)
+    if (itemErr) return fail(res, itemErr.message)
+
+    // Ghi nhận từng mã: trừ tồn pool (CAS) + item COMPLETED + OutboundScanEntry (như Lưu thủ công)
+    const failed: { material_code: string; message: string }[] = []
+    for (const row of itemRows) {
+      const ctn = Number(row.cartons_ordered)
+      const r = await applySharedPoolDelta(row.material_code_raw, warehouse_id, ctn)
+      if (r.outcome !== 'OK') {
+        failed.push({
+          material_code: row.material_code_raw,
+          message: r.outcome === 'INSUFFICIENT' ? `còn ${r.available} thùng` : 'tồn đang bận (nhiều người thao tác)',
+        })
+        continue
+      }
+      const t2 = now()
+      await Promise.all([
+        supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 }).eq('id', row.id),
+        supabase.from('OutboundScanEntry').insert({
+          id: randomUUID(), item_id: row.id,
+          inventory_entry_id: r.invEntryId,
+          pallet_code: row.material_code_raw, cartons_scanned: ctn,
+          is_loose_picking: false, scanned_at: t2, created_at: t2, updated_at: t2,
+        }),
+      ])
+    }
+
+    if (failed.length) {
+      // Đơn giữ IN_PROGRESS — user xử các mã lỗi trên trang chuyến (Lưu thủ công lẻ) rồi Hoàn thành tay
+      await supabase.from('OutboundDelivery').update({ status: 'IN_PROGRESS', updated_at: now() }).eq('id', doId)
+      const result = await fetchGDOFull(gdoId)
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'PARTIAL_EXPORT',
+          message: `Đơn ${group_code} đã tạo nhưng ${failed.length} mã chưa ghi nhận được — xử tiếp trên trang chuyến: ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}`,
+        },
+        data: result,
+      })
+    }
+
+    const tEnd = now()
+    await Promise.all([
+      supabase.from('OutboundDelivery').update({ status: 'COMPLETED', updated_at: tEnd }).eq('id', doId),
+      supabase.from('GroupDeliveryOrder')
+        .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
+        .eq('id', gdoId).neq('status', 'COMPLETED'),
+    ])
+    await maybeAutoCreateTransferOrder(gdoId, tEnd)
+
+    const result = await fetchGDOFull(gdoId)
+    return ok(res, result, 201)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Auto-create TmsOrder khi GDO COMPLETED + shipto_party là kho hệ thống ───
 
 async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
@@ -1006,6 +1159,12 @@ export async function startGDO(req: Request, res: Response) {
       }
     }
 
+    // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
+    const { data: cur } = await supabase.from('GroupDeliveryOrder')
+      .select('assigned_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+    const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
+    const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
+
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: now(),
@@ -1016,6 +1175,7 @@ export async function startGDO(req: Request, res: Response) {
         forklift_driver_id:     forklift_driver_id     ?? null,
         forklift_driver_names:  forklift_driver_names  ?? null,
         gate_registration_id:   gate_registration_id   ?? null,
+        ...(autoAssign ? { assigned_at: now(), assigned_by: req.user?.name ?? null } : {}),
         status:     'IN_PROGRESS',
         updated_at: now(),
       })
@@ -2600,6 +2760,35 @@ export async function getManualItemStock(req: Request, res: Response) {
 
 // ─── Manual complete item ─────────────────────────────────────
 
+// Áp delta vào tồn pool dùng chung (hàng no-QR/kho QTY: 1 dòng InventoryEntry pallet_code = mã hàng) —
+// optimistic-CAS + jitter, đọc lại remaining MỖI lần thử (nhiều đơn cùng xuất 1 mã → không retry thì ~nửa 409 oan).
+// INSUFFICIENT (thiếu tồn thật) KHÔNG retry; BUSY = CAS trượt hết 15 lần. Không có dòng tồn → OK (kho không theo dõi mã này).
+async function applySharedPoolDelta(materialCode: string, warehouseId: string, delta: number):
+  Promise<{ outcome: 'OK' | 'INSUFFICIENT' | 'BUSY'; invEntryId: string | null; available: number }> {
+  let invEntryId: string | null = null
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { data: invEntry } = await supabase
+      .from('InventoryEntry').select('id, cartons_remaining, cartons_imported')
+      .eq('pallet_code', materialCode).eq('warehouse_id', warehouseId).maybeSingle()
+    invEntryId = (invEntry as { id?: string } | null)?.id ?? null
+    if (!invEntry || delta === 0) {
+      return { outcome: 'OK', invEntryId, available: Number((invEntry as { cartons_remaining?: number } | null)?.cartons_remaining ?? 0) }
+    }
+    const current  = Number((invEntry as { cartons_remaining: number }).cartons_remaining)
+    const imported = Number((invEntry as { cartons_imported: number }).cartons_imported)
+    if (delta > 0 && current < delta) return { outcome: 'INSUFFICIENT', invEntryId, available: current }   // thiếu tồn thật
+    const newRemaining = current - delta   // delta<0 → cộng lại
+    const { data: applied } = await supabase.from('InventoryEntry').update({
+      cartons_remaining: newRemaining,
+      status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
+      updated_at: now(),
+    }).eq('id', (invEntry as { id: string }).id).eq('cartons_remaining', current).select('id')
+    if (applied?.length) return { outcome: 'OK', invEntryId, available: newRemaining }
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+  }
+  return { outcome: 'BUSY', invEntryId, available: 0 }
+}
+
 export async function manualCompleteItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
@@ -2628,41 +2817,16 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
     let specialInvEntryId: string | null = null
 
-    if (isSpecial && item.material_id && gdo?.warehouse_id) {
-      const materialCode = specialMatCode
+    if (isSpecial && item.material_id && gdo?.warehouse_id && specialMatCode) {
       const oldCartons = Number(item.cartons_scanned) || 0
       const delta = ctn - oldCartons   // >0: xuất thêm (trừ tồn) · <0: giảm (cộng lại) · =0: không đổi
-
-      // Áp delta vào tồn POSM dùng chung — optimistic-CAS + jitter, đọc lại remaining MỖI lần thử.
-      // Nhiều đơn cùng quét POSM chung 1 mã → thundering herd; không retry thì ~nửa bị 409 oan.
-      // INSUFFICIENT (thiếu tồn thật) thì KHÔNG retry; chỉ retry khi CAS trượt (người khác vừa đổi tồn).
-      let outcome: 'OK' | 'INSUFFICIENT' | 'BUSY' = 'OK'
-      for (let attempt = 0; attempt < 15; attempt++) {
-        const { data: invEntry } = await supabase
-          .from('InventoryEntry').select('id, cartons_remaining, cartons_imported')
-          .eq('pallet_code', materialCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
-        specialInvEntryId = (invEntry as { id?: string } | null)?.id ?? null
-        if (!invEntry || delta === 0) { outcome = 'OK'; break }
-        const current  = Number((invEntry as { cartons_remaining: number }).cartons_remaining)
-        const imported = Number((invEntry as { cartons_imported: number }).cartons_imported)
-        if (delta > 0 && current < delta) { outcome = 'INSUFFICIENT'; break }   // thiếu tồn thật
-        const newRemaining = current - delta   // delta<0 → cộng lại
-        const { data: applied } = await supabase.from('InventoryEntry').update({
-          cartons_remaining: newRemaining,
-          status: newRemaining === 0 ? 'EXPORTED' : newRemaining < imported ? 'PARTIAL' : 'IN_STOCK',
-          updated_at: now(),
-        }).eq('id', (invEntry as { id: string }).id).eq('cartons_remaining', current).select('id')
-        if (applied?.length) { outcome = 'OK'; break }
-        outcome = 'BUSY'
-        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
-      }
-      if (outcome === 'INSUFFICIENT') {
-        const { data: inv2 } = await supabase.from('InventoryEntry').select('cartons_remaining').eq('pallet_code', materialCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
-        const available = Number((inv2 as { cartons_remaining?: number } | null)?.cartons_remaining ?? 0)
+      const r = await applySharedPoolDelta(specialMatCode, gdo.warehouse_id as string, delta)
+      specialInvEntryId = r.invEntryId
+      if (r.outcome === 'INSUFFICIENT') {
         return fail(res, 400, 'INSUFFICIENT_STOCK',
-          `Không đủ tồn kho — còn ${available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
+          `Không đủ tồn kho — còn ${r.available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
       }
-      if (outcome === 'BUSY') return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại')
+      if (r.outcome === 'BUSY') return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại')
     }
 
     // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).

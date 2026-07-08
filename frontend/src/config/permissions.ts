@@ -44,6 +44,7 @@ export const MODULES = {
       view:       'Xem danh sách',
       prepare:    'Chuẩn bị hàng (soạn hàng)',
       create:     'Tạo đơn',
+      quick_export: 'Tạo & Xuất luôn (hàng không tem — trừ tồn ngay khi lưu)',
       import:     'Upload Excel (nhập kế hoạch xuất)',
       edit:       'Sửa đơn / xe / đổi ngày giao / tạm dừng-tiếp tục',
       assign:     'Giao đơn',

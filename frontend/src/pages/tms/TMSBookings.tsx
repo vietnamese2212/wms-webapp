@@ -29,7 +29,7 @@ import {
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
-  useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useTransferGoods,
+  useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
   useCompleteInboundOrder, useScanManualPallet, useMaterialSummary,
   type TransferOrder,
@@ -2147,6 +2147,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
+  const { mutateAsync: selfComplete,   isPending: selfCompleting } = useSelfCompleteTransfer()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
   const { mutateAsync: createOneInbound, isPending: creatingInbound } = useCreateOneInbound()
 
@@ -2225,6 +2226,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   // ĐVVT booking đủ = có Biển số + SĐT lái xe + Giờ xe tới (ETA). Chưa đủ → chưa cho bắt đầu nhận.
   const hasBooking = !!(slot?.license_plate?.trim() && slot?.driver_phone?.trim() && order?.eta)
   const tStatus = order?.transfer_gdo?.transfer_status
+  // SELF (kho nhận NONE / khách ngoài): không có bước nhận-quét → thay "Bắt đầu nhận hàng" bằng "Hoàn thành" (tài xế tự hoàn thành)
+  const isSelf = order?.delivery_mode === 'SELF'
   // Giữ trạng thái "đang bắt đầu nhận" liên tục từ lúc bấm tới khi panel chuyển sang RECEIVING
   // (tránh nút nháy về 'Bắt đầu nhận hàng' rồi mới đổi — do refetch trễ)
   const [starting, setStarting] = useState(false)
@@ -2308,28 +2311,29 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span>
-                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting) ? 'animate-pulse' : ''} ${!hasBooking ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            disabled={confirming || starting || !hasBooking}
+                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting || selfCompleting) ? 'animate-pulse' : ''} ${!hasBooking ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={confirming || starting || selfCompleting || !hasBooking}
                             onClick={async () => {
                               if (!order) return
                               setConfirmErr(''); setStarting(true)
                               try {
-                                await confirmReceipt(order.id)
+                                if (isSelf) await selfComplete(order.id)
+                                else await confirmReceipt(order.id)
                               } catch (e: unknown) {
                                 setStarting(false)
                                 const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                                setConfirmErr(msg ?? 'Lỗi xác nhận nhận hàng')
+                                setConfirmErr(msg ?? (isSelf ? 'Lỗi hoàn thành giao hàng' : 'Lỗi xác nhận nhận hàng'))
                               }
                             }}>
-                            {(confirming || starting)
+                            {(confirming || starting || selfCompleting)
                               ? <><RotateCcw className="h-3 w-3 animate-spin" /> Đang xử lý…</>
-                              : 'Bắt đầu nhận hàng'}
+                              : (isSelf ? 'Hoàn thành' : 'Bắt đầu nhận hàng')}
                           </Button>
                         </span>
                       </TooltipTrigger>
                       {!hasBooking && (
                         <TooltipContent side="bottom">
-                          Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng
+                          Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi {isSelf ? 'hoàn thành' : 'nhận hàng'}
                         </TooltipContent>
                       )}
                     </Tooltip>

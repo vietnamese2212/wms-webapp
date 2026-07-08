@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
-import { wrongFormatHint } from './systemSettingController'
+import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -545,12 +545,13 @@ export async function createGDO(req: Request, res: Response) {
 async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-    .select('id, group_code, shipto_party, transfer_status, license_plate')
+    .select('id, group_code, shipto_party, transfer_status, license_plate, warehouse_id')
     .eq('id', gdoId).single()
-  // Chỉ tạo chuyển kho khi có shipto_party (gốc từ upload) khớp KHO NHẬN theo dõi tồn (QR/QTY).
-  // shipto trỏ kho NONE / khách hàng / không có trong DB → xuất bán thường, KHÔNG tạo chuyển kho.
-  // (đổi kho NONE→QR/QTY rồi Hoàn thành: shipto đã lưu sẵn → tra lại thấy QR/QTY → tạo chuyển kho.)
   if (!gdo?.shipto_party || gdo.transfer_status) return
+
+  // Cờ Xác nhận giao hàng (Cài đặt hệ thống): tắt → không tạo booking; bật → chỉ tạo cho hình thức kho nhận được chọn.
+  const dc = await getDeliveryConfirmation()
+  if (!dc.enabled) return
 
   type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -559,7 +560,11 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
     .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
     .eq('is_active', true).maybeSingle()
   const destWh = (destWhData as DestWh) ?? null
-  if (!destWh || destWh.inventory_mode === 'NONE') return
+  // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
+  const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : destWh.inventory_mode === 'QTY' ? 'QTY' : 'QR') : 'OTHER'
+  if (!dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking)
+  // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.
+  const isSelf = modeKey === 'NONE' || modeKey === 'OTHER'
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
@@ -585,16 +590,19 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   if (!matMap.size) return
 
   const orderId = randomUUID()
-  const orderCode = `TRF_${destWh.code}_${gdo.group_code}`
+  // OTHER (khách ngoài, không có kho đích): scope + hiển thị theo KHO XUẤT (gdo.warehouse_id); tên KH = shipto.
+  const orderWarehouseId = destWh ? destWh.id : (gdo.warehouse_id as string)
+  const orderCode = `TRF_${destWh ? destWh.code : gdo.shipto_party}_${gdo.group_code}`
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('TmsOrder').insert({
     id: orderId, order_code: orderCode,
-    date: vnDate, warehouse_id: destWh.id,
-    destination_warehouse_id: destWh.id,
+    date: vnDate, warehouse_id: orderWarehouseId,
+    destination_warehouse_id: destWh ? destWh.id : null,
     direction: 'INBOUND', source_type: 'TRANSFER',
     transfer_gdo_id: gdoId,
+    delivery_mode: isSelf ? 'SELF' : 'SCAN',
     planned_boxes: 0, planned_pallets: 0,
     status: 'PENDING',
     created_at: nowTs, updated_at: nowTs,
@@ -602,7 +610,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
   const lineRows = [...matMap.values()].map(m => ({
     id: randomUUID(), tms_order_id: orderId, date: vnDate,
-    warehouse_id: destWh.id, warehouse_type: m.category || null,
+    warehouse_id: orderWarehouseId, warehouse_type: m.category || null,
     material_id: m.material_id, planned_boxes: m.planned_boxes,
     planned_pallets: null, status: 'ACTIVE',
     created_at: nowTs, updated_at: nowTs,

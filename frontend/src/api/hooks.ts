@@ -2379,6 +2379,7 @@ export type TransferOrder = import('@/types').TmsOrder & {
   transfer_gdo?: TransferGDO | null
   receiving_started_at?: string | null
   actual_received?: number
+  delivery_mode?: string | null   // 'SELF' (kho NONE / khách ngoài: tài xế tự Hoàn thành) | 'SCAN'/null (nhận-quét)
 }
 
 // destination_warehouse_id: nếu truyền, lọc theo kho nhận (dùng ở Inbound để hiển thị đúng kho)
@@ -2450,6 +2451,19 @@ export function useConfirmTransferReceipt() {
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+    },
+  })
+}
+
+// Booking SELF (kho nhận NONE / khách ngoài): tài xế TỰ HOÀN THÀNH — không nhận-quét, không tạo tồn.
+export function useSelfCompleteTransfer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (orderId: string) =>
+      apiClient.post(`/tms/orders/${orderId}/self-complete`).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
     },
   })
 }

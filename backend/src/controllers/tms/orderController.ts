@@ -1057,6 +1057,40 @@ export async function cancelTransferReceipt(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// POST /api/tms/orders/:id/self-complete — booking SELF (kho nhận NONE / khách ngoài OTHER): tài xế TỰ HOÀN THÀNH.
+// KHÔNG nhận-quét, KHÔNG tạo tồn/ProductionImport — chỉ đánh dấu đã giao: GDO.transfer_status=DELIVERED + TmsOrder.status=DONE.
+export async function selfCompleteTransfer(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const t = new Date().toISOString()
+    if (!(await guardOrderScope(req, res, id))) return
+
+    const { data: tmsOrder } = await supabase.from('TmsOrder')
+      .select('id, eta, delivery_mode, transfer_gdo_id').eq('id', id).single()
+    if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
+    if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
+    if (tmsOrder.delivery_mode !== 'SELF') return fail(res, 'Lệnh này cần nhận-quét, không thể tự hoàn thành', 400)
+
+    const gdoId = tmsOrder.transfer_gdo_id as string
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, transfer_status').eq('id', gdoId).single()
+    if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
+    if (gdo.transfer_status === 'DELIVERED') return fail(res, 'Đã hoàn thành giao hàng', 409)
+    if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao', 400)
+
+    // Gác ĐVVT booking: đủ Biển số + SĐT lái xe + Giờ xe tới (giờ giao) mới cho Hoàn thành.
+    const { data: bkSlots } = await supabase.from('TmsVehicleSlot')
+      .select('license_plate, driver_phone').eq('order_id', id)
+    const bk = ((bkSlots ?? []) as { license_plate: string | null; driver_phone: string | null }[])[0]
+    if (!bk?.license_plate?.trim() || !bk?.driver_phone?.trim() || !tmsOrder.eta)
+      return fail(res, 'Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi hoàn thành', 400)
+
+    await supabase.from('TmsOrder').update({ status: 'DONE', completed_at: t, updated_at: t }).eq('id', id)
+    await supabase.from('GroupDeliveryOrder').update({ transfer_status: 'DELIVERED', updated_at: t }).eq('id', gdoId)
+    return ok(res, { completed: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // GET /api/tms/orders/:id/transfer-goods
 export async function getTransferGoods(req: Request, res: Response) {
   try {

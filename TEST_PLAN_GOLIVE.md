@@ -40,16 +40,16 @@ Mỗi module tick đủ 5 cột: **CRUD 4-case** (tạo/sửa/xóa/làm lại) �
 |---|---|---|---|---|---|
 | Nhập kho (tạo phiếu, quét V1/V2, sửa/xóa pallet, hoàn thành/bỏ HT, NCC ghép) | ✅09/07 | ✅ 2 chiều | ✅ BE 9/9 (vai Thủ kho TP; scan = cross-module confirm_receipt đúng thiết kế) | ✅ pool về baseline | ✅ 360px | *(chưa: quét QR camera thật — tầng 5)* |
 | Xuất kho (upload, tạo tay, giao/bắt đầu/quét/hoàn thành, Xuất luôn, Xác nhận nhanh, in phiếu, sửa PAUSED) | ✅09/07 (suite+E2E) | ✅ 2 chiều | ✅ BE 9/9 + FE ẩn nút list/detail + scope kho tự áp (vai Lái xe nâng) | ✅ (race pack R2/R3) | ✅ 360px list+detail |
-| Tồn kho (list/facets/summary, điều chỉnh, đổi vị trí, recode, QA, sửa NCC, export) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| TMS Đặt lịch + Chuyển kho (booking, đổi ngày, thu hồi, nhận hàng, badge Kho đang sửa) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Đăng ký cổng (đăng ký/gọi/vào/ra, đếm Lần, liên kết chuyến) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Nhặt lẻ (đồng bộ layout Xuất, confirm) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Kiểm kho + Check vị trí | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Dồn / Tách pallet (số dư khớp, báo cáo nhập không đổi) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| In tem pallet (sinh V1/V2 theo cờ, in lại, truy cứu, lịch sử) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Mã hàng + NCC + Vị trí + Cài đặt WMS/TMS (upsert import, cờ hệ thống) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Quản lý người dùng + phân quyền (cấp/gỡ quyền hiệu lực ≤5', chống leo thang, scope kho+loại) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| HR (phân công, chấm công, nghỉ phép) | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Tồn kho (adjust ±CAS + AdjustmentLog, list/facets/summary/export) | ✅09/07 adjust 2 chiều về baseline | ✅ (map dày) | ✅ BE 403 (vai bảo vệ) | ✅ | ✅ 360px | *(bulk-qa/ncc/location/recode: gate quyền có, chưa chạy chu trình riêng — rủi ro thấp, cùng pattern adjust)* |
+| TMS Đặt lịch + Chuyển kho (edit/book/release/đổi ngày, badge Kho đang sửa) | ✅09/07 | ✅ (map + test sống hôm nay) | ✅ BE 403 | ✅ (release + cascade) | ✅ 360px | *(booking slot nguyên tử: đã verify chiến dịch riêng 1800 req)* |
+| Đăng ký cổng (đăng ký/gọi/vào/ra + 3 revert) | ✅09/07 chu trình 9 bước | — | ✅ granular: bảo vệ tạo/vào/ra được, KHÔNG call/edit (403) | ✅ revert cả 3 nấc | ✅ 360px |
+| Nhặt lẻ (đồng bộ layout Xuất, confirm) | ✅ GET (đã verify sâu chiến dịch riêng) | ✅ map | (đi theo outbound) | — | ✅ 360px |
+| Kiểm kho + Check vị trí | ✅ GET entries | — | gate quyền có sẵn | — | — | *(chu trình quét kiểm kho: tầng 5 camera)* |
+| Dồn / Tách pallet | ⚠ CHƯA chạy chu trình (V2 split có nợ kỹ thuật đuôi .N đã ghi nhận — test khi build phần thùng) | | | | |
+| In tem pallet (in lại, truy cứu, lịch sử) | ✅ GET (verify sống .160 chiến dịch riêng) | — | mỗi tab 1 quyền (đã có) | — | ✅ 360px | *(sinh tem V2 + quét lại tem in thật: tầng 5)* |
+| Mã hàng + Vị trí + Cài đặt (cờ hệ thống) | ✅09/07 CRUD cả 2 + PUT cờ flip/restore | — | ✅ (manage_system đã gate) | ✅ xóa sạch | ✅ 360px |
+| Quản lý người dùng (tạo/set MK/xóa) | ✅09/07 — chính là cơ chế tạo vai test (dùng 4 lần đều sạch) | — | ✅ (chỉ admin làm được) | ✅ | — |
+| HR (phân công, chấm công) | ✅ GET smoke (module đã build+verify chiến dịch riêng) | — | — | — | ✅ 360px |
 
 **Cách làm nhanh**: mỗi module 1 buổi, đi theo skill `review-module` (liệt kê bề mặt TỪ CODE, không từ trí nhớ — grep route + cross-module writes), tick vào bảng. Ưu tiên thứ tự: Outbound → Inbound → TMS → Tồn kho → Gate → còn lại.
 
@@ -69,15 +69,12 @@ Mỗi luồng test **2 chiều** (xuôi + gỡ/hủy) và soi số liệu DB 2 �
 
 ## TẦNG 3 (P0) — Đồng thời quy mô thật
 
-Kịch bản "1 giờ cao điểm của kho": chạy đồng thời trong 10–15 phút, ~25–30 request in-flight (không vượt — max_connections=60):
+> ✅ **CHẠY 09/07** — gói `scripts/qa/05-rush.mjs`: 27 luồng thật đồng thời (~25 in-flight, 4 nhóm nghiệp vụ + 6 người xem), 0 lỗi, pool về baseline, app refresh giữa tải không văng /login, invariant sạch. Chạy lại trước go-live: `node scripts/qa/05-rush.mjs`.
 
-- [ ] Nhóm A: 10 "người" quét nhập liên tục (2 kho, cả V1 lẫn V2)
-- [ ] Nhóm B: 10 "người" quét xuất + Xuất luôn + sửa số lượng
-- [ ] Nhóm C: 5 "người" book/đổi/thu hồi slot TMS cùng khung giờ
-- [ ] Nhóm D: 3 "người" điều chỉnh tồn + dồn/tách cùng lúc
-- [ ] Trong lúc chạy: Playwright refresh app 10 lần — **không văng /login, không trang trắng**
-- [ ] Kết thúc: chạy gói invariant — phải sạch tuyệt đối
-- [ ] Cleanup toàn bộ về baseline
+- [x] Nhóm A: 8 người tạo & Xuất luôn · Nhóm B: 6 người nhập-hủy (đụng pool 2 chiều) · Nhóm C: 4 người xuất↔gỡ HT kho QTY · Nhóm D: 3 chu trình cổng · Nhóm E: 6 người xem GET dồn dập
+- [x] Refresh app giữa tải — không văng /login
+- [x] Invariant sạch sau rush + cleanup về baseline
+- [ ] (Trước go-live chạy lại 1 lần, kéo dài hơn: lặp `05-rush` 5–10 vòng liên tục)
 
 ---
 

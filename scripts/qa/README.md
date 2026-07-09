@@ -19,6 +19,7 @@ Chạy lẻ từng gói: `node scripts/qa/00-invariant.mjs` (read-only, chạy l
 | `02-race` | 10× Xuất luôn đồng thời · 10× Hoàn thành đồng thời · xen kẽ Bỏ HT/Xuất luôn — bất biến: 1 lệnh, tồn trừ đúng 1 lần, pool về baseline | Có, tự dọn |
 | `03-scale` | Seed N đơn+lệnh → list nóng < 3s & < 5MB → dọn sạch | Có, tự dọn |
 | `04-qrformat` | QR pallet V1/V2 theo cờ `label_format`: format đúng nhận + lưu NGUYÊN VĂN (giữ đệm space, bóc batch/HSD), format sai 422, chống quét trùng. Mặc định test cờ HIỆN TẠI; **`--flip` lật cờ test cả 2 chiều rồi trả về — CHỈ chạy ngoài giờ vận hành** (trong ~1' lật, user đang quét sẽ bị 422) | Có, tự dọn |
+| `05-rush` | "Giờ cao điểm": 27 luồng thật đồng thời (~25 in-flight) — 8 xuất-luôn + 6 nhập-hủy + 4 xuất↔gỡ HT kho QTY + 3 chu trình cổng + 6 người xem GET dồn dập → 0 lỗi, pool về baseline. KHÔNG trong run-all (chạy tay trước go-live; nên mở app refresh trong lúc chạy — không được văng /login) | Có, tự dọn |
 
 ## Cấu hình
 - Mặc định trỏ Preview dev + đọc key staging từ `backend/.env`. Đổi qua env:

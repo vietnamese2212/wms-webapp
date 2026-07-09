@@ -1457,7 +1457,8 @@ function GDOFormBody({
             {mode === 'edit' ? (
               <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-white text-slate-600">{dvvt || '—'}</div>
             ) : (
-              <DvvtCombobox value={dvvt} onChange={setDvvt} companies={dvvtCompanies} />
+              // Kho NPP: chỉ gợi ý ĐVVT thật (NCC-tự-chở chỉ có nghĩa ở kho tổng)
+              <DvvtCombobox value={dvvt} onChange={setDvvt} companies={isNPP ? dvvtCompanies.filter(c => c.type === 'ĐVVT') : dvvtCompanies} />
             )}
           </div>
           {plateSlot}

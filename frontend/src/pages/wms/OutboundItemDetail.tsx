@@ -438,7 +438,11 @@ export default function OutboundItemDetail() {
   const confirmScan = scans.find(s => s.id === confirmScanId)
 
   const loscamCartonNum = parseInt(loscamCartons) || 0
-  const overStock = stock != null && loscamCartonNum > (stock.cartons_remaining ?? 0)
+  // Khả dụng CO GIÃN theo chính đơn này = tồn pool + số item này đã lấy (giảm/gỡ luôn được kể cả pool đang 0).
+  // Kho NONE / mã không theo dõi pool → không có trần tồn, chỉ chặn theo kế hoạch.
+  const stockCeiling = stock != null && (stock.has_pool || stock.inventory_mode === 'QTY')
+  const elasticAvail = (stock?.cartons_remaining ?? 0) + (stock?.cartons_scanned ?? 0)
+  const overStock = stockCeiling && loscamCartonNum > elasticAvail
   const overPlan  = stock != null && loscamCartonNum > (stock.cartons_ordered ?? 0)
 
   return (
@@ -498,7 +502,7 @@ export default function OutboundItemDetail() {
                 <div className="w-px bg-slate-200" />
                 <div className="flex-1 text-center">
                   <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
-                  <div className={`text-base font-bold tabular-nums ${(stock?.cartons_remaining ?? 0) === 0 ? 'text-red-600' : 'text-green-600'}`}>{stock?.cartons_remaining ?? 0}</div>
+                  <div className={`text-base font-bold tabular-nums ${stockCeiling && elasticAvail === 0 ? 'text-red-600' : 'text-green-600'}`}>{stockCeiling ? elasticAvail : '—'}</div>
                   <div className="text-[9px] text-slate-400">thùng</div>
                 </div>
               </div>
@@ -517,7 +521,7 @@ export default function OutboundItemDetail() {
                 <p className="text-xs text-red-600">Vượt kế hoạch ({stock?.cartons_ordered ?? item.cartons_ordered} thùng)</p>
               )}
               {!overPlan && overStock && (
-                <p className="text-xs text-amber-600">Vượt tồn khả dụng ({stock?.cartons_remaining ?? 0} thùng)</p>
+                <p className="text-xs text-amber-600">Vượt tồn khả dụng ({elasticAvail} thùng)</p>
               )}
             </div>
 
@@ -525,7 +529,7 @@ export default function OutboundItemDetail() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowLoscamDialog(false); setLoscamError('') }} disabled={completing}>Hủy</Button>
-            <Button size="sm" disabled={completing || isPaused || !gdo.started_at || (stock != null && (stock.cartons_remaining === 0 || overStock || overPlan))}
+            <Button size="sm" disabled={completing || isPaused || !gdo.started_at || overStock || overPlan}
               onClick={() => {
                 const c = Math.max(0, parseInt(loscamCartons) || 0)
                 setLoscamError('')

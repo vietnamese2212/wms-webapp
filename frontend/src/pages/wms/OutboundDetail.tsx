@@ -24,7 +24,7 @@ import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
-  useActiveGateRegistrations, useGDOs, useOutboundShortages,
+  useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
 } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { EditGDOModal, gdoKey } from './Outbound'
@@ -757,9 +757,13 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
   const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
   const { mutate: manualComplete, isPending: saving } = useManualCompleteItem()
 
-  const remaining  = stock?.cartons_remaining ?? 0
   const ordered    = stock?.cartons_ordered ?? 0
-  const overStock  = stock != null && cartons > remaining
+  // Khả dụng CO GIÃN theo chính đơn này = tồn pool + số item này đã lấy (giảm/gỡ luôn được, kể cả pool đang 0).
+  // Kho NONE (và mã không theo dõi pool) không có trần tồn → chỉ chặn theo kế hoạch.
+  const scanned    = stock?.cartons_scanned ?? 0
+  const hasCeiling = stock != null && (stock.has_pool || stock.inventory_mode === 'QTY')
+  const elastic    = (stock?.cartons_remaining ?? 0) + scanned
+  const overStock  = hasCeiling && cartons > elastic
   const overPlan   = stock != null && cartons > ordered
 
   return (
@@ -782,7 +786,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
               <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
-                <div className={`text-base font-bold tabular-nums ${remaining === 0 ? 'text-red-600' : 'text-green-600'}`}>{remaining}</div>
+                <div className={`text-base font-bold tabular-nums ${hasCeiling && elastic === 0 ? 'text-red-600' : 'text-green-600'}`}>{hasCeiling ? elastic : '—'}</div>
                 <div className="text-[9px] text-slate-400">thùng</div>
               </div>
             </div>
@@ -800,7 +804,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
               <p className="text-xs text-red-600">Vượt kế hoạch ({ordered} thùng)</p>
             )}
             {!overPlan && overStock && (
-              <p className="text-xs text-amber-600">Vượt tồn khả dụng ({remaining} thùng)</p>
+              <p className="text-xs text-amber-600">Vượt tồn khả dụng ({elastic} thùng)</p>
             )}
           </div>
 
@@ -808,7 +812,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Hủy</Button>
-          <Button size="sm" disabled={saving || remaining === 0 || overStock || overPlan}
+          <Button size="sm" disabled={saving || overStock || overPlan}
             onClick={() => manualComplete(
               { gdoId, itemId, cartons },
               {
@@ -1166,8 +1170,12 @@ export default function OutboundDetail() {
   const { mutate: unstartGDO,   isPending: unstarting  } = useUnstartGDO()
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
   const manualCompleteMulti = useManualCompleteItem()   // "Lưu tất cả theo KH" — bulk hàng không tem
+  const { mutate: quickExportExisting, isPending: quickExporting } = useQuickExportExistingGDO()
   const [bulkErr, setBulkErr] = useState<string | null>(null)
   const [bulkSaving, setBulkSaving] = useState(false)
+  const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
+  const [quickPlate, setQuickPlate] = useState('')
+  const [quickErr, setQuickErr] = useState<string | null>(null)
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
@@ -1253,6 +1261,16 @@ export default function OutboundDetail() {
   // Kho QTY/NONE: không bắt buộc Phân công trước — BE tự gán người bấm Bắt đầu (kho QR giữ nghi thức)
   const whInvMode = gdo.warehouse?.inventory_mode ?? null
   const canStart       = (!!gdo.assigned_at || (whInvMode !== null && whInvMode !== 'QR')) && !gdo.started_at && can(perms, 'outbound', 'start')
+  // "Xuất luôn" (1 bước) cho kho QTY/NONE: bỏ nghi thức Giao/Bắt đầu — nhập biển số là post + trừ tồn luôn.
+  const isQtyOrNone = whInvMode === 'QTY' || whInvMode === 'NONE'
+  const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && gdo.status !== 'PAUSED' && can(perms, 'outbound', 'quick_export')
+  function doQuickExport() {
+    setQuickErr(null)
+    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim() }, {
+      onSuccess: () => setShowQuickExport(false),
+      onError: (e) => setQuickErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi khi xuất luôn'),
+    })
+  }
 
   // "Lưu tất cả theo kế hoạch" — ghi nhận song song mọi mã không tem chưa xong (= bấm Lưu thủ công từng mã)
   const manualPendingItems = manualItems.filter(i => i.status !== 'COMPLETED')
@@ -1292,6 +1310,27 @@ export default function OutboundDetail() {
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}
+      {/* "Xuất luôn" (kho QTY/NONE): nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành + trừ tồn */}
+      <Dialog open={showQuickExport} onOpenChange={v => { if (!v && !quickExporting) { setShowQuickExport(false); setQuickErr(null) } }}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader><DialogTitle className="text-base">Xuất luôn</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-xs text-slate-600">Ghi nhận xuất toàn bộ mã theo kế hoạch, trừ tồn ngay và hoàn thành chuyến {gdo.group_code}. Nhập biển số xe:</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
+              <Input value={quickPlate} onChange={e => { setQuickPlate(e.target.value); setQuickErr(null) }}
+                placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
+            </div>
+            {quickErr && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{quickErr}</p>}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowQuickExport(false); setQuickErr(null) }} disabled={quickExporting}>Hủy</Button>
+            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || !quickPlate.trim()} onClick={doQuickExport}>
+              {quickExporting ? 'Đang xuất…' : 'Xuất luôn'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {showEditTransport && (
         <EditTransportDialog open={showEditTransport} gdo={gdo} onClose={() => setShowEditTransport(false)} />
       )}
@@ -1360,6 +1399,15 @@ export default function OutboundDetail() {
                 </Button>
               )}
               {/* ── Forward actions ── */}
+              {/* Kho QTY/NONE: "Xuất luôn" 1 bước (nhập biển số → post + trừ tồn) — bỏ Giao đơn/Bắt đầu */}
+              {canQuickExportHere && (
+                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
+                  disabled={quickExporting}
+                  title="Xuất luôn (nhập biển số → trừ tồn ngay)"
+                  onClick={() => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) }}>
+                  <Play className="h-3 w-3" /><span className="hidden sm:inline">{quickExporting ? 'Đang xuất…' : 'Xuất luôn'}</span>
+                </Button>
+              )}
               {!gdo.assigned_at && can(perms, 'outbound', 'assign') && (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-1.5 sm:px-2" disabled={assigning}
                   title="Giao đơn"

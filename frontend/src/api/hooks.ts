@@ -1497,6 +1497,28 @@ export function useQuickExportGDO() {
   })
 }
 
+// "Xuất luôn" trên GDO đã lưu (kho QTY/NONE): nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành + trừ tồn.
+export function useQuickExportExistingGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ gdoId, license_plate }: { gdoId: string; license_plate: string }) => {
+      const { data } = await apiClient.post(`/wms/outbound/${gdoId}/quick-export`, { license_plate })
+      return data.data as GDO
+    },
+    onSettled: (_d, _e, { gdoId }) => {   // 409 PARTIAL vẫn đã trừ tồn một phần → invalidate cả khi lỗi
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', gdoId] })
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-facets'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+      qc.invalidateQueries({ queryKey: ['manual-item-stock'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+    },
+  })
+}
+
 export function useUpdateGDO() {
   const qc = useQueryClient()
   return useMutation({
@@ -1910,7 +1932,7 @@ export function useManualItemStock(gdoId: string | undefined, itemId: string | u
     queryKey: ['manual-item-stock', gdoId, itemId],
     queryFn: async () => {
       const { data } = await apiClient.get(`/wms/outbound/${gdoId}/items/${itemId}/manual-stock`)
-      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number }
+      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number; inventory_mode: string | null; has_pool: boolean }
     },
     enabled: !!gdoId && !!itemId,
     staleTime: 0,

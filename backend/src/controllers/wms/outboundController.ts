@@ -831,6 +831,13 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   const dc = await getDeliveryConfirmation()
   if (!dc.enabled) return
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: dos } = await supabase.from('OutboundDelivery')
+    .select('id, distributor_name').eq('gdo_id', gdoId)
+  const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+  // Nhãn đích khi KHÔNG nhận diện được kho: tên KH của DO đầu
+  const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
+
   type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
   let destWh: DestWh | null = null
   if (gdo.shipto_party) {
@@ -841,18 +848,21 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
       .eq('is_active', true).maybeSingle()
     destWh = (destWhData as DestWh) ?? null
   }
+  // Fallback: KHÔNG có/không khớp shipto → dò TÊN khách khớp TÊN kho danh mục (gõ tay không bấm gợi ý,
+  // đơn cũ chưa gắn shipto…). Khớp ĐÚNG 1 kho mới nhận (trùng tên nhiều kho → giữ OTHER cho an toàn).
+  if (!destWh && custLabel !== 'KH') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: byName } = await supabase.from('Warehouse')
+      .select('id, code, name, inventory_mode')
+      .ilike('name', custLabel.replace(/[%_\\]/g, '\\$&'))   // ilike không wildcard = so bằng không phân hoa/thường
+      .eq('is_active', true).limit(2)
+    if ((byName ?? []).length === 1) destWh = byName![0] as DestWh
+  }
   // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : destWh.inventory_mode === 'QTY' ? 'QTY' : 'QR') : 'OTHER'
   if (!dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking)
   // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.
   const isSelf = modeKey === 'NONE' || modeKey === 'OTHER'
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: dos } = await supabase.from('OutboundDelivery')
-    .select('id, distributor_name').eq('gdo_id', gdoId)
-  const doIds = (dos ?? []).map((d: { id: string }) => d.id)
-  // Nhãn đích khi KHÔNG có shipto (khách ngoài danh mục): tên KH của DO đầu
-  const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: items } = doIds.length

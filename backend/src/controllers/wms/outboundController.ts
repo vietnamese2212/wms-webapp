@@ -589,10 +589,10 @@ export async function quickExportGDO(req: Request, res: Response) {
 
     const allCodes = [...new Set(items.map(i => i.material_code))]
     const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null }>(
-      ((mats ?? []) as { id: string; material_code: string; category: string | null }[])
-        .map(m => [m.material_code, { id: m.id, category: m.category }])
+      .select('id, material_code, category, no_qr_tracking').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null; no_qr: boolean | null }>(
+      ((mats ?? []) as { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null }[])
+        .map(m => [m.material_code, { id: m.id, category: m.category, no_qr: m.no_qr_tracking }])
     )
     const missing = allCodes.filter(c => !matMap.has(c))
     if (missing.length) return fail(res, `Mã hàng chưa có trong hệ thống: ${missing.join(', ')}`, 400)
@@ -657,27 +657,34 @@ export async function quickExportGDO(req: Request, res: Response) {
     const { error: itemErr } = await supabase.from('OutboundItem').insert(itemRows)
     if (itemErr) return fail(res, itemErr.message)
 
-    // Ghi nhận từng mã: trừ tồn pool (CAS) + item COMPLETED + OutboundScanEntry (như Lưu thủ công)
+    // Ghi nhận từng mã: pool (CAS) + entry CHỈ cho mã no-QR hiệu lực — khớp quickExportExistingGDO/manualCompleteItem.
+    // Kho NONE + mã thường: không theo dõi tồn → chỉ đánh item COMPLETED (không pool, không entry — trước đây
+    // sinh entry cho MỌI mã làm kho NONE kẹt "Cần xóa hết QR" khi Gỡ bắt đầu).
     const failed: { material_code: string; message: string }[] = []
     for (const row of itemRows) {
       const ctn = Number(row.cartons_ordered)
-      const r = await applySharedPoolDelta(row.material_code_raw, warehouse_id, ctn, whMode)
-      if (r.outcome !== 'OK') {
-        failed.push({
-          material_code: row.material_code_raw,
-          message: r.outcome === 'INSUFFICIENT' ? `còn ${r.available} thùng` : 'tồn đang bận (nhiều người thao tác)',
-        })
-        continue
+      const isSpecial = effectiveNoQr(matMap.get(row.material_code_raw)?.no_qr, whMode)
+      let invEntryId: string | null = null
+      if (isSpecial) {
+        const r = await applySharedPoolDelta(row.material_code_raw, warehouse_id, ctn, whMode)
+        if (r.outcome !== 'OK') {
+          failed.push({
+            material_code: row.material_code_raw,
+            message: r.outcome === 'INSUFFICIENT' ? `còn ${r.available} thùng` : 'tồn đang bận (nhiều người thao tác)',
+          })
+          continue
+        }
+        invEntryId = r.invEntryId
       }
       const t2 = now()
       await Promise.all([
         supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 }).eq('id', row.id),
-        supabase.from('OutboundScanEntry').insert({
+        ...(isSpecial ? [supabase.from('OutboundScanEntry').insert({
           id: randomUUID(), item_id: row.id,
-          inventory_entry_id: r.invEntryId,
+          inventory_entry_id: invEntryId,
           pallet_code: row.material_code_raw, cartons_scanned: ctn,
           is_loose_picking: false, scanned_at: t2, created_at: t2, updated_at: t2,
-        }),
+        })] : []),
       ])
     }
 
@@ -1453,11 +1460,13 @@ export async function unstartGDO(req: Request, res: Response) {
     if (!gdo?.started_at) return fail(res, 'Đơn chưa được bắt đầu', 400)
     const gdoMode = (gdo as unknown as { warehouse?: { inventory_mode?: string | null } | null }).warehouse?.inventory_mode
 
-    // Kiểm tra chưa có QR nào được quét (bỏ qua POSM/Pallet Loscam và nhặt lẻ chưa confirm)
+    // Kiểm tra chưa có QR nào được quét (bỏ qua POSM/Pallet Loscam và nhặt lẻ chưa confirm).
+    // Kho NONE: không theo dõi tồn → không bao giờ quét QR pallet; entry (nếu có — dữ liệu "Xuất luôn" cũ)
+    // chỉ là ghi tay, KHÔNG được chặn gỡ bắt đầu (trước đây kho NONE kẹt "Cần xóa hết QR" vô lý).
     const { data: doList } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
     const doIds = (doList ?? []).map((d: any) => d.id)
-    if (doIds.length) {
+    if (doIds.length && gdoMode !== 'NONE') {
       const { data: items } = await supabase.from('OutboundItem')
         .select('id, material_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking)').in('do_id', doIds)
       markItemsNoQrIfQty((items ?? []) as unknown as Parameters<typeof markItemsNoQrIfQty>[0], gdoMode)  // kho QTY → mọi item no-QR, không có QR để chặn gỡ bắt đầu

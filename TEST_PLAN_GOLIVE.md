@@ -38,8 +38,8 @@ Mỗi module tick đủ 5 cột: **CRUD 4-case** (tạo/sửa/xóa/làm lại) �
 
 | Module | CRUD | Realtime | Quyền | Undo | Responsive |
 |---|---|---|---|---|---|
-| Nhập kho (tạo phiếu, quét V1/V2, sửa/xóa pallet, hoàn thành/bỏ HT, NCC ghép) | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Xuất kho (upload, tạo tay, giao/bắt đầu/quét/hoàn thành, Xuất luôn, Xác nhận nhanh, in phiếu, sửa PAUSED) | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Nhập kho (tạo phiếu, quét V1/V2, sửa/xóa pallet, hoàn thành/bỏ HT, NCC ghép) | ✅09/07 | ✅ 2 chiều | ✅ BE 9/9 (vai Thủ kho TP; scan = cross-module confirm_receipt đúng thiết kế) | ✅ pool về baseline | ✅ 360px | *(chưa: quét QR camera thật — tầng 5)* |
+| Xuất kho (upload, tạo tay, giao/bắt đầu/quét/hoàn thành, Xuất luôn, Xác nhận nhanh, in phiếu, sửa PAUSED) | ✅09/07 (suite+E2E) | ✅ 2 chiều | ✅ BE 9/9 + FE ẩn nút list/detail + scope kho tự áp (vai Lái xe nâng) | ✅ (race pack R2/R3) | ✅ 360px list+detail |
 | Tồn kho (list/facets/summary, điều chỉnh, đổi vị trí, recode, QA, sửa NCC, export) | ☐ | ☐ | ☐ | ☐ | ☐ |
 | TMS Đặt lịch + Chuyển kho (booking, đổi ngày, thu hồi, nhận hàng, badge Kho đang sửa) | ☐ | ☐ | ☐ | ☐ | ☐ |
 | Đăng ký cổng (đăng ký/gọi/vào/ra, đếm Lần, liên kết chuyến) | ☐ | ☐ | ☐ | ☐ | ☐ |

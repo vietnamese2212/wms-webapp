@@ -92,7 +92,8 @@ export async function listOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
 
-    // TRANSFER orders: không cần date
+    // TRANSFER orders: không bắt buộc date, nhưng NHẬN date_from/date_to — lệnh tích lũy vô hạn
+    // (mỗi đơn xuất hoàn thành = 1 lệnh), kéo ALL sẽ chết theo thời gian; FE Bookings mặc định ~30 ngày.
     if (source_type === 'TRANSFER') {
       const tCats = scopeCategoriesOf(req)
       // Phân trang né cap-1000: lệnh chuyển kho tích lũy không giới hạn ngày → 1 response sẽ cắt mất lệnh
@@ -104,6 +105,8 @@ export async function listOrders(req: Request, res: Response) {
           .order('created_at', { ascending: false })
           .order('id')
         if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
+        if (date_from) q = q.gte('date', date_from)
+        if (date_to)   q = q.lte('date', date_to)
         if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
         return q
       })

@@ -750,16 +750,25 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       const ctn = Number(item.cartons_ordered)
       const isSpecial = effectiveNoQr(item.material?.no_qr_tracking, whMode)
       const matCode: string | null = isSpecial ? (item.material?.material_code ?? item.material_code_raw ?? null) : null
+      const hasPool = isSpecial && !!item.material_id && !!matCode
+      const delta = ctn - (Number(item.cartons_scanned) || 0)
       let invEntryId: string | null = null
-      if (isSpecial && item.material_id && matCode) {
-        const delta = ctn - (Number(item.cartons_scanned) || 0)
-        const r = await applySharedPoolDelta(matCode, gdo.warehouse_id as string, delta, whMode)
-        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode, message: `còn ${r.available} thùng` }); continue }
-        if (r.outcome === 'BUSY')         { failed.push({ material_code: matCode, message: 'tồn đang bận (nhiều người thao tác)' }); continue }
+      if (hasPool) {
+        const r = await applySharedPoolDelta(matCode!, gdo.warehouse_id as string, delta, whMode)
+        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode!, message: `còn ${r.available} thùng` }); continue }
+        if (r.outcome === 'BUSY')         { failed.push({ material_code: matCode!, message: 'tồn đang bận (nhiều người thao tác)' }); continue }
         invEntryId = r.invEntryId
       }
       const t2 = now()
-      await supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 }).eq('id', item.id)
+      // CAS claim: 2 người cùng bấm "Xuất luôn" → chỉ 1 request xử được item (chống trừ tồn ĐÔI).
+      const { data: claimed } = await supabase.from('OutboundItem')
+        .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 })
+        .eq('id', item.id).neq('status', 'COMPLETED').select('id')
+      if (!claimed?.length) {
+        // Thua đua (request kia vừa ghi nhận xong) → HOÀN lại phần tồn mình vừa trừ, không tính lỗi.
+        if (hasPool && delta !== 0) await applySharedPoolDelta(matCode!, gdo.warehouse_id as string, -delta, whMode)
+        continue
+      }
       successCount++
       if (isSpecial && matCode) {
         const { data: existingScan } = await supabase.from('OutboundScanEntry').select('id').eq('item_id', item.id).maybeSingle()
@@ -775,9 +784,10 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       }
     }
 
-    // Không xuất được mã nào (và CÓ mã chờ xử) → giữ GDO nguyên trạng, báo lỗi để user sửa số/kho rồi thử lại.
-    // pending rỗng = mọi mã ĐÃ ghi nhận đủ từ trước (Lưu thủ công/Xuất nhanh) → đi thẳng tới hoàn thành chuyến.
-    if (pending.length > 0 && successCount === 0) {
+    // Không xuất được mã nào VÌ LỖI THẬT (thiếu tồn/bận) → giữ GDO nguyên trạng để user sửa rồi thử lại.
+    // pending rỗng = mọi mã ĐÃ ghi nhận đủ; successCount=0 mà failed rỗng = thua đua toàn bộ (request kia
+    // đã xử xong) → cả 2 trường hợp đi tiếp tới chốt chuyến (CAS phía dưới đảm bảo chỉ 1 người thắng).
+    if (pending.length > 0 && successCount === 0 && failed.length > 0) {
       return res.status(409).json({
         success: false,
         error: { code: 'INSUFFICIENT_STOCK', message: `Không xuất được — ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}` },
@@ -786,6 +796,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     }
 
     // Có xuất được → tự Bắt đầu + Giao (nếu chưa) + gắn biển số.
+    // neq COMPLETED: request thua đua đến sau KHÔNG được lật chuyến đã hoàn thành về IN_PROGRESS.
     const t = now()
     await supabase.from('GroupDeliveryOrder').update({
       status: 'IN_PROGRESS',
@@ -793,7 +804,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
       ...(gdo.started_at  ? {} : { started_at: t }),
       updated_by: actor, updated_at: t,
-    }).eq('id', gdoId)
+    }).eq('id', gdoId).neq('status', 'COMPLETED')
 
     // Còn mã thiếu tồn → đơn IN_PROGRESS (đã xuất một phần), user xử tiếp trên trang chuyến.
     if (failed.length) {
@@ -805,13 +816,15 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     }
 
     const tEnd = now()
-    await Promise.all([
+    // CAS: chỉ winner (người thật sự chuyển GDO sang COMPLETED) mới tạo/đồng bộ lệnh chuyển kho —
+    // khớp patchGDO; không thì 2 request đua cùng insert TmsOrder → lệnh TRÙNG.
+    const [, { data: winRows }] = await Promise.all([
       supabase.from('OutboundDelivery').update({ status: 'COMPLETED', updated_at: tEnd }).in('id', doIds),
       supabase.from('GroupDeliveryOrder')
         .update({ status: 'COMPLETED', completed_at: tEnd, scan_completed_at: tEnd, updated_by: actor, updated_at: tEnd })
-        .eq('id', gdoId).neq('status', 'COMPLETED'),
+        .eq('id', gdoId).neq('status', 'COMPLETED').select('id'),
     ])
-    await maybeAutoCreateTransferOrder(gdoId, tEnd)
+    if ((winRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(gdoId, tEnd)
     return ok(res, await fetchGDOFull(gdoId))
   } catch (e) { return fail(res, String(e)) }
 }

@@ -2444,12 +2444,15 @@ export type TransferOrder = import('@/types').TmsOrder & {
 
 // destination_warehouse_id: nếu truyền, lọc theo kho nhận (dùng ở Inbound để hiển thị đúng kho)
 // Nếu không truyền: hiển thị tất cả lệnh TRANSFER (dùng ở TMS Bookings)
-export function useTransferOrders(destination_warehouse_id?: string) {
+export function useTransferOrders(destination_warehouse_id?: string, range?: { from?: string; to?: string }) {
   return useQuery({
-    queryKey: ['tms-orders-transfer', destination_warehouse_id ?? 'all'],
+    queryKey: ['tms-orders-transfer', destination_warehouse_id ?? 'all', range?.from ?? '', range?.to ?? ''],
     queryFn: async () => {
       const params: Record<string, string> = { source_type: 'TRANSFER' }
       if (destination_warehouse_id) params.destination_warehouse_id = destination_warehouse_id
+      // Lọc server-side theo ngày lệnh — lệnh chuyển kho tích lũy vô hạn, kéo ALL sẽ phình theo thời gian
+      if (range?.from) params.date_from = range.from
+      if (range?.to)   params.date_to = range.to
       const { data } = await apiClient.get('/tms/orders', { params })
       return data.data as TransferOrder[]
     },

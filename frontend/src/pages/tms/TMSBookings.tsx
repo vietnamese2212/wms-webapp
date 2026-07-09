@@ -2722,16 +2722,21 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   userWarehouseId: string | null
   userWarehouseIds: string[]
 }) {
-  const { data: orders = [], isLoading } = useTransferOrders()
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
-  const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
-  const { widths: colW, startResize, totalWidth } = useColumnResize('tms_transfer_col_widths', TRANSFER_COL_DEFAULTS)
-
   // Filter tab Chuyển kho per-user qua useWmsFilterStore — KHÔNG localStorage thuần
   const ttf    = useWmsFilterStore(s => s.tmsTransfer)
   const setTtf = useWmsFilterStore(s => s.setTmsTransfer)
   const dateFrom       = ttf.dateFrom; const setDateFrom       = (v: string)   => setTtf({ dateFrom: v })
   const dateTo         = ttf.dateTo;   const setDateTo         = (v: string)   => setTtf({ dateTo: v })
+
+  // Mặc định chỉ tải ~30 ngày gần nhất (lệnh tích lũy vô hạn — mỗi đơn xuất hoàn thành = 1 lệnh).
+  // User cần xem cũ hơn thì chỉnh "Ngày xuất" trong FilterBar; xóa filter = quay về 30 ngày.
+  const defaultFrom = React.useMemo(
+    () => new Date(Date.now() - 30 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }), [])
+  const effDateFrom = dateFrom || defaultFrom
+  const { data: orders = [], isLoading } = useTransferOrders(undefined, { from: effDateFrom, to: dateTo || undefined })
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
+  const selectedOrder = orders.find(o => o.id === selectedOrderId) ?? null
+  const { widths: colW, startResize, totalWidth } = useColumnResize('tms_transfer_col_widths', TRANSFER_COL_DEFAULTS)
   const khoXuatFilter  = ttf.khoXuat;  const setKhoXuatFilter  = (v: string[]) => setTtf({ khoXuat: v })
   const khoNhanFilter  = ttf.khoNhan;  const setKhoNhanFilter  = (v: string[]) => setTtf({ khoNhan: v })
 
@@ -2801,12 +2806,12 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
 
   const filtered = React.useMemo(() => {
     let list = scopedOrders
-    if (dateFrom) list = list.filter(o => o.date >= dateFrom)
+    if (effDateFrom) list = list.filter(o => o.date >= effDateFrom)
     if (dateTo)   list = list.filter(o => o.date <= dateTo)
     if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
     if (khoNhanFilter.length) list = list.filter(o => o.destination_warehouse_id && (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
     return list
-  }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
+  }, [scopedOrders, effDateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
   // Subtotal tab Chuyển kho (SummaryBand) — tính trên dữ liệu ĐÃ filter.
   // Thùng KH = tổng kế hoạch MỌI lệnh (scope). Thực nhận = CHỈ lệnh ĐÃ GIAO (đã hoàn tất nhận).
@@ -2825,7 +2830,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
 
   // Gom filter tab Chuyển kho về 1 FilterBar (daterange Ngày xuất + Kho xuất/nhận) — đồng bộ tab Kế hoạch
   const transferFilterDefs: FilterDef[] = [
-    { key: 'date', label: 'Ngày xuất', type: 'daterange', from: dateFrom, to: dateTo,
+    // from hiển thị effDateFrom để user THẤY cửa sổ 30 ngày mặc định đang áp (xóa filter = về mặc định, không phải "tất cả")
+    { key: 'date', label: 'Ngày xuất', type: 'daterange', from: effDateFrom, to: dateTo,
       onChange: (f, t) => { setDateFrom(f); setDateTo(t) } },
     ...(!isSingle ? [
       { key: 'khoxuat', label: 'Kho xuất', type: 'multi' as const, options: khoXuatOptions, selected: khoXuatFilter, onChange: setKhoXuatFilter, searchable: true },

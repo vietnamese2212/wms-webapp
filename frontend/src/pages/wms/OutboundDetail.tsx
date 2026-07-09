@@ -1425,7 +1425,7 @@ export default function OutboundDetail() {
                   <Play className="h-3 w-3" /><span className="hidden sm:inline">Bắt đầu</span>
                 </Button>
               )}
-              {/* "Xuất nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
+              {/* "Xác nhận nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
                   Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành). */}
               {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan') && (
                 <Button size="sm" variant="outline"
@@ -1433,12 +1433,12 @@ export default function OutboundDetail() {
                   disabled={bulkSaving}
                   title={`Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`}
                   onClick={() => setPendingConfirm({
-                    title: 'Xuất nhanh',
+                    title: 'Xác nhận nhanh',
                     message: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch?`,
                     onConfirm: () => { void bulkManualSave() },
                   })}>
                   <PenSquare className="h-3 w-3" />
-                  <span className="hidden sm:inline">{bulkSaving ? 'Đang lưu…' : 'Xuất nhanh'}</span>
+                  <span className="hidden sm:inline">{bulkSaving ? 'Đang lưu…' : 'Xác nhận nhanh'}</span>
                 </Button>
               )}
               {gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (

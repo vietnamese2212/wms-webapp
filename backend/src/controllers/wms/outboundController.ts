@@ -775,8 +775,9 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       }
     }
 
-    // Không xuất được mã nào → giữ GDO nguyên trạng (PENDING/…), báo lỗi để user sửa số/kho rồi thử lại.
-    if (successCount === 0) {
+    // Không xuất được mã nào (và CÓ mã chờ xử) → giữ GDO nguyên trạng, báo lỗi để user sửa số/kho rồi thử lại.
+    // pending rỗng = mọi mã ĐÃ ghi nhận đủ từ trước (Lưu thủ công/Xuất nhanh) → đi thẳng tới hoàn thành chuyến.
+    if (pending.length > 0 && successCount === 0) {
       return res.status(409).json({
         success: false,
         error: { code: 'INSUFFICIENT_STOCK', message: `Không xuất được — ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}` },

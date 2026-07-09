@@ -968,7 +968,8 @@ export default function InboundDetail() {
                             ? format(parseISO(entry.production_date), 'dd-MM-yy', { locale: vi })
                             : '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px]">
+                        {/* whitespace-pre: tem V2 có đệm SPACE trong mã — HTML gộp space làm user tưởng lưu sai */}
+                        <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] whitespace-pre">
                           {entry.pallet_code}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">

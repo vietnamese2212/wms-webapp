@@ -1260,7 +1260,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       {/* Mã pallet */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <div className="flex items-center min-w-0">
-          <span className="text-[10px] font-mono font-semibold truncate" title={e.pallet_code}>{e.pallet_code}</span>
+          {/* whitespace-pre (thay nowrap của truncate): tem V2 có đệm SPACE trong mã — HTML gộp space làm user tưởng lưu sai */}
+          <span className="text-[10px] font-mono font-semibold overflow-hidden text-ellipsis whitespace-pre" title={e.pallet_code}>{e.pallet_code}</span>
           {e.parent_pallet_code && (
             <span className="ml-1 shrink-0 inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1 py-0.5 text-[8px] text-sky-700" title={`Đã dồn vào ${e.parent_pallet_code}`}>
               <Layers className="h-2 w-2" />dồn
@@ -1447,8 +1448,8 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
     <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
       {/* Header */}
       <div className="flex items-start justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
-        {/* Mã pallet V2 dài (có đệm space) → hiện ĐẦY ĐỦ, tự xuống dòng thay vì cắt */}
-        <p className="text-xs font-semibold text-slate-700 font-mono break-words [overflow-wrap:anywhere] min-w-0">{e.pallet_code}</p>
+        {/* Mã pallet V2 dài (có đệm space) → hiện ĐẦY ĐỦ + GIỮ nguyên space (pre-wrap), tự xuống dòng thay vì cắt */}
+        <p className="text-xs font-semibold text-slate-700 font-mono whitespace-pre-wrap [overflow-wrap:anywhere] min-w-0">{e.pallet_code}</p>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-700 ml-2 shrink-0">
           <X className="h-4 w-4" />
         </button>

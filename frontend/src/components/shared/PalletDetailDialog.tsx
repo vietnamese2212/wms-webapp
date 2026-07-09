@@ -52,7 +52,8 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="max-w-xs p-0">
         <DialogHeader className="px-3 py-2 border-b bg-slate-50">
-          <DialogTitle className="text-xs font-mono font-semibold truncate">
+          {/* whitespace-pre (thay nowrap của truncate): tem V2 có đệm SPACE trong mã — HTML gộp space làm user tưởng lưu sai */}
+          <DialogTitle className="text-xs font-mono font-semibold overflow-hidden text-ellipsis whitespace-pre">
             {isLoading ? '…' : (entry?.pallet_code ?? '—')}
           </DialogTitle>
         </DialogHeader>

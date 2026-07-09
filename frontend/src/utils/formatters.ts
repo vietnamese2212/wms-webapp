@@ -14,37 +14,54 @@ function toUtcDate(isoStr: string): Date {
   return new Date(isoStr)
 }
 
-function vnParts(isoStr: string, opts: Intl.DateTimeFormatOptions): Record<string, string> {
+// ⚠️ WebKit/Safari (iOS: cả Safari LẪN Chrome iOS) NÉM `RangeError: date value is not finite`
+// khi Intl.DateTimeFormat.format/formatToParts nhận Date NaN — Chromium thì trả "Invalid Date" im lặng.
+// → MỌI formatter ngày PHẢI chặn ngày không hợp lệ trước khi gọi Intl/date-fns, nếu không 1 ô ngày
+// null/rỗng làm SẬP CẢ TRANG trên iOS (đã dính trang Tồn kho). Trả '—' thay vì ném.
+const INVALID = '—'
+function vnParts(isoStr: string, opts: Intl.DateTimeFormatOptions): Record<string, string> | null {
+  if (!isoStr) return null
+  const d = toUtcDate(isoStr)
+  if (isNaN(d.getTime())) return null
   return new Intl.DateTimeFormat('en', { timeZone: VN_TZ, ...opts })
-    .formatToParts(toUtcDate(isoStr))
+    .formatToParts(d)
     .reduce<Record<string, string>>((acc, p) => { acc[p.type] = p.value; return acc }, {})
 }
 
 // date-only strings (YYYY-MM-DD) — timezone-safe, use date-fns as usual
 export function formatDate(dateStr: string, fmt = 'dd-MM-yyyy') {
-  return format(parseISO(dateStr), fmt, { locale: vi })
+  if (!dateStr) return INVALID
+  const d = parseISO(dateStr)
+  if (isNaN(d.getTime())) return INVALID
+  return format(d, fmt, { locale: vi })
 }
 
 // Full UTC timestamp → date + time in Vietnam timezone
 export function formatDateTime(isoStr: string) {
   const p = vnParts(isoStr, { day: '2-digit', month: '2-digit', year: 'numeric', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  if (!p) return INVALID
   return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}:${p.second}`
 }
 
 // Date portion of a UTC timestamp in Vietnam timezone (twoDigitYear for compact table cells)
 export function formatTimestampDate(isoStr: string, twoDigitYear = false) {
   const p = vnParts(isoStr, { day: '2-digit', month: '2-digit', year: twoDigitYear ? '2-digit' : 'numeric' })
+  if (!p) return INVALID
   return `${p.day}-${p.month}-${p.year}`
 }
 
 // Time portion of a UTC timestamp in Vietnam timezone
 export function formatTimestampTime(isoStr: string, showSeconds = true) {
   const p = vnParts(isoStr, { hourCycle: 'h23', hour: '2-digit', minute: '2-digit', ...(showSeconds ? { second: '2-digit' } : {}) })
+  if (!p) return INVALID
   return showSeconds ? `${p.hour}:${p.minute}:${p.second}` : `${p.hour}:${p.minute}`
 }
 
 export function formatTimeAgo(dateStr: string) {
-  return formatDistanceToNow(parseISO(dateStr), { addSuffix: true, locale: vi })
+  if (!dateStr) return INVALID
+  const d = parseISO(dateStr)
+  if (isNaN(d.getTime())) return INVALID
+  return formatDistanceToNow(d, { addSuffix: true, locale: vi })
 }
 
 export function formatNumber(n: number) {

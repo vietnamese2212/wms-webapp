@@ -7,7 +7,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -28,6 +28,7 @@ import {
 } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { EditGDOModal, gdoKey } from './Outbound'
+import { printDeliveryNote } from './printDeliveryNote'
 import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
@@ -1486,6 +1487,16 @@ export default function OutboundDetail() {
                   <span className="hidden sm:inline">{hasAnyExpanded ? 'Thu gọn' : 'Pallet'}</span>
                 </Button>
               )}
+              {/* In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái) */}
+              <Button size="sm" variant="outline"
+                className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-200 text-slate-600 hover:bg-slate-50"
+                title="In Phiếu xuất kho"
+                onClick={() => {
+                  if (!printDeliveryNote(gdo, user?.name))
+                    setBulkErr('Trình duyệt chặn cửa sổ in — cho phép popup cho trang này rồi bấm lại')
+                }}>
+                <Printer className="h-3 w-3" /><span className="hidden sm:inline">In phiếu</span>
+              </Button>
 
               {/* ── Undo actions ── */}
               {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (() => {
@@ -1494,7 +1505,7 @@ export default function OutboundDetail() {
                 const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
                 const tooltip = blockedByTransfer
                   ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
-                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành sẽ xóa lệnh TMS chuyển kho' : undefined
+                  : ts === 'IN_TRANSIT' ? 'Lệnh TMS chuyển kho + booking GIỮ NGUYÊN (hiện "Kho đang sửa") — hoàn thành lại sẽ đồng bộ số liệu vào chính lệnh đó' : undefined
                 const btn = (
                   <Button size="sm" variant="outline"
                     className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"

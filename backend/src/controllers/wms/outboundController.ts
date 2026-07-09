@@ -724,7 +724,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
     if (gdo.status === 'CANCELLED')  return fail(res, 'Chuyến đã hủy', 400)
-    if (gdo.status === 'PAUSED')     return fail(res, 'Chuyến đang tạm dừng — không thể xuất luôn', 400)
+    // PAUSED vẫn cho: user tạm dừng để sửa kế hoạch → "Xuất luôn" = ngầm Tiếp tục + chốt chuyến.
     const whMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null })?.warehouse?.inventory_mode ?? null
     if (whMode !== 'QTY' && whMode !== 'NONE')
       return fail(res, 422, 'NOT_QTY_NONE', 'Chỉ kho quản lý theo số lượng (QTY) hoặc không theo dõi tồn (NONE) mới dùng "Xuất luôn". Kho QR hãy dùng luồng quét tem.')

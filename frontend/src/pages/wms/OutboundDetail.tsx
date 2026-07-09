@@ -1262,8 +1262,9 @@ export default function OutboundDetail() {
   const whInvMode = gdo.warehouse?.inventory_mode ?? null
   const canStart       = (!!gdo.assigned_at || (whInvMode !== null && whInvMode !== 'QR')) && !gdo.started_at && can(perms, 'outbound', 'start')
   // "Xuất luôn" (1 bước) cho kho QTY/NONE: bỏ nghi thức Giao/Bắt đầu — nhập biển số là post + trừ tồn luôn.
+  // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = whInvMode === 'QTY' || whInvMode === 'NONE'
-  const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && gdo.status !== 'PAUSED' && can(perms, 'outbound', 'quick_export')
+  const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'quick_export')
   function doQuickExport() {
     setQuickErr(null)
     quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim() }, {

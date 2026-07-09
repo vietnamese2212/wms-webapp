@@ -1846,14 +1846,14 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const { mutate: quickExportExisting, isPending: quickPending } = useQuickExportExistingGDO()
 
   // "Lưu & Xuất luôn" trong form Sửa — như form Tạo: chỉ kho QTY/NONE + quyền quick_export.
-  // Chỉ đơn PENDING (updateGDO không nhận IN_PROGRESS; PAUSED không xuất luôn được).
+  // PENDING + PAUSED (đơn tạm dừng để sửa → xuất luôn = tự tiếp tục + chốt; updateGDO cũng chỉ nhận 2 trạng thái này).
   const editUser = useAuthStore(s => s.user)
   const editPerms = (editUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuickEdit = can(editPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate] = useState('')
   const editWhMode: string | null = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   const isQtyOrNoneEdit = editWhMode === 'QTY' || editWhMode === 'NONE'
-  const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && gdo?.status === 'PENDING'
+  const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
   const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && dvvt.trim() !== '' && quickPlate.trim() !== ''
 
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)

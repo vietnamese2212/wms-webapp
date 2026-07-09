@@ -12,7 +12,8 @@ const steps = [
   ['00-invariant.mjs'],
   ['01-smoke.mjs'],
   ['02-race.mjs'],
-  ['00-invariant.mjs'],           // sau race phải vẫn sạch
+  ['04-qrformat.mjs'],            // test theo cờ HIỆN TẠI (không lật cờ — --flip chạy tay ngoài giờ)
+  ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),
 ]
 

@@ -968,6 +968,20 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
 // ─── Delete GDO ───────────────────────────────────────────────
 
+// Xóa lệnh chuyển kho gắn với các GDO — PHẢI gọi TRƯỚC khi xóa GDO
+// (FK TmsOrder.transfer_gdo_id NO ACTION: còn lệnh tham chiếu thì xóa GDO nổ lỗi).
+async function deleteTransferOrdersOf(gdoIds: string[]) {
+  if (!gdoIds.length) return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: orders } = await supabase.from('TmsOrder')
+    .select('id').in('transfer_gdo_id', gdoIds)
+  for (const o of (orders ?? []) as { id: string }[]) {
+    await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', o.id)
+    await supabase.from('TmsVehicleSlot').delete().eq('order_id', o.id)
+    await supabase.from('TmsOrder').delete().eq('id', o.id)
+  }
+}
+
 export async function deleteGDO(req: Request, res: Response) {
   try {
     if (!(await guardGdoScope(req, res, req.params.id))) return
@@ -977,14 +991,7 @@ export async function deleteGDO(req: Request, res: Response) {
     if (gdo.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa đơn ở trạng thái chờ (PENDING)', 400)
 
     // Đơn từng hoàn thành rồi gỡ → lệnh chuyển kho vẫn còn (giữ tracking) — xóa cả chuyến thì xóa lệnh theo
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: trfOrders } = await supabase.from('TmsOrder')
-      .select('id').eq('transfer_gdo_id', req.params.id)
-    for (const o of (trfOrders ?? []) as { id: string }[]) {
-      await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', o.id)
-      await supabase.from('TmsVehicleSlot').delete().eq('order_id', o.id)
-      await supabase.from('TmsOrder').delete().eq('id', o.id)
-    }
+    await deleteTransferOrdersOf([req.params.id])
 
     const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
@@ -2015,6 +2022,8 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Simple PENDING → cascade delete entire GDO
     if (toReplaceIds.length) {
+      // GDO PENDING vẫn có thể còn lệnh chuyển kho (Bỏ HT → Gỡ BĐ giữ lệnh) — xóa lệnh trước, không thì FK chặn xóa GDO
+      await deleteTransferOrdersOf(toReplaceIds)
       const { data: dosToDelete } = await supabase.from('OutboundDelivery')
         .select('id').in('gdo_id', toReplaceIds)
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)

@@ -1438,11 +1438,12 @@ function GDOFormBody({
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
             ) : (
+              // Kho NPP: gợi ý khách hàng CHỈ gồm kho tổng (trả hàng về tổng) — không hiện NPP khác; khách lẻ gõ tay
               <CustomerCombobox
                 value={customerName}
                 onChange={setCustomerName}
                 onNPPChange={setShiptoPartyId}
-                warehouses={warehouses}
+                warehouses={isNPP ? (warehouses as any[]).filter((w: any) => w.warehouse_type === 'CENTRAL') : warehouses}
               />
             )}
             {shiptoPartyId && (

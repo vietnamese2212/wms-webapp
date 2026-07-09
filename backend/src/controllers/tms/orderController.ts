@@ -99,7 +99,7 @@ export async function listOrders(req: Request, res: Response) {
       const orders = await fetchAllPaged(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let q = supabase.from('TmsOrder')
-          .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
+          .select(`${ORDER_SELECT}, transfer_gdo:GroupDeliveryOrder!transfer_gdo_id(id, group_code, status, shipto_party, transfer_status, delivery_date, dvvt, license_plate, warehouse:Warehouse!warehouse_id(id, code, name))`)
           .eq('source_type', 'TRANSFER')
           .order('created_at', { ascending: false })
           .order('id')
@@ -879,10 +879,13 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string }
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, transfer_status').eq('id', gdoId).single()
+      .select('id, status, transfer_status').eq('id', gdoId).single()
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status === 'DELIVERED') return fail(res, 'GDO này đã được xác nhận giao', 409)
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
+    // Kho xuất đang gỡ hoàn thành để sửa (lệnh giữ lại để không mất booking) → chờ chốt lại mới cho nhận
+    if (gdo.status !== 'COMPLETED')
+      return fail(res, 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại rồi mới nhận hàng', 409)
 
     // Gác ĐVVT booking: phải đủ Biển số + SĐT lái xe + Giờ xe tới (ETA) mới cho NPP nhận hàng.
     const { data: bkSlots } = await supabase.from('TmsVehicleSlot')
@@ -1075,10 +1078,13 @@ export async function selfCompleteTransfer(req: Request, res: Response) {
 
     const gdoId = tmsOrder.transfer_gdo_id as string
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, transfer_status').eq('id', gdoId).single()
+      .select('id, status, transfer_status').eq('id', gdoId).single()
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status === 'DELIVERED') return fail(res, 'Đã hoàn thành giao hàng', 409)
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao', 400)
+    // Kho xuất đang gỡ hoàn thành để sửa → chờ chốt lại mới cho tài xế tự hoàn thành
+    if (gdo.status !== 'COMPLETED')
+      return fail(res, 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại rồi mới hoàn thành giao', 409)
 
     // Gác ĐVVT booking: đủ Biển số + SĐT lái xe + Giờ xe tới (giờ giao) mới cho Hoàn thành.
     const { data: bkSlots } = await supabase.from('TmsVehicleSlot')

@@ -816,20 +816,30 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── Auto-create TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
+// ─── Auto-create/SYNC TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
 // shipto khớp kho DB → QR/QTY/NONE; shipto lạ HOẶC KHÔNG có shipto (khách ngoài danh mục) → OTHER.
 // Mục đích user (09/07): loại nào được tick trong cờ là lên TMS Chuyển kho để theo dõi vận chuyển.
+// Gỡ hoàn thành GIỮ lệnh + booking (không xóa) → hoàn thành lại rơi vào nhánh SYNC:
+// đồng bộ số liệu/đích vào CHÍNH lệnh cũ, tracking không đứt (user chốt 09/07).
 
 async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate, warehouse_id')
     .eq('id', gdoId).single()
-  if (!gdo || gdo.transfer_status) return
+  if (!gdo) return
 
-  // Cờ Xác nhận giao hàng (Cài đặt hệ thống): tắt → không tạo booking; bật → chỉ tạo cho hình thức kho nhận được chọn.
+  // Lệnh cũ còn sống (sau Bỏ hoàn thành) → SYNC thay vì tạo mới
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: existingRows } = await supabase.from('TmsOrder')
+    .select('id').eq('transfer_gdo_id', gdoId).limit(1)
+  const existing = ((existingRows ?? []) as { id: string }[])[0] ?? null
+  if (!existing && gdo.transfer_status) return   // trạng thái mồ côi (lệnh đã bị xóa tay) — giữ hành vi cũ
+
+  // Cờ Xác nhận giao hàng (Cài đặt hệ thống): tắt → không tạo booking MỚI; bật → chỉ tạo cho hình thức được chọn.
+  // Lệnh ĐÃ tồn tại thì vẫn sync bất kể cờ (đổi cờ giữa chừng không được làm đứt tracking).
   const dc = await getDeliveryConfirmation()
-  if (!dc.enabled) return
+  if (!existing && !dc.enabled) return
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
@@ -860,7 +870,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   }
   // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : destWh.inventory_mode === 'QTY' ? 'QTY' : 'QR') : 'OTHER'
-  if (!dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking)
+  if (!existing && !dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking mới)
   // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.
   const isSelf = modeKey === 'NONE' || modeKey === 'OTHER'
 
@@ -882,24 +892,38 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   }
   if (!matMap.size) return
 
-  const orderId = randomUUID()
   // OTHER (khách ngoài, không có kho đích): scope + hiển thị theo KHO XUẤT (gdo.warehouse_id); nhãn = shipto/tên KH.
   const orderWarehouseId = destWh ? destWh.id : (gdo.warehouse_id as string)
   const orderCode = `TRF_${destWh ? destWh.code : (gdo.shipto_party || custLabel)}_${gdo.group_code}`
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await supabase.from('TmsOrder').insert({
-    id: orderId, order_code: orderCode,
-    date: vnDate, warehouse_id: orderWarehouseId,
-    destination_warehouse_id: destWh ? destWh.id : null,
-    direction: 'INBOUND', source_type: 'TRANSFER',
-    transfer_gdo_id: gdoId,
-    delivery_mode: isSelf ? 'SELF' : 'SCAN',
-    planned_boxes: 0, planned_pallets: 0,
-    status: 'PENDING',
-    created_at: nowTs, updated_at: nowTs,
-  })
+  const orderId = existing ? existing.id : randomUUID()
+  if (existing) {
+    // SYNC: đích/mã/hình thức có thể đổi sau khi sửa đơn — cập nhật TẠI CHỖ, giữ booking + lịch sử
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('TmsOrder').update({
+      order_code: orderCode, warehouse_id: orderWarehouseId,
+      destination_warehouse_id: destWh ? destWh.id : null,
+      delivery_mode: isSelf ? 'SELF' : 'SCAN',
+      updated_at: nowTs,
+    }).eq('id', orderId)
+    // Kế hoạch nhập làm lại theo số MỚI (chưa ai nhận — Bỏ HT bị chặn từ RECEIVING trở đi)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', orderId)
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('TmsOrder').insert({
+      id: orderId, order_code: orderCode,
+      date: vnDate, warehouse_id: orderWarehouseId,
+      destination_warehouse_id: destWh ? destWh.id : null,
+      direction: 'INBOUND', source_type: 'TRANSFER',
+      transfer_gdo_id: gdoId,
+      delivery_mode: isSelf ? 'SELF' : 'SCAN',
+      planned_boxes: 0, planned_pallets: 0,
+      status: 'PENDING',
+      created_at: nowTs, updated_at: nowTs,
+    })
+  }
 
   const lineRows = [...matMap.values()].map(m => ({
     id: randomUUID(), tms_order_id: orderId, date: vnDate,
@@ -916,13 +940,26 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   await supabase.from('TmsOrder').update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
 
   const plate: string | null = gdo.license_plate || null
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await supabase.from('TmsVehicleSlot').insert({
-    id: randomUUID(), order_id: orderId,
-    license_plate: plate,
-    status: plate ? 'BOOKED' : 'PENDING',
-    created_at: nowTs, updated_at: nowTs,
-  })
+  if (existing) {
+    // Biển số đổi khi sửa đơn → cập nhật slot NẾU TMS chưa book chi tiết (chưa có SĐT lái xe)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: slots } = await supabase.from('TmsVehicleSlot')
+      .select('id, driver_phone').eq('order_id', orderId).limit(1)
+    const slot = ((slots ?? []) as { id: string; driver_phone: string | null }[])[0]
+    if (slot && !slot.driver_phone && plate) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await supabase.from('TmsVehicleSlot')
+        .update({ license_plate: plate, status: 'BOOKED', updated_at: nowTs }).eq('id', slot.id)
+    }
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await supabase.from('TmsVehicleSlot').insert({
+      id: randomUUID(), order_id: orderId,
+      license_plate: plate,
+      status: plate ? 'BOOKED' : 'PENDING',
+      created_at: nowTs, updated_at: nowTs,
+    })
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('GroupDeliveryOrder')
@@ -938,6 +975,16 @@ export async function deleteGDO(req: Request, res: Response) {
       .select('status').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (gdo.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa đơn ở trạng thái chờ (PENDING)', 400)
+
+    // Đơn từng hoàn thành rồi gỡ → lệnh chuyển kho vẫn còn (giữ tracking) — xóa cả chuyến thì xóa lệnh theo
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: trfOrders } = await supabase.from('TmsOrder')
+      .select('id').eq('transfer_gdo_id', req.params.id)
+    for (const o of (trfOrders ?? []) as { id: string }[]) {
+      await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', o.id)
+      await supabase.from('TmsVehicleSlot').delete().eq('order_id', o.id)
+      await supabase.from('TmsOrder').delete().eq('id', o.id)
+    }
 
     const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', req.params.id)
@@ -1446,23 +1493,20 @@ export async function uncompleteGDO(req: Request, res: Response) {
       return fail(res, 400, 'INBOUND_OPEN', `Kho NPP đã tạo phiếu nhập (${codes}) — hủy phiếu trước khi bỏ hoàn thành`)
     }
 
+    // Phương án A (user chốt 09/07): GIỮ lệnh chuyển kho + booking khi gỡ (tracking không đứt).
+    // Hoàn thành lại → maybeAutoCreateTransferOrder nhánh SYNC đồng bộ số liệu vào chính lệnh cũ.
+    // transfer_status giữ IN_TRANSIT để kho nhận thấy lệnh (nhưng BỊ CHẶN nhận khi gdo.status != COMPLETED).
+    let keepTransfer = false
     if (ts === 'IN_TRANSIT') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: tmsOrder } = await supabase.from('TmsOrder')
-        .select('id').eq('transfer_gdo_id', req.params.id).maybeSingle()
-      if (tmsOrder) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', tmsOrder.id)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('TmsVehicleSlot').delete().eq('order_id', tmsOrder.id)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('TmsOrder').delete().eq('id', tmsOrder.id)
-      }
+      const { data: tmsOrders } = await supabase.from('TmsOrder')
+        .select('id').eq('transfer_gdo_id', req.params.id).limit(1)
+      keepTransfer = ((tmsOrders ?? []) as { id: string }[]).length > 0
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('GroupDeliveryOrder')
-      .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: null, updated_at: now() })
+      .update({ status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null, transfer_status: keepTransfer ? 'IN_TRANSIT' : null, updated_at: now() })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, await fetchGDOFull(req.params.id))

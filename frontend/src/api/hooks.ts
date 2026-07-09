@@ -2427,6 +2427,7 @@ export function useTmsOrders(params?: { date_from?: string; date_to?: string; wa
 
 export type TransferGDO = {
   id: string; group_code: string; shipto_party: string | null; transfer_status: string | null
+  status?: string   // trạng thái GDO nguồn — != COMPLETED nghĩa là kho xuất đang gỡ HT để sửa (badge "Kho đang sửa")
   delivery_date?: string | null
   dvvt?: string | null
   license_plate?: string | null

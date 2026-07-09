@@ -2305,14 +2305,20 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className="text-sm font-mono font-bold text-slate-800">{order?.order_code}</span>
               {cfg && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>}
+              {order && srcEditing(order) && (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"
+                  title="Kho xuất đã bỏ hoàn thành để sửa đơn — booking giữ nguyên, chờ kho xuất hoàn thành lại">
+                  Kho đang sửa
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 {canConfirmReceipt && tStatus === 'IN_TRANSIT' && (
                   <TooltipProvider delayDuration={100}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span>
-                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting || selfCompleting) ? 'animate-pulse' : ''} ${!hasBooking ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            disabled={confirming || starting || selfCompleting || !hasBooking}
+                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting || selfCompleting) ? 'animate-pulse' : ''} ${(!hasBooking || srcEditing(order!)) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={confirming || starting || selfCompleting || !hasBooking || srcEditing(order!)}
                             onClick={async () => {
                               if (!order) return
                               setConfirmErr(''); setStarting(true)
@@ -2331,9 +2337,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                           </Button>
                         </span>
                       </TooltipTrigger>
-                      {!hasBooking && (
+                      {(!hasBooking || srcEditing(order!)) && (
                         <TooltipContent side="bottom">
-                          Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi {isSelf ? 'hoàn thành' : 'nhận hàng'}
+                          {srcEditing(order!)
+                            ? 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại'
+                            : `Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi ${isSelf ? 'hoàn thành' : 'nhận hàng'}`}
                         </TooltipContent>
                       )}
                     </Tooltip>
@@ -2693,6 +2701,11 @@ function transferDestLabel(o: TransferOrder): string {
   return o.transfer_gdo?.shipto_party ?? o.transfer_gdo?.customer_label ?? '—'
 }
 
+// Kho xuất đã "Bỏ hoàn thành" để sửa đơn — lệnh + booking giữ nguyên, nhận hàng tạm khóa tới khi chốt lại
+function srcEditing(o: TransferOrder): boolean {
+  return !!o.transfer_gdo?.status && o.transfer_gdo.status !== 'COMPLETED'
+}
+
 // Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
 const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
   { label: 'Số DO' }, { label: 'Ngày xuất' }, { label: 'Kho xuất' }, { label: 'Kho nhận' },
@@ -2960,6 +2973,13 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                               {cfg
                                 ? <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
                                 : <span className="text-slate-300">—</span>}
+                              {/* Kho xuất gỡ HT để sửa — lệnh giữ nguyên (booking không mất), nhận hàng tạm khóa */}
+                              {srcEditing(o) && (
+                                <span className="inline-block ml-1 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"
+                                  title="Kho xuất đã bỏ hoàn thành để sửa đơn — booking giữ nguyên, chờ kho xuất hoàn thành lại mới nhận hàng được">
+                                  Kho đang sửa
+                                </span>
+                              )}
                             </TableCell>
                             <TableCell className="px-2 py-1 truncate" title={o.transfer_gdo?.group_code ?? undefined}>
                               <span className="text-[10px] font-mono">{o.transfer_gdo?.group_code ?? '—'}</span>

@@ -1,0 +1,127 @@
+// Hạ tầng chung bộ QA regression — KHÔNG dependency ngoài (Node 18+, fetch native).
+// API app qua Preview (dev) · soi DB staging qua PostgREST (key đọc từ backend/.env).
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+export const BASE = process.env.QA_BASE_URL
+  ?? 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL ?? 'admin'
+const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD ?? 'Bavi1234'   // tài khoản test STAGING
+
+// ── Dữ liệu nền cố định của staging dùng cho test (đổi ở đây nếu staging thay data nền) ──
+export const FIX = {
+  WH_QTY:  { id: 'c36008f3-4f01-41a8-9538-3cce289837b0', code: '10010499', name: 'Bluestar' }, // kho QTY
+  WH_NONE: { id: 'b9ef99ad-473d-4538-9e0a-95955a08b37e', code: '10000274', name: 'An Sơn' },   // kho NONE
+  WH_QR:   { id: '56cf7a64-d3aa-4fd2-948d-490ec487acb9', code: '20000016', name: 'Kho Ba Vì' },// kho QR
+  MAT_POOL: '510000306',   // mã có dòng tồn pool tại WH_QTY
+  DVVT_TAG: 'QA-SUITE',    // mọi GDO test gắn dvvt này để nhận diện + dọn
+  DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật)
+}
+
+// ── App API ──
+let token = ''
+export async function login() {
+  const r = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+  })
+  const j = await r.json()
+  if (!j?.data?.token) throw new Error(`Login fail: ${r.status} ${JSON.stringify(j).slice(0, 200)}`)
+  token = j.data.token
+}
+export async function api(path, method = 'GET', body) {
+  const r = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  let j = null, text = ''
+  try { text = await r.text(); j = JSON.parse(text) } catch { /* body không phải JSON */ }
+  return { s: r.status, j, bytes: text.length }
+}
+
+// ── PostgREST staging (read-only cho invariant) — key service role từ backend/.env ──
+function readBackendEnv() {
+  const out = {}
+  try {
+    for (const line of readFileSync(join(ROOT, 'backend', '.env'), 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z_]+)\s*=\s*"?([^"]*)"?\s*$/)
+      if (m) out[m[1]] = m[2]
+    }
+  } catch { /* thiếu .env → gói invariant sẽ tự báo */ }
+  return out
+}
+const ENV = readBackendEnv()
+export const HAS_DB = !!(ENV.SUPABASE_URL && ENV.SUPABASE_SERVICE_ROLE_KEY)
+
+// GET 1 trang PostgREST (limit/offset). filter = chuỗi query PostgREST.
+async function restPage(table, filter, offset, limit) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
+    headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` },
+  })
+  if (!r.ok) throw new Error(`PostgREST ${table}: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+// Kéo ĐỦ mọi dòng (né cap-1000). maxRows = cầu chì an toàn cho staging.
+export async function restAll(table, filter, maxRows = 50_000) {
+  const out = []
+  for (let off = 0; off < maxRows; off += 1000) {
+    const page = await restPage(table, filter, off, 1000)
+    out.push(...page)
+    if (page.length < 1000) return out
+  }
+  console.warn(`  ⚠ ${table}: chạm cầu chì ${maxRows} dòng — kiểm tra có thể THIẾU (cần chuyển check này sang RPC)`)
+  return out
+}
+export function chunk(arr, n = 300) {
+  const out = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
+
+// ── Khung report PASS/FAIL ──
+const results = []
+export function check(name, ok, detail = '') {
+  results.push({ name, ok, detail })
+  console.log(`  ${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`)
+}
+export function finish(pack) {
+  const fail = results.filter(r => !r.ok)
+  console.log(`\n[${pack}] ${results.length - fail.length}/${results.length} PASS${fail.length ? ` — ${fail.length} FAIL` : ''}`)
+  process.exit(fail.length ? 1 : 0)
+}
+
+// Chạy song song có giới hạn in-flight (mặc định 20 — an toàn max_connections=60)
+export async function pool(tasks, limit = 20) {
+  const out = []; let i = 0
+  async function worker() { while (i < tasks.length) { const k = i++; out[k] = await tasks[k]() } }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker))
+  return out
+}
+
+// Gỡ dây chuyền 1 GDO test về 0 rồi xóa (kèm lệnh chuyển kho cascade). Trả true nếu xóa được.
+export async function teardownGdo(id, status) {
+  if (status === 'COMPLETED') await api(`/wms/outbound/${id}/uncomplete`, 'POST')
+  const d = await api(`/wms/outbound/${id}`, 'GET')
+  const cur = d.j?.data
+  if (!cur) return false
+  if (cur.status !== 'PENDING') {
+    for (const it of (cur.delivery_orders ?? []).flatMap(x => x.items))
+      await api(`/wms/outbound/${id}/items/${it.id}/manual-complete`, 'POST', { cartons: 0 })
+    const us = await api(`/wms/outbound/${id}/unstart`, 'POST')
+    if (us.s !== 200) return false
+  }
+  return (await api(`/wms/outbound/${id}`, 'DELETE')).s === 200
+}
+
+// Dọn MỌI GDO gắn tag QA (an toàn: chỉ đụng dvvt = FIX.DVVT_TAG)
+export async function cleanupTagged() {
+  const list = await api(`/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`, 'GET')
+  const gdos = (list.j?.data?.items ?? list.j?.data ?? []).filter(g => g.dvvt === FIX.DVVT_TAG)
+  if (!gdos.length) return 0
+  const rs = await pool(gdos.map(g => () => teardownGdo(g.id, g.status)), 15)
+  return rs.filter(Boolean).length
+}

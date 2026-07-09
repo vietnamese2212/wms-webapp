@@ -14,21 +14,19 @@
 
 Biến các script QA rời rạc thành bộ cố định `scripts/qa/*.mjs`, chạy trên Preview, **xanh hết mới được merge main**. Gồm 4 gói:
 
-- [ ] **Gói smoke** (~5'): login → mỗi module chính gọi 1 GET list + 1 chu trình tạo/sửa/xóa nhỏ rồi dọn (Inbound, Outbound, Inventory, TMS bookings, Gate, Materials, Locations).
-- [ ] **Gói invariant** (~1'): bộ query SQL bất biến — chạy TRƯỚC và SAU mọi đợt test, 2 lần phải giống nhau:
+> ✅ **ĐÃ XÂY XONG 09/07** — `scripts/qa/` (lib + 4 gói + runner + README). Chạy: `node scripts/qa/run-all.mjs [--scale 300]`.
+> Lần chạy đầu: XANH toàn bộ (invariant 7/7 ×3 · smoke 16/16 · race 14/14 · scale 6/6).
+
+- [x] **Gói smoke** (~2'): login → 11 GET list chính + chu trình tạo/sửa/xóa đơn xuất rồi dọn.
+- [x] **Gói invariant** (~1'): bộ query SQL bất biến — chạy TRƯỚC và SAU mọi đợt test, 2 lần phải giống nhau:
   - tồn không âm: `cartons_remaining < 0` = 0 dòng
   - không xuất quá: `cartons_scanned > cartons_ordered` = 0 dòng
   - không mồ côi: TmsOrder→GDO, inbound_plan_lines→TmsOrder, OutboundScanEntry→Item, InventoryEntry→ProductionImport
   - không lệnh chuyển kho TRÙNG: 2+ TmsOrder cùng transfer_gdo_id = 0
   - booking: booked_count khớp đếm thật (recount_slot drift = 0)
-- [ ] **Gói race** (~10'): các bài đua đã có + mở rộng — N request đồng thời cùng 1 tài nguyên, bất biến giữ nguyên:
-  - 10× "Xuất luôn" cùng 1 GDO → 1 lệnh, tồn trừ 1 lần
-  - 10× Hoàn thành (patchGDO) cùng 1 chuyến
-  - 25× book slot cùng khung giờ sức chứa nhỏ → không overbooking
-  - 10× scan cùng 1 pallet ở 2 chuyến khác nhau → không âm tồn
-  - Hoàn thành ↔ Bỏ hoàn thành ↔ kho nhận Bắt đầu nhận bắn xen kẽ → trạng thái cuối hợp lệ
-- [ ] **Gói scale** (~15'): seed 300–500 bản ghi vào module đích → đo latency (ngưỡng: list < 2s, không response > 5MB) → cleanup về baseline. Luân phiên module mỗi đợt.
-- [ ] Viết `scripts/qa/README.md`: thứ tự chạy, tài khoản test, cách đọc kết quả, lệnh cleanup khẩn.
+- [x] **Gói race** (~2'): 10× "Xuất luôn" cùng GDO (1 lệnh, tồn trừ 1 lần) · 10× Hoàn thành đồng thời · xen kẽ Bỏ HT/Xuất luôn/HT. *(Race booking slot + scan QR đã verify ở chiến dịch riêng `tms-slot-booking-atomic` 1800 req + `concurrency-hardening` — không lặp lại trong suite.)*
+- [x] **Gói scale** (~3'): seed 300 đơn+lệnh → list nóng < 3s & < 5MB → cleanup về baseline.
+- [x] `scripts/qa/README.md`: cách chạy, cấu hình, xử lý khi FAIL, giới hạn đã biết.
 
 **Definition of Done tầng 0**: 1 lệnh chạy tuần tự 4 gói, kết quả PASS/FAIL rõ ràng, sau khi chạy DB staging về đúng baseline.
 

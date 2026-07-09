@@ -1173,9 +1173,9 @@ const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; res
   { id: 'pin',      label: '',            w: 34,  resize: false },
   { id: 'date',     label: 'Ngày nhập',   w: 104 },
   { id: 'loc',      label: 'Vị trí',      w: 84 },
-  { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'matcode',  label: 'Mã hàng',     w: 110 },
   { id: 'matname',  label: 'Tên hàng',    w: 150 },
+  { id: 'ncc',      label: 'NCC',         w: 130 },
   { id: 'actual',   label: 'Thực nhập',   w: 84,  align: 'right' },
   { id: 'plan',     label: 'Thùng KH',    w: 84,  align: 'right' },
   { id: 'progress', label: 'Tiến độ',     w: 78,  align: 'right' },
@@ -1187,6 +1187,7 @@ const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; res
   { id: 'imp',      label: 'Người nhập',  w: 104 },
   { id: 'shift',    label: 'Ca',          w: 64 },
   { id: 'note',     label: 'Ghi chú',     w: 120 },
+  { id: 'wh',       label: 'Kho nhập',    w: 110 },
   { id: 'status',   label: 'Trạng thái',  w: 92 },
 ]
 const INBOUND_COL_DEFAULTS = INBOUND_COLS.map(c => c.w)
@@ -1846,23 +1847,23 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         </div>
       </TableCell>
 
-      {/* Col 4: NCC (nhà cung cấp) */}
-      <TableCell className="px-2 py-1 whitespace-nowrap">
-        {(order as any).ncc?.name
-          ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>
-          : <span className="text-[10px] text-slate-300">—</span>}
-      </TableCell>
-
-      {/* Col 5: Mã hàng */}
+      {/* Col 4: Mã hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {matCode
           ? <span className="text-[9px] text-slate-500 font-mono truncate block" title={matCode}>{matCode}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
-      {/* Col 6: Tên hàng */}
+      {/* Col 5: Tên hàng */}
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] font-medium truncate block" title={matName}>{matName}</span>
+      </TableCell>
+
+      {/* Col 6: NCC (nhà cung cấp) — sau Tên hàng */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {(order as any).ncc?.name
+          ? <span className="text-[10px] truncate block" title={(order as any).ncc.name}>{(order as any).ncc.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
       {/* Col 7: Thực nhập */}
@@ -1950,6 +1951,13 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
       {/* Col 11: Ghi chú */}
       <TableCell className="px-2 py-1">
         <div className="text-[10px] truncate" title={order.notes ?? undefined}>{order.notes ?? '—'}</div>
+      </TableCell>
+
+      {/* Col: Kho nhập */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {order.warehouse?.name
+          ? <span className="text-[10px] truncate block" title={order.warehouse.name}>{order.warehouse.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
 
       {/* Col cuối: Trạng thái */}

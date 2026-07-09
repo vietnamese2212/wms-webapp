@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -1843,6 +1843,29 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const [initialized, setInitialized] = useState(false)
 
   const { mutate: updateGDO, isPending } = useUpdateGDO()
+  const { mutate: quickExportExisting, isPending: quickPending } = useQuickExportExistingGDO()
+
+  // "Lưu & Xuất luôn" trong form Sửa — như form Tạo: chỉ kho QTY/NONE + quyền quick_export.
+  // Chỉ đơn PENDING (updateGDO không nhận IN_PROGRESS; PAUSED không xuất luôn được).
+  const editUser = useAuthStore(s => s.user)
+  const editPerms = (editUser?.module_permissions ?? null) as ModulePermissions | null
+  const canQuickEdit = can(editPerms, 'outbound', 'quick_export')
+  const [quickPlate, setQuickPlate] = useState('')
+  const editWhMode: string | null = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
+  const isQtyOrNoneEdit = editWhMode === 'QTY' || editWhMode === 'NONE'
+  const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && gdo?.status === 'PENDING'
+  const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && dvvt.trim() !== '' && quickPlate.trim() !== ''
+
+  // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)
+  const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
+  const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
+  const { data: allVehicles = [] } = useTmsVehicles(showQuickEdit ? { is_active: 'true' } : undefined, showQuickEdit)
+  const platesForDvvt = useMemo(
+    () => dvvtCompanyId
+      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
+      : [],
+    [allVehicles, dvvtCompanyId],
+  )
 
   // Pre-fill once GDO loads (wait for vehicle types to normalize correctly)
   useEffect(() => {
@@ -1853,6 +1876,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setShiptoPartyId(gdo.shipto_party ?? '')
     setDvvt(gdo.dvvt ?? '')
     setWarehouseType(gdo.warehouse_type ?? '')
+    setQuickPlate(gdo.license_plate ?? '')
     // distributor_name: single-DO → from first DO; multi-DO → displayed read-only separately
     setCustomerName(gdo.delivery_orders?.[0]?.distributor_name ?? '')
     setDeliveryCode(gdo.delivery_orders?.[0]?.delivery_code ?? '')
@@ -1885,7 +1909,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
 
   const isNPPEdit = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
 
-  function handleSubmit() {
+  function handleSubmit(quick = false) {
     // Đa-NPP (chuẩn 04/07) — DO chỉ là tham khảo, không dùng làm tiêu chí
     const isMultiNpp = new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean)).size > 1
     if (!date) return setError('Chọn ngày xuất')
@@ -1898,6 +1922,8 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
       if (item.cartons < item.min_cartons) return setError(`Số thùng không được nhỏ hơn đã xuất (${item.min_cartons})`)
       if (isMultiNpp && !item.db_id && !item.npp.trim()) return setError(`Dòng "${item.material_code}": chọn NPP cho dòng thêm mới`)
     }
+    const isQuick = quick && showQuickEdit
+    if (isQuick && !quickPlate.trim()) return setError('Nhập biển số xe để Xuất luôn')
     setError('')
     updateGDO(
       {
@@ -1913,7 +1939,20 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined, npp: i.npp || undefined })),
       },
       {
-        onSuccess: () => onClose(),
+        // Lưu & Xuất luôn: cập nhật đơn xong mới gọi xuất (đảm bảo xuất theo số VỪA SỬA)
+        onSuccess: () => {
+          if (!isQuick) return onClose()
+          quickExportExisting(
+            { gdoId, license_plate: quickPlate.trim() },
+            {
+              onSuccess: () => onClose(),
+              onError: (e: unknown) => {
+                const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Đã lưu nhưng chưa xuất được'
+                setError(msg)
+              },
+            }
+          )
+        },
         onError: (e: unknown) => {
           const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi cập nhật đơn'
           setError(msg)
@@ -1941,8 +1980,25 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
           exportType={exportType} setExportType={setExportType}
           warehouseType={warehouseType} setWarehouseType={setWarehouseType}
           items={items} setItems={setItems}
-          error={error} isPending={isPending}
-          onSubmit={handleSubmit} onClose={onClose}
+          error={error} isPending={isPending || quickPending}
+          onSubmit={() => handleSubmit(false)} onClose={onClose}
+          plateSlot={showQuickEdit ? (
+            <div className="space-y-1">
+              <label className="text-[10px] font-medium text-slate-500">Biển số xe {quickReadyEdit ? '' : <span className="text-slate-300">(để Xuất luôn)</span>}</label>
+              <PlateCombobox value={quickPlate} onChange={setQuickPlate} plates={platesForDvvt} />
+            </div>
+          ) : undefined}
+          quickAction={quickReadyEdit ? (
+            <Button
+              size="sm"
+              disabled={isPending || quickPending}
+              onClick={() => handleSubmit(true)}
+              className="bg-green-600 hover:bg-green-700 min-w-[120px]"
+              title="Lưu thay đổi + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
+            >
+              {quickPending ? 'Đang xuất…' : 'Lưu & Xuất luôn'}
+            </Button>
+          ) : undefined}
         />
       )}
     </ModalOverlay>

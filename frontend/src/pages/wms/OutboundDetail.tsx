@@ -1441,7 +1441,8 @@ export default function OutboundDetail() {
                   <span className="hidden sm:inline">{bulkSaving ? 'Đang lưu…' : 'Xác nhận nhanh'}</span>
                 </Button>
               )}
-              {gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
+              {/* Kho QTY/NONE ẩn "Hoàn thành" — "Xuất luôn" đã gộp bước chốt chuyến (kể cả sau Bỏ HT) */}
+              {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
                 <Button size="sm"
                   className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
                   disabled={patching}

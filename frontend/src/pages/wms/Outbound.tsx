@@ -1048,9 +1048,9 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
               className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center justify-between gap-2"
               onMouseDown={() => {
                 onChange(w.name)
-                // Chỉ set shipto (chuyển kho) khi đích là KHO NHẬN theo dõi tồn (QR/QTY);
-                // NPP/khách hàng (NONE) chỉ lấy tên, KHÔNG phải shipto
-                onNPPChange(w.inventory_mode !== 'NONE' ? w.code : '')
+                // Khách khớp kho trong danh mục (MỌI chế độ QR/QTY/NONE) → gắn shipto để theo dõi
+                // vận chuyển bên TMS Chuyển kho; có tạo booking hay không do cờ Xác nhận giao hàng quyết.
+                onNPPChange(w.code)
                 setOpen(false)
               }}
             >
@@ -1449,7 +1449,7 @@ function GDOFormBody({
             {shiptoPartyId && (
               <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
-                <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo phiếu nhập cho kho này</span>
+                <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo booking theo dõi vận chuyển (theo cài đặt Xác nhận giao hàng)</span>
               </div>
             )}
           </div>

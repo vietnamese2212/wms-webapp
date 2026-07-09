@@ -816,26 +816,31 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// ─── Auto-create TmsOrder khi GDO COMPLETED + shipto_party là kho hệ thống ───
+// ─── Auto-create TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
+// shipto khớp kho DB → QR/QTY/NONE; shipto lạ HOẶC KHÔNG có shipto (khách ngoài danh mục) → OTHER.
+// Mục đích user (09/07): loại nào được tick trong cờ là lên TMS Chuyển kho để theo dõi vận chuyển.
 
 async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: gdo } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, shipto_party, transfer_status, license_plate, warehouse_id')
     .eq('id', gdoId).single()
-  if (!gdo?.shipto_party || gdo.transfer_status) return
+  if (!gdo || gdo.transfer_status) return
 
   // Cờ Xác nhận giao hàng (Cài đặt hệ thống): tắt → không tạo booking; bật → chỉ tạo cho hình thức kho nhận được chọn.
   const dc = await getDeliveryConfirmation()
   if (!dc.enabled) return
 
   type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: destWhData } = await supabase.from('Warehouse')
-    .select('id, code, name, inventory_mode')
-    .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
-    .eq('is_active', true).maybeSingle()
-  const destWh = (destWhData as DestWh) ?? null
+  let destWh: DestWh | null = null
+  if (gdo.shipto_party) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: destWhData } = await supabase.from('Warehouse')
+      .select('id, code, name, inventory_mode')
+      .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
+      .eq('is_active', true).maybeSingle()
+    destWh = (destWhData as DestWh) ?? null
+  }
   // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : destWh.inventory_mode === 'QTY' ? 'QTY' : 'QR') : 'OTHER'
   if (!dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking)
@@ -844,8 +849,10 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: dos } = await supabase.from('OutboundDelivery')
-    .select('id').eq('gdo_id', gdoId)
+    .select('id, distributor_name').eq('gdo_id', gdoId)
   const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+  // Nhãn đích khi KHÔNG có shipto (khách ngoài danh mục): tên KH của DO đầu
+  const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: items } = doIds.length
@@ -866,9 +873,9 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   if (!matMap.size) return
 
   const orderId = randomUUID()
-  // OTHER (khách ngoài, không có kho đích): scope + hiển thị theo KHO XUẤT (gdo.warehouse_id); tên KH = shipto.
+  // OTHER (khách ngoài, không có kho đích): scope + hiển thị theo KHO XUẤT (gdo.warehouse_id); nhãn = shipto/tên KH.
   const orderWarehouseId = destWh ? destWh.id : (gdo.warehouse_id as string)
-  const orderCode = `TRF_${destWh ? destWh.code : gdo.shipto_party}_${gdo.group_code}`
+  const orderCode = `TRF_${destWh ? destWh.code : (gdo.shipto_party || custLabel)}_${gdo.group_code}`
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

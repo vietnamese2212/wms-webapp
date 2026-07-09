@@ -2432,6 +2432,7 @@ export type TransferGDO = {
   license_plate?: string | null
   warehouse?: { id: string; code: string; name: string } | null
   delivery_codes?: string[]
+  customer_label?: string | null   // tên KH (DO đầu) — hiển thị "Kho nhận" cho lệnh OTHER không có kho đích
 }
 export type TransferOrder = import('@/types').TmsOrder & {
   transfer_gdo?: TransferGDO | null

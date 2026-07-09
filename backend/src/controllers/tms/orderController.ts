@@ -109,15 +109,17 @@ export async function listOrders(req: Request, res: Response) {
       })
       const orderIds = orders.map((o: any) => o.id as string)
 
-      // Gắn delivery_codes từ OutboundDelivery
+      // Gắn delivery_codes + tên khách (customer_label — hiển thị "Kho nhận" cho lệnh OTHER không có kho đích)
       const gdoIds = [...new Set(orders.map((o: any) => o.transfer_gdo_id).filter(Boolean))] as string[]
       const codesByGdo = new Map<string, string[]>()
+      const custByGdo  = new Map<string, string>()
       if (gdoIds.length) {
         // Chunk + phân trang né cap-1000 (nhiều GDO → nhiều delivery)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
-          .select('gdo_id, delivery_code').in('gdo_id', chunk).order('id'))
+          .select('gdo_id, delivery_code, distributor_name').in('gdo_id', chunk).order('id'))
         for (const d of (dos ?? [])) {
+          if (d.distributor_name?.trim() && !custByGdo.has(d.gdo_id)) custByGdo.set(d.gdo_id, d.distributor_name.trim())
           if (!d.delivery_code) continue
           const list = codesByGdo.get(d.gdo_id) ?? []
           list.push(d.delivery_code)
@@ -171,7 +173,7 @@ export async function listOrders(req: Request, res: Response) {
       return ok(res, orders.map((o: any) => ({
         ...o,
         transfer_gdo: o.transfer_gdo
-          ? { ...o.transfer_gdo, delivery_codes: codesByGdo.get(o.transfer_gdo_id) ?? [] }
+          ? { ...o.transfer_gdo, delivery_codes: codesByGdo.get(o.transfer_gdo_id) ?? [], customer_label: custByGdo.get(o.transfer_gdo_id) ?? null }
           : o.transfer_gdo,
         receiving_started_at: receivingStartedAt.get(o.id) ?? null,
         actual_received: actualReceivedByOrder.get(o.id) ?? 0,

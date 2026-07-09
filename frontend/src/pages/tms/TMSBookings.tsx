@@ -2088,7 +2088,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
       open={!!order}
       onClose={() => onClose()}
       title="ĐVVT booking"
-      description={<>{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {order.warehouse?.name ?? '—'}</>}
+      description={<>{order.order_code} · {order.transfer_gdo?.warehouse?.name ?? '—'} → {transferDestLabel(order)}</>}
       footer={<>
         <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
         <Button size="sm" onClick={handleSave} disabled={saving || !licensePlate.trim() || !driverPhone.trim() || !eta}>
@@ -2422,7 +2422,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               </div>
               <div className="flex gap-2">
                 <span className="text-slate-400 w-16 shrink-0">Kho nhận</span>
-                <span className="font-medium text-blue-700">{order?.warehouse?.name ?? '—'}</span>
+                <span className="font-medium text-blue-700">{order ? transferDestLabel(order) : '—'}</span>
               </div>
               <div className="flex gap-2">
                 <span className="text-slate-400 w-16 shrink-0">Mã GDO</span>
@@ -2686,6 +2686,13 @@ const MAIN_COL_DEFAULTS = [32, 148, 150, 44, 78, 88, 88, 110, 28, 56, 88, 100, 6
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
 
+// "Kho nhận" của lệnh chuyển: có kho đích (destination_warehouse_id) → tên kho; OTHER (khách ngoài
+// hệ thống) → shipto/tên KH — KHÔNG dùng order.warehouse (với OTHER đó là KHO XUẤT gán làm scope).
+function transferDestLabel(o: TransferOrder): string {
+  if (o.destination_warehouse_id) return o.warehouse?.name ?? '—'
+  return o.transfer_gdo?.shipto_party ?? o.transfer_gdo?.customer_label ?? '—'
+}
+
 // Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
 const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
   { label: 'Số DO' }, { label: 'Ngày xuất' }, { label: 'Kho xuất' }, { label: 'Kho nhận' },
@@ -2773,7 +2780,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
 
   const khoNhanOptions = React.useMemo<MSOpt[]>(() => {
     const ids = new Set<string>()
-    for (const o of scopedOrders) { const id = (o as any).warehouse?.id; if (id) ids.add(id) }
+    // Chỉ lệnh CÓ kho đích (OTHER/khách ngoài không phải kho nhận — đừng đưa kho xuất-scope vào filter)
+    for (const o of scopedOrders) { const id = o.destination_warehouse_id ? (o as any).warehouse?.id : null; if (id) ids.add(id) }
     for (const id of khoNhanFilter) if (id) ids.add(id)
     return [...ids].map(id => ({ value: id, label: whNameById.get(id) ?? '…' }))
   }, [scopedOrders, khoNhanFilter, whNameById])
@@ -2783,7 +2791,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     if (dateFrom) list = list.filter(o => o.date >= dateFrom)
     if (dateTo)   list = list.filter(o => o.date <= dateTo)
     if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
-    if (khoNhanFilter.length) list = list.filter(o => (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
+    if (khoNhanFilter.length) list = list.filter(o => o.destination_warehouse_id && (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
     return list
   }, [scopedOrders, dateFrom, dateTo, khoXuatFilter, khoNhanFilter])
 
@@ -2894,7 +2902,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                               <span className="text-[10px]">{o.transfer_gdo?.warehouse?.name ?? '—'}{ownMark(o.transfer_gdo?.warehouse?.id)}</span>
                             </TableCell>
                             <TableCell className="px-2 py-1 whitespace-nowrap">
-                              <span className="text-[10px] font-semibold">{o.warehouse?.name ?? o.transfer_gdo?.shipto_party ?? '—'}{ownMark(o.warehouse?.id)}</span>
+                              <span className="text-[10px] font-semibold">{transferDestLabel(o)}{o.destination_warehouse_id ? ownMark(o.warehouse?.id) : <span className="ml-1 text-[8px] font-medium text-slate-400 border border-slate-200 rounded px-0.5">KH</span>}</span>
                             </TableCell>
                             <TableCell className="px-2 py-1 whitespace-nowrap">
                               {o.receiving_started_at

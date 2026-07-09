@@ -2315,9 +2315,10 @@ export function useUpdateTransportCompany() {
   })
 }
 
-export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string; unassigned?: string; pool_branches?: string }) {
+export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string; unassigned?: string; pool_branches?: string }, enabled = true) {
   return useQuery({
     queryKey: ['tms-vehicles', params],
+    enabled,
     staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/vehicles', { params })

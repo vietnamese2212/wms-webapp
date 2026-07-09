@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -1116,6 +1116,40 @@ function DvvtCombobox({ value, onChange, companies }: {
   )
 }
 
+// ─── Biển số combobox: gợi ý xe đã đăng ký của ĐVVT đang chọn, vẫn cho gõ biển lạ ──
+function PlateCombobox({ value, onChange, plates }: {
+  value: string
+  onChange: (v: string) => void
+  plates: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const filtered = value.trim()
+    ? plates.filter(p => p.toLowerCase().includes(value.toLowerCase()))
+    : plates
+  return (
+    <div className="relative">
+      <Input
+        className="h-7 text-xs font-mono"
+        placeholder="Biển số xe…"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
+          {filtered.slice(0, 30).map(p => (
+            <button key={p} type="button"
+              className="w-full text-left px-2.5 py-1.5 text-[11px] font-mono hover:bg-slate-50"
+              onMouseDown={() => { onChange(p); setOpen(false) }}
+            >{p}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Item row type ────────────────────────────────────────────
 
 type ItemRow = {
@@ -1166,6 +1200,7 @@ function GDOFormBody({
   onSubmit,
   onClose,
   quickAction,
+  plateSlot,
 }: {
   gdo?: GDO | null
   mode: 'create' | 'edit'
@@ -1182,7 +1217,8 @@ function GDOFormBody({
   isPending: boolean
   onSubmit: () => void
   onClose: () => void
-  quickAction?: React.ReactNode   // nút "Tạo & Xuất luôn" + ô biển số — đặt cạnh nút Tạo đơn xuất (chỉ form tạo)
+  quickAction?: React.ReactNode   // nút "Tạo & Xuất luôn" — đặt cạnh nút Lưu (chỉ form tạo, kho QTY/NONE)
+  plateSlot?: React.ReactNode      // ô Biển số xe — hiện trong header cạnh ĐVVT (chỉ kho QTY/NONE)
 }) {
   const formUser = useAuthStore(s => s.user)
   const [pasteErr, setPasteErr] = useState('')
@@ -1424,6 +1460,7 @@ function GDOFormBody({
               <DvvtCombobox value={dvvt} onChange={setDvvt} companies={dvvtCompanies} />
             )}
           </div>
+          {plateSlot}
           {!isMultiNpp && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Số DO *</label>
@@ -1635,8 +1672,8 @@ function GDOFormBody({
       </div>
 
       {/* Footer */}
-      <div className="border-t px-4 py-2.5 shrink-0 bg-slate-50/50 flex items-center gap-2">
-        <div className="flex-1" />
+      <div className="border-t px-4 py-2.5 shrink-0 bg-slate-50/50 flex flex-wrap items-center justify-end gap-2">
+        <div className="hidden sm:block flex-1" />
         <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Hủy</Button>
         <Button size="sm" disabled={submitting} onClick={onSubmit} className="min-w-[100px]">
           {submitting ? 'Đang lưu…' : (mode === 'create' ? 'Lưu' : 'Lưu thay đổi')}
@@ -1651,9 +1688,10 @@ function GDOFormBody({
 
 function ModalOverlay({ children, onClose, className }: { children: React.ReactNode; onClose: () => void; className?: string }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // Mobile: full màn hình (không lề); ≥sm: canh giữa có lề
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative z-10 bg-white rounded-xl shadow-2xl flex flex-col ${className ?? 'w-[80vw] max-w-[80vw] max-h-[90vh]'}`}>
+      <div className={`relative z-10 bg-white shadow-2xl flex flex-col w-full h-full max-h-full rounded-none sm:h-auto sm:rounded-xl ${className ?? 'sm:w-[80vw] sm:max-w-[80vw] sm:max-h-[90vh]'}`}>
         {children}
       </div>
     </div>
@@ -1685,14 +1723,24 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const modalPerms = (modalUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuick = can(modalPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate]   = useState('')
-  const { data: allMatsForQuick = [] } = useMaterials(undefined, canQuick)
   const quickWhMode: string | null = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
+  // "Tạo & Xuất luôn" CHỈ cho kho QTY / NONE (kho QR đi luồng quét tem) — không phụ thuộc mã hàng.
+  const isQtyOrNone = quickWhMode === 'QTY' || quickWhMode === 'NONE'
+  const showQuick = canQuick && isQtyOrNone            // kho QTY/NONE → hiện ô Biển số + (khi đủ) nút xuất luôn
   const quickFilled = items.filter(i => i.material_code.trim())
-  // Đủ điều kiện "Tạo & Xuất luôn": có quyền + có mã + MỌI mã là hàng không tem (no-QR hoặc kho QTY)
-  const quickEligible = canQuick && quickFilled.length > 0 && quickFilled.every(i => {
-    const m = allMatsForQuick.find(m => m.material_code === i.material_code)
-    return !!m && (m.no_qr_tracking === true || quickWhMode === 'QTY')
-  })
+  // Nút xuất luôn hiện khi: kho QTY/NONE + có mã + đủ ĐVVT + đủ Biển số (thiếu → chỉ nút Lưu)
+  const quickReady = showQuick && quickFilled.length > 0 && dvvt.trim() !== '' && quickPlate.trim() !== ''
+
+  // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (khớp tên ĐVVT → công ty → lọc xe theo ncc_id)
+  const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
+  const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
+  const { data: allVehicles = [] } = useTmsVehicles(showQuick ? { is_active: 'true' } : undefined, showQuick)
+  const platesForDvvt = useMemo(
+    () => dvvtCompanyId
+      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
+      : [],
+    [allVehicles, dvvtCompanyId],
+  )
 
   function handleSubmit(quick = false) {
     if (!date)         return setError('Chọn ngày xuất')
@@ -1711,7 +1759,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     for (const item of filledItems) {
       if (!item.cartons || item.cartons <= 0) return setError(`Số thùng phải > 0 (${item.material_code})`)
     }
-    const isQuick = quick && quickEligible
+    const isQuick = quick && showQuick
     if (isQuick && !quickPlate.trim()) return setError('Nhập biển số xe để Tạo & Xuất luôn')
     setError('')
     const payload = {
@@ -1751,24 +1799,22 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
         items={items} setItems={setItems}
         error={error} isPending={isPending || quickPending}
         onSubmit={() => handleSubmit(false)} onClose={onClose}
-        quickAction={quickEligible ? (
-          <div className="flex items-center gap-2">
-            <Input
-              value={quickPlate}
-              onChange={e => setQuickPlate(e.target.value)}
-              placeholder="Biển số xe *"
-              className="h-9 w-32 text-xs"
-            />
-            <Button
-              size="sm"
-              disabled={isPending || quickPending}
-              onClick={() => handleSubmit(true)}
-              className="bg-green-600 hover:bg-green-700 min-w-[120px]"
-              title="Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (hàng không tem)"
-            >
-              {quickPending ? 'Đang xuất…' : 'Tạo & Xuất luôn'}
-            </Button>
+        plateSlot={showQuick ? (
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-slate-500">Biển số xe {quickReady ? '' : <span className="text-slate-300">(để Xuất luôn)</span>}</label>
+            <PlateCombobox value={quickPlate} onChange={setQuickPlate} plates={platesForDvvt} />
           </div>
+        ) : undefined}
+        quickAction={quickReady ? (
+          <Button
+            size="sm"
+            disabled={isPending || quickPending}
+            onClick={() => handleSubmit(true)}
+            className="bg-green-600 hover:bg-green-700 min-w-[120px]"
+            title="Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
+          >
+            {quickPending ? 'Đang xuất…' : 'Tạo & Xuất luôn'}
+          </Button>
         ) : undefined}
       />
     </ModalOverlay>

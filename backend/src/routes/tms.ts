@@ -71,7 +71,7 @@ router.put('/transport-companies/:id',    requirePerm('tms_companies', 'edit'), 
 router.delete('/transport-companies/:id', requirePerm('tms_companies', 'delete'),  transportCompany.deleteTransportCompany)
 
 // Vehicle (Xe)
-router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicles', 'view']), vehicle.listVehicles)
+router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicles', 'view'], ['outbound', 'quick_export']), vehicle.listVehicles)
 router.post('/vehicles',       requirePerm('tms_vehicles', 'create'), vehicle.createVehicle)
 router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'edit'),   vehicle.updateVehicle)
 router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'delete'), vehicle.deleteVehicle)

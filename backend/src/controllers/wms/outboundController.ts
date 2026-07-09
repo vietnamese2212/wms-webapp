@@ -488,8 +488,9 @@ export async function createGDO(req: Request, res: Response) {
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
+    // ĐVVT: khớp danh mục → dùng tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
-    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
+    const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
     // Auto-generate group_code: warehouseCode_X_ddmmyy_stt (retry+jitter trong insertGdoNextCode)
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -503,7 +504,7 @@ export async function createGDO(req: Request, res: Response) {
     const actor = req.user?.name || null
     const ins = await insertGdoNextCode(prefix, {
       id: gdoId, planned_date: delivery_date, delivery_date,
-      warehouse_id: warehouse_id ?? null, dvvt: dvvtRes.name,
+      warehouse_id: warehouse_id ?? null, dvvt: dvvtName,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
       created_by: actor, updated_by: actor, updated_at: now(),
     })
@@ -572,25 +573,29 @@ export async function quickExportGDO(req: Request, res: Response) {
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
+    // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
-    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
+    const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
     const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode').eq('id', warehouse_id).maybeSingle()
     if (!wh) return fail(res, 'Không tìm thấy kho xuất', 404)
     const whMode = (wh as { inventory_mode?: string | null }).inventory_mode ?? null
 
-    // Mọi mã phải là hàng không tem (no-QR hiệu lực) — mã có tem QR phải đi luồng quét
+    // "Tạo & Xuất luôn" CHỈ áp cho kho QTY (tồn theo số lượng) hoặc NONE (không theo dõi tồn).
+    // Kho QR phải đi luồng quét tem — không dùng được xuất luôn.
+    if (whMode !== 'QTY' && whMode !== 'NONE') {
+      return fail(res, 422, 'NOT_QTY_NONE', 'Chỉ kho quản lý theo số lượng (QTY) hoặc không theo dõi tồn (NONE) mới dùng được "Tạo & Xuất luôn". Kho QR hãy dùng luồng quét tem.')
+    }
+
     const allCodes = [...new Set(items.map(i => i.material_code))]
     const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category, no_qr_tracking').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null; no_qr_tracking: boolean | null }>(
-      ((mats ?? []) as { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null }[])
-        .map(m => [m.material_code, { id: m.id, category: m.category, no_qr_tracking: m.no_qr_tracking }])
+      .select('id, material_code, category').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null }>(
+      ((mats ?? []) as { id: string; material_code: string; category: string | null }[])
+        .map(m => [m.material_code, { id: m.id, category: m.category }])
     )
     const missing = allCodes.filter(c => !matMap.has(c))
     if (missing.length) return fail(res, `Mã hàng chưa có trong hệ thống: ${missing.join(', ')}`, 400)
-    const notEligible = allCodes.filter(c => !effectiveNoQr(matMap.get(c)!.no_qr_tracking, whMode))
-    if (notEligible.length) return fail(res, 422, 'NOT_NO_QR', `Mã có tem QR phải xuất bằng quét, không dùng được "Xuất luôn": ${notEligible.join(', ')}`)
 
     // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ)
     const { data: pools } = await supabase.from('InventoryEntry')
@@ -614,7 +619,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     const actor = req.user?.name || null
     const ins = await insertGdoNextCode(prefix, {
       id: gdoId, planned_date: delivery_date, delivery_date,
-      warehouse_id, dvvt: dvvtRes.name,
+      warehouse_id, dvvt: dvvtName,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
@@ -838,12 +843,13 @@ export async function updateGDO(req: Request, res: Response) {
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
 
+    // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
-    if (!dvvtRes.ok) return fail(res, `ĐVVT "${dvvt}" không khớp danh mục — kiểm tra lại mã/tên ĐVVT`, 400)
+    const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
     const t = now()
     const gdoUpdates: Record<string, unknown> = {
-      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvtRes.name, updated_at: t,
+      delivery_date, warehouse_id: warehouse_id ?? null, dvvt: dvvtName, updated_at: t,
     }
     if ('gate_registration_id' in req.body) gdoUpdates.gate_registration_id = gate_registration_id ?? null
     if ('shipto_party' in req.body) gdoUpdates.shipto_party = shipto_party ?? null

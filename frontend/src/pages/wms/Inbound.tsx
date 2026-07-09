@@ -507,6 +507,13 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
       if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
       if (nccDuplicateCodes.size > 0) { setNccErr(`Mã hàng bị trùng (đã có trong nhóm): ${[...nccDuplicateCodes].join(', ')}`); return }
+      // Dòng THÊM MỚI: gõ mã không khớp danh mục / có mã nhưng thiếu số lượng → chặn TRƯỚC khi lưu
+      {
+        const invalidNew = nccRows.filter(r => r.material_code.trim() && !r.material_id)
+        if (invalidNew.length) { setNccErr(`Mã hàng không hợp lệ (chưa khớp danh mục): ${invalidNew.map(r => r.material_code).join(', ')}`); return }
+        const noQtyNew = nccRows.filter(r => r.material_id && (!r.planned_qty || Number(r.planned_qty) <= 0))
+        if (noQtyNew.length) { setNccErr(`Thiếu số lượng ở mã: ${noQtyNew.map(r => r.material_code).join(', ')}`); return }
+      }
       setNccSaving(true); setNccErr('')
       try {
         await Promise.all(
@@ -551,8 +558,14 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       setNccErr(`NCC này đã có phiếu ${[...new Set(takenSameNcc.map(t => t.code))].join(', ')} trên lượt xe này — mở phiếu đó và dùng "Sửa nhóm" để thêm hàng`)
       return
     }
+    // Gõ mã không khớp danh mục → chặn (không bỏ qua im lặng)
+    const invalidRows = nccRows.filter(r => r.material_code.trim() && !r.material_id)
+    if (invalidRows.length) { setNccErr(`Mã hàng không hợp lệ (chưa khớp danh mục): ${invalidRows.map(r => r.material_code).join(', ')}`); return }
     const validRows = nccRows.filter(r => r.material_id)
     if (!validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    // Mỗi mã phải có số lượng > 0
+    const noQtyRows = validRows.filter(r => !r.planned_qty || Number(r.planned_qty) <= 0)
+    if (noQtyRows.length) { setNccErr(`Thiếu số lượng ở mã: ${noQtyRows.map(r => r.material_code).join(', ')}`); return }
     const dupCodes = new Set<string>()
     const seenCodes = new Set<string>()
     for (const r of validRows) {

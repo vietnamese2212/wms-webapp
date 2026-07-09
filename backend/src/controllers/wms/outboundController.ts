@@ -741,18 +741,11 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       material?: { material_code?: string | null; no_qr_tracking?: boolean | null } | null
     }>).filter(i => i.status !== 'COMPLETED')
 
-    const t = now()
     const actor = req.user?.name || null
-    // Tự Bắt đầu + Giao (nếu chưa) + gắn biển số
-    await supabase.from('GroupDeliveryOrder').update({
-      status: 'IN_PROGRESS',
-      license_plate: license_plate.trim(),
-      ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
-      ...(gdo.started_at  ? {} : { started_at: t }),
-      updated_by: actor, updated_at: t,
-    }).eq('id', gdoId)
-
+    // Ghi nhận từng mã TRƯỚC (trừ tồn). CHƯA đụng trạng thái GDO — nếu TẤT CẢ fail thì giữ nguyên PENDING
+    // để đơn vẫn xóa/sửa được (không kẹt "đã bắt đầu" khi chưa xuất được gì).
     const failed: { material_code: string; message: string }[] = []
+    let successCount = 0
     for (const item of pending) {
       const ctn = Number(item.cartons_ordered)
       const isSpecial = effectiveNoQr(item.material?.no_qr_tracking, whMode)
@@ -767,6 +760,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       }
       const t2 = now()
       await supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 }).eq('id', item.id)
+      successCount++
       if (isSpecial && matCode) {
         const { data: existingScan } = await supabase.from('OutboundScanEntry').select('id').eq('item_id', item.id).maybeSingle()
         if (existingScan) {
@@ -781,12 +775,31 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       }
     }
 
-    if (failed.length) {
-      const result = await fetchGDOFull(gdoId)
+    // Không xuất được mã nào → giữ GDO nguyên trạng (PENDING/…), báo lỗi để user sửa số/kho rồi thử lại.
+    if (successCount === 0) {
       return res.status(409).json({
         success: false,
-        error: { code: 'PARTIAL_EXPORT', message: `${failed.length} mã chưa xuất được — xử tiếp trên trang chuyến: ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}` },
-        data: result,
+        error: { code: 'INSUFFICIENT_STOCK', message: `Không xuất được — ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}` },
+        data: await fetchGDOFull(gdoId),
+      })
+    }
+
+    // Có xuất được → tự Bắt đầu + Giao (nếu chưa) + gắn biển số.
+    const t = now()
+    await supabase.from('GroupDeliveryOrder').update({
+      status: 'IN_PROGRESS',
+      license_plate: license_plate.trim(),
+      ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
+      ...(gdo.started_at  ? {} : { started_at: t }),
+      updated_by: actor, updated_at: t,
+    }).eq('id', gdoId)
+
+    // Còn mã thiếu tồn → đơn IN_PROGRESS (đã xuất một phần), user xử tiếp trên trang chuyến.
+    if (failed.length) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'PARTIAL_EXPORT', message: `Đã xuất ${successCount} mã; ${failed.length} mã chưa xuất được — xử tiếp trên trang chuyến: ${failed.map(f => `${f.material_code} (${f.message})`).join(' · ')}` },
+        data: await fetchGDOFull(gdoId),
       })
     }
 

@@ -854,28 +854,15 @@ export default function PalletLabels() {
               <div className="rounded-md bg-sky-50 border border-sky-200 p-2 text-[11px] text-sky-800">
                 Tem <b>chấm phẩy&nbsp;(;)</b> — sinh mã lô <b>Mã tắt + ngày NHẬP KHO + Máy + STT</b> (vd SI260612N021 nhập ngày 12/06/26). Mã tắt lấy từ ô “Mã tắt (mã lô)” của Mã hàng; NSX nằm riêng trên tem.
               </div>
-              <div className="space-y-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Loại hàng</Label>
-                  <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
-                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">Tất cả loại</SelectItem>
-                      {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Panel hẹp (lg:w-72) — 2 ô date xếp DỌC, đứng cạnh nhau sẽ bị cắt chữ dd/mm/yyyy */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
-                  <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
-                  <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
-                  <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
-                  <p className="text-[10px] text-slate-400">NSX in trên tem + tính HSD.</p>
-                </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Loại hàng</Label>
+                <Select value={genCat || '__all__'} onValueChange={v => { setGenCat(v === '__all__' ? '' : v); setMat(null) }}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Tất cả loại" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Tất cả loại</SelectItem>
+                    {categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Mã hàng <span className="text-red-500">*</span></Label>
@@ -916,6 +903,18 @@ export default function PalletLabels() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              {/* Nhóm ngày: Nhập kho → NSX → HSD (user chốt 10/07: 2 ngày đứng TRÊN HSD).
+                  Panel hẹp lg:w-72 — các ô date xếp DỌC, đứng cạnh nhau sẽ bị cắt chữ dd/mm/yyyy */}
+              <div className="space-y-1">
+                <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
+                <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
+                <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
+                <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                <p className="text-[10px] text-slate-400">NSX in trên tem + tính HSD.</p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">HSD <span className="text-red-500">*</span></Label>

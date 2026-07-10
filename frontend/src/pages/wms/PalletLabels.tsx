@@ -865,17 +865,16 @@ export default function PalletLabels() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
-                    <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
-                    <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
-                    <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
-                    <p className="text-[10px] text-slate-400">NSX trên tem + tính HSD.</p>
-                  </div>
+                {/* Panel hẹp (lg:w-72) — 2 ô date xếp DỌC, đứng cạnh nhau sẽ bị cắt chữ dd/mm/yyyy */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
+                  <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
+                  <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
+                  <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                  <p className="text-[10px] text-slate-400">NSX in trên tem + tính HSD.</p>
                 </div>
               </div>
               <div className="space-y-1">

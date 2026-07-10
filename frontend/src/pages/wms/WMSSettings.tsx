@@ -414,6 +414,7 @@ function TypeDialog({ type, open, onClose }: {
   const [isNcc,      setIsNcc]      = useState(m.is_ncc_goods ?? false)
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
+  const [useBatchChar, setUseBatchChar] = useState(!!(m.batch_char ?? '').trim())      // tick = loại dùng ký tự cố định
   const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
   const [err, setErr] = useState('')
@@ -426,9 +427,10 @@ function TypeDialog({ type, open, onClose }: {
     setErr('')
     const name = value.trim()
     if (!name) { setErr('Tên loại kho là bắt buộc'); return }
+    if (useBatchChar && !batchChar.trim()) { setErr('Đã tick dùng ký tự mã lô — nhập 1 ký tự (vd K)'); return }
     const meta: WhTypeMeta = {
       is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
-      batch_char: batchChar.trim().toUpperCase().slice(0, 1), badge_color: badge,
+      batch_char: useBatchChar ? batchChar.trim().toUpperCase().slice(0, 1) : '', badge_color: badge,
     }
     if (isEdit) {
       // Đổi TÊN = cascade toàn DB (Material/Vị trí/Khu vực/quyền NV/khung giờ/đơn hàng…) — xác nhận trước
@@ -496,13 +498,18 @@ function TypeDialog({ type, open, onClose }: {
               'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
           </div>
 
-          <div className="space-y-1">
-            <Label className="text-xs">Ký tự mã lô (tem chấm phẩy ; )</Label>
-            <Input value={batchChar} maxLength={1} className="w-16 uppercase"
-              onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
-            <p className="text-[11px] text-slate-400 leading-snug">
-              Sinh tem V2: ký tự này thế chỗ Máy trong mã lô — vd điền K thì mã lô ra SI260311<b>K</b>021. Để trống = chọn Máy tay (Thành phẩm).
-            </p>
+          <div className="space-y-1.5">
+            {flagRow('wt-batchchar', useBatchChar, v => { setUseBatchChar(v); if (!v) setBatchChar('') },
+              'Ký tự mã lô cố định (tem chấm phẩy ; )',
+              'Sinh tem V2: dùng 1 ký tự cố định của Loại kho thế chỗ Máy trong mã lô — vd điền K thì mã lô ra SI260311K021. Bỏ tick = chọn Máy tay khi sinh tem (Thành phẩm).')}
+            {useBatchChar && (
+              <div className="flex items-center gap-2 pl-6">
+                <Label className="text-xs shrink-0">Ký tự của loại này *</Label>
+                <Input value={batchChar} maxLength={1} className="w-14 uppercase text-center"
+                  autoFocus={!batchChar}
+                  onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">

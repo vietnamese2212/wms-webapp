@@ -65,13 +65,18 @@ router.put('/slot-templates/:id',    requirePerm('tms_slots', 'edit'),         s
 router.delete('/slot-templates/:id', requirePerm('tms_slots', 'delete'),       slotTemplate.deleteSlotTemplate)
 
 // TransportCompany (ĐVVT / NCC)
-router.get('/transport-companies',        requireAnyPerm(['tms_plan', 'view'], ['tms_companies', 'view'], ['tms_vehicles', 'view']), transportCompany.listTransportCompanies)
+// GET hở đọc có chủ đích (chỉ cần đăng nhập — verifyToken tầng app): danh mục NCC/ĐVVT được đọc chéo
+// ở khắp WMS (Inventory Sửa NCC + filter, Outbound chọn ĐVVT, Inbound scan resolve NCC, Materials
+// shelflife theo NCC, In tem NCC) — gate quyền TMS làm vai kho thuần bị 403 âm thầm → combobox rỗng.
+router.get('/transport-companies',        transportCompany.listTransportCompanies)
 router.post('/transport-companies',       requirePerm('tms_companies', 'create'),  transportCompany.createTransportCompany)
 router.put('/transport-companies/:id',    requirePerm('tms_companies', 'edit'),    transportCompany.updateTransportCompany)
 router.delete('/transport-companies/:id', requirePerm('tms_companies', 'delete'),  transportCompany.deleteTransportCompany)
 
 // Vehicle (Xe)
-router.get('/vehicles',        requireAnyPerm(['tms_plan', 'view'], ['tms_vehicles', 'view'], ['outbound', 'quick_export']), vehicle.listVehicles)
+// GET hở đọc có chủ đích như /transport-companies: biển số xe cần cho Outbound Bắt đầu/Xuất luôn,
+// gate, TMS — gate quyền TMS làm vai kho thuần 403 âm thầm (từng phải vá lẻ outbound.quick_export).
+router.get('/vehicles',        vehicle.listVehicles)
 router.post('/vehicles',       requirePerm('tms_vehicles', 'create'), vehicle.createVehicle)
 router.put('/vehicles/:id',    requirePerm('tms_vehicles', 'edit'),   vehicle.updateVehicle)
 router.delete('/vehicles/:id', requirePerm('tms_vehicles', 'delete'), vehicle.deleteVehicle)

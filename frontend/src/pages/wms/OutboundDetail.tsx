@@ -16,7 +16,7 @@ import { Card }    from '@/components/ui/card'
 import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { ActionBtn } from '@/components/shared/ActionBtn'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
@@ -1307,6 +1307,126 @@ export default function OutboundDetail() {
     }
   }
 
+  // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  const actionItems: ActionItem[] = []
+  if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit'))
+    actionItems.push({
+      key: 'edit', icon: PenSquare, label: 'Sửa đơn', tip: 'Sửa đơn (ngày, khách, mã hàng, số lượng)',
+      onClick: () => setShowEditGDO(true),
+    })
+  if (gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel'))
+    actionItems.push({
+      key: 'delete', icon: Trash2, label: 'Xóa đơn', tip: 'Xóa đơn (chỉ khi Chờ xuất — không hoàn tác được)',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+      onClick: handleDelete,
+    })
+  // Kho QTY/NONE: "Xuất luôn" 1 bước (nhập biển số → post + trừ tồn) — bỏ Giao đơn/Bắt đầu
+  if (canQuickExportHere)
+    actionItems.push({
+      key: 'quick-export', icon: Play, label: 'Xuất luôn',
+      tip: 'Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay',
+      primary: true, variant: 'success', busy: quickExporting,
+      onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) },
+    })
+  if (!gdo.assigned_at && can(perms, 'outbound', 'assign'))
+    actionItems.push({
+      key: 'assign', icon: ClipboardList, label: 'Giao đơn', tip: 'Giao đơn cho người phụ trách soạn hàng',
+      primary: true, busy: assigning,
+      onClick: () => setPendingConfirm({
+        title: 'Giao đơn',
+        message: `Xác nhận giao đơn ${gdo.group_code}?`,
+        onConfirm: () => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined }),
+      }),
+    })
+  if (canStart)
+    actionItems.push({
+      key: 'start', icon: Play, label: 'Bắt đầu', tip: 'Bắt đầu xuất hàng (nhập biển số, người xuất)',
+      primary: true, variant: 'default',
+      onClick: () => setShowStart(true),
+    })
+  // "Xác nhận nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
+  // Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành).
+  if (!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan'))
+    actionItems.push({
+      key: 'bulk-manual', icon: PenSquare, label: 'Xác nhận nhanh',
+      tip: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`,
+      className: 'border-green-300 text-green-700 hover:bg-green-50', busy: bulkSaving,
+      onClick: () => setPendingConfirm({
+        title: 'Xác nhận nhanh',
+        message: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch?`,
+        onConfirm: () => { void bulkManualSave() },
+      }),
+    })
+  // Kho QTY/NONE ẩn "Hoàn thành" — "Xuất luôn" đã gộp bước chốt chuyến (kể cả sau Bỏ HT)
+  if (!isQtyOrNone && gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete'))
+    actionItems.push({
+      key: 'complete', icon: CheckCircle2, label: 'Hoàn thành', tip: 'Hoàn thành chuyến (thực xuất phải khớp kế hoạch)',
+      primary: true, variant: 'success', busy: patching,
+      onClick: () => setPendingConfirm({
+        title: 'Hoàn thành',
+        message: `Xác nhận hoàn thành chuyến ${gdo.group_code}?`,
+        onConfirm: () => patchGDO({ id: gdo.id, status: 'COMPLETED' }),
+      }),
+    })
+  if (canManagePause && gdo.status === 'IN_PROGRESS')
+    actionItems.push({
+      key: 'pause', icon: Pause, label: 'Tạm dừng', tip: 'Tạm dừng chuyến — khóa quét/ghi nhận cho tới khi Tiếp tục',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: patching,
+      onClick: () => patchGDO({ id: gdo.id, status: 'PAUSED' }),
+    })
+  if (canManagePause && gdo.status === 'PAUSED')
+    actionItems.push({
+      key: 'resume', icon: Play, label: 'Tiếp tục', tip: 'Tiếp tục chuyến đang tạm dừng',
+      primary: true, variant: 'success', busy: patching,
+      onClick: () => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' }),
+    })
+  if (hasScanEntries)
+    actionItems.push({
+      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet',
+      tip: hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng',
+      className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
+      onClick: toggleExpandAll,
+    })
+  // In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái)
+  actionItems.push({
+    key: 'print', icon: Printer, label: 'In phiếu', tip: 'In Phiếu xuất kho (A4)',
+    className: 'text-slate-600',
+    onClick: () => {
+      if (!printDeliveryNote(gdo, user?.name))
+        setBulkErr('Trình duyệt chặn cửa sổ in — cho phép popup cho trang này rồi bấm lại')
+    },
+  })
+  // ── Undo actions ──
+  if (can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED') {
+    const ts = gdo.transfer_status as string | null
+    const tsLabel: Record<string, string> = { IN_TRANSIT: 'Đang vận chuyển', RECEIVING: 'Đang nhận', DELIVERED: 'Đã giao' }
+    const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
+    actionItems.push({
+      key: 'uncomplete', icon: RotateCcw, label: 'Bỏ hoàn thành',
+      tip: blockedByTransfer
+        ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
+        : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành để sửa — lệnh TMS + booking GIỮ NGUYÊN (hiện "Kho đang sửa"), hoàn thành lại sẽ đồng bộ vào chính lệnh đó'
+        : 'Bỏ hoàn thành chuyến để sửa lại',
+      className: 'border-slate-300 text-slate-500 disabled:opacity-40',
+      disabled: blockedByTransfer, busy: uncompleting,
+      onClick: () => doUndo((id, opts) => uncompleteGDO(id, opts)),
+    })
+  }
+  if (can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED')
+    actionItems.push({
+      key: 'unstart', icon: RotateCcw, label: 'Gỡ bắt đầu',
+      tip: hasBlockingScans ? 'Xóa hết QR đã quét trước rồi mới gỡ bắt đầu được' : 'Gỡ bắt đầu — đơn quay về Chờ xuất',
+      className: 'border-slate-300 text-slate-500 disabled:opacity-40',
+      disabled: hasBlockingScans, busy: unstarting,
+      onClick: () => doUndo((id, opts) => unstartGDO(id, opts)),
+    })
+  if (can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at)
+    actionItems.push({
+      key: 'unassign', icon: RotateCcw, label: 'Gỡ giao đơn', tip: 'Gỡ giao đơn — bỏ người phụ trách đã gán',
+      className: 'border-slate-300 text-slate-500', busy: unassigning,
+      onClick: () => doUndo((id, opts) => unassignGDO(id, opts)),
+    })
+
   return (
     <>
       {showStart && (
@@ -1362,8 +1482,8 @@ export default function OutboundDetail() {
         {/* ── Header: ~20% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
 
-          {/* Row 1: back + code + status + buttons */}
-          <div className="flex items-center justify-between gap-2">
+          {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
+          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
             <div className="flex items-center gap-1.5 min-w-0">
               <button onClick={() => navigate('/wms/outbound')}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
@@ -1382,114 +1502,7 @@ export default function OutboundDetail() {
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
             </div>
-            <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
-              {/* ── Edit / Delete ── */}
-              {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit') && (
-                <ActionBtn icon={PenSquare} label="Sửa" tip="Sửa đơn (ngày, khách, mã hàng, số lượng)"
-                  onClick={() => setShowEditGDO(true)} />
-              )}
-              {gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel') && (
-                <ActionBtn icon={Trash2} label="Xóa đơn" tip="Xóa đơn (chỉ khi Chờ xuất — không hoàn tác được)"
-                  className="border-red-200 text-red-600 hover:bg-red-50"
-                  onClick={handleDelete} />
-              )}
-              {/* ── Forward actions ── */}
-              {/* Kho QTY/NONE: "Xuất luôn" 1 bước (nhập biển số → post + trừ tồn) — bỏ Giao đơn/Bắt đầu */}
-              {canQuickExportHere && (
-                <ActionBtn icon={Play} label="Xuất luôn" tip="Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay"
-                  primary variant="success" busy={quickExporting}
-                  onClick={() => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) }} />
-              )}
-              {!gdo.assigned_at && can(perms, 'outbound', 'assign') && (
-                <ActionBtn icon={ClipboardList} label="Giao đơn" tip="Giao đơn cho người phụ trách soạn hàng"
-                  primary busy={assigning}
-                  onClick={() => setPendingConfirm({
-                    title: 'Giao đơn',
-                    message: `Xác nhận giao đơn ${gdo.group_code}?`,
-                    onConfirm: () => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined }),
-                  })} />
-              )}
-              {canStart && (
-                <ActionBtn icon={Play} label="Bắt đầu" tip="Bắt đầu xuất hàng (nhập biển số, người xuất)"
-                  primary variant="default" onClick={() => setShowStart(true)} />
-              )}
-              {/* "Xác nhận nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
-                  Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành). */}
-              {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan') && (
-                <ActionBtn icon={PenSquare} label="Xác nhận nhanh"
-                  tip={`Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`}
-                  className="border-green-300 text-green-700 hover:bg-green-50"
-                  busy={bulkSaving}
-                  onClick={() => setPendingConfirm({
-                    title: 'Xác nhận nhanh',
-                    message: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch?`,
-                    onConfirm: () => { void bulkManualSave() },
-                  })} />
-              )}
-              {/* Kho QTY/NONE ẩn "Hoàn thành" — "Xuất luôn" đã gộp bước chốt chuyến (kể cả sau Bỏ HT) */}
-              {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
-                <ActionBtn icon={CheckCircle2} label="Hoàn thành" tip="Hoàn thành chuyến (thực xuất phải khớp kế hoạch)"
-                  primary variant="success" busy={patching}
-                  onClick={() => setPendingConfirm({
-                    title: 'Hoàn thành',
-                    message: `Xác nhận hoàn thành chuyến ${gdo.group_code}?`,
-                    onConfirm: () => patchGDO({ id: gdo.id, status: 'COMPLETED' }),
-                  })} />
-              )}
-              {canManagePause && gdo.status === 'IN_PROGRESS' && (
-                <ActionBtn icon={Pause} label="Tạm dừng" tip="Tạm dừng chuyến — khóa quét/ghi nhận cho tới khi Tiếp tục"
-                  className="border-red-200 text-red-600 hover:bg-red-50" busy={patching}
-                  onClick={() => patchGDO({ id: gdo.id, status: 'PAUSED' })} />
-              )}
-              {canManagePause && gdo.status === 'PAUSED' && (
-                <ActionBtn icon={Play} label="Tiếp tục" tip="Tiếp tục chuyến đang tạm dừng"
-                  primary variant="success" busy={patching}
-                  onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })} />
-              )}
-              {hasScanEntries && (
-                <ActionBtn icon={ChevronDown} label={hasAnyExpanded ? 'Thu gọn' : 'Xem pallet'}
-                  tip={hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng'}
-                  className={`text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`}
-                  onClick={toggleExpandAll} />
-              )}
-              {/* In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái) */}
-              <ActionBtn icon={Printer} label="In phiếu" tip="In Phiếu xuất kho (A4)"
-                className="text-slate-600"
-                onClick={() => {
-                  if (!printDeliveryNote(gdo, user?.name))
-                    setBulkErr('Trình duyệt chặn cửa sổ in — cho phép popup cho trang này rồi bấm lại')
-                }} />
-
-              {/* ── Undo actions ── */}
-              {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (() => {
-                const ts = gdo.transfer_status as string | null
-                const tsLabel: Record<string, string> = { IN_TRANSIT: 'Đang vận chuyển', RECEIVING: 'Đang nhận', DELIVERED: 'Đã giao' }
-                const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
-                const tooltip = blockedByTransfer
-                  ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
-                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành để sửa — lệnh TMS + booking GIỮ NGUYÊN (hiện "Kho đang sửa"), hoàn thành lại sẽ đồng bộ vào chính lệnh đó'
-                  : 'Bỏ hoàn thành chuyến để sửa lại'
-                return (
-                  <ActionBtn icon={RotateCcw} label="Bỏ hoàn thành" tip={tooltip}
-                    className="border-slate-300 text-slate-500 disabled:opacity-40"
-                    disabled={blockedByTransfer} busy={uncompleting}
-                    onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))} />
-                )
-              })()}
-              {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
-                <ActionBtn icon={RotateCcw} label="Gỡ bắt đầu"
-                  tip={hasBlockingScans ? 'Xóa hết QR đã quét trước rồi mới gỡ bắt đầu được' : 'Gỡ bắt đầu — đơn quay về Chờ xuất'}
-                  className="border-slate-300 text-slate-500 disabled:opacity-40"
-                  disabled={hasBlockingScans} busy={unstarting}
-                  onClick={() => doUndo((id, opts) => unstartGDO(id, opts))} />
-              )}
-              {can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at && (
-                <ActionBtn icon={RotateCcw} label="Gỡ giao đơn" tip="Gỡ giao đơn — bỏ người phụ trách đã gán"
-                  className="border-slate-300 text-slate-500"
-                  busy={unassigning}
-                  onClick={() => doUndo((id, opts) => unassignGDO(id, opts))} />
-              )}
-            </div>
+            <ActionCluster items={actionItems} />
           </div>
 
           {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}

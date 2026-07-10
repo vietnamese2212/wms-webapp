@@ -11,7 +11,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
-import { ActionBtn } from '@/components/shared/ActionBtn'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -518,21 +518,21 @@ export default function Outbound() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <div className="flex gap-1.5 shrink-0">
-            {can(perms, 'outbound', 'prepare') && (
-              <ActionBtn icon={PackageCheck} label="Chuẩn bị hàng" tip="Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)"
-                onClick={() => navigate('/wms/outbound/prepare')} />
-            )}
-            {can(perms, 'outbound', 'create') && (
-              <ActionBtn icon={PenSquare} label="Tạo đơn" tip="Tạo đơn xuất thủ công" primary
-                onClick={() => setShowCreate(true)} />
-            )}
-            {can(perms, 'outbound', 'import') && (
-              <ActionBtn icon={Upload} label="Upload Excel" tip="Upload kế hoạch xuất từ file Excel"
-                className="max-sm:hidden"
-                onClick={() => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) }} />
-            )}
-          </div>
+          <ActionCluster className="shrink-0" items={[
+            ...(can(perms, 'outbound', 'prepare') ? [{
+              key: 'prepare', icon: PackageCheck, label: 'Chuẩn bị hàng', tip: 'Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)',
+              onClick: () => navigate('/wms/outbound/prepare'),
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'outbound', 'create') ? [{
+              key: 'create', icon: PenSquare, label: 'Tạo đơn', tip: 'Tạo đơn xuất thủ công', primary: true,
+              onClick: () => setShowCreate(true),
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'outbound', 'import') ? [{
+              key: 'upload', icon: Upload, label: 'Upload Excel', tip: 'Upload kế hoạch xuất từ file Excel',
+              mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ max-sm:hidden)
+              onClick: () => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) },
+            } satisfies ActionItem] : []),
+          ]} />
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
         </div>
 

@@ -41,7 +41,7 @@ export function SavedViews({ module, currentFilters, onApply, activeId }: {
   return (
     <div ref={ref} className="relative shrink-0">
       <button type="button" onClick={() => setOpen(v => !v)}
-        className={`h-7 px-2 inline-flex items-center gap-1 rounded-md border text-xs font-medium transition-colors ${
+        className={`h-9 sm:h-7 px-2.5 sm:px-2 inline-flex items-center gap-1 rounded-md border text-xs font-medium transition-colors ${
           activeId ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
         }`}>
         <Bookmark className={`h-3.5 w-3.5 ${activeId ? 'fill-blue-500 text-blue-500' : ''}`} />

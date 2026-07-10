@@ -91,8 +91,9 @@ export function ActionCluster({ items, className }: { items: ActionItem[]; class
       <div className={cn('hidden sm:flex items-center gap-1 flex-wrap justify-end', className)}>
         {items.map(({ key, danger: _d, mobileHidden: _m, ...i }) => <ActionBtn key={key} {...i} />)}
       </div>
-      {/* Mobile: nút chính icon + CHỮ, nút phụ gom vào menu ⋮ */}
-      <div className={cn('flex sm:hidden items-center gap-1.5', className)}>
+      {/* Mobile: nút chính icon + CHỮ bên trái; menu ⋮ GHIM CỐ ĐỊNH mép phải (w-full + ml-auto)
+          — vị trí ⋮ không xê dịch theo số nút chính của từng công đoạn */}
+      <div className={cn('flex sm:hidden items-center gap-1.5 w-full', className)}>
         {primaries.map(i => (
           <Button key={i.key} variant={i.variant ?? 'outline'} size="sm"
             disabled={i.disabled || i.busy} onClick={i.onClick}
@@ -105,7 +106,7 @@ export function ActionCluster({ items, className }: { items: ActionItem[]; class
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" aria-label="Thao tác khác"
-                className="!min-h-0 !min-w-0 h-9 w-9 p-0 rounded-md shrink-0">
+                className="!min-h-0 !min-w-0 h-9 w-9 p-0 rounded-md shrink-0 ml-auto">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>

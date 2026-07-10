@@ -163,8 +163,9 @@ function MobileFilterSheet({ defs, activeCount, onClearAll, className }: {
 
   return (
     <>
+      {/* Nút hiện chủ yếu trên mobile (page truyền sm:hidden) — h-9 khớp cỡ control mobile chuẩn */}
       <button type="button" onClick={() => setOpen(true)}
-        className={`h-7 px-2 inline-flex items-center justify-center gap-1 rounded-md border text-xs font-medium transition-colors ${
+        className={`h-9 sm:h-7 px-2.5 sm:px-2 inline-flex items-center justify-center gap-1 rounded-md border text-xs font-medium transition-colors ${
           activeCount > 0 ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 bg-white'
         } ${className ?? ''}`}>
         <SlidersHorizontal className="h-3.5 w-3.5" />

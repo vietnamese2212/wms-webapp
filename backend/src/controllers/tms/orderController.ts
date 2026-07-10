@@ -865,6 +865,40 @@ export async function getInboundReport(req: Request, res: Response) {
 }
 
 // POST /api/tms/orders/:id/confirm-receipt  — NPP xác nhận nhận hàng → tạo ProductionImport
+// NSX breakdown từ tem đã quét xuất ở kho nguồn: material_id → các dòng (NSX, Σ thùng, số pallet).
+// Kho nhận QTY_DATE dùng để tách 1 phiếu nhập / (mã × NSX) — người nhận không phải nhìn tem gõ NSX,
+// và 1 lần 1 mã nhận được NHIỀU date. Hàng no-QR (tem không có / production_date null) → dòng nsx=null.
+type TransferNsxLine = { nsx: string | null; cartons: number; pallets: number }
+async function transferNsxBreakdown(
+  items: { id: string; material_id: string | null }[],
+  materialCodeById: Map<string, string | null>,
+): Promise<Map<string, TransferNsxLine[]>> {
+  const itemMat = new Map(items.map(i => [i.id, i.material_id]))
+  const scans = await fetchAllByIdChunks(items.map(i => i.id), chunk => supabase.from('OutboundScanEntry')
+    .select('item_id, pallet_code, cartons_scanned, production_date').in('item_id', chunk).order('id'))
+  const byKey = new Map<string, { material_id: string; nsx: string | null; cartons: number; palletCodes: Set<string> }>()
+  for (const s of (scans ?? []) as { item_id: string; pallet_code: string | null; cartons_scanned: number | null; production_date: string | null }[]) {
+    const mid = itemMat.get(s.item_id)
+    if (!mid) continue
+    const nsx = s.production_date ? String(s.production_date).slice(0, 10) : null
+    const key = `${mid}|${nsx ?? ''}`
+    const cur = byKey.get(key) ?? { material_id: mid, nsx, cartons: 0, palletCodes: new Set<string>() }
+    cur.cartons += Number(s.cartons_scanned) || 0
+    // Đếm pallet thật để đối chiếu tem khi nhận (hàng no-QR ghi pallet_code = mã hàng → không phải tem)
+    if (s.pallet_code && s.pallet_code !== materialCodeById.get(mid)) cur.palletCodes.add(s.pallet_code)
+    byKey.set(key, cur)
+  }
+  const out = new Map<string, TransferNsxLine[]>()
+  for (const g of byKey.values()) {
+    if (g.cartons <= 0) continue
+    const list = out.get(g.material_id) ?? []
+    list.push({ nsx: g.nsx, cartons: g.cartons, pallets: g.palletCodes.size })
+    out.set(g.material_id, list)
+  }
+  for (const list of out.values()) list.sort((a, b) => ((a.nsx ?? '9999-99-99') < (b.nsx ?? '9999-99-99') ? -1 : 1))
+  return out
+}
+
 export async function confirmTransferReceipt(req: Request, res: Response) {
   try {
     const { id } = req.params
@@ -872,14 +906,14 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
 
     const { data: tmsOrder } = await supabase.from('TmsOrder')
-      .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name, parent_warehouse_id)')
+      .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name, parent_warehouse_id, inventory_mode)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
     if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
 
     const gdoId = tmsOrder.transfer_gdo_id as string
-    const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string; parent_warehouse_id: string | null }
+    const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string; parent_warehouse_id: string | null; inventory_mode: string | null }
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
       .select('id, status, transfer_status, warehouse_id').eq('id', gdoId).single()
@@ -918,16 +952,34 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (!doIds.length) return fail(res, 'GDO không có đơn giao hàng', 400)
 
     const { data: items } = await supabase.from('OutboundItem')
-      .select('material_id, cartons_ordered, material_type, material:Material(category)').in('do_id', doIds)
+      .select('id, material_id, cartons_ordered, material_type, material:Material(category, material_code)').in('do_id', doIds)
 
-    const matMap = new Map<string, { material_id: string; cartons: number; category: string | null }>()
+    const matMap = new Map<string, { material_id: string; cartons: number; category: string | null; material_code: string | null }>()
     for (const item of (items ?? []) as any[]) {
       if (!item.material_id) continue
       if (!matMap.has(item.material_id))
-        matMap.set(item.material_id, { material_id: item.material_id, cartons: 0, category: item.material?.category ?? null })
+        matMap.set(item.material_id, { material_id: item.material_id, cartons: 0, category: item.material?.category ?? null, material_code: item.material?.material_code ?? null })
       matMap.get(item.material_id)!.cartons += item.cartons_ordered || 0
     }
     if (!matMap.size) return fail(res, 'GDO không có mặt hàng hợp lệ', 400)
+
+    // Kho nhận QTY_DATE: tách phiếu theo (mã × NSX) kế thừa từ tem quét xuất — Σ thùng theo THỰC QUÉT
+    // từng NSX; mã không có tem quét (GDO cũ) → giữ 1 phiếu theo KH, NSX gõ tay lúc nhận.
+    type ImportLine = { material_id: string; cartons: number; pallets: number; category: string | null; nsx: string | null }
+    let importLines: ImportLine[] = [...matMap.values()]
+      .map(m => ({ material_id: m.material_id, cartons: m.cartons, pallets: 0, category: m.category, nsx: null }))
+    if (nppWh.inventory_mode === 'QTY_DATE') {
+      const matCodeById = new Map([...matMap.values()].map(m => [m.material_id, m.material_code]))
+      const nsxByMat = await transferNsxBreakdown(
+        ((items ?? []) as { id: string; material_id: string | null }[]).map(i => ({ id: i.id, material_id: i.material_id })),
+        matCodeById)
+      importLines = [...matMap.values()].flatMap(m => {
+        const lines = nsxByMat.get(m.material_id)
+        if (!lines?.length)
+          return [{ material_id: m.material_id, cartons: m.cartons, pallets: 0, category: m.category, nsx: null as string | null }]
+        return lines.map(l => ({ material_id: m.material_id, cartons: l.cartons, pallets: l.pallets, category: m.category, nsx: l.nsx }))
+      })
+    }
 
     const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     const [vy, vm, vd] = vnDate.split('-')
@@ -944,19 +996,20 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
         return isNaN(n) ? max : Math.max(max, n)
       }, 0)
 
-      const toInsert = [...matMap.values()].map((m, idx) => ({
+      const toInsert = importLines.map((m, idx) => ({
         id: randomUUID(),
         import_code: `${importPrefix}${String(maxSeq + idx + 1).padStart(2, '0')}`,
         warehouse_id: tmsOrder.destination_warehouse_id,
         material_id: m.material_id,
         planned_cartons: m.cartons,
-        planned_pallets: 0,
+        planned_pallets: m.pallets,
         status: 'OPEN',
         source_type: 'TRANSFER',
         warehouse_type: m.category ?? null,
         import_date: vnDate,
         from_gdo_id: gdoId,
         tms_order_id: id,
+        transfer_production_date: m.nsx,
         updated_at: t,
       }))
       const { error: insertError } = await supabase.from('ProductionImport').insert(toInsert)
@@ -987,7 +1040,7 @@ export async function createOneInbound(req: Request, res: Response) {
 
     const t = new Date().toISOString()
     const { data: tmsOrder } = await supabase.from('TmsOrder')
-      .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code)')
+      .select('id, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, inventory_mode)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh không phải chuyển kho', 400)
@@ -1009,15 +1062,26 @@ export async function createOneInbound(req: Request, res: Response) {
       .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
     const doIds = (dos ?? []).map((d: { id: string }) => d.id)
     let plannedCartons = 0
+    let matItems: { id: string; material_id: string | null }[] = []
     if (doIds.length > 0) {
       const { data: items } = await supabase.from('OutboundItem')
-        .select('cartons_ordered').in('do_id', doIds).eq('material_id', material_id)
+        .select('id, cartons_ordered').in('do_id', doIds).eq('material_id', material_id)
       plannedCartons = (items ?? []).reduce((s: number, i: { cartons_ordered: number }) => s + (i.cartons_ordered || 0), 0)
+      matItems = ((items ?? []) as { id: string }[]).map(i => ({ id: i.id, material_id }))
     }
 
     // Lấy category của material
     const { data: mat } = await supabase.from('Material')
-      .select('category').eq('id', material_id).maybeSingle()
+      .select('category, material_code').eq('id', material_id).maybeSingle()
+
+    // Kho nhận QTY_DATE → tách dòng theo NSX từ tem quét xuất (như confirmTransferReceipt)
+    const destMode = (tmsOrder.warehouse as unknown as { inventory_mode?: string | null })?.inventory_mode ?? null
+    let lines: TransferNsxLine[] = [{ nsx: null, cartons: plannedCartons, pallets: 0 }]
+    if (destMode === 'QTY_DATE' && matItems.length) {
+      const nsxByMat = await transferNsxBreakdown(matItems, new Map([[material_id, (mat as any)?.material_code ?? null]]))
+      const found = nsxByMat.get(material_id)
+      if (found?.length) lines = found
+    }
 
     // Generate import_code
     const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1032,21 +1096,22 @@ export async function createOneInbound(req: Request, res: Response) {
       return isNaN(n) ? max : Math.max(max, n)
     }, 0)
 
-    const { data: created, error } = await supabase.from('ProductionImport').insert({
+    const { data: created, error } = await supabase.from('ProductionImport').insert(lines.map((l, idx) => ({
       id:              randomUUID(),
-      import_code:     `${prefix}${String(maxSeq + 1).padStart(2, '0')}`,
+      import_code:     `${prefix}${String(maxSeq + idx + 1).padStart(2, '0')}`,
       warehouse_id:    tmsOrder.destination_warehouse_id,
       material_id,
-      planned_cartons: plannedCartons || null,
-      planned_pallets: 0,
+      planned_cartons: l.cartons || null,
+      planned_pallets: l.pallets,
       status:          'OPEN',
       source_type:     'TRANSFER',
       warehouse_type:  (mat as any)?.category ?? null,
       import_date:     vnDate,
       from_gdo_id:     tmsOrder.transfer_gdo_id,
       tms_order_id:    id,
+      transfer_production_date: l.nsx,
       updated_at:      t,
-    }).select('id, import_code, status, material_id').maybeSingle()
+    }))).select('id, import_code, status, material_id')
     if (error) throw error
 
     return ok(res, created, 201)

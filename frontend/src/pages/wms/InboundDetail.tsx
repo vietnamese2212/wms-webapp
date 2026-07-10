@@ -32,7 +32,7 @@ import { useActiveInboundStore }  from '@/stores/activeInboundStore'
 import { statusText } from '@/lib/rowStatus'
 import { inboundKey, inboundGroupKey } from './Inbound'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { inboundOrderStatusLabel, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
@@ -246,9 +246,11 @@ export default function InboundDetail() {
   function handleManualSave() {
     const c = Number(manualCartons)
     if (!manualCartons || isNaN(c) || c < 0) { setManualFeedback({ type: 'error', msg: 'Nhập số thùng hợp lệ' }); return }
-    if (whQtyDate && !manualProdDate) { setManualFeedback({ type: 'error', msg: 'Kho theo dõi tồn theo date — nhập NSX' }); return }
+    // Phiếu chuyển kho đã gắn NSX (kế thừa tem quét xuất) → BE dùng NSX phiếu, không cần gõ
+    const phieuNsx = order?.transfer_production_date ?? null
+    if (whQtyDate && !phieuNsx && !manualProdDate) { setManualFeedback({ type: 'error', msg: 'Kho theo dõi tồn theo date — nhập NSX' }); return }
     saveManual(
-      { orderId: order!.id, cartons: c, employee_id: user?.id, ...(whQtyDate ? { production_date: manualProdDate } : {}) },
+      { orderId: order!.id, cartons: c, employee_id: user?.id, ...(whQtyDate ? { production_date: phieuNsx ?? manualProdDate } : {}) },
       {
         onSuccess: () => { setManualFeedback(null); setShowManualDialog(false) },
         onError: (err) => {
@@ -410,16 +412,24 @@ export default function InboundDetail() {
           <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
             {whQtyDate && (
-              <div className="space-y-1.5">
-                <p className="text-xs text-slate-500">NSX (ngày sản xuất) <span className="text-red-500">*</span></p>
-                <Input
-                  type="date"
-                  value={manualProdDate}
-                  onChange={e => setManualProdDate(e.target.value)}
-                  className="h-9"
-                />
-                <p className="text-[10px] text-slate-400">Kho theo dõi tồn theo date — mỗi NSX là 1 dòng tồn riêng (xuất trừ FEFO)</p>
-              </div>
+              order?.transfer_production_date ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-500">NSX (ngày sản xuất)</p>
+                  <p className="text-sm font-semibold text-indigo-700">{formatDate(order.transfer_production_date)}</p>
+                  <p className="text-[10px] text-slate-400">NSX kế thừa từ tem pallet đã quét xuất ở kho nguồn — không cần gõ tay</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-slate-500">NSX (ngày sản xuất) <span className="text-red-500">*</span></p>
+                  <Input
+                    type="date"
+                    value={manualProdDate}
+                    onChange={e => setManualProdDate(e.target.value)}
+                    className="h-9"
+                  />
+                  <p className="text-[10px] text-slate-400">Kho theo dõi tồn theo date — mỗi NSX là 1 dòng tồn riêng (xuất trừ FEFO)</p>
+                </div>
+              )
             )}
             <div className="space-y-1.5">
               <p className="text-xs text-slate-500">Số thùng thực nhập</p>
@@ -839,6 +849,8 @@ export default function InboundDetail() {
           { label: 'Pallet',    value: entries.length },
           { label: 'Thực nhập', value: `${totalScanned.toLocaleString()} thùng` },
           { label: 'Thùng KH',  value: order.planned_cartons != null ? `${order.planned_cartons}` : '—' },
+          // Phiếu chuyển kho vào kho QTY_DATE: 1 phiếu = 1 NSX (kế thừa tem quét xuất)
+          ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
         ]} />
 
         {/* ── Pallet table (~80%) ── */}

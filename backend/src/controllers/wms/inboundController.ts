@@ -59,7 +59,7 @@ async function guardInboundScope(req: Request, res: Response, id: string): Promi
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history, ncc_id,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history, ncc_id, transfer_production_date,
   warehouse:Warehouse(id, code, name, inventory_mode),
   ncc:TransportCompany!ncc_id(id, name),
   location:Location(id, location_code, sub_code, max_pallets),
@@ -1247,7 +1247,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, material:Material!material_id(material_code, category)')
+      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -1274,12 +1274,15 @@ export async function scanManual(req: Request, res: Response) {
     const cartonsNum = Math.max(0, Number(cartons) || 0)
     const warehouseId = (order as any).warehouse_id as string | null
 
-    // Kho QTY_DATE: pool tách theo NSX → nhập tay BẮT BUỘC có NSX (yyyy-mm-dd); mode khác bỏ qua field này.
+    // Kho QTY_DATE: pool tách theo NSX. Phiếu chuyển kho đã gắn NSX (transfer_production_date — kế thừa
+    // từ tem quét xuất ở kho nguồn) → dùng NSX của PHIẾU, người nhận không phải gõ; phiếu không gắn NSX
+    // (nhập tay/hàng no-QR không rõ NSX) → BẮT BUỘC body có production_date (yyyy-mm-dd). Mode khác bỏ qua.
     const { data: whRow } = warehouseId
       ? await supabase.from('Warehouse').select('inventory_mode').eq('id', warehouseId).maybeSingle()
       : { data: null }
     const whInvMode = (whRow as { inventory_mode?: string | null } | null)?.inventory_mode ?? null
-    const prodDate = whInvMode === 'QTY_DATE' ? String(production_date ?? '').slice(0, 10) : ''
+    const phieuNsx = ((order as { transfer_production_date?: string | null }).transfer_production_date ?? '').slice(0, 10)
+    const prodDate = whInvMode === 'QTY_DATE' ? (phieuNsx || String(production_date ?? '').slice(0, 10)) : ''
     if (whInvMode === 'QTY_DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(prodDate)) {
       return fail(res, 422, 'NSX_REQUIRED', 'Kho theo dõi tồn theo date — phải nhập NSX (ngày sản xuất) khi lưu thủ công')
     }

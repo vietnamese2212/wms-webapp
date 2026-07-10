@@ -2574,8 +2574,9 @@ export function useActiveImportsByGdo(gdoId?: string | null) {
       const { data } = await apiClient.get('/wms/inbound-orders', { params: { from_gdo_id: gdoId } })
       return data.data as {
         material_id: string; status: string; id: string; import_code: string
-        planned_cartons: number | null; total_cartons?: number
+        planned_cartons: number | null; planned_pallets?: number | null; total_cartons?: number
         posm_entry_id?: string | null
+        transfer_production_date?: string | null
         material?: { no_qr_tracking?: boolean | null } | null
       }[]
     },

@@ -6,8 +6,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { QRScanner } from '@/components/shared/QRScanner'
+import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -201,12 +200,7 @@ export default function PalletOps() {
     <div className="flex flex-col h-full sm:p-3">
       <style>{PALLET_PRINT_CSS}</style>
 
-      <Dialog open={scanFor !== null} onOpenChange={o => { if (!o) setScanFor(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-sm flex items-center gap-2"><QrCode className="h-4 w-4" />Quét QR pallet</DialogTitle></DialogHeader>
-          {scanFor !== null && <QRScanner onScan={handleScanned} onClose={() => setScanFor(null)} />}
-        </DialogContent>
-      </Dialog>
+      <QRScanDialog open={scanFor !== null} onClose={() => setScanFor(null)} onScan={handleScanned} title="Quét QR pallet" />
 
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Toolbar */}

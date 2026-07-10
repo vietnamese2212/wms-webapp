@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response'
 // SỔ CỜ (thêm cờ mới = thêm dòng vào KNOWN_SETTINGS + ghi chú ở đây):
 // - label_format: 'underscore' | 'semicolon' — định dạng tem pallet khi IN từ app.
 //     underscore (mặc định, đơn vị 1): ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
-//     semicolon  (đơn vị 2):           Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
+//     semicolon  (đơn vị 2):           Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút
 //   Chiều IN: quyết định format tem sinh. Chiều QUÉT inbound: cờ GATE format (getLabelFormat) —
 //   ';' chỉ nhận tem ';', '_' chỉ nhận tem '_' (mỗi đơn vị 1 format cố định; quét nhầm → chặn).
 

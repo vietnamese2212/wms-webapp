@@ -79,7 +79,7 @@ function toYymmdd(iso: string): string {
 function buildBatchV2(p: { prefix: string; yymmdd: string; machine: string; seq: number }): string {
   return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${String(p.seq).padStart(3, '0')}`
 }
-// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây (7 đoạn).
+// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút (7 đoạn).
 // QA + Giờ đệm space canh phải width 7 (giống "      1"); chỉ trim khi bóc tách/so khớp (normalizeQR).
 function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string; hour: number; minSec: string }): string {
   const qa = (p.qaOk ? '1' : '0').padStart(7, ' ')
@@ -280,8 +280,8 @@ export default function PalletLabels() {
   const [entryDateV2, setEntryDateV2] = useState<string>(TODAY)
   const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
   const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
-  const [hourV2, setHourV2]   = useState('1')     // Giờ SX (đoạn 6) — chọn 1..10
-  const [minSecV2, setMinSecV2] = useState('00:00') // Phút:giây SX (đoạn 7) — bắt buộc có trên tem
+  const [hourV2, setHourV2]   = useState('1')     // MẺ SX (đoạn 6) — chọn 1..10
+  const [minSecV2, setMinSecV2] = useState('00:00') // GIỜ:PHÚT SX (đoạn 7) — bắt buộc có trên tem
   const [hsdEdited, setHsdEdited] = useState(false)  // user đã sửa tay HSD → ngừng auto-đè
   const batchPrefix = (mat?.batch_prefix ?? '').trim().toUpperCase()
 
@@ -921,9 +921,10 @@ export default function PalletLabels() {
                 <Input type="date" className="h-8 text-sm w-full" value={hsdV2} onChange={e => { setHsdV2(e.target.value); setHsdEdited(true) }} />
                 <p className="text-[10px] text-slate-400">Tự tính NSX + hạn dùng mã{mat?.shelf_life_days != null ? ` (${mat.shelf_life_days} ngày)` : ''} — sửa được.</p>
               </div>
+              {/* Đoạn 6 = MẺ (số mẻ SX), đoạn 7 = GIỜ:PHÚT — user chỉnh nghĩa 10/07 (trước hiểu nhầm là giờ;phút:giây) */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Giờ SX</Label>
+                  <Label className="text-xs">Mẻ</Label>
                   <Select value={hourV2} onValueChange={setHourV2}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -932,7 +933,7 @@ export default function PalletLabels() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Phút:giây</Label>
+                  <Label className="text-xs">Giờ:Phút</Label>
                   <Input className="h-8 text-sm" placeholder="05:26" value={minSecV2} onChange={e => setMinSecV2(e.target.value)} />
                 </div>
               </div>

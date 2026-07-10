@@ -40,7 +40,7 @@ type ValidationResult =
   | { ok: true; msg: string }
   | { ok: false; msg: string }
 
-// Tem V2 (`;` — đơn vị 2): Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây — khớp backend parseInboundQR nhánh v2
+// Tem V2 (`;` — đơn vị 2): Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — khớp backend parseInboundQR nhánh v2
 function validateQRv2(raw: string, order: InboundOrder): ValidationResult {
   const parts = raw.trim().split(';').map(p => p.trim())
   if (parts.length < 5) {

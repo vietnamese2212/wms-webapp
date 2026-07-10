@@ -7,10 +7,11 @@
 //   Example NCC: 070526_<maPOSM>_C05_10008728_001_B
 //
 // V2 (đơn vị 2, delimiter `;`, nhà máy in cố định — các đoạn có PADDING SPACE phải trim):
-//   MaterialCode;QA;MãLô;NSX;HSD;Giờ;Phút:Giây
+//   MaterialCode;QA;MãLô;NSX;HSD;Mẻ;Giờ:Phút   (đoạn 6 = SỐ MẺ SX, đoạn 7 = giờ:phút — user chỉnh nghĩa 10/07)
 //   Example: 50033;      1;TA260705A045;05/07/2026;05/03/2027;      1;05:26
 //   - QA: 1=OK, khác 1 (0…)=X
-//   - Mã lô: <TắtHàng 2 ký tự><yymmdd><Máy 1 ký tự><SEQ 3 số> — Máy/SEQ trích được như V1
+//   - Mã lô: <TắtHàng 2 ký tự><yymmdd NGÀY NHẬP KHO><Máy 1 ký tự><SEQ 3 số> — Máy/SEQ trích được như V1;
+//     yymmdd là ngày NHẬP KHO (không phải NSX — NSX nằm riêng đoạn 4)
 //   - NSX/HSD: dd/mm/yyyy (parse theo THÀNH PHẦN — không toISOString từ local, tránh lệch -1 ngày)
 //   pallet_code = chuỗi CHUẨN HÓA (trim từng đoạn, nối lại `;`) → dedup/tra cứu ổn định.
 
@@ -28,7 +29,7 @@ export interface ParsedQR {
   qa_ok:              boolean | null  // đoạn 2: true=OK, false=X
   batch:              string | null   // đoạn 3: mã lô nguyên văn
   expiry_date:        Date | null     // đoạn 5: HSD
-  production_time:    string | null   // đoạn 6+7: "H:MM:SS"
+  production_time:    string | null   // đoạn 6+7 nối ':' — "Mẻ:Giờ:Phút" (lưu thô, không diễn giải)
   is_valid:           boolean
   error?:             string
 }

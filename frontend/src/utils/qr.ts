@@ -1,6 +1,6 @@
 // QR pallet — helper dùng chung FE, PHẢI khớp backend/src/utils/qrParser.ts
 // V1 (đơn vị 1, `_`): ddmmyy_Mã_ChuKỳ_Máy_Seq_NMSX
-// V2 (đơn vị 2, `;`): Mã hàng;QA(1=OK,0=X);Mã lô;NSX dd/mm/yyyy;HSD dd/mm/yyyy;Giờ;Phút:Giây
+// V2 (đơn vị 2, `;`): Mã hàng;QA(1=OK,0=X);Mã lô;NSX dd/mm/yyyy;HSD dd/mm/yyyy;Mẻ;Giờ:Phút
 //   Tem nhà máy đệm SPACE từng đoạn → pallet_code = chuỗi chuẩn hóa (trim từng đoạn, nối `;`).
 
 /** Chuẩn hóa chuỗi QR như backend normalizeQR — CHỈ trim NGOÀI, GIỮ đệm space bên trong (tem V2)
@@ -31,7 +31,7 @@ function validDdmmyy(d: string): boolean {
 export function isValidTem(raw: string): boolean {
   const s = (raw ?? '').trim()
   if (!s) return false
-  if (s.includes(';')) {                       // V2: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
+  if (s.includes(';')) {                       // V2: MãHàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút
     const p = s.split(';').map(x => x.trim())
     if (p.length < 7) return false
     const lot = p[2] ?? ''

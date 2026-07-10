@@ -50,7 +50,7 @@ export function buildBatchV2(p: { prefix: string; yymmdd: string; machine: strin
   const seqStr = Number.isNaN(n) ? String(p.seq) : String(n).padStart(3, '0')
   return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${seqStr}`
 }
-// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây (7 đoạn).
+// Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút (7 đoạn).
 // QA + Giờ ĐỆM SPACE canh phải width 7 (giống tem thật "      1") — KHÔNG trim khi in; chỉ trim khi bóc tách/so khớp (normalizeQR).
 export function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string; hour: number; minSec: string }): string {
   const qa = (p.qaOk ? '1' : '0').padStart(7, ' ')
@@ -75,7 +75,7 @@ const V2_BATCH_RE = /^[A-Z0-9]{2}\d{6}([A-Z])(\d{3})(\.\d+)?$/i
 export function parseCodeFields(code: string): CodeFields {
   const s = String(code ?? '').trim()
   if (s.includes(';')) {
-    const p = s.split(';').map(x => x.trim())   // Mã hàng;QA;Mã lô;NSX;HSD;Giờ;Phút:Giây
+    const p = s.split(';').map(x => x.trim())   // Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút
     const batch = p[2] ?? ''
     const m = V2_BATCH_RE.exec(batch)
     return {

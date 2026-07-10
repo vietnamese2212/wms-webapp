@@ -2313,13 +2313,13 @@ export function useSlotApplyInfo(params: { warehouse_id?: string; vehicle_type_i
   })
 }
 
-export function useTransportCompanies(onlyActive = false) {
+export function useTransportCompanies(onlyActive = false, type?: 'NCC' | 'ĐVVT') {
   return useQuery({
-    queryKey: ['tms-transport-companies', onlyActive],
+    queryKey: ['tms-transport-companies', onlyActive, type ?? ''],
     staleTime: 30 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/tms/transport-companies', {
-        params: onlyActive ? { is_active: 'true' } : {},
+        params: { ...(onlyActive ? { is_active: 'true' } : {}), ...(type ? { type } : {}) },
       })
       return data.data as TransportCompany[]
     },

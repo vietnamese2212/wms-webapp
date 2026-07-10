@@ -223,7 +223,7 @@ function NccPanel({ ids, material, onClose }: {
   const [expanded, setExpanded] = useState(false)
   const [error, setError]   = useState('')
   const { mutate, isPending } = useBulkUpdateInventoryNcc()
-  const { data: allCompanies = [] } = useTransportCompanies(true)
+  const { data: allCompanies = [] } = useTransportCompanies(true, 'NCC')   // chỉ NCC, không lấy ĐVVT
   const allNcc = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccName = (id: string) => allNcc.find(n => n.id === id)?.name ?? '(NCC?)'
   // Khi các pallet chọn cùng 1 mã hàng → ưu tiên hiện biến thể (NCC, shelflife) đã khai cho mã đó
@@ -654,7 +654,7 @@ export default function Inventory() {
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
   const { data: whTypes      = [] } = useScopedWhTypes()
-  const { data: allCompaniesF = [] } = useTransportCompanies(true)
+  const { data: allCompaniesF = [] } = useTransportCompanies(true, 'NCC')   // filter NCC — không lấy ĐVVT
   const nccFilterOpts = (allCompaniesF as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC').map(c => ({ value: c.id, label: c.name }))
   const categories = whTypes.map(t => t.value)
   const { data: facets } = useInventoryFacets({

@@ -30,7 +30,7 @@ export async function listTransportCompanies(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { is_active } = req.query as Record<string, string>
+    const { is_active, type } = req.query as Record<string, string>
     // Phân trang né cap ~1000 (danh mục NCC/ĐVVT tăng dần)
     const data = await fetchAllRowsParallel(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -38,6 +38,7 @@ export async function listTransportCompanies(req: Request, res: Response) {
       // ĐVVT user: chỉ thấy công ty của mình
       if (userNccId) q = q.eq('id', userNccId)
       if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
+      if (type) q = q.eq('type', type)   // 'NCC' | 'ĐVVT' — chỗ chỉ cần NCC (vd Sửa NCC tồn kho) khỏi kéo cả ĐVVT
       return q
     })
     return ok(res, data ?? [])

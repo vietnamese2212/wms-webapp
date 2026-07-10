@@ -1247,7 +1247,9 @@ function GDOFormBody({
     return inWh.size ? [...active].sort((a, b) => Number(inWh.has(b.name)) - Number(inWh.has(a.name))) : active
   }, [allVehicleTypes, vtByWarehouse])
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
-  const noVehicle = isNPP
+  // Chuyển nội bộ parent↔kho phụ (cùng site): xe nâng/đẩy tay — không cần Loại xe/ĐVVT
+  const internalPair = isInternalPairFE(warehouses as WarehouseLite[], warehouseId, shiptoPartyId)
+  const noVehicle = isNPP || internalPair
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
   const isMultiNpp = nppOptions.length > 1
@@ -1458,15 +1460,20 @@ function GDOFormBody({
                 })}
               />
             )}
-            {shiptoPartyId && (
+            {shiptoPartyId && (internalPair ? (
+              <div className="flex items-center gap-1.5 rounded bg-violet-50 border border-violet-200 px-2 py-1 text-[10px] text-violet-800">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>Chuyển <b>NỘI BỘ</b> · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — không cần ĐVVT/Loại xe/biển số; kho phụ chỉ bấm Nhận (không cần booking)</span>
+              </div>
+            ) : (
               <div className="flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-800">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
                 <span>Chuyển kho · Ship-to: <span className="font-mono font-semibold">{shiptoPartyId}</span> — Hoàn thành đơn sẽ tạo booking theo dõi vận chuyển (theo cài đặt Xác nhận giao hàng)</span>
               </div>
-            )}
+            ))}
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] font-medium text-slate-500">ĐVVT {mode === 'create' && <span className="text-red-500">*</span>}</label>
+            <label className="text-[10px] font-medium text-slate-500">ĐVVT {mode === 'create' && !internalPair && <span className="text-red-500">*</span>}{internalPair && <span className="text-slate-400"> (nội bộ — không bắt buộc)</span>}</label>
             {mode === 'edit' ? (
               <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-white text-slate-600">{dvvt || '—'}</div>
             ) : (
@@ -1744,8 +1751,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const quickFilled = items.filter(i => i.material_code.trim())
   // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (xe nâng/đẩy tay trong site)
   const internalPairCreate = isInternalPairFE(warehousesForCreate as WarehouseLite[], warehouseId, shiptoPartyId)
-  // Nút xuất luôn hiện khi: kho QTY/NONE + có mã + đủ ĐVVT + đủ Biển số (thiếu → chỉ nút Lưu; nội bộ không cần biển số)
-  const quickReady = showQuick && quickFilled.length > 0 && dvvt.trim() !== '' && (quickPlate.trim() !== '' || internalPairCreate)
+  // Nút xuất luôn hiện khi: kho QTY/NONE + có mã + đủ ĐVVT + đủ Biển số (thiếu → chỉ nút Lưu; nội bộ không cần cả hai)
+  const quickReady = showQuick && quickFilled.length > 0 && (dvvt.trim() !== '' || internalPairCreate) && (quickPlate.trim() !== '' || internalPairCreate)
 
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (khớp tên ĐVVT → công ty → lọc xe theo ncc_id)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
@@ -1763,8 +1770,9 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     if (!deliveryCode.trim()) return setError('Nhập Số DO')
     if (!warehouseType) return setError('Chọn loại kho')
     if (!customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!dvvt.trim())  return setError('Nhập đơn vị vận tải')
-    if (!isNPPCreate && !exportType) return setError('Chọn loại xe')
+    // Chuyển nội bộ parent↔kho phụ: không cần ĐVVT/Loại xe (xe nâng trong site)
+    if (!dvvt.trim() && !internalPairCreate)  return setError('Nhập đơn vị vận tải')
+    if (!isNPPCreate && !internalPairCreate && !exportType) return setError('Chọn loại xe')
     const filledItems = items.filter(i => i.material_code.trim())
     if (filledItems.length === 0) return setError('Nhập ít nhất một mã hàng')
     const seenCodes = new Set<string>()
@@ -1870,7 +1878,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
   // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (như form Tạo)
   const internalPairEdit = isInternalPairFE(warehousesForEdit as WarehouseLite[], warehouseId, shiptoPartyId)
-  const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && dvvt.trim() !== '' && (quickPlate.trim() !== '' || internalPairEdit)
+  const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && (dvvt.trim() !== '' || internalPairEdit) && (quickPlate.trim() !== '' || internalPairEdit)
 
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
@@ -1931,7 +1939,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     if (!date) return setError('Chọn ngày xuất')
     if (!isMultiNpp && !deliveryCode.trim()) return setError('Nhập Số DO')
     if (!isMultiNpp && !customerName.trim()) return setError('Nhập tên khách hàng')
-    if (!isNPPEdit && !exportType) return setError('Chọn loại xe')
+    if (!isNPPEdit && !internalPairEdit && !exportType) return setError('Chọn loại xe')
     for (const item of items) {
       if (!item.material_code.trim()) return setError('Chọn mã hàng cho tất cả dòng')
       if (!item.cartons || item.cartons <= 0) return setError('Số thùng phải > 0')

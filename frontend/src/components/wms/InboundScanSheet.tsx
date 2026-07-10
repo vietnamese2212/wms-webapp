@@ -11,6 +11,8 @@ import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, 
 import { playBeep } from '@/utils/audio'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
+import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import type { InboundOrder } from '@/types'
 
 // ─── Scan feedback banner ─────────────────────────────────────
@@ -123,7 +125,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   if (order.ncc_id && !variants.some(v => v.ncc_id === order.ncc_id)) {
     baseOpts.push({ key: `${order.ncc_id}|`, ncc_id: order.ncc_id, shelf: null, label: nccName(order.ncc_id) })
   }
-  const nccRelevant = isTransfer || !!order.ncc_id || variants.length > 0
+  // Cờ requires_ncc của Loại kho: pallet mới phải có NCC (chuyển kho kế thừa — không chặn)
+  const whTypeMeta = useWhTypeMetaMap()
+  const matCategory = (order.material as { category?: string | null } | undefined)?.category ?? ''
+  const nccRequired = !isTransfer && requiresNcc(matCategory, whTypeMeta)
+  const nccRelevant = isTransfer || !!order.ncc_id || variants.length > 0 || nccRequired
   // Mặc định: kế thừa (transfer) hoặc NCC của phiếu; nếu NCC đó chỉ 1 shelflife thì set luôn shelflife
   const ordVarsForNcc = order.ncc_id ? variants.filter(v => v.ncc_id === order.ncc_id) : []
   const initNcc   = isTransfer ? '' : (order.ncc_id ?? '')
@@ -235,7 +241,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
     scannerRef.current?.resume()
   }
 
-  const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking
+  // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
+  const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)
+  const nccMissing = nccRequired && !nccId && !v1AutoNcc
+  const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking && !nccMissing
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -278,7 +287,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
                   }}
                   className="h-8 flex-1 rounded-md border border-input bg-white px-2 text-xs"
                 >
-                  <option value="">{isTransfer ? '— Tự kế thừa từ pallet gốc —' : '— Không NCC —'}</option>
+                  <option value="">{isTransfer ? '— Tự kế thừa từ pallet gốc —' : nccRequired ? '— Chọn NCC (bắt buộc) —' : '— Không NCC —'}</option>
                   {baseOpts.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
                   {nccExpanded && allNcc.filter(n => !baseOpts.some(v => v.ncc_id === n.id)).map(n => (
                     <option key={n.id} value={`${n.id}|`}>{n.name}</option>
@@ -288,6 +297,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               <button type="button" onClick={() => setNccExpanded(x => !x)} className="ml-[2.75rem] text-[10px] text-sky-600 hover:underline">
                 {nccExpanded ? 'Thu gọn' : 'Mở rộng: tất cả NCC'}
               </button>
+              {nccMissing && (
+                <p className="ml-[2.75rem] text-[10px] text-red-600">
+                  Loại kho “{matCategory}” bắt buộc chọn NCC — chọn NCC rồi mới lưu được.
+                </p>
+              )}
             </div>
           )}
 

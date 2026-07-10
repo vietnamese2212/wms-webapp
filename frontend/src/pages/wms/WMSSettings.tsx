@@ -414,6 +414,7 @@ function TypeDialog({ type, open, onClose }: {
   const [isNcc,      setIsNcc]      = useState(m.is_ncc_goods ?? false)
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
+  const [reqNcc,     setReqNcc]     = useState(m.requires_ncc ?? false)
   const [useBatchChar, setUseBatchChar] = useState(!!(m.batch_char ?? '').trim())      // tick = loại dùng ký tự cố định
   const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
@@ -430,6 +431,7 @@ function TypeDialog({ type, open, onClose }: {
     if (useBatchChar && !batchChar.trim()) { setErr('Đã tick dùng ký tự mã lô — nhập 1 ký tự (vd K)'); return }
     const meta: WhTypeMeta = {
       is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
+      requires_ncc: reqNcc,
       batch_char: useBatchChar ? batchChar.trim().toUpperCase().slice(0, 1) : '', badge_color: badge,
     }
     if (isEdit) {
@@ -496,6 +498,8 @@ function TypeDialog({ type, open, onClose }: {
               'Mã hàng thuộc loại này phải khai HSD (ngày) — dùng tính %Date')}
             {flagRow('wt-palletea', reqPalletEa, setReqPalletEa, 'Bắt buộc Pallet/EA',
               'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
+            {flagRow('wt-reqncc', reqNcc, setReqNcc, 'Bắt buộc có NCC khi nhập kho',
+              'Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.')}
           </div>
 
           <div className="space-y-1.5">
@@ -1000,7 +1004,7 @@ export default function WMSSettings() {
                               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${whTypeBadgeCls(t.value, new Map([[t.value, t.meta ?? {}]]))}`}>{t.value}</span>
                               <span className="ml-1.5 text-[9px] text-slate-400">
                                 {[t.meta?.is_ncc_goods && 'NCC', t.meta?.requires_shelf_life && 'HSD', t.meta?.requires_pallet_per_ea && 'Pallet/EA',
-                                  t.meta?.batch_char && `Mã lô: ${t.meta.batch_char}`].filter(Boolean).join(' · ')}
+                                  t.meta?.requires_ncc && 'NCC bắt buộc', t.meta?.batch_char && `Mã lô: ${t.meta.batch_char}`].filter(Boolean).join(' · ')}
                               </span>
                             </TableCell>
                             {canManageType && (
@@ -1037,6 +1041,7 @@ export default function WMSSettings() {
                   <div><span className="text-slate-400">Hàng NCC:</span> <span className="font-medium">{detailType.meta?.is_ncc_goods ? 'Có (QR đoạn 4 = mã NCC)' : 'Không (đoạn 4 = Máy)'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc HSD:</span> <span className="font-medium">{detailType.meta?.requires_shelf_life ? 'Có' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc Pallet/EA:</span> <span className="font-medium">{detailType.meta?.requires_pallet_per_ea ? 'Có' : 'Không'}</span></div>
+                  <div><span className="text-slate-400">Bắt buộc NCC khi nhập:</span> <span className="font-medium">{detailType.meta?.requires_ncc ? 'Có (chặn lưu thiếu NCC)' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Ký tự mã lô:</span> <span className="font-medium">{detailType.meta?.batch_char || '— (chọn Máy tay)'}</span></div>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">

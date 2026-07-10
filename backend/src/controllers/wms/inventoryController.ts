@@ -7,6 +7,7 @@ import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { normalizeQR } from '../../utils/qrParser'
+import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
 
 const ENTRY_SELECT = `
@@ -1234,13 +1235,13 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
     const [mats, whs, locs, cos, qas] = await Promise.all([
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')),
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, category')),
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
       fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
       fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
     ]) as [
-      { id: string; material_code: string }[],
+      { id: string; material_code: string; category: string | null }[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
       { id: string; location_code: string }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
@@ -1248,6 +1249,8 @@ export async function uploadExcel(req: Request, res: Response) {
     ]
 
     const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
+    const matCatMap = new Map(mats.map(m => [m.id, m.category ?? '']))
+    const whTypeMeta = await getWhTypeMetaMap()   // cờ requires_ncc per Loại kho (kiểm dòng thiếu NCC)
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
     const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
@@ -1316,6 +1319,11 @@ export async function uploadExcel(req: Request, res: Response) {
       const nccRaw = invStr(r.ncc)
       let nccId: string | null = null
       if (nccRaw) { const resu = resolveNcc(nccRaw); if (!resu.id) { errors.push(`${at} — NCC ${resu.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = resu.id }
+      // Cờ requires_ncc của Loại kho (user chốt 10/07): dòng loại này thiếu NCC → lỗi (all-or-nothing như các lỗi khác)
+      const rowCat = matCatMap.get(matId) ?? ''
+      if (!nccId && whTypeMeta.get(rowCat)?.requires_ncc === true) {
+        errors.push(`${at} — Loại kho "${rowCat}" bắt buộc có NCC (cột NCC đang trống)`); continue
+      }
       // QA: trống hoặc "OK" = pallet tốt → NULL. Chỉ gán khi là cờ GIỮ thật; giá trị lạ → lỗi.
       const qaRaw = invStr(r.qa_status)
       let qaId: string | null = null

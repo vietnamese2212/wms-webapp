@@ -10,6 +10,7 @@ export interface WhTypeMeta {
   is_ncc_goods?: boolean          // QR V1 đoạn 4 = mã NCC (thay vì Máy)
   requires_shelf_life?: boolean   // Mã hàng bắt buộc HSD
   requires_pallet_per_ea?: boolean// Mã hàng bắt buộc Pallet/EA
+  requires_ncc?: boolean          // Nhập kho bắt buộc có NCC (quét/nhập tay/upload tồn — chuyển kho kế thừa, không chặn)
   batch_char?: string             // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2
   badge_color?: string
 }
@@ -38,4 +39,10 @@ export async function isNccGoodsCategory(category: string | null | undefined): P
   const meta = (await getWhTypeMetaMap()).get(category)
   if (meta && typeof meta.is_ncc_goods === 'boolean') return meta.is_ncc_goods
   return LEGACY_NCC_CATEGORIES.includes(category)
+}
+
+/** Loại kho bắt buộc có NCC khi nhập? Cờ mới (10/07) — không có fallback legacy, mặc định KHÔNG bắt buộc. */
+export async function categoryRequiresNcc(category: string | null | undefined): Promise<boolean> {
+  if (!category) return false
+  return (await getWhTypeMetaMap()).get(category)?.requires_ncc === true
 }

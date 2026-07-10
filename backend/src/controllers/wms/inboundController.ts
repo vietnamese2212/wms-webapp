@@ -9,7 +9,7 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { isNccGoodsCategory } from '../../utils/warehouseTypeMeta'
+import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 
 // Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
 // (mỗi đơn vị 1 format cố định — quét nhầm tem đơn vị khác phải bị chặn).
@@ -1108,6 +1108,13 @@ export async function scanQR(req: Request, res: Response) {
       if (resolvedShelf == null && s?.shelf_life_days != null && Number(s.shelf_life_days) > 0) resolvedShelf = Number(s.shelf_life_days)
     }
 
+    // Cờ requires_ncc của Loại kho (user chốt 10/07): pallet tồn MỚI phải có NCC — chặn cứng.
+    // Chuyển kho KHÔNG chặn (kế thừa từ pallet gốc ở trên, gốc không có thì thôi).
+    const matCategory = ((order as any).material?.category ?? '') as string
+    if (!isTransfer && !resolvedNcc && await categoryRequiresNcc(matCategory)) {
+      return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${matCategory}" bắt buộc chọn NCC — chọn NCC ở panel quét rồi lưu lại`)
+    }
+
     // Tem V2 (`;`) mang sẵn QA trên tem (1=OK, khác=X) → tự gán khi operator không chọn tay.
     // User chốt 07/07: QA=0 (X) VẪN CHO NHẬP — chỉ gán trạng thái, không chặn.
     let resolvedQa: string | null = qa_status_id ?? null
@@ -1235,11 +1242,18 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, posm_entry_id, material:Material!material_id(material_code)')
+      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, material:Material!material_id(material_code, category)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+
+    // Cờ requires_ncc của Loại kho: lưu thủ công (no-QR — entry pool không mang NCC riêng)
+    // → NCC phải có ở cấp PHIẾU (ProductionImport.ncc_id). Thiếu → chặn cứng (user chốt 10/07).
+    const manualCategory = ((order as any).material?.category ?? '') as string
+    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory)) {
+      return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${manualCategory}" bắt buộc có NCC — sửa phiếu nhập, chọn NCC rồi lưu lại`)
+    }
 
     // 1 lần mỗi phiếu — enforce qua posm_entry_id (trừ khi entry bị xóa)
     if ((order as any).posm_entry_id) {

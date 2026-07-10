@@ -5,6 +5,7 @@ export interface WhTypeMeta {
   is_ncc_goods?: boolean           // QR V1 đoạn 4 = mã NCC (thay vì Máy); NMSX = nơi nhận đầu tiên
   requires_shelf_life?: boolean    // Mã hàng bắt buộc HSD
   requires_pallet_per_ea?: boolean // Mã hàng bắt buộc Pallet/EA (quy đổi tồn EA → pallet)
+  requires_ncc?: boolean           // Nhập kho bắt buộc có NCC (quét/nhập tay/upload — chuyển kho kế thừa, không chặn)
   batch_char?: string              // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2 (vd 'N')
   badge_color?: string             // blue | purple | orange | green | amber | red | emerald | cyan | slate
 }
@@ -36,6 +37,12 @@ export function needsPalletPerEa(category: string | null | undefined, metaMap?: 
   const meta = metaMap?.get(category)
   if (meta && typeof meta.requires_pallet_per_ea === 'boolean') return meta.requires_pallet_per_ea
   return LEGACY_PALLET_PER_EA.includes(category)
+}
+
+/** Nhập kho bắt buộc có NCC? Cờ mới 10/07 — không fallback legacy, mặc định KHÔNG bắt buộc. */
+export function requiresNcc(category: string | null | undefined, metaMap?: WhTypeMetaMap): boolean {
+  if (!category) return false
+  return metaMap?.get(category)?.requires_ncc === true
 }
 
 /** Ký tự cố định thế chỗ Máy trong mã lô V2 (rỗng = chọn Máy tay như Thành phẩm). */

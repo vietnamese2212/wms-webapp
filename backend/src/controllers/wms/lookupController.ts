@@ -16,6 +16,7 @@ function sanitizeMeta(raw: unknown): WhTypeMeta | null {
   if (typeof o.is_ncc_goods === 'boolean') out.is_ncc_goods = o.is_ncc_goods
   if (typeof o.requires_shelf_life === 'boolean') out.requires_shelf_life = o.requires_shelf_life
   if (typeof o.requires_pallet_per_ea === 'boolean') out.requires_pallet_per_ea = o.requires_pallet_per_ea
+  if (typeof o.requires_ncc === 'boolean') out.requires_ncc = o.requires_ncc
   if (typeof o.batch_char === 'string') out.batch_char = o.batch_char.trim().toUpperCase().slice(0, 1)
   if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
   return out

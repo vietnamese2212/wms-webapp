@@ -274,7 +274,10 @@ export default function PalletLabels() {
   const [seqStart, setSeqStart] = useState('1')
   const [count, setCount]     = useState('4')
   const [qty, setQty]         = useState('')
-  // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + ngày + Máy + STT ──
+  // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + NGÀY NHẬP KHO + Máy + STT ──
+  // Thành phần ngày trong mã lô = ngày NHẬP KHO (user chốt 10/07 — vd SI260612N021 in ngày 12/06/26,
+  // NSX 11/03/26 nằm riêng ở đoạn 4). Mặc định hôm nay, sửa được.
+  const [entryDateV2, setEntryDateV2] = useState<string>(TODAY)
   const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
   const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
   const [hourV2, setHourV2]   = useState('1')     // Giờ SX (đoạn 6) — chọn 1..10
@@ -321,7 +324,7 @@ export default function PalletLabels() {
   }, [isV2Format, hsdEdited, mat, prodDate])
 
   const genReady = !!(mat && prodDate && cycle.trim() && seg4.trim() && nmsx.trim())
-  const genReadyV2 = !!(mat && batchPrefix && prodDate && (v2FixedChar || machine.trim()) && hsdV2)
+  const genReadyV2 = !!(mat && batchPrefix && prodDate && entryDateV2 && (v2FixedChar || machine.trim()) && hsdV2)
   const genLabels: LabelData[] = useMemo(() => {
     if (tab !== 'generate' || !mat) return []
     const start = parseInt(seqStart, 10) || 1
@@ -331,7 +334,7 @@ export default function PalletLabels() {
     // ── Tem V2 (tem `;`): MãHàng;QA;Mã lô;NSX;HSD ──
     if (isV2Format) {
       if (!genReadyV2) return []
-      const yymmdd = toYymmdd(prodDate)
+      const yymmdd = toYymmdd(entryDateV2)   // mã lô mang ngày NHẬP KHO (không phải NSX)
       const nsxDisp = toDisplayDate(prodDate)
       const hsdDisp = toDisplayDate(hsdV2)
       const machineChar = v2FixedChar || clean(machine).toUpperCase().slice(0, 1)   // ký tự Loại kho (nếu khai) hoặc Máy
@@ -385,11 +388,11 @@ export default function PalletLabels() {
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar, entryDateV2])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
   const genPrefix = isV2Format
-    ? (genReadyV2 && mat ? `${batchPrefix}${toYymmdd(prodDate)}${v2FixedChar || clean(machine).toUpperCase().slice(0, 1)}` : '')
+    ? (genReadyV2 && mat ? `${batchPrefix}${toYymmdd(entryDateV2)}${v2FixedChar || clean(machine).toUpperCase().slice(0, 1)}` : '')
     : (genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(seg4)}_` : '')
   const { data: genDupData } = useInventoryEntries(
     { search: genPrefix, status: '', page: 1, limit: 500 },
@@ -849,7 +852,7 @@ export default function PalletLabels() {
             /* Sinh tem V2 (tem `;`): MãHàng;QA;Mã lô;NSX;HSD — mã lô = mã tắt + ngày + Máy + STT */
             <div className="space-y-2">
               <div className="rounded-md bg-sky-50 border border-sky-200 p-2 text-[11px] text-sky-800">
-                Tem <b>chấm phẩy&nbsp;(;)</b> — sinh mã lô <b>Mã tắt + ngày + Máy + STT</b> (vd TA260705A018). Mã tắt lấy từ ô “Mã tắt (mã lô)” của Mã hàng.
+                Tem <b>chấm phẩy&nbsp;(;)</b> — sinh mã lô <b>Mã tắt + ngày NHẬP KHO + Máy + STT</b> (vd SI260612N021 nhập ngày 12/06/26). Mã tắt lấy từ ô “Mã tắt (mã lô)” của Mã hàng; NSX nằm riêng trên tem.
               </div>
               <div className="space-y-2">
                 <div className="space-y-1">
@@ -862,9 +865,17 @@ export default function PalletLabels() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
-                  <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
+                    <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
+                    <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>
+                    <Input type="date" className="h-8 text-sm w-full" value={prodDate} onChange={e => setProdDate(e.target.value)} />
+                    <p className="text-[10px] text-slate-400">NSX trên tem + tính HSD.</p>
+                  </div>
                 </div>
               </div>
               <div className="space-y-1">

@@ -442,13 +442,18 @@ function TypeDialog({ type, open, onClose }: {
               .map(([t, n]) => `${RENAMED_LABELS[t] ?? t}: ${n}`)
             toast({ title: `Đã đổi tên "${type.value}" → "${name}"`,
               description: parts.length ? `Cập nhật đồng bộ — ${parts.join(' · ')}` : 'Chưa có dữ liệu nào dùng tên cũ' })
+          } else {
+            toast({ title: `Đã lưu loại kho "${name}"` })
           }
           onClose()
         },
         onError: e => setErr(apiMsg(e)),
       })
     } else {
-      add({ value: name, meta }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      add({ value: name, meta }, {
+        onSuccess: () => { toast({ title: `Đã tạo loại kho "${name}"` }); onClose() },
+        onError: e => setErr(apiMsg(e)),
+      })
     }
   }
 
@@ -494,10 +499,9 @@ function TypeDialog({ type, open, onClose }: {
           <div className="space-y-1">
             <Label className="text-xs">Ký tự mã lô (tem chấm phẩy ; )</Label>
             <Input value={batchChar} maxLength={1} className="w-16 uppercase"
-              onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              placeholder="N" />
+              onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
             <p className="text-[11px] text-slate-400 leading-snug">
-              Sinh tem V2: ký tự này thế chỗ Máy trong mã lô (vd N → SI260311<b>N</b>021). Để trống = chọn Máy tay (Thành phẩm).
+              Sinh tem V2: ký tự này thế chỗ Máy trong mã lô — vd điền K thì mã lô ra SI260311<b>K</b>021. Để trống = chọn Máy tay (Thành phẩm).
             </p>
           </div>
 

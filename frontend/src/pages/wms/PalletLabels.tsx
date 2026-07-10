@@ -909,7 +909,13 @@ export default function PalletLabels() {
               <div className="space-y-1">
                 <Label className="text-xs">Ngày nhập kho <span className="text-red-500">*</span></Label>
                 <Input type="date" className="h-8 text-sm w-full" value={entryDateV2} onChange={e => setEntryDateV2(e.target.value)} />
-                <p className="text-[10px] text-slate-400">Vào mã lô — mặc định hôm nay.</p>
+                <p className="text-[10px] text-slate-400">
+                  Vào mã lô — mặc định hôm nay.
+                  {/* Xem trước mã lô sống theo ô này — tránh điền nhầm Ngày SX vào đây (lô sẽ lệch ngày) */}
+                  {genLabels[0]?.batch && (
+                    <> Mã lô sẽ in: <b className="font-mono text-sky-700">{genLabels[0].batch}</b>{genLabels.length > 1 && <> … <b className="font-mono text-sky-700">{genLabels[genLabels.length - 1].batch}</b></>}</>
+                  )}
+                </p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Ngày SX <span className="text-red-500">*</span></Label>

@@ -2182,6 +2182,14 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   for (const list of importsByMat.values())
     list.sort((a, b) => ((a.transfer_production_date ?? '9999-99-99') < (b.transfer_production_date ?? '9999-99-99') ? -1 : 1))
 
+  // Kho nhận theo dõi tồn SỐ LƯỢNG (QTY/QTY_DATE): nhận bằng số thùng, không quét pallet.
+  // QTY_DATE: phiếu đã tách theo NSX (kế thừa tem quét xuất) → dòng NSX + nút "Nhận đủ theo xuất".
+  const { data: whsForInternal = [] } = useWarehouses(true)
+  const destWhFull = (whsForInternal as { id: string; parent_warehouse_id?: string | null; inventory_mode?: string | null }[]).find(w => w.id === order?.destination_warehouse_id)
+  const destQtyLike = isQtyLike(destWhFull?.inventory_mode)
+  const destQtyDate = destWhFull?.inventory_mode === 'QTY_DATE'
+  const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
   function refreshPanel() {
     qc.invalidateQueries({ queryKey: ['transfer-goods', order?.id] })
     qc.invalidateQueries({ queryKey: ['inbound-by-gdo', order?.transfer_gdo?.id] })
@@ -2251,14 +2259,19 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   }
 
 
-  const hasPallets = goods.some(g => g.pallets.length > 0)
-  const allExpanded = hasPallets && goods.filter(g => g.pallets.length > 0).every(g => expandedMats.has(g.material_id))
+  // Dòng xổ dưới mỗi mã: kho QTY_DATE = các dòng NSX (phiếu nhận); kho khác = pallet nguồn.
+  // Mặc định THU GỌN (1 dòng/mã) — đơn 20-30 mã không tràn; "Nhận đủ theo xuất" nhận cả lô không cần xổ.
+  const expandables = goods.filter(g => destQtyDate
+    ? (importsByMat.get(g.material_id) ?? []).length > 0
+    : g.pallets.length > 0)
+  const hasExpandables = expandables.length > 0
+  const allExpanded = hasExpandables && expandables.every(g => expandedMats.has(g.material_id))
 
   function toggleAllPallets() {
     if (allExpanded) {
       setExpandedMats(new Set())
     } else {
-      setExpandedMats(new Set(goods.filter(g => g.pallets.length > 0).map(g => g.material_id)))
+      setExpandedMats(new Set(expandables.map(g => g.material_id)))
     }
   }
 
@@ -2273,15 +2286,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const slot = order?.vehicle_slots?.[0]
   // ĐVVT booking đủ = có Biển số + SĐT lái xe + Giờ xe tới (ETA). Chưa đủ → chưa cho bắt đầu nhận.
   // MIỄN booking khi kho nhận là KHO PHỤ NỘI BỘ của chính kho xuất (cùng site — xe nâng/đẩy tay, khớp BE confirmTransferReceipt).
-  const { data: whsForInternal = [] } = useWarehouses(true)
-  const destWhFull = (whsForInternal as { id: string; parent_warehouse_id?: string | null; inventory_mode?: string | null }[]).find(w => w.id === order?.destination_warehouse_id)
   const isInternalDest = !!destWhFull?.parent_warehouse_id && destWhFull.parent_warehouse_id === order?.transfer_gdo?.warehouse?.id
   const hasBooking = isInternalDest || !!(slot?.license_plate?.trim() && slot?.driver_phone?.trim() && order?.eta)
-  // Kho nhận theo dõi tồn SỐ LƯỢNG (QTY/QTY_DATE): nhận bằng số thùng, không quét pallet.
-  // QTY_DATE: phiếu đã tách theo NSX (kế thừa tem quét xuất) → hiện dòng NSX + nút "Nhận đủ theo xuất".
-  const destQtyLike = isQtyLike(destWhFull?.inventory_mode)
-  const destQtyDate = destWhFull?.inventory_mode === 'QTY_DATE'
-  const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const tStatus = order?.transfer_gdo?.transfer_status
   // SELF (kho nhận NONE / khách ngoài): không có bước nhận-quét → thay "Bắt đầu nhận hàng" bằng "Hoàn thành" (tài xế tự hoàn thành)
   const isSelf = order?.delivery_mode === 'SELF'
@@ -2387,11 +2393,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
       tip: 'Cập nhật ĐVVT booking (biển số, SĐT lái xe, giờ xe tới)',
       onClick: () => setShowUpdate(true),
     })
-  if (!isLoading && goods.length > 0 && hasPallets)
+  if (!isLoading && goods.length > 0 && hasExpandables)
     headerActions.push({
       key: 'toggle-pallets', icon: ChevronDown,
-      label: allExpanded ? 'Thu gọn' : 'Pallet',
-      tip: allExpanded ? 'Thu gọn danh sách pallet của mọi mã hàng' : 'Mở danh sách pallet của mọi mã hàng',
+      label: allExpanded ? 'Thu gọn' : destQtyDate ? 'Dòng NSX' : 'Pallet',
+      tip: allExpanded
+        ? 'Thu gọn về 1 dòng mỗi mã hàng'
+        : destQtyDate ? 'Mở các dòng NSX (phiếu nhận) của mọi mã hàng' : 'Mở danh sách pallet của mọi mã hàng',
       className: `text-slate-500 ${allExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleAllPallets,
     })
@@ -2626,14 +2634,15 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       const actualCartons = isNoQrRow
                         ? Math.max(g.actual_boxes ?? 0, impTotal)
                         : (g.actual_boxes ?? 0)
+                      const canExpand = destQtyDate ? imps.length > 0 : g.pallets.length > 0
                       return (
                         <React.Fragment key={g.material_id}>
                           <tr
-                            className={`border-t border-slate-100 ${g.pallets.length > 0 ? 'cursor-pointer hover:bg-blue-50/40' : 'hover:bg-slate-50'}`}
-                            onClick={() => g.pallets.length > 0 && toggleMat(g.material_id)}
+                            className={`border-t border-slate-100 ${canExpand ? 'cursor-pointer hover:bg-blue-50/40' : 'hover:bg-slate-50'}`}
+                            onClick={() => canExpand && toggleMat(g.material_id)}
                           >
                             <td className="px-2 py-1 text-slate-300 text-[10px]">
-                              {g.pallets.length > 0 ? (isExpanded ? '▾' : '▸') : ''}
+                              {canExpand ? (isExpanded ? '▾' : '▸') : ''}
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               <span className="text-[10px] font-mono font-semibold">{g.material_code ?? '—'}</span>
@@ -2681,10 +2690,10 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {!imp ? (
                                     <span className="text-[10px] text-slate-300 whitespace-nowrap">Chưa có phiếu</span>
                                   ) : multiNsx ? (
-                                    // Thao tác per NSX ở các dòng dưới — ô này chỉ tóm tắt trạng thái cả mã
+                                    // Thao tác per NSX ở các dòng xổ dưới — ô này chỉ tóm tắt trạng thái cả mã
                                     imps.every(i => i.status === 'COMPLETED')
                                       ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
-                                      : <span className="text-[10px] text-slate-400 whitespace-nowrap">↓ {imps.length} dòng NSX</span>
+                                      : <span className="text-[10px] text-slate-400 whitespace-nowrap">{isExpanded ? '▾' : '▸'} {imps.length} NSX</span>
                                   ) : (
                                     <div className="flex flex-col items-stretch gap-1 min-w-[84px]">
                                       {imp.status === 'COMPLETED' ? (
@@ -2700,7 +2709,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                                   onChange={e => setManualDraft(d => ({ ...d, [imp.id]: e.target.value }))}
                                                   placeholder="thùng"
                                                   className="w-14 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
-                                                <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 flex-1"
+                                                <Button size="sm" variant="outline" className="h-6 !min-h-0 !min-w-0 text-[10px] px-1.5 flex-1"
                                                   disabled={busy} onClick={() => handleManualConfirm(imp.id, imp.planned_cartons)}>
                                                   {busy ? '…' : 'Lưu'}
                                                 </Button>
@@ -2715,7 +2724,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                             )
                                           )}
                                           {canComplete && hasQty && (
-                                            <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
+                                            <Button size="sm" className="h-6 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
                                               disabled={busy} onClick={() => setCompleteConfirm({ impId: imp.id, code: g.material_code ?? '—', name: g.material_name ?? '', planned: g.planned_boxes, actual: actualCartons })}>
                                               <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                             </Button>
@@ -2734,8 +2743,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               )
                             })()}
                           </tr>
-                          {/* Dòng NSX (kho QTY_DATE): mỗi phiếu = 1 NSX kế thừa từ tem quét xuất — nhận/hoàn thành từng dòng */}
-                          {multiNsx && imps.map(ai => {
+                          {/* Dòng NSX (kho QTY_DATE, xổ khi bấm dòng mã): mỗi phiếu = 1 NSX kế thừa từ tem quét xuất.
+                              1 DÒNG MỎNG (đơn 20-30 mã không tràn): nút nằm ngang + !min-h-0 phá sàn touch-target */}
+                          {multiNsx && isExpanded && imps.map(ai => {
                             const saved = !!ai.posm_entry_id || (ai.total_cartons ?? 0) > 0
                             const busy = rowBusy === ai.id
                             const actual = ai.total_cartons ?? 0
@@ -2745,11 +2755,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             const effNsx = ai.transfer_production_date ?? (nsxDraft[ai.id] || TODAY_VN)
                             return (
                               <tr key={ai.id} className="bg-indigo-50/40 border-t border-indigo-100">
-                                <td className="px-2 py-1"></td>
-                                <td className="px-2 py-1 whitespace-nowrap">
+                                <td className="px-2 py-0.5"></td>
+                                <td className="px-2 py-0.5 whitespace-nowrap">
                                   <span className="text-[9px] font-mono text-slate-400">{ai.import_code}</span>
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap">
+                                <td className="px-2 py-0.5 whitespace-nowrap">
                                   {nsxLabel ? (
                                     <span className="text-[10px] font-semibold text-indigo-700">NSX {nsxLabel}</span>
                                   ) : canReceiveNow && ai.status === 'OPEN' && !saved ? (
@@ -2757,29 +2767,29 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                       <span className="text-[10px] font-medium text-amber-600">NSX</span>
                                       <input type="date" value={nsxDraft[ai.id] ?? TODAY_VN}
                                         onChange={e => setNsxDraft(d => ({ ...d, [ai.id]: e.target.value }))}
-                                        className="h-6 text-[10px] rounded border border-amber-300 px-1" />
+                                        className="h-5 text-[10px] rounded border border-amber-300 px-1" />
                                     </span>
                                   ) : (
                                     <span className="text-[10px] text-slate-400">NSX —</span>
                                   )}
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap">
+                                <td className="px-2 py-0.5 whitespace-nowrap">
                                   <span className="text-[10px] text-slate-400 tabular-nums">{(ai.planned_pallets ?? 0) > 0 ? `${ai.planned_pallets} pl` : ''}</span>
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                <td className="px-2 py-0.5 whitespace-nowrap text-right">
                                   <span className="text-[10px] tabular-nums text-slate-600">{planned}</span>
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                <td className="px-2 py-0.5 whitespace-nowrap text-right">
                                   <span className={`text-[10px] tabular-nums font-semibold ${actual > 0 ? 'text-green-700' : 'text-slate-300'}`}>
                                     {actual > 0 ? actual : '—'}
                                   </span>
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap text-right">
+                                <td className="px-2 py-0.5 whitespace-nowrap text-right">
                                   {actual > 0
                                     ? <span className={`text-[10px] tabular-nums font-semibold ${diff === 0 ? 'text-green-700' : diff > 0 ? 'text-red-600' : 'text-amber-600'}`}>{diff > 0 ? `+${diff}` : diff}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
-                                <td className="px-2 py-1 whitespace-nowrap">
+                                <td className="px-2 py-0.5 whitespace-nowrap">
                                   {ai.status === 'COMPLETED'
                                     ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">✓ Đã xong</span>
                                     : saved
@@ -2787,36 +2797,32 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                       : <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">Chờ nhận</span>}
                                 </td>
                                 {showActions && (
-                                  <td className="px-1.5 py-1 w-px sticky right-0 bg-indigo-50 border-l border-slate-200" onClick={e => e.stopPropagation()}>
-                                    <div className="flex flex-col items-stretch gap-1 min-w-[84px]">
-                                      {ai.status !== 'COMPLETED' && canReceiveNow && (
+                                  <td className="px-1.5 py-0.5 w-px sticky right-0 bg-indigo-50 border-l border-slate-200" onClick={e => e.stopPropagation()}>
+                                    <div className="flex items-center gap-1 whitespace-nowrap">
+                                      {ai.status !== 'COMPLETED' && canReceiveNow && !saved && canScan && (
                                         <>
-                                          {!saved && canScan && (
-                                            <div className="flex items-center gap-1">
-                                              <input type="number" min={0}
-                                                value={manualDraft[ai.id] ?? String(planned)}
-                                                onChange={e => setManualDraft(d => ({ ...d, [ai.id]: e.target.value }))}
-                                                placeholder="thùng"
-                                                className="w-14 h-6 text-[10px] text-center rounded border border-slate-300 px-1" />
-                                              <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 flex-1"
-                                                disabled={busy} onClick={() => handleManualConfirm(ai.id, planned, effNsx)}>
-                                                {busy ? '…' : 'Lưu'}
-                                              </Button>
-                                            </div>
-                                          )}
-                                          {saved && canComplete && (
-                                            <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
-                                              disabled={busy}
-                                              onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned, actual })}>
-                                              <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
-                                            </Button>
-                                          )}
+                                          <input type="number" min={0}
+                                            value={manualDraft[ai.id] ?? String(planned)}
+                                            onChange={e => setManualDraft(d => ({ ...d, [ai.id]: e.target.value }))}
+                                            placeholder="thùng"
+                                            className="w-12 h-5 text-[10px] text-center rounded border border-slate-300 px-1" />
+                                          <Button size="sm" variant="outline" className="h-5 !min-h-0 !min-w-0 text-[10px] px-1.5"
+                                            disabled={busy} onClick={() => handleManualConfirm(ai.id, planned, effNsx)}>
+                                            {busy ? '…' : 'Lưu'}
+                                          </Button>
                                         </>
                                       )}
-                                      <button type="button" className="text-[10px] text-blue-600 hover:text-blue-800 text-left whitespace-nowrap"
+                                      {ai.status !== 'COMPLETED' && canReceiveNow && saved && canComplete && (
+                                        <Button size="sm" className="h-5 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
+                                          disabled={busy}
+                                          onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned, actual })}>
+                                          <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
+                                        </Button>
+                                      )}
+                                      <button type="button" className="text-[11px] leading-none text-blue-600 hover:text-blue-800 px-0.5"
                                         title="Mở phiếu trong Nhập kho"
                                         onClick={() => navigate(`/wms/inbound/${ai.id}`)}>
-                                        Mở Inbound ↗
+                                        ↗
                                       </button>
                                     </div>
                                   </td>
@@ -2824,7 +2830,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               </tr>
                             )
                           })}
-                          {isExpanded && g.pallets.map(p => (
+                          {!destQtyDate && isExpanded && g.pallets.map(p => (
                             <tr key={p.pallet_code} className="bg-blue-50/30 border-t border-blue-100">
                               <td className="px-2 py-0.5"></td>
                               <td className="px-2 py-0.5"></td>

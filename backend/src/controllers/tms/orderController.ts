@@ -905,6 +905,13 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')
     if (existing && existing > 0) return fail(res, 'Đã tạo phiếu nhập cho lô hàng này rồi', 409)
 
+    // CHỐT NHẬN NGUYÊN TỬ: nhiều người cùng bấm Nhận → chỉ 1 request thắng CAS IN_TRANSIT→RECEIVING
+    // (check-then-act ở trên không đủ — 5 request đồng thời từng tạo 3 bộ phiếu trùng).
+    const { data: claimed } = await supabase.from('GroupDeliveryOrder')
+      .update({ transfer_status: 'RECEIVING', updated_at: t })
+      .eq('id', gdoId).eq('transfer_status', 'IN_TRANSIT').select('id')
+    if (!claimed?.length) return fail(res, 'Đã có người khác bắt đầu nhận lô hàng này', 409)
+
     const { data: dos } = await supabase.from('OutboundDelivery')
       .select('id').eq('gdo_id', gdoId)
     const doIds: string[] = (dos ?? []).map((d: { id: string }) => d.id)
@@ -926,35 +933,47 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     const [vy, vm, vd] = vnDate.split('-')
     const ddmmyy = `${vd}${vm}${vy.slice(2)}`
     const importPrefix = `${nppWh.code}_N_${ddmmyy}_`
-    const { data: existingCodes } = await supabase.from('ProductionImport')
-      .select('import_code').ilike('import_code', `${importPrefix}%`)
-    const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
-      const n = parseInt(r.import_code.slice(importPrefix.length), 10)
-      return isNaN(n) ? max : Math.max(max, n)
-    }, 0)
+    // Đánh số phiếu: retry+jitter khi trùng số với lệnh KHÁC nhận cùng kho cùng lúc (23505)
+    let created = 0
+    let lastErr: string | null = null
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const { data: existingCodes } = await supabase.from('ProductionImport')
+        .select('import_code').ilike('import_code', `${importPrefix}%`)
+      const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
+        const n = parseInt(r.import_code.slice(importPrefix.length), 10)
+        return isNaN(n) ? max : Math.max(max, n)
+      }, 0)
 
-    const toInsert = [...matMap.values()].map((m, idx) => ({
-      id: randomUUID(),
-      import_code: `${importPrefix}${String(maxSeq + idx + 1).padStart(2, '0')}`,
-      warehouse_id: tmsOrder.destination_warehouse_id,
-      material_id: m.material_id,
-      planned_cartons: m.cartons,
-      planned_pallets: 0,
-      status: 'OPEN',
-      source_type: 'TRANSFER',
-      warehouse_type: m.category ?? null,
-      import_date: vnDate,
-      from_gdo_id: gdoId,
-      tms_order_id: id,
-      updated_at: t,
-    }))
-    const { error: insertError } = await supabase.from('ProductionImport').insert(toInsert)
-    if (insertError) return fail(res, `Lỗi tạo phiếu nhập: ${insertError.message}`, 500)
+      const toInsert = [...matMap.values()].map((m, idx) => ({
+        id: randomUUID(),
+        import_code: `${importPrefix}${String(maxSeq + idx + 1).padStart(2, '0')}`,
+        warehouse_id: tmsOrder.destination_warehouse_id,
+        material_id: m.material_id,
+        planned_cartons: m.cartons,
+        planned_pallets: 0,
+        status: 'OPEN',
+        source_type: 'TRANSFER',
+        warehouse_type: m.category ?? null,
+        import_date: vnDate,
+        from_gdo_id: gdoId,
+        tms_order_id: id,
+        updated_at: t,
+      }))
+      const { error: insertError } = await supabase.from('ProductionImport').insert(toInsert)
+      if (!insertError) { created = toInsert.length; lastErr = null; break }
+      lastErr = insertError.message
+      if (insertError.code !== '23505') break
+      await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 25))))
+    }
+    if (lastErr) {
+      // Không tạo được phiếu → NHẢ chốt nhận (trả IN_TRANSIT) để người khác/lần sau nhận lại được
+      await supabase.from('GroupDeliveryOrder')
+        .update({ transfer_status: 'IN_TRANSIT', updated_at: new Date().toISOString() })
+        .eq('id', gdoId).eq('transfer_status', 'RECEIVING')
+      return fail(res, `Lỗi tạo phiếu nhập: ${lastErr}`, 500)
+    }
 
-    await supabase.from('GroupDeliveryOrder')
-      .update({ transfer_status: 'RECEIVING', updated_at: t }).eq('id', gdoId)
-
-    return ok(res, { created: toInsert.length })
+    return ok(res, { created })
   } catch (e) { return fail(res, String(e)) }
 }
 

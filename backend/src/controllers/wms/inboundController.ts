@@ -436,9 +436,10 @@ export async function createOrder(req: Request, res: Response) {
     const whCode = whRow?.code ? String(whRow.code) : 'XX'
     const importPrefix = `${whCode}_N_${ddmmyy}_`
 
-    // Retry khi 2 request song song → cùng import_code → 23505
+    // Retry khi 2 request song song → cùng import_code → 23505.
+    // 12 lần (5 từng cạn khi ~10 người cùng tạo phiếu 1 kho — đo QA 10/07: 13/120 lỗi 409 oan).
     let order: unknown = null
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 12; attempt++) {
       const { data: existingCodes } = await supabase.from('ProductionImport')
         .select('import_code').ilike('import_code', `${importPrefix}%`)
       const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {

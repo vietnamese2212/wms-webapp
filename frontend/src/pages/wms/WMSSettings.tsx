@@ -702,10 +702,16 @@ export default function WMSSettings() {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [overType, setOverType] = useState<{ idx: number; below: boolean } | null>(null)
   // Đồng bộ từ server khi KHÔNG đang kéo (sau reorder, refetch sẽ cập nhật đúng thứ tự).
-  // Dep = chuỗi id ổn định (KHÔNG dùng ref mảng — fallback [] đổi ref mỗi render → loop vô hạn).
-  const typesKey = (warehouseTypes as TypeRow[]).map(t => t.id).join(',')
+  // Dep = chuỗi NỘI DUNG ổn định (KHÔNG dùng ref mảng — fallback [] đổi ref mỗi render → loop vô hạn).
+  // Phải gồm cả value + meta: đổi tên/cờ giữ nguyên id — chỉ key theo id thì bảng kẹt bản cũ tới khi F5.
+  const typesKey = (warehouseTypes as TypeRow[]).map(t => `${t.id}|${t.value}|${JSON.stringify(t.meta ?? {})}`).join(',')
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (dragIdx === null) setOrderedTypes(warehouseTypes as TypeRow[]) }, [typesKey, dragIdx])
+  useEffect(() => {
+    if (dragIdx !== null) return
+    setOrderedTypes(warehouseTypes as TypeRow[])
+    // Pane detail đang mở cũng nhận bản mới (giữ theo id)
+    setDetailType(prev => prev ? ((warehouseTypes as TypeRow[]).find(t => t.id === prev.id) ?? null) : null)
+  }, [typesKey, dragIdx])
   function dropType() {
     const from = dragIdx, ov = overType
     setDragIdx(null); setOverType(null)

@@ -11,6 +11,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
+import { ActionBtn } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -519,22 +520,17 @@ export default function Outbound() {
           </button>
           <div className="flex gap-1.5 shrink-0">
             {can(perms, 'outbound', 'prepare') && (
-              <Button size="sm" variant="outline" onClick={() => navigate('/wms/outbound/prepare')} className="h-7 text-xs gap-1">
-                <PackageCheck className="h-3.5 w-3.5" />
-                Chuẩn bị hàng
-              </Button>
+              <ActionBtn icon={PackageCheck} label="Chuẩn bị hàng" tip="Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)"
+                onClick={() => navigate('/wms/outbound/prepare')} />
             )}
             {can(perms, 'outbound', 'create') && (
-              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)} className="h-7 text-xs gap-1">
-                <PenSquare className="h-3.5 w-3.5" />
-                Tạo đơn
-              </Button>
+              <ActionBtn icon={PenSquare} label="Tạo đơn" tip="Tạo đơn xuất thủ công" primary
+                onClick={() => setShowCreate(true)} />
             )}
             {can(perms, 'outbound', 'import') && (
-              <Button size="sm" variant="outline" onClick={() => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) }} className="hidden sm:inline-flex h-7 text-xs gap-1">
-                <Upload className="h-3.5 w-3.5" />
-                Upload Excel
-              </Button>
+              <ActionBtn icon={Upload} label="Upload Excel" tip="Upload kế hoạch xuất từ file Excel"
+                className="max-sm:hidden"
+                onClick={() => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) }} />
             )}
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />

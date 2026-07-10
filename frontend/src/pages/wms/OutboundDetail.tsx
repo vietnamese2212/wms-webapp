@@ -16,7 +16,7 @@ import { Card }    from '@/components/ui/card'
 import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ActionBtn } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
@@ -1385,118 +1385,80 @@ export default function OutboundDetail() {
             <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
               {/* ── Edit / Delete ── */}
               {(gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit') && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2"
-                  title="Sửa"
-                  onClick={() => setShowEditGDO(true)}>
-                  <PenSquare className="h-3 w-3" /><span className="hidden sm:inline">Sửa</span>
-                </Button>
+                <ActionBtn icon={PenSquare} label="Sửa" tip="Sửa đơn (ngày, khách, mã hàng, số lượng)"
+                  onClick={() => setShowEditGDO(true)} />
               )}
               {gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel') && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-red-200 text-red-600 hover:bg-red-50"
-                  title="Xóa đơn"
-                  onClick={handleDelete}>
-                  <Trash2 className="h-3 w-3" /><span className="hidden sm:inline">Xóa</span>
-                </Button>
+                <ActionBtn icon={Trash2} label="Xóa đơn" tip="Xóa đơn (chỉ khi Chờ xuất — không hoàn tác được)"
+                  className="border-red-200 text-red-600 hover:bg-red-50"
+                  onClick={handleDelete} />
               )}
               {/* ── Forward actions ── */}
               {/* Kho QTY/NONE: "Xuất luôn" 1 bước (nhập biển số → post + trừ tồn) — bỏ Giao đơn/Bắt đầu */}
               {canQuickExportHere && (
-                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
-                  disabled={quickExporting}
-                  title="Xuất luôn (nhập biển số → trừ tồn ngay)"
-                  onClick={() => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) }}>
-                  <Play className="h-3 w-3" /><span className="hidden sm:inline">{quickExporting ? 'Đang xuất…' : 'Xuất luôn'}</span>
-                </Button>
+                <ActionBtn icon={Play} label="Xuất luôn" tip="Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay"
+                  primary variant="success" busy={quickExporting}
+                  onClick={() => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) }} />
               )}
               {!gdo.assigned_at && can(perms, 'outbound', 'assign') && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-1.5 sm:px-2" disabled={assigning}
-                  title="Giao đơn"
+                <ActionBtn icon={ClipboardList} label="Giao đơn" tip="Giao đơn cho người phụ trách soạn hàng"
+                  primary busy={assigning}
                   onClick={() => setPendingConfirm({
                     title: 'Giao đơn',
                     message: `Xác nhận giao đơn ${gdo.group_code}?`,
                     onConfirm: () => assignGDO({ id: gdo.id, assigned_by: user?.name ?? undefined }),
-                  })}>
-                  <ClipboardList className="h-3 w-3" />
-                  <span className="hidden sm:inline">{assigning ? '…' : 'Giao đơn'}</span>
-                </Button>
+                  })} />
               )}
               {canStart && (
-                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2" title="Bắt đầu" onClick={() => setShowStart(true)}>
-                  <Play className="h-3 w-3" /><span className="hidden sm:inline">Bắt đầu</span>
-                </Button>
+                <ActionBtn icon={Play} label="Bắt đầu" tip="Bắt đầu xuất hàng (nhập biển số, người xuất)"
+                  primary variant="default" onClick={() => setShowStart(true)} />
               )}
               {/* "Xác nhận nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
                   Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành). */}
               {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan') && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-green-300 text-green-700 hover:bg-green-50"
-                  disabled={bulkSaving}
-                  title={`Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`}
+                <ActionBtn icon={PenSquare} label="Xác nhận nhanh"
+                  tip={`Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`}
+                  className="border-green-300 text-green-700 hover:bg-green-50"
+                  busy={bulkSaving}
                   onClick={() => setPendingConfirm({
                     title: 'Xác nhận nhanh',
                     message: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch?`,
                     onConfirm: () => { void bulkManualSave() },
-                  })}>
-                  <PenSquare className="h-3 w-3" />
-                  <span className="hidden sm:inline">{bulkSaving ? 'Đang lưu…' : 'Xác nhận nhanh'}</span>
-                </Button>
+                  })} />
               )}
               {/* Kho QTY/NONE ẩn "Hoàn thành" — "Xuất luôn" đã gộp bước chốt chuyến (kể cả sau Bỏ HT) */}
               {!isQtyOrNone && gdo.status === 'IN_PROGRESS' && canComplete && can(perms, 'outbound', 'complete') && (
-                <Button size="sm"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
-                  disabled={patching}
-                  title="Hoàn thành"
+                <ActionBtn icon={CheckCircle2} label="Hoàn thành" tip="Hoàn thành chuyến (thực xuất phải khớp kế hoạch)"
+                  primary variant="success" busy={patching}
                   onClick={() => setPendingConfirm({
                     title: 'Hoàn thành',
                     message: `Xác nhận hoàn thành chuyến ${gdo.group_code}?`,
                     onConfirm: () => patchGDO({ id: gdo.id, status: 'COMPLETED' }),
-                  })}>
-                  <CheckCircle2 className="h-3 w-3" />
-                  <span className="hidden sm:inline">{patching ? '…' : 'Hoàn thành'}</span>
-                </Button>
+                  })} />
               )}
               {canManagePause && gdo.status === 'IN_PROGRESS' && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-red-200 text-red-600 hover:bg-red-50"
-                  disabled={patching}
-                  title="Tạm dừng"
-                  onClick={() => patchGDO({ id: gdo.id, status: 'PAUSED' })}>
-                  <Pause className="h-3 w-3" />
-                  <span className="hidden sm:inline">{patching ? '…' : 'Tạm dừng'}</span>
-                </Button>
+                <ActionBtn icon={Pause} label="Tạm dừng" tip="Tạm dừng chuyến — khóa quét/ghi nhận cho tới khi Tiếp tục"
+                  className="border-red-200 text-red-600 hover:bg-red-50" busy={patching}
+                  onClick={() => patchGDO({ id: gdo.id, status: 'PAUSED' })} />
               )}
               {canManagePause && gdo.status === 'PAUSED' && (
-                <Button size="sm" className="h-7 text-xs gap-1 px-1.5 sm:px-2 bg-green-600 hover:bg-green-700"
-                  disabled={patching}
-                  title="Tiếp tục"
-                  onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })}>
-                  <Play className="h-3 w-3" />
-                  <span className="hidden sm:inline">{patching ? '…' : 'Tiếp tục'}</span>
-                </Button>
+                <ActionBtn icon={Play} label="Tiếp tục" tip="Tiếp tục chuyến đang tạm dừng"
+                  primary variant="success" busy={patching}
+                  onClick={() => patchGDO({ id: gdo.id, status: 'IN_PROGRESS' })} />
               )}
               {hasScanEntries && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
-                  onClick={toggleExpandAll}
-                  title={hasAnyExpanded ? 'Thu gọn tất cả' : 'Xem pallet đã quét'}
-                >
-                  <ChevronDown className={`h-3 w-3 transition-transform ${hasAnyExpanded ? 'rotate-180' : ''}`} />
-                  <span className="hidden sm:inline">{hasAnyExpanded ? 'Thu gọn' : 'Pallet'}</span>
-                </Button>
+                <ActionBtn icon={ChevronDown} label={hasAnyExpanded ? 'Thu gọn' : 'Xem pallet'}
+                  tip={hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng'}
+                  className={`text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`}
+                  onClick={toggleExpandAll} />
               )}
               {/* In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái) */}
-              <Button size="sm" variant="outline"
-                className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-200 text-slate-600 hover:bg-slate-50"
-                title="In Phiếu xuất kho"
+              <ActionBtn icon={Printer} label="In phiếu" tip="In Phiếu xuất kho (A4)"
+                className="text-slate-600"
                 onClick={() => {
                   if (!printDeliveryNote(gdo, user?.name))
                     setBulkErr('Trình duyệt chặn cửa sổ in — cho phép popup cho trang này rồi bấm lại')
-                }}>
-                <Printer className="h-3 w-3" /><span className="hidden sm:inline">In phiếu</span>
-              </Button>
+                }} />
 
               {/* ── Undo actions ── */}
               {can(perms, 'outbound', 'uncomplete') && gdo.status === 'COMPLETED' && (() => {
@@ -1505,49 +1467,27 @@ export default function OutboundDetail() {
                 const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
                 const tooltip = blockedByTransfer
                   ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
-                  : ts === 'IN_TRANSIT' ? 'Lệnh TMS chuyển kho + booking GIỮ NGUYÊN (hiện "Kho đang sửa") — hoàn thành lại sẽ đồng bộ số liệu vào chính lệnh đó' : undefined
-                const btn = (
-                  <Button size="sm" variant="outline"
-                    className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
-                    disabled={uncompleting || blockedByTransfer}
-                    onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))}>
-                    <RotateCcw className="h-3 w-3" />
-                    <span className="hidden sm:inline">{uncompleting ? '…' : 'Bỏ HT'}</span>
-                  </Button>
-                )
-                if (!tooltip) return btn
+                  : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành để sửa — lệnh TMS + booking GIỮ NGUYÊN (hiện "Kho đang sửa"), hoàn thành lại sẽ đồng bộ vào chính lệnh đó'
+                  : 'Bỏ hoàn thành chuyến để sửa lại'
                 return (
-                  <TooltipProvider delayDuration={100}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="inline-flex">{btn}</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-[260px] text-xs text-center">
-                        {tooltip}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <ActionBtn icon={RotateCcw} label="Bỏ hoàn thành" tip={tooltip}
+                    className="border-slate-300 text-slate-500 disabled:opacity-40"
+                    disabled={blockedByTransfer} busy={uncompleting}
+                    onClick={() => doUndo((id, opts) => uncompleteGDO(id, opts))} />
                 )
               })()}
               {can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED' && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
-                  disabled={unstarting || hasBlockingScans}
-                  title={hasBlockingScans ? 'Xóa hết QR đã quét trước' : 'Gỡ bắt đầu'}
-                  onClick={() => doUndo((id, opts) => unstartGDO(id, opts))}>
-                  <RotateCcw className="h-3 w-3" />
-                  <span className="hidden sm:inline">{unstarting ? '…' : 'Gỡ BĐ'}</span>
-                </Button>
+                <ActionBtn icon={RotateCcw} label="Gỡ bắt đầu"
+                  tip={hasBlockingScans ? 'Xóa hết QR đã quét trước rồi mới gỡ bắt đầu được' : 'Gỡ bắt đầu — đơn quay về Chờ xuất'}
+                  className="border-slate-300 text-slate-500 disabled:opacity-40"
+                  disabled={hasBlockingScans} busy={unstarting}
+                  onClick={() => doUndo((id, opts) => unstartGDO(id, opts))} />
               )}
               {can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at && (
-                <Button size="sm" variant="outline"
-                  className="h-7 text-xs gap-1 px-1.5 sm:px-2 border-slate-300 text-slate-500 hover:bg-slate-50"
-                  disabled={unassigning}
-                  title="Gỡ giao đơn"
-                  onClick={() => doUndo((id, opts) => unassignGDO(id, opts))}>
-                  <RotateCcw className="h-3 w-3" />
-                  <span className="hidden sm:inline">{unassigning ? '…' : 'Gỡ GĐ'}</span>
-                </Button>
+                <ActionBtn icon={RotateCcw} label="Gỡ giao đơn" tip="Gỡ giao đơn — bỏ người phụ trách đã gán"
+                  className="border-slate-300 text-slate-500"
+                  busy={unassigning}
+                  onClick={() => doUndo((id, opts) => unassignGDO(id, opts))} />
               )}
             </div>
           </div>

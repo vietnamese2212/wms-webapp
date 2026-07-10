@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 
-const INVENTORY_MODES = ['QR', 'QTY', 'NONE'] as const
+const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0

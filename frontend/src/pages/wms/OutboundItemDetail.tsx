@@ -23,6 +23,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
+import { isQtyLike } from '@/utils/inventoryMode'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -441,7 +442,8 @@ export default function OutboundItemDetail() {
   const loscamCartonNum = parseInt(loscamCartons) || 0
   // Khả dụng CO GIÃN theo chính đơn này = tồn pool + số item này đã lấy (giảm/gỡ luôn được kể cả pool đang 0).
   // Kho NONE / mã không theo dõi pool → không có trần tồn, chỉ chặn theo kế hoạch.
-  const stockCeiling = stock != null && (stock.has_pool || stock.inventory_mode === 'QTY')
+  // (Kho QTY_DATE: lưu ở đây trừ FEFO tự động; muốn chọn đúng NSX → dùng dialog Lưu số lượng ở trang chuyến.)
+  const stockCeiling = stock != null && (stock.has_pool || isQtyLike(stock.inventory_mode))
   const elasticAvail = (stock?.cartons_remaining ?? 0) + (stock?.cartons_scanned ?? 0)
   const overStock = stockCeiling && loscamCartonNum > elasticAvail
   const overPlan  = stock != null && loscamCartonNum > (stock.cartons_ordered ?? 0)

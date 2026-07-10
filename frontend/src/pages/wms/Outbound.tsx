@@ -24,6 +24,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
+import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import type { GDO } from '@/types'
@@ -1737,8 +1738,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const canQuick = can(modalPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate]   = useState('')
   const quickWhMode: string | null = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
-  // "Tạo & Xuất luôn" CHỈ cho kho QTY / NONE (kho QR đi luồng quét tem) — không phụ thuộc mã hàng.
-  const isQtyOrNone = quickWhMode === 'QTY' || quickWhMode === 'NONE'
+  // "Tạo & Xuất luôn" CHỈ cho kho QTY/QTY_DATE/NONE (kho QR đi luồng quét tem) — không phụ thuộc mã hàng.
+  const isQtyOrNone = isQtyLike(quickWhMode) || quickWhMode === 'NONE'
   const showQuick = canQuick && isQtyOrNone            // kho QTY/NONE → hiện ô Biển số + (khi đủ) nút xuất luôn
   const quickFilled = items.filter(i => i.material_code.trim())
   // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (xe nâng/đẩy tay trong site)
@@ -1865,7 +1866,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const canQuickEdit = can(editPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate] = useState('')
   const editWhMode: string | null = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
-  const isQtyOrNoneEdit = editWhMode === 'QTY' || editWhMode === 'NONE'
+  const isQtyOrNoneEdit = isQtyLike(editWhMode) || editWhMode === 'NONE'
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
   // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (như form Tạo)
   const internalPairEdit = isInternalPairFE(warehousesForEdit as WarehouseLite[], warehouseId, shiptoPartyId)

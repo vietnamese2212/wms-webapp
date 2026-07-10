@@ -1240,7 +1240,7 @@ export async function scanManual(req: Request, res: Response) {
   try {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
-    const { cartons, employee_id } = req.body
+    const { cartons, employee_id, production_date } = req.body
 
     if (!cartons && cartons !== 0) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu số thùng')
 
@@ -1273,7 +1273,18 @@ export async function scanManual(req: Request, res: Response) {
     const cartonsNum = Math.max(0, Number(cartons) || 0)
     const warehouseId = (order as any).warehouse_id as string | null
 
+    // Kho QTY_DATE: pool tách theo NSX → nhập tay BẮT BUỘC có NSX (yyyy-mm-dd); mode khác bỏ qua field này.
+    const { data: whRow } = warehouseId
+      ? await supabase.from('Warehouse').select('inventory_mode').eq('id', warehouseId).maybeSingle()
+      : { data: null }
+    const whInvMode = (whRow as { inventory_mode?: string | null } | null)?.inventory_mode ?? null
+    const prodDate = whInvMode === 'QTY_DATE' ? String(production_date ?? '').slice(0, 10) : ''
+    if (whInvMode === 'QTY_DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(prodDate)) {
+      return fail(res, 422, 'NSX_REQUIRED', 'Kho theo dõi tồn theo date — phải nhập NSX (ngày sản xuất) khi lưu thủ công')
+    }
+
     // Mã không-QR: 1 entry shared cho mỗi (kho, vật tư), pallet_code = mã hàng.
+    // (Kho QTY_DATE: 1 entry / (kho, vật tư, NSX) — nhiều dòng active cùng mã, khác production_date.)
     // Đóng góp của từng phiếu lưu ở ProductionImport.posm_cartons (detail hiển thị đúng phần của phiếu).
     const sharedPalletCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
@@ -1287,11 +1298,13 @@ export async function scanManual(req: Request, res: Response) {
     for (let attempt = 0; attempt < 15 && !entryId; attempt++) {
       const { data: candidates } = await supabase
         .from('InventoryEntry')
-        .select('id, cartons_remaining, cartons_imported, warehouse_id, location:Location!location_id(warehouse_id)')
+        .select('id, cartons_remaining, cartons_imported, warehouse_id, production_date, location:Location!location_id(warehouse_id)')
         .eq('pallet_code', sharedPalletCode)
         .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
       const existingPallet = ((candidates ?? []) as any[])
-        .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
+        .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId
+          // QTY_DATE: pool khớp phải ĐÚNG NSX (khác NSX → tạo dòng mới)
+          && (whInvMode !== 'QTY_DATE' || String(e.production_date ?? '').slice(0, 10) === prodDate)) ?? null
 
       if (existingPallet) {
         const before = Number(existingPallet.cartons_remaining)
@@ -1318,6 +1331,7 @@ export async function scanManual(req: Request, res: Response) {
             location_id:       null,
             warehouse_id:      warehouseId,
             material_id:       order.material_id,
+            production_date:   prodDate ? `${prodDate}T00:00:00` : null,
             cartons_imported:  cartonsNum,
             cartons_remaining: cartonsNum,
             stack_layer:       1,

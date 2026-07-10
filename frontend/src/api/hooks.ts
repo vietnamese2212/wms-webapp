@@ -591,6 +591,7 @@ export function useScanManualPallet() {
       cartons: number
       location_id?: string
       employee_id?: string
+      production_date?: string   // kho QTY_DATE: NSX bắt buộc (pool tách theo date)
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan-manual`, body).then((r) => r.data.data),
 
     onMutate: async ({ orderId, cartons }) => {
@@ -1718,8 +1719,9 @@ export function useScanOutboundItem() {
 export function useManualCompleteItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons?: number }) =>
-      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`, cartons != null ? { cartons } : {}).then(r => r.data.data),
+    mutationFn: ({ gdoId, itemId, cartons, production_date }: { gdoId: string; itemId: string; cartons?: number; production_date?: string }) =>
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-complete`,
+        { ...(cartons != null ? { cartons } : {}), ...(production_date ? { production_date } : {}) }).then(r => r.data.data),
     onMutate: async ({ gdoId, itemId, cartons }) => {
       await qc.cancelQueries({ queryKey: ['gdo', gdoId] })
       const prev = qc.getQueryData(['gdo', gdoId])
@@ -1939,7 +1941,7 @@ export function useManualItemStock(gdoId: string | undefined, itemId: string | u
     queryKey: ['manual-item-stock', gdoId, itemId],
     queryFn: async () => {
       const { data } = await apiClient.get(`/wms/outbound/${gdoId}/items/${itemId}/manual-stock`)
-      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number; inventory_mode: string | null; has_pool: boolean }
+      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number; inventory_mode: string | null; has_pool: boolean; date_pools?: { production_date: string | null; cartons_remaining: number }[] }
     },
     enabled: !!gdoId && !!itemId,
     staleTime: 0,

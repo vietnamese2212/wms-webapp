@@ -5,6 +5,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+import { isQtyLike } from '@/utils/inventoryMode'
 import {
   ArrowLeft, CheckCircle2,
   Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer,
@@ -767,6 +768,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
   gdoId: string; itemId: string; matName: string; initialCartons: number; onClose: () => void
 }) {
   const [cartons, setCartons] = useState(initialCartons)
+  const [prodDate, setProdDate] = useState('')   // kho QTY_DATE: '' = FEFO tự động, khác = chọn đúng NSX
   const [err, setErr] = useState<string | null>(null)
   const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
   const { mutate: manualComplete, isPending: saving } = useManualCompleteItem()
@@ -775,10 +777,17 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
   // Khả dụng CO GIÃN theo chính đơn này = tồn pool + số item này đã lấy (giảm/gỡ luôn được, kể cả pool đang 0).
   // Kho NONE (và mã không theo dõi pool) không có trần tồn → chỉ chặn theo kế hoạch.
   const scanned    = stock?.cartons_scanned ?? 0
-  const hasCeiling = stock != null && (stock.has_pool || stock.inventory_mode === 'QTY')
-  const elastic    = (stock?.cartons_remaining ?? 0) + scanned
+  const hasCeiling = stock != null && (stock.has_pool || isQtyLike(stock.inventory_mode))
+  const isQtyDate  = stock?.inventory_mode === 'QTY_DATE'
+  const datePools  = stock?.date_pools ?? []
+  // Chọn NSX cụ thể → trần khả dụng theo pool NSX đó; FEFO → tổng mọi NSX
+  const poolRemaining = prodDate
+    ? (datePools.find(p => (p.production_date ?? '') === prodDate)?.cartons_remaining ?? 0)
+    : (stock?.cartons_remaining ?? 0)
+  const elastic    = poolRemaining + scanned
   const overStock  = hasCeiling && cartons > elastic
   const overPlan   = stock != null && cartons > ordered
+  const fmtD = (d: string) => d.split('-').reverse().join('/')
 
   return (
     <Dialog open onOpenChange={v => { if (!v && !saving) onClose() }}>
@@ -806,6 +815,24 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
             </div>
           )}
 
+          {isQtyDate && (
+            <div className="space-y-1">
+              <Label className="text-xs">NSX xuất</Label>
+              <select
+                className="w-full h-9 border border-slate-200 rounded-md px-2 text-sm bg-white"
+                value={prodDate}
+                onChange={e => { setProdDate(e.target.value); setErr(null) }}
+              >
+                <option value="">Tự động FEFO — NSX cũ nhất trước</option>
+                {datePools.map(p => (
+                  <option key={p.production_date ?? '_none'} value={p.production_date ?? ''}>
+                    {p.production_date ? `NSX ${fmtD(p.production_date)}` : 'Không NSX'} — còn {p.cartons_remaining} thùng
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-1">
             <Label className="text-xs">Số thùng xuất</Label>
             <Input
@@ -828,7 +855,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Hủy</Button>
           <Button size="sm" disabled={saving || overStock || overPlan}
             onClick={() => manualComplete(
-              { gdoId, itemId, cartons },
+              { gdoId, itemId, cartons, production_date: prodDate || undefined },
               {
                 onSuccess: onClose,
                 onError: (e: any) => setErr(e?.response?.data?.error?.message ?? 'Lỗi khi lưu'),
@@ -1277,7 +1304,7 @@ export default function OutboundDetail() {
   const canStart       = (!!gdo.assigned_at || (whInvMode !== null && whInvMode !== 'QR')) && !gdo.started_at && can(perms, 'outbound', 'start')
   // "Xuất luôn" (1 bước) cho kho QTY/NONE: bỏ nghi thức Giao/Bắt đầu — nhập biển số là post + trừ tồn luôn.
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
-  const isQtyOrNone = whInvMode === 'QTY' || whInvMode === 'NONE'
+  const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
   const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'quick_export')
   function doQuickExport() {
     setQuickErr(null)

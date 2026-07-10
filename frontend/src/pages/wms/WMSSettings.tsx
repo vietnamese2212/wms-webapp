@@ -49,7 +49,7 @@ const DC_ENABLED_OPTS = [
 ]
 const DC_MODE_OPTS = [
   { value: 'QR',    label: 'Kho QR (tồn kho QR)' },
-  { value: 'QTY',   label: 'Kho QTY (tồn số lượng)' },
+  { value: 'QTY',   label: 'Kho QTY / QTY theo date (tồn số lượng)' },
   { value: 'NONE',  label: 'Kho NONE (tài xế tự hoàn thành)' },
   { value: 'OTHER', label: 'Khách ngoài (tài xế tự hoàn thành)' },
 ]
@@ -170,11 +170,12 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
-type InvMode = 'QR' | 'QTY' | 'NONE'
+type InvMode = 'QR' | 'QTY' | 'QTY_DATE' | 'NONE'
 const INV_MODE_META: Record<InvMode, { label: string; desc: string; badge: string }> = {
-  QR:   { label: 'Tồn kho QR',     desc: 'Theo dõi tồn đầy đủ qua QR (pallet/vị trí/quét)', badge: 'border-green-400 text-green-700 bg-green-50' },
-  QTY:  { label: 'Tồn kho số lượng', desc: 'Theo dõi tồn dạng số lượng, không pallet/QR',     badge: 'border-sky-400 text-sky-700 bg-sky-50' },
-  NONE: { label: 'Không quản tồn',  desc: 'Không theo dõi tồn (điểm trung chuyển/giao nhận)', badge: 'border-slate-300 text-slate-500 bg-slate-50' },
+  QR:       { label: 'Tồn kho QR',     desc: 'Theo dõi tồn đầy đủ qua QR (pallet/vị trí/quét)', badge: 'border-green-400 text-green-700 bg-green-50' },
+  QTY:      { label: 'Tồn kho số lượng', desc: 'Theo dõi tồn dạng số lượng, không pallet/QR',     badge: 'border-sky-400 text-sky-700 bg-sky-50' },
+  QTY_DATE: { label: 'Tồn số lượng theo date', desc: 'Tồn số lượng tách theo NSX — nhập tay phải có NSX, xuất trừ FEFO (date cũ trước, chọn được khi cần)', badge: 'border-indigo-400 text-indigo-700 bg-indigo-50' },
+  NONE:     { label: 'Không quản tồn',  desc: 'Không theo dõi tồn (điểm trung chuyển/giao nhận)', badge: 'border-slate-300 text-slate-500 bg-slate-50' },
 }
 const invModeMeta = (m: string) => INV_MODE_META[(m as InvMode)] ?? INV_MODE_META.QR
 

@@ -15,9 +15,10 @@ const nf = (n: number) => Number(n ?? 0).toLocaleString('vi-VN')
 const nf0 = (n: number) => Math.round(Number(n ?? 0)).toLocaleString('vi-VN')
 
 const MODE_BADGE: Record<string, string> = {
-  QR:   'bg-green-100 text-green-700',
-  QTY:  'bg-blue-100 text-blue-700',
-  NONE: 'bg-slate-100 text-slate-500',
+  QR:       'bg-green-100 text-green-700',
+  QTY:      'bg-blue-100 text-blue-700',
+  QTY_DATE: 'bg-indigo-100 text-indigo-700',
+  NONE:     'bg-slate-100 text-slate-500',
 }
 
 export default function Dashboard() {

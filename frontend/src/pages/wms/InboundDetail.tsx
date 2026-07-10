@@ -223,6 +223,9 @@ export default function InboundDetail() {
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
   const [manualCartons,     setManualCartons]     = useState('')
+  // Kho QTY_DATE: pool tách theo NSX → lưu thủ công bắt buộc nhập NSX (default hôm nay giờ VN)
+  const whQtyDate = (order?.warehouse as { inventory_mode?: string | null } | undefined)?.inventory_mode === 'QTY_DATE'
+  const [manualProdDate,    setManualProdDate]    = useState(() => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }))
   const [manualFeedback,    setManualFeedback]    = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
@@ -243,8 +246,9 @@ export default function InboundDetail() {
   function handleManualSave() {
     const c = Number(manualCartons)
     if (!manualCartons || isNaN(c) || c < 0) { setManualFeedback({ type: 'error', msg: 'Nhập số thùng hợp lệ' }); return }
+    if (whQtyDate && !manualProdDate) { setManualFeedback({ type: 'error', msg: 'Kho theo dõi tồn theo date — nhập NSX' }); return }
     saveManual(
-      { orderId: order!.id, cartons: c, employee_id: user?.id },
+      { orderId: order!.id, cartons: c, employee_id: user?.id, ...(whQtyDate ? { production_date: manualProdDate } : {}) },
       {
         onSuccess: () => { setManualFeedback(null); setShowManualDialog(false) },
         onError: (err) => {
@@ -405,6 +409,18 @@ export default function InboundDetail() {
         <DialogContent className="sm:max-w-xs">
           <DialogHeader><DialogTitle className="text-base">Xác nhận số lượng</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
+            {whQtyDate && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-slate-500">NSX (ngày sản xuất) <span className="text-red-500">*</span></p>
+                <Input
+                  type="date"
+                  value={manualProdDate}
+                  onChange={e => setManualProdDate(e.target.value)}
+                  className="h-9"
+                />
+                <p className="text-[10px] text-slate-400">Kho theo dõi tồn theo date — mỗi NSX là 1 dòng tồn riêng (xuất trừ FEFO)</p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <p className="text-xs text-slate-500">Số thùng thực nhập</p>
               <Input

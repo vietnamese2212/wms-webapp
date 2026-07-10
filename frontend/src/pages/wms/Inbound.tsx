@@ -37,6 +37,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
+import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -598,7 +599,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   // Nhập SX cho phép cả mã no-QR (POSM/Loscam, nhập tồn đầu). No-QR hiệu lực = mã no_qr_tracking HOẶC kho QTY
   // → backend tự bỏ vị trí + nhập số lượng thủ công ở trang chi tiết, nên form không bắt buộc chọn Vị trí.
   const factoryNoQr   = ((materials as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
-    || ((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode === 'QTY')
+    || isQtyLike((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode)
 
   function handleFactorySubmit() {
     if (!warehouseId || !subType || !materialId || (!factoryNoQr && !locationId) || !shiftId || !importDate) return

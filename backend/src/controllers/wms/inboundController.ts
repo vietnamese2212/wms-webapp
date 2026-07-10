@@ -1296,15 +1296,16 @@ export async function scanManual(req: Request, res: Response) {
     //       KHÔNG trả 409 (tự merge, người dùng không phải bấm lại).
     let entryId: string | null = null
     for (let attempt = 0; attempt < 15 && !entryId; attempt++) {
-      const { data: candidates } = await supabase
+      // QTY_DATE: lọc ĐÚNG NSX ngay từ DB (kho tích lũy 1 dòng/NSX — tránh kéo cả trăm dòng + cap 1000)
+      let candQ = supabase
         .from('InventoryEntry')
         .select('id, cartons_remaining, cartons_imported, warehouse_id, production_date, location:Location!location_id(warehouse_id)')
         .eq('pallet_code', sharedPalletCode)
         .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+      if (whInvMode === 'QTY_DATE') candQ = candQ.eq('production_date', `${prodDate}T00:00:00`)
+      const { data: candidates } = await candQ
       const existingPallet = ((candidates ?? []) as any[])
-        .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId
-          // QTY_DATE: pool khớp phải ĐÚNG NSX (khác NSX → tạo dòng mới)
-          && (whInvMode !== 'QTY_DATE' || String(e.production_date ?? '').slice(0, 10) === prodDate)) ?? null
+        .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
 
       if (existingPallet) {
         const before = Number(existingPallet.cartons_remaining)

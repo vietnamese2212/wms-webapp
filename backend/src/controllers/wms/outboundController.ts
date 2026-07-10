@@ -645,12 +645,17 @@ export async function quickExportGDO(req: Request, res: Response) {
     const missing = allCodes.filter(c => !matMap.has(c))
     if (missing.length) return fail(res, `Mã hàng chưa có trong hệ thống: ${missing.join(', ')}`, 400)
 
-    // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ)
-    const { data: pools } = await supabase.from('InventoryEntry')
-      .select('pallet_code, cartons_remaining').eq('warehouse_id', warehouse_id).in('pallet_code', allCodes)
-    const poolMap = new Map<string, number>(
-      ((pools ?? []) as { pallet_code: string; cartons_remaining: number }[]).map(p => [p.pallet_code, Number(p.cartons_remaining)])
-    )
+    // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ).
+    // GỘP TỔNG mọi dòng cùng mã (pool đa dòng sau nhập lại / QTY_DATE 1 dòng mỗi NSX — Map thô lấy dòng CUỐI
+    // làm khả dụng SAI, báo thiếu oan) + chunk mã & phân trang (nhiều mã × nhiều NSX vượt cap 1000 dòng/response).
+    const poolMap = new Map<string, number>()
+    for (let i = 0; i < allCodes.length; i += 300) {
+      const chunk = allCodes.slice(i, i + 300)
+      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+        .select('id, pallet_code, cartons_remaining').eq('warehouse_id', warehouse_id).in('pallet_code', chunk).order('id'))
+      for (const p of rows as { pallet_code: string; cartons_remaining: number }[])
+        poolMap.set(p.pallet_code, (poolMap.get(p.pallet_code) ?? 0) + Number(p.cartons_remaining))
+    }
     // QTY: mã không có dòng tồn = tồn 0 → tính là thiếu. NONE: không theo dõi tồn → bỏ qua (have=null).
     const availOf = (code: string): number | null =>
       poolMap.has(code) ? poolMap.get(code)! : (isQtyLike(whMode) ? 0 : null)
@@ -3078,9 +3083,12 @@ async function applySharedPoolDelta(materialCode: string, warehouseId: string, d
   const isQtyDate = mode === 'QTY_DATE'
   const dateOf = (r: PoolRow) => String(r.production_date ?? '').slice(0, 10)
   const loadRows = async (): Promise<PoolRow[]> => {
+    // order NSX cũ trước ngay từ DB: kho QTY_DATE tích lũy 1 dòng/NSX — nếu vượt cap 1000 dòng/response
+    // thì phần bị cắt là NSX MỚI nhất (an toàn cho FEFO tiêu trước dòng cũ, không mất dòng cũ).
     const { data } = await supabase.from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported, status, production_date')
       .eq('pallet_code', materialCode).eq('warehouse_id', warehouseId)
+      .order('production_date', { ascending: true })
     let list = ((data ?? []) as PoolRow[])
     // QTY_DATE + người xuất CHỌN NSX cụ thể → chỉ thao tác trên pool đúng NSX đó
     if (isQtyDate && productionDate) list = list.filter(r => dateOf(r) === productionDate)

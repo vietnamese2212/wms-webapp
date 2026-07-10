@@ -1390,6 +1390,7 @@ export default function OutboundDetail() {
   // In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái)
   actionItems.push({
     key: 'print', icon: Printer, label: 'In phiếu', tip: 'In Phiếu xuất kho (A4)',
+    mobileHidden: true, // user chốt 10/07: in A4 không dùng trên điện thoại
     className: 'text-slate-600',
     onClick: () => {
       if (!printDeliveryNote(gdo, user?.name))

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -789,15 +789,24 @@ export default function PalletLabels() {
             <div className="flex-1" />
           )}
           {tabDefs && <FilterSheetButton defs={tabDefs} className="sm:hidden" />}
+          {/* In tem = window.print → thuần PC (mobileHidden) — chuẩn ActionCluster */}
           {tab === 'generate' && canGenerate && (
-            <Button size="sm" className="h-7 text-xs gap-1" disabled={!labels.length} onClick={handlePrint}>
-              <Printer className="h-3.5 w-3.5" /> In {labels.length > 0 ? `(${labels.length})` : ''}
-            </Button>
+            <ActionCluster className="shrink-0" items={[{
+              key: 'print', icon: Printer,
+              label: labels.length > 0 ? `In (${labels.length})` : 'In',
+              tip: labels.length > 0 ? `In ${labels.length} tem vừa sinh (${sheets.length} trang A4)` : 'Nhập đủ thông tin ở panel trái để sinh tem trước khi in',
+              primary: true, variant: 'default', mobileHidden: true,
+              disabled: !labels.length, onClick: handlePrint,
+            } satisfies ActionItem]} />
           )}
           {tab === 'reprint' && canReprint && (
-            <Button size="sm" className="h-7 text-xs gap-1" disabled={!labels.length} onClick={handlePrint}>
-              <Printer className="h-3.5 w-3.5" /> In lại {labels.length > 0 ? `(${labels.length})` : ''}
-            </Button>
+            <ActionCluster className="shrink-0" items={[{
+              key: 'reprint', icon: Printer,
+              label: labels.length > 0 ? `In lại (${labels.length})` : 'In lại',
+              tip: labels.length > 0 ? `In lại ${labels.length} tem đã chọn từ tồn kho` : 'Chọn mã pallet ở panel trái trước khi in lại',
+              primary: true, variant: 'default', mobileHidden: true,
+              disabled: !labels.length, onClick: handlePrint,
+            } satisfies ActionItem]} />
           )}
         </div>
         {/* Hàng 2: FilterBar chuẩn (desktop/tablet); mobile gom vào nút "Lọc" ở trên */}
@@ -1025,14 +1034,15 @@ export default function PalletLabels() {
               {/* Quét / điền tay mã pallet — thêm nhanh, không phụ thuộc filter */}
               <div className="space-y-1">
                 <Label className="text-xs">Quét / nhập mã pallet</Label>
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 flex-wrap">
                   <div className="relative flex-1">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã rồi Enter, hoặc bấm quét →" value={palletQ} onChange={e => setPalletQ(e.target.value)} onKeyDown={onScanEnter} />
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="h-8 px-2 shrink-0" title="Quét QR" onClick={() => setScanFor('reprint')}>
-                    <QrCode className="h-4 w-4" />
-                  </Button>
+                  <ActionCluster className="shrink-0" items={[{
+                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để thêm nhanh vào danh sách in lại', primary: true,
+                    onClick: () => setScanFor('reprint'),
+                  } satisfies ActionItem]} />
                 </div>
                 {scanEntries.length > 0 && (
                   <div className="border rounded-md divide-y divide-slate-100 max-h-40 overflow-y-auto">
@@ -1087,14 +1097,15 @@ export default function PalletLabels() {
             <>
               <div className="space-y-1">
                 <Label className="text-xs">Quét / nhập mã pallet</Label>
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 flex-wrap">
                   <div className="relative flex-1">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã pallet, hoặc bấm quét →" value={auQr} onChange={e => setAuQr(e.target.value)} />
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="h-8 px-2 shrink-0" title="Quét QR" onClick={() => setScanFor('audit')}>
-                    <QrCode className="h-4 w-4" />
-                  </Button>
+                  <ActionCluster className="shrink-0" items={[{
+                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để truy cứu lịch sử in', primary: true,
+                    onClick: () => setScanFor('audit'),
+                  } satisfies ActionItem]} />
                 </div>
                 <p className="text-[10px] text-slate-400">Tra riêng 1 pallet, hoặc lọc theo nhóm ở thanh trên.</p>
               </div>
@@ -1205,19 +1216,33 @@ export default function PalletLabels() {
               {!canReprint ? (
                 <span className="text-[11px] text-slate-400">Bạn không có quyền in lại — chỉ xem lịch sử.</span>
               ) : histSelBatch ? (
-                <>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={() => reprintRows(histSelBatchRows)}>
-                    <Printer className="h-3.5 w-3.5" />In lại cả lệnh ({histSelBatchRows.length} tem)
-                  </Button>
-                  <button onClick={clearHistSel} className="text-[11px] text-slate-500 hover:text-slate-700">Bỏ chọn</button>
-                </>
+                /* Bulk-action khi chọn 1 lệnh in — In lại = window.print (thuần PC) */
+                <ActionCluster items={[
+                  {
+                    key: 'reprint-batch', icon: Printer, label: `In lại (${histSelBatchRows.length})`,
+                    tip: `In lại cả lệnh — ${histSelBatchRows.length} tem`,
+                    primary: true, variant: 'default', mobileHidden: true,
+                    onClick: () => reprintRows(histSelBatchRows),
+                  } satisfies ActionItem,
+                  {
+                    key: 'clear', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn lệnh in đang chọn',
+                    onClick: clearHistSel,
+                  } satisfies ActionItem,
+                ]} />
               ) : histSelTems.size > 0 ? (
-                <>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={() => reprintRows(histSelTemRows)}>
-                    <Printer className="h-3.5 w-3.5" />In lại {histSelTems.size} tem đã chọn
-                  </Button>
-                  <button onClick={clearHistSel} className="text-[11px] text-slate-500 hover:text-slate-700">Bỏ chọn</button>
-                </>
+                /* Bulk-action khi tích nhiều tem lẻ */
+                <ActionCluster items={[
+                  {
+                    key: 'reprint-tems', icon: Printer, label: `In lại (${histSelTems.size})`,
+                    tip: `In lại ${histSelTems.size} tem đã chọn (kể cả khác lệnh in)`,
+                    primary: true, variant: 'default', mobileHidden: true,
+                    onClick: () => reprintRows(histSelTemRows),
+                  } satisfies ActionItem,
+                  {
+                    key: 'clear', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn các tem đã tích',
+                    onClick: clearHistSel,
+                  } satisfies ActionItem,
+                ]} />
               ) : (
                 <span className="text-[11px] text-slate-400">Chọn <b>1 lệnh</b> (in cả lệnh) hoặc tích <b>nhiều tem</b> trong chi tiết (in từng tem) để in lại.</span>
               )}

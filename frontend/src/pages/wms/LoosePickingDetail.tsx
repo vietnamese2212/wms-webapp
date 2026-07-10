@@ -5,7 +5,7 @@ import { vi } from 'date-fns/locale'
 import {
   ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useGDO, useItemInventory, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
@@ -459,14 +459,24 @@ export default function LoosePickingDetail() {
     }
   }
 
+  // ── Cụm action header (ActionCluster) — đồng bộ nút "Xem pallet" với OutboundDetail ──
+  const actionItems: ActionItem[] = []
+  if (hasScanEntries)
+    actionItems.push({
+      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet',
+      tip: hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng',
+      className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
+      onClick: toggleExpandAll,
+    })
+
   return (
     <div className="flex flex-col h-full min-h-0">
 
       {/* ── Header ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
 
-        {/* Row 1: back + code + status + actions */}
-        <div className="flex items-center justify-between gap-2">
+        {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
+        <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
           <div className="flex items-center gap-1.5 min-w-0">
             <button onClick={() => navigate('/wms/loosepicking')}
               className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
@@ -486,18 +496,7 @@ export default function LoosePickingDetail() {
               <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
             </button>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            {hasScanEntries && (
-              <Button size="sm" variant="outline"
-                className="h-7 text-xs gap-1 px-2 border-slate-200 text-slate-500 hover:bg-slate-50"
-                onClick={toggleExpandAll}
-                title={hasAnyExpanded ? 'Thu gọn tất cả' : 'Xem pallet đã quét'}
-              >
-                <ChevronDown className={`h-3 w-3 transition-transform ${hasAnyExpanded ? 'rotate-180' : ''}`} />
-                {hasAnyExpanded ? 'Thu gọn' : 'Pallet'}
-              </Button>
-            )}
-          </div>
+          {actionItems.length > 0 && <ActionCluster items={actionItems} />}
         </div>
 
         {/* Row 2: GDO info */}

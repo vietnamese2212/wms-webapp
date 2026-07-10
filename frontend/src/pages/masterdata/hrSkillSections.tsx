@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Trash2, Pencil, Check, X, Save, Award } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
   useSkills, useCreateSkill, useUpdateSkill, useDeleteSkill,
   useEmployeeSkills, useSetEmployeeSkills, type SkillRow,
@@ -167,9 +168,16 @@ export function EmployeeSkillSection({ employeeId }: { employeeId: string }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1.5">
         <p className="text-xs font-medium text-slate-600 flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Kỹ năng / Vị trí (0 = không làm · 1 = chính · 2–3 = phụ)</p>
-        {canAssign && <Button size="sm" variant={dirty ? 'default' : 'outline'} disabled={!dirty || setSkills.isPending} onClick={save} className="h-7"><Save className="h-3.5 w-3.5 mr-1" />Lưu</Button>}
+        <ActionCluster className="justify-end" items={[
+          ...(canAssign ? [{
+            key: 'save', icon: Save, label: 'Lưu', tip: dirty ? 'Lưu ma trận kỹ năng đã chỉnh' : 'Chưa có thay đổi để lưu',
+            primary: true, variant: dirty ? 'default' : 'outline',
+            disabled: !dirty, busy: setSkills.isPending,
+            onClick: () => { void save() },
+          } satisfies ActionItem] : []),
+        ]} />
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
       <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">

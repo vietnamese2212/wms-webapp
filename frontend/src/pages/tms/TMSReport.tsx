@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { Download, Check, X, Rows3, AlignJustify } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -171,9 +171,12 @@ export default function TMSReport() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={exportExcel} disabled={filteredRows.length === 0}>
-            <Download className="h-3.5 w-3.5 mr-1" />Excel
-          </Button>
+          <ActionCluster className="shrink-0" items={[{
+            key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
+            primary: true, disabled: filteredRows.length === 0,
+            mobileHidden: true, // export Excel không dùng trên điện thoại
+            onClick: exportExcel,
+          } satisfies ActionItem]} />
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />

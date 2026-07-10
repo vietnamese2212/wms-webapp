@@ -92,7 +92,9 @@ export function ActionCluster({ items, className }: { items: ActionItem[]; class
         {items.map(({ key, danger: _d, mobileHidden: _m, ...i }) => <ActionBtn key={key} {...i} />)}
       </div>
       {/* Mobile: nút chính icon + CHỮ bên trái; menu ⋮ GHIM CỐ ĐỊNH mép phải (w-full + ml-auto)
-          — vị trí ⋮ không xê dịch theo số nút chính của từng công đoạn */}
+          — vị trí ⋮ không xê dịch theo số nút chính của từng công đoạn.
+          Cụm toàn nút mobileHidden → không render (tránh div rỗng chiếm 1 dòng wrap) */}
+      {mobileItems.length > 0 && (
       <div className={cn('flex sm:hidden items-center gap-1.5 w-full', className)}>
         {primaries.map(i => (
           <Button key={i.key} variant={i.variant ?? 'outline'} size="sm"
@@ -128,6 +130,7 @@ export function ActionCluster({ items, className }: { items: ActionItem[]; class
           </DropdownMenu>
         )}
       </div>
+      )}
     </>
   )
 }

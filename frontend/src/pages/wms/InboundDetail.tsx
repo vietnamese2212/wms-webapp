@@ -17,6 +17,7 @@ import { Label }               from '@/components/ui/label'
 import { Card }                from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
@@ -328,6 +329,34 @@ export default function InboundDetail() {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   }
 
+  // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  const headerActionItems: ActionItem[] = []
+  if (isOpen && entries.length === 0 && can(perms, 'inbound', 'cancel'))
+    headerActionItems.push({
+      key: 'cancel', icon: XCircle, label: 'Hủy phiếu',
+      tip: 'Hủy phiếu nhập (chỉ khi chưa có pallet — không hoàn tác được)',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: cancelling,
+      onClick: () => openConfirm(
+        'Hủy phiếu nhập',
+        `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
+        () => cancelOrder(order.id, { onSuccess: () => navigate('/wms/inbound') })
+      ),
+    })
+  if (isOpen && can(perms, 'inbound', 'complete'))
+    headerActionItems.push({
+      key: 'complete', icon: CheckCircle2, label: 'Hoàn thành',
+      tip: 'Hoàn thành phiếu nhập (đối chiếu thực nhập với kế hoạch)',
+      primary: true, variant: 'success', busy: completing,
+      onClick: () => setCompleteDlg('complete'),
+    })
+  if (isCompleted && can(perms, 'inbound', 'uncomplete'))
+    headerActionItems.push({
+      key: 'uncomplete', icon: RotateCcw, label: 'Gỡ hoàn thành',
+      tip: 'Gỡ hoàn thành — phiếu quay về Đang nhập, quét tiếp được',
+      className: 'border-slate-300 text-slate-500 disabled:opacity-40', busy: uncompleting,
+      onClick: () => setCompleteDlg('uncomplete'),
+    })
+
   return (
     <>
       {showScan && (
@@ -589,8 +618,8 @@ export default function InboundDetail() {
         {/* ── Compact header (~20%) ── */}
         <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
 
-          {/* Row 1: navigation + code + status + actions */}
-          <div className="flex items-center justify-between gap-2">
+          {/* Row 1: navigation + code + actions — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
+          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
             <div className="flex items-center gap-2 min-w-0">
               <button
                 onClick={() => navigate('/wms/inbound')}
@@ -601,57 +630,19 @@ export default function InboundDetail() {
               <span className={`font-semibold font-mono text-sm truncate ${statusText(inboundKey(order))}`}>
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={() => isPinned(order.id)
                   ? unpin(order.id)
                   : pin({ id: order.id, import_code: order.import_code ?? order.id.slice(0, 8), status: order.status, location_code: order.location?.location_code, mat_code: order.material?.material_code })
                 }
                 title={isPinned(order.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'}
-                className="p-1 rounded hover:bg-slate-100 transition-colors"
+                className="p-1 rounded hover:bg-slate-100 transition-colors shrink-0"
               >
                 <Bookmark className={`h-4 w-4 transition-colors ${isPinned(order.id) ? 'fill-amber-400 text-amber-500' : 'text-slate-300 hover:text-slate-500'}`} />
               </button>
-              {isOpen && entries.length === 0 && can(perms, 'inbound', 'cancel') && (
-                <Button
-                  size="sm" variant="outline"
-                  className="h-7 text-xs px-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
-                  disabled={cancelling}
-                  onClick={() => openConfirm(
-                    'Hủy phiếu nhập',
-                    `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
-                    () => cancelOrder(order.id, { onSuccess: () => navigate('/wms/inbound') })
-                  )}
-                >
-                  <XCircle className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">{cancelling ? 'Đang hủy…' : 'Hủy phiếu'}</span>
-                </Button>
-              )}
-              {isOpen && can(perms, 'inbound', 'complete') && (
-                <Button
-                  size="sm" variant="outline"
-                  className="h-7 text-xs px-2 text-green-700 border-green-300 hover:bg-green-50 hover:text-green-800 disabled:opacity-40"
-                  disabled={completing}
-                  onClick={() => setCompleteDlg('complete')}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">{completing ? 'Đang lưu…' : 'Hoàn thành'}</span>
-                </Button>
-              )}
-              {isCompleted && can(perms, 'inbound', 'uncomplete') && (
-                <Button
-                  size="sm" variant="outline"
-                  className="h-7 text-xs px-2 text-slate-600 border-slate-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-40"
-                  disabled={uncompleting}
-                  onClick={() => setCompleteDlg('uncomplete')}
-                >
-                  <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">{uncompleting ? 'Đang gỡ…' : 'Gỡ hoàn thành'}</span>
-                </Button>
-              )}
             </div>
+
+            <ActionCluster items={headerActionItems} />
           </div>
 
           {/* Row 2: info chips */}
@@ -837,7 +828,7 @@ export default function InboundDetail() {
         {/* ── Pallet table (~80%) ── */}
         <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
 
-          <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2">
+          <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
               Pallet đã quét
@@ -846,49 +837,39 @@ export default function InboundDetail() {
                 <span className="ml-1 text-[11px] font-normal normal-case text-blue-600">· {selectedIds.size} đã chọn</span>
               )}
             </h2>
-            <div className="flex items-center gap-2">
-              {isOpen && selectedIds.size > 0 && (
-                <Button
-                  size="sm" variant="outline"
-                  className="h-8 gap-1.5 text-red-600 hover:bg-red-50 border-red-200"
-                  onClick={() => openConfirm(
-                    'Xóa pallet đã chọn',
-                    `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
-                    () => deleteEntries(
-                      { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
-                      { onSuccess: () => setSelectedIds(new Set()) }
-                    )
-                  )}
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Xóa ({selectedIds.size})
-                </Button>
-              )}
-              {isOpen && can(perms, 'inbound', 'scan') && (
-                isManualEntry ? (
-                  <Button
-                    size="sm" variant="outline"
-                    className="h-8 gap-1.5"
-                    disabled={isNccFull || !!order.posm_entry_id}
-                    onClick={() => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) }}
-                    title={order.posm_entry_id ? 'Phiếu này đã lưu thủ công rồi' : undefined}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công'}
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-8 gap-1.5"
-                    disabled={!order.location_id || isNccFull}
-                    onClick={() => { unlockAudio(); setShowScan(true) }}
-                    title={isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch` : !order.location_id ? 'Chọn vị trí trước' : undefined}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {isNccFull ? 'Đủ kế hoạch' : order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước'}
-                  </Button>
-                )
-              )}
-            </div>
+            {/* Cụm action bảng pallet — ActionCluster chuẩn (Thêm pallet/Lưu thủ công = hành động tiến chính) */}
+            <ActionCluster items={[
+              ...(isOpen && selectedIds.size > 0 ? [{
+                key: 'delete-selected', icon: Trash2, label: `Xóa (${selectedIds.size})`,
+                tip: `Xóa ${selectedIds.size} pallet đã chọn (không hoàn tác được)`,
+                danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+                onClick: () => openConfirm(
+                  'Xóa pallet đã chọn',
+                  `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
+                  () => deleteEntries(
+                    { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
+                    { onSuccess: () => setSelectedIds(new Set()) }
+                  )
+                ),
+              } satisfies ActionItem] : []),
+              ...(isOpen && can(perms, 'inbound', 'scan') ? [isManualEntry ? {
+                key: 'manual', icon: Plus,
+                label: order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công',
+                tip: order.posm_entry_id ? 'Phiếu này đã lưu thủ công rồi'
+                  : isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch`
+                  : 'Nhập số thùng thực nhập thủ công (mã no-QR)',
+                primary: true, disabled: isNccFull || !!order.posm_entry_id,
+                onClick: () => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) },
+              } satisfies ActionItem : {
+                key: 'scan', icon: Plus,
+                label: isNccFull ? 'Đủ kế hoạch' : order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước',
+                tip: isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch`
+                  : !order.location_id ? 'Chọn vị trí cho phiếu trước rồi mới quét pallet'
+                  : 'Quét QR thêm pallet vào phiếu',
+                primary: true, variant: 'default', disabled: !order.location_id || isNccFull,
+                onClick: () => { unlockAudio(); setShowScan(true) },
+              } satisfies ActionItem] : []),
+            ]} />
           </div>
 
           <Card>

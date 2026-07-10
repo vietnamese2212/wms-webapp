@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -146,13 +147,20 @@ export function LeaveSection() {
           title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
-        <button type="button" onClick={exportExcel} disabled={!leaves.length}
-          className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
-          title="Xuất Excel">
-          <Download className="h-3.5 w-3.5" /> Excel
-        </button>
         <FilterSheetButton defs={defs} className="sm:hidden" />
-        {canRequest && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Gửi đơn nghỉ</Button>}
+        <ActionCluster className="shrink-0" items={[
+          {
+            key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel danh sách đơn nghỉ phép',
+            mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
+            disabled: !leaves.length,
+            onClick: exportExcel,
+          } satisfies ActionItem,
+          ...(canRequest ? [{
+            key: 'create', icon: Plus, label: 'Gửi đơn nghỉ', tip: 'Tạo đơn xin nghỉ phép mới',
+            primary: true, variant: 'default',
+            onClick: () => setOpenCreate(true),
+          } satisfies ActionItem] : []),
+        ]} />
       </div>
       <FilterBar defs={defs} className="hidden sm:flex shrink-0" />
 

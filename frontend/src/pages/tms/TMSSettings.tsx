@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -649,9 +650,11 @@ export default function TMSSettings() {
             <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vtFilterDefs} />
             {vtCreate && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingVT(null); setShowVTDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm loại xe
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add-vt', icon: Plus, label: 'Thêm loại xe', tip: 'Thêm loại xe mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingVT(null); setShowVTDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
           <div className="flex-1 min-h-0 flex">
@@ -752,9 +755,11 @@ export default function TMSSettings() {
             <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[140px]" />
             <FilterBar defs={stFilterDefs} />
             {slotCreate && warehouseId && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setBatchPreset(null); setShowBatchDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm khung giờ
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add-slot', icon: Plus, label: 'Thêm khung giờ', tip: 'Thêm khung giờ mới cho kho đang chọn',
+                primary: true, variant: 'default',
+                onClick: () => { setBatchPreset(null); setShowBatchDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
           {!warehouseId ? (
@@ -791,26 +796,24 @@ export default function TMSSettings() {
                             <Fragment key={`${g.vtId}|${g.cargo}`}>
                               <TableRow className="bg-slate-50 hover:bg-slate-50">
                                 <TableCell colSpan={slotWrite ? 5 : 4} className="px-2 py-1.5">
-                                  <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
                                     <div className="text-[11px] font-semibold text-slate-700">
                                       {g.vtName}
                                       <span className="font-normal text-slate-400"> · {g.cargo === 'ALL' ? 'Tất cả loại kho' : g.cargo} · {g.rows.length} khung</span>
                                     </div>
-                                    <div className="flex items-center gap-1.5">
-                                      {slotCreate && (
-                                        <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1"
-                                          onClick={() => { setBatchPreset({ vtId: g.vtId, cargoType: g.cargo }); setShowBatchDlg(true) }}>
-                                          <Settings2 className="h-3 w-3" /> Sửa cả cụm
-                                        </Button>
-                                      )}
-                                      {slotDelete && (
-                                        <Button size="sm" variant="outline" disabled={deletingCluster}
-                                          className="h-6 px-2 text-[10px] gap-1 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                                          onClick={() => { if (confirm(`Xóa cả cụm khung giờ "${g.vtName} · ${g.cargo === 'ALL' ? 'Tất cả loại kho' : g.cargo}"?\nCác ngày tương lai chưa có xe booking sẽ không còn khung giờ này.`)) deleteCluster({ warehouse_id: warehouseId, vehicle_type_id: g.vtId, cargo_type: g.cargo }, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được cụm khung giờ', description: apiMsg(e2) }) }) }}>
-                                          <Trash2 className="h-3 w-3" /> Xóa cả cụm
-                                        </Button>
-                                      )}
-                                    </div>
+                                    <ActionCluster className="shrink-0" items={[
+                                      ...(slotCreate ? [{
+                                        key: 'edit-cluster', icon: Settings2, label: 'Sửa cả cụm',
+                                        tip: 'Sửa cả cụm khung giờ (thứ × giờ × max xe) của nhóm này', primary: true,
+                                        onClick: () => { setBatchPreset({ vtId: g.vtId, cargoType: g.cargo }); setShowBatchDlg(true) },
+                                      } satisfies ActionItem] : []),
+                                      ...(slotDelete ? [{
+                                        key: 'delete-cluster', icon: Trash2, label: 'Xóa cả cụm',
+                                        tip: 'Xóa toàn bộ khung giờ của nhóm này (ngày tương lai chưa booking mất khung giờ)',
+                                        danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', disabled: deletingCluster,
+                                        onClick: () => { if (confirm(`Xóa cả cụm khung giờ "${g.vtName} · ${g.cargo === 'ALL' ? 'Tất cả loại kho' : g.cargo}"?\nCác ngày tương lai chưa có xe booking sẽ không còn khung giờ này.`)) deleteCluster({ warehouse_id: warehouseId, vehicle_type_id: g.vtId, cargo_type: g.cargo }, { onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được cụm khung giờ', description: apiMsg(e2) }) }) },
+                                      } satisfies ActionItem] : []),
+                                    ]} />
                                   </div>
                                 </TableCell>
                               </TableRow>
@@ -883,9 +886,11 @@ export default function TMSSettings() {
             <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={coFilterDefs} />
             {coCreate && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingCo(null); setShowCoDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm ĐVVT
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add-co', icon: Plus, label: 'Thêm ĐVVT', tip: 'Thêm đơn vị vận tải / nhà cung cấp mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingCo(null); setShowCoDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
           <div className="flex-1 min-h-0 flex">
@@ -988,9 +993,11 @@ export default function TMSSettings() {
             <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vFilterDefs} />
             {vCreate && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingV(null); setShowVDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm xe
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add-v', icon: Plus, label: 'Thêm xe', tip: 'Thêm xe mới cho ĐVVT / NCC',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingV(null); setShowVDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
           <div className="flex-1 min-h-0 flex">

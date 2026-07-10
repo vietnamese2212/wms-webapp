@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
   useDepartments, useJobTitles, useEmployeeRecords,
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
@@ -947,11 +948,13 @@ export default function UserManagement() {
               title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
               {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
             </button>
-            {canCreateEmp && (
-              <Button size="sm" className="gap-1.5 h-8" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm nhân viên
-              </Button>
-            )}
+            <ActionCluster className="shrink-0" items={[
+              ...(canCreateEmp ? [{
+                key: 'create', icon: Plus, label: 'Thêm nhân viên', tip: 'Tạo tài khoản nhân viên mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingEmp(null); setShowEmpDlg(true) },
+              } satisfies ActionItem] : []),
+            ]} />
           </div>
           <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
@@ -1102,36 +1105,31 @@ export default function UserManagement() {
                 {(selectedEmp.deleted_at
                   ? canDeleteEmp
                   : (canSetPwd || canEditEmp || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
-                  <div className="flex flex-wrap gap-1.5 border-b pb-2">
-                    {selectedEmp.deleted_at ? (
-                      canDeleteEmp && (
-                        <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs text-green-700"
-                          disabled={restoring} onClick={() => restore(selectedEmp.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Khôi phục
-                        </Button>
-                      )
-                    ) : (
-                      <>
-                        {canEditEmp && (
-                          <Button size="sm" className="!min-h-0 h-7 gap-1 text-xs"
-                            onClick={() => { setEditingEmp(selectedEmp); setShowEmpDlg(true) }}>
-                            <Pencil className="h-3.5 w-3.5" /> Sửa
-                          </Button>
-                        )}
-                        {canSetPwd && (
-                          <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs"
-                            onClick={() => setPwdEmp(selectedEmp)}>
-                            <KeyRound className="h-3.5 w-3.5" /> Mật khẩu
-                          </Button>
-                        )}
-                        {canDeleteEmp && selectedEmp.id !== user?.id && (
-                          <Button size="sm" variant="outline" className="!min-h-0 h-7 gap-1 text-xs text-red-600 hover:text-red-700"
-                            onClick={() => setConfirmDeleteEmp(selectedEmp)}>
-                            <Trash2 className="h-3.5 w-3.5" /> Xóa
-                          </Button>
-                        )}
-                      </>
-                    )}
+                  <div className="border-b pb-2">
+                    <ActionCluster className="justify-start" items={selectedEmp.deleted_at
+                      ? (canDeleteEmp ? [{
+                          key: 'restore', icon: RotateCcw, label: 'Khôi phục', tip: 'Khôi phục nhân viên đã ẩn về danh sách',
+                          primary: true, busy: restoring,
+                          className: 'border-green-300 text-green-700 hover:bg-green-50',
+                          onClick: () => restore(selectedEmp.id),
+                        } satisfies ActionItem] : [])
+                      : [
+                          ...(canEditEmp ? [{
+                            key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin nhân viên',
+                            primary: true, variant: 'default',
+                            onClick: () => { setEditingEmp(selectedEmp); setShowEmpDlg(true) },
+                          } satisfies ActionItem] : []),
+                          ...(canSetPwd ? [{
+                            key: 'password', icon: KeyRound, label: 'Mật khẩu', tip: 'Đặt mật khẩu đăng nhập mới',
+                            onClick: () => setPwdEmp(selectedEmp),
+                          } satisfies ActionItem] : []),
+                          ...(canDeleteEmp && selectedEmp.id !== user?.id ? [{
+                            key: 'delete', icon: Trash2, label: 'Xóa', tip: 'Xóa nhân viên (không hoàn tác được)',
+                            danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+                            onClick: () => setConfirmDeleteEmp(selectedEmp),
+                          } satisfies ActionItem] : []),
+                        ]
+                    } />
                   </div>
                 )}
                 <div><span className="text-slate-400">Mã NV:</span> <span className="font-mono font-medium">{selectedEmp.employee_code}</span></div>
@@ -1154,13 +1152,15 @@ export default function UserManagement() {
 
         {/* ── Tab: Phòng ban ── */}
         <TabsContent value="departments" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
-          <div className="shrink-0 flex items-center justify-between">
+          <div className="shrink-0 flex items-center justify-between flex-wrap gap-1.5">
             <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
-            {isAdminUser && (
-              <Button size="sm" className="gap-1.5" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm phòng ban
-              </Button>
-            )}
+            <ActionCluster className="shrink-0 justify-end" items={[
+              ...(isAdminUser ? [{
+                key: 'create', icon: Plus, label: 'Thêm phòng ban', tip: 'Tạo phòng ban mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingDept(null); setShowDeptDlg(true) },
+              } satisfies ActionItem] : []),
+            ]} />
           </div>
           <div className="flex gap-3 items-stretch flex-1 min-h-0">
             <Card className="flex-1 min-w-0 flex flex-col">
@@ -1236,11 +1236,13 @@ export default function UserManagement() {
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
             <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>
-            {isAdminUser && (
-              <Button size="sm" className="gap-1.5 h-8" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
-                <Plus className="h-4 w-4" /> Thêm chức danh
-              </Button>
-            )}
+            <ActionCluster className="shrink-0 justify-end" items={[
+              ...(isAdminUser ? [{
+                key: 'create', icon: Plus, label: 'Thêm chức danh', tip: 'Tạo chức danh mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingJt(null); setShowJtDlg(true) },
+              } satisfies ActionItem] : []),
+            ]} />
           </div>
           <FilterBar defs={jtFilterDefs} className="shrink-0 hidden sm:flex" />
           <div className="flex gap-3 items-stretch flex-1 min-h-0">

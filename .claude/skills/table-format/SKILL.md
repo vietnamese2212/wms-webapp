@@ -140,6 +140,14 @@ Mọi filter state (search, date, dropdown…) lưu `useWmsFilterStore` (`fronte
 ## 17b. Nút icon inline trong cell (chuẩn kích thước — dùng chung mọi module)
 Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.5 w-3.5`** + nút `px-1.5 py-1 rounded` (đủ to cân đối, dễ bấm trên tablet). KHÔNG dùng `h-2.5`/`px-1 py-0.5` (quá nhỏ). Nút phải `onClick={e => e.stopPropagation()}` (hoặc handler tự stopPropagation) để không kích hoạt click-row. Nút mở luồng quét QR ngay trên list → mở **overlay/popup** (vd `InboundScanSheetById`), KHÔNG điều hướng sang trang chi tiết (giữ nguyên giao diện danh sách).
 
+## 17c. Nút action toolbar/header = ActionCluster (chuẩn toàn app — user chốt 10/07)
+**MỌI cụm nút action** ở toolbar list page, header trang detail, pane detail, thanh bulk-action → dùng `<ActionCluster items={ActionItem[]}/>` từ `@/components/shared/ActionBtn` (KHÔNG tự viết `<Button>` rời cho action). Mẫu: toolbar `Outbound.tsx` (items inline + `satisfies ActionItem`), header `OutboundDetail.tsx` (`const actionItems: ActionItem[]` build bằng if+push theo điều kiện).
+- Component tự render 2 chế độ: **desktop** = inline h-7 đồng bộ (primary icon+nhãn, phụ icon-only + tooltip Radix, disabled vẫn có tooltip); **mobile** = primary icon+CHỮ h-9, TOÀN BỘ nút phụ gom **1 menu ⋮ ghim cố định mép phải** (`w-full` + `ml-auto` — vị trí không xê dịch theo công đoạn), dòng menu = icon + nhãn, item disabled hiện `tip` làm lý do.
+- `ActionItem`: `key/icon/label(≤3 từ)/tip(mô tả đầy đủ)/onClick/primary(tối đa 1-2 mỗi cụm)/variant/className(chỉ MÀU — 'border-red-200 text-red-600…', KHÔNG size)/disabled/busy/danger(dòng menu đỏ — Xóa/Hủy)/mobileHidden(việc thuần PC: Upload/Export Excel, In)`.
+- Nút quét QR = chủ lực mobile → primary, KHÔNG BAO GIỜ mobileHidden. Hàng chứa cụm phải `flex-wrap` (cụm xuống dòng thay vì bị cắt trên màn hẹp).
+- **1 cỡ control toolbar**: mobile `h-9` / desktop `h-7` — SearchInput, nút Lọc (`FilterSheetButton`), `SavedViews`, density đã theo; component toolbar MỚI phải dùng cặp `h-9 sm:h-7`.
+- Chip/nút inline trong cell bảng vẫn theo mục 17b (KHÔNG đưa vào ActionCluster); nút footer form/dialog (Lưu/Hủy) không thuộc chuẩn này.
+
 ## 18. Phân quyền + loading (bắt buộc mọi nút action)
 - Mọi nút gọi API write bọc `can(perms, 'module', 'action')` (mỗi action = 1 permission riêng, không gộp `manage`). `perms` từ `useAuthStore(s => s.user)`.
 - Mọi button gọi API: `disabled={saving}` + text phản hồi. Bulk action chạy song song `Promise.all(ids.map(...))`. Lỗi API: banner đỏ inline (không chỉ console).

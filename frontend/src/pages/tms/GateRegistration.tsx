@@ -25,6 +25,7 @@ import {
   HelpCircle, XCircle, ChevronsDownUp, ChevronsUpDown,
 } from 'lucide-react'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -820,11 +821,9 @@ export default function GateRegistration() {
     return regs.find(r => r.visit_group_id === reg.visit_group_id && r.id !== reg.id)
   }
 
-  // ── Action buttons (reused in row + detail)
-  function ActionButtons({ reg, size = 'sm' }: { reg: GateRegistration; size?: 'sm' | 'xs' }) {
-    const btnCls = size === 'xs'
-      ? 'text-[10px] px-1.5 py-0.5 h-auto !min-h-0 !min-w-0'   // bỏ sàn touch-target 44px → row co theo số mã đơn
-      : 'text-xs px-2 py-1 h-auto'
+  // ── Action buttons nhỏ NẰM TRONG CELL từng dòng (chuẩn 17b — giữ nguyên, không dùng ActionCluster)
+  function ActionButtons({ reg }: { reg: GateRegistration }) {
+    const btnCls = 'text-[10px] px-1.5 py-0.5 h-auto !min-h-0 !min-w-0'   // bỏ sàn touch-target 44px → row co theo số mã đơn
     // Xe kết hợp — gác thứ tự: chân Xuất chỉ Gọi xe/Vào khi chân Nhập đã Ra; gỡ "Đã ra" chân Nhập phải hoàn tác chân Xuất trước
     const partner = combinedPartner(reg)
     const blockOutForward = !!(reg.visit_group_id && reg.direction === 'OUTBOUND' && partner && partner.status !== 'COMPLETED')
@@ -897,6 +896,61 @@ export default function GateRegistration() {
         )}
       </div>
     )
+  }
+
+  // ── Cụm action tiến trình cho PANE chi tiết (chuẩn ActionCluster) — CÙNG điều kiện trạng thái/quyền/
+  // gác xe kết hợp với ActionButtons ở trên (sửa 1 bên nhớ sửa bên kia)
+  function paneGateActionItems(reg: GateRegistration): ActionItem[] {
+    const partner = combinedPartner(reg)
+    const blockOutForward = !!(reg.visit_group_id && reg.direction === 'OUTBOUND' && partner && partner.status !== 'COMPLETED')
+    const blockInRevertExit = !!(reg.visit_group_id && reg.direction === 'INBOUND' && partner && partner.status !== 'REGISTERED')
+    const items: ActionItem[] = []
+    if (reg.status === 'REGISTERED' && can(perms, 'gate_registration', 'call'))
+      items.push({
+        key: 'call', icon: PhoneCall, label: 'Gọi xe',
+        tip: blockOutForward ? 'Xe Nhập chưa ra — chân Xuất chưa thể gọi xe' : 'Gọi xe vào lấy/giao hàng',
+        primary: true, className: 'border-amber-300 text-amber-700 hover:bg-amber-50',
+        disabled: blockOutForward,
+        onClick: () => { setCallTarget(reg); setCallTime(nowVnDatetimeLocal()) },
+      })
+    if (reg.status === 'CALLED' && can(perms, 'gate_registration', 'call'))
+      items.push({
+        key: 'revert-call', icon: RotateCcw, label: 'Huỷ gọi xe', tip: 'Huỷ gọi xe (quay về Đã đăng ký)',
+        variant: 'ghost', className: 'text-slate-400 hover:text-red-500',
+        busy: revertCallMut.isPending,
+        onClick: () => revertCallMut.mutate(reg.id),
+      })
+    if ((reg.status === 'REGISTERED' || reg.status === 'CALLED') && can(perms, 'gate_registration', 'entry'))
+      items.push({
+        key: 'entry', icon: LogIn, label: 'Vào cổng',
+        tip: blockOutForward ? 'Xe Nhập chưa ra — chân Xuất chưa thể vào' : 'Xác nhận xe vào cổng',
+        primary: true, className: 'border-green-300 text-green-700 hover:bg-green-50',
+        disabled: blockOutForward,
+        onClick: () => { setEntryTarget(reg); setEntryTime(nowVnDatetimeLocal()) },
+      })
+    if (reg.status === 'IN' && can(perms, 'gate_registration', 'entry'))
+      items.push({
+        key: 'revert-entry', icon: RotateCcw, label: 'Huỷ vào', tip: 'Huỷ xác nhận vào (quay về trạng thái trước)',
+        variant: 'ghost', className: 'text-slate-400 hover:text-red-500',
+        busy: revertEntryMut.isPending,
+        onClick: () => revertEntryMut.mutate(reg.id),
+      })
+    if (reg.status === 'IN' && can(perms, 'gate_registration', 'exit'))
+      items.push({
+        key: 'exit', icon: LogOut, label: 'Ra cổng', tip: 'Xác nhận xe ra cổng (ghi giờ ra, trọng lượng)',
+        primary: true, className: 'border-blue-300 text-blue-700 hover:bg-blue-50',
+        onClick: () => { setExitTarget(reg); setExitWeight(''); setExitTime(nowVnDatetimeLocal()) },
+      })
+    if (reg.status === 'COMPLETED' && can(perms, 'gate_registration', 'exit'))
+      items.push({
+        key: 'revert-exit', icon: RotateCcw, label: 'Huỷ ra',
+        tip: blockInRevertExit ? 'Phải hoàn tác thao tác chân Xuất trước (gỡ Gọi xe / Đã vào)' : 'Huỷ xác nhận ra',
+        variant: 'ghost', className: 'text-slate-400 hover:text-red-500',
+        disabled: blockInRevertExit,
+        busy: revertExitMut.isPending,
+        onClick: () => revertExitMut.mutate(reg.id),
+      })
+    return items
   }
 
   // ── Vehicle options lọc theo công ty — GOM CHI NHÁNH theo tên (1 ĐVVT nhiều mã, cùng tên)
@@ -1023,7 +1077,7 @@ export default function GateRegistration() {
         </span>
       </TableCell>
       <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-        <ActionButtons reg={reg} size="xs" />
+        <ActionButtons reg={reg} />
       </TableCell>
     </TableRow>
   )
@@ -1054,11 +1108,13 @@ export default function GateRegistration() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {can(perms, 'gate_registration', 'create') && (
-            <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
-              <Plus className="h-3.5 w-3.5 mr-1" />Thêm
-            </Button>
-          )}
+          <ActionCluster className="shrink-0" items={[
+            ...(can(perms, 'gate_registration', 'create') ? [{
+              key: 'create', icon: Plus, label: 'Đăng ký xe', tip: 'Đăng ký lượt xe mới vào cổng',
+              primary: true, variant: 'default',
+              onClick: openCreate,
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
 
         {/* Filter chip bar (desktop) */}
@@ -1157,28 +1213,23 @@ export default function GateRegistration() {
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[selected.status]}`}>
                   {STATUS_LABEL[selected.status]}
                 </span>
-                <div className="ml-auto flex gap-2">
-                  {can(perms, 'gate_registration', 'edit') && (
-                    <Button size="sm" variant="outline"
-                      className="h-6 px-2 text-[10px] gap-1"
-                      onClick={() => { setSelected(null); openEdit(selected) }}
-                    >
-                      <Pencil className="h-3 w-3" />Sửa
-                    </Button>
-                  )}
-                  {can(perms, 'gate_registration', 'delete') && (
-                    <Button size="sm" variant="outline"
-                      className="h-6 px-2 text-[10px] gap-1 border-red-200 text-red-600 hover:bg-red-50"
-                      onClick={() => setDeleteTarget(selected)}
-                    >
-                      <Trash2 className="h-3 w-3" />Xóa
-                    </Button>
-                  )}
-                </div>
+                <ActionCluster className="ml-auto" items={[
+                  ...(can(perms, 'gate_registration', 'edit') ? [{
+                    key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin lượt đăng ký',
+                    onClick: () => { setSelected(null); openEdit(selected) },
+                  } satisfies ActionItem] : []),
+                  ...(can(perms, 'gate_registration', 'delete') ? [{
+                    key: 'delete', icon: Trash2, label: 'Xóa', tip: 'Xóa lượt đăng ký (không hoàn tác được)',
+                    danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+                    onClick: () => setDeleteTarget(selected),
+                  } satisfies ActionItem] : []),
+                ]} />
               </div>
 
-              {/* Action buttons */}
-              <ActionButtons reg={selected} size="sm" />
+              {/* Cụm action tiến trình theo trạng thái (Gọi xe / Vào / Ra + hoàn tác) */}
+              <div className="flex flex-wrap">
+                <ActionCluster items={paneGateActionItems(selected)} />
+              </div>
 
               <div className="border-t pt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Kho & Hàng</p>

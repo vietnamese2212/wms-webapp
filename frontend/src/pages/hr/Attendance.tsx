@@ -6,6 +6,7 @@ import { vi } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -187,7 +188,13 @@ function MySection() {
             <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setMonth(m => addMonths(m, 1))}><ChevronRight className="h-4 w-4" /></Button>
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setMonth(new Date()); setSel(today) }}>Hôm nay</Button>
             <div className="flex-1" />
-            {canRequestLeave && <Button size="sm" className="h-7" onClick={() => setOpenLeave(true)}><Plus className="h-4 w-4 mr-1" />Xin nghỉ phép</Button>}
+            {canRequestLeave && (
+              <ActionCluster className="shrink-0" items={[{
+                key: 'leave-request', icon: Plus, label: 'Xin nghỉ phép', tip: 'Gửi đơn xin nghỉ phép cho chính mình',
+                primary: true, variant: 'default',
+                onClick: () => setOpenLeave(true),
+              } satisfies ActionItem]} />
+            )}
           </div>
           <div className="grid grid-cols-7 gap-1">
             {DOW.map(d => <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>)}
@@ -447,11 +454,12 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
-        <button type="button" onClick={exportExcel} disabled={!filtered.length}
-          className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
-          title="Xuất Excel (raw)">
-          <Download className="h-3.5 w-3.5" /> Excel
-        </button>
+        <ActionCluster className="shrink-0" items={[{
+          key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
+          mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
+          disabled: !filtered.length,
+          onClick: exportExcel,
+        } satisfies ActionItem]} />
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>

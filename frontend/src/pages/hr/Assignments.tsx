@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus, Wand2, Send, Trash2, CalendarDays, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify } from 'lucide-react'
+import { Plus, Wand2, Send, Trash2, CalendarDays, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -219,7 +220,13 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {canCreate && <Button size="sm" className="h-7" onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4 mr-1" />Tạo phiếu</Button>}
+          {canCreate && (
+            <ActionCluster className="shrink-0" items={[{
+              key: 'create', icon: Plus, label: 'Tạo phiếu', tip: 'Tạo phiếu phân công mới (Kho → Layout → Ngày)',
+              primary: true, variant: 'default',
+              onClick: () => setOpenCreate(true),
+            } satisfies ActionItem]} />
+          )}
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap"><FilterBar defs={filterDefs} /></div>
       </div>
@@ -463,6 +470,50 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const empRows = [...empMap.values()].sort((a, b) => empFirst(a) - empFirst(b) || (a.employee?.name ?? '').localeCompare(b.employee?.name ?? ''))
 
   const diff = totalAssigned - totalRequired
+
+  // Cụm action của phiếu (chuẩn ActionCluster) — điều kiện render/quyền/disabled giữ nguyên như nút cũ
+  const actionItems: ActionItem[] = []
+  if (step === 'demand' && canCreate) {
+    actionItems.push({
+      key: 'save', icon: Save, label: 'Lưu',
+      tip: locked ? 'Đã phát hành — bấm Hoàn tác để sửa' : 'Lưu yêu cầu nhân lực vào layout',
+      disabled: locked, busy: upsert.isPending || setLayoutSkills.isPending,
+      onClick: () => { void saveLayout() },
+    })
+    actionItems.push({
+      key: 'auto', icon: Wand2, label: 'Tự xếp người', primary: true, variant: 'default',
+      tip: locked ? 'Đã phát hành — bấm Hoàn tác để sửa'
+        : totalRequired === 0 ? 'Nhập số lượng yêu cầu trước khi tự xếp'
+        : 'Lưu yêu cầu + tự động xếp người vào vị trí',
+      disabled: locked || totalRequired === 0, busy: assigning,
+      onClick: () => { void runAuto() },
+    })
+  }
+  if (step === 'result' && canPublish && !published && hasResult)
+    actionItems.push({
+      key: 'publish', icon: Send, label: 'Phát hành', primary: true, variant: 'default',
+      tip: 'Phát hành phiếu rồi mở lịch (ảnh) để chia sẻ', busy: publish.isPending,
+      onClick: () => { void publishAndView() },
+    })
+  if (step === 'result' && published && hasResult)
+    actionItems.push({
+      key: 'view-img', icon: ImageIcon, label: 'Xem lịch', primary: true,
+      tip: 'Xem lịch dạng ảnh để chia sẻ/tải về',
+      onClick: () => setShowImg(true),
+    })
+  if (step === 'result' && canPublish && published)
+    actionItems.push({
+      key: 'unpublish', icon: Undo2, label: 'Hoàn tác', tip: 'Hoàn tác phát hành để sửa lại phiếu',
+      disabled: publish.isPending,
+      onClick: () => publish.mutate({ id: sheet.id, publish: false }),
+    })
+  if (canDelete)
+    actionItems.push({
+      key: 'delete', icon: Trash2, label: 'Xóa phiếu', tip: 'Xóa phiếu phân công này (không hoàn tác được)',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+      onClick: () => { void onDelete() },
+    })
+
   return (
     <div className="flex flex-col h-full">
       {/* ── Header gọn (shrink-0) ── */}
@@ -471,8 +522,6 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
           <Button size="sm" variant="ghost" className="h-7 -ml-1" onClick={onBack}>← Danh sách</Button>
           <span className="text-sm font-semibold text-slate-800">{sheet.layout_name}</span>
           <Badge variant={published ? 'success' : 'warning'}>{published ? 'Đã phát hành' : 'Nháp'}</Badge>
-          <div className="flex-1" />
-          {canDelete && <Button size="sm" variant="outline" className="h-7 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>}
         </div>
         <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-slate-500">
           <span className="tabular-nums">{formatDate(sheet.work_date)} · {whName}</span>
@@ -488,11 +537,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
             <button onClick={() => hasResult && setStep('result')} disabled={!hasResult} className={`px-3 py-1 border-l border-slate-200 ${step === 'result' ? 'bg-sky-600 text-white' : hasResult ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-300'}`}>2. Kết quả phân công</button>
           </div>
           <div className="flex-1" />
-          {step === 'demand' && canCreate && <Button size="sm" variant="outline" className="h-7" onClick={saveLayout} disabled={locked || upsert.isPending || setLayoutSkills.isPending}><Save className="h-3.5 w-3.5 mr-1" />Lưu</Button>}
-          {step === 'demand' && canCreate && <Button size="sm" className="h-7" onClick={runAuto} disabled={locked || assigning || totalRequired === 0}>{assigning ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Wand2 className="h-3.5 w-3.5 mr-1" />}{assigning ? 'Đang xếp…' : 'Tự xếp người'}</Button>}
-          {step === 'result' && canPublish && !published && hasResult && <Button size="sm" className="h-7" onClick={publishAndView} disabled={publish.isPending}><Send className="h-3.5 w-3.5 mr-1" />Phát hành & Xem lịch</Button>}
-          {step === 'result' && published && hasResult && <Button size="sm" variant="outline" className="h-7" onClick={() => setShowImg(true)}><ImageIcon className="h-3.5 w-3.5 mr-1" />Xem lịch</Button>}
-          {step === 'result' && canPublish && published && <Button size="sm" variant="outline" className="h-7" onClick={() => publish.mutate({ id: sheet.id, publish: false })} disabled={publish.isPending}>↩ Hoàn tác</Button>}
+          <ActionCluster className="shrink-0" items={actionItems} />
         </div>
         {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5">{err}</div>}
         {assigning && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded px-3 py-1.5 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Đang tự xếp người…</div>}
@@ -760,7 +805,13 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
       <div className="flex flex-wrap items-center gap-2">
         <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
         <div className="flex-1" />
-        {canCreate && wh && <Button size="sm" className="h-7" onClick={() => setForm({ id: null })}><Plus className="h-4 w-4 mr-1" />Tạo layout</Button>}
+        {canCreate && wh && (
+          <ActionCluster className="shrink-0" items={[{
+            key: 'create-layout', icon: Plus, label: 'Tạo layout', tip: 'Tạo layout mẫu mới cho kho đang chọn',
+            primary: true, variant: 'default',
+            onClick: () => setForm({ id: null }),
+          } satisfies ActionItem]} />
+        )}
       </div>
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
 

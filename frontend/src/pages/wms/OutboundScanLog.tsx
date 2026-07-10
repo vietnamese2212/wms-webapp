@@ -10,6 +10,7 @@ import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { QRScanner } from '@/components/shared/QRScanner'
@@ -319,29 +320,25 @@ export default function OutboundScanLog() {
           </span>
           <div className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-          <button
-            type="button"
-            onClick={() => setShowScanner(true)}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50 transition-colors shrink-0"
-            title="Quét QR lọc theo mã pallet"
-          >
-            <QrCode className="h-3.5 w-3.5 text-slate-500" />
-          </button>
           <SavedViews
             module="scanlog"
             currentFilters={viewSnapshot}
             onApply={applyView}
             activeId={activeViewId}
           />
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting || !canFetch}
-            className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
-            title="Xuất Excel kết quả đang lọc"
-          >
-            <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
-          </button>
+          {/* Cụm action toolbar (chuẩn ActionCluster): quét QR lọc pallet (chủ lực mobile) + Export (chỉ PC) */}
+          <ActionCluster className="shrink-0" items={[
+            {
+              key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR lọc theo mã pallet',
+              primary: true,
+              onClick: () => setShowScanner(true),
+            } satisfies ActionItem,
+            {
+              key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
+              mobileHidden: true, disabled: !canFetch, busy: exporting,
+              onClick: () => { void handleExport() },
+            } satisfies ActionItem,
+          ]} />
         </div>
 
         {/* Row 2: FilterBar (chip) */}

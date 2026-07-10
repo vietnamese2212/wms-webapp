@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -521,16 +522,18 @@ export default function Materials() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {can(perms, 'materials', 'import') && (
-            <Button size="sm" variant="outline" onClick={() => setShowUpload(true)} className="hidden sm:inline-flex h-7 text-xs gap-1">
-              <Upload className="h-3.5 w-3.5" />Upload Excel
-            </Button>
-          )}
-          {can(perms, 'materials', 'create') && (
-            <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
-              <Plus className="h-3.5 w-3.5" />Thêm
-            </Button>
-          )}
+          <ActionCluster className="shrink-0" items={[
+            ...(can(perms, 'materials', 'import') ? [{
+              key: 'upload', icon: Upload, label: 'Upload Excel', tip: 'Upload mã hàng từ file Excel (mã mới thêm, mã đã có cập nhật)',
+              mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              onClick: () => setShowUpload(true),
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'materials', 'create') ? [{
+              key: 'add', icon: Plus, label: 'Thêm mã hàng', tip: 'Thêm mã hàng mới',
+              primary: true, variant: 'default',
+              onClick: openAdd,
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
 
         {/* Filter chip bar (desktop) */}
@@ -815,19 +818,24 @@ export default function Materials() {
                 </div>
               </div>
 
-              {/* Action buttons */}
+              {/* Action buttons — cụm action chuẩn ActionCluster */}
               {(canEdit || canDel) && (
-                <div className="shrink-0 border-t px-4 py-3 flex gap-2">
-                  {canEdit && (
-                    <Button size="sm" variant="outline" className="flex-1 text-xs h-7 gap-1" onClick={() => { openEdit(detailMat); setDetailMat(null) }}>
-                      <Pencil className="h-3 w-3" />Sửa
-                    </Button>
-                  )}
-                  {canDel && (
-                    <Button size="sm" variant="outline" className="text-xs h-7 gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300" onClick={() => { setDeleteTarget(detailMat); setDetailMat(null) }}>
-                      <Trash2 className="h-3 w-3" />{detailMat.is_active ? 'Ẩn' : 'Xóa'}
-                    </Button>
-                  )}
+                <div className="shrink-0 border-t px-4 py-3">
+                  <ActionCluster items={[
+                    ...(canEdit ? [{
+                      key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin mã hàng',
+                      primary: true,
+                      onClick: () => { openEdit(detailMat); setDetailMat(null) },
+                    } satisfies ActionItem] : []),
+                    ...(canDel ? [{
+                      key: 'delete', icon: Trash2, label: detailMat.is_active ? 'Ẩn' : 'Xóa',
+                      tip: detailMat.is_active
+                        ? 'Ẩn mã hàng (đánh dấu ẩn, không xóa khỏi hệ thống)'
+                        : 'Xóa mã hàng đã ẩn',
+                      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+                      onClick: () => { setDeleteTarget(detailMat); setDetailMat(null) },
+                    } satisfies ActionItem] : []),
+                  ]} />
                 </div>
               )}
             </>

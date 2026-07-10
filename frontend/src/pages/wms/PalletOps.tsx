@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Layers, Scissors, QrCode, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -249,7 +250,10 @@ export default function PalletOps() {
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                   <Input className="pl-7 h-8 text-sm w-full" placeholder="Tìm / quét mã pallet" value={hSearch} onChange={e => setHSearch(e.target.value)} />
                 </div>
-                <Button type="button" variant="outline" size="sm" className="h-8 px-2 shrink-0" title="Quét QR" onClick={() => setScanFor('history')}><QrCode className="h-4 w-4" /></Button>
+                <ActionCluster className="shrink-0" items={[{
+                  key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
+                  onClick: () => setScanFor('history'),
+                } satisfies ActionItem]} />
                 <FilterSheetButton defs={histDefs} className="sm:hidden" />
               </div>
               <FilterBar defs={histDefs} className="hidden sm:flex" />
@@ -335,24 +339,34 @@ export default function PalletOps() {
               <>
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
                   <Label className="text-xs font-semibold">Pallet đích (giữ lại làm đại diện)</Label>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet đích" value={mergeTarget} disabled={!scopeReady} onChange={e => setMergeTarget(e.target.value)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('target')}><QrCode className="h-4 w-4" /></Button>
+                    <ActionCluster className="shrink-0" items={[{
+                      key: 'scan-target', icon: QrCode, label: 'Quét QR',
+                      tip: scopeReady ? 'Quét QR pallet đích (giữ lại làm đại diện)' : 'Chọn Kho và Loại kho trước mới quét được',
+                      primary: true, disabled: !scopeReady,
+                      onClick: () => setScanFor('target'),
+                    } satisfies ActionItem]} />
                   </div>
                 </div>
 
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
                   <Label className="text-xs font-semibold">Pallet con (xếp chung lên đích)</Label>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/gõ mã rồi Enter" value={childInput} disabled={!scopeReady}
                         onChange={e => setChildInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addChild(childInput) }} onBlur={() => addChild(childInput)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('child')}><QrCode className="h-4 w-4" /></Button>
+                    <ActionCluster className="shrink-0" items={[{
+                      key: 'scan-child', icon: QrCode, label: 'Quét QR',
+                      tip: scopeReady ? 'Quét QR pallet con — quét liên tiếp để thêm nhiều pallet' : 'Chọn Kho và Loại kho trước mới quét được',
+                      primary: true, disabled: !scopeReady,
+                      onClick: () => setScanFor('child'),
+                    } satisfies ActionItem]} />
                   </div>
                   <div className="space-y-1 max-h-60 overflow-y-auto">
                     {allChildren.map(c => (
@@ -367,29 +381,42 @@ export default function PalletOps() {
 
                 <p className="text-[11px] text-slate-500">Dồn = xếp hàng nhiều tem lên 1 pallet vật lý. <b>Không đổi số lượng, không in tem mới</b> — mỗi tem giữ truy vết riêng.</p>
 
-                {canMerge ? (
-                  <Button className="w-full gap-1.5" disabled={!mergeReady || merge.isPending} onClick={doMerge}>
-                    <Layers className="h-4 w-4" />{merge.isPending ? 'Đang dồn…' : `Dồn ${allChildren.length || ''} pallet vào đích`}
-                  </Button>
-                ) : <p className="text-xs text-amber-600">Bạn không có quyền dồn pallet.</p>}
-
-                {canUngroup && (
-                  <Button variant="outline" className="w-full gap-1.5" disabled={!allChildren.length || ungroup.isPending}
-                    onClick={async () => { setMsg(null); try { const r = await ungroup.mutateAsync({ pallet_codes: allChildren, warehouse_id: opWh }); setMsg({ ok: true, text: `Đã gỡ nhóm ${r.ungrouped} pallet` }); setMergeChildren([]); setChildInput('') } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi gỡ nhóm' }) } }}>
-                    <Trash2 className="h-4 w-4" />Gỡ nhóm các pallet con đã nhập
-                  </Button>
-                )}
+                {/* Cụm action chính tab Dồn — chuẩn ActionCluster (desktop inline, mobile nút chính + menu ⋮) */}
+                <ActionCluster items={[
+                  ...(canMerge ? [{
+                    key: 'merge', icon: Layers,
+                    label: allChildren.length ? `Dồn ${allChildren.length} pallet` : 'Dồn pallet',
+                    tip: mergeReady
+                      ? 'Dồn các pallet con đã nhập vào pallet đích (gom nhóm — không đổi số lượng, không in tem mới)'
+                      : 'Chọn Kho/Loại kho, pallet đích và ít nhất 1 pallet con trước',
+                    primary: true, variant: 'default', disabled: !mergeReady, busy: merge.isPending,
+                    onClick: () => { void doMerge() },
+                  } satisfies ActionItem] : []),
+                  ...(canUngroup ? [{
+                    key: 'ungroup', icon: Trash2, label: 'Gỡ nhóm',
+                    tip: allChildren.length ? 'Gỡ nhóm các pallet con đã nhập khỏi pallet đích' : 'Quét/nhập pallet con cần gỡ nhóm trước',
+                    danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+                    disabled: !allChildren.length, busy: ungroup.isPending,
+                    onClick: async () => { setMsg(null); try { const r = await ungroup.mutateAsync({ pallet_codes: allChildren, warehouse_id: opWh }); setMsg({ ok: true, text: `Đã gỡ nhóm ${r.ungrouped} pallet` }); setMergeChildren([]); setChildInput('') } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi gỡ nhóm' }) } },
+                  } satisfies ActionItem] : []),
+                ]} />
+                {!canMerge && <p className="text-xs text-amber-600">Bạn không có quyền dồn pallet.</p>}
               </>
             ) : (
               <>
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
                   <Label className="text-xs font-semibold">Pallet gốc cần tách</Label>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
                     <div className="relative flex-1">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet gốc" value={splitSrc} disabled={!scopeReady} onChange={e => setSplitSrc(e.target.value)} />
                     </div>
-                    <Button type="button" variant="outline" size="sm" className="h-9 px-2.5 shrink-0" disabled={!scopeReady} onClick={() => setScanFor('source')}><QrCode className="h-4 w-4" /></Button>
+                    <ActionCluster className="shrink-0" items={[{
+                      key: 'scan-source', icon: QrCode, label: 'Quét QR',
+                      tip: scopeReady ? 'Quét QR pallet gốc cần tách' : 'Chọn Kho và Loại kho trước mới quét được',
+                      primary: true, disabled: !scopeReady,
+                      onClick: () => setScanFor('source'),
+                    } satisfies ActionItem]} />
                   </div>
                   {srcQ.length >= 3 && !srcEntry && <p className="text-xs text-amber-600">Không tìm thấy pallet này đang tồn kho.</p>}
                   {srcEntry && (
@@ -456,10 +483,16 @@ export default function PalletOps() {
 
                 <p className="text-[11px] text-slate-500">Tách = chia số lượng thật. Gốc giảm tồn, sinh pallet con mới (seq <code>x.1</code>). <b>Tách và in là 2 bước riêng</b> — tách xong có thể in ngay hoặc in sau ở tab Lịch sử. Không ảnh hưởng báo cáo nhập.</p>
 
+                {/* Cụm action chính tab Tách — chuẩn ActionCluster */}
                 {canSplit ? (
-                  <Button className="w-full gap-1.5" disabled={!splitReady || split.isPending} onClick={doSplit}>
-                    <Scissors className="h-4 w-4" />{split.isPending ? 'Đang tách…' : 'Tách pallet'}
-                  </Button>
+                  <ActionCluster items={[{
+                    key: 'split', icon: Scissors, label: 'Tách pallet',
+                    tip: splitReady
+                      ? 'Tách pallet gốc thành các pallet con theo số thùng đã nhập'
+                      : 'Chọn Kho/Loại kho, pallet gốc đang tồn và số thùng hợp lệ trước',
+                    primary: true, variant: 'default', disabled: !splitReady, busy: split.isPending,
+                    onClick: () => { void doSplit() },
+                  } satisfies ActionItem]} />
                 ) : <p className="text-xs text-amber-600">Bạn không có quyền tách pallet.</p>}
 
                 {/* Sau khi tách: tem con chờ in — in ngay hoặc để dành in ở Lịch sử */}
@@ -469,14 +502,22 @@ export default function PalletOps() {
                     <div className="space-y-0.5 max-h-32 overflow-y-auto">
                       {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · {l.qty} thùng</div>)}
                     </div>
-                    <div className="flex gap-2">
-                      {canGenLabel && (
-                        <Button size="sm" className="flex-1 gap-1.5" onClick={() => { printTems(splitDone, 'GENERATE'); setSplitDone(null) }}>
-                          <Printer className="h-3.5 w-3.5" />In tem ngay
-                        </Button>
-                      )}
-                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setSplitDone(null)}>{canGenLabel ? 'Để in sau (ở Lịch sử)' : 'Đóng — in tem ở module In tem pallet'}</Button>
-                    </div>
+                    {/* Cụm action sau khi tách — In tem (thuần PC, window.print) + Để in sau/Đóng */}
+                    <ActionCluster items={[
+                      ...(canGenLabel ? [{
+                        key: 'print-now', icon: Printer, label: 'In tem ngay',
+                        tip: 'In ngay tem các pallet con vừa tách (mở hộp thoại in trình duyệt)',
+                        primary: true, variant: 'default', mobileHidden: true,
+                        onClick: () => { printTems(splitDone, 'GENERATE'); setSplitDone(null) },
+                      } satisfies ActionItem] : []),
+                      {
+                        key: 'print-later', icon: canGenLabel ? History : X,
+                        label: canGenLabel ? 'Để in sau' : 'Đóng',
+                        tip: canGenLabel ? 'Không in ngay — vào tab Lịch sử để in sau' : 'Đóng — in tem ở module In tem pallet',
+                        primary: true,
+                        onClick: () => setSplitDone(null),
+                      } satisfies ActionItem,
+                    ]} />
                   </div>
                 )}
               </>

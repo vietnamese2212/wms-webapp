@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Network, AlertTriangle, Plus, Users, ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import {
@@ -169,7 +170,16 @@ export default function OrgChart() {
           ) : (
             <>
               <style>{ORG_CSS}</style>
-              {canEdit && <div className="px-4 pt-3"><Button size="sm" variant="outline" className="h-7" onClick={() => openPick({ kind: 'root' })}><Plus className="h-3.5 w-3.5 mr-1" />Thêm sơ đồ (vị trí gốc)</Button></div>}
+              {canEdit && (
+                <div className="px-4 pt-3 flex items-center gap-2 flex-wrap">
+                  {/* Cụm action đầu vùng sơ đồ (chuẩn ActionCluster) */}
+                  <ActionCluster className="justify-start" items={[{
+                    key: 'add-root', icon: Plus, label: 'Thêm sơ đồ', tip: 'Thêm sơ đồ mới — chọn vị trí gốc từ chức danh có sẵn',
+                    primary: true,
+                    onClick: () => openPick({ kind: 'root' }),
+                  } satisfies ActionItem]} />
+                </div>
+              )}
               {roots.map((r, i) => (
                 <div key={r.id} className={i > 0 ? 'border-t border-dashed border-slate-200 mt-2' : ''}>
                   <div className="orgchart"><ul>{renderLi(r)}</ul></div>

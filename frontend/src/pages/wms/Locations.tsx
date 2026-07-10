@@ -4,6 +4,7 @@ import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } 
 import { formatDateTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -278,21 +279,24 @@ export default function Locations() {
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews module="locations" currentFilters={viewSnapshot} activeId={activeViewId}
             onApply={(fl) => setLocationsFilter(fl as Partial<typeof viewSnapshot>)} />
-          <button type="button" onClick={exportExcel} disabled={!filtered.length}
-            className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
-            title="Xuất Excel">
-            <Download className="h-3.5 w-3.5" /> Excel
-          </button>
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {can(perms, 'locations', 'create') && (
-            <Button size="sm" onClick={openAdd} className="h-7 text-xs gap-1">
-              <Plus className="h-3.5 w-3.5" /> Thêm vị trí
-            </Button>
-          )}
+          <ActionCluster className="shrink-0" items={[
+            {
+              key: 'excel', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách vị trí đang lọc',
+              mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              disabled: !filtered.length,
+              onClick: exportExcel,
+            } satisfies ActionItem,
+            ...(can(perms, 'locations', 'create') ? [{
+              key: 'add', icon: Plus, label: 'Thêm vị trí', tip: 'Thêm vị trí kho mới',
+              primary: true, variant: 'default',
+              onClick: openAdd,
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
 
         {/* Filter chip bar (desktop) */}

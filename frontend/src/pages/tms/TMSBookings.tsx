@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2 } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -37,7 +38,6 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 
@@ -2250,6 +2250,83 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   })
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
+  // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  const headerActions: ActionItem[] = []
+  if (canConfirmReceipt && tStatus === 'IN_TRANSIT')
+    headerActions.push({
+      key: 'start-receipt', icon: isSelf ? CheckCircle2 : Play,
+      label: isSelf ? 'Hoàn thành' : 'Nhận hàng',
+      tip: srcEditing(order!)
+        ? 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại'
+        : !hasBooking
+          ? `Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi ${isSelf ? 'hoàn thành' : 'nhận hàng'}`
+          : isSelf ? 'Hoàn thành giao hàng (kho nhận không quét)' : 'Bắt đầu nhận hàng chuyển kho',
+      primary: true, variant: 'success',
+      disabled: !hasBooking || srcEditing(order!),
+      busy: confirming || starting || selfCompleting,
+      onClick: async () => {
+        if (!order) return
+        setConfirmErr(''); setStarting(true)
+        try {
+          if (isSelf) await selfComplete(order.id)
+          else await confirmReceipt(order.id)
+        } catch (e: unknown) {
+          setStarting(false)
+          const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+          setConfirmErr(msg ?? (isSelf ? 'Lỗi hoàn thành giao hàng' : 'Lỗi xác nhận nhận hàng'))
+        }
+      },
+    })
+  if (canConfirmReceipt && tStatus === 'RECEIVING') {
+    headerActions.push({
+      key: 'cancel-receipt', icon: X, label: 'Hủy nhận',
+      tip: hasActiveImports
+        ? `Còn ${activeImports.length} phiếu nhập đang hoạt động — hủy từng phiếu ở Nhập kho trước`
+        : 'Hủy nhận hàng — trạng thái sẽ về Đang vận chuyển',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
+      disabled: hasActiveImports, busy: cancelling,
+      onClick: async () => {
+        if (!order) return
+        if (!confirm('Hủy nhận hàng? Trạng thái sẽ về Đang vận chuyển.')) return
+        setConfirmErr('')
+        try {
+          await cancelReceipt(order.id)
+        } catch (e: unknown) {
+          const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+          setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
+        }
+      },
+    })
+    if (missingMaterials.length > 0)
+      headerActions.push({
+        key: 'recreate-inbound', icon: PlusCircle, label: 'Tạo phiếu lại',
+        tip: `Mã hàng ${missingMaterials.map(g => g.material_code ?? g.material_id.slice(0, 8)).join(', ')} đang không có phiếu nhập`,
+        className: 'border-amber-400 text-amber-700 hover:bg-amber-50',
+        busy: creatingInbound,
+        onClick: async () => {
+          if (!order) return
+          // Bulk song song (CLAUDE.md): không for...of await tuần tự
+          await Promise.all(missingMaterials.map(g =>
+            createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })
+          ))
+        },
+      })
+  }
+  if (canEdit)
+    headerActions.push({
+      key: 'update-booking', icon: Truck, label: 'ĐVVT booking',
+      tip: 'Cập nhật ĐVVT booking (biển số, SĐT lái xe, giờ xe tới)',
+      onClick: () => setShowUpdate(true),
+    })
+  if (!isLoading && goods.length > 0 && hasPallets)
+    headerActions.push({
+      key: 'toggle-pallets', icon: ChevronDown,
+      label: allExpanded ? 'Thu gọn' : 'Pallet',
+      tip: allExpanded ? 'Thu gọn danh sách pallet của mọi mã hàng' : 'Mở danh sách pallet của mọi mã hàng',
+      className: `text-slate-500 ${allExpanded ? '[&_svg]:rotate-180' : ''}`,
+      onClick: toggleAllPallets,
+    })
+
   return (
     <>
       <TransportUpdateDialog order={showUpdate ? order : null} onClose={() => setShowUpdate(false)} />
@@ -2311,109 +2388,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                   Kho đang sửa
                 </span>
               )}
-              <div className="ml-auto flex items-center gap-2 shrink-0">
-                {canConfirmReceipt && tStatus === 'IN_TRANSIT' && (
-                  <TooltipProvider delayDuration={100}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span>
-                          <Button size="sm" className={`h-7 text-xs bg-green-600 hover:bg-green-700 gap-1 ${(confirming || starting || selfCompleting) ? 'animate-pulse' : ''} ${(!hasBooking || srcEditing(order!)) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            disabled={confirming || starting || selfCompleting || !hasBooking || srcEditing(order!)}
-                            onClick={async () => {
-                              if (!order) return
-                              setConfirmErr(''); setStarting(true)
-                              try {
-                                if (isSelf) await selfComplete(order.id)
-                                else await confirmReceipt(order.id)
-                              } catch (e: unknown) {
-                                setStarting(false)
-                                const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                                setConfirmErr(msg ?? (isSelf ? 'Lỗi hoàn thành giao hàng' : 'Lỗi xác nhận nhận hàng'))
-                              }
-                            }}>
-                            {(confirming || starting || selfCompleting)
-                              ? <><RotateCcw className="h-3 w-3 animate-spin" /> Đang xử lý…</>
-                              : (isSelf ? 'Hoàn thành' : 'Bắt đầu nhận hàng')}
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      {(!hasBooking || srcEditing(order!)) && (
-                        <TooltipContent side="bottom">
-                          {srcEditing(order!)
-                            ? 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại'
-                            : `Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi ${isSelf ? 'hoàn thành' : 'nhận hàng'}`}
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-                {canConfirmReceipt && tStatus === 'RECEIVING' && (
-                  <>
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span>
-                            <Button size="sm" variant="outline"
-                              className="h-7 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                              disabled={cancelling || hasActiveImports}
-                              onClick={async () => {
-                                if (!order) return
-                                if (!confirm('Hủy nhận hàng? Trạng thái sẽ về Đang vận chuyển.')) return
-                                setConfirmErr('')
-                                try {
-                                  await cancelReceipt(order.id)
-                                } catch (e: unknown) {
-                                  const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
-                                  setConfirmErr(msg ?? 'Lỗi hủy nhận hàng')
-                                }
-                              }}>
-                              {cancelling ? 'Đang hủy...' : 'Hủy nhận'}
-                            </Button>
-                          </span>
-                        </TooltipTrigger>
-                        {hasActiveImports && (
-                          <TooltipContent side="bottom">
-                            Còn {activeImports.length} phiếu nhập đang hoạt động — hủy từng phiếu ở Nhập kho trước
-                          </TooltipContent>
-                        )}
-                      </Tooltip>
-                    </TooltipProvider>
-                    {missingMaterials.length > 0 && (
-                      <TooltipProvider delayDuration={100}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button size="sm" variant="outline"
-                              className="h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-50"
-                              disabled={creatingInbound}
-                              onClick={async () => {
-                                if (!order) return
-                                // Bulk song song (CLAUDE.md): không for...of await tuần tự
-                                await Promise.all(missingMaterials.map(g =>
-                                  createOneInbound({ tmsOrderId: order.id, material_id: g.material_id })
-                                ))
-                              }}>
-                              {creatingInbound ? 'Đang tạo...' : 'Tạo phiếu lại'}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom">
-                            Mã hàng {missingMaterials.map(g => g.material_code ?? g.material_id.slice(0, 8)).join(', ')} đang không có phiếu nhập
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                  </>
-                )}
-                {canEdit && (
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowUpdate(true)}>
-                    ĐVVT booking
-                  </Button>
-                )}
-                {!isLoading && goods.length > 0 && hasPallets && (
-                  <Button variant="outline" size="sm" className="h-7 text-[10px] px-2.5" onClick={toggleAllPallets}>
-                    {allExpanded ? 'Thu gọn' : 'Pallet ▾'}
-                  </Button>
-                )}
-              </div>
+              <ActionCluster className="ml-auto" items={headerActions} />
             </div>
             {confirmErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{confirmErr}</p>}
             {actionErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{actionErr}</p>}
@@ -3109,6 +3084,27 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   // Chỉ Sửa/Xóa khi mọi xe còn PENDING (đồng bộ với điều kiện canEditOrder ở list — tránh sửa/xóa đơn đã book).
   const allPending = order.vehicle_slots.every(vs => vs.status === 'PENDING')
 
+  // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  const headerActions: ActionItem[] = []
+  if (isInbound && canUploadInbound)
+    headerActions.push({
+      key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload danh sách hàng kế hoạch nhập từ Excel',
+      mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+      onClick: () => setShowUpload(true),
+    })
+  if (canEdit && allPending)
+    headerActions.push({
+      key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa đơn hàng (chỉ khi mọi xe còn Chờ book)',
+      primary: true,
+      onClick: onEditOrder,
+    })
+  if (canDelete && allPending)
+    headerActions.push({
+      key: 'delete', icon: Trash2, label: 'Xóa', tip: 'Xóa đơn hàng (chỉ khi mọi xe còn Chờ book)',
+      danger: true, className: 'text-red-600 hover:text-red-700 border-red-200 hover:border-red-300',
+      onClick: onDeleteOrder,
+    })
+
   // Info-row dùng chung khung với TransferOrderDetail (label w-16 + value kế thừa style từ children).
   const infoRow = (label: string, value: React.ReactNode, wide = false) => (
     <div className={`flex gap-2 ${wide ? 'col-span-2 sm:col-span-3' : ''}`}>
@@ -3135,23 +3131,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
             {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
             {order.priority && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Ưu tiên</span>}
-            <div className="ml-auto flex items-center gap-2 shrink-0">
-              {isInbound && canUploadInbound && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 hidden sm:inline-flex" onClick={() => setShowUpload(true)}>
-                  <Upload className="h-3 w-3" />Upload
-                </Button>
-              )}
-              {canEdit && allPending && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEditOrder}>
-                  <Pencil className="h-3 w-3" />Sửa
-                </Button>
-              )}
-              {canDelete && allPending && (
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300" onClick={onDeleteOrder}>
-                  <Trash2 className="h-3 w-3" />Xóa
-                </Button>
-              )}
-            </div>
+            <ActionCluster className="ml-auto" items={headerActions} />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-0.5 text-[11px]">
             {infoRow('NPP', order.npp_name)}
@@ -3708,7 +3688,8 @@ export default function TMSBookings() {
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
-        <div className="flex items-center justify-between mb-2">
+        {/* flex-wrap: mobile cụm ActionCluster (w-full) xuống dòng riêng thay vì tràn */}
+        <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap mb-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
             {/* Toggle 2 tab chỉ hiện khi có quyền nhận hàng chuyển kho — không có quyền thì chỉ xem Kế hoạch (#1) */}
@@ -3725,28 +3706,28 @@ export default function TMSBookings() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
-            {warehouseId && canView && (
-              <Button variant="outline" size="sm" onClick={() => setSlotOverviewOpen(true)} className="h-8 px-2">
-                <Eye className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Xem booking</span>
-              </Button>
-            )}
-            {can(perms, 'tms_plan', 'upload_outbound') && (
-              <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)} className="h-8 px-2 hidden sm:inline-flex">
-                <Upload className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload xuất</span>
-              </Button>
-            )}
-            {canUploadInbound && (
-              <Button variant="outline" size="sm" onClick={() => setInboundPlanUploadOpen(true)} className="h-8 px-2 hidden sm:inline-flex">
-                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Upload KH nhập</span>
-              </Button>
-            )}
-            {canCreate && (
-              <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!warehouseId} className="h-8 px-2">
-                <Plus className="h-3.5 w-3.5 shrink-0" /><span className="hidden sm:inline ml-1">Thêm đơn</span>
-              </Button>
-            )}
-          </div>
+          <ActionCluster className="shrink-0" items={[
+            ...(warehouseId && canView ? [{
+              key: 'slot-overview', icon: Eye, label: 'Xem booking', tip: 'Xem tình trạng khung giờ booking của kho',
+              onClick: () => setSlotOverviewOpen(true),
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'tms_plan', 'upload_outbound') ? [{
+              key: 'upload-outbound', icon: Upload, label: 'Upload xuất', tip: 'Upload kế hoạch xuất từ file Excel',
+              mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              onClick: () => setUploadOpen(true),
+            } satisfies ActionItem] : []),
+            ...(canUploadInbound ? [{
+              key: 'upload-inbound', icon: FileSpreadsheet, label: 'Upload KH nhập', tip: 'Upload kế hoạch nhập từ file Excel',
+              mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              onClick: () => setInboundPlanUploadOpen(true),
+            } satisfies ActionItem] : []),
+            ...(canCreate ? [{
+              key: 'create', icon: Plus, label: 'Thêm đơn',
+              tip: !warehouseId ? 'Chọn kho trước khi thêm đơn' : 'Tạo đơn kế hoạch vận chuyển mới',
+              primary: true, variant: 'default', disabled: !warehouseId,
+              onClick: () => setCreateOpen(true),
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
         {activeTab === 'main' && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -3761,21 +3742,25 @@ export default function TMSBookings() {
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (
-              <div className="flex items-center gap-2 w-full py-0.5">
+              <div className="flex items-center gap-2 w-full py-0.5 flex-wrap">
                 <span className="text-xs text-slate-600 font-medium">{selectedOrderIds.size} đơn đã chọn</span>
-                {canChangeDate && (
-                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setChangeDateOpen(true)}>
-                    <CalendarDays className="h-3.5 w-3.5 mr-1" />Đổi ngày
-                  </Button>
-                )}
-                {canDelete && (
-                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => setBulkDeleteOpen(true)}>
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />Xóa
-                  </Button>
-                )}
-                <button onClick={() => setSelectedOrderIds(new Set())} className="text-xs text-slate-400 hover:text-slate-600">
-                  Bỏ chọn
-                </button>
+                <ActionCluster items={[
+                  ...(canChangeDate ? [{
+                    key: 'change-date', icon: CalendarDays, label: 'Đổi ngày', tip: 'Đổi ngày giao cho các đơn đã chọn',
+                    primary: true,
+                    onClick: () => setChangeDateOpen(true),
+                  } satisfies ActionItem] : []),
+                  ...(canDelete ? [{
+                    key: 'bulk-delete', icon: Trash2, label: 'Xóa', tip: 'Xóa các đơn đã chọn (kèm slot xe chưa đặt lịch)',
+                    danger: true, className: 'text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700',
+                    onClick: () => setBulkDeleteOpen(true),
+                  } satisfies ActionItem] : []),
+                  {
+                    key: 'clear-selection', icon: X, label: 'Bỏ chọn', tip: 'Bỏ chọn tất cả đơn đang chọn',
+                    className: 'text-slate-500',
+                    onClick: () => setSelectedOrderIds(new Set()),
+                  } satisfies ActionItem,
+                ]} />
               </div>
             )}
             {actionErr && <p className="text-xs text-red-600 w-full">{actionErr}</p>}

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/use-toast'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -512,12 +513,14 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
 }) {
   return (
     <>
-      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2">
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
         <p className="text-xs text-slate-500 flex-1">{rows.length} {noun}</p>
         {canManage && (
-          <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={onAdd}>
-            <Plus className="h-3.5 w-3.5" /> Thêm {noun}
-          </Button>
+          <ActionCluster className="shrink-0" items={[{
+            key: 'add', icon: Plus, label: `Thêm ${noun}`, tip: `Thêm ${noun} mới`,
+            primary: true, variant: 'default',
+            onClick: onAdd,
+          } satisfies ActionItem]} />
         )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -741,9 +744,11 @@ export default function WMSSettings() {
             <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={whFilterDefs} />
             {canManageWarehouse && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingWh(null); setShowWhDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm kho
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add', icon: Plus, label: 'Thêm kho', tip: 'Thêm kho mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingWh(null); setShowWhDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
           <div className="flex-1 min-h-0 flex">
@@ -844,9 +849,11 @@ export default function WMSSettings() {
               {canManageType ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự (áp cho cây Đăng ký cổng)</> : 'Danh mục loại kho'}
             </p>
             {canManageType && (
-              <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => { setEditingType(null); setShowTypeDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm loại kho
-              </Button>
+              <ActionCluster className="shrink-0" items={[{
+                key: 'add', icon: Plus, label: 'Thêm loại kho', tip: 'Thêm loại kho mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingType(null); setShowTypeDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
 
@@ -951,9 +958,11 @@ export default function WMSSettings() {
               </>
             )}
             {canManageZone && (
-              <Button size="sm" className="h-7 text-xs gap-1 ml-auto shrink-0" onClick={() => { setEditingZone(null); setShowZoneDlg(true) }}>
-                <Plus className="h-3.5 w-3.5" /> Thêm khu vực
-              </Button>
+              <ActionCluster className="ml-auto shrink-0" items={[{
+                key: 'add', icon: Plus, label: 'Thêm khu vực', tip: 'Thêm khu vực kho mới',
+                primary: true, variant: 'default',
+                onClick: () => { setEditingZone(null); setShowZoneDlg(true) },
+              } satisfies ActionItem]} />
             )}
           </div>
 

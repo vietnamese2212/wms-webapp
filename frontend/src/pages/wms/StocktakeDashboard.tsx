@@ -15,6 +15,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { computePctDate } from '@/utils/shelfLife'
@@ -333,11 +334,12 @@ export default function StocktakeDashboard() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <button type="button" onClick={exportExcel} disabled={!entries.length}
-            className="hidden sm:inline-flex items-center gap-1 h-6 px-2 rounded-md border border-slate-200 text-[11px] font-medium text-slate-600 hover:bg-slate-50 shrink-0 disabled:opacity-50"
-            title="Xuất Excel">
-            <Download className="h-3.5 w-3.5" /> Excel
-          </button>
+          {/* Cụm action toolbar (chuẩn ActionCluster) — Export chỉ dùng trên PC */}
+          <ActionCluster className="shrink-0" items={[{
+            key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
+            mobileHidden: true, disabled: !entries.length,
+            onClick: exportExcel,
+          } satisfies ActionItem]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>

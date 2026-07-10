@@ -5,9 +5,10 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Card }    from '@/components/ui/card'
 import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -445,6 +446,45 @@ export default function OutboundItemDetail() {
   const overStock = stockCeiling && loscamCartonNum > elasticAvail
   const overPlan  = stock != null && loscamCartonNum > (stock.cartons_ordered ?? 0)
 
+  // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  const actionItems: ActionItem[] = []
+  // Tồn kho: bật/tắt panel tồn của mã hàng (giữ màu active khi đang mở)
+  actionItems.push({
+    key: 'inventory', icon: Package, label: 'Tồn kho',
+    tip: `Xem tồn kho trong kho${inventoryData.length > 0 ? ` (${inventoryData.length} pallet)` : ''}`,
+    className: showInventory ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100' : 'text-slate-500',
+    onClick: () => setShowInventory(v => !v),
+  })
+  // Check nhặt lẻ — xác nhận trừ tồn số thùng lẻ đã chuẩn bị (capability complete, khớp BE)
+  if (!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && can(perms, 'outbound', 'complete'))
+    actionItems.push({
+      key: 'confirm-loose', icon: CheckCircle2, label: `Check nhặt lẻ (${looseUnconfirmedCount})`,
+      tip: isPaused
+        ? 'Chuyến đang tạm dừng — không thể xác nhận'
+        : `Xác nhận đã kiểm ${looseUnconfirmedCount} thùng nhặt lẻ — tồn kho sẽ trừ ngay`,
+      primary: true, busy: confirming, disabled: isPaused,
+      className: 'border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100',
+      onClick: () => setConfirmLooseOpen(true),
+    })
+  if (isNoQr) {
+    // "Lưu thủ công" = ghi nhận xuất no-QR — capability QUÉT (khớp BE requirePerm outbound.scan)
+    if (can(perms, 'outbound', 'scan'))
+      actionItems.push({
+        key: 'manual', icon: PenSquare, label: isDone ? 'Sửa SL' : 'Lưu thủ công',
+        tip: isPaused ? 'Chuyến đang tạm dừng'
+          : !gdo.started_at ? (notStartedMsg ?? 'Cần Bắt đầu trước khi ghi nhận')
+          : 'Ghi nhận số thùng xuất thủ công (hàng không tem)',
+        primary: true, disabled: isPaused || !gdo.started_at,
+        onClick: () => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) },
+      })
+  } else if (!isDone && canScan) {
+    actionItems.push({
+      key: 'scan', icon: QrCode, label: 'Quét pallet', tip: 'Quét QR pallet để xuất hàng',
+      primary: true, variant: 'default',
+      onClick: openScan,
+    })
+  }
+
   return (
     <>
       {showScan && (
@@ -555,8 +595,8 @@ export default function OutboundItemDetail() {
         {/* ── Header: ~30% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
 
-          {/* Row 1: back + code + status + action */}
-          <div className="flex items-center justify-between gap-2">
+          {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
+          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
             <div className="flex items-center gap-1.5 min-w-0">
               <button
                 onClick={() => navigate(`/wms/outbound/${gdoId}`)}
@@ -568,45 +608,13 @@ export default function OutboundItemDetail() {
               <Badge status={item.status} />
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => setShowInventory(v => !v)}
-                className={`flex items-center gap-1 h-7 px-2 rounded border text-xs font-medium transition-colors ${
-                  showInventory
-                    ? 'bg-blue-50 border-blue-200 text-blue-700'
-                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-                }`}
-                title="Xem tồn kho trong kho"
-              >
-                <Package className="h-3.5 w-3.5" />
-                Tồn kho{inventoryData.length > 0 ? ` (${inventoryData.length})` : ''}
-              </button>
-              {isNoQr ? (
-                /* "Lưu thủ công" = ghi nhận xuất no-QR — capability QUÉT (khớp BE requirePerm outbound.scan) */
-                can(perms, 'outbound', 'scan') && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isPaused || !gdo.started_at}
-                  onClick={() => { setLoscamCartons(String(isDone ? item.cartons_scanned : item.cartons_ordered)); setShowLoscamDialog(true) }}>
-                  {isDone ? 'Sửa SL' : 'Lưu thủ công'}
-                </Button>
-              ) : !isDone && (canScan ? (
-                <Button size="sm" className="h-7 text-xs gap-1" onClick={openScan}>
-                  <QrCode className="h-3.5 w-3.5" /> Quét pallet
-                </Button>
-              ) : (
+            <div className="flex items-center gap-1.5 max-sm:w-full">
+              {!isNoQr && !isDone && !canScan && (
                 <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
-              ))}
+              )}
+              <ActionCluster items={actionItems} />
             </div>
           </div>
-
-          {/* Row 1b: Check nhặt lẻ — hàng riêng để không che code/badge trên mobile */}
-          {!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && can(perms, 'outbound', 'complete') && (
-            <button
-              onClick={() => setConfirmLooseOpen(true)}
-              disabled={confirming || isPaused}
-              className="w-full flex items-center justify-center gap-1.5 h-8 px-3 rounded border text-xs font-medium transition-colors bg-purple-50 border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
-            >
-              {confirming ? 'Đang xử lý…' : `Check nhặt lẻ (${looseUnconfirmedCount} thùng)`}
-            </button>
-          )}
 
           {/* Row 2: material name + progress — kế thừa màu trạng thái như dòng ở list */}
           <div className="space-y-1">

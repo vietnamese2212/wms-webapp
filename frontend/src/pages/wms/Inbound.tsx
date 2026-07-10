@@ -15,6 +15,7 @@ import { Input }               from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
@@ -1513,11 +1514,13 @@ export default function Inbound() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {can(perms, 'inbound', 'create') && (
-            <Button size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => setShowNew(true)}>
-              <Plus className="h-3.5 w-3.5" /> Tạo phiếu
-            </Button>
-          )}
+          {/* Cụm action toolbar — ActionCluster chuẩn (desktop inline, mobile icon+chữ / menu ⋮) */}
+          <ActionCluster className="shrink-0" items={[
+            ...(can(perms, 'inbound', 'create') ? [{
+              key: 'create', icon: Plus, label: 'Tạo phiếu', tip: 'Tạo phiếu nhập kho mới', primary: true,
+              onClick: () => setShowNew(true),
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
 
         {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}

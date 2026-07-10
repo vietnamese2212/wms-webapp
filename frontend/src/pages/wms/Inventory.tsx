@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import type { AxiosError } from 'axios'
-import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload } from 'lucide-react'
+import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { useNavigate } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -935,20 +936,20 @@ export default function Inventory() {
             title={aggregate ? 'Đang xem TỔNG HỢP theo mã — bấm để về chi tiết pallet' : 'Xem tổng hợp tồn kho theo mã hàng (không tới pallet)'}>
             <Sigma className="h-3.5 w-3.5" />Tổng hợp
           </button>
-          {can(user?.module_permissions, 'inventory', 'export') && (
-            <button type="button" onClick={handleExport} disabled={exporting}
-              className="hidden sm:inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-50"
-              title={`Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`}>
-              <Download className="h-3.5 w-3.5" />{exporting ? 'Đang xuất…' : 'Excel'}
-            </button>
-          )}
-          {can(user?.module_permissions, 'inventory', 'import') && (
-            <button type="button" onClick={() => setShowUpload(true)}
-              className="hidden sm:inline-flex h-7 items-center gap-1 px-2 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
-              title="Upload tồn kho đầu kỳ từ Excel">
-              <Upload className="h-3.5 w-3.5" />Upload
-            </button>
-          )}
+          <ActionCluster className="shrink-0" items={[
+            ...(can(user?.module_permissions, 'inventory', 'export') ? [{
+              key: 'excel', icon: Download, label: 'Excel',
+              tip: `Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`,
+              mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              busy: exporting,
+              onClick: handleExport,
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'inventory', 'import') ? [{
+              key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload tồn kho đầu kỳ từ Excel',
+              mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
+              onClick: () => setShowUpload(true),
+            } satisfies ActionItem] : []),
+          ]} />
         </div>
         {exportError && (
           <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{exportError}</div>
@@ -1125,59 +1126,51 @@ export default function Inventory() {
           flex items-center gap-3 text-sm whitespace-nowrap">
           <span className="text-slate-300 text-xs font-medium">{checkedCount} pallet</span>
           <div className="w-px h-4 bg-slate-600" />
-          {can(user?.module_permissions, 'inventory', 'qa_update') && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-              onClick={() => setActionModal('qa')}>
-              QA Status
-            </button>
-          )}
-          {can(user?.module_permissions, 'inventory', 'update_ncc') && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-              onClick={() => setActionModal('ncc')}>
-              NCC
-            </button>
-          )}
-          {can(user?.module_permissions, 'inventory', 'move_location') && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-              onClick={() => setActionModal('location')}>
-              Vị trí
-            </button>
-          )}
-          {can(user?.module_permissions, 'inventory', 'recode') && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-              onClick={() => setActionModal('material')}>
-              Mã hàng
-            </button>
-          )}
-          {can(user?.module_permissions, 'inventory', 'update_prod_date') && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors"
-              onClick={() => setActionModal('production-date')}>
-              Ngày SX
-            </button>
-          )}
-          {/* Dồn / Tách pallet — điều hướng sang trang thao tác, prefill mã */}
-          {can(user?.module_permissions, 'pallet_ops', 'split') && checkedCount === 1 && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-sky-700 hover:bg-sky-600 transition-colors"
-              onClick={() => { const c = displayEntries.find(e => checkedIds.has(e.id))?.pallet_code; if (c) navigate(`/wms/pallet-ops?tab=split&source=${encodeURIComponent(c)}`) }}>
-              <Scissors className="h-3 w-3" />Tách
-            </button>
-          )}
-          {can(user?.module_permissions, 'pallet_ops', 'merge') && checkedCount >= 2 && (
-            <button
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-sky-700 hover:bg-sky-600 transition-colors"
-              onClick={() => {
+          {/* Cụm action bulk — ActionCluster chuẩn; className w-auto để pill nổi ôm sát nội dung
+              (không lấy w-full mặc định của cluster mobile). Màu tối truyền qua className từng nút. */}
+          <ActionCluster className="w-auto shrink-0" items={[
+            ...(can(user?.module_permissions, 'inventory', 'qa_update') ? [{
+              key: 'qa', icon: BadgeCheck, label: 'QA Status', tip: 'Đổi QA status các pallet đã chọn',
+              className: 'border-slate-600 bg-slate-700 text-slate-100 hover:bg-slate-600 hover:text-white',
+              onClick: () => setActionModal('qa'),
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'inventory', 'update_ncc') ? [{
+              key: 'ncc', icon: Factory, label: 'NCC', tip: 'Gán NCC cho các pallet đã chọn (áp HSD ngoại lệ theo NCC)',
+              className: 'border-slate-600 bg-slate-700 text-slate-100 hover:bg-slate-600 hover:text-white',
+              onClick: () => setActionModal('ncc'),
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'inventory', 'move_location') ? [{
+              key: 'location', icon: MapPin, label: 'Vị trí', tip: 'Chuyển vị trí các pallet đã chọn',
+              className: 'border-slate-600 bg-slate-700 text-slate-100 hover:bg-slate-600 hover:text-white',
+              onClick: () => setActionModal('location'),
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'inventory', 'recode') ? [{
+              key: 'material', icon: Tag, label: 'Mã hàng', tip: 'Đổi mã hàng các pallet đã chọn',
+              className: 'border-slate-600 bg-slate-700 text-slate-100 hover:bg-slate-600 hover:text-white',
+              onClick: () => setActionModal('material'),
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'inventory', 'update_prod_date') ? [{
+              key: 'production-date', icon: CalendarDays, label: 'Ngày SX', tip: 'Sửa ngày sản xuất các pallet đã chọn',
+              className: 'border-slate-600 bg-slate-700 text-slate-100 hover:bg-slate-600 hover:text-white',
+              onClick: () => setActionModal('production-date'),
+            } satisfies ActionItem] : []),
+            // Dồn / Tách pallet — điều hướng sang trang thao tác, prefill mã (gate quyền pallet_ops giữ nguyên)
+            ...(can(user?.module_permissions, 'pallet_ops', 'split') && checkedCount === 1 ? [{
+              key: 'split', icon: Scissors, label: 'Tách', tip: 'Tách pallet đang chọn (chia số lượng, sang trang Dồn/Tách)',
+              primary: true,
+              className: 'border-sky-600 bg-sky-700 text-white hover:bg-sky-600 hover:text-white',
+              onClick: () => { const c = displayEntries.find(e => checkedIds.has(e.id))?.pallet_code; if (c) navigate(`/wms/pallet-ops?tab=split&source=${encodeURIComponent(c)}`) },
+            } satisfies ActionItem] : []),
+            ...(can(user?.module_permissions, 'pallet_ops', 'merge') && checkedCount >= 2 ? [{
+              key: 'merge', icon: Layers, label: 'Dồn', tip: 'Dồn các pallet đã chọn về 1 pallet (sang trang Dồn/Tách)',
+              primary: true,
+              className: 'border-sky-600 bg-sky-700 text-white hover:bg-sky-600 hover:text-white',
+              onClick: () => {
                 const codes = displayEntries.filter(e => checkedIds.has(e.id)).map(e => e.pallet_code)
                 if (codes.length >= 2) navigate(`/wms/pallet-ops?tab=merge&target=${encodeURIComponent(codes[0])}&children=${encodeURIComponent(codes.slice(1).join(','))}`)
-              }}>
-              <Layers className="h-3 w-3" />Dồn
-            </button>
-          )}
+              },
+            } satisfies ActionItem] : []),
+          ]} />
           <div className="w-px h-4 bg-slate-600" />
           <button
             className="text-slate-400 hover:text-white transition-colors"
@@ -1540,27 +1533,24 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
             không cần quay ra tick. Mỗi nút gate đúng quyền như thanh floating. */}
         {(() => {
           const p = user?.module_permissions
-          const btns: { key: QuickAction | 'split'; label: string; show: boolean; onClick: () => void }[] = [
-            { key: 'qa',              label: 'QA Status', show: can(p, 'inventory', 'qa_update'),        onClick: () => onQuickAction('qa') },
-            { key: 'ncc',             label: 'NCC',       show: can(p, 'inventory', 'update_ncc'),       onClick: () => onQuickAction('ncc') },
-            { key: 'location',        label: 'Vị trí',    show: can(p, 'inventory', 'move_location'),    onClick: () => onQuickAction('location') },
-            { key: 'material',        label: 'Mã hàng',   show: can(p, 'inventory', 'recode'),           onClick: () => onQuickAction('material') },
-            { key: 'production-date', label: 'Ngày SX',   show: can(p, 'inventory', 'update_prod_date'), onClick: () => onQuickAction('production-date') },
-            { key: 'split',           label: 'Tách',      show: can(p, 'pallet_ops', 'split'),           onClick: onSplit },
-          ]
-          const visible = btns.filter(b => b.show)
-          if (!visible.length) return null
+          const actionItems: ActionItem[] = []
+          if (can(p, 'inventory', 'qa_update'))
+            actionItems.push({ key: 'qa', icon: BadgeCheck, label: 'QA Status', tip: 'Đổi QA status pallet này', onClick: () => onQuickAction('qa') })
+          if (can(p, 'inventory', 'update_ncc'))
+            actionItems.push({ key: 'ncc', icon: Factory, label: 'NCC', tip: 'Gán NCC cho pallet này (áp HSD ngoại lệ theo NCC)', onClick: () => onQuickAction('ncc') })
+          if (can(p, 'inventory', 'move_location'))
+            actionItems.push({ key: 'location', icon: MapPin, label: 'Vị trí', tip: 'Chuyển vị trí pallet này', onClick: () => onQuickAction('location') })
+          if (can(p, 'inventory', 'recode'))
+            actionItems.push({ key: 'material', icon: Tag, label: 'Mã hàng', tip: 'Đổi mã hàng pallet này', onClick: () => onQuickAction('material') })
+          if (can(p, 'inventory', 'update_prod_date'))
+            actionItems.push({ key: 'production-date', icon: CalendarDays, label: 'Ngày SX', tip: 'Sửa ngày sản xuất pallet này', onClick: () => onQuickAction('production-date') })
+          if (can(p, 'pallet_ops', 'split'))
+            actionItems.push({ key: 'split', icon: Scissors, label: 'Tách', tip: 'Tách pallet này (chia số lượng, sang trang Dồn/Tách)', onClick: onSplit })
+          if (!actionItems.length) return null
           return (
             <div className="border-t pt-3">
               <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Thao tác</p>
-              <div className="grid grid-cols-3 gap-1.5">
-                {visible.map(b => (
-                  <button key={b.key} onClick={b.onClick}
-                    className="text-[11px] px-2 py-1.5 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-sky-300 hover:text-sky-700 transition-colors">
-                    {b.label}
-                  </button>
-                ))}
-              </div>
+              <ActionCluster className="justify-start" items={actionItems} />
             </div>
           )
         })()}
@@ -1569,11 +1559,12 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
         <div className="border-t pt-3 space-y-2">
           {/* Nút + form điều chỉnh: chỉ hiện nếu có quyền inventory.adjust (tránh bấm rồi 403). Lịch sử bên dưới vẫn xem được. */}
           {can(user?.module_permissions, 'inventory', 'adjust') && (!showAdj ? (
-            <Button size="sm" variant="outline" className="w-full gap-1.5"
-              onClick={() => setShowAdj(true)}>
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Điều chỉnh tồn kho
-            </Button>
+            <ActionCluster className="justify-start" items={[{
+              key: 'adjust', icon: SlidersHorizontal, label: 'Điều chỉnh tồn',
+              tip: 'Điều chỉnh tồn kho pallet này (+/− số thùng, có ghi log điều chỉnh)',
+              primary: true,
+              onClick: () => setShowAdj(true),
+            } satisfies ActionItem]} />
           ) : (
             <div className="space-y-2">
               <p className="text-[10px] text-slate-500">

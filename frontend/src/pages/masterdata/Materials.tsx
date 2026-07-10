@@ -29,6 +29,8 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { needsShelfLife, needsPalletPerEa, whTypeBadgeCls, type WhTypeMetaMap } from '@/utils/cargoCategory'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
@@ -51,17 +53,9 @@ function RowCheck({ checked, indeterminate, onClick }: {
   )
 }
 
-function CatBadge({ cat }: { cat: string | null }) {
+function CatBadge({ cat, metaMap }: { cat: string | null; metaMap?: WhTypeMetaMap }) {
   if (!cat) return <span className="text-slate-300">—</span>
-  const colors: Record<string, string> = {
-    'POSM':       'bg-purple-100 text-purple-700',
-    'Thành phẩm': 'bg-blue-100 text-blue-700',
-    'NVL':        'bg-green-100 text-green-700',
-    'Bao bì':     'bg-amber-100 text-amber-700',
-    'Raw':        'bg-orange-100 text-orange-700',
-  }
-  const cls = colors[cat] ?? 'bg-slate-100 text-slate-600'
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${cls}`}>{cat}</span>
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${whTypeBadgeCls(cat, metaMap)}`}>{cat}</span>
 }
 
 // Khối lượng (kg) thường là float dẫn xuất nhiều chữ số thập phân (vd 0.001658333) → tràn cột hẹp.
@@ -99,22 +93,17 @@ const EMPTY_FORM = {
   notes: '',
 }
 
-// HSD (shelflife) BẮT BUỘC cho MỌI loại hàng, TRỪ Thùng & POSM (bao bì/vật phẩm quảng cáo — không cần hạn dùng).
-const NO_SHELF_LIFE_CATS = ['Thùng', 'POSM']
-const needsShelfLife = (cat: string | null | undefined) => !!cat && !NO_SHELF_LIFE_CATS.includes(cat)
-
-// Pallet/EA (1 EA = ? pallet) BẮT BUỘC cho loại hàng kho NVL: Raw / Thùng / Giấy (để quy đổi tồn EA → pallet).
-const PALLET_PER_EA_CATS = ['Raw', 'Thùng', 'Giấy']
-const needsPalletPerEa = (cat: string | null | undefined) => !!cat && PALLET_PER_EA_CATS.includes(cat)
+// Luật HSD / Pallet/EA bắt buộc đi theo CỜ per-Loại kho (LookupValue.meta, chỉnh trong tab Loại kho) —
+// needsShelfLife / needsPalletPerEa import từ utils/cargoCategory, truyền metaMap của useWhTypeMetaMap().
 
 // Mã hàng THIẾU dữ liệu bắt buộc → trả danh sách field thiếu (để tô đỏ + tooltip trong danh sách). Khớp luật form.
-function missingRequiredFields(m: Material): string[] {
+function missingRequiredFields(m: Material, metaMap: WhTypeMetaMap): string[] {
   const miss: string[] = []
   if (!m.category) miss.push('Loại hàng')
   if (!m.unit) miss.push('ĐVT')
   if (m.cartons_per_pallet == null || Number(m.cartons_per_pallet) <= 0) miss.push('Thùng/pallet')
-  if (needsShelfLife(m.category) && m.shelf_life_days == null) miss.push('HSD')
-  if (needsPalletPerEa(m.category) && m.pallet_per_ea == null) miss.push('Pallet/EA')
+  if (needsShelfLife(m.category, metaMap) && m.shelf_life_days == null) miss.push('HSD')
+  if (needsPalletPerEa(m.category, metaMap) && m.pallet_per_ea == null) miss.push('Pallet/EA')
   return miss
 }
 
@@ -176,6 +165,7 @@ export default function Materials() {
   // Data
   const { data: raw = [], isLoading }    = useMaterials(undefined)
   const { data: warehouseTypes = [] }    = useScopedWhTypes()
+  const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (HSD/Pallet-EA bắt buộc, màu badge)
   const { data: warehousesRaw = [] }     = useWarehouses(true)
   const { data: allCompanies = [] }      = useTransportCompanies(true)
   const warehouses = warehousesRaw as WhRow[]
@@ -221,14 +211,14 @@ export default function Materials() {
       if (catFilter.length > 0 && !catFilter.includes(m.category ?? '')) return false
       // Lọc chất lượng dữ liệu (OR giữa các tuỳ chọn đã chọn)
       if (dqFilter.length > 0) {
-        const okIncomplete = dqFilter.includes('incomplete') && missingRequiredFields(m).length > 0
+        const okIncomplete = dqFilter.includes('incomplete') && missingRequiredFields(m, whTypeMeta).length > 0
         const okDup        = dqFilter.includes('dup')        && isDupName(m)
         if (!okIncomplete && !okDup) return false
       }
       if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.unit], search)) return false
       return true
     })
-  }, [raw, catFilter, search, statusFilter, qrFilter, dqFilter, dupNames])
+  }, [raw, catFilter, search, statusFilter, qrFilter, dqFilter, dupNames, whTypeMeta])
 
   const allSelected  = filtered.length > 0 && filtered.every(m => selected.has(m.id))
   const someSelected = selected.size > 0 && !allSelected
@@ -255,10 +245,10 @@ export default function Materials() {
     if (!form.category) return 'Loại hàng là bắt buộc'
     if (!form.unit) return 'ĐVT là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
-    if (needsShelfLife(form.category) && !form.shelf_life_days)
-      return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉ Thùng/POSM mới được để trống)`
-    if (needsPalletPerEa(form.category) && !form.pallet_per_ea)
-      return `Pallet/EA là bắt buộc cho loại "${form.category}" (kho NVL — để quy đổi tồn)`
+    if (needsShelfLife(form.category, whTypeMeta) && !form.shelf_life_days)
+      return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉnh luật này trong Cài đặt WMS → Loại kho)`
+    if (needsPalletPerEa(form.category, whTypeMeta) && !form.pallet_per_ea)
+      return `Pallet/EA là bắt buộc cho loại "${form.category}" (để quy đổi tồn EA → pallet)`
     for (const ov of overrides) {
       if (!ov.warehouse_id || !ov.cartons_per_pallet) return 'Điền đủ kho và số thùng cho mọi ngoại lệ'
     }
@@ -496,9 +486,9 @@ export default function Materials() {
     active:     filtered.filter(m => m.is_active).length,
     inactive:   filtered.filter(m => !m.is_active).length,
     noQr:       filtered.filter(m => m.no_qr_tracking).length,
-    incomplete: filtered.filter(m => missingRequiredFields(m).length > 0).length,
+    incomplete: filtered.filter(m => missingRequiredFields(m, whTypeMeta).length > 0).length,
     dup:        filtered.filter(m => isDupName(m)).length,
-  }), [filtered, dupNames])
+  }), [filtered, dupNames, whTypeMeta])
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -579,7 +569,7 @@ export default function Materials() {
                 <tr><td colSpan={colCount}><EmptyState title="Không có mã hàng" /></td></tr>
               ) : pageItems.map(mat => {
                 const hasOverrides = (mat.warehouse_pallet_overrides?.length ?? 0) > 0
-                const miss = missingRequiredFields(mat)
+                const miss = missingRequiredFields(mat, whTypeMeta)
                 const dup  = isDupName(mat)
                 const tip = [miss.length ? `Thiếu: ${miss.join(', ')}` : '', dup ? 'Trùng Tên hàng với mã khác' : ''].filter(Boolean).join(' · ')
                 return (
@@ -601,7 +591,7 @@ export default function Materials() {
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] text-slate-500 max-w-[200px] truncate">
                       {mat.material_description}
                     </TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap"><CatBadge cat={mat.category} /></TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap"><CatBadge cat={mat.category} metaMap={whTypeMeta} /></TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px]">{mat.unit ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
                       {mat.cartons_per_pallet ?? <span className="text-slate-300">—</span>}
@@ -737,7 +727,7 @@ export default function Materials() {
                 <div>
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Phân loại</p>
                   <div className="space-y-0">
-                    <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} />} />
+                    <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
                     <DRow label="ĐVT"        value={detailMat.unit} />
                   </div>
                 </div>
@@ -974,9 +964,9 @@ export default function Materials() {
               <Input type="number" min={1} className="col-span-2 h-7 text-xs" value={form.units_per_carton} onChange={e => setField('units_per_carton', e.target.value)} placeholder="Số đơn vị/thùng" />
             </div>
 
-            {/* Pallet/EA — quy đổi tồn EA → pallet (bắt buộc Raw/Thùng/Giấy) */}
+            {/* Pallet/EA — quy đổi tồn EA → pallet (bắt buộc theo cờ Loại kho) */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">Pallet/EA{needsPalletPerEa(form.category) && ' *'}</Label>
+              <Label className="text-xs text-right">Pallet/EA{needsPalletPerEa(form.category, whTypeMeta) && ' *'}</Label>
               <Input type="number" min={0} step="any" className="col-span-2 h-7 text-xs" value={form.pallet_per_ea} onChange={e => setField('pallet_per_ea', e.target.value)} placeholder="1 EA = ? pallet (vd 0.00005)" />
             </div>
 
@@ -989,7 +979,7 @@ export default function Materials() {
             {/* HSD */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">
-                HSD (ngày){needsShelfLife(form.category) && ' *'}
+                HSD (ngày){needsShelfLife(form.category, whTypeMeta) && ' *'}
               </Label>
               <Input type="number" min={0} className="col-span-2 h-7 text-xs" value={form.shelf_life_days} onChange={e => setField('shelf_life_days', e.target.value)} placeholder="Số ngày hạn sử dụng" />
             </div>

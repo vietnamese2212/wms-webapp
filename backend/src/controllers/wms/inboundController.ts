@@ -9,6 +9,7 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { isNccGoodsCategory } from '../../utils/warehouseTypeMeta'
 
 // Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
 // (mỗi đơn vị 1 format cố định — quét nhầm tem đơn vị khác phải bị chặn).
@@ -1084,9 +1085,8 @@ export async function scanQR(req: Request, res: Response) {
     // - Nếu trống & là chuyển kho → kế thừa NCC + shelflife từ pallet GỐC cùng pallet_code.
     //   (pallet đổi tên A→B không kế thừa được → operator chọn ở sheet.)
     // - shelflife lưu thẳng trên pallet vì 1 mã+1 NCC có thể nhiều shelflife (không suy được từ NCC).
-    // Hàng nhập NCC (POSM/Raw/Thùng/Giấy): đoạn 4 QR = MÃ NCC (không phải Máy) → lưu vào ncc_id.
-    const NCC_CATEGORIES = ['POSM', 'Raw', 'Thùng', 'Giấy']
-    const isNccGoods = NCC_CATEGORIES.includes((((order as any).material?.category ?? '') as string))
+    // Hàng nhập NCC (cờ is_ncc_goods của Loại kho): đoạn 4 QR = MÃ NCC (không phải Máy) → lưu vào ncc_id.
+    const isNccGoods = await isNccGoodsCategory(((order as any).material?.category ?? '') as string)
 
     let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null

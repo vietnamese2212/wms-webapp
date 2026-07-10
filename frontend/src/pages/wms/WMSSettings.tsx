@@ -28,6 +28,7 @@ import {
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { WH_BADGE_COLORS, whTypeBadgeCls, type WhTypeMeta } from '@/utils/cargoCategory'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -395,11 +396,26 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
 
 // ─── Type Dialog ─────────────────────────────────────────────────────────────
 
+// Nhãn bảng đổi tên cascade → tiếng Việt (hiện trong toast kết quả)
+const RENAMED_LABELS: Record<string, string> = {
+  Material: 'Mã hàng', Location: 'Vị trí', WarehouseZone: 'Khu vực', Employee: 'Nhân viên',
+  SlotTemplate: 'Khung giờ mẫu', DeliverySlot: 'Khung giờ', TmsOrder: 'Đơn TMS',
+  GroupDeliveryOrder: 'Chuyến xuất', gate_registrations: 'Đăng ký cổng',
+  inbound_plan_lines: 'KH nhập', ProductionImport: 'Phiếu nhập',
+}
+
 function TypeDialog({ type, open, onClose }: {
-  type: { id: string; value: string } | null; open: boolean; onClose: () => void
+  type: { id: string; value: string; meta?: WhTypeMeta | null } | null; open: boolean; onClose: () => void
 }) {
   const isEdit = !!type
+  const m = type?.meta ?? {}
   const [value, setValue] = useState(type?.value ?? '')
+  // Cờ hành vi per-loại (LookupValue.meta) — thay các hardcode tên loại cũ
+  const [isNcc,      setIsNcc]      = useState(m.is_ncc_goods ?? false)
+  const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
+  const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
+  const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
+  const [badge,      setBadge]      = useState(m.badge_color ?? '')
   const [err, setErr] = useState('')
 
   const { mutate: add,    isPending: adding    } = useAddWarehouseType()
@@ -408,13 +424,43 @@ function TypeDialog({ type, open, onClose }: {
 
   function handleSubmit() {
     setErr('')
-    if (!value.trim()) { setErr('Tên loại kho là bắt buộc'); return }
+    const name = value.trim()
+    if (!name) { setErr('Tên loại kho là bắt buộc'); return }
+    const meta: WhTypeMeta = {
+      is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
+      batch_char: batchChar.trim().toUpperCase().slice(0, 1), badge_color: badge,
+    }
     if (isEdit) {
-      update({ id: type.id, value: value.trim() }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      // Đổi TÊN = cascade toàn DB (Material/Vị trí/Khu vực/quyền NV/khung giờ/đơn hàng…) — xác nhận trước
+      if (name !== type.value && !confirm(
+        `Đổi tên loại kho "${type.value}" → "${name}"?\n\nMọi dữ liệu đang dùng tên cũ (mã hàng, vị trí, khu vực, quyền nhân viên, khung giờ TMS, đơn hàng, phiếu nhập…) sẽ được cập nhật đồng bộ theo tên mới.`
+      )) return
+      update({ id: type.id, value: name, meta }, {
+        onSuccess: data => {
+          if (data?.renamed) {
+            const parts = Object.entries(data.renamed).filter(([, n]) => n > 0)
+              .map(([t, n]) => `${RENAMED_LABELS[t] ?? t}: ${n}`)
+            toast({ title: `Đã đổi tên "${type.value}" → "${name}"`,
+              description: parts.length ? `Cập nhật đồng bộ — ${parts.join(' · ')}` : 'Chưa có dữ liệu nào dùng tên cũ' })
+          }
+          onClose()
+        },
+        onError: e => setErr(apiMsg(e)),
+      })
     } else {
-      add(value.trim(), { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      add({ value: name, meta }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
+
+  const flagRow = (id: string, checked: boolean, onChange: (v: boolean) => void, label: string, hint: string) => (
+    <label htmlFor={id} className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+      <input id={id} type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+      <span className="min-w-0">
+        <span className="block text-xs font-medium text-slate-700">{label}</span>
+        <span className="block text-[11px] text-slate-400 leading-snug">{hint}</span>
+      </span>
+    </label>
+  )
 
   return (
     <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa loại kho' : 'Thêm loại kho'} widthClass="sm:max-w-lg" footer={<>
@@ -429,7 +475,43 @@ function TypeDialog({ type, open, onClose }: {
             <Label className="text-xs">Tên loại kho *</Label>
             <Input value={value} onChange={e => setValue(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
-              placeholder="Thành phẩm, NVL, POSM…" />
+              placeholder="Thành phẩm, Nguyên liệu, Vật tư…" />
+            {isEdit && value.trim() !== type.value && (
+              <p className="text-[11px] text-amber-600">Đổi tên sẽ cập nhật đồng bộ TOÀN BỘ dữ liệu đang dùng tên cũ.</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Hành vi</Label>
+            {flagRow('wt-ncc', isNcc, setIsNcc, 'Hàng NCC',
+              'Quét nhập tem gạch dưới ( _ ): đoạn 4 của QR là MÃ NCC (tự nhận NCC) thay vì Máy sản xuất')}
+            {flagRow('wt-shelf', reqShelf, setReqShelf, 'Bắt buộc HSD',
+              'Mã hàng thuộc loại này phải khai HSD (ngày) — dùng tính %Date')}
+            {flagRow('wt-palletea', reqPalletEa, setReqPalletEa, 'Bắt buộc Pallet/EA',
+              'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Ký tự mã lô (tem chấm phẩy ; )</Label>
+            <Input value={batchChar} maxLength={1} className="w-16 uppercase"
+              onChange={e => setBatchChar(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              placeholder="N" />
+            <p className="text-[11px] text-slate-400 leading-snug">
+              Sinh tem V2: ký tự này thế chỗ Máy trong mã lô (vd N → SI260311<b>N</b>021). Để trống = chọn Máy tay (Thành phẩm).
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Màu hiển thị</Label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {Object.keys(WH_BADGE_COLORS).map(c => (
+                <button key={c} type="button" onClick={() => setBadge(badge === c ? '' : c)}
+                  title={c}
+                  className={`h-6 px-2 rounded-full text-[10px] font-medium border transition-all ${WH_BADGE_COLORS[c]} ${badge === c ? 'ring-2 ring-offset-1 ring-blue-500 border-transparent' : 'border-transparent opacity-70 hover:opacity-100'}`}>
+                  {value.trim() || 'Aa'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
     </FormSheet>
@@ -599,11 +681,11 @@ export default function WMSSettings() {
   // Loại kho
   const { data: warehouseTypes = [], isLoading: loadingTypes } = useWarehouseTypes()
   const { mutate: deleteType, isPending: deletingType }  = useDeleteWarehouseType()
-  const [editingType, setEditingType] = useState<{ id: string; value: string } | null>(null)
+  const [editingType, setEditingType] = useState<{ id: string; value: string; meta?: WhTypeMeta | null } | null>(null)
   const [showTypeDlg, setShowTypeDlg] = useState(false)
 
   // Kéo-thả sắp thứ tự loại kho (kiểu AppSheet: grip + chỉ báo trên/dưới theo nửa dòng)
-  type TypeRow = { id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+  type TypeRow = { id: string; value: string; meta?: WhTypeMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
   const reorderTypes = useReorderWarehouseTypes()
   const [orderedTypes, setOrderedTypes] = useState<TypeRow[]>([])
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -631,7 +713,7 @@ export default function WMSSettings() {
 
   // Detail panel state
   const [detailWh,   setDetailWh]   = useState<WhRow | null>(null)
-  const [detailType, setDetailType] = useState<{ id: string; value: string; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
+  const [detailType, setDetailType] = useState<{ id: string; value: string; meta?: WhTypeMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null } | null>(null)
   const [detailZone, setDetailZone] = useState<WarehouseZone | null>(null)
 
   // Khu vực kho — lọc theo warehouse_scope của user
@@ -897,12 +979,18 @@ export default function WMSSettings() {
                                 <GripVertical className="h-4 w-4" />
                               </TableCell>
                             )}
-                            <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{t.value}</TableCell>
+                            <TableCell className="px-2 py-1 whitespace-nowrap">
+                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${whTypeBadgeCls(t.value, new Map([[t.value, t.meta ?? {}]]))}`}>{t.value}</span>
+                              <span className="ml-1.5 text-[9px] text-slate-400">
+                                {[t.meta?.is_ncc_goods && 'NCC', t.meta?.requires_shelf_life && 'HSD', t.meta?.requires_pallet_per_ea && 'Pallet/EA',
+                                  t.meta?.batch_char && `Mã lô: ${t.meta.batch_char}`].filter(Boolean).join(' · ')}
+                              </span>
+                            </TableCell>
                             {canManageType && (
                               <TableCell className="px-2 py-1 whitespace-nowrap">
                                 <div className="flex items-center gap-0.5">
                                   <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
-                                    onClick={e => { e.stopPropagation(); setEditingType({ id: t.id, value: t.value }); setShowTypeDlg(true) }}>
+                                    onClick={e => { e.stopPropagation(); setEditingType({ id: t.id, value: t.value, meta: t.meta }); setShowTypeDlg(true) }}>
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
                                   <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
@@ -926,6 +1014,13 @@ export default function WMSSettings() {
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-700">{detailType.value}</span>
                   <button onClick={() => setDetailType(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div className="border-t pt-2 space-y-1.5">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hành vi</p>
+                  <div><span className="text-slate-400">Hàng NCC:</span> <span className="font-medium">{detailType.meta?.is_ncc_goods ? 'Có (QR đoạn 4 = mã NCC)' : 'Không (đoạn 4 = Máy)'}</span></div>
+                  <div><span className="text-slate-400">Bắt buộc HSD:</span> <span className="font-medium">{detailType.meta?.requires_shelf_life ? 'Có' : 'Không'}</span></div>
+                  <div><span className="text-slate-400">Bắt buộc Pallet/EA:</span> <span className="font-medium">{detailType.meta?.requires_pallet_per_ea ? 'Có' : 'Không'}</span></div>
+                  <div><span className="text-slate-400">Ký tự mã lô:</span> <span className="font-medium">{detailType.meta?.batch_char || '— (chọn Máy tay)'}</span></div>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

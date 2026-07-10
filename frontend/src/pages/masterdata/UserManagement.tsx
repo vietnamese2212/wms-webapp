@@ -34,15 +34,10 @@ import { PERMISSION_PAGES } from '@/config/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import type { EmployeeRecord, Department, JobTitle, TmsVehicle } from '@/types'
 import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { whTypeBadgeCls } from '@/utils/cargoCategory'
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
-const CATEGORY_COLOR: Record<string, string> = {
-  'Thành phẩm': 'bg-emerald-100 text-emerald-700',
-  'Nguyên vật liệu': 'bg-blue-100 text-blue-700',
-  'POSM':       'bg-orange-100 text-orange-700',
-  'Bao bì':     'bg-slate-100 text-slate-600',
-}
+// Màu badge Loại kho theo cờ per-loại (LookupValue.meta) — whTypeBadgeCls từ utils/cargoCategory
 
 // ─── Set password dialog ──────────────────────────────────────────────────────
 
@@ -202,6 +197,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const { data: warehouses = [] }     = useWarehouses()
   const { data: whTypes = [] }        = useWarehouseTypes()
   const categoryOptions                = whTypes.map(t => t.value)
+  const whTypeMeta                     = useWhTypeMetaMap()
   const { data: transportCompanies = [] } = useTransportCompanies(true)
 
   const [name,         setName]         = useState(emp?.name          ?? '')
@@ -483,7 +479,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       <button key={cat} type="button" onClick={() => toggleCategory(cat)}
                         className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
                           ${categories.includes(cat)
-                            ? (CATEGORY_COLOR[cat] ?? 'bg-emerald-100 text-emerald-700') + ' border-transparent'
+                            ? whTypeBadgeCls(cat, whTypeMeta) + ' border-transparent'
                             : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'}`}>
                         {cat}
                       </button>
@@ -804,6 +800,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
 
 export default function UserManagement() {
   const user = useAuthStore(s => s.user)
+  const whTypeMeta = useWhTypeMetaMap()
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canCreateEmp = can(perms, 'user_admin', 'create')
   const canEditEmp   = can(perms, 'user_admin', 'edit')
@@ -1022,7 +1019,7 @@ export default function UserManagement() {
                             <div className="flex gap-1 overflow-hidden">
                               {cats.length === 0 ? <span className="text-slate-300">—</span> : cats.map(cat => (
                                 <span key={cat} className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium
-                                  ${CATEGORY_COLOR[cat] ?? 'bg-slate-100 text-slate-600'}`}>{cat}</span>
+                                  ${whTypeBadgeCls(cat, whTypeMeta)}`}>{cat}</span>
                               ))}
                             </div>
                           </TableCell>

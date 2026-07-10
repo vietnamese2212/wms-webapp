@@ -13,7 +13,8 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { isNccCategory } from '@/utils/cargoCategory'
+import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import {
@@ -101,6 +102,7 @@ function QRImg({ value, px = 320 }: { value: string; px?: number }) {
 
 // ─── 1 tem (1/4 A4 = 105mm × 148.5mm) ─────────────────────────
 function PalletLabel({ d }: { d: LabelData }) {
+  const whTypeMeta = useWhTypeMetaMap()   // cờ is_ncc_goods per-Loại kho (ô NCC vs Máy trên tem V1)
   return (
     <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[3.5mm] overflow-hidden">
       {/* QR — chiếm phần lớn (hút khoảng trống thừa), căn giữa */}
@@ -156,7 +158,7 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
           <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
-        {isNccCategory(d.category) ? (
+        {isNccCategory(d.category, whTypeMeta) ? (
           <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">NCC</div>
             <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
@@ -282,15 +284,18 @@ export default function PalletLabels() {
 
   // Danh mục NCC (đoạn 4 cho hàng nhập NCC)
   const { data: companies = [] } = useTransportCompanies(true)
+  const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (is_ncc_goods + batch_char)
   const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
   const nccNameByCode = useMemo(() => new Map(nccList.map(c => [c.code, c.name])), [nccList])
   // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ
   const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined) =>
-    isNccCategory(category) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
-  // Loại hàng đang chọn quyết định đoạn 4: thành phẩm → Máy; POSM/Raw/Thùng/Giấy → NCC
+    isNccCategory(category, whTypeMeta) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
+  // Loại hàng đang chọn quyết định đoạn 4 (cờ is_ncc_goods): không NCC → Máy; NCC → mã NCC
   const genCategory = mat?.category ?? genCat
-  const genIsNcc = isNccCategory(genCategory)
+  const genIsNcc = isNccCategory(genCategory, whTypeMeta)
+  // Tem V2: Loại kho có "Ký tự mã lô" → thế chỗ Máy trong mã lô, khóa ô chọn tay (vd Nguyên liệu = N)
+  const v2FixedChar = batchCharOf(genCategory, whTypeMeta)
   const seg4 = genIsNcc ? nccCode : machine                                   // giá trị vào QR (đoạn 4)
   const seg4Name = genIsNcc ? (nccList.find(c => c.code === nccCode)?.name ?? '') : ''
 
@@ -316,7 +321,7 @@ export default function PalletLabels() {
   }, [isV2Format, hsdEdited, mat, prodDate])
 
   const genReady = !!(mat && prodDate && cycle.trim() && seg4.trim() && nmsx.trim())
-  const genReadyV2 = !!(mat && batchPrefix && prodDate && machine.trim() && hsdV2)
+  const genReadyV2 = !!(mat && batchPrefix && prodDate && (v2FixedChar || machine.trim()) && hsdV2)
   const genLabels: LabelData[] = useMemo(() => {
     if (tab !== 'generate' || !mat) return []
     const start = parseInt(seqStart, 10) || 1
@@ -329,7 +334,7 @@ export default function PalletLabels() {
       const yymmdd = toYymmdd(prodDate)
       const nsxDisp = toDisplayDate(prodDate)
       const hsdDisp = toDisplayDate(hsdV2)
-      const machineChar = clean(machine).toUpperCase().slice(0, 1)   // Máy = 1 ký tự trong mã lô
+      const machineChar = v2FixedChar || clean(machine).toUpperCase().slice(0, 1)   // ký tự Loại kho (nếu khai) hoặc Máy
       const hourNum = parseInt(hourV2, 10) || 1
       const minSec = minSecV2.trim() || '00:00'
       for (let i = 0; i < n; i++) {
@@ -380,11 +385,11 @@ export default function PalletLabels() {
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
   const genPrefix = isV2Format
-    ? (genReadyV2 && mat ? `${batchPrefix}${toYymmdd(prodDate)}${clean(machine).toUpperCase().slice(0, 1)}` : '')
+    ? (genReadyV2 && mat ? `${batchPrefix}${toYymmdd(prodDate)}${v2FixedChar || clean(machine).toUpperCase().slice(0, 1)}` : '')
     : (genReady && mat ? `${toDdmmyy(prodDate)}_${clean(mat.material_code)}_${clean(cycle)}_${clean(seg4)}_` : '')
   const { data: genDupData } = useInventoryEntries(
     { search: genPrefix, status: '', page: 1, limit: 500 },
@@ -663,7 +668,7 @@ export default function PalletLabels() {
       qty: r.qty ?? '',
       cycle: r.cycle ?? f.cycle,
       machine: r.machine ?? f.machine,
-      nccName: isNccCategory(r.category ?? mat?.category) ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
+      nccName: isNccCategory(r.category ?? mat?.category, whTypeMeta) ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
       seq: r.seq ?? f.seq,
       batch: f.batch || undefined,
       expiryDisplay: f.expiryDisplay || undefined,
@@ -877,9 +882,19 @@ export default function PalletLabels() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
-                  <Input maxLength={1} className="h-8 text-sm uppercase" placeholder="A" value={machine}
-                    onChange={e => setMachine(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 1))} />
+                  {v2FixedChar ? (
+                    <>
+                      <Label className="text-xs">Ký tự mã lô</Label>
+                      <Input className="h-8 text-sm uppercase bg-slate-100 text-slate-500" value={v2FixedChar} disabled />
+                      <p className="text-[10px] text-slate-400">Cố định theo Loại kho “{genCategory}”.</p>
+                    </>
+                  ) : (
+                    <>
+                      <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
+                      <Input maxLength={1} className="h-8 text-sm uppercase" placeholder="A" value={machine}
+                        onChange={e => setMachine(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 1))} />
+                    </>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">QA</Label>
@@ -926,7 +941,7 @@ export default function PalletLabels() {
                   <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
                 </div>
               </div>
-              {!genReadyV2 && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng (có Mã tắt), Máy, HSD để sinh tem.</p>}
+              {!genReadyV2 && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng (có Mã tắt), {v2FixedChar ? '' : 'Máy, '}HSD để sinh tem.</p>}
               {genReadyV2 && genDupes.length > 0 && (
                 <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -1150,7 +1165,7 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
-                      {(() => { const s = isNccCategory(g.category) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—'); return (
+                      {(() => { const s = isNccCategory(g.category, whTypeMeta) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—'); return (
                       <td className="px-2 py-1 whitespace-nowrap" title={s}>{s}</td>
                       ) })()}
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>

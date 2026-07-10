@@ -9,6 +9,7 @@ import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
+import type { WhTypeMeta } from '@/utils/cargoCategory'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -691,13 +692,15 @@ export function useMaterialCategories() {
   })
 }
 
+export type WarehouseTypeRow = { id: string; value: string; sort_order: number; meta?: WhTypeMeta | null }
+
 export function useWarehouseTypes() {
   return useQuery({
     queryKey: ['lookup', 'warehouse_type'],
     staleTime: 10 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/lookup', { params: { type: 'warehouse_type' } })
-      return data.data as { id: string; value: string; sort_order: number }[]
+      return data.data as WarehouseTypeRow[]
     },
   })
 }
@@ -705,8 +708,8 @@ export function useWarehouseTypes() {
 export function useAddWarehouseType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (value: string) =>
-      apiClient.post('/wms/lookup', { type: 'warehouse_type', value }).then(r => r.data.data),
+    mutationFn: (input: { value: string; meta?: WhTypeMeta }) =>
+      apiClient.post('/wms/lookup', { type: 'warehouse_type', ...input }).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
   })
 }
@@ -714,9 +717,13 @@ export function useAddWarehouseType() {
 export function useUpdateWarehouseType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, value }: { id: string; value: string }) =>
-      apiClient.put(`/wms/lookup/${id}`, { value }).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] }),
+    mutationFn: ({ id, value, meta }: { id: string; value: string; meta?: WhTypeMeta }) =>
+      apiClient.put(`/wms/lookup/${id}`, { value, meta }).then(r => r.data.data as WarehouseTypeRow & { renamed?: Record<string, number> }),
+    // Đổi TÊN loại kho = cascade toàn DB (Material/Location/đơn hàng/quyền…) → invalidate toàn bộ cache query
+    onSuccess: data => {
+      if (data?.renamed) qc.invalidateQueries()
+      else qc.invalidateQueries({ queryKey: ['lookup', 'warehouse_type'] })
+    },
   })
 }
 

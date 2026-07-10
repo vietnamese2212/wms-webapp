@@ -33,6 +33,24 @@ async function findShiptoClash(codes: string[], code: string, excludeId?: string
   return null
 }
 
+// Kho phụ nội bộ: validate parent_warehouse_id — parent phải tồn tại, không tự trỏ mình,
+// không lồng 2 cấp (parent không được là kho phụ; kho đang làm parent không được thành kho phụ).
+async function validateParent(parentId: string | null, selfId?: string): Promise<string | null> {
+  if (!parentId) return null
+  if (selfId && parentId === selfId) return 'Kho không thể trực thuộc chính nó'
+  const { data: parent } = await supabase.from('Warehouse')
+    .select('id, parent_warehouse_id').eq('id', parentId).maybeSingle()
+  if (!parent) return 'Không tìm thấy kho parent'
+  if ((parent as { parent_warehouse_id: string | null }).parent_warehouse_id)
+    return 'Kho parent đã là kho phụ của kho khác — không lồng 2 cấp'
+  if (selfId) {
+    const { count } = await supabase.from('Warehouse')
+      .select('id', { count: 'exact', head: true }).eq('parent_warehouse_id', selfId)
+    if ((count ?? 0) > 0) return 'Kho này đang là parent của kho phụ khác — không thể trở thành kho phụ'
+  }
+  return null
+}
+
 // Chuẩn hoá mã NMSX (đoạn 6 QR + tiền tố location_code): UPPER trim, rỗng → null.
 function normNmsx(input: unknown): string | null {
   const v = String(input ?? '').toUpperCase().trim()
@@ -98,7 +116,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -112,11 +130,14 @@ export async function createWarehouse(req: Request, res: Response) {
     const nmsx = normNmsx(nmsx_code)
     const nmsxClash = await findNmsxClash(nmsx)
     if (nmsxClash) return fail(res, 409, 'DUPLICATE', `Mã NMSX "${nmsxClash}" đã thuộc kho khác`)
+    const parentId = parent_warehouse_id ? String(parent_warehouse_id) : null
+    const parentErr = await validateParent(parentId)
+    if (parentErr) return fail(res, 400, 'VALIDATION_ERROR', parentErr)
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
+      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, parent_warehouse_id: parentId, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
       .select().single()
 
     if (error) {
@@ -129,7 +150,7 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
@@ -152,6 +173,12 @@ export async function updateWarehouse(req: Request, res: Response) {
       if (!['CENTRAL', 'NPP'].includes(warehouse_type))
         return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ')
       patch.warehouse_type = warehouse_type
+    }
+    if (parent_warehouse_id !== undefined) {
+      const parentId = parent_warehouse_id ? String(parent_warehouse_id) : null
+      const parentErr = await validateParent(parentId, req.params.id)
+      if (parentErr) return fail(res, 400, 'VALIDATION_ERROR', parentErr)
+      patch.parent_warehouse_id = parentId
     }
     if (inventory_mode !== undefined) {
       if (!INVENTORY_MODES.includes(inventory_mode))

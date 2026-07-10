@@ -872,17 +872,17 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
 
     const { data: tmsOrder } = await supabase.from('TmsOrder')
-      .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name)')
+      .select('id, eta, destination_warehouse_id, transfer_gdo_id, warehouse:Warehouse!destination_warehouse_id(id, code, name, parent_warehouse_id)')
       .eq('id', id).single()
     if (!tmsOrder) return fail(res, 'Không tìm thấy lệnh chuyển kho', 404)
     if (!tmsOrder.transfer_gdo_id) return fail(res, 'Lệnh này không phải lệnh chuyển kho', 400)
     if (!tmsOrder.destination_warehouse_id) return fail(res, 'Lệnh chưa có kho nhận', 400)
 
     const gdoId = tmsOrder.transfer_gdo_id as string
-    const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string }
+    const nppWh = tmsOrder.warehouse as unknown as { id: string; code: string; name: string; parent_warehouse_id: string | null }
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, transfer_status').eq('id', gdoId).single()
+      .select('id, status, transfer_status, warehouse_id').eq('id', gdoId).single()
     if (!gdo) return fail(res, 'Không tìm thấy GDO', 404)
     if (gdo.transfer_status === 'DELIVERED') return fail(res, 'GDO này đã được xác nhận giao', 409)
     if (gdo.transfer_status !== 'IN_TRANSIT') return fail(res, 'GDO phải ở trạng thái Đang giao trước khi xác nhận', 400)
@@ -891,11 +891,15 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       return fail(res, 'Kho xuất đang sửa đơn (đã bỏ hoàn thành) — chờ kho xuất hoàn thành lại rồi mới nhận hàng', 409)
 
     // Gác ĐVVT booking: phải đủ Biển số + SĐT lái xe + Giờ xe tới (ETA) mới cho NPP nhận hàng.
-    const { data: bkSlots } = await supabase.from('TmsVehicleSlot')
-      .select('license_plate, driver_phone').eq('order_id', id)
-    const bk = ((bkSlots ?? []) as { license_plate: string | null; driver_phone: string | null }[])[0]
-    if (!bk?.license_plate?.trim() || !bk?.driver_phone?.trim() || !tmsOrder.eta)
-      return fail(res, 'Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng', 400)
+    // MIỄN gác khi kho nhận là KHO PHỤ NỘI BỘ của chính kho xuất (cùng site — xe nâng/đẩy tay, không có xe tải).
+    const isInternalDest = !!nppWh.parent_warehouse_id && nppWh.parent_warehouse_id === (gdo as { warehouse_id?: string | null }).warehouse_id
+    if (!isInternalDest) {
+      const { data: bkSlots } = await supabase.from('TmsVehicleSlot')
+        .select('license_plate, driver_phone').eq('order_id', id)
+      const bk = ((bkSlots ?? []) as { license_plate: string | null; driver_phone: string | null }[])[0]
+      if (!bk?.license_plate?.trim() || !bk?.driver_phone?.trim() || !tmsOrder.eta)
+        return fail(res, 'Cần ĐVVT booking (đủ Biển số, SĐT lái xe, Giờ xe tới) trước khi nhận hàng', 400)
+    }
 
     const { count: existing } = await supabase.from('ProductionImport')
       .select('id', { count: 'exact', head: true }).eq('from_gdo_id', gdoId).neq('status', 'CANCELLED')

@@ -2224,7 +2224,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
 
   const slot = order?.vehicle_slots?.[0]
   // ĐVVT booking đủ = có Biển số + SĐT lái xe + Giờ xe tới (ETA). Chưa đủ → chưa cho bắt đầu nhận.
-  const hasBooking = !!(slot?.license_plate?.trim() && slot?.driver_phone?.trim() && order?.eta)
+  // MIỄN booking khi kho nhận là KHO PHỤ NỘI BỘ của chính kho xuất (cùng site — xe nâng/đẩy tay, khớp BE confirmTransferReceipt).
+  const { data: whsForInternal = [] } = useWarehouses(true)
+  const destWhFull = (whsForInternal as { id: string; parent_warehouse_id?: string | null }[]).find(w => w.id === order?.destination_warehouse_id)
+  const isInternalDest = !!destWhFull?.parent_warehouse_id && destWhFull.parent_warehouse_id === order?.transfer_gdo?.warehouse?.id
+  const hasBooking = isInternalDest || !!(slot?.license_plate?.trim() && slot?.driver_phone?.trim() && order?.eta)
   const tStatus = order?.transfer_gdo?.transfer_status
   // SELF (kho nhận NONE / khách ngoài): không có bước nhận-quét → thay "Bắt đầu nhận hàng" bằng "Hoàn thành" (tài xế tự hoàn thành)
   const isSelf = order?.delivery_mode === 'SELF'

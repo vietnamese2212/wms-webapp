@@ -21,7 +21,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
-  useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO,
+  useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
@@ -366,6 +366,19 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
+  // Chuyển nội bộ parent↔kho phụ (cùng site): biển số tùy chọn — xe nâng/đẩy tay, BE startGDO cũng nới tương ứng
+  const { data: whsForInternal = [] } = useWarehouses(true)
+  const internalPair = (() => {
+    type W = { id: string; code?: string; parent_warehouse_id?: string | null; shipto_codes?: string[] | null }
+    const whs = whsForInternal as W[]
+    const st = gdo.shipto_party ?? ''
+    if (!gdo.warehouse_id || !st) return false
+    const dest = whs.find(w => w.code === st || (w.shipto_codes ?? []).includes(st))
+    if (!dest) return false
+    const src = whs.find(w => w.id === gdo.warehouse_id)
+    return dest.parent_warehouse_id === gdo.warehouse_id || (src?.parent_warehouse_id ?? null) === dest.id
+  })()
+
   // Resolved names for submission
   const empMap = new Map((employees as EmpOption[]).map(e => [e.id, e.name]))
   const exporterName = [user?.name, ...exporterNames]
@@ -373,12 +386,12 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit() {
-    if (!effectivePlate.trim()) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
+    if (!effectivePlate.trim() && !internalPair) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null)
     startGDO(
       {
         id:                   gdo.id,
-        license_plate:        effectivePlate.trim(),
+        license_plate:        effectivePlate.trim() || undefined,
         container_number:     containerNum || undefined,
         exporter_name:        exporterName || undefined,
         loader_name:          loaderName   || undefined,

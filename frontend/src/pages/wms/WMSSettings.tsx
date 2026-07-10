@@ -167,7 +167,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'NONE'
@@ -187,8 +187,18 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
+  const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   const [err, setErr] = useState('')
+
+  // Danh sách kho làm parent: kho thường (không phải kho phụ), trừ chính mình
+  const { data: allWhForParent = [] } = useWarehouses(false)
+  const parentOpts = [
+    { value: '__none__', label: '— Kho thường (không trực thuộc) —' },
+    ...(allWhForParent as WhRow[])
+      .filter(w => !w.parent_warehouse_id && w.id !== wh?.id)
+      .map(w => ({ value: w.id, label: w.name, sub: w.code })),
+  ]
 
   const { mutate: create, isPending: creating } = useCreateWarehouse()
   const { mutate: update, isPending: updating } = useUpdateWarehouse()
@@ -197,14 +207,15 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   function handleSubmit() {
     setErr('')
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
+    const parent_warehouse_id = parentId === '__none__' ? null : parentId
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -256,6 +267,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               </SelectContent>
             </Select>
             <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
+            <SingleSelect options={parentOpts} value={parentId} onChange={setParentId}
+              placeholder="— Kho thường (không trực thuộc) —" searchPlaceholder="Tìm kho…" triggerClassName="h-8 w-full text-sm" />
+            <p className="text-[10px] text-slate-400">Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</p>
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Mã ship-to phụ</Label>
@@ -882,7 +899,14 @@ export default function WMSSettings() {
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.code}</TableCell>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{wh.name}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">
+                            {wh.name}
+                            {wh.parent_warehouse_id && (
+                              <Badge variant="outline" className="ml-1.5 text-[9px] border-violet-400 text-violet-700 bg-violet-50">
+                                Nội bộ · {(allWh as WhRow[]).find(p => p.id === wh.parent_warehouse_id)?.code ?? '?'}
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
                               {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
@@ -928,6 +952,7 @@ export default function WMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Chức năng:</span> <span className="font-medium">{detailWh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}</span></div>
                 <div><span className="text-slate-400">Quản tồn:</span> <span className="font-medium">{invModeMeta(detailWh.inventory_mode).label}</span></div>
+                <div><span className="text-slate-400">Trực thuộc:</span> <span className="font-medium">{detailWh.parent_warehouse_id ? ((allWh as WhRow[]).find(p => p.id === detailWh.parent_warehouse_id)?.name ?? '?') : '— (kho thường)'}</span></div>
                 <div><span className="text-slate-400">NMSX:</span> <span className="font-mono font-medium">{detailWh.nmsx_code || '—'}</span></div>
                 <div><span className="text-slate-400">Ship-to phụ:</span> <span className="font-mono font-medium">{detailWh.shipto_codes?.length ? detailWh.shipto_codes.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Địa chỉ:</span> <span className="font-medium">{detailWh.address ?? '—'}</span></div>

@@ -475,6 +475,48 @@ async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): 
   return { error: 'Không sinh được số chuyến (nhiều người tạo đơn cùng lúc) — thử lại' }
 }
 
+// ─── Kho phụ nội bộ (Warehouse.parent_warehouse_id) — luật quỹ đạo ───────────
+// Kho phụ CHỈ giao dịch với kho parent của nó: nhận chuyển kho từ parent, xuất trả parent,
+// hoặc xuất tiêu hao (không gắn ship-to). Cặp parent↔con được nới biển số khi Bắt đầu/Xuất luôn.
+type OrbitWh = { id: string; name: string; parent_warehouse_id: string | null }
+
+async function orbitWhByShipto(shipto: string | null | undefined): Promise<OrbitWh | null> {
+  const st = String(shipto ?? '').trim()
+  if (!st) return null
+  const { data } = await supabase.from('Warehouse')
+    .select('id, name, parent_warehouse_id')
+    .or(`code.eq.${st},shipto_codes.cs.{${st}}`)
+    .eq('is_active', true).maybeSingle()
+  return (data as OrbitWh | null) ?? null
+}
+
+async function parentOfWh(whId: string | null | undefined): Promise<string | null> {
+  if (!whId) return null
+  const { data } = await supabase.from('Warehouse')
+    .select('parent_warehouse_id').eq('id', whId).maybeSingle()
+  return (data as { parent_warehouse_id: string | null } | null)?.parent_warehouse_id ?? null
+}
+
+// Trả message lỗi khi đơn xuất vi phạm quỹ đạo kho phụ, null nếu hợp lệ.
+async function internalOrbitError(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<string | null> {
+  const dest = await orbitWhByShipto(shipto)
+  if (dest?.parent_warehouse_id && dest.parent_warehouse_id !== (sourceWhId ?? null))
+    return `"${dest.name}" là kho phụ nội bộ — chỉ kho parent của nó mới được xuất tới`
+  const srcParent = await parentOfWh(sourceWhId)
+  if (srcParent && String(shipto ?? '').trim() && dest?.id !== srcParent)
+    return 'Kho phụ nội bộ chỉ xuất trả về kho parent hoặc xuất tiêu hao (không gắn ship-to kho khác)'
+  return null
+}
+
+// Cặp parent↔con (cùng site) → biển số tùy chọn (chuyển nội bộ bằng xe nâng/đẩy tay).
+async function isInternalPair(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<boolean> {
+  if (!sourceWhId) return false
+  const dest = await orbitWhByShipto(shipto)
+  if (!dest) return false
+  if (dest.parent_warehouse_id === sourceWhId) return true
+  return (await parentOfWh(sourceWhId)) === dest.id
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
@@ -487,6 +529,8 @@ export async function createGDO(req: Request, res: Response) {
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    const orbitErr = await internalOrbitError(warehouse_id ?? null, shipto_party)
+    if (orbitErr) return fail(res, orbitErr, 400)
 
     // ĐVVT: khớp danh mục → dùng tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
@@ -567,11 +611,15 @@ export async function quickExportGDO(req: Request, res: Response) {
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim())     return fail(res, 'Số DO là bắt buộc', 400)
-    if (!license_plate?.trim())     return fail(res, 'Biển số xe là bắt buộc', 400)
     if (!items?.length)             return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
     if (!warehouse_id)              return fail(res, 'Chọn kho xuất', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    const orbitErr = await internalOrbitError(warehouse_id, shipto_party)
+    if (orbitErr) return fail(res, orbitErr, 400)
+    // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ (xe nâng/đẩy tay trong site)
+    if (!license_plate?.trim() && !(await isInternalPair(warehouse_id, shipto_party)))
+      return fail(res, 'Biển số xe là bắt buộc', 400)
 
     // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
@@ -626,7 +674,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
-      started_at: t, license_plate: license_plate.trim(),
+      started_at: t, license_plate: license_plate?.trim() || null,
       created_by: actor, updated_by: actor, updated_at: t,
     })
     if (ins.error) return fail(res, ins.error)
@@ -722,11 +770,10 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
   try {
     const { gdoId } = req.params
     const { license_plate } = req.body as { license_plate?: string }
-    if (!license_plate?.trim()) return fail(res, 'Biển số xe là bắt buộc', 400)
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, warehouse_id, assigned_at, assigned_by, started_at, warehouse:Warehouse(inventory_mode)')
+      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, warehouse:Warehouse(inventory_mode)')
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
@@ -735,6 +782,10 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const whMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null })?.warehouse?.inventory_mode ?? null
     if (whMode !== 'QTY' && whMode !== 'NONE')
       return fail(res, 422, 'NOT_QTY_NONE', 'Chỉ kho quản lý theo số lượng (QTY) hoặc không theo dõi tồn (NONE) mới dùng "Xuất luôn". Kho QR hãy dùng luồng quét tem.')
+    // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ
+    if (!license_plate?.trim() &&
+        !(await isInternalPair(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party)))
+      return fail(res, 'Biển số xe là bắt buộc', 400)
 
     const { data: dos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
@@ -807,7 +858,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const t = now()
     await supabase.from('GroupDeliveryOrder').update({
       status: 'IN_PROGRESS',
-      license_plate: license_plate.trim(),
+      ...(license_plate?.trim() ? { license_plate: license_plate.trim() } : {}),
       ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
       ...(gdo.started_at  ? {} : { started_at: t }),
       updated_by: actor, updated_at: t,
@@ -868,12 +919,12 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // Nhãn đích khi KHÔNG nhận diện được kho: tên KH của DO đầu
   const custLabel = ((dos ?? [])[0] as { distributor_name?: string | null } | undefined)?.distributor_name?.trim() || 'KH'
 
-  type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null }
+  type DestWh = { id: string; code: string; name: string; inventory_mode?: string | null; parent_warehouse_id?: string | null }
   let destWh: DestWh | null = null
   if (gdo.shipto_party) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: destWhData } = await supabase.from('Warehouse')
-      .select('id, code, name, inventory_mode')
+      .select('id, code, name, inventory_mode, parent_warehouse_id')
       .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
       .eq('is_active', true).maybeSingle()
     destWh = (destWhData as DestWh) ?? null
@@ -883,11 +934,13 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   if (!destWh && custLabel !== 'KH') {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: byName } = await supabase.from('Warehouse')
-      .select('id, code, name, inventory_mode')
+      .select('id, code, name, inventory_mode, parent_warehouse_id')
       .ilike('name', custLabel.replace(/[%_\\]/g, '\\$&'))   // ilike không wildcard = so bằng không phân hoa/thường
       .eq('is_active', true).limit(2)
     if ((byName ?? []).length === 1) destWh = byName![0] as DestWh
   }
+  // Kho phụ nội bộ của site KHÁC (tên/shipto trùng lọt qua) → không auto-transfer, coi như khách ngoài (OTHER).
+  if (destWh?.parent_warehouse_id && destWh.parent_warehouse_id !== gdo.warehouse_id) destWh = null
   // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : destWh.inventory_mode === 'QTY' ? 'QTY' : 'QR') : 'OTHER'
   if (!existing && !dc.modes.includes(modeKey)) return   // loại này không được chọn → ngắt (không tạo booking mới)
@@ -1040,9 +1093,14 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status').eq('id', req.params.id).single()
+      .select('status, shipto_party').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
+
+    // Luật quỹ đạo kho phụ — kiểm theo shipto HIỆU LỰC sau update (body có gửi thì lấy body, không thì giữ cũ)
+    const effShipto = 'shipto_party' in req.body ? (shipto_party ?? null) : ((gdo as { shipto_party?: string | null }).shipto_party ?? null)
+    const orbitErr = await internalOrbitError(warehouse_id ?? null, effShipto)
+    if (orbitErr) return fail(res, orbitErr, 400)
 
     // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
@@ -1359,7 +1417,6 @@ export async function startGDO(req: Request, res: Response) {
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
     }
-    if (!license_plate) return fail(res, 'Biển số xe là bắt buộc', 400)
     if (!(await guardGdoScope(req, res, req.params.id))) return
 
     // Khóa cứng 1 chuyến = 1 phiếu: nếu chuyến cổng đã gắn GDO khác → chặn, trừ khi user xác nhận đặc biệt (bốc thêm đơn cùng chuyến)
@@ -1376,14 +1433,19 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+      .select('assigned_at, warehouse_id, shipto_party, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
     const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
+
+    // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ (xe nâng/đẩy tay trong site)
+    if (!license_plate?.trim() &&
+        !(await isInternalPair((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party)))
+      return fail(res, 'Biển số xe là bắt buộc', 400)
 
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: now(),
-        license_plate,
+        license_plate: license_plate?.trim() || null,
         container_number:       container_number       ?? null,
         exporter_name:          exporter_name          ?? null,
         loader_name:            loader_name            ?? null,

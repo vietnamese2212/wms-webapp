@@ -3,12 +3,14 @@ import { persist } from 'zustand/middleware'
 import type { AxiosError } from 'axios'
 import { apiClient } from '@/api/client'
 import { clearOfflineData } from '@/offline/persist'
+import { setRealtimeAuth } from '@/lib/supabase'
 import type { User } from '@/types'
 
 interface AuthState {
   user: User | null
   isAuthenticated: boolean
   token: string | null
+  realtimeToken: string | null   // vé Supabase Realtime (role authenticated) cho RLS đóng-hẳn
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   updateUser: (partial: Partial<User>) => void
@@ -21,15 +23,18 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       token: null,
+      realtimeToken: null,
 
       login: async (email: string, password: string) => {
         const res = await apiClient.post('/auth/login', { email, password })
-        const { token, user } = res.data.data as { token: string; user: User }
-        set({ user, isAuthenticated: true, token })
+        const { token, user, realtime_token } = res.data.data as { token: string; user: User; realtime_token: string | null }
+        set({ user, isAuthenticated: true, token, realtimeToken: realtime_token ?? null })
+        setRealtimeAuth(realtime_token ?? null)
       },
 
       logout: () => {
-        set({ user: null, isAuthenticated: false, token: null })
+        set({ user: null, isAuthenticated: false, token: null, realtimeToken: null })
+        setRealtimeAuth(null)     // trả kết nối realtime về anon
         void clearOfflineData()   // dọn cache + hàng đợi quét khỏi IndexedDB (máy dùng chung)
       },
 
@@ -41,8 +46,9 @@ export const useAuthStore = create<AuthState>()(
       refreshUser: async () => {
         try {
           const res = await apiClient.get('/auth/me')
-          const { user, token } = res.data.data as { user: User; token: string }
-          set({ user, token })
+          const { user, token, realtime_token } = res.data.data as { user: User; token: string; realtime_token: string | null }
+          set({ user, token, realtimeToken: realtime_token ?? null })
+          setRealtimeAuth(realtime_token ?? null)   // tái cấp vé realtime (định kỳ 5' qua Shell)
         } catch (err) {
           // CHỈ đăng xuất khi token thực sự hết hạn/sai (401). Lỗi TẠM THỜI
           // (cold-start timeout, mất mạng, 5xx, DB bận lúc đông) KHÔNG được xóa

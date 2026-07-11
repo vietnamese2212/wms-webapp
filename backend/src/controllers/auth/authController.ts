@@ -46,6 +46,16 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }
 
+// Vé Realtime: JWT ký bằng SUPABASE JWT SECRET, role 'authenticated' → client ĐÃ ĐĂNG
+// NHẬP kết nối Supabase Realtime dưới RLS (chỉ authenticated đọc được, anon bị chặn).
+// CHƯA cấu hình SUPABASE_JWT_SECRET → trả null → FE giữ hành vi cũ (anon), KHÔNG vỡ gì.
+// Chỉ khi (a) set secret + (b) apply migration RLS đóng-hẳn thì cơ chế này mới siết.
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET
+function buildRealtimeToken(empId: string): string | null {
+  if (!SUPABASE_JWT_SECRET) return null
+  return jwt.sign({ role: 'authenticated', aud: 'authenticated', sub: empId }, SUPABASE_JWT_SECRET, { expiresIn: JWT_EXPIRY })
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string, jobTitleName?: string) {
   return {
@@ -115,7 +125,7 @@ export async function login(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { token, user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name) })
+    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name) })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -158,7 +168,7 @@ export async function me(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name), token })
+    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name), token, realtime_token: buildRealtimeToken(emp.id) })
   } catch (e) { return fail(res, String(e)) }
 }
 

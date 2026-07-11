@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
 import { useAuthStore } from '@/stores/authStore'
+import { setRealtimeAuth } from '@/lib/supabase'
 import { OfflineBanner } from '@/offline/OfflineBanner'
 import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
 import { initScanQueue } from '@/offline/scanQueue'
@@ -40,6 +41,9 @@ export function Shell() {
       staleTime: 30_000,
     })
 
+    // Gắn vé realtime đã persist (nếu có) TRƯỚC khi mở kênh → reload app vẫn kết nối
+    // realtime dưới RLS đóng-hẳn. refreshUser() ở trên sẽ tái cấp vé mới khi /me trả về.
+    setRealtimeAuth(useAuthStore.getState().realtimeToken)
     // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
     connectRealtimeEvents()
 

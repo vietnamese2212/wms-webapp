@@ -16,6 +16,7 @@ import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -255,6 +256,8 @@ export default function Outbound() {
     date_from: f.dateFrom || undefined,
     date_to:   f.dateTo   || undefined,
   })
+  // Prefetch chi tiết chuyến ĐANG CHẠY khi có mạng → offline quét được cả chuyến chưa bấm vào
+  usePrefetchGdos(gdos)
   // Prefetch danh mục mã hàng (nền) cho user có quyền tạo/sửa → mở form Thêm/Sửa lần đầu đã sẵn.
   // CHỈ chạy SAU khi danh sách chuyến tải xong (!isLoading) để 1.37MB mã hàng KHÔNG cạnh tranh,
   // giữ danh sách hiện nhanh. Chung cache key với useMaterials() trong form; user chỉ-xem không tải.

@@ -543,7 +543,8 @@ export function useScanPallet() {
       employee_id?: string
       ncc_id?: string
       shelf_life_days?: number
-    }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body).then((r) => r.data.data),
+      // timeout 12s: sóng yếu → fail sớm → InboundScanSheet tự xếp vào hàng đợi offline
+    }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body, { timeout: 12000 }).then((r) => r.data.data),
 
     // Optimistic: add entry to table immediately, before API responds
     onMutate: async ({ orderId, qr_code, location_id }) => {
@@ -1697,7 +1698,8 @@ export function useScanOutboundItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; employee_id?: string; cartons_override?: number
-    }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body).then(r => r.data.data),
+      // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
+    }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
       qc.setQueryData(['gdo', v.gdoId], (old: any) => {
         if (!old) return old
@@ -1857,7 +1859,9 @@ export function useConfirmLoosePickingItem() {
 export function useCheckOutboundScan() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, qr_code }: { gdoId: string; itemId: string; qr_code: string }) =>
-      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/check-scan`, { qr_code }).then(r => r.data.data as CheckOutboundScanResult),
+      // timeout 12s (thay vì 30s mặc định): sóng kho chập chờn làm request treo —
+      // fail sớm để flow quét chuyển sang hàng đợi offline, không bắt user đứng chờ
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/check-scan`, { qr_code }, { timeout: 12000 }).then(r => r.data.data as CheckOutboundScanResult),
   })
 }
 
@@ -1877,7 +1881,8 @@ export function useCheckInboundScan() {
     mutationFn: ({ orderId, qr_code, location_id, stack_layer }: {
       orderId: string; qr_code: string; location_id: string; stack_layer: number
     }) =>
-      apiClient.post(`/wms/inbound-orders/${orderId}/check-scan`, { qr_code, location_id, stack_layer })
+      // timeout 12s: sóng yếu → fail sớm, không treo camera 30s
+      apiClient.post(`/wms/inbound-orders/${orderId}/check-scan`, { qr_code, location_id, stack_layer }, { timeout: 12000 })
         .then(r => r.data.data as CheckScanResult),
   })
 }

@@ -24,6 +24,7 @@ import {
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
+import { usePrefetchInboundOrders } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -1301,6 +1302,8 @@ export default function Inbound() {
     date_to:           f.dateTo           || undefined,
     material_category: f.materialCategory || undefined,
   })
+  // Prefetch chi tiết phiếu ĐANG MỞ khi có mạng → offline quét được cả phiếu chưa bấm vào
+  usePrefetchInboundOrders(serverOrders)
 
   // Null-safe defaults for all array/string fields (guards against stale session state)
   const filterMaterials = f.filterMaterials ?? []

@@ -946,13 +946,15 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
       .eq('id', gdoId).eq('transfer_status', 'IN_TRANSIT').select('id')
     if (!claimed?.length) return fail(res, 'Đã có người khác bắt đầu nhận lô hàng này', 409)
 
-    const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id').eq('gdo_id', gdoId)
+    const dos = await fetchAllPaged(() => supabase.from('OutboundDelivery')
+      .select('id').eq('gdo_id', gdoId).order('id'))
     const doIds: string[] = (dos ?? []).map((d: { id: string }) => d.id)
     if (!doIds.length) return fail(res, 'GDO không có đơn giao hàng', 400)
 
-    const { data: items } = await supabase.from('OutboundItem')
-      .select('id, material_id, cartons_ordered, material_type, material:Material(category, material_code)').in('do_id', doIds)
+    // Phiếu nhập tách từ list này — thiếu item (cap-1000) = có mã KHÔNG được tạo phiếu nhận → chunk + phân trang
+    const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+      .select('id, material_id, cartons_ordered, material_type, material:Material(category, material_code)')
+      .in('do_id', chunk).order('id'))
 
     const matMap = new Map<string, { material_id: string; cartons: number; category: string | null; material_code: string | null }>()
     for (const item of (items ?? []) as any[]) {
@@ -1220,15 +1222,16 @@ export async function getTransferGoods(req: Request, res: Response) {
     const outPalletsByMat = new Map<string, Map<string, OutPallet>>()
 
     if (tmsOrder.transfer_gdo_id) {
+      const dos = await fetchAllPaged(() => supabase.from('OutboundDelivery')
+        .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id).order('id'))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: dos } = await supabase.from('OutboundDelivery')
-        .select('id').eq('gdo_id', tmsOrder.transfer_gdo_id)
       const doIds = (dos ?? []).map((d: any) => d.id as string)
 
       if (doIds.length) {
+        // Bảng đối chiếu pallet xuất↔nhận — thiếu item (cap-1000) = scan không map được mã → chunk + phân trang
+        const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+          .select('id, material_id').in('do_id', chunk).order('id'))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: items } = await supabase.from('OutboundItem')
-          .select('id, material_id').in('do_id', doIds)
         const itemIds = (items ?? []).map((i: any) => i.id as string)
         const itemMatMap = new Map<string, string>()
         for (const item of items ?? []) itemMatMap.set(item.id, item.material_id)

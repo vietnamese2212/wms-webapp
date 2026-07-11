@@ -510,8 +510,24 @@ export function useCancelInboundOrder() {
       useActiveInboundStore.getState().unpin(id)
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
+      // Hủy phiếu hoàn tồn + gỡ dòng panel Nhận chuyển kho (cancel-cascade có thể đổi cả TmsOrder/GDO)
+      qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+      qc.invalidateQueries({ queryKey: ['inventory-summary'] })
+      qc.invalidateQueries({ queryKey: ['inbound-by-gdo'] })
+      qc.invalidateQueries({ queryKey: ['transfer-goods'] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
     },
   })
+}
+
+// Quét/lưu tay/sửa/xóa pallet đụng cả LIST Nhập (cột Thực nhập/Tiến độ gộp từ InventoryEntry)
+// + trang Tồn kho — invalidate cùng lượt cho chính user, không chờ realtime/refetchInterval
+function invalidateAfterPalletMutation(qc: ReturnType<typeof useQueryClient>, orderId: string) {
+  qc.invalidateQueries({ queryKey: ['inbound-order', orderId] })
+  qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+  qc.invalidateQueries({ queryKey: ['inventory-entries'] })
+  qc.invalidateQueries({ queryKey: ['inventory-summary'] })
 }
 
 export function useScanPallet() {
@@ -578,7 +594,7 @@ export function useScanPallet() {
     },
 
     // Always sync real data after settle
-    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onSettled: (_d, _e, v) => invalidateAfterPalletMutation(qc, v.orderId),
   })
 }
 
@@ -626,7 +642,7 @@ export function useScanManualPallet() {
     onError: (_e, _v, ctx: any) => {
       if (ctx?.previous) qc.setQueryData(['inbound-order', ctx.orderId], ctx.previous)
     },
-    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onSettled: (_d, _e, v) => invalidateAfterPalletMutation(qc, v.orderId),
   })
 }
 
@@ -653,7 +669,7 @@ export function useDeletePalletEntry() {
     onError: (_e, _v, ctx: any) => {
       if (ctx?.prev) qc.setQueryData(['inbound-order', ctx.orderId], ctx.prev)
     },
-    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onSettled: (_d, _e, v) => invalidateAfterPalletMutation(qc, v.orderId),
   })
 }
 
@@ -664,7 +680,7 @@ export function useDeletePalletEntries() {
       apiClient.delete(`/wms/inbound-orders/${orderId}/entries`, {
         data: { entry_ids: entryIds, employee_id: employeeId },
       }).then((r) => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onSuccess: (_d, v) => invalidateAfterPalletMutation(qc, v.orderId),
   })
 }
 
@@ -678,7 +694,7 @@ export function useUpdatePalletEntry() {
       stack_layer?: number
       employee_id?: string
     }) => apiClient.patch(`/wms/inbound-orders/${orderId}/entries/${entryId}`, body).then((r) => r.data.data),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] }),
+    onSuccess: (_d, v) => invalidateAfterPalletMutation(qc, v.orderId),
   })
 }
 

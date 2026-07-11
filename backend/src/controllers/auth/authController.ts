@@ -30,6 +30,7 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
     ncc_id:             emp.ncc_id ?? null,
+    is_superadmin:      emp.employee_code === 'ADMIN' || emp.name === 'Admin',   // middleware bypass đọc từ token — khớp điều kiện resolve quyền
   }
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }

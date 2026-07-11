@@ -196,17 +196,18 @@ async function fetchGDOFull(id: string) {
     .eq('id', id).single()
   if (error || !gdo) return null
 
-  const { data: dos } = await supabase.from('OutboundDelivery')
-    .select('*').eq('gdo_id', id).order('delivery_code')
+  const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
+    .select('*').eq('gdo_id', id).order('delivery_code').order('id'))
 
   const doIds = (dos ?? []).map((d: any) => d.id)
 
-  const { data: items } = doIds.length
-    ? await supabase.from('OutboundItem')
+  // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
+  const items = doIds.length
+    ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
         .select('*, material:Material(id,material_code,short_name,custom_short_name,unit,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking)')
-        .in('do_id', doIds)
-        .order('id')
-    : { data: [] }
+        .in('do_id', chunk)
+        .order('id'))
+    : []
 
   // Kho QTY → ép mọi item thành no-QR hiệu lực (hiển thị + logic manual downstream)
   markItemsNoQrIfQty(
@@ -215,10 +216,10 @@ async function fetchGDOFull(id: string) {
   )
 
   const itemIds = (items ?? []).map((i: any) => i.id)
-  const { data: scans } = itemIds.length
-    ? await supabase.from('OutboundScanEntry')
-        .select('*, scanned_by_emp:Employee!scanned_by(id, name)').in('item_id', itemIds)
-    : { data: [] }
+  const scans = itemIds.length
+    ? await fetchAllByIdChunks(itemIds, chunk => supabase.from('OutboundScanEntry')
+        .select('*, scanned_by_emp:Employee!scanned_by(id, name)').in('item_id', chunk).order('id'))
+    : []
 
   // Map item_id → shelf_life_days để tính pct_date cho từng scan entry
   const itemShelfMap = new Map<string, number>()
@@ -517,6 +518,19 @@ async function isInternalPair(sourceWhId: string | null | undefined, shipto: str
   return (await parentOfWh(sourceWhId)) === dest.id
 }
 
+// Số thùng/nhặt lẻ từ client phải là số hữu hạn ≥ 0 — số âm/NaN lọt vào phá tổng, shortage, pool (NaN còn 500 lúc insert)
+function invalidItemQty(items: Array<{ material_code: string; cartons_ordered: unknown; loose_picking?: unknown }>): string | null {
+  for (const i of items) {
+    const c = Number(i.cartons_ordered)
+    if (!Number.isFinite(c) || c < 0) return `Số thùng không hợp lệ cho mã "${i.material_code}" — phải là số ≥ 0`
+    if (i.loose_picking != null) {
+      const l = Number(i.loose_picking)
+      if (!Number.isFinite(l) || l < 0) return `Số nhặt lẻ không hợp lệ cho mã "${i.material_code}" — phải là số ≥ 0`
+    }
+  }
+  return null
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
@@ -527,6 +541,8 @@ export async function createGDO(req: Request, res: Response) {
     if (!delivery_date) return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim()) return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length) return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
+    const qtyErr = invalidItemQty(items)
+    if (qtyErr) return fail(res, qtyErr, 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     const orbitErr = await internalOrbitError(warehouse_id ?? null, shipto_party)
@@ -612,6 +628,8 @@ export async function quickExportGDO(req: Request, res: Response) {
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim())     return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length)             return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
+    const qxQtyErr = invalidItemQty(items)
+    if (qxQtyErr)                   return fail(res, qxQtyErr, 400)
     if (!warehouse_id)              return fail(res, 'Chọn kho xuất', 400)
     if (!guardWhCreate(req, res, warehouse_id)) return
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
@@ -952,13 +970,12 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.
   const isSelf = modeKey === 'NONE' || modeKey === 'OTHER'
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: items } = doIds.length
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await supabase.from('OutboundItem')
+  // Kế hoạch nhập của chuyến dựng từ list này — phải ĐỦ MỌI item (cap-1000/URL dài: chunk + phân trang)
+  const items = doIds.length
+    ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
         .select('material_id, cartons_ordered, material_type, material:Material(category)')
-        .in('do_id', doIds)
-    : { data: [] as any[] }
+        .in('do_id', chunk).order('id'))
+    : ([] as any[])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null }>()
@@ -1094,6 +1111,10 @@ export async function updateGDO(req: Request, res: Response) {
     }
 
     if (!(await guardGdoScope(req, res, req.params.id))) return
+    if (items?.length) {
+      const updQtyErr = invalidItemQty(items)
+      if (updQtyErr) return fail(res, updQtyErr, 400)
+    }
     if (warehouse_id && !guardWhCreate(req, res, warehouse_id)) return
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
@@ -1438,7 +1459,13 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, warehouse_id, shipto_party, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+      .select('assigned_at, started_at, status, warehouse_id, shipto_party, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+    // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
+    // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
+    const curStatus = (cur as { status?: string } | null)?.status
+    if ((cur as { started_at?: string | null } | null)?.started_at || curStatus === 'COMPLETED' || curStatus === 'CANCELLED') {
+      return fail(res, 'Chuyến đã bắt đầu hoặc đã kết thúc — dùng "Sửa thông tin xe" nếu cần đổi biển số', 400)
+    }
     const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
 
@@ -1846,14 +1873,16 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
-    const [warehousesRes, whTypesRes, vehicleTypesRes, existingRes, allMaterials] = await Promise.all([
+    const [warehousesRes, whTypesRes, vehicleTypesRes, existingGdos, allMaterials] = await Promise.all([
       supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
       supabase.from('LookupValue').select('value').eq('type', 'warehouse_type'),
       supabase.from('VehicleType').select('code, name').eq('is_active', true),
-      supabase.from('GroupDeliveryOrder')
+      // Chunk + phân trang: file nhiều nghìn Số xe → .in() 1 phát vừa vượt URL vừa bị cap-1000
+      // (GDO thứ 1001+ bị coi là "mới" → tạo trùng)
+      fetchAllByIdChunks(allGroupCodes, chunk => supabase.from('GroupDeliveryOrder')
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
-        .in('group_code', allGroupCodes),
+        .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as Promise<{ id: string; material_code: string }[]>,
     ])
@@ -1891,7 +1920,7 @@ export async function uploadExcel(req: Request, res: Response) {
     // Ship-to đã gán tay trên đơn PENDING — mang theo khi upload đè (xóa+tạo lại), không để mất âm thầm
     const shiptoByGroupCode  = new Map<string, string>()
 
-    for (const g of (existingRes.data ?? [])) {
+    for (const g of (existingGdos ?? [])) {
       if (g.shipto_party) shiptoByGroupCode.set(g.group_code as string, g.shipto_party as string)
       if (g.status === 'PENDING') {
         if (g.assigned_at) pendingPreserveMap.set(g.group_code as string, g.id)
@@ -2108,29 +2137,34 @@ export async function uploadExcel(req: Request, res: Response) {
     }
 
     // ── Delete validated PENDING GDOs ──
+    // .in() với danh sách id lớn phải chia lô 300 — file nhiều nghìn xe → URL quá dài (414/Bad Request)
+    const idChunks = (arr: string[], n = 300): string[][] =>
+      Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n))
 
     // Simple PENDING → cascade delete entire GDO
     if (toReplaceIds.length) {
       // GDO PENDING vẫn có thể còn lệnh chuyển kho (Bỏ HT → Gỡ BĐ giữ lệnh) — xóa lệnh trước, không thì FK chặn xóa GDO
       await deleteTransferOrdersOf(toReplaceIds)
-      const { data: dosToDelete } = await supabase.from('OutboundDelivery')
-        .select('id').in('gdo_id', toReplaceIds)
+      const dosToDelete = await fetchAllByIdChunks(toReplaceIds, c => supabase.from('OutboundDelivery')
+        .select('id').in('gdo_id', c).order('id'))
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
-      if (doIdsToDelete.length) {
-        await supabase.from('OutboundItem').delete().in('do_id', doIdsToDelete)
-        await supabase.from('OutboundDelivery').delete().in('id', doIdsToDelete)
+      for (const c of idChunks(doIdsToDelete)) {
+        await supabase.from('OutboundItem').delete().in('do_id', c)
+        await supabase.from('OutboundDelivery').delete().in('id', c)
       }
-      await supabase.from('GroupDeliveryOrder').delete().in('id', toReplaceIds)
+      for (const c of idChunks(toReplaceIds)) {
+        await supabase.from('GroupDeliveryOrder').delete().in('id', c)
+      }
     }
 
     // Preserve PENDING → delete DOs/Items only, update GDO header
     if (toPreserveIds.length) {
-      const { data: dosToDelete } = await supabase.from('OutboundDelivery')
-        .select('id').in('gdo_id', toPreserveIds)
+      const dosToDelete = await fetchAllByIdChunks(toPreserveIds, c => supabase.from('OutboundDelivery')
+        .select('id').in('gdo_id', c).order('id'))
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
-      if (doIdsToDelete.length) {
-        await supabase.from('OutboundItem').delete().in('do_id', doIdsToDelete)
-        await supabase.from('OutboundDelivery').delete().in('id', doIdsToDelete)
+      for (const c of idChunks(doIdsToDelete)) {
+        await supabase.from('OutboundItem').delete().in('do_id', c)
+        await supabase.from('OutboundDelivery').delete().in('id', c)
       }
       for (const { id, fields } of preserveGDOUpdates) {
         await supabase.from('GroupDeliveryOrder').update(fields).eq('id', id)
@@ -2159,22 +2193,16 @@ export async function uploadExcel(req: Request, res: Response) {
 // Tồn khả dụng của 1 mã hàng trong 1 kho (FEFO list) — dùng chung cho getItemInventory
 // và getInventoryByMaterial (nút search tồn kho ở bảng chuẩn bị). Trả [] nếu kho không có vị trí.
 async function fetchMaterialInventory(materialId: string, warehouseId: string | null) {
-  let locIds: string[] | null = null
-  if (warehouseId) {
-    const { data: locs } = await supabase.from('Location')
-      .select('id').eq('warehouse_id', warehouseId)
-    locIds = ((locs ?? []) as any[]).map((l: any) => l.id as string)
-    if (!locIds.length) return []
-  }
-
+  // Lọc kho bằng INNER JOIN Location — KHÔNG kéo danh sách location id về trước
+  // (kho lớn >1000 vị trí: locIds bị cap-1000 cắt → tồn ở vị trí thứ 1001+ "biến mất" âm thầm).
   // Phân trang đủ (cap ~1000/response) — .order('id') phụ để phân trang ổn định
   const data = await fetchAllRowsParallel(() => {
     let q = supabase.from('InventoryEntry')
-      .select('id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, expiry_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location(location_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)')
+      .select(`id, pallet_code, cartons_imported, cartons_remaining, cartons_reserved, production_date, expiry_date, import_date, qa_status_id, ncc_id, shelf_life_days, qa_status:QAStatus(id,code,name), location:Location${warehouseId ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
       .eq('material_id', materialId)
       .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
       .gt('cartons_remaining', 0) // tồn=0 hợp lệ trong DB (upload snapshot) nhưng không phải tồn khả dụng
-    if (locIds) q = q.in('location_id', locIds)
+    if (warehouseId) q = q.eq('location.warehouse_id', warehouseId)
     return q.order('created_at').order('id')
   })
 
@@ -2268,19 +2296,20 @@ export async function getPrepareBoard(req: Request, res: Response) {
     // do_id → kho QTY? (kho QTY → mã hành xử như no_qr_tracking)
     const qtyGdoIds = new Set((gdos ?? []).filter((g: any) => isQtyLike(g.warehouse?.inventory_mode)).map((g: any) => g.id as string))
 
-    const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id, gdo_id').in('gdo_id', gdoIds)
+    const dos = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
+      .select('id, gdo_id').in('gdo_id', chunk).order('id'))
     const doIds = (dos ?? []).map((d: any) => d.id)
     if (!doIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
     const qtyDoIds = new Set((dos ?? []).filter((d: any) => qtyGdoIds.has(d.gdo_id)).map((d: any) => d.id as string))
 
-    const { data: items } = await supabase.from('OutboundItem')
+    // Board gom nhiều chuyến — thiếu item (cap-1000) = thiếu dòng cần chuẩn bị → chunk + phân trang
+    const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
       .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, warehouse_pallet_overrides, no_qr_tracking)')
-      .in('do_id', doIds) as { data: Array<{
+      .in('do_id', chunk).order('id')) as Array<{
         do_id: string; material_id: string | null; material_code_raw: string | null
         cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
         material: { short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides: { warehouse_id: string; cartons_per_pallet: number }[] | null; no_qr_tracking: boolean | null } | null
-      }> | null }
+      }>
 
     // Gom theo mã hàng (material_id, fallback material_code_raw)
     type Row = {
@@ -2845,7 +2874,7 @@ export async function manualLooseItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
     const { cartons } = req.body as { cartons?: number }
-    if (cartons == null || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
+    if (cartons == null || !Number.isFinite(Number(cartons)) || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
@@ -3155,6 +3184,10 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const { gdoId, itemId } = req.params
 
     const { cartons, production_date } = req.body as { cartons?: number; production_date?: string | null }
+    // Số gửi lên phải hợp lệ — TUYỆT ĐỐI không fallback sang KH (số âm/NaN mà thành "xuất đủ" là mất hàng oan)
+    if (cartons != null && (!Number.isFinite(Number(cartons)) || Number(cartons) < 0)) {
+      return fail(res, 'Số thùng không hợp lệ — phải là số ≥ 0', 400)
+    }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),

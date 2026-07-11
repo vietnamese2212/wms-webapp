@@ -7,7 +7,7 @@ import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 
@@ -97,19 +97,22 @@ function generateImportCode(whCode: string, ddmmyy: string, seq: number): string
 }
 
 async function computeGdoTotalCartons(gdoId: string, materialId: string | null): Promise<number | null> {
-  const { data: dos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
-  const doIds = (dos ?? []).map((d: any) => d.id as string)
+  // Tổng dùng làm planned_cartons hiển thị — phải ĐỦ MỌI dòng (chuyến >1000 item/scan: cap-1000 cắt âm thầm → tổng thiếu)
+  const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id'))
+  const doIds = dos.map((d: any) => d.id as string)
   if (!doIds.length) return null
 
-  let itemQuery = supabase.from('OutboundItem').select('id').in('do_id', doIds)
-  if (materialId) itemQuery = itemQuery.eq('material_id', materialId)
-  const { data: items } = await itemQuery
-  const itemIds = (items ?? []).map((i: any) => i.id as string)
+  const items = await fetchAllByIdChunks(doIds, chunk => {
+    let q = supabase.from('OutboundItem').select('id').in('do_id', chunk)
+    if (materialId) q = q.eq('material_id', materialId)
+    return q.order('id')
+  })
+  const itemIds = items.map((i: any) => i.id as string)
   if (!itemIds.length) return null
 
-  const { data: scans } = await supabase.from('OutboundScanEntry')
-    .select('cartons_scanned').in('item_id', itemIds)
-  return (scans ?? []).reduce((sum: number, s: any) => sum + (Number(s.cartons_scanned) || 0), 0)
+  const scans = await fetchAllByIdChunks(itemIds, chunk =>
+    supabase.from('OutboundScanEntry').select('cartons_scanned').in('item_id', chunk).order('id'))
+  return scans.reduce((sum: number, s: any) => sum + (Number(s.cartons_scanned) || 0), 0)
 }
 
 // Tính thống kê 1 phiếu từ dữ liệu ĐÃ FETCH SẴN (bulk) — tách khỏi query để listOrders gọi 1 lần cho

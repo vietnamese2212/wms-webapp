@@ -87,12 +87,15 @@ export async function getDashboard(req: Request, res: Response) {
       .gte('import_date', dayStart).lte('import_date', dayEnd)
     if (whIds) piQ = piQ.in('warehouse_id', whIds)
 
-    let gdoQ = supabase.from('GroupDeliveryOrder').select('id').neq('status', 'CANCELLED').eq('delivery_date', today)
-    if (whIds) gdoQ = gdoQ.in('warehouse_id', whIds)
+    const makeGdoQ = () => {
+      let q = supabase.from('GroupDeliveryOrder').select('id').neq('status', 'CANCELLED').eq('delivery_date', today).order('id')
+      if (whIds) q = q.in('warehouse_id', whIds)
+      return q
+    }
 
-    const [{ count: inboundOrders }, { data: gdos }, todayEntries] = await Promise.all([
+    const [{ count: inboundOrders }, gdos, todayEntries] = await Promise.all([
       piQ,
-      gdoQ.limit(1000),
+      fetchAllRowsParallel(makeGdoQ),   // scope NATIONAL >1000 GDO/ngày: limit cứng làm outboundPlanned/Scanned thiếu âm thầm
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry').select('cartons_imported')
           .gte('import_date', dayStart).lte('import_date', dayEnd).order('id')

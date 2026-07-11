@@ -40,7 +40,7 @@ import { unlockAudio } from '@/utils/audio'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
-const TODAY = new Date().toISOString().slice(0, 10)
+const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 interface LocationWithCapacity {
   id: string

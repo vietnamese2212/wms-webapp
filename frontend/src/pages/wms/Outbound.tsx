@@ -29,7 +29,7 @@ import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import type { GDO } from '@/types'
 
-const TODAY = new Date().toISOString().slice(0, 10)
+const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()

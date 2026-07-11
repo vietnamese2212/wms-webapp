@@ -17,7 +17,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
-const TODAY = new Date().toISOString().slice(0, 10)
+const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'loc',     label: 'Vị trí (FEFO)', w: 150 },

@@ -6,7 +6,8 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
   ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard']],
-  InventoryEntry:      [['inbound-order'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages']],
+  // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
+  InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages']],
   Location:            [['locations-real'], ['sub-groups']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
@@ -25,7 +26,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   SlotTemplate:        [['tms-slot-templates'], ['tms-vehicle-types-by-warehouse']],   // by-warehouse derive từ SlotTemplate
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc
   Vehicle:             [['tms-vehicles']],
-  TmsOrder:            [['tms-orders'], ['tms-orders-transfer']],
+  // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
+  TmsOrder:            [['tms-orders'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
   TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations']],

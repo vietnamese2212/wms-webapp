@@ -245,8 +245,11 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       }
     })
 
-    const { error } = await supabase.from('inbound_plan_lines').insert(rows)
-    if (error) return fail(res, error.message)
+    // Ghi theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await supabase.from('inbound_plan_lines').insert(rows.slice(i, i + 500))
+      if (error) return fail(res, error.message)
+    }
 
     // Recalc tất cả TmsOrders bị ảnh hưởng
     const affectedOrderIds = [...new Set(rows.map(r => r.tms_order_id).filter(Boolean))] as string[]

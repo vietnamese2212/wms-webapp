@@ -11,7 +11,14 @@ export interface JwtPayload {
   warehouse_ids:      string[]
   module_permissions: Record<string, string[]>
   ncc_id:             string | null
+  is_superadmin?:     boolean   // cùng điều kiện với lúc phát token (employee_code=ADMIN hoặc name=Admin)
 }
+
+// Bypass phân quyền phải KHỚP điều kiện nhận diện superadmin lúc phát token (authController):
+// trước đây chỉ xét name==='Admin' → superadmin theo employee_code=ADMIN nhưng tên khác sẽ
+// phụ thuộc hoàn toàn ALL_PERMISSIONS (thiếu key BE là mất quyền âm thầm). Token cũ (7 ngày)
+// chưa có is_superadmin → giữ fallback name==='Admin'.
+const isSuperadminReq = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -32,7 +39,7 @@ export const JWT_SECRET = () => {
 
 export function requirePerm(module: string, action: string) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.name === 'Admin') return next()
+    if (isSuperadminReq(req)) return next()
     const perms = req.user?.module_permissions ?? {}
     if (!perms[module]?.includes(action)) {
       return res.status(403).json({
@@ -46,7 +53,7 @@ export function requirePerm(module: string, action: string) {
 
 export function requireAnyPerm(...checks: [string, string][]) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.name === 'Admin') return next()
+    if (isSuperadminReq(req)) return next()
     const perms = req.user?.module_permissions ?? {}
     const allowed = checks.some(([module, action]) => perms[module]?.includes(action))
     if (!allowed) {

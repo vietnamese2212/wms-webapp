@@ -37,14 +37,18 @@ REVOKE USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
 REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM anon, authenticated;
 
--- ─── PHẦN 2: KHÓA HẲN bảng chứa CREDENTIAL / PII / cấu trúc quyền ───────────────
--- Các bảng này KHÔNG được để anon đọc (hash mật khẩu, email/phone, ánh xạ quyền).
--- Gỡ khỏi publication realtime + thu hồi SELECT + bật RLS (phòng thủ nhiều lớp).
--- FE bù realtime cho màn HR bằng POLLING (useAttendance/useLeaves 30s, useEmployeeRecords
--- 60s) qua backend service-role → vẫn "nhảy số", không lộ cho anon.
+-- ─── PHẦN 2: KHÓA HẲN bảng chứa CREDENTIAL ─────────────────────────────────────
+-- CHỈ Employee — chứa HASH MẬT KHẨU (bcrypt). Đây là thứ DUY NHẤT bắt buộc giấu khỏi
+-- anon: lộ hash + mật khẩu ngắn = crack offline → đăng nhập thật.
+-- Các bảng khác (Attendance/LeaveRequest/UserWarehouseAccess…) là DỮ LIỆU NGHIỆP VỤ nội
+-- bộ, KHÔNG phải credential — không nguy hiểm hơn tồn kho/đơn hàng (vốn đã anon-readable
+-- để giữ realtime). Giữ realtime cho chúng cho nhất quán; đã chặn GHI ở Phần 1 nên không
+-- ai sửa được. (Muốn giấu TẤT CẢ dữ liệu nghiệp vụ khỏi anon = fix gốc: realtime dùng
+-- token tương thích Supabase-Auth, mini-project sau.)
+-- FE bù realtime cho Employee (đã gỡ) bằng POLLING useEmployeeRecords 60s.
 DO $$
 DECLARE t text;
-DECLARE sensitive text[] := ARRAY['Employee', 'UserWarehouseAccess', 'Attendance', 'LeaveRequest'];
+DECLARE sensitive text[] := ARRAY['Employee'];
 BEGIN
   FOREACH t IN ARRAY sensitive LOOP
     -- gỡ khỏi realtime (bỏ qua nếu chưa có trong publication)

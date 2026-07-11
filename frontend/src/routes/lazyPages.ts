@@ -10,6 +10,10 @@ import { lazy, type ComponentType } from 'react'
 function lazyRetry<T extends ComponentType<unknown>>(importer: () => Promise<{ default: T }>) {
   return lazy(() =>
     importer().catch((e: unknown) => {
+      // Offline: reload sẽ chết trắng (không lấy được index.html mới) — throw luôn
+      // để ErrorBoundary hiện nút "Tải lại". (PWA precache đã cover đa số trường hợp;
+      // guard này đỡ khi SW chưa kịp cache / bị xóa.)
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) throw e
       const KEY = 'chunk_reload_at'
       let last = 0
       try { last = Number(sessionStorage.getItem(KEY) ?? 0) } catch {}

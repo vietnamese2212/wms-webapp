@@ -10,7 +10,23 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// Lỗi ném ra khi thao tác GHI lúc trình duyệt chắc chắn offline — từ chối tức thì
+// thay vì để request treo tới timeout. Đợt B (offline scan queue) bắt đúng lỗi này
+// (code OFFLINE) để xếp hàng quét thay vì báo lỗi.
+export class OfflineError extends Error {
+  code = 'OFFLINE'
+  constructor() {
+    super('Mất kết nối mạng — thao tác chưa được thực hiện, thử lại khi có mạng')
+  }
+}
+
 apiClient.interceptors.request.use((config) => {
+  // Trình duyệt biết chắc offline + request GHI → chặn ngay (GET để React Query tự xử:
+  // query đang cache vẫn hiển thị, không cần bắn request chết).
+  const method = (config.method ?? 'get').toLowerCase()
+  if (method !== 'get' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return Promise.reject(new OfflineError())
+  }
   const stored = localStorage.getItem('wms-auth')
   if (stored) {
     try {

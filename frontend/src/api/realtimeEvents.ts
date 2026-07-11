@@ -93,6 +93,9 @@ function patchSlotCache(payload: Payload) {
 }
 
 let channel: RealtimeChannel | null = null
+// Đã từng đứt realtime kể từ lần SUBSCRIBED gần nhất — để phân biệt "nối lần đầu"
+// với "nối LẠI sau đứt" (chỉ trường hợp sau mới cần invalidate toàn bộ).
+let hadRealtimeDisconnect = false
 
 // Time-based cooldown to block late Realtime events that arrive after a mutation
 // settles but before all backend DB writes have propagated. isMutating() drops to 0
@@ -181,10 +184,19 @@ export function connectRealtimeEvents(): void {
     )
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        console.info('[realtime] connected — all tables live')
+        // Nối LẠI sau khi đứt (không phải lần subscribe đầu): mọi event trong lúc đứt
+        // đã mất vĩnh viễn → invalidate toàn bộ để list refetch, xóa dữ liệu stale.
+        if (hadRealtimeDisconnect) {
+          hadRealtimeDisconnect = false
+          console.info('[realtime] reconnected — invalidating all queries (missed events)')
+          queryClient.invalidateQueries()
+        } else {
+          console.info('[realtime] connected — all tables live')
+        }
       }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('[realtime] error, retrying:', status)
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        hadRealtimeDisconnect = true
+        console.warn('[realtime] disconnected, retrying:', status)
       }
     })
 }

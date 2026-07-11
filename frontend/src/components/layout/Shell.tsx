@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
 import { useAuthStore } from '@/stores/authStore'
+import { OfflineBanner } from '@/offline/OfflineBanner'
 
 export function Shell() {
   const qc = useQueryClient()
@@ -39,7 +40,15 @@ export function Shell() {
 
     // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
     connectRealtimeEvents()
-    return () => clearInterval(permSync)
+
+    // Mạng về sau khi đứt → realtime event trong lúc offline đã MẤT VĨNH VIỄN
+    // (Supabase không replay) → invalidate toàn bộ để xóa stale, list tự refetch.
+    const onBackOnline = () => qc.invalidateQueries()
+    window.addEventListener('online', onBackOnline)
+    return () => {
+      clearInterval(permSync)
+      window.removeEventListener('online', onBackOnline)
+    }
   }, [qc, refreshUser])
 
   return (
@@ -47,6 +56,7 @@ export function Shell() {
       <Sidebar />
       <div className="flex flex-1 flex-col min-w-0">
         <Header />
+        <OfflineBanner />
         <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 bg-slate-100">
           {/* Page transition: fade + trượt nhẹ mỗi lần đổi route (key theo pathname) */}
           <div key={location.pathname} className="h-full animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">

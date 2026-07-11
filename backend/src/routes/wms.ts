@@ -89,12 +89,13 @@ router.patch('/inbound-orders/:id',                     requirePerm('inbound', '
 router.patch('/inbound-orders/:id/location',            requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.setOrderLocation)
 router.post('/inbound-orders/:id/complete',             requireAnyPerm(['inbound', 'complete'], ['tms_plan', 'confirm_receipt']), inbound.completeOrder)
 router.post('/inbound-orders/:id/uncomplete',           requirePerm('inbound', 'uncomplete'), inbound.uncompleteOrder)
-router.post('/inbound-orders/:id/cancel',               requirePerm('inbound', 'cancel'), inbound.cancelOrder)
+// confirm_receipt: người nhận chuyển kho hủy DÒNG NSX thừa / xóa số vừa lưu ngay trên panel tab Chuyển kho
+router.post('/inbound-orders/:id/cancel',               requireAnyPerm(['inbound', 'cancel'], ['tms_plan', 'confirm_receipt']), inbound.cancelOrder)
 router.post('/inbound-orders/:id/check-scan',           requireAnyPerm(['inbound', 'scan'], ['tms_plan', 'confirm_receipt']), inbound.checkScanQR)
 router.post('/inbound-orders/:id/scan',                 requireAnyPerm(['inbound', 'scan'], ['tms_plan', 'confirm_receipt']), inbound.scanQR)
 router.post('/inbound-orders/:id/scan-manual',          requireAnyPerm(['inbound', 'scan'], ['tms_plan', 'confirm_receipt']), inbound.scanManual)
 router.patch('/inbound-orders/:id/entries/:entryId',    requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.updateEntry)
-router.delete('/inbound-orders/:id/entries/:entryId',   requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntry)
+router.delete('/inbound-orders/:id/entries/:entryId',   requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet'], ['tms_plan', 'confirm_receipt']), inbound.removeEntry)
 router.delete('/inbound-orders/:id/entries',            requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntries)
 router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 

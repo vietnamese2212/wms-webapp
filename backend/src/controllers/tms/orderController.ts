@@ -1034,8 +1034,11 @@ export async function confirmTransferReceipt(req: Request, res: Response) {
 export async function createOneInbound(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { material_id } = req.body as { material_id: string }
+    // production_date + planned_cartons (tùy chọn): THÊM 1 dòng NSX mới cho mã ở kho QTY_DATE
+    // (hàng về có NSX ngoài dữ liệu quét xuất) — trùng (mã × NSX) mới chặn, khác NSX vẫn thêm được.
+    const { material_id, production_date, planned_cartons } = req.body as { material_id: string; production_date?: string | null; planned_cartons?: number | null }
     if (!material_id) return fail(res, 'Thiếu material_id', 400)
+    const manualNsx = /^\d{4}-\d{2}-\d{2}$/.test(String(production_date ?? '')) ? String(production_date).slice(0, 10) : null
     if (!(await guardOrderScope(req, res, id))) return
 
     const t = new Date().toISOString()
@@ -1051,11 +1054,13 @@ export async function createOneInbound(req: Request, res: Response) {
     if (!gdo || gdo.transfer_status !== 'RECEIVING')
       return fail(res, 'GDO phải đang ở trạng thái Đang nhận', 400)
 
-    // Kiểm tra chưa có phiếu active cho mã hàng này trong TMS order
-    const { data: existing } = await supabase.from('ProductionImport')
+    // Kiểm tra trùng: thêm dòng NSX cụ thể → chặn theo (mã × NSX); tạo lại phiếu mã thiếu → chặn theo mã
+    let dupQ = supabase.from('ProductionImport')
       .select('id').eq('tms_order_id', id).eq('material_id', material_id)
+    if (manualNsx) dupQ = dupQ.eq('transfer_production_date', manualNsx)
+    const { data: existing } = await dupQ
     if ((existing ?? []).length > 0)
-      return fail(res, 'Đã có phiếu nhập cho mã hàng này', 409)
+      return fail(res, manualNsx ? `Đã có dòng nhận NSX ${manualNsx} cho mã hàng này` : 'Đã có phiếu nhập cho mã hàng này', 409)
 
     // Lấy planned_cartons từ GDO outbound items
     const { data: dos } = await supabase.from('OutboundDelivery')
@@ -1074,10 +1079,12 @@ export async function createOneInbound(req: Request, res: Response) {
     const { data: mat } = await supabase.from('Material')
       .select('category, material_code').eq('id', material_id).maybeSingle()
 
-    // Kho nhận QTY_DATE → tách dòng theo NSX từ tem quét xuất (như confirmTransferReceipt)
+    // Thêm dòng NSX cụ thể (gõ tay) → 1 phiếu đúng NSX đó; còn lại: kho QTY_DATE tách theo tem quét xuất
     const destMode = (tmsOrder.warehouse as unknown as { inventory_mode?: string | null })?.inventory_mode ?? null
     let lines: TransferNsxLine[] = [{ nsx: null, cartons: plannedCartons, pallets: 0 }]
-    if (destMode === 'QTY_DATE' && matItems.length) {
+    if (manualNsx) {
+      lines = [{ nsx: manualNsx, cartons: Math.max(0, Number(planned_cartons) || 0), pallets: 0 }]
+    } else if (destMode === 'QTY_DATE' && matItems.length) {
       const nsxByMat = await transferNsxBreakdown(matItems, new Map([[material_id, (mat as any)?.material_code ?? null]]))
       const found = nsxByMat.get(material_id)
       if (found?.length) lines = found

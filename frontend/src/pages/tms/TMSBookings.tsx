@@ -33,6 +33,7 @@ import {
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
   useCompleteInboundOrder, useScanManualPallet, useMaterialSummary,
+  useCancelInboundOrder, useDeletePalletEntry,
   type TransferOrder,
 } from '@/api/hooks'
 import { useNavigate } from 'react-router-dom'
@@ -2162,9 +2163,13 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const canComplete = canConfirmReceipt
   const { mutateAsync: completeInbound } = useCompleteInboundOrder()
   const { mutateAsync: saveManual }      = useScanManualPallet()
+  const { mutateAsync: cancelInbound }   = useCancelInboundOrder()
+  const { mutateAsync: deleteEntry }     = useDeletePalletEntry()
   const [scanImportId, setScanImportId] = useState<string | null>(null)
   const [manualDraft,  setManualDraft]  = useState<Record<string, string>>({})
   const [nsxDraft,     setNsxDraft]     = useState<Record<string, string>>({})
+  // Dialog "+ NSX": thêm dòng nhận NSX mới cho 1 mã (hàng về có NSX ngoài dữ liệu quét xuất)
+  const [addNsx, setAddNsx] = useState<{ materialId: string; code: string; nsx: string; cartons: string } | null>(null)
   const [rowBusy,      setRowBusy]       = useState<string | null>(null)
   const [completeConfirm, setCompleteConfirm] = useState<{ impId: string; code: string; name: string; planned: number; actual: number } | null>(null)
   const [actionErr,    setActionErr]     = useState('')
@@ -2224,6 +2229,21 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     } finally { setRowBusy(null) }
   }
 
+  // Xóa 1 dòng NSX (phiếu chưa lưu số) — dòng thừa so với hàng về thực tế
+  async function handleCancelLine(impId: string, label: string) {
+    if (!confirm(`Xóa dòng nhận ${label}?`)) return
+    setActionErr(''); setRowBusy(impId)
+    try { await cancelInbound(impId); refreshPanel() }
+    catch (e) { setActionErr(errMsgOf(e)) } finally { setRowBusy(null) }
+  }
+
+  // Xóa số ĐÃ LƯU (chưa hoàn thành) → hoàn tồn, dòng quay về "Chờ nhận" để sửa số/NSX rồi Lưu lại
+  async function handleUndoSaved(impId: string, entryId: string) {
+    setActionErr(''); setRowBusy(impId)
+    try { await deleteEntry({ orderId: impId, entryId, employeeId: user?.id }); refreshPanel() }
+    catch (e) { setActionErr(errMsgOf(e)) } finally { setRowBusy(null) }
+  }
+
   // ── "Nhận đủ theo xuất" (kho nhận QTY/QTY_DATE): 1 chạm lưu + hoàn thành MỌI phiếu đang mở theo
   // đúng số xuất; phiếu QTY_DATE dùng NSX đã kế thừa từ tem quét, phiếu không NSX dùng ô NSX đã hiện.
   // 409 lành tính (người khác vừa lưu/hoàn thành xong) coi như đạt mục tiêu, không báo lỗi oan.
@@ -2239,7 +2259,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
       try {
         const saved = !!ai.posm_entry_id || (ai.total_cartons ?? 0) > 0
         if (!saved && (ai.planned_cartons ?? 0) > 0) {
-          const nsx = ai.transfer_production_date ?? (destQtyDate ? (nsxDraft[ai.id] || TODAY_VN) : undefined)
+          // NSX người dùng đã chỉnh trong ô (draft) thắng; chưa chỉnh → NSX phiếu; không có → hôm nay
+          const nsx = nsxDraft[ai.id] ?? ai.transfer_production_date ?? (destQtyDate ? TODAY_VN : undefined)
           try {
             await saveManual({ orderId: ai.id, cartons: ai.planned_cartons ?? 0, employee_id: user?.id, ...(nsx ? { production_date: nsx } : {}) })
           } catch (e) {
@@ -2468,11 +2489,14 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       <tr key={ai.id} className="border-t border-slate-100">
                         <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{matName.get(ai.material_id) ?? '—'}</td>
                         <td className="px-2 py-1 text-[10px] whitespace-nowrap">
-                          {ai.transfer_production_date
-                            ? <span className="font-medium text-indigo-700">{formatDate(ai.transfer_production_date)}</span>
-                            : destQtyDate
-                              ? <span className="text-amber-600">{formatDate(nsxDraft[ai.id] || TODAY_VN)} (gõ tay)</span>
-                              : <span className="text-slate-300">—</span>}
+                          {(() => {
+                            const edited = nsxDraft[ai.id] && nsxDraft[ai.id] !== ai.transfer_production_date
+                            const d = nsxDraft[ai.id] ?? ai.transfer_production_date
+                            if (d) return <span className={`font-medium ${edited ? 'text-amber-600' : 'text-indigo-700'}`}>{formatDate(d)}{edited ? ' (đã sửa)' : ''}</span>
+                            return destQtyDate
+                              ? <span className="text-amber-600">{formatDate(TODAY_VN)} (gõ tay)</span>
+                              : <span className="text-slate-300">—</span>
+                          })()}
                         </td>
                         <td className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{ai.planned_cartons ?? 0}</td>
                         <td className="px-2 py-1 text-[10px] text-slate-400 tabular-nums whitespace-nowrap">{(ai.planned_pallets ?? 0) > 0 ? ai.planned_pallets : '—'}</td>
@@ -2493,6 +2517,45 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
           </Dialog>
         )
       })()}
+      {addNsx && (
+        <Dialog open onOpenChange={v => { if (!v) setAddNsx(null) }}>
+          <DialogContent className="sm:max-w-xs">
+            <DialogHeader>
+              <DialogTitle>Thêm dòng NSX — <span className="font-mono">{addNsx.code}</span></DialogTitle>
+              <p className="text-xs text-slate-500 mt-1">Hàng về có NSX ngoài dữ liệu quét xuất → thêm dòng nhận riêng cho NSX đó.</p>
+            </DialogHeader>
+            <div className="space-y-3 py-1">
+              <div className="space-y-1">
+                <p className="text-xs text-slate-500">NSX (ngày sản xuất) <span className="text-red-500">*</span></p>
+                <Input type="date" value={addNsx.nsx} className="h-9"
+                  onChange={e => setAddNsx(s => s ? { ...s, nsx: e.target.value } : s)} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-slate-500">Số thùng dự kiến</p>
+                <Input type="number" min={0} value={addNsx.cartons} className="h-9" placeholder="0"
+                  onChange={e => setAddNsx(s => s ? { ...s, cartons: e.target.value } : s)} />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setAddNsx(null)}>Hủy</Button>
+              <Button size="sm" disabled={creatingInbound || !addNsx.nsx}
+                onClick={async () => {
+                  setActionErr('')
+                  try {
+                    await createOneInbound({ tmsOrderId: order!.id, material_id: addNsx.materialId, production_date: addNsx.nsx, planned_cartons: Number(addNsx.cartons) || 0 })
+                    setExpandedMats(prev => new Set(prev).add(addNsx.materialId))
+                    setAddNsx(null)
+                    refreshPanel()
+                  } catch (e) {
+                    setActionErr(errMsgOf(e)); setAddNsx(null)
+                  }
+                }}>
+                {creatingInbound ? 'Đang thêm…' : 'Thêm dòng'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {scanImportId && (
         <InboundScanSheetById
           importId={scanImportId}
@@ -2690,10 +2753,19 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   {!imp ? (
                                     <span className="text-[10px] text-slate-300 whitespace-nowrap">Chưa có phiếu</span>
                                   ) : multiNsx ? (
-                                    // Thao tác per NSX ở các dòng xổ dưới — ô này chỉ tóm tắt trạng thái cả mã
-                                    imps.every(i => i.status === 'COMPLETED')
-                                      ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
-                                      : <span className="text-[10px] text-slate-400 whitespace-nowrap">{isExpanded ? '▾' : '▸'} {imps.length} NSX</span>
+                                    // Thao tác per NSX ở các dòng xổ dưới — ô này tóm tắt trạng thái + nút thêm dòng NSX
+                                    <div className="flex items-center gap-1 whitespace-nowrap">
+                                      {imps.every(i => i.status === 'COMPLETED')
+                                        ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
+                                        : <span className="text-[10px] text-slate-400 whitespace-nowrap">{isExpanded ? '▾' : '▸'} {imps.length} NSX</span>}
+                                      {canReceiveNow && canScan && (
+                                        <button type="button" className="text-blue-600 hover:text-blue-800 text-[12px] leading-none font-bold px-0.5"
+                                          title="Thêm dòng NSX mới cho mã này (hàng về có NSX ngoài dữ liệu xuất)"
+                                          onClick={() => setAddNsx({ materialId: g.material_id, code: g.material_code ?? '', nsx: TODAY_VN, cartons: '' })}>
+                                          ＋
+                                        </button>
+                                      )}
+                                    </div>
                                   ) : (
                                     <div className="flex flex-col items-stretch gap-1 min-w-[84px]">
                                       {imp.status === 'COMPLETED' ? (
@@ -2752,7 +2824,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             const planned = ai.planned_cartons ?? 0
                             const diff = actual - planned
                             const nsxLabel = ai.transfer_production_date ? formatDate(ai.transfer_production_date) : null
-                            const effNsx = ai.transfer_production_date ?? (nsxDraft[ai.id] || TODAY_VN)
+                            // NSX gửi khi Lưu: ô đã chỉnh (draft) THẮNG NSX phiếu (BE sẽ đồng bộ lại nhãn phiếu)
+                            const effNsx = nsxDraft[ai.id] ?? ai.transfer_production_date ?? TODAY_VN
                             return (
                               <tr key={ai.id} className="bg-indigo-50/40 border-t border-indigo-100">
                                 <td className="px-2 py-0.5"></td>
@@ -2760,15 +2833,16 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   <span className="text-[9px] font-mono text-slate-400">{ai.import_code}</span>
                                 </td>
                                 <td className="px-2 py-0.5 whitespace-nowrap">
-                                  {nsxLabel ? (
-                                    <span className="text-[10px] font-semibold text-indigo-700">NSX {nsxLabel}</span>
-                                  ) : canReceiveNow && ai.status === 'OPEN' && !saved ? (
+                                  {canReceiveNow && ai.status === 'OPEN' && !saved ? (
+                                    // Chưa lưu → NSX SỬA ĐƯỢC (tem thực tế lệch dữ liệu quét): indigo = kế thừa tem, amber = gõ tay
                                     <span className="inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                                      <span className="text-[10px] font-medium text-amber-600">NSX</span>
-                                      <input type="date" value={nsxDraft[ai.id] ?? TODAY_VN}
+                                      <span className={`text-[10px] font-medium ${nsxLabel ? 'text-indigo-700' : 'text-amber-600'}`}>NSX</span>
+                                      <input type="date" value={nsxDraft[ai.id] ?? ai.transfer_production_date ?? TODAY_VN}
                                         onChange={e => setNsxDraft(d => ({ ...d, [ai.id]: e.target.value }))}
-                                        className="h-5 text-[10px] rounded border border-amber-300 px-1" />
+                                        className={`h-5 text-[10px] rounded border px-1 ${nsxLabel ? 'border-indigo-200 text-indigo-800' : 'border-amber-300'}`} />
                                     </span>
+                                  ) : nsxLabel ? (
+                                    <span className="text-[10px] font-semibold text-indigo-700">NSX {nsxLabel}</span>
                                   ) : (
                                     <span className="text-[10px] text-slate-400">NSX —</span>
                                   )}
@@ -2810,14 +2884,28 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                             disabled={busy} onClick={() => handleManualConfirm(ai.id, planned, effNsx)}>
                                             {busy ? '…' : 'Lưu'}
                                           </Button>
+                                          <button type="button" className="text-red-500 hover:text-red-700 px-0.5 disabled:opacity-40"
+                                            title="Xóa dòng nhận này (hàng về không có NSX này)"
+                                            disabled={busy}
+                                            onClick={() => handleCancelLine(ai.id, `${g.material_code ?? ''} · NSX ${formatDate(effNsx)}`)}>
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
                                         </>
                                       )}
                                       {ai.status !== 'COMPLETED' && canReceiveNow && saved && canComplete && (
-                                        <Button size="sm" className="h-5 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
-                                          disabled={busy}
-                                          onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned, actual })}>
-                                          <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
-                                        </Button>
+                                        <>
+                                          <Button size="sm" className="h-5 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
+                                            disabled={busy}
+                                            onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned, actual })}>
+                                            <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
+                                          </Button>
+                                          <button type="button" className="text-amber-600 hover:text-amber-800 px-0.5 disabled:opacity-40"
+                                            title="Xóa số đã lưu để sửa lại (số thùng / NSX)"
+                                            disabled={busy || !ai.posm_entry_id}
+                                            onClick={() => ai.posm_entry_id && handleUndoSaved(ai.id, ai.posm_entry_id)}>
+                                            <RotateCcw className="h-3 w-3" />
+                                          </button>
+                                        </>
                                       )}
                                       <button type="button" className="text-[11px] leading-none text-blue-600 hover:text-blue-800 px-0.5"
                                         title="Mở phiếu trong Nhập kho"

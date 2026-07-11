@@ -2557,8 +2557,8 @@ export function useCancelTransferReceipt() {
 export function useCreateOneInbound() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ tmsOrderId, material_id }: { tmsOrderId: string; material_id: string }) =>
-      apiClient.post(`/tms/orders/${tmsOrderId}/create-one-inbound`, { material_id }).then(r => r.data.data),
+    mutationFn: ({ tmsOrderId, ...body }: { tmsOrderId: string; material_id: string; production_date?: string; planned_cartons?: number }) =>
+      apiClient.post(`/tms/orders/${tmsOrderId}/create-one-inbound`, body).then(r => r.data.data),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['inbound-by-gdo'] })
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })

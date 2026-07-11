@@ -1274,15 +1274,16 @@ export async function scanManual(req: Request, res: Response) {
     const cartonsNum = Math.max(0, Number(cartons) || 0)
     const warehouseId = (order as any).warehouse_id as string | null
 
-    // Kho QTY_DATE: pool tách theo NSX. Phiếu chuyển kho đã gắn NSX (transfer_production_date — kế thừa
-    // từ tem quét xuất ở kho nguồn) → dùng NSX của PHIẾU, người nhận không phải gõ; phiếu không gắn NSX
-    // (nhập tay/hàng no-QR không rõ NSX) → BẮT BUỘC body có production_date (yyyy-mm-dd). Mode khác bỏ qua.
+    // Kho QTY_DATE: pool tách theo NSX. Ưu tiên body production_date (người nhận SỬA được NSX khi tem
+    // thực tế lệch dữ liệu quét) → fallback NSX của PHIẾU (transfer_production_date — kế thừa từ tem
+    // quét xuất, bulk "Nhận đủ theo xuất" không gửi body). Không có cả hai → 422. Mode khác bỏ qua.
     const { data: whRow } = warehouseId
       ? await supabase.from('Warehouse').select('inventory_mode').eq('id', warehouseId).maybeSingle()
       : { data: null }
     const whInvMode = (whRow as { inventory_mode?: string | null } | null)?.inventory_mode ?? null
     const phieuNsx = ((order as { transfer_production_date?: string | null }).transfer_production_date ?? '').slice(0, 10)
-    const prodDate = whInvMode === 'QTY_DATE' ? (phieuNsx || String(production_date ?? '').slice(0, 10)) : ''
+    const bodyNsx = String(production_date ?? '').slice(0, 10)
+    const prodDate = whInvMode === 'QTY_DATE' ? (/^\d{4}-\d{2}-\d{2}$/.test(bodyNsx) ? bodyNsx : phieuNsx) : ''
     if (whInvMode === 'QTY_DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(prodDate)) {
       return fail(res, 422, 'NSX_REQUIRED', 'Kho theo dõi tồn theo date — phải nhập NSX (ngày sản xuất) khi lưu thủ công')
     }
@@ -1363,6 +1364,8 @@ export async function scanManual(req: Request, res: Response) {
     // imported_by = người quét thực tế (để detail hiển thị đúng người/giờ của phiếu này)
     const orderPatch: Record<string, unknown> = { posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now }
     if (employee_id) orderPatch.imported_by = employee_id
+    // Đồng bộ nhãn NSX của phiếu = NSX thực lưu (người nhận sửa NSX / phiếu chưa gắn NSX gõ tay)
+    if (whInvMode === 'QTY_DATE' && prodDate && prodDate !== phieuNsx) orderPatch.transfer_production_date = prodDate
     const { error: markErr } = await supabase
       .from('ProductionImport')
       .update(orderPatch)

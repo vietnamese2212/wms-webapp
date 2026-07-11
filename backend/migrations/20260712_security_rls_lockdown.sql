@@ -39,8 +39,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM anon, 
 
 -- ─── PHẦN 2: KHÓA HẲN bảng chứa CREDENTIAL / PII / cấu trúc quyền ───────────────
 -- Các bảng này KHÔNG được để anon đọc (hash mật khẩu, email/phone, ánh xạ quyền).
--- Gỡ khỏi publication realtime (FE không cần realtime các bảng này cho vận hành kho —
--- màn quản trị tự refetch khi mở trang) + thu hồi SELECT + bật RLS (phòng thủ nhiều lớp).
+-- Gỡ khỏi publication realtime + thu hồi SELECT + bật RLS (phòng thủ nhiều lớp).
+-- FE bù realtime cho màn HR bằng POLLING (useAttendance/useLeaves 30s, useEmployeeRecords
+-- 60s) qua backend service-role → vẫn "nhảy số", không lộ cho anon.
 DO $$
 DECLARE t text;
 DECLARE sensitive text[] := ARRAY['Employee', 'UserWarehouseAccess', 'Attendance', 'LeaveRequest'];

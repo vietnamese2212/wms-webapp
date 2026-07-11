@@ -1222,6 +1222,8 @@ export function useJobTitles(departmentId?: string) {
 export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string; include_deleted?: boolean }) {
   return useQuery({
     queryKey: ['employee-records', params],
+    // Bảng Employee bị khóa khỏi realtime anon (bảo mật) → poll 60s để DS nhân viên tự cập nhật
+    refetchInterval: 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/employees', { params })
       return data.data as EmployeeRecord[]
@@ -3063,6 +3065,9 @@ export function useLeaves(params: { warehouse_id?: string; department_id?: strin
   return useQuery({
     queryKey: ['hr-leaves', params],
     enabled,
+    // Bảng LeaveRequest bị khóa khỏi realtime anon (bảo mật PII) → poll 30s để màn Nghỉ phép
+    // vẫn tự "nhảy số" khi có mạng. Chỉ chạy khi tab đang mở & focus (không tốn nền).
+    refetchInterval: 30_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/hr/leaves', { params })
       return data.data as LeaveRow[]
@@ -3285,6 +3290,9 @@ export function useAttendance(params: { warehouse_id?: string; department_id?: s
   return useQuery({
     queryKey: ['hr-attendance', params],
     enabled,
+    // Bảng Attendance bị khóa khỏi realtime anon (bảo mật) → poll 30s để bảng Chấm công
+    // tự cập nhật khi nhân sự chấm công. Chỉ chạy khi tab mở & focus.
+    refetchInterval: 30_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/hr/attendance', { params })
       return data.data as AttendanceRow[]

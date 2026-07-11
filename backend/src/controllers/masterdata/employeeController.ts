@@ -12,6 +12,19 @@ function isSuperadmin(req: Request): boolean {
   return req.user?.name === 'Admin'
 }
 
+// Chống leo thang: non-superadmin không được gán cho tài khoản/chức danh quyền mà CHÍNH
+// MÌNH không có. Trả message lỗi nếu vi phạm, null nếu hợp lệ. (Cùng logic departmentController.)
+function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
+  if (isSuperadmin(req)) return null
+  const mine: Record<string, string[]> = req.user?.module_permissions ?? {}
+  for (const [mod, actions] of Object.entries(perms ?? {})) {
+    for (const a of (actions ?? [])) {
+      if (!mine[mod]?.includes(a)) return `Không thể cấp quyền vượt quá quyền của bạn: ${mod}.${a}`
+    }
+  }
+  return null
+}
+
 // Chặn non-superadmin thao tác trên tài khoản superadmin (Admin). true = đã chặn (đã trả lỗi).
 async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boolean> {
   if (isSuperadmin(req)) return false
@@ -240,11 +253,6 @@ export async function getEmployee(req: Request, res: Response) {
 
 export async function createEmployee(req: Request, res: Response) {
   try {
-    // Chỉ superadmin được TẠO tài khoản — nhất quán với updateEmployee (:297) và
-    // setWarehouseAccess (:482). Trước đây thiếu check này → user chỉ có user_admin.create
-    // có thể tạo tài khoản warehouse_scope='NATIONAL' + gán chức danh quyền cao bất kỳ,
-    // rồi dùng temp_password trả về để đăng nhập (leo thang quyền toàn diện).
-    if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được tạo tài khoản', 403)
     const {
       name, employee_code, email, phone,
       department_id, job_title_id,
@@ -261,17 +269,48 @@ export async function createEmployee(req: Request, res: Response) {
 
     if (!name || !employee_code) return fail(res, 'name và employee_code là bắt buộc', 400)
 
+    // ── ỦY QUYỀN CÓ RÀO CHẮN (delegation, không leo thang) ──────────────────────
+    // Quản lý đơn vị (có user_admin.create) TẠO ĐƯỢC tài khoản, nhưng KHÔNG được vượt
+    // quyền/kho/loại của chính mình → tránh tự nâng cấp qua việc tạo tài khoản khác.
+    const callerSuper = isSuperadmin(req)
+    if (!callerSuper) {
+      // 1. Không tạo tài khoản superadmin
+      if (name === 'Admin' || employee_code === 'ADMIN')
+        return fail(res, 'Không thể tạo tài khoản Admin', 403)
+      // 2. Không đặt phạm vi toàn hệ thống (NATIONAL) — chỉ Admin
+      if (warehouse_scope && warehouse_scope !== 'ASSIGNED')
+        return fail(res, 'Chỉ Admin được đặt phạm vi kho toàn hệ thống', 403)
+      // 3. Kho gán cho tài khoản mới ⊆ kho của người tạo
+      const myWhs = new Set(req.user?.warehouse_ids ?? [])
+      if (warehouse_ids.some(w => !myWhs.has(w)))
+        return fail(res, 'Không thể gán kho ngoài phạm vi của bạn', 403)
+      // 4. Loại hàng gán ⊆ loại của người tạo (nếu người tạo bị giới hạn loại)
+      const myCats = req.user?.allowed_categories ?? []
+      if (myCats.length && Array.isArray(allowed_categories) && allowed_categories.some(c => !myCats.includes(c)))
+        return fail(res, 'Không thể gán loại hàng ngoài phạm vi của bạn', 403)
+      // 5. Chống leo thang: quyền của CHỨC DANH gán cho tài khoản mới ⊆ quyền người tạo
+      if (job_title_id) {
+        const { data: jt } = await supabase.from('JobTitle').select('module_permissions').eq('id', job_title_id).maybeSingle()
+        const escErr = escalationError(req, (jt as { module_permissions?: Record<string, string[]> } | null)?.module_permissions)
+        if (escErr) return fail(res, escErr, 403)
+      }
+    }
+
     const empId = randomUUID()
     const tempPassword = generateTempPassword()
     const hashedPw = await bcrypt.hash(tempPassword, 10)
 
-    // Default loại hàng = toàn bộ danh mục hiện hành (LookupValue warehouse_type),
-    // KHÔNG hardcode taxonomy cũ (NVL/Bao bì đã bỏ)
+    // Default loại hàng: người tạo là Admin → toàn bộ danh mục; non-admin → GIỚI HẠN theo
+    // loại của người tạo (không để tài khoản mới mặc định rộng hơn người tạo).
     let defaultCategories = allowed_categories
     if (defaultCategories === undefined) {
-      const { data: whTypes } = await supabase.from('LookupValue')
-        .select('value').eq('type', 'warehouse_type').order('sort_order')
-      defaultCategories = ((whTypes ?? []) as { value: string }[]).map(t => t.value)
+      if (!callerSuper && (req.user?.allowed_categories?.length ?? 0) > 0) {
+        defaultCategories = req.user!.allowed_categories
+      } else {
+        const { data: whTypes } = await supabase.from('LookupValue')
+          .select('value').eq('type', 'warehouse_type').order('sort_order')
+        defaultCategories = ((whTypes ?? []) as { value: string }[]).map(t => t.value)
+      }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

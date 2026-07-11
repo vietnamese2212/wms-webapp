@@ -121,8 +121,10 @@ export function isConnectivityError(err: unknown): boolean {
 
 // ─── Replay engine ───────────────────────────────────────────────────────────
 
-// Guard server trả khi bản ghi ĐÃ tồn tại (khớp thông điệp các guard dedup hiện có)
-const DUP_RE = /đã được quét|đã xuất hết|đã tồn tại|DUPLICATE_PALLET|ALREADY_SAVED|đã được lưu thủ công/i
+// Guard server trả khi bản ghi ĐÃ tồn tại — so khớp CẢ error.code lẫn message
+// (verify sống 12/07: nhập trùng trả code DUPLICATE_PALLET nhưng message là
+// "đang tồn kho tại đây, chưa được xuất" — chỉ so message sẽ hụt).
+const DUP_RE = /đã được quét|đã xuất hết|đã tồn tại|đang tồn kho|DUPLICATE_PALLET|ALREADY_SAVED|đã được lưu thủ công/i
 
 function setItem(id: string, patch: Partial<QueuedScan>): void {
   mutateItems(list => list.map(i => (i.id === id ? { ...i, ...patch } : i)))
@@ -157,11 +159,12 @@ export async function processScanQueue(): Promise<void> {
           setItem(item.id, { uncertain: wasUncertain })
           break
         }
-        const resp = (err as AxiosError<{ error?: { message?: string } }>)?.response
+        const resp = (err as AxiosError<{ error?: { message?: string; code?: string } }>)?.response
         if (!resp) break                       // lỗi mạng giữa chừng — giữ pending (uncertain=true), thử đợt sau
         if (resp.status >= 500) break          // server lỗi tạm — đừng đốt queue, thử đợt sau
         const msg = resp.data?.error?.message ?? `HTTP ${resp.status}`
-        if (wasUncertain && DUP_RE.test(msg)) {
+        const errCode = resp.data?.error?.code ?? ''
+        if (wasUncertain && (DUP_RE.test(msg) || DUP_RE.test(errCode))) {
           // Lần gửi trước đã lên nhưng response rớt → server báo trùng = XÁC NHẬN thành công
           setItem(item.id, { status: 'done', uncertain: false, reason: 'Đã lên từ lần gửi trước (server xác nhận trùng)' })
           anyDone = true

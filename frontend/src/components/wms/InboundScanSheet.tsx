@@ -8,6 +8,8 @@ import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
+import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
+import { OfflineError } from '@/api/client'
 import { playBeep } from '@/utils/audio'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
@@ -17,12 +19,21 @@ import type { InboundOrder } from '@/types'
 
 // ─── Scan feedback banner ─────────────────────────────────────
 
-type FeedbackState = { type: 'success' | 'error'; msg: string }
+type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string }
 
 function ScanFeedback({ state }: { state: FeedbackState }) {
   if (state.type === 'success') {
     return (
       <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 shrink-0" />
+        <span>{state.msg}</span>
+      </div>
+    )
+  }
+  if (state.type === 'queued') {
+    // Offline: lượt quét đã vào hàng đợi — SỐ TẠM, chưa được server xác nhận
+    return (
+      <div className="rounded-lg bg-amber-50 border border-amber-300 p-2.5 text-sm text-amber-800 flex items-center gap-2">
         <CheckCircle2 className="h-4 w-4 shrink-0" />
         <span>{state.msg}</span>
       </div>
@@ -185,7 +196,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           setMergeWarning(data.will_merge ? (data.merge_warning ?? null) : null)
         },
         onError: (err) => {
-          const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          // Chuyển kho BẮT BUỘC online (cần đối chiếu số đã xuất từ server) — không vào queue
+          const msg = isConnectivityError(err)
+            ? 'Mất kết nối mạng — phiếu CHUYỂN KHO cần mạng để đối chiếu số xuất. Quét lại khi có mạng.'
+            : (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setValidation({ ok: false, msg })
         },
       }
@@ -217,12 +231,42 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, warns.length ? 4000 : 1500)
         },
         onError: (err) => {
+          const qrToQueue = pendingQR
           setPendingQR(null)
           setValidation(null)
           setServerCheckOk(false)
           setMergeWarning(null)
           setOutboundCartons(null)
           setCartons(defaultCartons)
+          // Lỗi KẾT NỐI (offline / mạng rớt giữa chừng) → xếp hàng đợi, server phân
+          // xử lúc sync (unique (kho,pallet) chống trùng tuyệt đối). Chỉ quét QR mới
+          // được vào queue — xem offline/scanQueue.ts.
+          if (isConnectivityError(err) && qrToQueue) {
+            const norm = normalizeQR(qrToQueue)
+            const { queued, duplicate } = enqueueScan({
+              kind: 'inbound',
+              url: `/wms/inbound-orders/${order.id}/scan`,
+              body: {
+                qr_code: qrToQueue, location_id: activeLocationId, stack_layer: Number(stackLayer),
+                cartons_override: Number(cartons) || undefined, employee_id: employeeId,
+                ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined,
+              },
+              pallet_code: norm,
+              label: `Phiếu nhập ${order.material?.material_code ?? ''} · ${activeLoc?.location_code ?? ''}`,
+              orderId: order.id,
+              // Lỗi mạng SAU khi gửi (không phải chặn offline tức thì) → kết quả không
+              // rõ, replay gặp "trùng" sẽ coi là đã lên từ lần này
+              uncertain: !(err instanceof OfflineError),
+            })
+            setFeedback({
+              type: 'queued',
+              msg: duplicate
+                ? `⏸ Pallet này ĐÃ trong hàng đợi chờ mạng (${queued} chờ)`
+                : `⏸ Mất mạng — đã xếp hàng chờ (${queued} chờ) · ${norm}`,
+            })
+            setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 2000)
+            return
+          }
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -245,6 +289,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)
   const nccMissing = nccRequired && !nccId && !v1AutoNcc
   const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking && !nccMissing
+  // Số lượt quét của PHIẾU NÀY đang chờ mạng (hàng đợi offline)
+  const queuedThisOrder = useScanQueue(s =>
+    s.items.filter(i => i.status === 'pending' && i.orderId === order.id).length)
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -262,6 +309,12 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
               {order.material?.short_name && <span className="text-slate-500"> · {order.material.short_name}</span>}
               {activeLoc && <span className="font-mono"> · {activeLoc.location_code}</span>}
               {!activeLocationId && <span className="text-amber-500"> · Chưa chọn vị trí</span>}
+              {/* Số quét đang chờ mạng của phiếu này — TÁCH BẠCH khỏi số đã xác nhận */}
+              {queuedThisOrder > 0 && (
+                <span className="ml-1 rounded-full bg-amber-100 border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 whitespace-nowrap">
+                  ⏸ {queuedThisOrder} chờ mạng
+                </span>
+              )}
             </p>
             <button
               type="button"

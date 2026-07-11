@@ -24,6 +24,10 @@ import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
+import { isOffline } from '@/offline/useOnline'
+import { OfflineError } from '@/api/client'
+import { normalizeQR } from '@/utils/qr'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -71,7 +75,7 @@ function ProgressBar({ scanned, ordered, looseUnconfirmed = 0 }: { scanned: numb
   )
 }
 
-type FeedbackState = { type: 'success' | 'error'; msg: string } | null
+type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | null
 
 interface ScanDialogProps {
   item:    OutboundItem
@@ -82,6 +86,9 @@ interface ScanDialogProps {
 function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const user = useAuthStore(s => s.user)
+  // Số lượt quét của MÃ này đang chờ mạng (hàng đợi offline)
+  const queuedThisItem = useScanQueue(s =>
+    s.items.filter(i => i.status === 'pending' && i.itemId === item.id).length)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
@@ -91,10 +98,38 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
   const remaining = Math.max(0, item.cartons_ordered - item.cartons_scanned)
 
+  // Offline: không check được với server → xếp thẳng vào hàng đợi; SL do server chốt
+  // lúc sync (cap = min(tồn pallet, còn cần xuất) — không bao giờ vượt kế hoạch).
+  // cartons_override chỉ gửi khi user đã kịp xác nhận số (đường handleSave).
+  function queueScan(qr_code: string, cartonsOverride: number | undefined, uncertain: boolean) {
+    const norm = normalizeQR(qr_code)
+    const { queued, duplicate } = enqueueScan({
+      kind: 'outbound',
+      url: `/wms/outbound/${gdoId}/items/${item.id}/scan`,
+      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride },
+      pallet_code: norm,
+      label: `${item.material?.material_code ?? item.material_code_raw ?? ''} · ${matName}`,
+      orderId: gdoId,
+      itemId: item.id,
+      uncertain,
+    })
+    setFeedback({
+      type: 'queued',
+      msg: duplicate
+        ? `⏸ Pallet này ĐÃ trong hàng đợi chờ mạng (${queued} chờ)`
+        : `⏸ Mất mạng — đã xếp hàng chờ (${queued} chờ) · ${norm}${cartonsOverride ? ` · ${cartonsOverride} thùng` : ' · SL chốt khi có mạng'}`,
+    })
+    setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 2000)
+  }
+
   function handleScan(qr_code: string) {
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    if (isOffline()) {   // trình duyệt biết chắc offline → khỏi bắn check chết
+      queueScan(qr_code, undefined, false)
+      return
+    }
     checkScan(
       { gdoId, itemId: item.id, qr_code },
       {
@@ -103,6 +138,11 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
         },
         onError: (err) => {
+          // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
+          if (isConnectivityError(err)) {
+            queueScan(qr_code, undefined, false)   // check là GET-nghĩa, chưa ghi gì → không uncertain
+            return
+          }
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -126,7 +166,15 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           }, 1500)
         },
         onError: (err) => {
+          const qr = checkResult.pallet_code
+          const cartons = Math.max(1, parseInt(pendingCartons) || 1)
           setCheckResult(null)
+          // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
+          // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
+          if (isConnectivityError(err)) {
+            queueScan(qr, cartons, !(err instanceof OfflineError))
+            return
+          }
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
           setFeedback({ type: 'error', msg })
         },
@@ -253,6 +301,17 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           {feedback?.type === 'success' && (
             <div className="rounded-lg bg-green-50 border border-green-200 p-2.5 text-sm text-green-800 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />{feedback.msg}
+            </div>
+          )}
+          {feedback?.type === 'queued' && (
+            <div className="rounded-lg bg-amber-50 border border-amber-300 p-2.5 text-sm text-amber-800 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />{feedback.msg}
+            </div>
+          )}
+          {/* Số quét đang chờ mạng của MÃ này — tách bạch khỏi số đã xác nhận */}
+          {queuedThisItem > 0 && !feedback && (
+            <div className="rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5 text-[11px] font-medium text-amber-700">
+              ⏸ {queuedThisItem} lượt quét đang chờ mạng (chưa tính vào số đã xuất)
             </div>
           )}
 

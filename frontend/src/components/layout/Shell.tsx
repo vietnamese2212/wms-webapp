@@ -11,6 +11,8 @@ import { apiClient } from '@/api/client'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
 import { useAuthStore } from '@/stores/authStore'
 import { OfflineBanner } from '@/offline/OfflineBanner'
+import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
+import { initScanQueue } from '@/offline/scanQueue'
 
 export function Shell() {
   const qc = useQueryClient()
@@ -41,6 +43,9 @@ export function Shell() {
     // Connect to SSE for real-time sync (no-op if VITE_API_URL is not set)
     connectRealtimeEvents()
 
+    // Hàng đợi quét offline: hydrate từ IndexedDB + tự replay khi mạng về
+    initScanQueue()
+
     // Mạng về sau khi đứt → realtime event trong lúc offline đã MẤT VĨNH VIỄN
     // (Supabase không replay) → invalidate toàn bộ để xóa stale, list tự refetch.
     const onBackOnline = () => qc.invalidateQueries()
@@ -69,6 +74,7 @@ export function Shell() {
         </main>
       </div>
       <BottomNav />
+      <OfflineQueuePanel />
       <Toaster />
     </div>
   )

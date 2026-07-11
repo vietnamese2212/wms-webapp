@@ -13,6 +13,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { MobileNav } from './MobileNav'
 import { Badge } from '@/components/ui/badge'
+import { OfflineQueueHeaderButton } from '@/offline/OfflineQueuePanel'
 
 const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath?: string }> = {
   '/': { label: 'Dashboard' },
@@ -93,6 +94,8 @@ export function Header() {
       </div>
 
       <div className="flex flex-1 lg:flex-none justify-end items-center gap-2">
+        {/* Hàng đợi quét offline — chỉ báo lệnh chưa lên, cạnh chuông (bấm mở danh sách) */}
+        <OfflineQueueHeaderButton />
         {/* Notifications */}
         <Button variant="ghost" size="icon" className="relative text-slate-300 hover:bg-white/10 hover:text-white">
           <Bell className="h-5 w-5" />

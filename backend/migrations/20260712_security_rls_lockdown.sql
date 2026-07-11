@@ -34,23 +34,33 @@ REVOKE USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
 REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM anon, authenticated;
 
--- ─── PHẦN 2: BẬT RLS + chặn ĐỌC của anon trên MỌI bảng ─────────────────────────
--- Mỗi bảng: enable RLS + thu hồi SELECT của anon. Bảng vận hành (cần realtime) → thêm
--- policy cho 'authenticated' đọc (vé realtime của user đăng nhập). Employee (hash mật
--- khẩu) → KHÔNG cấp cho cả authenticated + gỡ khỏi realtime → chỉ backend service_role đọc.
+-- ─── PHẦN 2: XÓA policy mở-cho-anon + đặt lại RLS đúng ─────────────────────────
+-- HIỆN TRẠNG (soi 12/07): RLS ĐÃ bật, nhưng mỗi bảng có 1 policy MỞ TOANG cho `anon`
+-- (anon đọc+ghi mọi thứ). ⇒ Phải XÓA HẾT policy cũ trên từng bảng, rồi:
+--   • Bảng vận hành (cần realtime): tạo policy DUY NHẤT cho 'authenticated' SELECT + thu
+--     hồi SELECT của anon → chỉ user đăng nhập (vé realtime) đọc, khách vãng lai = 0 dòng.
+--   • Employee (hash mật khẩu): KHÔNG policy nào + thu hồi SELECT cả anon lẫn authenticated
+--     + gỡ khỏi realtime → chỉ backend service_role (bỏ qua RLS) đọc.
 DO $$
-DECLARE r record;
+DECLARE r record; pol record;
 BEGIN
   FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.tablename);
-    EXECUTE format('REVOKE SELECT ON public.%I FROM anon', r.tablename);
-    EXECUTE format('DROP POLICY IF EXISTS rls_auth_select ON public.%I', r.tablename);
-    IF r.tablename = 'Employee' THEN
-      EXECUTE 'REVOKE SELECT ON public."Employee" FROM authenticated';   -- chỉ backend đọc
-    ELSE
-      EXECUTE format('GRANT SELECT ON public.%I TO authenticated', r.tablename);
-      EXECUTE format('CREATE POLICY rls_auth_select ON public.%I FOR SELECT TO authenticated USING (true)', r.tablename);
-    END IF;
+    BEGIN
+      -- Xóa MỌI policy cũ (gồm policy mở cho anon) → chỉ còn policy do file này kiểm soát
+      FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = r.tablename LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol.policyname, r.tablename);
+      END LOOP;
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.tablename);
+      EXECUTE format('REVOKE SELECT ON public.%I FROM anon', r.tablename);
+      IF r.tablename = 'Employee' THEN
+        EXECUTE 'REVOKE SELECT ON public."Employee" FROM authenticated';   -- chỉ backend đọc
+      ELSE
+        EXECUTE format('GRANT SELECT ON public.%I TO authenticated', r.tablename);
+        EXECUTE format('CREATE POLICY rls_auth_select ON public.%I FOR SELECT TO authenticated USING (true)', r.tablename);
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'Bỏ qua bảng % (lỗi: %)', r.tablename, SQLERRM;   -- bảng lạ/extension → không chặn cả migration
+    END;
   END LOOP;
   -- Employee ra khỏi publication realtime (không broadcast hash mật khẩu qua WAL)
   BEGIN

@@ -943,6 +943,11 @@ export async function scanQR(req: Request, res: Response) {
 
     if (!qr_code)     return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu qr_code')
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
+    // cartons_override âm/NaN tạo tồn ÂM (imported=-N) — chặn ngay (cả nhánh merge & tạo mới đọc giá trị này)
+    if (cartons_override !== undefined && cartons_override !== null &&
+        (!Number.isFinite(Number(cartons_override)) || Number(cartons_override) < 0)) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'Số thùng không hợp lệ — phải là số ≥ 0')
+    }
 
     // Load order with material + source_type
     const { data: order } = await supabase

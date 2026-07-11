@@ -21,7 +21,10 @@ export default defineConfig({
         icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // PHẢI có 'wasm': máy không có BarcodeDetector native (iPhone/desktop) giải mã QR
+        // bằng zxing_reader.wasm nạp lúc chạy — thiếu precache → offline camera lên
+        // nhưng KHÔNG giải mã được tem (bug thật user báo 12/07).
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,wasm}'],
         // SPA fallback khi offline — nhưng TUYỆT ĐỐI không nuốt /api (serverless cùng origin)
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],

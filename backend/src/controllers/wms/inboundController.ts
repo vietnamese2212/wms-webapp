@@ -769,7 +769,7 @@ export async function cancelOrder(req: Request, res: Response) {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport')
-      .select('status, source_type, from_gdo_id, posm_entry_id')
+      .select('status, source_type, from_gdo_id, tms_order_id, posm_entry_id')
       .eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành, không thể hủy')
@@ -792,17 +792,27 @@ export async function cancelOrder(req: Request, res: Response) {
     const { error } = await supabase.from('ProductionImport').delete().eq('id', req.params.id)
     if (error) throw error
 
-    // Nếu là phiếu TRANSFER: kiểm tra còn phiếu nào không
-    // Nếu hết → reset GDO transfer_status về IN_TRANSIT để NPP có thể bắt đầu lại
+    // Nếu là phiếu TRANSFER: kiểm tra các phiếu còn lại
+    // - Hết phiếu → reset GDO transfer_status về IN_TRANSIT để NPP bắt đầu nhận lại
+    // - Còn phiếu và TẤT CẢ đã COMPLETED → chạy cascade hoàn tất như completeOrder (TmsOrder DONE +
+    //   GDO DELIVERED). Không có bước này: xóa 1 dòng NSX thừa sau khi mọi dòng khác đã nhận xong
+    //   → không còn phiếu nào để bấm Hoàn thành → lệnh kẹt "chưa hoàn thành" vĩnh viễn (user báo 11/07).
     if (existing.source_type === 'TRANSFER' && existing.from_gdo_id) {
-      const { count: activeCount } = await supabase
+      const { data: siblings } = await supabase
         .from('ProductionImport')
-        .select('id', { count: 'exact', head: true })
+        .select('id, status')
         .eq('from_gdo_id', existing.from_gdo_id)
-      if (!activeCount || activeCount === 0) {
+      if (!(siblings ?? []).length) {
         await supabase.from('GroupDeliveryOrder')
           .update({ transfer_status: 'IN_TRANSIT', updated_at: nowTs })
           .eq('id', existing.from_gdo_id)
+      } else if (existing.tms_order_id && (siblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')) {
+        await supabase.from('TmsOrder')
+          .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
+          .eq('id', existing.tms_order_id).neq('status', 'DONE')
+        await supabase.from('GroupDeliveryOrder')
+          .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+          .eq('id', existing.from_gdo_id).eq('transfer_status', 'RECEIVING')
       }
     }
 

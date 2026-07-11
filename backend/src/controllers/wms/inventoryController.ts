@@ -5,8 +5,8 @@ import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
-import { safeSearch } from '../../utils/search'
+import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { safeSearch, safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
@@ -59,6 +59,29 @@ async function guardEntriesScope(req: Request, res: Response, ids: string[]): Pr
       return false
     }
   }
+  return true
+}
+
+// Gác ĐỌC-theo-id 1 pallet: cắt CẢ kho VÀ loại hàng (mirror listInventory) — chống IDOR đọc chéo kho/loại.
+// Trả false + đã gửi lỗi nếu chặn. Bản ghi không tồn tại → true (để handler tự trả 404 riêng).
+async function guardEntryRead(req: Request, res: Response, id: string): Promise<boolean> {
+  const scope = scopeWhIds(req)
+  const cats = scopeCategoriesOf(req)
+  if (scope === null && cats === null) return true
+  const { data, error } = await supabase.from('InventoryEntry')
+    .select('warehouse_id, location:Location!location_id(warehouse_id), material:Material(category)')
+    .eq('id', id).maybeSingle()
+  if (error) { fail(res, 500, 'DB_ERROR', error.message); return false }
+  if (!data) return true
+  type LocWh = { warehouse_id: string | null }
+  const row = data as unknown as { warehouse_id: string | null; location: LocWh | LocWh[] | null; material: { category: string | null } | { category: string | null }[] | null }
+  const loc = Array.isArray(row.location) ? row.location[0] : row.location
+  const wh = loc?.warehouse_id ?? row.warehouse_id ?? null
+  if (scope !== null && (!wh || !scope.includes(wh))) {
+    fail(res, 403, 'FORBIDDEN', 'Pallet không thuộc kho trong phạm vi của bạn'); return false
+  }
+  const mat = Array.isArray(row.material) ? row.material[0] : row.material
+  if (!categoryAllowed(req, mat?.category)) { fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false }
   return true
 }
 
@@ -770,6 +793,7 @@ export async function adjustInventory(req: Request, res: Response) {
 
 export async function listAdjustmentLog(req: Request, res: Response) {
   const { id } = req.params
+  if (!(await guardEntryRead(req, res, id))) return   // chống IDOR: lịch sử điều chỉnh chỉ cho pallet trong phạm vi
   const { data, error } = await supabase
     .from('InventoryAdjustmentLog' as any)
     .select('id, delta, cartons_before, cartons_after, note, actor_name, actor_id, adjusted_at')
@@ -1018,7 +1042,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
           if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
         }
 
-        if (category)     locQuery = locQuery.or(`category.eq.${category},category.is.null`)
+        if (category)     locQuery = locQuery.or(`category.eq.${safeFilterValue(category)},category.is.null`)
         if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
         return locQuery
       })
@@ -1165,6 +1189,7 @@ export async function getInventoryEntry(req: Request, res: Response) {
     .maybeSingle()
   if (error) return fail(res, error.message)
   if (!data)  return fail(res, 'Không tìm thấy pallet', 404)
+  if (!(await guardEntryRead(req, res, id))) return   // chống IDOR: chỉ đọc pallet trong phạm vi kho+loại
   return ok(res, data)
 }
 
@@ -1287,6 +1312,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const adjustLogs: Record<string, unknown>[] = []
     const actorName = req.user?.name ?? null
     const actorId = req.user?.sub ?? null
+    const uploadScope = scopeWhIds(req)   // null = NATIONAL (toàn quyền); mảng = chỉ kho được gán
     const seenInFile = new Set<string>()
     let lineNo = 0
     for (const r of rows) {
@@ -1313,6 +1339,8 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
       const wh = whByCode.get(whRaw!.toLowerCase()) || whByName.get(whRaw!.toLowerCase())
       if (!wh) { errors.push(`${at} — kho không khớp: ${whRaw}`); continue }
+      // Scope: chặn upload ghi tồn sang kho ngoài phạm vi user (all-or-nothing như các lỗi khác)
+      if (uploadScope !== null && !uploadScope.includes(wh.id)) { errors.push(`${at} — kho "${whRaw}" ngoài phạm vi của bạn`); continue }
       // Trùng trong file theo (kho, pallet) — cùng mã ở 2 kho khác nhau là hợp lệ
       const fileKey = `${wh.id}|${palletLc}`
       if (seenInFile.has(fileKey)) { errors.push(`${at} — trùng mã pallet trong file (cùng kho ${whRaw})`); continue }
@@ -1323,6 +1351,8 @@ export async function uploadExcel(req: Request, res: Response) {
       if (nccRaw) { const resu = resolveNcc(nccRaw); if (!resu.id) { errors.push(`${at} — NCC ${resu.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = resu.id }
       // Cờ requires_ncc của Loại kho (user chốt 10/07): dòng loại này thiếu NCC → lỗi (all-or-nothing như các lỗi khác)
       const rowCat = matCatMap.get(matId) ?? ''
+      // Scope Loại hàng: chặn ghi mã thuộc loại ngoài phạm vi user (mã chưa gán loại vẫn cho)
+      if (!categoryAllowed(req, rowCat)) { errors.push(`${at} — Loại hàng "${rowCat}" ngoài phạm vi của bạn`); continue }
       if (!nccId && whTypeMeta.get(rowCat)?.requires_ncc === true) {
         errors.push(`${at} — Loại kho "${rowCat}" bắt buộc có NCC (cột NCC đang trống)`); continue
       }

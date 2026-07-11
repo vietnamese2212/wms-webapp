@@ -13,7 +13,13 @@ import * as systemSetting from '../controllers/wms/systemSettingController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
+// Chỉ nhận file Excel (chặn feed binary lạ vào XLSX.read) + 1 file + trần 10MB.
+// File sai loại → req.file undefined → controller trả 400 "Không có file" (không ném lỗi thô).
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, /\.(xlsx|xls|xlsm)$/i.test(file.originalname)),
+})
 
 const router = Router()
 

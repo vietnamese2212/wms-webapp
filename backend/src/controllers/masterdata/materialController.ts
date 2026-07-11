@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { safeSearch } from '../../utils/search'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -293,6 +293,9 @@ export async function uploadExcel(req: Request, res: Response) {
       }
 
       const dbRow = existingByCode.get(material_code)
+      // Scope Loại hàng: bỏ qua (báo lỗi) mã thuộc loại ngoài phạm vi user (mã mới chưa gán loại vẫn cho)
+      const effCat = category ?? dbRow?.category ?? null
+      if (!categoryAllowed(req, effCat)) { errors.push(`${material_code} — Loại hàng "${effCat ?? ''}" ngoài phạm vi của bạn`); continue }
       if (dbRow || upsertByCode.has(material_code)) {
         // Mã đã có (hoặc đã gặp ở dòng trước) → merge full record để UPSERT (giữ created_at/is_active vì không đưa vào payload)
         const base = upsertByCode.get(material_code) ?? {

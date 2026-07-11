@@ -3,6 +3,23 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+
+// ─── Scope kho+loại (mirror TMS orderController) — KH nhập chuyển kho gắn 1 kho đích ──
+// NATIONAL → null (toàn quyền). Khác → chỉ các kho được gán cho user.
+function scopeWhIds(req: Request): string[] | null {
+  return req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? [])
+}
+function whInScope(req: Request, whId: string | null | undefined): boolean {
+  const s = scopeWhIds(req)
+  return s === null || (!!whId && s.includes(whId))
+}
+// Gác GHI theo (kho, loại): kho phải trong phạm vi + loại phải được phép. Trả false + đã gửi 403 nếu chặn.
+function guardPlanWrite(req: Request, res: Response, whId: string | null | undefined, whType: string | null | undefined): boolean {
+  if (!whInScope(req, whId)) { fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác kế hoạch của kho này', 403); return false }
+  if (!categoryAllowed(req, whType)) { fail(res, CATEGORY_FORBIDDEN_MSG, 403); return false }
+  return true
+}
 
 const LINE_SELECT = `
   *,
@@ -118,6 +135,8 @@ export async function listPlanLines(req: Request, res: Response) {
     const from = date_from ?? date
     const to   = date_to   ?? date
     if (!tms_order_id && (!from || !warehouse_id)) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
+    // Scope: kho truyền vào ngoài phạm vi user → trả rỗng (không lộ kế hoạch kho khác)
+    if (warehouse_id && !whInScope(req, warehouse_id)) return ok(res, [])
 
     // Phân trang né cap ~1000 (khoảng ngày rộng × nhiều NCC → KH nhập dễ vượt)
     const data = await fetchAllRowsParallel(() => {
@@ -131,7 +150,12 @@ export async function listPlanLines(req: Request, res: Response) {
       }
       return q.order('date').order('created_at').order('id')
     })
-    return ok(res, data ?? [])
+    // Cắt kho+loại đủ MỌI nhánh (kể cả nhánh chỉ có tms_order_id, không có warehouse_id param)
+    const scoped = (data ?? []).filter((r) => {
+      const row = r as { warehouse_id: string | null; warehouse_type: string | null }
+      return whInScope(req, row.warehouse_id) && categoryAllowed(req, row.warehouse_type)
+    })
+    return ok(res, scoped)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -143,6 +167,7 @@ export async function createPlanLine(req: Request, res: Response) {
       ncc_id, material_id, po_number, planned_boxes, planned_pallets,
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+    if (!guardPlanWrite(req, res, warehouse_id, warehouse_type || null)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
@@ -215,6 +240,11 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       }
     }
 
+    // Scope: chặn nếu BẤT KỲ nhóm nào ngoài phạm vi kho/loại (all-or-nothing — chưa tạo TmsOrder nào)
+    for (const g of uniqueGroups.values()) {
+      if (!guardPlanWrite(req, res, g.warehouse_id, g.warehouse_type)) return
+    }
+
     for (const [key, group] of uniqueGroups) {
       const orderId = await findOrCreateTmsOrder(group, user)
       groupMap.set(key, orderId)
@@ -276,6 +306,8 @@ export async function updatePlanLine(req: Request, res: Response) {
       .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id, tms_order_id')
       .eq('id', id).single()
     if (!existing) return fail(res, 'Không tìm thấy dòng kế hoạch', 404)
+    // Scope: chỉ sửa dòng thuộc kho+loại trong phạm vi user
+    if (!guardPlanWrite(req, res, existing.warehouse_id, existing.warehouse_type)) return
 
     const updates: Record<string, unknown> = { updated_by: user?.name || null, updated_at: now }
     if (material_id     !== undefined) updates.material_id     = material_id     || null
@@ -305,6 +337,8 @@ export async function updatePlanLine(req: Request, res: Response) {
         vehicle_type:   vehicle_type   !== undefined ? (vehicle_type   || null) : existing.vehicle_type,
         ncc_id:         ncc_id         !== undefined ? (ncc_id         || null) : existing.ncc_id,
       }
+      // Scope: loại mới (nếu đổi warehouse_type) cũng phải trong phạm vi user
+      if (!categoryAllowed(req, newGroup.warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
       newTmsOrderId = await findOrCreateTmsOrder(newGroup, user)
 
@@ -339,8 +373,10 @@ export async function deletePlanLine(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing } = await supabase.from('inbound_plan_lines')
-      .select('id, tms_order_id').eq('id', id).single()
+      .select('id, tms_order_id, warehouse_id, warehouse_type').eq('id', id).single()
     if (!existing) return fail(res, 'Không tìm thấy dòng kế hoạch', 404)
+    // Scope: chỉ xóa dòng thuộc kho+loại trong phạm vi user
+    if (!guardPlanWrite(req, res, existing.warehouse_id, existing.warehouse_type)) return
 
     // Chặn xóa nếu TmsOrder đã được xử lý (chỉ cho phép khi còn PENDING)
     if (existing.tms_order_id) {
@@ -390,8 +426,10 @@ export async function cancelPlanLine(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing } = await supabase.from('inbound_plan_lines')
-      .select('id, status, tms_order_id').eq('id', id).single()
+      .select('id, status, tms_order_id, warehouse_id, warehouse_type').eq('id', id).single()
     if (!existing) return fail(res, 'Không tìm thấy dòng kế hoạch', 404)
+    // Scope: chỉ hủy dòng thuộc kho+loại trong phạm vi user
+    if (!guardPlanWrite(req, res, existing.warehouse_id, existing.warehouse_type)) return
     if (existing.status === 'CANCELLED') return fail(res, 'Dòng kế hoạch đã được hủy rồi', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -431,6 +469,7 @@ export async function bulkCreateForOrder(req: Request, res: Response) {
       .single()
     if (orderErr || !tmsOrder) return fail(res, 'Không tìm thấy TmsOrder', 404)
     if (tmsOrder.direction !== 'INBOUND') return fail(res, 'Chỉ tạo kế hoạch cho đơn hàng hướng nhập (INBOUND)', 400)
+    if (!guardPlanWrite(req, res, tmsOrder.warehouse_id, tmsOrder.warehouse_type)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user

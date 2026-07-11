@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { safeFilterValue } from '../../utils/search'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -52,7 +53,7 @@ export async function listLocations(req: Request, res: Response) {
       if (sub_code) query = query.eq('sub_code', String(sub_code))
       if (active === 'true') query = query.eq('is_active', true)
       // category filter: match exact OR null (uncategorized locations accept all)
-      if (category) query = (query as any).or(`category.eq.${String(category)},category.is.null`)
+      if (category) query = (query as any).or(`category.eq.${safeFilterValue(category)},category.is.null`)
       // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (vị trí chưa gán loại vẫn hiện)
       if (scopeCats) query = (query as any).or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       return query

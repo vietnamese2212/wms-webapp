@@ -9,7 +9,7 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeSearch } from '../../utils/search'
+import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 
 // Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
@@ -504,6 +504,7 @@ export async function createOrder(req: Request, res: Response) {
 
 export async function getOrder(req: Request, res: Response) {
   try {
+    if (!(await guardInboundScope(req, res, req.params.id))) return   // chống IDOR: chỉ đọc phiếu thuộc kho trong phạm vi
     const [{ data: order, error: oErr }, { data: entries, error: eErr }] = await Promise.all([
       supabase.from('ProductionImport').select(ORDER_SELECT).eq('id', req.params.id).maybeSingle(),
       supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('import_order_id', req.params.id).order('created_at'),
@@ -511,6 +512,8 @@ export async function getOrder(req: Request, res: Response) {
     if (oErr) throw oErr
     if (eErr) throw eErr
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (!categoryAllowed(req, (order as { warehouse_type?: string | null }).warehouse_type))
+      return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     applyInboundMode(order as unknown as Parameters<typeof applyInboundMode>[0])
 
     let allEntries = entries ?? []
@@ -1116,7 +1119,7 @@ export async function scanQR(req: Request, res: Response) {
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
     // Chưa có NCC & là hàng NCC → resolve từ đoạn 4 QR (chỉ tem V1 — tem V2 `;` không mang mã NCC)
     if (parsed.format === 'v1' && isNccGoods && !resolvedNcc && parsed.machine_code?.trim()) {
-      const seg4 = parsed.machine_code.trim()
+      const seg4 = safeFilterValue(parsed.machine_code.trim())
       const { data: co } = await supabase.from('TransportCompany')
         .select('id').eq('type', 'NCC')
         .or(`code.eq.${seg4},alias_codes.cs.{${seg4}}`).limit(1).maybeSingle()
@@ -1670,6 +1673,10 @@ export async function getLocationSuggestions(req: Request, res: Response) {
       .from('ProductionImport').select('warehouse_id, material_id').eq('id', req.params.id).maybeSingle()
     if (!order)               return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (!order.warehouse_id)  return fail(res, 400, 'NO_WAREHOUSE', 'Phiếu nhập chưa có kho')
+    // Chống IDOR: gợi ý vị trí lộ layout/tồn kho — chỉ cho phiếu thuộc kho trong phạm vi user
+    const scope = scopeWhIds(req)
+    if (scope !== null && !scope.includes(order.warehouse_id))
+      return fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể xem gợi ý vị trí kho này')
 
     ok(res, await getLocationSuggestionsData(order.warehouse_id, order.material_id))
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

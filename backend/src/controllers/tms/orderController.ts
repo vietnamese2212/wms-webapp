@@ -506,6 +506,7 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
 export async function getPlanVsActual(req: Request, res: Response) {
   try {
     const { orderId } = req.params
+    if (!(await guardOrderScope(req, res, orderId))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
 
     // Plan lines (kế hoạch)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1203,6 +1204,7 @@ export async function selfCompleteTransfer(req: Request, res: Response) {
 export async function getTransferGoods(req: Request, res: Response) {
   try {
     const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: tmsOrder } = await supabase.from('TmsOrder')

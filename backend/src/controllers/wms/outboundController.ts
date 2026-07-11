@@ -10,6 +10,7 @@ import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingControl
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { safeFilterValue } from '../../utils/search'
 
 const now = () => new Date().toISOString()
 
@@ -436,6 +437,11 @@ export async function getGDO(req: Request, res: Response) {
   try {
     const result = await fetchGDOFull(req.params.id)
     if (!result) return fail(res, 'Không tìm thấy chuyến xe', 404)
+    // Chống IDOR: chỉ đọc chuyến thuộc kho + loại trong phạm vi user (mirror listGDOs)
+    if (!(await guardGdoScope(req, res, req.params.id))) return
+    if (!categoryAllowed(req, (result as { warehouse_type?: string | null }).warehouse_type)) {
+      return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    }
     return ok(res, result)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -487,9 +493,10 @@ type OrbitWh = { id: string; name: string; parent_warehouse_id: string | null }
 async function orbitWhByShipto(shipto: string | null | undefined): Promise<OrbitWh | null> {
   const st = String(shipto ?? '').trim()
   if (!st) return null
+  const stSafe = safeFilterValue(st)
   const { data } = await supabase.from('Warehouse')
     .select('id, name, parent_warehouse_id')
-    .or(`code.eq.${st},shipto_codes.cs.{${st}}`)
+    .or(`code.eq.${stSafe},shipto_codes.cs.{${stSafe}}`)
     .eq('is_active', true).maybeSingle()
   return (data as OrbitWh | null) ?? null
 }
@@ -949,9 +956,10 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   let destWh: DestWh | null = null
   if (gdo.shipto_party) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stSafe = safeFilterValue(gdo.shipto_party)
     const { data: destWhData } = await supabase.from('Warehouse')
       .select('id, code, name, inventory_mode, parent_warehouse_id')
-      .or(`code.eq.${gdo.shipto_party},shipto_codes.cs.{${gdo.shipto_party}}`)
+      .or(`code.eq.${stSafe},shipto_codes.cs.{${stSafe}}`)
       .eq('is_active', true).maybeSingle()
     destWh = (destWhData as DestWh) ?? null
   }
@@ -1968,6 +1976,9 @@ export async function uploadExcel(req: Request, res: Response) {
         errs.push('Thiếu cột Loại kho')
       else if (invalidWhTypes.length)
         errs.push(`Loại kho "${invalidWhTypes.join(', ')}" không có trong hệ thống`)
+      // Scope Loại hàng: chặn upload tạo chuyến loại ngoài phạm vi user
+      const outScopeTypes = loaiKhoVals.filter(v => !categoryAllowed(req, v))
+      if (outScopeTypes.length) errs.push(`Loại kho "${outScopeTypes.join(', ')}" ngoài phạm vi của bạn`)
 
       const unknownMatsV = [...new Set(
         groupRows.filter(r => String(r['Material'] ?? '').trim()).map(r => String(r['Material']).trim())

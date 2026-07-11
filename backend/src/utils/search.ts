@@ -8,3 +8,11 @@ export function safeSearch(input: unknown): string {
     .replace(/[\\%_]/g, m => '\\' + m)   // escape wildcard LIKE
     .replace(/[,()]/g, ' ')              // bỏ ký tự phá cú pháp .or()
 }
+
+// Giá trị làm HẰNG so-khớp-CHÍNH-XÁC trong `.or()/.eq()/.cs.{}` (KHÔNG phải ilike pattern):
+// loại ký tự cấu trúc `, ( ) { } "` để không chèn thêm predicate / phá array literal `{...}`.
+// Khác safeSearch (dành cho ilike): ở đây KHÔNG escape `% _` vì là so khớp literal, không phải LIKE.
+// Dùng cho: mã kho/shipto, category, đoạn QR (giá trị do user/QR đưa vào rồi ghép thẳng vào filter).
+export function safeFilterValue(input: unknown): string {
+  return String(input ?? '').replace(/[,(){}"\\]/g, '').trim()
+}

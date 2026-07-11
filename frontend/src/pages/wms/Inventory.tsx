@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import type { AxiosError } from 'axios'
 import { Package, X, SlidersHorizontal, ChevronRight, Check, Rows3, AlignJustify, Scissors, Layers, Sigma, Download, Upload, BadgeCheck, Factory, MapPin, Tag, CalendarDays } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
@@ -81,7 +82,7 @@ const LIMIT = 50
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
 function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
-  const ws = XLSX.utils.json_to_sheet(rows)
+  const ws = XLSX.utils.json_to_sheet(sanitizeRows(rows))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Tồn kho')
   XLSX.writeFile(wb, `${baseName}.xlsx`)

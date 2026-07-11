@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
@@ -260,7 +261,7 @@ export default function Locations() {
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
       'Cần check': l.requires_stocktake ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
     }))
-    const ws = XLSX.utils.json_to_sheet(sheet)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Vị trí kho')
     XLSX.writeFile(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)

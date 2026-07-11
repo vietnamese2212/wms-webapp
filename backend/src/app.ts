@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
 import dotenv from 'dotenv'
 import authRouter from './routes/auth'
 import masterdataRouter from './routes/masterdata'
@@ -12,6 +13,16 @@ import { supabase } from './lib/supabase'
 dotenv.config()
 
 const app = express()
+
+// Ẩn "X-Powered-By: Express" (khỏi lộ stack công nghệ)
+app.disable('x-powered-by')
+// Chạy sau proxy Vercel → tin X-Forwarded-For để rate-limit lấy đúng IP client
+app.set('trust proxy', 1)
+
+// Security headers: X-Frame-Options (chống clickjacking), X-Content-Type-Options,
+// Referrer-Policy… CSP tắt vì API chỉ trả JSON (FE tĩnh do Vercel phục vụ riêng),
+// bật CSP ở đây không có tác dụng mà dễ gây phiền.
+app.use(helmet({ contentSecurityPolicy: false }))
 
 app.use(cors({
   origin: [

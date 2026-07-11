@@ -48,6 +48,9 @@ apiClient.interceptors.response.use(
     const hadToken = !!(error.config?.headers?.Authorization)
     if (error.response?.status === 401 && hadToken) {
       localStorage.removeItem('wms-auth')
+      // Dọn cache + hàng đợi quét khỏi IndexedDB khi phiên hết hạn (máy dùng chung).
+      // import động để tránh phụ thuộc vòng ở tầng client thấp.
+      import('@/offline/persist').then(m => m.clearOfflineData()).catch(() => {})
       window.location.href = '/login'
     }
     return Promise.reject(error)

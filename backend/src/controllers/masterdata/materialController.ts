@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { safeSearch } from '../../utils/search'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -31,7 +32,7 @@ export async function listMaterials(req: Request, res: Response) {
       if (category) query = query.eq('category', String(category))
       if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       if (search) {
-        const s = String(search)
+        const s = safeSearch(search)
         query = query.or(
           `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
         )
@@ -211,8 +212,9 @@ const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'ca
   'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix'] as const
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
-const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isNaN(n) ? null : n }
-const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return Number.isNaN(n) ? null : n }
+// Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
+const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return (!Number.isFinite(n) || n < 0) ? null : n }
+const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return (!Number.isFinite(n) || n < 0) ? null : n }
 
 export async function uploadExcel(req: Request, res: Response) {
   try {

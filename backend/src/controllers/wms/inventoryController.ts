@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { safeSearch } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
@@ -373,11 +374,12 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         searchLocIds = (sloc.data ?? []).map((l: any) => l.id as string)
       } else {
+        const st = safeSearch(term)
         const [fmat, floc] = await Promise.all([
           supabase.from('Material').select('id')
-            .or(`material_code.ilike.%${term}%,material_description.ilike.%${term}%,short_name.ilike.%${term}%,old_code.ilike.%${term}%`).limit(500),
+            .or(`material_code.ilike.%${st}%,material_description.ilike.%${st}%,short_name.ilike.%${st}%,old_code.ilike.%${st}%`).limit(500),
           supabase.from('Location').select('id')
-            .or(`location_code.ilike.%${term}%,sub_code.ilike.%${term}%,sub_name.ilike.%${term}%`).limit(500),
+            .or(`location_code.ilike.%${st}%,sub_code.ilike.%${st}%,sub_name.ilike.%${st}%`).limit(500),
         ])
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         searchMatIds = ((fmat as any).data ?? []).map((m: any) => m.id as string)

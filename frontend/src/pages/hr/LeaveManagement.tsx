@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -98,7 +99,7 @@ export function LeaveSection() {
       'Trạng thái': STATUS_META[l.status]?.label ?? l.status, 'Người duyệt': l.approved_by ?? '',
       'Tạo lúc': l.created_at ? formatTimestampDate(l.created_at, true) : '',
     }))
-    const ws = XLSX.utils.json_to_sheet(sheet)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Nghỉ phép')
     XLSX.writeFile(wb, `nghi_phep_${TODAY()}.xlsx`)

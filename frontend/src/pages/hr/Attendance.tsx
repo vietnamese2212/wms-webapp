@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock, Flag, Download, Rows3, AlignJustify } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -432,7 +433,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
       'Chức danh': r.employee?.job_title ?? '', 'Loại': KIND_SHORT[r.kind] ?? r.kind,
       'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
     }))
-    const ws = XLSX.utils.json_to_sheet(sheet)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Bảng công')
     XLSX.writeFile(wb, `bang_cong_${from}_${to}.xlsx`)

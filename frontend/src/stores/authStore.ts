@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AxiosError } from 'axios'
 import { apiClient } from '@/api/client'
+import { clearOfflineData } from '@/offline/persist'
 import type { User } from '@/types'
 
 interface AuthState {
@@ -27,7 +28,10 @@ export const useAuthStore = create<AuthState>()(
         set({ user, isAuthenticated: true, token })
       },
 
-      logout: () => set({ user: null, isAuthenticated: false, token: null }),
+      logout: () => {
+        set({ user: null, isAuthenticated: false, token: null })
+        void clearOfflineData()   // dọn cache + hàng đợi quét khỏi IndexedDB (máy dùng chung)
+      },
 
       updateUser: (partial) =>
         set((state) => ({

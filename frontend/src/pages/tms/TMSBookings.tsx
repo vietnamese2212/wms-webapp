@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -1696,7 +1697,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     const data = [
       { 'Ngày': '10/07/2026', 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
     ]
-    const ws = XLSX.utils.json_to_sheet(data)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(data))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'KH Nhập ngoài')
     XLSX.writeFile(wb, 'template_ke_hoach_nhap.xlsx')

@@ -9,6 +9,7 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { safeSearch } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 
 // Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
@@ -240,7 +241,7 @@ export async function listOrders(req: Request, res: Response) {
     if (search) {
       const [matRes, palletRes] = await Promise.all([
         supabase.from('Material').select('id')
-          .or(`material_code.ilike.%${search}%,short_name.ilike.%${search}%`).limit(500),
+          .or(`material_code.ilike.%${safeSearch(search)}%,short_name.ilike.%${safeSearch(search)}%`).limit(500),
         // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
         supabase.from('InventoryEntry').select('import_order_id')
           .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
@@ -250,7 +251,7 @@ export async function listOrders(req: Request, res: Response) {
         ((palletRes.data ?? []) as { import_order_id: string | null }[])
           .map(p => p.import_order_id).filter((v): v is string => !!v)
       )]
-      const filters = [`import_code.ilike.%${search}%`]
+      const filters = [`import_code.ilike.%${safeSearch(search)}%`]
       if (matIds.length > 0)   filters.push(`material_id.in.(${matIds.join(',')})`)
       if (orderIds.length > 0) filters.push(`id.in.(${orderIds.join(',')})`)
       searchFilters = filters.join(',')
@@ -273,7 +274,7 @@ export async function listOrders(req: Request, res: Response) {
       if (material_id) q = q.eq('material_id', material_id)
       if (shift_id)    q = q.eq('shift_id', shift_id)
       if (from_gdo_id) q = q.eq('from_gdo_id', from_gdo_id)
-      if (material_category) q = q.or(`warehouse_type.eq."${material_category}",source_type.eq.TRANSFER`)
+      if (material_category) { const mc = String(material_category).replace(/[",()]/g, ''); q = q.or(`warehouse_type.eq."${mc}",source_type.eq.TRANSFER`) }
       if (from)      q = q.gte('import_date', from)
       if (nextDay)   q = q.lt('import_date', nextDay)
       if (searchFilters) q = q.or(searchFilters)

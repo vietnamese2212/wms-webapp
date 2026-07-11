@@ -8,6 +8,17 @@ import { ALL_PERMISSIONS } from '../../config/permissions'
 
 const JWT_EXPIRY = '7d'
 
+// Hash giả (cố định lúc load) để bcrypt.compare LUÔN chạy kể cả khi không tìm thấy
+// tài khoản → cân bằng thời gian phản hồi, chống timing-attack enumerate email.
+const DUMMY_HASH = bcrypt.hashSync('timing-attack-dummy-password', 10)
+
+// Chuẩn hóa email nhập vào để so khớp AN TOÀN: escape ký tự đại diện LIKE (% _ \)
+// → dùng với .ilike() giữ so-khớp-không-phân-biệt-hoa-thường nhưng KHÔNG cho input
+// chứa `%`/`_` biến thành wildcard (chống LIKE-injection khớp tài khoản bất kỳ).
+function escapeLikeEmail(raw: string): string {
+  return raw.trim().replace(/[\\%_]/g, m => '\\' + m)
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWarehouseIds(employeeId: string): Promise<string[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,17 +75,21 @@ export async function login(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
       .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
-      .ilike('email', email.trim())
+      .ilike('email', escapeLikeEmail(email))
       .limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
-    if (!emp)           return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)
-    if (!emp.is_active) return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 401)
-    if (!emp.password)  return fail(res, 'Tài khoản chưa được đặt mật khẩu. Liên hệ quản trị viên.', 401)
 
-    const valid = await bcrypt.compare(password, emp.password)
-    if (!valid) return fail(res, 'Email hoặc mật khẩu không đúng', 401)
+    // LUÔN chạy bcrypt.compare (dùng hash giả nếu không có tài khoản) → chống timing;
+    // KHÔNG tiết lộ tài khoản tồn tại/bị khóa/chưa có mật khẩu TRƯỚC khi xác thực đúng
+    // mật khẩu → chống enumeration. Mọi thất bại pre-auth trả cùng 1 message + 401.
+    const valid = await bcrypt.compare(password, emp?.password || DUMMY_HASH)
+    if (!emp || !emp.password || !valid) {
+      return fail(res, 'Tên đăng nhập hoặc mật khẩu không đúng', 401)
+    }
+    // Đã chứng minh biết đúng mật khẩu → giờ mới báo trạng thái tài khoản (an toàn tiết lộ)
+    if (!emp.is_active) return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403)
 
     // Run all 3 independent post-auth queries in parallel
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -156,7 +171,7 @@ export async function changePassword(req: Request, res: Response) {
 
     const { old_password, new_password } = req.body as { old_password?: string; new_password?: string }
     if (!old_password || !new_password) return fail(res, 'Thiếu thông tin', 400)
-    if (new_password.length < 6) return fail(res, 'Mật khẩu mới phải có ít nhất 6 ký tự', 400)
+    if (new_password.length < 8) return fail(res, 'Mật khẩu mới phải có ít nhất 8 ký tự', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')

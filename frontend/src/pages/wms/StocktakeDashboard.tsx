@@ -9,6 +9,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -301,7 +302,7 @@ export default function StocktakeDashboard() {
         'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
       }
     })
-    const ws = XLSX.utils.json_to_sheet(sheet)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Tổng hợp KK')
     XLSX.writeFile(wb, `tong_hop_kk_${todayVN}.xlsx`)

@@ -40,4 +40,15 @@ export const persistOptions: Omit<PersistQueryClientOptions, 'queryClient'> = {
   },
 }
 
+// Dọn SẠCH dữ liệu client khi ĐĂNG XUẤT / phiên hết hạn (401) — chống rò rỉ trên
+// MÁY DÙNG CHUNG: xóa cache React Query (tồn kho/phiếu/mã hàng) + hàng đợi quét offline
+// khỏi IndexedDB. Nếu không, user kế tiếp mở app vẫn đọc được dữ liệu kho của người trước.
+export async function clearOfflineData(): Promise<void> {
+  try { queryClient.clear() } catch { /* ignore */ }
+  await Promise.allSettled([
+    del('wms-query-cache'),      // cache React Query persist (persist.ts key)
+    del('wms-scan-queue-v1'),    // hàng đợi quét offline (scanQueue.ts key)
+  ])
+}
+
 export { queryClient }

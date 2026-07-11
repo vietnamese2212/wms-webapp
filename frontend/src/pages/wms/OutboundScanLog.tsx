@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import {
   ClipboardList, ChevronLeft, ChevronRight, QrCode, AlertTriangle, Download,
 } from 'lucide-react'
@@ -287,7 +288,7 @@ export default function OutboundScanLog() {
           'TG quét xong': fmtTs(row.last_scanned_at), 'TG hoàn thành': fmtTs(row.completed_at),
         }
       })
-      const ws = XLSX.utils.json_to_sheet(sheet)
+      const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
       XLSX.writeFile(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)

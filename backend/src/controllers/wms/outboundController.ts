@@ -139,8 +139,11 @@ function parsePlannedDate(group_code: string): string | null {
 }
 
 function parseDecimal(val: any): number {
+  // Số lượng/khối lượng xuất — luôn KHÔNG âm & hữu hạn. Âm/Infinity/NaN → 0 (chống
+  // giá trị rác từ Excel/paste như "1e999", "-50" làm sai tồn/xuất).
+  const clamp = (n: number): number => (Number.isFinite(n) && n >= 0) ? n : 0
   if (!val && val !== 0) return 0
-  if (typeof val === 'number') return isNaN(val) ? 0 : val
+  if (typeof val === 'number') return clamp(val)
   // Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
   let s = String(val).trim().replace(/\s/g, '')
   const commas = (s.match(/,/g) ?? []).length
@@ -150,7 +153,7 @@ function parseDecimal(val: any): number {
   else if (commas === 1)    s = s.replace(',', '.')                    // 15,462 → 15.462
   else if (dots > 1)        s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
   const n = parseFloat(s)
-  return isNaN(n) ? 0 : n
+  return clamp(n)
 }
 
 function validateGroupCode(gc: string): string | null {

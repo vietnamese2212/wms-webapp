@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { Download, Check, X, Rows3, AlignJustify } from 'lucide-react'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -140,7 +141,7 @@ export default function TMSReport() {
       '% TT/KH':          r.pct != null ? r.pct / 100 : null,
       'Ghi chú':          r.note || '',
     }))
-    const ws = XLSX.utils.json_to_sheet(data)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(data))
     const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1')
     for (let R = 1; R <= range.e.r; R++) {
       const cell = ws[XLSX.utils.encode_cell({ r: R, c: 10 })]

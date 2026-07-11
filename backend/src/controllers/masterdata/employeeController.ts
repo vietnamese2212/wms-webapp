@@ -4,6 +4,7 @@ import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { safeSearch } from '../../utils/search'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
@@ -19,6 +20,20 @@ async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boo
     .select('name, employee_code').eq('id', req.params.id).maybeSingle()
   if (data?.name === 'Admin' || data?.employee_code === 'ADMIN') {
     fail(res, 'Chỉ Admin mới được thao tác trên tài khoản Admin', 403)
+    return true
+  }
+  return false
+}
+
+// Chặn thao tác GHI (đặt MK / xóa / đổi sơ đồ / khôi phục) trên nhân viên NGOÀI phạm vi
+// quản lý của người gọi. true = đã chặn (đã trả 403). Superadmin (visibleEmployeeIds=null) đi qua.
+// Vá lỗ account-takeover: trước đây các hàm này chỉ chặn target-là-superadmin, KHÔNG kiểm scope
+// → người có quyền set_password có thể đặt lại MK của BẤT KỲ ai rồi chiếm tài khoản.
+async function blockIfOutOfScope(req: Request, res: Response, targetId: string): Promise<boolean> {
+  const scope = await visibleEmployeeIds(req)
+  if (scope === null) return false            // superadmin — toàn quyền
+  if (!scope.has(targetId)) {
+    fail(res, 'Không có quyền thao tác trên nhân viên ngoài phạm vi quản lý', 403)
     return true
   }
   return false
@@ -132,7 +147,7 @@ async function fetchFull(opts: {
     if (opts.ids?.length)      q = q.in('id', opts.ids)
     if (opts.department_id)    q = q.eq('department_id', opts.department_id)
     if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
-    if (opts.search)           q = q.or(`name.ilike.%${opts.search}%,employee_code.ilike.%${opts.search}%,email.ilike.%${opts.search}%`)
+    if (opts.search) { const s = safeSearch(opts.search); q = q.or(`name.ilike.%${s}%,employee_code.ilike.%${s}%,email.ilike.%${s}%`) }
     return q
   }
   const emps = await fetchAllRowsParallel(buildQ) as unknown as EmpRow[]
@@ -225,6 +240,11 @@ export async function getEmployee(req: Request, res: Response) {
 
 export async function createEmployee(req: Request, res: Response) {
   try {
+    // Chỉ superadmin được TẠO tài khoản — nhất quán với updateEmployee (:297) và
+    // setWarehouseAccess (:482). Trước đây thiếu check này → user chỉ có user_admin.create
+    // có thể tạo tài khoản warehouse_scope='NATIONAL' + gán chức danh quyền cao bất kỳ,
+    // rồi dùng temp_password trả về để đăng nhập (leo thang quyền toàn diện).
+    if (!isSuperadmin(req)) return fail(res, 'Chỉ Admin được tạo tài khoản', 403)
     const {
       name, employee_code, email, phone,
       department_id, job_title_id,
@@ -355,6 +375,7 @@ export async function updateEmployee(req: Request, res: Response) {
 export async function setManager(req: Request, res: Response) {
   try {
     if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
     const { manager_id } = req.body as { manager_id?: string | null }
     const mgr = manager_id || null
@@ -389,9 +410,10 @@ export async function setManager(req: Request, res: Response) {
 export async function setPassword(req: Request, res: Response) {
   try {
     if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
     const { password } = req.body as { password?: string }
-    if (!password || password.length < 6) return fail(res, 'Mật khẩu phải có ít nhất 6 ký tự', 400)
+    if (!password || password.length < 8) return fail(res, 'Mật khẩu phải có ít nhất 8 ký tự', 400)
 
     const hash = await bcrypt.hash(password, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -428,6 +450,7 @@ async function employeeHasHistory(id: string): Promise<boolean> {
 export async function deleteEmployee(req: Request, res: Response) {
   try {
     if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
 
     const hasHistory = await employeeHasHistory(id)
@@ -464,6 +487,7 @@ export async function deleteEmployee(req: Request, res: Response) {
 export async function restoreEmployee(req: Request, res: Response) {
   try {
     if (await blockIfTargetSuperadmin(req, res)) return
+    if (await blockIfOutOfScope(req, res, req.params.id)) return
     const { id } = req.params
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await supabase.from('Employee')

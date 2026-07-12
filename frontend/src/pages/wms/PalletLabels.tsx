@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -579,6 +579,29 @@ export default function PalletLabels() {
   const chunk4 = (arr: LabelData[]) => { const s: LabelData[][] = []; for (let i = 0; i < arr.length; i += 4) s.push(arr.slice(i, i + 4)); return s }
   const sheets = useMemo(() => chunk4(labels), [labels])                 // preview generate/reprint
   const printSheets = useMemo(() => chunk4(printLabels), [printLabels])  // vùng in thật (ẩn off-screen)
+
+  // ── Preview thu gọn: tờ A4 (210×297mm) render đúng khổ vật lý → quá to, phải cuộn.
+  // Tự scale để 1 TỜ lọt trọn trong khung nhìn (fit-contain). CHỈ ảnh hưởng preview trên màn —
+  // vùng in thật (.pl-print-area, off-screen) giữ nguyên 210×297mm nên KHỔ IN không đổi.
+  const A4_W_PX = 793.7, A4_H_PX = 1122.5   // 210mm / 297mm @ 96dpi
+  const previewRef = useRef<HTMLDivElement>(null)
+  const [previewScale, setPreviewScale] = useState(0.5)
+  useEffect(() => {
+    const el = previewRef.current
+    if (!el) return
+    const recompute = () => {
+      const availW = el.clientWidth - 20
+      const availH = Math.min(el.clientHeight || window.innerHeight, window.innerHeight) - 20
+      if (availW <= 0) return
+      const s = Math.min(availW / A4_W_PX, availH / A4_H_PX)
+      setPreviewScale(Math.max(0.28, Math.min(1, s)))
+    }
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    ro.observe(el)
+    window.addEventListener('resize', recompute)
+    return () => { ro.disconnect(); window.removeEventListener('resize', recompute) }
+  }, [tab, sheets.length])
 
   function doPrint(mode: 'GENERATE' | 'REPRINT', items: LabelData[]) {
     if (!items.length) return
@@ -1347,7 +1370,7 @@ export default function PalletLabels() {
             </div>
           </div>
         ) : (
-        <div className="lg:flex-1 min-h-[40vh] lg:min-h-0 overflow-auto bg-slate-100 p-2 sm:p-4">
+        <div ref={previewRef} className="lg:flex-1 min-h-[40vh] lg:min-h-0 overflow-auto bg-slate-100 p-2 sm:p-4">
           {labels.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full min-h-[30vh] text-slate-400">
               <QrCode className="h-10 w-10 opacity-30 mb-2" />
@@ -1356,7 +1379,7 @@ export default function PalletLabels() {
           ) : (
             <div className="mx-auto space-y-4">
               {sheets.map((sheet, si) => (
-                <div key={si} className="pl-sheet mx-auto grid grid-cols-2 grid-rows-2 overflow-hidden bg-white shadow-sm" style={{ width: '210mm', height: '297mm' }}>
+                <div key={si} className="pl-sheet mx-auto grid grid-cols-2 grid-rows-2 overflow-hidden bg-white shadow-sm" style={{ width: '210mm', height: '297mm', zoom: previewScale }}>
                   {sheet.map(d => <PalletLabel key={d.key} d={d} />)}
                 </div>
               ))}

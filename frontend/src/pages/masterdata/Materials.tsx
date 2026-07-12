@@ -88,6 +88,9 @@ const EMPTY_FORM = {
   pallet_per_ea: '',
   weight_kg: '',
   shelf_life_days: '',
+  carton_length_cm: '',
+  carton_width_cm: '',
+  carton_height_cm: '',
   old_code: '',
   batch_prefix: '',
   notes: '',
@@ -262,6 +265,10 @@ export default function Materials() {
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
+    else { labels.push('(bỏ trống)'); keys.push('batch_prefix'); ex.push('') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
+    labels.push('Thùng dài (cm)', 'Thùng rộng (cm)', 'Thùng cao (cm)')
+    keys.push('carton_length_cm', 'carton_width_cm', 'carton_height_cm')
+    ex.push(38, 28.5, 24)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -293,6 +300,9 @@ export default function Materials() {
       pallet_per_ea:        mat.pallet_per_ea      != null ? String(mat.pallet_per_ea)      : '',
       weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
+      carton_length_cm:     mat.carton_length_cm    != null ? String(mat.carton_length_cm)    : '',
+      carton_width_cm:      mat.carton_width_cm     != null ? String(mat.carton_width_cm)     : '',
+      carton_height_cm:     mat.carton_height_cm    != null ? String(mat.carton_height_cm)    : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
       notes:                mat.notes ?? '',
@@ -339,6 +349,9 @@ export default function Materials() {
         pallet_per_ea:                 form.pallet_per_ea ? Number(form.pallet_per_ea) : undefined,
         weight_kg:                     Number(form.weight_kg),
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
+        carton_length_cm:              form.carton_length_cm ? Number(form.carton_length_cm) : null,
+        carton_width_cm:               form.carton_width_cm  ? Number(form.carton_width_cm)  : null,
+        carton_height_cm:              form.carton_height_cm ? Number(form.carton_height_cm) : null,
         old_code:                      form.old_code.trim() || undefined,
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
         notes:                         form.notes.trim() || undefined,
@@ -974,6 +987,18 @@ export default function Materials() {
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">KG</Label>
               <Input type="number" min={0} step="0.01" className="col-span-2 h-7 text-xs" value={form.weight_kg} onChange={e => setField('weight_kg', e.target.value)} placeholder="Khối lượng (kg/thùng)" />
+            </div>
+
+            {/* Kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Thùng D×R×C (cm)</Label>
+              <div className="col-span-2 flex items-center gap-1.5">
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_length_cm} onChange={e => setField('carton_length_cm', e.target.value)} placeholder="Dài" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_width_cm} onChange={e => setField('carton_width_cm', e.target.value)} placeholder="Rộng" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_height_cm} onChange={e => setField('carton_height_cm', e.target.value)} placeholder="Cao" />
+              </div>
             </div>
 
             {/* HSD */}

@@ -42,6 +42,7 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.3",
     "tailwind-merge": "^2.2.0",
+    "three": "^0.185.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^4.5.0",
     "zxing-wasm": "^3.1.0"
@@ -51,6 +52,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
+    "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.33",

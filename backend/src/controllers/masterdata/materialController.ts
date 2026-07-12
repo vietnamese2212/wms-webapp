@@ -67,6 +67,7 @@ export async function createMaterial(req: Request, res: Response) {
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
+      carton_length_cm, carton_width_cm, carton_height_cm,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
@@ -90,6 +91,9 @@ export async function createMaterial(req: Request, res: Response) {
         units_per_carton: units_per_carton != null ? Number(units_per_carton) : null,
         pallet_per_ea: pallet_per_ea != null ? Number(pallet_per_ea) : null,
         shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null,
+        carton_length_cm: carton_length_cm != null ? Number(carton_length_cm) : null,
+        carton_width_cm:  carton_width_cm  != null ? Number(carton_width_cm)  : null,
+        carton_height_cm: carton_height_cm != null ? Number(carton_height_cm) : null,
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
@@ -123,6 +127,7 @@ export async function updateMaterial(req: Request, res: Response) {
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
+      carton_length_cm, carton_width_cm, carton_height_cm,
     } = req.body
 
     let short_name: string | undefined
@@ -150,6 +155,9 @@ export async function updateMaterial(req: Request, res: Response) {
     if (units_per_carton !== undefined) patch.units_per_carton = units_per_carton != null ? Number(units_per_carton) : null
     if (pallet_per_ea !== undefined) patch.pallet_per_ea = pallet_per_ea != null ? Number(pallet_per_ea) : null
     if (shelf_life_days !== undefined) patch.shelf_life_days = shelf_life_days != null ? Number(shelf_life_days) : null
+    if (carton_length_cm !== undefined) patch.carton_length_cm = carton_length_cm != null ? Number(carton_length_cm) : null
+    if (carton_width_cm  !== undefined) patch.carton_width_cm  = carton_width_cm  != null ? Number(carton_width_cm)  : null
+    if (carton_height_cm !== undefined) patch.carton_height_cm = carton_height_cm != null ? Number(carton_height_cm) : null
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null
@@ -209,7 +217,8 @@ export async function listCategories(_req: Request, res: Response) {
 // batch_prefix (ĐV2 tem `;`) THÊM Ở CUỐI để không xê dịch cột cũ. File ĐV1 KHÔNG có cột này (12 cột) →
 // r[12] undefined → giữ nguyên (không đụng). File ĐV2 thêm cột thứ 13 = mã tắt mã lô.
 const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
-  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix'] as const
+  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix',
+  'carton_length_cm', 'carton_width_cm', 'carton_height_cm'] as const   // kích thước thùng (cm) THÊM Ở CUỐI — file cũ ngắn hơn → giữ nguyên
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
@@ -273,6 +282,9 @@ export async function uploadExcel(req: Request, res: Response) {
       const sld          = mInt(row.shelf_life_days)
       const notes        = mStr(row.notes)
       const batchPrefix  = (() => { const s = mStr(row.batch_prefix); return s ? s.toUpperCase() : null })()  // ĐV2: mã tắt mã lô
+      const cLen         = mNum(row.carton_length_cm)
+      const cWid         = mNum(row.carton_width_cm)
+      const cHei         = mNum(row.carton_height_cm)
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
       // Đắp ô CÓ GIÁ TRỊ lên base (ô trống → giữ nguyên base)
       const apply = (base: Record<string, unknown>) => {
@@ -288,6 +300,9 @@ export async function uploadExcel(req: Request, res: Response) {
         if (sld          != null) base.shelf_life_days = sld
         if (notes        != null) base.notes = notes
         if (batchPrefix  != null) base.batch_prefix = batchPrefix
+        if (cLen         != null) base.carton_length_cm = cLen
+        if (cWid         != null) base.carton_width_cm  = cWid
+        if (cHei         != null) base.carton_height_cm = cHei
         base.updated_at = now
         return base
       }
@@ -315,7 +330,9 @@ export async function uploadExcel(req: Request, res: Response) {
           id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
           custom_short_name: customShort, category, product_type, unit, weight_kg,
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
-          shelf_life_days: sld, notes, batch_prefix: batchPrefix, is_active: true, created_at: now, updated_at: now,
+          shelf_life_days: sld, notes, batch_prefix: batchPrefix,
+          carton_length_cm: cLen, carton_width_cm: cWid, carton_height_cm: cHei,
+          is_active: true, created_at: now, updated_at: now,
         })
       }
     }

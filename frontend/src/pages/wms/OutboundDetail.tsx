@@ -8,7 +8,7 @@ import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/ut
 import { isQtyLike } from '@/utils/inventoryMode'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -32,6 +32,7 @@ import { EditGDOModal, gdoKey } from './Outbound'
 import { printDeliveryNote } from './printDeliveryNote'
 import { statusText } from '@/lib/rowStatus'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
+import { LoadPlan3DDialog } from '@/components/wms/LoadPlan3DDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -1224,6 +1225,7 @@ export default function OutboundDetail() {
   const canManagePause = can(perms, 'outbound', 'edit')  // Tạm dừng/Tiếp tục = patchGDO → route đòi outbound.edit
 
   const [showStart,         setShowStart]         = useState(false)
+  const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
   const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
@@ -1427,6 +1429,12 @@ export default function OutboundDetail() {
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,
     })
+  // Sơ đồ xếp xe 3D — chỉ đọc, hướng dẫn thứ tự xếp thùng lên xe theo số lượng đơn
+  actionItems.push({
+    key: 'load-plan', icon: Boxes, label: 'Xếp xe 3D', tip: 'Sơ đồ 3D xếp thùng lên xe theo số lượng đơn (hướng dẫn thứ tự xếp)',
+    className: 'text-slate-600',
+    onClick: () => setShowLoadPlan(true),
+  })
   // In Phiếu xuất kho — chỉ đọc, in được ở mọi trạng thái (phiếu ghi rõ trạng thái)
   actionItems.push({
     key: 'print', icon: Printer, label: 'In phiếu', tip: 'In Phiếu xuất kho (A4)',
@@ -1472,6 +1480,9 @@ export default function OutboundDetail() {
     <>
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
+      )}
+      {showLoadPlan && (
+        <LoadPlan3DDialog open={showLoadPlan} onClose={() => setShowLoadPlan(false)} gdo={gdo} />
       )}
       {/* "Xuất luôn" (kho QTY/NONE): nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành + trừ tồn */}
       <Dialog open={showQuickExport} onOpenChange={v => { if (!v && !quickExporting) { setShowQuickExport(false); setQuickErr(null) } }}>

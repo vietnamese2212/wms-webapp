@@ -43,13 +43,19 @@ export async function reorderVehicleTypes(req: Request, res: Response) {
 
 export async function createVehicleType(req: Request, res: Response) {
   try {
-    const { code, name } = req.body as { code: string; name: string }
+    const { code, name, box_length_cm, box_width_cm, box_height_cm } = req.body as { code: string; name: string; box_length_cm?: number | null; box_width_cm?: number | null; box_height_cm?: number | null }
     if (!code || !name) return fail(res, 'code và name là bắt buộc', 400)
     const now = new Date().toISOString()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = req.user?.name || null
     const { data, error } = await supabase.from('VehicleType')
-      .insert({ id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(), is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor })
+      .insert({
+        id: randomUUID(), code: code.toUpperCase().trim(), name: name.trim(), is_active: true,
+        box_length_cm: box_length_cm != null ? Number(box_length_cm) : null,
+        box_width_cm:  box_width_cm  != null ? Number(box_width_cm)  : null,
+        box_height_cm: box_height_cm != null ? Number(box_height_cm) : null,
+        created_at: now, updated_at: now, created_by: actor, updated_by: actor,
+      })
       .select().single()
     if (error) return fail(res, error.message)
     return ok(res, data, 201)
@@ -59,11 +65,14 @@ export async function createVehicleType(req: Request, res: Response) {
 export async function updateVehicleType(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { code, name, is_active } = req.body as { code?: string; name?: string; is_active?: boolean }
+    const { code, name, is_active, box_length_cm, box_width_cm, box_height_cm } = req.body as { code?: string; name?: string; is_active?: boolean; box_length_cm?: number | null; box_width_cm?: number | null; box_height_cm?: number | null }
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (code      !== undefined) updates.code      = code.toUpperCase().trim()
     if (name      !== undefined) updates.name      = name.trim()
     if (is_active !== undefined) updates.is_active = is_active
+    if (box_length_cm !== undefined) updates.box_length_cm = box_length_cm != null ? Number(box_length_cm) : null
+    if (box_width_cm  !== undefined) updates.box_width_cm  = box_width_cm  != null ? Number(box_width_cm)  : null
+    if (box_height_cm !== undefined) updates.box_height_cm = box_height_cm != null ? Number(box_height_cm) : null
     const { data, error } = await supabase.from('VehicleType')
       .update(updates).eq('id', id).select().single()
     if (error) return fail(res, error.message)

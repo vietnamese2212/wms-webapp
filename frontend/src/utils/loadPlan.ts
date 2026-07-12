@@ -50,7 +50,7 @@ export interface LoadPlan {
 
 export const ASSUMED_CARTON = { l: 422, w: 233, h: 100 }   // mm — cỡ thùng chuẩn user đưa 12/07
 
-type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number }
+type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number; groups: Set<number> }
 
 // "Gần kích thước" = trùng nhau khi làm tròn về cm — cùng class thì gom chung khối
 const classKeyOf = (g: LoadGroup) => `${Math.round(g.l / 10)}x${Math.round(g.w / 10)}x${Math.round(g.h / 10)}`
@@ -97,8 +97,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     let shelfOrient: { fl: number; fw: number } | null = null
     const closeShelf = () => { if (shelfDepth > 0) { shelfX += shelfDepth; shelfDepth = 0; cursorY = 0 } shelfKey = null; shelfOrient = null }
 
-    // Trạng thái KHỐI kích thước đang mở (trong 1 đơn)
-    let openCol: { col: Col; used: number; cap: number } | null = null   // chân dở — mã sau CÙNG class lấp tiếp (cap = trần lớp của chân)
+    // Trạng thái KHỐI kích thước đang mở (trong 1 đơn) — object để TS không narrow sai qua closure
+    const st: { openCol: { col: Col; used: number; cap: number } | null } = { openCol: null }   // chân dở — mã sau CÙNG class lấp tiếp (cap = trần lớp của chân)
     let classCols: Col[] = []                               // các chân của class hiện tại (để rải phần dư lên nóc)
 
     // Đặt 1 chân MỚI của class: shelf logic; take = số lớp đổ vào (≤ std)
@@ -128,60 +128,102 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       step++
       for (let k = 0; k < take; k++)
         placed.push({ x: shelfX, y: cursorY, z: k * g.h, l: pick.fl, w: pick.fw, h: g.h, group: gi, step })
-      const col: Col = { x: shelfX, y: cursorY, fl: pick.fl, fw: pick.fw, top: take * g.h, doKey: g.doKey, step }
+      const col: Col = { x: shelfX, y: cursorY, fl: pick.fl, fw: pick.fw, top: take * g.h, doKey: g.doKey, step, groups: new Set([gi]) }
       cols.push(col); classCols.push(col)
       cursorY += pick.fw
       shelfDepth = Math.max(shelfDepth, pick.fl)
       shelfKey = rowKey
-      openCol = take < std ? { col, used: take, cap: std } : null
+      st.openCol = take < std ? { col, used: take, cap: std } : null
       return true
     }
 
-    // Đổ hàng 1 MÃ vào class đang mở (liền mạch — lấp chân dở trước, rồi chân mới)
-    // isClassTail: mã CUỐI của class → phần dư rải lên nóc khối class (giao thoa)
-    const pourGroup = (g: LoadGroup, gi: number, count: number, std: number, rowKey: string, isClassTail: boolean) => {
-      let remaining = count
-      // 1) Lấp tiếp CHÂN DỞ của mã trước (cùng kích thước → đè lên nhau, không hở)
-      // Trần chân dở = min(trần chân, trần lớp của mã đang đổ) — mã yếu (max lớp thấp) không bị chồng quá
-      if (openCol && remaining > 0) {
-        const effCap = Math.min(openCol.cap, std)
-        const take = Math.min(remaining, Math.max(0, effCap - openCol.used))
-        if (take > 0) {
-          step++
-          for (let k = 0; k < take; k++)
-            placed.push({ x: openCol.col.x, y: openCol.col.y, z: openCol.col.top + k * g.h, l: openCol.col.fl, w: openCol.col.fw, h: g.h, group: gi, step })
-          openCol.col.top += take * g.h
-          openCol.used += take
-          openCol.cap = effCap
-          remaining -= take
-        }
-        if (openCol.used >= effCap) openCol = null
-      }
-      // 2) Chân mới đầy đủ std lớp
-      while (remaining >= std) {
-        if (!newColumn(g, gi, std, std, rowKey)) { leftover.push({ group: gi, count: remaining }); return }
-        remaining -= std
-      }
-      if (remaining <= 0) return
-      // 3) Đuôi mã
-      if (!isClassTail) {
-        // mã sau cùng class sẽ lấp tiếp → để chân dở
-        if (!newColumn(g, gi, remaining, std, rowKey)) leftover.push({ group: gi, count: remaining })
-        return
-      }
-      // 3b) ĐUÔI CLASS (giao thoa): rải lên NÓC khối của chính class — mỗi chân tối đa 1 lớp thêm
-      for (const oc of classCols) {
-        if (remaining <= 0) break
-        if (oc === openCol?.col) continue
+    // Rải phần dư lên NÓC khối class (CHỈ khi sàn hết chỗ) — ƯU TIÊN: chân CÙNG MÃ trước →
+    // chân cùng loại; trong mỗi nhóm đi TỪ PHÍA CỬA vào (step giảm dần — người bốc với tới được).
+    const spillOnRoof = (g: LoadGroup, gi: number, rem: number): number => {
+      const cands = [...classCols]
+        .filter(oc => oc !== st.openCol?.col)
+        .sort((a, b) =>
+          ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (b.step - a.step))
+      for (const oc of cands) {
+        if (rem <= 0) break
         if (truck.height - oc.top < g.h) continue
-        if (g.maxLayers != null && Math.round(oc.top / g.h) >= g.maxLayers) continue   // không vượt trần lớp của mã
+        if (g.maxLayers != null && Math.round(oc.top / g.h) >= g.maxLayers) continue
         step++
         placed.push({ x: oc.x, y: oc.y, z: oc.top, l: oc.fl, w: oc.fw, h: g.h, group: gi, step })
         oc.top += g.h
-        remaining -= 1
+        oc.groups.add(gi)
+        rem -= 1
       }
-      // vẫn còn (không đủ trần) → chân dở đứng CUỐI khối (khối vẫn 1 loại kích thước)
-      if (remaining > 0 && !newColumn(g, gi, remaining, std, rowKey)) leftover.push({ group: gi, count: remaining })
+      return rem
+    }
+
+    // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) theo dãy TARGET 2 MỨC:
+    // n1 chân TRONG cao stdBase + m chân NGOÀI thấp L2 (hạ lớp dần ra cửa, mức đều dễ nhìn
+    // — user: "hạ từ 18 xuống 16"). Giải n1·std + m·L2 = C với L2 lớn nhất có thể.
+    const buildTargets = (C: number, stdBase: number): number[] => {
+      const targets: number[] = []
+      const a = Math.floor(C / stdBase), r = C % stdBase
+      if (r === 0) { for (let i = 0; i < a; i++) targets.push(stdBase); return targets }
+      if (a === 0) { targets.push(r); return targets }
+      let found: { L2: number; m: number; n1: number } | null = null
+      for (let L2 = stdBase - 1; L2 >= 1 && !found; L2--) {
+        for (let m = 1; m * L2 <= C; m++) {
+          const rest = C - m * L2
+          if (rest % stdBase === 0) { found = { L2, m, n1: rest / stdBase }; break }
+        }
+      }
+      const { L2, m, n1 } = found!   // luôn tồn tại (L2=1, m=r)
+      for (let i = 0; i < n1; i++) targets.push(stdBase)
+      for (let i = 0; i < m; i++) targets.push(L2)
+      return targets
+    }
+
+    const pourClass = (members: number[], capH: number, rowKey: string) => {
+      const stdBase = Math.max(1, Math.min(Math.round(capH * f), capH))
+      const C = members.reduce((s, gi) => s + groupsIn[gi].count, 0)
+      const targets = buildTargets(C, stdBase)
+      let t = 0
+      st.openCol = null; classCols = []
+      for (const gi of members) {
+        const g = groupsIn[gi]
+        const myCap = g.maxLayers ?? Infinity
+        let remaining = g.count
+        while (remaining > 0) {
+          // 1) Lấp tiếp CHÂN DỞ (mã sau đè lên chân dở mã trước — không hở);
+          //    trần hiệu dụng = min(target của chân, maxLayers của mã đang đổ)
+          // TS không thấy newColumn (closure) gán st.openCol → narrow nhầm null; cast typed để thoát
+          const oc = st.openCol as { col: Col; used: number; cap: number } | null
+          if (oc) {
+            const effCap = Math.min(oc.cap, myCap)
+            const take = Math.min(remaining, Math.max(0, effCap - oc.used))
+            if (take > 0) {
+              step++
+              for (let k = 0; k < take; k++)
+                placed.push({ x: oc.col.x, y: oc.col.y, z: oc.col.top + k * g.h, l: oc.col.fl, w: oc.col.fw, h: g.h, group: gi, step })
+              oc.col.top += take * g.h
+              oc.used += take
+              oc.col.groups.add(gi)
+              remaining -= take
+            }
+            if (oc.used >= effCap) st.openCol = null
+            if (take > 0) continue
+            st.openCol = null   // mã này không đổ thêm được vào chân dở (maxLayers) → sang chân mới
+            continue
+          }
+          // 2) Chân mới theo target kế tiếp (hết dãy target — hụt do maxLayers → dùng stdBase)
+          const target = targets[t] ?? stdBase
+          t++
+          const take = Math.min(remaining, Math.min(target, myCap))
+          if (!newColumn(g, gi, take, target, rowKey)) {
+            // SÀN HẾT CHỖ → tràn phần dư lên nóc (cùng mã trước, phía cửa) rồi mới bỏ thừa
+            remaining = spillOnRoof(g, gi, remaining)
+            if (remaining > 0) leftover.push({ group: gi, count: remaining })
+            break
+          }
+          remaining -= take
+        }
+      }
+      st.openCol = null
     }
 
     // Luật 2: đi từng ĐƠN — sàn (theo khối kích thước) → hàng nhẹ lên nóc → đơn sau
@@ -201,14 +243,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           continue
         }
         const capH = Math.max(1, Math.floor((truck.height - reserveH) / maxH))
-        const rowKey = `${dk}|${ck}`
-        openCol = null; classCols = []
-        members.forEach((gi, idx) => {
-          const g = groupsIn[gi]
-          const std = Math.max(1, Math.min(Math.round(capH * f), capH, g.maxLayers ?? Infinity))
-          pourGroup(g, gi, g.count, std, rowKey, idx === members.length - 1)
-        })
-        openCol = null
+        pourClass(members, capH, `${dk}|${ck}`)
       }
       // Hàng nhẹ của đơn — ưu tiên nóc chân cùng đơn, hết nóc mới xuống sàn
       for (const gi of topOrder) {
@@ -217,8 +252,9 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         let remaining = g.count
         const capOwn = g.h > truck.height ? 0 : Math.max(1, Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? Infinity))
         if (capOwn > 0) {
+          // Ưu tiên nóc chân cùng đơn, đi TỪ PHÍA CỬA vào (người bốc với tới được)
           const hosts = [...cols].sort((a, b) =>
-            ((a.doKey === dk ? 0 : 1) - (b.doKey === dk ? 0 : 1)) || (a.step - b.step))
+            ((a.doKey === dk ? 0 : 1) - (b.doKey === dk ? 0 : 1)) || (b.step - a.step))
           for (const host of hosts) {
             if (remaining <= 0) break
             const head = truck.height - host.top
@@ -236,24 +272,25 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         }
         if (remaining > 0) {
           // hết nóc → xuống sàn như 1 class riêng của chính nó
-          const ck = classKeyOf(g)
-          const cap = g.h > truck.height ? 0 : Math.max(1, Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? Infinity))
-          if (cap === 0 || Math.min(g.l, g.w) > truck.width) { leftover.push({ group: gi, count: remaining }); continue }
-          const std = Math.max(1, Math.min(cap, Math.round(cap * f)))
-          openCol = null; classCols = []
-          pourGroup(g, gi, remaining, std, `${dk}|top|${ck}`, true)
-          openCol = null
+          if (g.h > truck.height || Math.min(g.l, g.w) > truck.width) { leftover.push({ group: gi, count: remaining }); continue }
+          const capOwnH = Math.max(1, Math.floor(truck.height / g.h))
+          const savedCount = g.count
+          // pourClass đọc count từ groupsIn — tạm thay bằng phần còn lại
+          ;(groupsIn[gi] as { count: number }).count = remaining
+          pourClass([gi], capOwnH, `${dk}|top|${classKeyOf(g)}`)
+          ;(groupsIn[gi] as { count: number }).count = savedCount
         }
       }
     }
     return { placed, leftover, step }
   }
 
-  // f=1: chồng kịch số lớp. Nếu ĐỦ hết → hạ lớp dần (f nhỏ nhất vẫn xếp đủ) để trải hết chiều dài xe.
+  // f=1: chồng kịch số lớp. Nếu ĐỦ hết → hạ lớp dần (f nhỏ nhất vẫn xếp đủ) để trải TỚI ĐUÔI XE.
+  // Lưới mịn — hạ được tới 1-2 lớp; sàn hết chỗ thì phần dư tự tràn lên nóc phía cửa.
   let best = pack(1)
   let f = 1
   if (best.leftover.length === 0) {
-    for (const cand of [0.12, 0.2, 0.3, 0.42, 0.55, 0.7, 0.85]) {
+    for (const cand of [0.04, 0.06, 0.09, 0.12, 0.16, 0.21, 0.27, 0.34, 0.42, 0.51, 0.61, 0.72, 0.84]) {
       const r = pack(cand)
       if (r.leftover.length === 0) { best = r; f = cand; break }
     }

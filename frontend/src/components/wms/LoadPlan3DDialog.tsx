@@ -61,6 +61,29 @@ function makeLabelSprite(THREE: typeof import('three'), text: string, color: str
   return { sprite, aspect: canvas.width / canvas.height }
 }
 
+// Badge nhỏ tối màu — ký hiệu SỐ LỚP của 1 vùng chân (1 badge cho cả vùng cùng số lớp)
+function makeBadgeSprite(THREE: typeof import('three'), text: string) {
+  const font = 'bold 40px system-ui, sans-serif'
+  const measure = document.createElement('canvas').getContext('2d')!
+  measure.font = font
+  const textW = measure.measureText(text).width
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(140, Math.ceil(textW) + 56)
+  canvas.height = 88
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = 'rgba(15,23,42,0.88)'
+  ctx.beginPath()
+  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 40)
+  ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.font = font
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2)
+  const tex = new THREE.CanvasTexture(canvas)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }))
+  return { sprite, aspect: canvas.width / canvas.height }
+}
+
 export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClose: () => void; gdo: GDO }) {
   const { data: vehicleTypes = [] } = useVehicleTypes(true)
 
@@ -363,6 +386,44 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         cone.position.set(e.bx, e.btop + 80, e.bz)
         cone.rotation.x = Math.PI
         boxGroup.add(cone)
+      }
+    }
+
+    // KÝ HIỆU SỐ LỚP theo VÙNG: gom chân theo số lớp — vùng liền nhau cùng số lớp = 1 badge;
+    // khu vực có số lớp KHÁC → badge riêng (không ghi từng chân).
+    {
+      const colInfo = new Map<string, { cx: number; cy: number; count: number; top: number }>()
+      for (const bk of buckets.values()) for (const { b } of bk.boxes) {
+        const k = `${b.x}|${b.y}`
+        const c = colInfo.get(k) ?? { cx: b.x + b.l / 2, cy: b.y + b.w / 2, count: 0, top: 0 }
+        c.count++
+        c.top = Math.max(c.top, b.z + b.h)
+        colInfo.set(k, c)
+      }
+      const byCount = new Map<number, { cx: number; cy: number; top: number }[]>()
+      for (const c of colInfo.values()) {
+        if (!byCount.has(c.count)) byCount.set(c.count, [])
+        byCount.get(c.count)!.push(c)
+      }
+      for (const [count, colsOfCount] of byCount) {
+        // cụm theo x liền kề (hở > 1200mm = vùng mới)
+        const sorted = [...colsOfCount].sort((a, b) => a.cx - b.cx)
+        const clusters: typeof sorted[] = []
+        for (const c of sorted) {
+          const last = clusters[clusters.length - 1]
+          if (last && c.cx - last[last.length - 1].cx <= 1200) last.push(c)
+          else clusters.push([c])
+        }
+        for (const cl of clusters) {
+          const mx = cl.reduce((s, c) => s + c.cx, 0) / cl.length
+          const my = cl.reduce((s, c) => s + c.cy, 0) / cl.length
+          const mtop = Math.max(...cl.map(c => c.top))
+          const { sprite, aspect } = makeBadgeSprite(THREE, `${count} lớp`)
+          sprite.position.set(toX(mx, 0), mtop + 130, toZ(my, 0))
+          const bh = 170
+          sprite.scale.set(bh * aspect, bh, 1)
+          boxGroup.add(sprite)
+        }
       }
     }
 

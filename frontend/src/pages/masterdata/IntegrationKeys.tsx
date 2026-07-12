@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
-import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2 } from 'lucide-react'
+import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin } from '@/config/permissions'
@@ -26,6 +26,15 @@ const SCOPE_OPTS: { key: string; label: string }[] = [
   { key: 'scans:read',     label: 'Lịch sử quét' },
 ]
 const ALL_SCOPES = SCOPE_OPTS.map(s => s.key)
+
+// Tài liệu 5 endpoint (khớp backend/src/routes/integration.ts + exportController.ts).
+const ENDPOINT_DOCS: { path: string; scope: string; label: string; fields: string }[] = [
+  { path: '/materials',        scope: 'materials:read', label: 'Mã hàng',      fields: 'material_code, material_description, short_name, category, product_type, unit, cartons_per_pallet, units_per_carton, shelf_life_days, batch_prefix, is_active' },
+  { path: '/inventory',        scope: 'inventory:read', label: 'Tồn kho',      fields: 'pallet_code, batch (mã lô), expiry_date (HSD), production_date, material_code, warehouse_id, location_id, cartons_imported, cartons_remaining, cartons_reserved, status, ncc_id, import_date' },
+  { path: '/inbound-receipts', scope: 'inbound:read',   label: 'Phiếu nhập',   fields: 'import_code, material_code, warehouse_id, warehouse_type, planned_cartons, planned_pallets, status, source_type, ncc_id, import_date' },
+  { path: '/outbound-orders',  scope: 'outbound:read',  label: 'Phiếu xuất',   fields: 'group_code, planned_date, delivery_date, warehouse_id, warehouse_type, dvvt, shipto_party, license_plate, status, transfer_status, completed_at' },
+  { path: '/scan-entries',     scope: 'scans:read',     label: 'Lịch sử quét', fields: 'item_id, inventory_entry_id, pallet_code, cartons_scanned, production_date, pct_date, is_loose_picking, scanned_at, scanned_by' },
+]
 const errMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Có lỗi xảy ra, thử lại'
 
@@ -37,6 +46,7 @@ export default function IntegrationKeys() {
   const qc = useQueryClient()
 
   const [showForm, setShowForm] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [name, setName] = useState('')
   const [scopes, setScopes] = useState<string[]>(ALL_SCOPES)
   const [createdKey, setCreatedKey] = useState<{ name: string; key: string } | null>(null)
@@ -113,6 +123,9 @@ export default function IntegrationKeys() {
           </span>
           <span className="hidden md:inline text-[11px] text-slate-400">ERP gọi <code className="text-slate-500">{baseUrl}/…</code> kèm header <code className="text-slate-500">X-API-Key</code></span>
           <div className="flex-1" />
+          <Button size="sm" variant="outline" onClick={() => setShowHelp(true)}>
+            <BookOpen className="h-4 w-4 mr-1" /> Hướng dẫn API
+          </Button>
           <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => { setErr(null); setShowForm(true) }}>
             <Plus className="h-4 w-4 mr-1" /> Tạo key
           </Button>
@@ -276,6 +289,104 @@ export default function IntegrationKeys() {
             <Button className={confirmActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-red-600 hover:bg-red-700'} disabled={busy} onClick={runConfirm}>
               {busy ? 'Đang xử lý…' : (confirmActive ? 'Thu hồi' : 'Xóa hẳn')}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hướng dẫn API — tài liệu tích hợp ERP */}
+      <Dialog open={showHelp} onOpenChange={setShowHelp}>
+        <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5 text-blue-600" /> Hướng dẫn kết nối ERP (pull API)</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 text-[13px] text-slate-700 leading-relaxed">
+            {/* 1. Tổng quan */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">API này để làm gì?</h3>
+              <p>
+                Cổng <b>chỉ-đọc (read-only)</b> để ERP bên ngoài (SAP, FAST…) <b>tự gọi vào</b> lấy dữ liệu WMS về:
+                mã hàng, tồn kho (kèm mã lô + HSD), phiếu nhập, phiếu xuất, lịch sử quét. WMS <b>không</b> ghi ngược sang ERP —
+                ERP chủ động đồng bộ theo lịch của họ. Mỗi đơn vị có <b>URL + key riêng</b> (dữ liệu cách ly tuyệt đối).
+              </p>
+            </section>
+
+            {/* 2. Base URL + xác thực */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">1 · Địa chỉ &amp; xác thực</h3>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 min-w-0 break-all rounded bg-slate-900 text-slate-100 px-2 py-1.5 font-mono text-[12px]">{baseUrl}</code>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => copyText(baseUrl, 'doc-url')}>
+                  {copiedId === 'doc-url' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+              <p>Mọi request gắn header <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px]">X-API-Key: &lt;key&gt;</code> (key tạo ở nút "Tạo key"). Sai/thu hồi key → <code className="font-mono">401</code>; thiếu phạm vi → <code className="font-mono">403</code>.</p>
+            </section>
+
+            {/* 3. Endpoints */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">2 · Các endpoint (đều là <code className="font-mono text-[12px]">GET</code>)</h3>
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="min-w-full text-[12px]">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-medium">Đường dẫn</th>
+                      <th className="px-2 py-1.5 text-left font-medium">Dữ liệu</th>
+                      <th className="px-2 py-1.5 text-left font-medium">Phạm vi (scope)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ENDPOINT_DOCS.map(e => (
+                      <tr key={e.path} className="border-t align-top">
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap text-slate-700">{e.path}</td>
+                        <td className="px-2 py-1.5">
+                          <div className="font-medium text-slate-700">{e.label}</div>
+                          <div className="text-[11px] text-slate-400">{e.fields}</div>
+                        </td>
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap text-slate-500">{e.scope}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* 4. Tham số */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">3 · Tham số truy vấn (query)</h3>
+              <ul className="list-disc pl-5 space-y-1">
+                <li><code className="font-mono text-[12px]">updated_since</code> — ISO 8601 (vd <code className="font-mono">2026-01-01T00:00:00Z</code>). Chỉ lấy bản ghi thay đổi từ mốc này (đồng bộ <b>delta</b>). Bỏ trống = lấy từ đầu.</li>
+                <li><code className="font-mono text-[12px]">limit</code> — số dòng/trang, mặc định <b>500</b>, tối đa <b>1000</b>.</li>
+                <li><code className="font-mono text-[12px]">cursor</code> — con trỏ trang kế (lấy từ <code className="font-mono">next_cursor</code> của phản hồi trước). Đã tự nhớ cả mốc <code className="font-mono">updated_since</code> nên các trang sau <b>chỉ cần truyền cursor</b>.</li>
+              </ul>
+            </section>
+
+            {/* 5. Phản hồi + phân trang */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">4 · Phản hồi &amp; phân trang</h3>
+              <pre className="overflow-x-auto rounded bg-slate-900 text-slate-100 px-3 py-2 font-mono text-[11px] leading-snug">{`{
+  "success": true,
+  "data": [ { ... }, { ... } ],
+  "paging": { "count": 500, "has_more": true, "next_cursor": "eyJ..." }
+}`}</pre>
+              <p>Lặp: gọi endpoint → xử lý <code className="font-mono">data</code> → nếu <code className="font-mono">next_cursor</code> khác <code className="font-mono">null</code> thì gọi lại kèm <code className="font-mono">?cursor=&lt;next_cursor&gt;</code>, tới khi <code className="font-mono">next_cursor = null</code>. Lần sync sau đặt <code className="font-mono">updated_since</code> = <code className="font-mono">updated_at</code> lớn nhất đã nhận.</p>
+            </section>
+
+            {/* 6. Ví dụ */}
+            <section className="space-y-1.5">
+              <h3 className="font-semibold text-slate-800">5 · Ví dụ (curl)</h3>
+              <div className="flex items-start gap-2">
+                <pre className="flex-1 min-w-0 overflow-x-auto rounded bg-slate-900 text-slate-100 px-3 py-2 font-mono text-[11px] leading-snug">{`curl -H "X-API-Key: <KEY>" \\
+  "${baseUrl}/inventory?updated_since=2026-01-01T00:00:00Z&limit=500"`}</pre>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => copyText(`curl -H "X-API-Key: <KEY>" "${baseUrl}/inventory?updated_since=2026-01-01T00:00:00Z&limit=500"`, 'doc-curl')}>
+                  {copiedId === 'doc-curl' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            </section>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowHelp(false)}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

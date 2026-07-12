@@ -615,6 +615,7 @@ export interface OutboundScanEntry {
   pct_date:             number | null
   production_date:      string | null
   best_available_date:  string | null  // production_date tốt nhất trong kho lúc quét (cũ nhất, không QA)
+  carton_scans?:        { code: string; match: boolean; at?: string }[] | null  // mã THÙNG đính kèm (multiscan, truy vết)
 }
 
 export interface OutboundItem {
@@ -703,4 +704,6 @@ export interface GDO {
   updated_by?:     string | null
   // Detail
   delivery_orders?: OutboundDelivery[]
+  // Xuất: Kho/Loại kho có bắt multiscan tem thùng sau khi quét pallet không (getGDO tính, Kho đè Loại kho)
+  carton_scan_enabled?: boolean
 }

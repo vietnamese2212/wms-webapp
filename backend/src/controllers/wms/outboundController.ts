@@ -11,6 +11,7 @@ import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
+import { warehouseRequiresCartonScan } from '../../utils/cartonScan'
 
 const now = () => new Date().toISOString()
 
@@ -442,7 +443,45 @@ export async function getGDO(req: Request, res: Response) {
     if (!categoryAllowed(req, (result as { warehouse_type?: string | null }).warehouse_type)) {
       return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     }
-    return ok(res, result)
+    // Cờ quét-tới-thùng cho chuyến này (Kho đè Loại kho) → FE quyết mở panel multiscan thùng sau khi quét pallet
+    const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
+    const carton_scan_enabled = await warehouseRequiresCartonScan(r.warehouse_id, r.warehouse_type)
+    return ok(res, { ...result, carton_scan_enabled })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// PATCH /wms/outbound/scan-entries/:scanId/cartons — đính danh sách mã THÙNG vào 1 dòng scan pallet
+// (truy vết, KHÔNG đụng tồn/cartons_scanned). Lưu CẢ thùng lạ mã hàng (match=false) để giữ vết.
+// FE gửi FULL danh sách hiện tại mỗi lần lưu (replace, idempotent).
+export async function attachCartonScans(req: Request, res: Response) {
+  try {
+    const { scanId } = req.params
+    const { cartons } = req.body as { cartons?: { code?: string; match?: boolean; at?: string }[] }
+    if (!Array.isArray(cartons)) return fail(res, 'cartons phải là mảng', 400)
+
+    const { data: scan } = await supabase.from('OutboundScanEntry').select('id, item_id').eq('id', scanId).maybeSingle()
+    if (!scan) return fail(res, 'Không tìm thấy dòng quét', 404)
+    // Chuỗi scan → item → DO → GDO để kiểm phạm vi kho (chống IDOR)
+    const { data: item } = await supabase.from('OutboundItem').select('do_id').eq('id', (scan as { item_id: string }).item_id).maybeSingle()
+    const { data: doRow } = item ? await supabase.from('OutboundDelivery').select('gdo_id').eq('id', (item as { do_id: string }).do_id).maybeSingle() : { data: null }
+    const { data: gdo } = doRow ? await supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', (doRow as { gdo_id: string }).gdo_id).maybeSingle() : { data: null }
+    const g = gdo as { status?: string; warehouse_id?: string | null } | null
+    if (!inScope(req, g?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
+    if (g?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể lưu', 400)
+
+    // Chuẩn hóa + loại trùng theo mã (giữ lần quét đầu)
+    const seen = new Set<string>()
+    const clean: { code: string; match: boolean; at: string }[] = []
+    for (const c of cartons) {
+      const code = normalizeQR(String(c?.code ?? ''))
+      if (!code || seen.has(code)) continue
+      seen.add(code)
+      clean.push({ code, match: c?.match !== false, at: typeof c?.at === 'string' ? c.at : now() })
+    }
+    const { error } = await supabase.from('OutboundScanEntry')
+      .update({ carton_scans: clean, updated_at: now() }).eq('id', scanId)
+    if (error) return fail(res, `Lỗi lưu mã thùng: ${error.message}`, 500)
+    return ok(res, { id: scanId, carton_count: clean.length })
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -116,7 +116,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -135,11 +135,14 @@ export async function createWarehouse(req: Request, res: Response) {
     if (parentErr) return fail(res, 400, 'VALIDATION_ERROR', parentErr)
 
     const actor = req.user?.name || null
-    const { data, error } = await supabase
-      .from('Warehouse')
-      .insert({ id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, parent_warehouse_id: parentId, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() })
-      .select().single()
-
+    const row: Record<string, unknown> = { id: randomUUID(), code: String(code).toUpperCase().trim(), name: String(name).trim(), address, warehouse_type, inventory_mode: mode, shipto_codes: shiptoArr, nmsx_code: nmsx, parent_warehouse_id: parentId, created_by: actor, updated_by: actor, updated_at: new Date().toISOString() }
+    if (carton_scan_override !== undefined) row.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
+    let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
+    // Cột carton_scan_override chưa apply migration → bỏ cột đó rồi thử lại (không chặn tạo kho)
+    if (error && /carton_scan_override/i.test(error.message) && 'carton_scan_override' in row) {
+      delete row.carton_scan_override
+      ;({ data, error } = await supabase.from('Warehouse').insert(row).select().single())
+    }
     if (error) {
       if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã kho đã tồn tại')
       throw error
@@ -150,8 +153,9 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+    if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (name !== undefined) patch.name = String(name).trim()
     if (address !== undefined) patch.address = address
     if (is_active !== undefined) patch.is_active = Boolean(is_active)
@@ -196,8 +200,13 @@ export async function updateWarehouse(req: Request, res: Response) {
       patch.inventory_mode = inventory_mode
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('Warehouse').update(patch).eq('id', req.params.id).select().maybeSingle()
+    // Cột carton_scan_override chưa apply migration → bỏ cột đó rồi thử lại (không chặn sửa kho)
+    if (error && /carton_scan_override/i.test(error.message) && 'carton_scan_override' in patch) {
+      delete patch.carton_scan_override
+      ;({ data, error } = await supabase.from('Warehouse').update(patch).eq('id', req.params.id).select().maybeSingle())
+    }
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     ok(res, data)

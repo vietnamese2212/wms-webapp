@@ -16,7 +16,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { toast } from '@/components/ui/use-toast'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, useAttachCartonScans, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { CartonScanSheet, type CartonScan } from '@/components/wms/CartonScanSheet'
+import { materialCodeOf } from '@/utils/qr'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { itemStatusText } from './Outbound'
 import { useAuthStore } from '@/stores/authStore'
@@ -80,10 +82,11 @@ type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | nul
 interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
+  cartonScanEnabled?: boolean
   onClose: () => void
 }
 
-function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const user = useAuthStore(s => s.user)
   // Số lượt quét của MÃ này đang chờ mạng (hàng đợi offline)
@@ -94,6 +97,10 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const [pendingCartons, setPendingCartons] = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
+  const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
+  // Panel multiscan tem THÙNG neo vào pallet vừa quét (chỉ khi Kho/Loại kho bật cờ)
+  const [cartonFor, setCartonFor] = useState<{ scanId: string; palletCode: string; wasComplete: boolean } | null>(null)
+  const expectedMaterialCode = item.material?.material_code ?? materialCodeOf(item.material_code_raw) ?? ''
 
   const matName   = item.material?.short_name ?? item.material_code_raw ?? '—'
   const remaining = Math.max(0, item.cartons_ordered - item.cartons_scanned)
@@ -159,6 +166,13 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           setCheckResult(null)
           const scannedNow = Number(data.scan_entry.cartons_scanned)
           const isNowComplete = scannedNow >= remaining
+          // Kho/Loại kho bật quét-thùng → mở panel multiscan thùng neo vào pallet vừa quét
+          // (chưa resume/đóng tới khi lưu/bỏ qua tem thùng)
+          if (cartonScanEnabled) {
+            setFeedback(null)
+            setCartonFor({ scanId: data.scan_entry.id, palletCode: data.scan_entry.pallet_code, wasComplete: isNowComplete })
+            return
+          }
           setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${scannedNow} thùng` })
           setTimeout(() => {
             if (isNowComplete) { onClose() }
@@ -186,6 +200,25 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
     setFeedback(null)
     setCheckResult(null)
     scannerRef.current?.resume()
+  }
+
+  // Đóng panel thùng rồi tiếp tục luồng pallet (đóng hẳn nếu item vừa đủ, không thì quét tiếp)
+  function finishCarton() {
+    const wasComplete = cartonFor?.wasComplete
+    setCartonFor(null)
+    if (wasComplete) onClose()
+    else { scannerRef.current?.resume(); setFeedback(null) }
+  }
+  function saveCarton(list: CartonScan[]) {
+    if (!cartonFor) return
+    attachCartons({ gdoId, scanId: cartonFor.scanId, cartons: list }, {
+      onSuccess: finishCarton,
+      onError: (err) => toast({
+        title: 'Lưu mã thùng lỗi',
+        description: (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Thử lại',
+        variant: 'destructive',
+      }),
+    })
   }
 
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
@@ -318,6 +351,17 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           <Button variant="outline" className="w-full" onClick={onClose} disabled={saving}>Đóng</Button>
         </div>
       </div>
+
+      {cartonFor && (
+        <CartonScanSheet
+          open
+          palletCode={cartonFor.palletCode}
+          expectedMaterialCode={expectedMaterialCode}
+          saving={attaching}
+          onSave={saveCarton}
+          onSkip={finishCarton}
+        />
+      )}
     </div>,
     document.body
   )
@@ -549,7 +593,7 @@ export default function OutboundItemDetail() {
   return (
     <>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
+        <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled} onClose={() => setShowScan(false)} />
       )}
 
       <ConfirmDialog
@@ -895,6 +939,16 @@ export default function OutboundItemDetail() {
                           <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                             {se.pallet_code}
                           </div>
+                          {Array.isArray(se.carton_scans) && se.carton_scans.length > 0 && (() => {
+                            const cs = se.carton_scans!
+                            const odd = cs.filter(c => c.match === false).length
+                            return (
+                              <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5"
+                                title={cs.map(c => `${c.match === false ? '⚠ lạ · ' : ''}${c.code}`).join('\n')}>
+                                🧰 {cs.length} thùng{odd > 0 && <span className="text-amber-600 font-semibold">· {odd} lạ</span>}
+                              </span>
+                            )
+                          })()}
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
                           {se.cartons_scanned}

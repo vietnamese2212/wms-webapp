@@ -167,7 +167,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'QTY_DATE' | 'NONE'
@@ -190,6 +190,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
+  // Đè cờ "quét tới thùng" theo Kho: inherit=theo Loại kho · on=bật · off=tắt
+  const [cartonOv,      setCartonOv]      = useState<'inherit' | 'on' | 'off'>(wh?.carton_scan_override == null ? 'inherit' : wh.carton_scan_override ? 'on' : 'off')
   const [err, setErr] = useState('')
 
   // Danh sách kho làm parent: kho thường (không phải kho phụ), trừ chính mình
@@ -209,14 +211,15 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     setErr('')
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     const parent_warehouse_id = parentId === '__none__' ? null : parentId
+    const carton_scan_override = cartonOv === 'inherit' ? null : cartonOv === 'on'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -284,6 +287,18 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <Label className="text-xs">Mã NMSX (kho tổng)</Label>
             <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
             <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Quét tới THÙNG khi xuất</Label>
+            <Select value={cartonOv} onValueChange={v => setCartonOv(v as 'inherit' | 'on' | 'off')}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="inherit">Theo Loại kho (mặc định)</SelectItem>
+                <SelectItem value="on">Bật — bắt quét tem thùng</SelectItem>
+                <SelectItem value="off">Tắt — chỉ quét pallet</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-slate-400">Đè cờ của Loại kho cho riêng kho này. "Theo Loại kho" = dùng cấu hình ở tab Loại kho.</p>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -433,6 +448,7 @@ function TypeDialog({ type, open, onClose }: {
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
   const [reqNcc,     setReqNcc]     = useState(m.requires_ncc ?? false)
+  const [reqCartonScan, setReqCartonScan] = useState(m.requires_carton_scan ?? false)
   const [useBatchChar, setUseBatchChar] = useState(!!(m.batch_char ?? '').trim())      // tick = loại dùng ký tự cố định
   const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
@@ -449,7 +465,7 @@ function TypeDialog({ type, open, onClose }: {
     if (useBatchChar && !batchChar.trim()) { setErr('Đã tick dùng ký tự mã lô — nhập 1 ký tự (vd K)'); return }
     const meta: WhTypeMeta = {
       is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
-      requires_ncc: reqNcc,
+      requires_ncc: reqNcc, requires_carton_scan: reqCartonScan,
       batch_char: useBatchChar ? batchChar.trim().toUpperCase().slice(0, 1) : '', badge_color: badge,
     }
     if (isEdit) {
@@ -518,6 +534,8 @@ function TypeDialog({ type, open, onClose }: {
               'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
             {flagRow('wt-reqncc', reqNcc, setReqNcc, 'Bắt buộc có NCC khi nhập kho',
               'Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.')}
+            {flagRow('wt-cartonscan', reqCartonScan, setReqCartonScan, 'Quét tới THÙNG khi xuất',
+              'Xuất kho: sau khi quét pallet sẽ mở multiscan quét tem từng thùng để đính kèm truy vết (không tính tồn theo thùng). Từng Kho có thể đè cờ này.')}
           </div>
 
           <div className="space-y-1.5">

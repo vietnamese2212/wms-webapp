@@ -11,6 +11,7 @@ export interface WhTypeMeta {
   requires_shelf_life?: boolean   // Mã hàng bắt buộc HSD
   requires_pallet_per_ea?: boolean// Mã hàng bắt buộc Pallet/EA
   requires_ncc?: boolean          // Nhập kho bắt buộc có NCC (quét/nhập tay/upload tồn — chuyển kho kế thừa, không chặn)
+  requires_carton_scan?: boolean  // Xuất kho: sau khi quét pallet phải multiscan tem THÙNG đính kèm (truy vết)
   batch_char?: string             // ký tự cố định thế chỗ Máy trong mã lô khi sinh tem V2
   badge_color?: string
 }

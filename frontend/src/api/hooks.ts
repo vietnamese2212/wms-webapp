@@ -230,7 +230,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -239,7 +239,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -1733,6 +1733,17 @@ export function useScanOutboundItem() {
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },
+  })
+}
+
+// Đính danh sách mã THÙNG (multiscan) vào 1 dòng scan pallet — truy vết, không đụng tồn.
+export function useAttachCartonScans() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ scanId, cartons }: { gdoId: string; scanId: string; cartons: { code: string; match: boolean; at: number }[] }) =>
+      apiClient.patch(`/wms/outbound/scan-entries/${scanId}/cartons`,
+        { cartons: cartons.map(c => ({ code: c.code, match: c.match, at: new Date(c.at).toISOString() })) }).then(r => r.data.data),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] }),
   })
 }
 

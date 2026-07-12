@@ -49,25 +49,30 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     setBoxH(vt?.box_height_cm != null ? String(vt.box_height_cm) : '')
   }
 
-  // Gom nhóm thùng theo mã hàng từ các DO của chuyến
+  // Gom nhóm thùng theo (ĐƠN × mã hàng) — thứ tự đơn giữ nguyên (xếp hết đơn 1 mới tới đơn 2)
   const groups: LoadGroup[] = useMemo(() => {
     const map = new Map<string, LoadGroup>()
     for (const d of gdo.delivery_orders ?? []) {
       for (const it of d.items) {
         if (it.cartons_ordered <= 0) continue
-        const key = it.material?.material_code ?? it.material_code_raw ?? '?'
+        const code = it.material?.material_code ?? it.material_code_raw ?? '?'
+        const key = `${d.delivery_code}|${code}`
         const hasDims = it.material?.carton_length_cm && it.material?.carton_width_cm && it.material?.carton_height_cm
         const cur = map.get(key)
         if (cur) { cur.count += it.cartons_ordered; continue }
         map.set(key, {
           key,
-          label: it.material?.short_name ?? it.material_code_raw ?? key,
+          label: it.material?.short_name ?? it.material_code_raw ?? code,
+          doKey: d.delivery_code,
+          doLabel: d.distributor_name ? `${d.delivery_code} · ${d.distributor_name}` : d.delivery_code,
           count: it.cartons_ordered,
           l: hasDims ? Number(it.material!.carton_length_cm) : ASSUMED_CARTON.l,
           w: hasDims ? Number(it.material!.carton_width_cm)  : ASSUMED_CARTON.w,
           h: hasDims ? Number(it.material!.carton_height_cm) : ASSUMED_CARTON.h,
           weightKg: it.material?.weight_kg ?? null,
           assumed: !hasDims,
+          maxLayers: it.material?.max_stack_layers ?? null,
+          onTop: it.material?.stack_on_top ?? false,
         })
       }
     }
@@ -227,6 +232,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     ? plan.groups[plan.placed.find(b => b.step === maxStep)?.group ?? -1]
     : null
   const currentColCount = plan ? plan.placed.filter(b => b.step === maxStep).length : 0
+  const doLabels = [...new Set(groups.map(g => g.doLabel))]
+  const hasManyDos = doLabels.length > 1
 
   return (
     <div className="fixed inset-0 z-[120] bg-white flex flex-col">
@@ -264,7 +271,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               <p className="text-[11px] text-center text-slate-600 mt-0.5">
                 {maxStep === 0
                   ? 'Xe trống — bấm ▶ để xem thứ tự xếp từng cột'
-                  : <>Bước <b className="tabular-nums">{maxStep}/{plan.stepCount}</b>{currentGroup && <> — xếp cột <b>{currentColCount} thùng</b> · <span className="font-medium">{currentGroup.label}</span> (cột sáng)</>}</>}
+                  : <>Bước <b className="tabular-nums">{maxStep}/{plan.stepCount}</b>{currentGroup && <> — xếp <b>{currentColCount} thùng</b> · <span className="font-medium">{currentGroup.label}</span>{hasManyDos && <span className="text-slate-400"> · {currentGroup.doLabel}</span>} (chân sáng)</>}</>}
               </p>
             </div>
           )}
@@ -328,16 +335,23 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             </div>
           )}
 
-          {/* Chú giải theo mã hàng */}
-          <div className="space-y-1">
-            <p className="text-[9px] uppercase font-medium text-slate-500">Mã hàng ({groups.length})</p>
-            {groups.map((g, i) => (
-              <div key={g.key} className="flex items-center gap-2 text-[11px]">
-                <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
-                <span className="truncate flex-1" title={`${g.key} — ${g.label}`}>{g.label}</span>
-                {g.assumed && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 shrink-0">cỡ giả định</span>}
-                <span className="tabular-nums font-semibold shrink-0">{g.count}</span>
-                <span className="text-slate-400 shrink-0">{g.l}×{g.w}×{g.h}</span>
+          {/* Chú giải theo ĐƠN → mã hàng (thứ tự xếp: hết đơn trên mới tới đơn dưới) */}
+          <div className="space-y-1.5">
+            <p className="text-[9px] uppercase font-medium text-slate-500">Thứ tự xếp ({groups.length} mã{hasManyDos ? ` · ${doLabels.length} đơn` : ''})</p>
+            {doLabels.map(dl => (
+              <div key={dl} className="space-y-1">
+                {hasManyDos && <p className="text-[10px] font-semibold text-slate-600 border-b border-slate-100 pb-0.5">{dl}</p>}
+                {groups.map((g, i) => g.doLabel === dl && (
+                  <div key={g.key} className="flex items-center gap-2 text-[11px]">
+                    <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
+                    <span className="truncate flex-1" title={`${g.key} — ${g.label}`}>{g.label}</span>
+                    {g.onTop && <span className="text-[9px] px-1 rounded bg-sky-100 text-sky-700 shrink-0" title="Hàng nhẹ — xếp trên nóc mã hàng khác">nhẹ↑</span>}
+                    {g.maxLayers != null && <span className="text-[9px] px-1 rounded bg-slate-100 text-slate-600 shrink-0" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
+                    {g.assumed && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 shrink-0">cỡ giả định</span>}
+                    <span className="tabular-nums font-semibold shrink-0">{g.count}</span>
+                    <span className="text-slate-400 shrink-0">{g.l}×{g.w}×{g.h}</span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

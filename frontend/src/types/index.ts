@@ -229,6 +229,8 @@ export interface Material {
   carton_length_cm?:          number | null   // kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D
   carton_width_cm?:           number | null
   carton_height_cm?:          number | null
+  max_stack_layers?:          number | null   // số lớp xếp tối đa 1 chân hàng (null = theo chiều cao xe)
+  stack_on_top?:              boolean         // hàng nhẹ — được xếp TRÊN mã hàng khác (ưu tiên lên nóc)
   warehouse_pallet_overrides:     WarehousePalletOverride[] | null
   supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null
   manufacturer_id:                string | null
@@ -629,7 +631,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; no_qr_tracking?: boolean; carton_length_cm?: number | null; carton_width_cm?: number | null; carton_height_cm?: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; no_qr_tracking?: boolean; carton_length_cm?: number | null; carton_width_cm?: number | null; carton_height_cm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean } | null
   cartons_ordered:    number
   boxes_display:      number
   weight:             number | null

@@ -91,6 +91,7 @@ const EMPTY_FORM = {
   carton_length_cm: '',
   carton_width_cm: '',
   carton_height_cm: '',
+  max_stack_layers: '',
   old_code: '',
   batch_prefix: '',
   notes: '',
@@ -150,6 +151,7 @@ export default function Materials() {
   const [form,       setForm]       = useState(EMPTY_FORM)
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
+  const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
   const [formError,        setFormError]        = useState('')
@@ -266,9 +268,9 @@ export default function Materials() {
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
     else { labels.push('(bỏ trống)'); keys.push('batch_prefix'); ex.push('') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
-    labels.push('Thùng dài (cm)', 'Thùng rộng (cm)', 'Thùng cao (cm)')
-    keys.push('carton_length_cm', 'carton_width_cm', 'carton_height_cm')
-    ex.push(38, 28.5, 24)
+    labels.push('Thùng dài (cm)', 'Thùng rộng (cm)', 'Thùng cao (cm)', 'Số lớp tối đa', 'Xếp trên hàng khác (1/0)')
+    keys.push('carton_length_cm', 'carton_width_cm', 'carton_height_cm', 'max_stack_layers', 'stack_on_top')
+    ex.push(38, 28.5, 24, 8, 0)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -282,6 +284,7 @@ export default function Materials() {
     setSupplierOverrides([])
     setEditActive(true)
     setNoQr(false)
+    setStackOnTop(false)
     setFormError('')
     setDialogMode('add')
   }
@@ -303,6 +306,7 @@ export default function Materials() {
       carton_length_cm:     mat.carton_length_cm    != null ? String(mat.carton_length_cm)    : '',
       carton_width_cm:      mat.carton_width_cm     != null ? String(mat.carton_width_cm)     : '',
       carton_height_cm:     mat.carton_height_cm    != null ? String(mat.carton_height_cm)    : '',
+      max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
       notes:                mat.notes ?? '',
@@ -321,6 +325,7 @@ export default function Materials() {
     )
     setEditActive(mat.is_active)
     setNoQr(mat.no_qr_tracking ?? false)
+    setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -352,6 +357,8 @@ export default function Materials() {
         carton_length_cm:              form.carton_length_cm ? Number(form.carton_length_cm) : null,
         carton_width_cm:               form.carton_width_cm  ? Number(form.carton_width_cm)  : null,
         carton_height_cm:              form.carton_height_cm ? Number(form.carton_height_cm) : null,
+        max_stack_layers:              form.max_stack_layers ? Number(form.max_stack_layers) : null,
+        stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
         notes:                         form.notes.trim() || undefined,
@@ -998,6 +1005,18 @@ export default function Materials() {
                 <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_width_cm} onChange={e => setField('carton_width_cm', e.target.value)} placeholder="Rộng" />
                 <span className="text-slate-400 text-xs">×</span>
                 <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_height_cm} onChange={e => setField('carton_height_cm', e.target.value)} placeholder="Cao" />
+              </div>
+            </div>
+
+            {/* Luật xếp chồng (xếp xe 3D): số lớp tối đa + hàng nhẹ được lên nóc hàng khác */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Số lớp xếp tối đa</Label>
+              <div className="col-span-2 flex items-center gap-3">
+                <Input type="number" min={1} className="h-7 text-xs w-24" value={form.max_stack_layers} onChange={e => setField('max_stack_layers', e.target.value)} placeholder="∞" />
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                  <input type="checkbox" checked={stackOnTop} onChange={e => setStackOnTop(e.target.checked)} className="h-3.5 w-3.5 rounded accent-blue-600" />
+                  Xếp trên hàng khác (hàng nhẹ)
+                </label>
               </div>
             </div>
 

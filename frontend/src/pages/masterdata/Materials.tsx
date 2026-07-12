@@ -88,9 +88,9 @@ const EMPTY_FORM = {
   pallet_per_ea: '',
   weight_kg: '',
   shelf_life_days: '',
-  carton_length_cm: '',
-  carton_width_cm: '',
-  carton_height_cm: '',
+  carton_length_mm: '',
+  carton_width_mm: '',
+  carton_height_mm: '',
   max_stack_layers: '',
   old_code: '',
   batch_prefix: '',
@@ -272,9 +272,9 @@ export default function Materials() {
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
     else { labels.push('(bỏ trống)'); keys.push('batch_prefix'); ex.push('') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
-    labels.push('Thùng dài (cm)', 'Thùng rộng (cm)', 'Thùng cao (cm)', 'Số lớp tối đa', 'Xếp trên hàng khác (1/0)')
-    keys.push('carton_length_cm', 'carton_width_cm', 'carton_height_cm', 'max_stack_layers', 'stack_on_top')
-    ex.push(38, 28.5, 24, 8, 0)
+    labels.push('Thùng dài (mm)', 'Thùng rộng (mm)', 'Thùng cao (mm)', 'Số lớp tối đa', 'Xếp trên hàng khác (1/0)')
+    keys.push('carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'max_stack_layers', 'stack_on_top')
+    ex.push(380, 285, 240, 8, 0)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -307,9 +307,9 @@ export default function Materials() {
       pallet_per_ea:        mat.pallet_per_ea      != null ? String(mat.pallet_per_ea)      : '',
       weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
-      carton_length_cm:     mat.carton_length_cm    != null ? String(mat.carton_length_cm)    : '',
-      carton_width_cm:      mat.carton_width_cm     != null ? String(mat.carton_width_cm)     : '',
-      carton_height_cm:     mat.carton_height_cm    != null ? String(mat.carton_height_cm)    : '',
+      carton_length_mm:     mat.carton_length_mm    != null ? String(mat.carton_length_mm)    : '',
+      carton_width_mm:      mat.carton_width_mm     != null ? String(mat.carton_width_mm)     : '',
+      carton_height_mm:     mat.carton_height_mm    != null ? String(mat.carton_height_mm)    : '',
       max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
@@ -358,9 +358,9 @@ export default function Materials() {
         pallet_per_ea:                 form.pallet_per_ea ? Number(form.pallet_per_ea) : undefined,
         weight_kg:                     Number(form.weight_kg),
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
-        carton_length_cm:              form.carton_length_cm ? Number(form.carton_length_cm) : null,
-        carton_width_cm:               form.carton_width_cm  ? Number(form.carton_width_cm)  : null,
-        carton_height_cm:              form.carton_height_cm ? Number(form.carton_height_cm) : null,
+        carton_length_mm:              form.carton_length_mm ? Number(form.carton_length_mm) : null,
+        carton_width_mm:               form.carton_width_mm  ? Number(form.carton_width_mm)  : null,
+        carton_height_mm:              form.carton_height_mm ? Number(form.carton_height_mm) : null,
         max_stack_layers:              form.max_stack_layers ? Number(form.max_stack_layers) : null,
         stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
@@ -422,9 +422,9 @@ export default function Materials() {
   async function handleBulkPack() {
     // Chỉ đắp field CÓ GIÁ TRỊ — ô trống giữ nguyên giá trị từng mã
     const patch: Record<string, number | boolean> = {}
-    if (bulkPack.l)      patch.carton_length_cm = Number(bulkPack.l)
-    if (bulkPack.w)      patch.carton_width_cm  = Number(bulkPack.w)
-    if (bulkPack.h)      patch.carton_height_cm = Number(bulkPack.h)
+    if (bulkPack.l)      patch.carton_length_mm = Number(bulkPack.l)
+    if (bulkPack.w)      patch.carton_width_mm  = Number(bulkPack.w)
+    if (bulkPack.h)      patch.carton_height_mm = Number(bulkPack.h)
     if (bulkPack.layers) patch.max_stack_layers = Number(bulkPack.layers)
     if (bulkPack.onTop)  patch.stack_on_top     = bulkPack.onTop === '1'
     setBulkPackSaving(true)
@@ -1026,15 +1026,15 @@ export default function Materials() {
               <Input type="number" min={0} step="0.01" className="col-span-2 h-7 text-xs" value={form.weight_kg} onChange={e => setField('weight_kg', e.target.value)} placeholder="Khối lượng (kg/thùng)" />
             </div>
 
-            {/* Kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D */}
+            {/* Kích thước thùng carton (mm) — phục vụ sơ đồ xếp xe 3D */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">Thùng D×R×C (cm)</Label>
+              <Label className="text-xs text-right">Thùng D×R×C (mm)</Label>
               <div className="col-span-2 flex items-center gap-1.5">
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_length_cm} onChange={e => setField('carton_length_cm', e.target.value)} placeholder="Dài" />
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_length_mm} onChange={e => setField('carton_length_mm', e.target.value)} placeholder="Dài" />
                 <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_width_cm} onChange={e => setField('carton_width_cm', e.target.value)} placeholder="Rộng" />
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_width_mm} onChange={e => setField('carton_width_mm', e.target.value)} placeholder="Rộng" />
                 <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_height_cm} onChange={e => setField('carton_height_cm', e.target.value)} placeholder="Cao" />
+                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_height_mm} onChange={e => setField('carton_height_mm', e.target.value)} placeholder="Cao" />
               </div>
             </div>
 
@@ -1219,7 +1219,7 @@ export default function Materials() {
           <div className="space-y-3 py-1">
             <p className="text-xs text-slate-500">Chỉ ô CÓ GIÁ TRỊ được áp cho {selected.size} mã đã chọn — ô bỏ trống giữ nguyên từng mã.</p>
             <div className="space-y-1">
-              <Label className="text-xs">Thùng D×R×C (cm)</Label>
+              <Label className="text-xs">Thùng D×R×C (mm)</Label>
               <div className="flex items-center gap-1.5">
                 <Input type="number" min={0} step="0.1" className="h-8 text-xs" value={bulkPack.l} onChange={e => setBulkPack(p => ({ ...p, l: e.target.value }))} placeholder="Dài" />
                 <span className="text-slate-400 text-xs">×</span>

@@ -71,9 +71,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   function pickVehicleType(id: string) {
     setVtId(id)
     const vt = vehicleTypes.find(v => v.id === id)
-    setBoxL(vt?.box_length_cm != null ? String(vt.box_length_cm) : '')
-    setBoxW(vt?.box_width_cm  != null ? String(vt.box_width_cm)  : '')
-    setBoxH(vt?.box_height_cm != null ? String(vt.box_height_cm) : '')
+    setBoxL(vt?.box_length_mm != null ? String(vt.box_length_mm) : '')
+    setBoxW(vt?.box_width_mm  != null ? String(vt.box_width_mm)  : '')
+    setBoxH(vt?.box_height_mm != null ? String(vt.box_height_mm) : '')
   }
 
   // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo)
@@ -84,7 +84,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         if (it.cartons_ordered <= 0) continue
         const code = it.material?.material_code ?? it.material_code_raw ?? '?'
         const key = `${d.delivery_code}|${code}`
-        const hasDims = it.material?.carton_length_cm && it.material?.carton_width_cm && it.material?.carton_height_cm
+        const hasDims = it.material?.carton_length_mm && it.material?.carton_width_mm && it.material?.carton_height_mm
         // Đã xuất thật = đã quét/ghi nhận − nhặt lẻ CHƯA xác nhận cuối
         const looseUnconfirmed = (it.scan_entries ?? [])
           .filter(s => s.is_loose_picking && !s.loose_confirmed)
@@ -99,9 +99,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           doLabel: d.distributor_name ? `${d.delivery_code} · ${d.distributor_name}` : d.delivery_code,
           count: it.cartons_ordered,
           done,
-          l: hasDims ? Number(it.material!.carton_length_cm) : ASSUMED_CARTON.l,
-          w: hasDims ? Number(it.material!.carton_width_cm)  : ASSUMED_CARTON.w,
-          h: hasDims ? Number(it.material!.carton_height_cm) : ASSUMED_CARTON.h,
+          l: hasDims ? Number(it.material!.carton_length_mm) : ASSUMED_CARTON.l,
+          w: hasDims ? Number(it.material!.carton_width_mm)  : ASSUMED_CARTON.w,
+          h: hasDims ? Number(it.material!.carton_height_mm) : ASSUMED_CARTON.h,
           weightKg: it.material?.weight_kg ?? null,
           assumed: !hasDims,
           maxLayers: it.material?.max_stack_layers ?? null,
@@ -218,11 +218,11 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     )
     frame.position.set(0, H / 2, 0)
     boxGroup.add(frame)
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(L, 2, W), new THREE.MeshLambertMaterial({ color: 0xcbd5e1 }))
-    floor.position.set(0, -1, 0)
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(L, 20, W), new THREE.MeshLambertMaterial({ color: 0xcbd5e1 }))
+    floor.position.set(0, -10, 0)
     boxGroup.add(floor)
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(4, H, W), new THREE.MeshLambertMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 }))
-    cab.position.set(-L / 2 - 2, H / 2, 0)
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(40, H, W), new THREE.MeshLambertMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 }))
+    cab.position.set(-L / 2 - 20, H / 2, 0)
     boxGroup.add(cab)
 
     // Chọn thùng hiển thị theo chế độ:
@@ -258,7 +258,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, boxes.length)
       const m = new THREE.Matrix4()
       boxes.forEach(({ b }, i) => {
-        m.makeScale(Math.max(1, b.l - 1), Math.max(1, b.h - 1), Math.max(1, b.w - 1))
+        m.makeScale(Math.max(1, b.l - 10), Math.max(1, b.h - 10), Math.max(1, b.w - 10))   // hở 10mm nhìn rõ từng thùng
         m.setPosition(toX(b.x, b.l), toY(b.z, b.h), toZ(b.y, b.w))
         inst.setMatrixAt(i, m)
         const agg = visibleByGroup.get(gi) ?? { cx: 0, cy: 0, top: 0, n: 0 }
@@ -279,18 +279,18 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         const short = g.label.length > 22 ? g.label.slice(0, 21) + '…' : g.label
         const countTxt = mode === 'progress' ? `${g.done}` : (g.done > 0 ? `${g.done}/${g.count}` : `${g.count}`)
         const sprite = makeLabelSprite(THREE, `${short} · ${countTxt}`, color)
-        const labelY = agg.top + 42
+        const labelY = agg.top + 420
         sprite.position.set(cx, labelY, cy)
-        sprite.scale.set(150, 28, 1)
+        sprite.scale.set(1500, 280, 1)
         boxGroup.add(sprite)
         // Mũi tên: thân line + đầu cone chỉ xuống nóc khối
         const lineMat = new THREE.LineBasicMaterial({ color })
         const lineGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(cx, labelY - 12, cy), new THREE.Vector3(cx, agg.top + 12, cy),
+          new THREE.Vector3(cx, labelY - 120, cy), new THREE.Vector3(cx, agg.top + 120, cy),
         ])
         boxGroup.add(new THREE.Line(lineGeo, lineMat))
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(5, 12, 10), new THREE.MeshLambertMaterial({ color }))
-        cone.position.set(cx, agg.top + 8, cy)
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(50, 120, 10), new THREE.MeshLambertMaterial({ color }))
+        cone.position.set(cx, agg.top + 80, cy)
         cone.rotation.x = Math.PI
         boxGroup.add(cone)
       }
@@ -351,7 +351,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {!plan && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
               <p className="text-sm text-slate-500 px-6 text-center">
-                {groups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (cm) để dựng sơ đồ.'}
+                {groups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
               </p>
             </div>
           )}
@@ -387,13 +387,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               <option value="">— Chọn loại xe —</option>
               {vehicleTypes.map(vt => (
                 <option key={vt.id} value={vt.id}>
-                  {vt.name}{vt.box_length_cm ? ` (${vt.box_length_cm}×${vt.box_width_cm}×${vt.box_height_cm})` : ' (chưa khai lòng thùng)'}
+                  {vt.name}{vt.box_length_mm ? ` (${vt.box_length_mm}×${vt.box_width_mm}×${vt.box_height_mm})` : ' (chưa khai lòng thùng)'}
                 </option>
               ))}
             </select>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Lòng thùng xe D×R×C (cm)</Label>
+            <Label className="text-xs">Lòng thùng xe D×R×C (mm)</Label>
             <div className="flex items-center gap-1.5">
               <Input type="number" min={0} className="h-8 text-xs" value={boxL} onChange={e => setBoxL(e.target.value)} placeholder="Dài" />
               <span className="text-slate-400 text-xs">×</span>
@@ -456,7 +456,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           )}
           {assumedCount > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
-              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang dùng cỡ giả định {ASSUMED_CARTON.l}×{ASSUMED_CARTON.w}×{ASSUMED_CARTON.h} cm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
+              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang dùng cỡ giả định {ASSUMED_CARTON.l}×{ASSUMED_CARTON.w}×{ASSUMED_CARTON.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
             </div>
           )}
 

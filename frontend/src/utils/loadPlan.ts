@@ -9,7 +9,7 @@
 // 4. Mã hàng nhẹ (stack_on_top) được xếp TRÊN mã khác — ưu tiên lên nóc các chân đã
 //    xếp (cùng đơn trước), hết nóc mới xuống sàn. max_stack_layers giới hạn số lớp.
 // 1 step = 1 chân (hoặc 1 cụm đặt lên nóc) — cho thanh trượt "xếp theo thứ tự".
-// Đơn vị: cm.
+// Đơn vị: mm (user chốt 12/07 — mọi kích thước thùng/lòng xe nhập mm).
 
 export interface TruckDims { length: number; width: number; height: number }
 
@@ -46,7 +46,7 @@ export interface LoadPlan {
   spreadLayersPct: number   // 100 = chồng kịch trần; thấp hơn = đã hạ lớp để trải dài
 }
 
-export const ASSUMED_CARTON = { l: 40, w: 30, h: 25 }
+export const ASSUMED_CARTON = { l: 400, w: 300, h: 250 }   // mm
 
 type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number }
 

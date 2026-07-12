@@ -226,9 +226,9 @@ export interface Material {
   storage_category:           string | null
   old_code:                   string | null
   batch_prefix:               string | null   // ĐV2 tem `;`: 2 ký tự tắt hàng để sinh mã lô (khớp kế toán); null với ĐV1
-  carton_length_cm?:          number | null   // kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D
-  carton_width_cm?:           number | null
-  carton_height_cm?:          number | null
+  carton_length_mm?:          number | null   // kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D
+  carton_width_mm?:           number | null
+  carton_height_mm?:          number | null
   max_stack_layers?:          number | null   // số lớp xếp tối đa 1 chân hàng (null = theo chiều cao xe)
   stack_on_top?:              boolean         // hàng nhẹ — được xếp TRÊN mã hàng khác (ưu tiên lên nóc)
   warehouse_pallet_overrides:     WarehousePalletOverride[] | null
@@ -470,9 +470,9 @@ export interface TmsVehicleType {
   code:       string
   name:       string
   is_active:  boolean
-  box_length_cm?: number | null   // lòng thùng xe (cm) — phục vụ sơ đồ xếp xe 3D
-  box_width_cm?:  number | null
-  box_height_cm?: number | null
+  box_length_mm?: number | null   // lòng thùng xe (cm) — phục vụ sơ đồ xếp xe 3D
+  box_width_mm?:  number | null
+  box_height_mm?: number | null
   created_at?: string
   updated_at?: string
   created_by?: string | null
@@ -631,7 +631,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; no_qr_tracking?: boolean; carton_length_cm?: number | null; carton_width_cm?: number | null; carton_height_cm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean } | null
   cartons_ordered:    number
   boxes_display:      number
   weight:             number | null

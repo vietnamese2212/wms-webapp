@@ -314,7 +314,7 @@ export function useUpdateMaterial() {
       weight_kg?: number | null; cartons_per_pallet?: number | null
       units_per_carton?: number | null; shelf_life_days?: number | null
       is_active?: boolean; no_qr_tracking?: boolean; pallet_per_ea?: number | null
-      carton_length_cm?: number | null; carton_width_cm?: number | null; carton_height_cm?: number | null
+      carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null
       max_stack_layers?: number | null; stack_on_top?: boolean
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
@@ -2227,7 +2227,7 @@ export function useVehicleTypes(onlyActive = false) {
 export function useCreateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; box_length_cm?: number | null; box_width_cm?: number | null; box_height_cm?: number | null }) =>
+    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.post('/tms/vehicle-types', body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -2246,7 +2246,7 @@ export function useReorderVehicleTypes() {
 export function useUpdateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_cm?: number | null; box_width_cm?: number | null; box_height_cm?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.put(`/tms/vehicle-types/${id}`, body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })

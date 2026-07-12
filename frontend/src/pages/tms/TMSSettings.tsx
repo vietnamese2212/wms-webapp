@@ -42,9 +42,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   const [code, setCode] = useState(vt?.code ?? '')
   const [name, setName] = useState(vt?.name ?? '')
   const [isActive, setIsActive] = useState(vt?.is_active ?? true)
-  const [boxL, setBoxL] = useState(vt?.box_length_cm != null ? String(vt.box_length_cm) : '')
-  const [boxW, setBoxW] = useState(vt?.box_width_cm  != null ? String(vt.box_width_cm)  : '')
-  const [boxH, setBoxH] = useState(vt?.box_height_cm != null ? String(vt.box_height_cm) : '')
+  const [boxL, setBoxL] = useState(vt?.box_length_mm != null ? String(vt.box_length_mm) : '')
+  const [boxW, setBoxW] = useState(vt?.box_width_mm  != null ? String(vt.box_width_mm)  : '')
+  const [boxH, setBoxH] = useState(vt?.box_height_mm != null ? String(vt.box_height_mm) : '')
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateVehicleType()
@@ -55,9 +55,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     const dims = {
-      box_length_cm: boxL ? Number(boxL) : null,
-      box_width_cm:  boxW ? Number(boxW) : null,
-      box_height_cm: boxH ? Number(boxH) : null,
+      box_length_mm: boxL ? Number(boxL) : null,
+      box_width_mm:  boxW ? Number(boxW) : null,
+      box_height_mm: boxH ? Number(boxH) : null,
     }
     if (isEdit) {
       update({ id: vt.id, name, is_active: isActive, ...dims }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
@@ -82,7 +82,7 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
           {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
         <div className="space-y-1"><Label className="text-xs">Tên *</Label>
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
-        <div className="space-y-1"><Label className="text-xs">Lòng thùng xe D×R×C (cm)</Label>
+        <div className="space-y-1"><Label className="text-xs">Lòng thùng xe D×R×C (mm)</Label>
           <div className="flex items-center gap-1.5">
             <Input type="number" min={0} value={boxL} onChange={e => setBoxL(e.target.value)} placeholder="Dài" />
             <span className="text-slate-400 text-xs">×</span>
@@ -90,7 +90,7 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
             <span className="text-slate-400 text-xs">×</span>
             <Input type="number" min={0} value={boxH} onChange={e => setBoxH(e.target.value)} placeholder="Cao" />
           </div>
-          <p className="text-[10px] text-slate-400">Kích thước lòng thùng chở hàng — dùng cho sơ đồ xếp xe 3D ở Xuất kho (vd xe 15 tấn: 920 × 235 × 240).</p></div>
+          <p className="text-[10px] text-slate-400">Kích thước lòng thùng chở hàng — dùng cho sơ đồ xếp xe 3D ở Xuất kho (vd xe 15 tấn: 9200 × 2350 × 2400).</p></div>
         {isEdit && <div className="flex items-center gap-2">
           <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
           <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>

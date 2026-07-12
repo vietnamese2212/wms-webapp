@@ -70,7 +70,14 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const [boxH, setBoxH] = useState('')
   const [maxStep, setMaxStep] = useState(0)
   const [mode, setMode] = useState<'plan' | 'progress'>('plan')   // Dự toán · Tiến độ
-  const [showLabels, setShowLabels] = useState(true)
+  // Nhãn: mặc định KHÔNG phủ hết (26 nhãn + dây dẫn = rối) — bấm mã ở panel để SOI từng khối;
+  // nhãn luôn hiện cho khối đang xếp (bước hiện tại); checkbox bật hết khi cần.
+  const [showLabels, setShowLabels] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const toggleSelect = (key: string) => setSelectedKeys(s => {
+    const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n
+  })
+  const selKey = [...selectedKeys].sort().join('|')
 
   function pickVehicleType(id: string) {
     setVtId(id)
@@ -283,14 +290,18 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       buckets.get(bk)!.boxes.push({ b })
     })
 
+    // Spotlight: có mã đang CHỌN từ panel → khối khác chìm mờ, khối chọn nổi
+    const spotlight = selectedKeys.size > 0
     const visibleByGroup = new Map<number, { cx: number; cy: number; top: number; n: number }>()
     for (const { boxes, gi, kind } of buckets.values()) {
       const color = new THREE.Color(GROUP_COLORS[gi % GROUP_COLORS.length])
+      const dimmed = spotlight && !selectedKeys.has(groups[gi].key)
       const mat = new THREE.MeshLambertMaterial({
         color,
-        transparent: kind === 'done', opacity: kind === 'done' ? 0.28 : 1,
-        emissive: kind === 'current' ? color : new THREE.Color(0x000000),
-        emissiveIntensity: kind === 'current' ? 0.45 : 0,
+        transparent: dimmed || kind === 'done',
+        opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
+        emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(groups[gi].key))) ? color : new THREE.Color(0x000000),
+        emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
       })
       const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, boxes.length)
       const m = new THREE.Matrix4()
@@ -307,11 +318,15 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       boxGroup.add(inst)
     }
 
-    // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0):
-    // dàn đều theo chiều dài xe thành 2-3 hàng, KHÔNG đè nhau; đường dẫn + mũi tên chỉ xuống đúng khối.
-    if (showLabels) {
+    // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0), dàn không đè nhau.
+    // Chỉ vẽ nhãn cho: mã đang CHỌN (spotlight) + khối của BƯỚC hiện tại; bật "tất cả nhãn" mới vẽ hết.
+    const curStepGi = mode === 'plan' && maxStep > 0 ? plan.placed.find(b => b.step === maxStep)?.group ?? -1 : -1
+    const labelGis = [...visibleByGroup.keys()].filter(gi =>
+      showLabels || selectedKeys.has(groups[gi].key) || gi === curStepGi)
+    if (labelGis.length) {
       const labelH = 240
-      const entries = [...visibleByGroup.entries()]
+      const entries = labelGis
+        .map(gi => [gi, visibleByGroup.get(gi)!] as const)
         .map(([gi, agg]) => {
           const g = groups[gi]
           const countTxt = mode === 'progress' ? `${g.done} thùng` : (g.done > 0 ? `${g.done}/${g.count} thùng` : `${g.count} thùng`)
@@ -362,7 +377,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       c.controls.target.set(0, H / 3, 0)
       c.controls.update()
     }
-  }, [ready, plan, maxStep, mode, showLabels, groups, ordinals])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, plan, maxStep, mode, showLabels, groups, ordinals, selKey])
 
   if (!open) return null
 
@@ -461,7 +477,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
           <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
             <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} className="h-3.5 w-3.5 rounded accent-blue-600" />
-            Hiện nhãn tên mảng hàng trên sơ đồ
+            Hiện TẤT CẢ nhãn tên trên sơ đồ
           </label>
 
           {plan && (
@@ -517,12 +533,19 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
           {/* Chú giải theo ĐƠN → mã hàng; hiện tiến độ đã xuất/kế hoạch */}
           <div className="space-y-1.5">
-            <p className="text-[9px] uppercase font-medium text-slate-500">Thứ tự xếp ({groups.length} mã{hasManyDos ? ` · ${doLabels.length} đơn` : ''})</p>
+            <div className="flex items-center justify-between">
+              <p className="text-[9px] uppercase font-medium text-slate-500">Thứ tự xếp ({groups.length} mã{hasManyDos ? ` · ${doLabels.length} đơn` : ''})</p>
+              {selectedKeys.size > 0 && (
+                <button onClick={() => setSelectedKeys(new Set())} className="text-[10px] text-sky-600 hover:underline">Bỏ soi ({selectedKeys.size})</button>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400">Bấm vào mã để SOI khối đó trên sơ đồ (khối khác mờ đi).</p>
             {doLabels.map(dl => (
               <div key={dl} className="space-y-1">
                 {hasManyDos && <p className="text-[10px] font-semibold text-slate-600 border-b border-slate-100 pb-0.5">{dl}</p>}
                 {groups.map((g, i) => g.doLabel === dl && (
-                  <div key={g.key} className="flex items-center gap-2 text-[11px]">
+                  <div key={g.key} onClick={() => toggleSelect(g.key)}
+                    className={`flex items-center gap-2 text-[11px] cursor-pointer rounded px-1 -mx-1 ${selectedKeys.has(g.key) ? 'bg-sky-100 ring-1 ring-sky-300' : 'hover:bg-slate-50'}`}>
                     <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
                     <span className="truncate flex-1" title={`${g.key} — ${g.label}`}>{g.label}</span>
                     {g.onTop && <span className="text-[9px] px-1 rounded bg-sky-100 text-sky-700 shrink-0" title="Hàng nhẹ — xếp trên nóc mã hàng khác">nhẹ↑</span>}

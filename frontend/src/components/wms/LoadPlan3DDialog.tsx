@@ -226,30 +226,37 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     floor.position.set(0, -10, 0)
     boxGroup.add(floor)
 
-    // ĐẦU XE TẢI (stylized) — để user biết hướng nào là đầu xe: cabin + mũi xe + kính + bánh
-    const cabColor = new THREE.MeshLambertMaterial({ color: 0x0284c7 })
-    const darkMat  = new THREE.MeshLambertMaterial({ color: 0x1e293b })
-    const glassMat = new THREE.MeshLambertMaterial({ color: 0xbae6fd })
+    // ĐẦU XE TẢI (stylized) — chỉ để nhận hướng đầu xe: TÁCH XA thùng + tông XÁM NHẠT trong suốt
+    // (không màu sắc — thùng hàng phải nổi rõ nhất)
+    const ghostMat = new THREE.MeshLambertMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.4 })
+    const ghostMat2 = new THREE.MeshLambertMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 })
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x94a3b8 })
     const cabLen = Math.min(1600, L * 0.25), cabW = W * 0.94, cabH = H * 0.62
-    const cabX = -L / 2 - 80 - cabLen / 2
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabLen, cabH, cabW), cabColor)
+    const cabX = -L / 2 - 550 - cabLen / 2   // tách hẳn khỏi thùng hàng
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabLen, cabH, cabW), ghostMat)
     cabin.position.set(cabX, cabH / 2, 0)
     boxGroup.add(cabin)
+    const cabEdge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(cabLen, cabH, cabW)), edgeMat)
+    cabEdge.position.copy(cabin.position)
+    boxGroup.add(cabEdge)
     // Kính lái (mặt trước cabin)
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(30, cabH * 0.38, cabW * 0.85), glassMat)
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(30, cabH * 0.38, cabW * 0.85), ghostMat2)
     glass.position.set(cabX - cabLen / 2 - 15, cabH * 0.68, 0)
     boxGroup.add(glass)
     // Mũi xe (hood) thấp phía trước
     const noseLen = cabLen * 0.45
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW), cabColor)
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW), ghostMat)
     nose.position.set(cabX - cabLen / 2 - noseLen / 2, cabH * 0.21, 0)
     boxGroup.add(nose)
-    // Bánh xe (trụ tối màu, trục theo chiều ngang) — 1 cặp dưới cabin + 2 cặp cuối thùng
+    const noseEdge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW)), edgeMat)
+    noseEdge.position.copy(nose.position)
+    boxGroup.add(noseEdge)
+    // Bánh xe — xám mờ, 1 cặp dưới cabin + 2 cặp cuối thùng
     const wheelR = Math.min(500, H * 0.22)
     const wheelGeo = new THREE.CylinderGeometry(wheelR, wheelR, 300, 18)
     const wheelXs = [cabX, L / 2 - 900, L / 2 - 900 - wheelR * 2.4]
     for (const wx of wheelXs) for (const side of [-1, 1]) {
-      const wheel = new THREE.Mesh(wheelGeo, darkMat)
+      const wheel = new THREE.Mesh(wheelGeo, ghostMat2)
       wheel.rotation.x = Math.PI / 2
       wheel.position.set(wx, -wheelR * 0.4, side * (W / 2 - 160))
       boxGroup.add(wheel)

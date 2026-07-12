@@ -307,28 +307,45 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       boxGroup.add(inst)
     }
 
-    // Nhãn tên MẢNG hàng + mũi tên chỉ xuống khối
+    // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0):
+    // dàn đều theo chiều dài xe thành 2-3 hàng, KHÔNG đè nhau; đường dẫn + mũi tên chỉ xuống đúng khối.
     if (showLabels) {
-      for (const [gi, agg] of visibleByGroup) {
-        const g = groups[gi]
-        const color = GROUP_COLORS[gi % GROUP_COLORS.length]
-        const cx = toX(agg.cx / agg.n, 0), cy = toZ(agg.cy / agg.n, 0)
-        // Nhãn hiện ĐỦ tên + số lượng (canvas tự giãn — không cắt chữ)
-        const countTxt = mode === 'progress' ? `${g.done} thùng` : (g.done > 0 ? `${g.done}/${g.count} thùng` : `${g.count} thùng`)
-        const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, color)
-        const labelY = agg.top + 420
-        sprite.position.set(cx, labelY, cy)
-        const labelH = 260
-        sprite.scale.set(labelH * aspect, labelH, 1)
-        boxGroup.add(sprite)
-        // Mũi tên: thân line + đầu cone chỉ xuống nóc khối
-        const lineMat = new THREE.LineBasicMaterial({ color })
+      const labelH = 240
+      const entries = [...visibleByGroup.entries()]
+        .map(([gi, agg]) => {
+          const g = groups[gi]
+          const countTxt = mode === 'progress' ? `${g.done} thùng` : (g.done > 0 ? `${g.done}/${g.count} thùng` : `${g.count} thùng`)
+          const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
+          return {
+            gi, sprite, w: labelH * aspect,
+            bx: toX(agg.cx / agg.n, 0), bz: toZ(agg.cy / agg.n, 0), btop: agg.top,
+          }
+        })
+        .sort((a, b) => a.bx - b.bx)   // theo vị trí khối dọc thân xe
+      const GAP = 150
+      const rowY = [H + 380, H + 380 + labelH + 60, H + 380 + (labelH + 60) * 2]
+      const rowCursor = rowY.map(() => -Infinity)
+      for (const e of entries) {
+        // Chọn hàng đặt được gần vị trí khối nhất (không chồng nhãn trước đó trong hàng)
+        let best = 0, bestX = 0, bestDist = Infinity
+        for (let r = 0; r < rowY.length; r++) {
+          const x = Math.max(e.bx, rowCursor[r] + GAP + e.w / 2)
+          const dist = Math.abs(x - e.bx) + r * 50   // ưu tiên hàng thấp khi ngang nhau
+          if (dist < bestDist) { bestDist = dist; best = r; bestX = x }
+        }
+        rowCursor[best] = bestX + e.w / 2
+        const y = rowY[best]
+        e.sprite.position.set(bestX, y, 0)
+        e.sprite.scale.set(e.w, labelH, 1)
+        boxGroup.add(e.sprite)
+        // Đường dẫn từ đáy nhãn → nóc khối + mũi tên cone
+        const color = GROUP_COLORS[e.gi % GROUP_COLORS.length]
         const lineGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(cx, labelY - 120, cy), new THREE.Vector3(cx, agg.top + 120, cy),
+          new THREE.Vector3(bestX, y - labelH / 2, 0), new THREE.Vector3(e.bx, e.btop + 140, e.bz),
         ])
-        boxGroup.add(new THREE.Line(lineGeo, lineMat))
+        boxGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color })))
         const cone = new THREE.Mesh(new THREE.ConeGeometry(50, 120, 10), new THREE.MeshLambertMaterial({ color }))
-        cone.position.set(cx, agg.top + 80, cy)
+        cone.position.set(e.bx, e.btop + 80, e.bz)
         cone.rotation.x = Math.PI
         boxGroup.add(cone)
       }

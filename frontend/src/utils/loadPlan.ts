@@ -3,11 +3,12 @@
 // 1. Trải HẾT chiều dài xe — nếu tất cả vẫn vừa khi hạ thấp số lớp, hạ đều để hàng
 //    rải khắp sàn thay vì chất kịch nóc phía đầu xe; chiều cao các CHÂN cùng loại
 //    chênh nhau ≤ 1 lớp (chia đều thùng cho các chân).
-// 2. Xếp hết ĐƠN 1 rồi mới tới ĐƠN 2 (1 xe nhiều DO).
-// 3. Một DÃY (dải ngang lòng xe) chỉ chứa 1 kích thước của 1 đơn — sang kích thước
-//    khác là "khóa" dãy cũ (thùng dư tự nằm trên nóc chân cùng loại nhờ chia đều).
-// 4. Mã hàng nhẹ (stack_on_top) được xếp TRÊN mã khác — ưu tiên lên nóc các chân đã
-//    xếp (cùng đơn trước), hết nóc mới xuống sàn. max_stack_layers giới hạn số lớp.
+// 2. Xếp hết ĐƠN 1 rồi mới tới ĐƠN 2 (1 xe nhiều DO); trong đơn: XONG HẲN 1 MÃ hàng
+//    rồi mới sang mã tiếp theo — mỗi DÃY (dải ngang) chỉ chứa 1 MÃ của 1 đơn.
+// 3. Sang mã khác là "khóa" dãy cũ (thùng dư tự nằm trên nóc chân cùng mã nhờ chia đều).
+// 4. Mã hàng nhẹ (stack_on_top) được xếp TRÊN mã khác — khi chuyến có hàng nhẹ, các chân
+//    hàng NỀN được HẠ ĐỀU chừa "lớp nền phẳng" phía trên (reserve) cho hàng nhẹ trải lên nóc
+//    (ưu tiên nóc cùng đơn, hết nóc mới xuống sàn). max_stack_layers giới hạn số lớp.
 // 1 step = 1 chân (hoặc 1 cụm đặt lên nóc) — cho thanh trượt "xếp theo thứ tự".
 // Đơn vị: mm (user chốt 12/07 — mọi kích thước thùng/lòng xe nhập mm).
 
@@ -46,7 +47,7 @@ export interface LoadPlan {
   spreadLayersPct: number   // 100 = chồng kịch trần; thấp hơn = đã hạ lớp để trải dài
 }
 
-export const ASSUMED_CARTON = { l: 400, w: 300, h: 250 }   // mm
+export const ASSUMED_CARTON = { l: 422, w: 233, h: 100 }   // mm — cỡ thùng chuẩn user đưa 12/07
 
 type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number }
 
@@ -70,16 +71,33 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     })
   const topOrder = groupsIn.map((_, i) => i).filter(i => groupsIn[i].onTop)
 
-  // Số lớp tối đa 1 chân của nhóm (0 = không đặt nổi 1 thùng)
-  const capOf = (g: LoadGroup) => g.h > truck.height ? 0
-    : Math.max(1, Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? Infinity))
+  // Hàng nhẹ xếp đè → HẠ ĐỀU chân hàng nền: chừa reserve = số lớp hàng nhẹ cần
+  // khi trải phẳng trên nóc (ước theo diện tích sàn xe), tối đa nửa chiều cao xe.
+  const onTopGroups = groupsIn.filter(g => g.onTop && g.count > 0)
+  let reserveH = 0
+  if (onTopGroups.length) {
+    const floorArea = truck.length * truck.width
+    const maxTopH = Math.max(...onTopGroups.map(g => g.h))
+    const area1Layer = onTopGroups.reduce((s, g) => s + g.count * g.l * g.w, 0)
+    const layers = Math.max(1, Math.ceil(area1Layer / Math.max(1, floorArea * 0.9)))
+    reserveH = Math.min(layers * maxTopH, truck.height * 0.5)
+  }
+
+  // Số lớp tối đa 1 chân của nhóm dưới trần ceilH (0 = không đặt nổi 1 thùng)
+  const capOf = (g: LoadGroup, ceilH: number) => g.h > ceilH ? 0
+    : Math.max(1, Math.min(Math.floor(ceilH / g.h), g.maxLayers ?? Infinity))
+  // Hàng nền: trần hiệu dụng đã trừ reserve; nếu thùng cao hơn trần hạ (nhưng vẫn vừa xe) → 1 lớp
+  const capFloor = (g: LoadGroup) => {
+    const c = capOf(g, truck.height - reserveH)
+    return c === 0 && g.h <= truck.height ? 1 : c
+  }
 
   function pack(f: number) {
     const placed: PlacedBox[] = []
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
     let step = 0
-    // Dải (shelf) hiện tại — 1 dải chỉ 1 (đơn × kích thước)
+    // Dải (shelf) hiện tại — 1 dải chỉ 1 (đơn × MÃ hàng)
     let shelfX = 0, shelfDepth = 0, cursorY = 0
     let shelfKey: string | null = null
 
@@ -87,8 +105,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
     // Đặt 1 chân `layers` thùng của nhóm gi — trả số thùng đặt được (0 = hết chỗ sàn)
     const placeColumn = (g: LoadGroup, gi: number, layers: number): number => {
-      const rowKey = `${g.doKey}|${dimsKey(g)}`
-      if (shelfKey !== null && shelfKey !== rowKey) closeShelf()   // luật 3: dãy chỉ 1 loại
+      const rowKey = `${g.doKey}|${gi}`   // 1 dãy = 1 MÃ của 1 đơn (xong hẳn mã này mới sang mã khác)
+      if (shelfKey !== null && shelfKey !== rowKey) closeShelf()
       const opts = g.l === g.w ? [{ fl: g.l, fw: g.w }] : [{ fl: g.l, fw: g.w }, { fl: g.w, fw: g.l }]
       const tryFit = () => opts
         .filter(o => shelfX + o.fl <= truck.length && cursorY + o.fw <= truck.width)
@@ -113,7 +131,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     // Xếp 1 nhóm xuống sàn: chia ĐỀU count cho các chân (chênh ≤ 1 lớp — luật 1)
     const placeFloorGroup = (g: LoadGroup, gi: number, count: number) => {
       if (count <= 0) return
-      const cap = capOf(g)
+      const cap = capFloor(g)
       if (cap === 0 || Math.min(g.l, g.w) > truck.width || Math.max(g.l, g.w) > truck.length) {
         leftover.push({ group: gi, count }); return
       }
@@ -136,7 +154,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const g = groupsIn[gi]
         if (g.doKey !== dk || g.count <= 0) continue
         let remaining = g.count
-        const capOwn = capOf(g)
+        const capOwn = capOf(g, truck.height)
         if (capOwn > 0) {
           // Ưu tiên nóc chân CÙNG ĐƠN, rồi nóc các chân đã xếp trước đó
           const hosts = [...cols].sort((a, b) =>

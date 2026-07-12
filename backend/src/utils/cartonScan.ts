@@ -1,20 +1,20 @@
 import { supabase } from '../lib/supabase'
-import { getWhTypeMetaMap } from './warehouseTypeMeta'
 
-// Cờ "quét tới THÙNG khi xuất" — 2 điều kiện VÀ (user chốt 12/07):
-//   1) KHO bật công tắc (Warehouse.carton_scan_override = true; mặc định TẮT) — kho tắt thì miễn xét.
-//   2) LOẠI HÀNG của chuyến (cargoCategory = GDO.warehouse_type) có cờ meta.requires_carton_scan.
-// → chỉ kho ĐÃ BẬT và đúng loại hàng ĐANG BẬT mới phải quét thùng; mặc định cả 2 đều tắt.
-// Defensive: cột kho chưa apply migration (production) → coi như kho tắt (hành vi cũ, không vỡ).
+// Cờ "quét tới THÙNG khi xuất" — setup TẠI TỪNG KHO (user chốt 12/07 lần 2):
+//   Warehouse.carton_scan_override = công tắc kho (mặc định TẮT)
+//   Warehouse.carton_scan_categories = CÁC Loại kho phải quét TẠI KHO ĐÓ (multi, độc lập từng kho)
+// → bật khi: công tắc ON && loại hàng của chuyến (GDO.warehouse_type) nằm trong danh sách.
+// vd kho 1 quét [Thành phẩm, POSM], kho 2 chỉ [Thùng] — không ảnh hưởng nhau. KHÔNG dùng meta Loại kho.
+// Defensive: cột chưa apply migration (production) → select lỗi → coi như tắt (hành vi cũ).
 export async function warehouseRequiresCartonScan(
   warehouseId: string | null | undefined,
   cargoCategory: string | null | undefined,
 ): Promise<boolean> {
   if (!warehouseId || !cargoCategory) return false
   const { data, error } = await supabase.from('Warehouse')
-    .select('carton_scan_override').eq('id', warehouseId).maybeSingle()
+    .select('carton_scan_override, carton_scan_categories').eq('id', warehouseId).maybeSingle()
   if (error) return false
-  const whOn = (data as { carton_scan_override?: boolean | null } | null)?.carton_scan_override === true
-  if (!whOn) return false   // kho tắt → không xét loại kho
-  return (await getWhTypeMetaMap()).get(cargoCategory)?.requires_carton_scan === true
+  const row = data as { carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null } | null
+  if (row?.carton_scan_override !== true) return false             // công tắc kho tắt → miễn xét
+  return (row.carton_scan_categories ?? []).includes(cargoCategory) // đúng loại đã chọn tại kho
 }

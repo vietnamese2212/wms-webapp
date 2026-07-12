@@ -167,7 +167,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'QTY_DATE' | 'NONE'
@@ -190,8 +190,10 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
-  // Cờ "quét tới thùng khi xuất" theo TỪNG KHO — mặc định TẮT, kho nào cần thì tick
+  // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
   const [cartonScan,    setCartonScan]    = useState(wh?.carton_scan_override === true)
+  const [cartonCats,    setCartonCats]    = useState<string[]>(wh?.carton_scan_categories ?? [])
+  const { data: whTypesForCarton = [] } = useWarehouseTypes()   // taxonomy đầy đủ (trang quản trị)
   const [err, setErr] = useState('')
 
   // Danh sách kho làm parent: kho thường (không phải kho phụ), trừ chính mình
@@ -211,15 +213,17 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     setErr('')
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     const parent_warehouse_id = parentId === '__none__' ? null : parentId
+    if (cartonScan && cartonCats.length === 0) { setErr('Bật quét tới thùng thì chọn ít nhất 1 Loại kho phải quét'); return }
     const carton_scan_override = cartonScan
+    const carton_scan_categories = cartonScan ? cartonCats : null
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -288,14 +292,28 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
             <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
               <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
               <span className="min-w-0">
                 <span className="block text-xs font-medium text-slate-700">Quét tới THÙNG khi xuất</span>
-                <span className="block text-[11px] text-slate-400 leading-snug">Mặc định TẮT. Bật = kho này dùng tính năng quét tem thùng khi xuất; LOẠI HÀNG nào phải quét do cờ ở tab Loại kho quyết định. Kho tắt thì không quét, bất kể Loại kho.</span>
+                <span className="block text-[11px] text-slate-400 leading-snug">Mặc định TẮT. Bật thì chọn các Loại kho phải quét tem thùng TẠI KHO NÀY (đính kèm truy vết, không tính tồn theo thùng). Mỗi kho chọn độc lập.</span>
               </span>
             </label>
+            {cartonScan && (
+              <div className="pl-6 space-y-1">
+                <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {whTypesForCarton.map(t => (
+                    <label key={t.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[12px] cursor-pointer ${cartonCats.includes(t.value) ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600" checked={cartonCats.includes(t.value)}
+                        onChange={() => setCartonCats(p => p.includes(t.value) ? p.filter(x => x !== t.value) : [...p, t.value])} />
+                      {t.value}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -445,7 +463,6 @@ function TypeDialog({ type, open, onClose }: {
   const [reqShelf,   setReqShelf]   = useState(m.requires_shelf_life ?? true)          // default = hành vi Thành phẩm
   const [reqPalletEa,setReqPalletEa]= useState(m.requires_pallet_per_ea ?? false)
   const [reqNcc,     setReqNcc]     = useState(m.requires_ncc ?? false)
-  const [reqCartonScan, setReqCartonScan] = useState(m.requires_carton_scan ?? false)
   const [useBatchChar, setUseBatchChar] = useState(!!(m.batch_char ?? '').trim())      // tick = loại dùng ký tự cố định
   const [batchChar,  setBatchChar]  = useState(m.batch_char ?? '')
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
@@ -462,7 +479,7 @@ function TypeDialog({ type, open, onClose }: {
     if (useBatchChar && !batchChar.trim()) { setErr('Đã tick dùng ký tự mã lô — nhập 1 ký tự (vd K)'); return }
     const meta: WhTypeMeta = {
       is_ncc_goods: isNcc, requires_shelf_life: reqShelf, requires_pallet_per_ea: reqPalletEa,
-      requires_ncc: reqNcc, requires_carton_scan: reqCartonScan,
+      requires_ncc: reqNcc,
       batch_char: useBatchChar ? batchChar.trim().toUpperCase().slice(0, 1) : '', badge_color: badge,
     }
     if (isEdit) {
@@ -531,8 +548,6 @@ function TypeDialog({ type, open, onClose }: {
               'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
             {flagRow('wt-reqncc', reqNcc, setReqNcc, 'Bắt buộc có NCC khi nhập kho',
               'Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.')}
-            {flagRow('wt-cartonscan', reqCartonScan, setReqCartonScan, 'Quét tới THÙNG khi xuất (loại hàng này)',
-              'Mặc định TẮT. Chỉ hiệu lực ở KHO đã bật công tắc "Quét tới THÙNG khi xuất" — chuyến xuất loại hàng này tại kho đó phải quét tem từng thùng (đính kèm truy vết, không tính tồn theo thùng).')}
           </div>
 
           <div className="space-y-1.5">

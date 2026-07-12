@@ -10,6 +10,7 @@ import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
+import * as integrationKeys from '../controllers/integration/keyController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -48,6 +49,11 @@ router.get('/dashboard', dashboard.getDashboard)
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)
 router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'), systemSetting.updateSetting)
+
+// Quản lý API key tích hợp ERP — CHỈ superadmin (kiểm trong controller). Key thô hiện 1 lần lúc tạo.
+router.get('/integration-keys',            integrationKeys.listKeys)
+router.post('/integration-keys',           integrationKeys.createKey)
+router.patch('/integration-keys/:id/revoke', integrationKeys.revokeKey)
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

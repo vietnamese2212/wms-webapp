@@ -1,0 +1,55 @@
+import { Request, Response } from 'express'
+import { randomUUID, randomBytes } from 'crypto'
+import { supabase } from '../../lib/supabase'
+import { ok, fail } from '../../utils/response'
+import { hashApiKey } from '../../middlewares/apiKey'
+
+// Quản lý API key — CHỈ superadmin (khóa cấp tài khoản, không phải quyền nghiệp vụ thường).
+const isSuper = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
+
+const VALID_SCOPES = ['materials:read', 'inventory:read', 'inbound:read', 'outbound:read', 'scans:read', '*']
+
+// POST /wms/integration-keys — tạo key mới, trả key thô 1 LẦN DUY NHẤT (sau đó chỉ còn băm).
+export async function createKey(req: Request, res: Response) {
+  if (!isSuper(req)) return fail(res, 'Chỉ Admin được tạo API key', 403)
+  const { name, scopes } = req.body as { name?: string; scopes?: string[] }
+  if (!name?.trim()) return fail(res, 'Thiếu tên key', 400)
+
+  const scopeList = Array.isArray(scopes) && scopes.length ? scopes : ['*']
+  const bad = scopeList.filter((s) => !VALID_SCOPES.includes(s))
+  if (bad.length) return fail(res, `Scope không hợp lệ: ${bad.join(', ')} (hợp lệ: ${VALID_SCOPES.join(', ')})`, 400)
+
+  const raw = 'wms_' + randomBytes(32).toString('base64url')   // key thô entropy cao
+  const id = randomUUID()
+  const now = new Date().toISOString()
+  const { error } = await supabase.from('ApiKey').insert({
+    id, name: name.trim(), key_hash: hashApiKey(raw), key_prefix: raw.slice(0, 12),
+    scopes: scopeList, is_active: true, created_at: now, updated_at: now, created_by: req.user?.name ?? null,
+  })
+  if (error) return fail(res, error.message, 500)
+
+  return ok(res, {
+    id, name: name.trim(), scopes: scopeList, key: raw,
+    note: 'LƯU key này NGAY — hệ thống KHÔNG hiện lại. Gửi ERP đặt vào header X-API-Key.',
+  }, 201)
+}
+
+// GET /wms/integration-keys — liệt kê (KHÔNG trả key thô, chỉ prefix để nhận diện).
+export async function listKeys(req: Request, res: Response) {
+  if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
+  const { data, error } = await supabase.from('ApiKey')
+    .select('id, name, key_prefix, scopes, is_active, last_used_at, created_at, created_by')
+    .order('created_at', { ascending: false })
+  if (error) return fail(res, error.message, 500)
+  return ok(res, data ?? [])
+}
+
+// PATCH /wms/integration-keys/:id/revoke — thu hồi (gọi API bằng key này lập tức 401).
+export async function revokeKey(req: Request, res: Response) {
+  if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
+  const { error } = await supabase.from('ApiKey')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+  if (error) return fail(res, error.message, 500)
+  return ok(res, { id: req.params.id, revoked: true })
+}

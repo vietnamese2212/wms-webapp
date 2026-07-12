@@ -7,6 +7,7 @@ import masterdataRouter from './routes/masterdata'
 import wmsRouter from './routes/wms'
 import tmsRouter from './routes/tms'
 import hrRouter from './routes/hr'
+import integrationRouter from './routes/integration'
 import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 
@@ -50,5 +51,7 @@ app.use('/api/masterdata', verifyToken, masterdataRouter)
 app.use('/api/wms',        verifyToken, wmsRouter)
 app.use('/api/tms',        verifyToken, tmsRouter)
 app.use('/api/hr',         verifyToken, hrRouter)
+// Cổng tích hợp ERP: auth RIÊNG bằng API key (requireApiKey trong router), KHÔNG dùng verifyToken.
+app.use('/api/integration', integrationRouter)
 
 export default app

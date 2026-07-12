@@ -15,7 +15,7 @@ const {
   Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
-  UserManagement, Materials, Settings,
+  UserManagement, IntegrationKeys, Materials, Settings,
 } = Pages
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -27,21 +27,26 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function PermissionRoute({
   module,
   action,
+  adminOnly,
   children,
 }: {
-  module: ModuleKey | ModuleKey[]
+  module?: ModuleKey | ModuleKey[]
   action?: string   // nếu có: gate theo đúng action (vd outbound.prepare), không chỉ "có quyền nào trong module"
+  adminOnly?: boolean   // chỉ superadmin (không mở theo module) — vd API key tích hợp
   children: React.ReactNode
 }) {
   const user = useAuthStore((s) => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const allowed = isAdmin(user?.name) || (
-    Array.isArray(module)
-      ? canAccessAny(perms, ...module)
-      : action
-        ? can(perms, module, action)
-        : canAccess(perms, module)
-  )
+  const admin = isAdmin(user?.name)
+  const allowed = adminOnly
+    ? admin
+    : admin || (
+      Array.isArray(module)
+        ? canAccessAny(perms, ...module)
+        : module
+          ? (action ? can(perms, module, action) : canAccess(perms, module))
+          : false
+    )
   if (!allowed) return <Navigate to="/" replace />
   return <>{children}</>
 }
@@ -111,6 +116,10 @@ export default function App() {
         <Route
           path="/masterdata/users"
           element={<PermissionRoute module="user_admin"><UserManagement /></PermissionRoute>}
+        />
+        <Route
+          path="/masterdata/integration-keys"
+          element={<PermissionRoute adminOnly><IntegrationKeys /></PermissionRoute>}
         />
         <Route
           path="/masterdata/materials"

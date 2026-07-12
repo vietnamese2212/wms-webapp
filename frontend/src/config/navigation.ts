@@ -5,7 +5,7 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -82,7 +82,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Quản trị',
     items: [
-      { to: '/masterdata/users', icon: UserCog, label: 'Quản lý người dùng', module: 'user_admin' },
+      { to: '/masterdata/users',            icon: UserCog,  label: 'Quản lý người dùng', module: 'user_admin' },
+      { to: '/masterdata/integration-keys', icon: KeyRound, label: 'Kết nối ERP',        adminOnly: true },
     ],
   },
 ]

@@ -90,28 +90,40 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
     let step = 0
-    // Dải (shelf) hiện tại — 1 dải chỉ 1 (đơn × loại kích thước)
+    // Dải (shelf) hiện tại — 1 dải chỉ 1 (đơn × loại kích thước) và 1 HƯỚNG XOAY duy nhất
+    // (trộn 2 hướng trong 1 dải làm dải phình sâu mà chứa ít chân — lãng phí sàn)
     let shelfX = 0, shelfDepth = 0, cursorY = 0
     let shelfKey: string | null = null
-    const closeShelf = () => { if (shelfDepth > 0) { shelfX += shelfDepth; shelfDepth = 0; cursorY = 0 } shelfKey = null }
+    let shelfOrient: { fl: number; fw: number } | null = null
+    const closeShelf = () => { if (shelfDepth > 0) { shelfX += shelfDepth; shelfDepth = 0; cursorY = 0 } shelfKey = null; shelfOrient = null }
 
     // Trạng thái KHỐI kích thước đang mở (trong 1 đơn)
-    let openCol: { col: Col; used: number } | null = null   // chân dở — mã sau CÙNG class lấp tiếp
+    let openCol: { col: Col; used: number; cap: number } | null = null   // chân dở — mã sau CÙNG class lấp tiếp (cap = trần lớp của chân)
     let classCols: Col[] = []                               // các chân của class hiện tại (để rải phần dư lên nóc)
 
     // Đặt 1 chân MỚI của class: shelf logic; take = số lớp đổ vào (≤ std)
     const newColumn = (g: LoadGroup, gi: number, take: number, std: number, rowKey: string): boolean => {
       if (shelfKey !== null && shelfKey !== rowKey) closeShelf()
       const opts = g.l === g.w ? [{ fl: g.l, fw: g.w }] : [{ fl: g.l, fw: g.w }, { fl: g.w, fw: g.l }]
-      const tryFit = () => opts
-        .filter(o => shelfX + o.fl <= truck.length && cursorY + o.fw <= truck.width)
-        .sort((a, b) => (a.fl - b.fl) || (a.fw - b.fw))[0] ?? null
-      let pick = tryFit()
-      if (!pick) {
+      // Chọn hướng cho CẢ DẢI: nhiều chân / mm chiều sâu nhất (tie → dải nông hơn)
+      const pickBest = () => {
+        const c = opts.filter(o => shelfX + o.fl <= truck.length && o.fw <= truck.width)
+        if (!c.length) return null
+        return c.sort((a, b) =>
+          (Math.floor(truck.width / b.fw) / b.fl) - (Math.floor(truck.width / a.fw) / a.fl) || (a.fl - b.fl))[0]
+      }
+      if (!shelfOrient) {
+        shelfOrient = pickBest()
+        if (!shelfOrient && shelfDepth > 0) { closeShelf(); shelfOrient = pickBest() }
+        if (!shelfOrient) return false
+      }
+      let pick = shelfOrient
+      if (cursorY + pick.fw > truck.width || shelfX + pick.fl > truck.length) {
         if (shelfDepth === 0) return false
         closeShelf()
-        pick = tryFit()
-        if (!pick) return false
+        shelfOrient = pickBest()
+        if (!shelfOrient) return false
+        pick = shelfOrient
       }
       step++
       for (let k = 0; k < take; k++)
@@ -121,7 +133,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       cursorY += pick.fw
       shelfDepth = Math.max(shelfDepth, pick.fl)
       shelfKey = rowKey
-      openCol = take < std ? { col, used: take } : null
+      openCol = take < std ? { col, used: take, cap: std } : null
       return true
     }
 
@@ -130,17 +142,20 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     const pourGroup = (g: LoadGroup, gi: number, count: number, std: number, rowKey: string, isClassTail: boolean) => {
       let remaining = count
       // 1) Lấp tiếp CHÂN DỞ của mã trước (cùng kích thước → đè lên nhau, không hở)
+      // Trần chân dở = min(trần chân, trần lớp của mã đang đổ) — mã yếu (max lớp thấp) không bị chồng quá
       if (openCol && remaining > 0) {
-        const take = Math.min(remaining, std - openCol.used)
+        const effCap = Math.min(openCol.cap, std)
+        const take = Math.min(remaining, Math.max(0, effCap - openCol.used))
         if (take > 0) {
           step++
           for (let k = 0; k < take; k++)
             placed.push({ x: openCol.col.x, y: openCol.col.y, z: openCol.col.top + k * g.h, l: openCol.col.fl, w: openCol.col.fw, h: g.h, group: gi, step })
           openCol.col.top += take * g.h
           openCol.used += take
+          openCol.cap = effCap
           remaining -= take
         }
-        if (openCol.used >= std) openCol = null
+        if (openCol.used >= effCap) openCol = null
       }
       // 2) Chân mới đầy đủ std lớp
       while (remaining >= std) {
@@ -178,19 +193,21 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const ck = classKeyOf(groupsIn[doFloor[i]])
         const members: number[] = []
         while (i < doFloor.length && classKeyOf(groupsIn[doFloor[i]]) === ck) members.push(doFloor[i++])
-        // Thông số class: chiều cao đại diện = max h; cap theo trần đã trừ reserve + maxLayers chặt nhất
+        // Thông số class: chiều cao đại diện = max h; cap theo trần đã trừ reserve.
+        // maxLayers áp PER MÃ (chân của mã yếu thấp hơn) — KHÔNG kéo cả khối xuống.
         const maxH = Math.max(...members.map(gi => groupsIn[gi].h))
-        const minMaxLayers = Math.min(...members.map(gi => groupsIn[gi].maxLayers ?? Infinity))
         if (maxH > truck.height || Math.min(...members.map(gi => Math.min(groupsIn[gi].l, groupsIn[gi].w))) > truck.width) {
           for (const gi of members) leftover.push({ group: gi, count: groupsIn[gi].count })
           continue
         }
-        let cap = Math.max(1, Math.min(Math.floor((truck.height - reserveH) / maxH), minMaxLayers))
-        if (cap === 0) cap = 1
-        const std = Math.max(1, Math.min(cap, Math.round(cap * f)))
+        const capH = Math.max(1, Math.floor((truck.height - reserveH) / maxH))
         const rowKey = `${dk}|${ck}`
         openCol = null; classCols = []
-        members.forEach((gi, idx) => pourGroup(groupsIn[gi], gi, groupsIn[gi].count, std, rowKey, idx === members.length - 1))
+        members.forEach((gi, idx) => {
+          const g = groupsIn[gi]
+          const std = Math.max(1, Math.min(Math.round(capH * f), capH, g.maxLayers ?? Infinity))
+          pourGroup(g, gi, g.count, std, rowKey, idx === members.length - 1)
+        })
         openCol = null
       }
       // Hàng nhẹ của đơn — ưu tiên nóc chân cùng đơn, hết nóc mới xuống sàn

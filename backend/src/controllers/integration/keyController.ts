@@ -3,6 +3,7 @@ import { randomUUID, randomBytes } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { hashApiKey } from '../../middlewares/apiKey'
+import { encryptSecret, decryptSecret } from '../../utils/secretBox'
 
 // Quản lý API key — CHỈ superadmin (khóa cấp tài khoản, không phải quyền nghiệp vụ thường).
 const isSuper = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
@@ -24,6 +25,7 @@ export async function createKey(req: Request, res: Response) {
   const now = new Date().toISOString()
   const { error } = await supabase.from('ApiKey').insert({
     id, name: name.trim(), key_hash: hashApiKey(raw), key_prefix: raw.slice(0, 12),
+    key_enc: encryptSecret(raw),   // lưu MÃ HÓA để superadmin xem lại (reveal); auth vẫn dùng key_hash
     scopes: scopeList, is_active: true, created_at: now, updated_at: now, created_by: req.user?.name ?? null,
   })
   if (error) return fail(res, error.message, 500)
@@ -34,14 +36,29 @@ export async function createKey(req: Request, res: Response) {
   }, 201)
 }
 
-// GET /wms/integration-keys — liệt kê (KHÔNG trả key thô, chỉ prefix để nhận diện).
+// GET /wms/integration-keys — liệt kê. Superadmin → trả kèm `key` (giải mã từ key_enc) để
+// REVEAL/COPY lại. Key tạo trước khi có cột key_enc → key = null (không reveal được).
 export async function listKeys(req: Request, res: Response) {
   if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
   const { data, error } = await supabase.from('ApiKey')
-    .select('id, name, key_prefix, scopes, is_active, last_used_at, created_at, created_by')
+    .select('id, name, key_prefix, key_enc, scopes, is_active, last_used_at, created_at, created_by')
     .order('created_at', { ascending: false })
   if (error) return fail(res, error.message, 500)
-  return ok(res, data ?? [])
+  const rows = (data ?? []) as unknown as Array<Record<string, unknown> & { key_enc: string | null }>
+  const out = rows.map(({ key_enc, ...r }) => ({ ...r, key: decryptSecret(key_enc) }))
+  return ok(res, out)
+}
+
+// DELETE /wms/integration-keys/:id — XÓA HẲN. Chỉ cho xóa key ĐÃ THU HỒI (phải revoke trước).
+export async function deleteKey(req: Request, res: Response) {
+  if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
+  const { data } = await supabase.from('ApiKey').select('is_active').eq('id', req.params.id).maybeSingle()
+  const row = data as { is_active: boolean } | null
+  if (!row) return fail(res, 'Không tìm thấy key', 404)
+  if (row.is_active) return fail(res, 'Phải thu hồi key trước khi xóa', 400)
+  const { error } = await supabase.from('ApiKey').delete().eq('id', req.params.id)
+  if (error) return fail(res, error.message, 500)
+  return ok(res, { id: req.params.id, deleted: true })
 }
 
 // PATCH /wms/integration-keys/:id/revoke — thu hồi (gọi API bằng key này lập tức 401).

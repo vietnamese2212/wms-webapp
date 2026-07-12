@@ -54,6 +54,7 @@ router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'), syste
 router.get('/integration-keys',            integrationKeys.listKeys)
 router.post('/integration-keys',           integrationKeys.createKey)
 router.patch('/integration-keys/:id/revoke', integrationKeys.revokeKey)
+router.delete('/integration-keys/:id',       integrationKeys.deleteKey)   // xóa hẳn (chỉ key đã thu hồi)
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

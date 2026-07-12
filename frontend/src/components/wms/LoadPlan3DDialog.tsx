@@ -37,24 +37,28 @@ function disposeChildren(THREE: typeof import('three'), group: import('three').G
   }
 }
 
-// Sprite nhãn tên mảng hàng (canvas → texture)
+// Sprite nhãn tên mảng hàng (canvas → texture) — canvas TỰ GIÃN theo độ dài chữ (hiện ĐỦ tên, không cắt)
 function makeLabelSprite(THREE: typeof import('three'), text: string, color: string) {
+  const font = 'bold 34px system-ui, sans-serif'
+  const measure = document.createElement('canvas').getContext('2d')!
+  measure.font = font
+  const textW = measure.measureText(text).width
   const canvas = document.createElement('canvas')
-  canvas.width = 512; canvas.height = 96
+  canvas.width = Math.max(220, Math.ceil(textW) + 60)
+  canvas.height = 96
   const ctx = canvas.getContext('2d')!
   ctx.fillStyle = 'rgba(255,255,255,0.92)'
   ctx.strokeStyle = color; ctx.lineWidth = 6
-  const r = 18
   ctx.beginPath()
-  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, r)
+  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 18)
   ctx.fill(); ctx.stroke()
   ctx.fillStyle = '#0f172a'
-  ctx.font = 'bold 34px system-ui, sans-serif'
+  ctx.font = font
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
   ctx.fillText(text, canvas.width / 2, canvas.height / 2)
   const tex = new THREE.CanvasTexture(canvas)
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }))
-  return sprite
+  return { sprite, aspect: canvas.width / canvas.height }
 }
 
 export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClose: () => void; gdo: GDO }) {
@@ -221,9 +225,35 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const floor = new THREE.Mesh(new THREE.BoxGeometry(L, 20, W), new THREE.MeshLambertMaterial({ color: 0xcbd5e1 }))
     floor.position.set(0, -10, 0)
     boxGroup.add(floor)
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(40, H, W), new THREE.MeshLambertMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 }))
-    cab.position.set(-L / 2 - 20, H / 2, 0)
-    boxGroup.add(cab)
+
+    // ĐẦU XE TẢI (stylized) — để user biết hướng nào là đầu xe: cabin + mũi xe + kính + bánh
+    const cabColor = new THREE.MeshLambertMaterial({ color: 0x0284c7 })
+    const darkMat  = new THREE.MeshLambertMaterial({ color: 0x1e293b })
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0xbae6fd })
+    const cabLen = Math.min(1600, L * 0.25), cabW = W * 0.94, cabH = H * 0.62
+    const cabX = -L / 2 - 80 - cabLen / 2
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabLen, cabH, cabW), cabColor)
+    cabin.position.set(cabX, cabH / 2, 0)
+    boxGroup.add(cabin)
+    // Kính lái (mặt trước cabin)
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(30, cabH * 0.38, cabW * 0.85), glassMat)
+    glass.position.set(cabX - cabLen / 2 - 15, cabH * 0.68, 0)
+    boxGroup.add(glass)
+    // Mũi xe (hood) thấp phía trước
+    const noseLen = cabLen * 0.45
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW), cabColor)
+    nose.position.set(cabX - cabLen / 2 - noseLen / 2, cabH * 0.21, 0)
+    boxGroup.add(nose)
+    // Bánh xe (trụ tối màu, trục theo chiều ngang) — 1 cặp dưới cabin + 2 cặp cuối thùng
+    const wheelR = Math.min(500, H * 0.22)
+    const wheelGeo = new THREE.CylinderGeometry(wheelR, wheelR, 300, 18)
+    const wheelXs = [cabX, L / 2 - 900, L / 2 - 900 - wheelR * 2.4]
+    for (const wx of wheelXs) for (const side of [-1, 1]) {
+      const wheel = new THREE.Mesh(wheelGeo, darkMat)
+      wheel.rotation.x = Math.PI / 2
+      wheel.position.set(wx, -wheelR * 0.4, side * (W / 2 - 160))
+      boxGroup.add(wheel)
+    }
 
     // Chọn thùng hiển thị theo chế độ:
     //  - Dự toán: theo thanh trượt (step ≤ maxStep); phần đã xuất thật → MỜ; chân đang xếp (step=maxStep) → SÁNG.
@@ -276,12 +306,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         const g = groups[gi]
         const color = GROUP_COLORS[gi % GROUP_COLORS.length]
         const cx = toX(agg.cx / agg.n, 0), cy = toZ(agg.cy / agg.n, 0)
-        const short = g.label.length > 22 ? g.label.slice(0, 21) + '…' : g.label
-        const countTxt = mode === 'progress' ? `${g.done}` : (g.done > 0 ? `${g.done}/${g.count}` : `${g.count}`)
-        const sprite = makeLabelSprite(THREE, `${short} · ${countTxt}`, color)
+        // Nhãn hiện ĐỦ tên + số lượng (canvas tự giãn — không cắt chữ)
+        const countTxt = mode === 'progress' ? `${g.done} thùng` : (g.done > 0 ? `${g.done}/${g.count} thùng` : `${g.count} thùng`)
+        const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, color)
         const labelY = agg.top + 420
         sprite.position.set(cx, labelY, cy)
-        sprite.scale.set(1500, 280, 1)
+        const labelH = 260
+        sprite.scale.set(labelH * aspect, labelH, 1)
         boxGroup.add(sprite)
         // Mũi tên: thân line + đầu cone chỉ xuống nóc khối
         const lineMat = new THREE.LineBasicMaterial({ color })

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify } from 'lucide-react'
+import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -166,6 +166,10 @@ export default function Materials() {
   const [bulkDeleting,   setBulkDeleting]   = useState(false)
   const [bulkQrOpen,     setBulkQrOpen]     = useState(false)
   const [bulkQrSaving,   setBulkQrSaving]   = useState(false)
+  // Bulk sửa quy cách xếp xe (D×R×C + số lớp tối đa + hàng nhẹ) — ô trống = giữ nguyên
+  const [bulkPackOpen,   setBulkPackOpen]   = useState(false)
+  const [bulkPackSaving, setBulkPackSaving] = useState(false)
+  const [bulkPack, setBulkPack] = useState({ l: '', w: '', h: '', layers: '', onTop: '' })   // onTop: ''=giữ nguyên · '1' · '0'
 
   // Data
   const { data: raw = [], isLoading }    = useMaterials(undefined)
@@ -410,6 +414,27 @@ export default function Materials() {
       setBulkQrOpen(false)
     } finally {
       setBulkQrSaving(false)
+    }
+  }
+
+  const bulkPackHasChange = !!(bulkPack.l || bulkPack.w || bulkPack.h || bulkPack.layers || bulkPack.onTop)
+
+  async function handleBulkPack() {
+    // Chỉ đắp field CÓ GIÁ TRỊ — ô trống giữ nguyên giá trị từng mã
+    const patch: Record<string, number | boolean> = {}
+    if (bulkPack.l)      patch.carton_length_cm = Number(bulkPack.l)
+    if (bulkPack.w)      patch.carton_width_cm  = Number(bulkPack.w)
+    if (bulkPack.h)      patch.carton_height_cm = Number(bulkPack.h)
+    if (bulkPack.layers) patch.max_stack_layers = Number(bulkPack.layers)
+    if (bulkPack.onTop)  patch.stack_on_top     = bulkPack.onTop === '1'
+    setBulkPackSaving(true)
+    try {
+      await Promise.all([...selected].map(id => updateMaterial.mutateAsync({ id, ...patch })))
+      setSelected(new Set())
+      setBulkPackOpen(false)
+      setBulkPack({ l: '', w: '', h: '', layers: '', onTop: '' })
+    } finally {
+      setBulkPackSaving(false)
     }
   }
 
@@ -698,6 +723,11 @@ export default function Materials() {
       {selected.size > 0 && (
         <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl">
           <span className="text-xs text-slate-300">{selected.size} mã đã chọn</span>
+          {canEdit && (
+            <button onClick={() => setBulkPackOpen(true)} className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+              <Boxes className="h-3.5 w-3.5" />Quy cách xếp xe
+            </button>
+          )}
           {canEdit && (
             <button onClick={() => setBulkQrOpen(true)} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
               <QrCode className="h-3.5 w-3.5" />Không theo dõi QR
@@ -1175,6 +1205,49 @@ export default function Materials() {
             <Button variant="outline" size="sm" onClick={() => setBulkQrOpen(false)} className="text-xs h-7">Hủy</Button>
             <Button size="sm" onClick={handleBulkNoQr} disabled={bulkQrSaving} className="text-xs h-7 bg-amber-500 hover:bg-amber-600 text-white">
               {bulkQrSaving ? 'Đang lưu…' : `Xác nhận ${selected.size} mã`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk sửa quy cách xếp xe (D×R×C + số lớp + hàng nhẹ) ─────────── */}
+      <Dialog open={bulkPackOpen} onOpenChange={open => !open && !bulkPackSaving && setBulkPackOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Quy cách xếp xe — {selected.size} mã hàng</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-xs text-slate-500">Chỉ ô CÓ GIÁ TRỊ được áp cho {selected.size} mã đã chọn — ô bỏ trống giữ nguyên từng mã.</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Thùng D×R×C (cm)</Label>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={0} step="0.1" className="h-8 text-xs" value={bulkPack.l} onChange={e => setBulkPack(p => ({ ...p, l: e.target.value }))} placeholder="Dài" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} step="0.1" className="h-8 text-xs" value={bulkPack.w} onChange={e => setBulkPack(p => ({ ...p, w: e.target.value }))} placeholder="Rộng" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} step="0.1" className="h-8 text-xs" value={bulkPack.h} onChange={e => setBulkPack(p => ({ ...p, h: e.target.value }))} placeholder="Cao" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Số lớp xếp tối đa</Label>
+                <Input type="number" min={1} className="h-8 text-xs" value={bulkPack.layers} onChange={e => setBulkPack(p => ({ ...p, layers: e.target.value }))} placeholder="Giữ nguyên" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Hàng nhẹ (xếp trên hàng khác)</Label>
+                <select value={bulkPack.onTop} onChange={e => setBulkPack(p => ({ ...p, onTop: e.target.value }))}
+                  className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
+                  <option value="">Giữ nguyên</option>
+                  <option value="1">Bật — được xếp lên nóc</option>
+                  <option value="0">Tắt</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setBulkPackOpen(false)} disabled={bulkPackSaving} className="text-xs h-7">Hủy</Button>
+            <Button size="sm" onClick={handleBulkPack} disabled={bulkPackSaving || !bulkPackHasChange} className="text-xs h-7">
+              {bulkPackSaving ? 'Đang lưu…' : `Áp cho ${selected.size} mã`}
             </Button>
           </DialogFooter>
         </DialogContent>

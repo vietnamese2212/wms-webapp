@@ -24,7 +24,7 @@
     "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.7.5",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

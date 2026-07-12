@@ -6,7 +6,10 @@ import { ok, fail } from '../../utils/response'
 import { JWT_SECRET, type JwtPayload } from '../../middlewares/auth'
 import { ALL_PERMISSIONS } from '../../config/permissions'
 
-const JWT_EXPIRY = '7d'
+// 24h thay vì 7d: giảm cửa sổ token-bị-trộm-của-tài-khoản-đã-vô-hiệu-hóa gọi API trực tiếp
+// (từ ≤7 ngày xuống ≤1 ngày). FE refreshUser (5' + on-load) tái cấp token mới → phiên đang
+// dùng KHÔNG hết hạn; chỉ phải đăng nhập lại nếu đóng app >24h. Áp cho cả token app + vé realtime.
+const JWT_EXPIRY = '1d'
 
 // Hash giả (cố định lúc load) để bcrypt.compare LUÔN chạy kể cả khi không tìm thấy
 // tài khoản → cân bằng thời gian phản hồi, chống timing-attack enumerate email.

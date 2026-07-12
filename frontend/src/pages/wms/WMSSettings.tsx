@@ -190,8 +190,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
-  // Đè cờ "quét tới thùng" theo Kho: inherit=theo Loại kho · on=bật · off=tắt
-  const [cartonOv,      setCartonOv]      = useState<'inherit' | 'on' | 'off'>(wh?.carton_scan_override == null ? 'inherit' : wh.carton_scan_override ? 'on' : 'off')
+  // Cờ "quét tới thùng khi xuất" theo TỪNG KHO — mặc định TẮT, kho nào cần thì tick
+  const [cartonScan,    setCartonScan]    = useState(wh?.carton_scan_override === true)
   const [err, setErr] = useState('')
 
   // Danh sách kho làm parent: kho thường (không phải kho phụ), trừ chính mình
@@ -211,7 +211,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     setErr('')
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     const parent_warehouse_id = parentId === '__none__' ? null : parentId
-    const carton_scan_override = cartonOv === 'inherit' ? null : cartonOv === 'on'
+    const carton_scan_override = cartonScan
     if (isEdit) {
       update(
         { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override },
@@ -289,16 +289,13 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Quét tới THÙNG khi xuất</Label>
-            <Select value={cartonOv} onValueChange={v => setCartonOv(v as 'inherit' | 'on' | 'off')}>
-              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="inherit">Theo Loại kho (mặc định)</SelectItem>
-                <SelectItem value="on">Bật — bắt quét tem thùng</SelectItem>
-                <SelectItem value="off">Tắt — chỉ quét pallet</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-[10px] text-slate-400">Đè cờ của Loại kho cho riêng kho này. "Theo Loại kho" = dùng cấu hình ở tab Loại kho.</p>
+            <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+              <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-slate-700">Quét tới THÙNG khi xuất</span>
+                <span className="block text-[11px] text-slate-400 leading-snug">Mặc định TẮT. Bật = kho này dùng tính năng quét tem thùng khi xuất; LOẠI HÀNG nào phải quét do cờ ở tab Loại kho quyết định. Kho tắt thì không quét, bất kể Loại kho.</span>
+              </span>
+            </label>
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
@@ -534,8 +531,8 @@ function TypeDialog({ type, open, onClose }: {
               'Mã hàng thuộc loại này phải khai Pallet/EA để quy đổi tồn EA → pallet')}
             {flagRow('wt-reqncc', reqNcc, setReqNcc, 'Bắt buộc có NCC khi nhập kho',
               'Chặn lưu pallet thiếu NCC ở quét nhập, nhập tay và upload tồn kho. Chuyển kho kế thừa NCC từ pallet gốc, không chặn.')}
-            {flagRow('wt-cartonscan', reqCartonScan, setReqCartonScan, 'Quét tới THÙNG khi xuất',
-              'Xuất kho: sau khi quét pallet sẽ mở multiscan quét tem từng thùng để đính kèm truy vết (không tính tồn theo thùng). Từng Kho có thể đè cờ này.')}
+            {flagRow('wt-cartonscan', reqCartonScan, setReqCartonScan, 'Quét tới THÙNG khi xuất (loại hàng này)',
+              'Mặc định TẮT. Chỉ hiệu lực ở KHO đã bật công tắc "Quét tới THÙNG khi xuất" — chuyến xuất loại hàng này tại kho đó phải quét tem từng thùng (đính kèm truy vết, không tính tồn theo thùng).')}
           </div>
 
           <div className="space-y-1.5">

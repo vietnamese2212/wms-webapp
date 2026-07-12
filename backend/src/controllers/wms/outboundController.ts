@@ -443,7 +443,7 @@ export async function getGDO(req: Request, res: Response) {
     if (!categoryAllowed(req, (result as { warehouse_type?: string | null }).warehouse_type)) {
       return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     }
-    // Cờ quét-tới-thùng cho chuyến này (Kho đè Loại kho) → FE quyết mở panel multiscan thùng sau khi quét pallet
+    // Cờ quét-tới-thùng: KHO bật VÀ Loại hàng của chuyến bật → FE mở panel multiscan thùng sau khi quét pallet
     const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
     const carton_scan_enabled = await warehouseRequiresCartonScan(r.warehouse_id, r.warehouse_type)
     return ok(res, { ...result, carton_scan_enabled })

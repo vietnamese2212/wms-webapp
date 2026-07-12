@@ -590,8 +590,11 @@ export default function PalletLabels() {
     const el = previewRef.current
     if (!el) return
     const recompute = () => {
-      const availW = el.clientWidth - 20
-      const availH = Math.min(el.clientHeight || window.innerHeight, window.innerHeight) - 20
+      const cs = getComputedStyle(el)   // trừ ĐÚNG padding container (p-2/p-4) để tờ + padding lọt trọn, hết scroll dư
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+      const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+      const availW = el.clientWidth - padX - 6
+      const availH = Math.min(el.clientHeight || window.innerHeight, window.innerHeight) - padY - 6
       if (availW <= 0) return
       const s = Math.min(availW / A4_W_PX, availH / A4_H_PX)
       setPreviewScale(Math.max(0.28, Math.min(1, s)))

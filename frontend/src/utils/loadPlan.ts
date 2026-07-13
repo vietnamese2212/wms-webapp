@@ -154,13 +154,14 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       return true
     }
 
-    // Rải phần dư lên NÓC khối class (CHỈ khi sàn hết chỗ) — ƯU TIÊN: chân CÙNG MÃ trước →
-    // chân cùng loại; trong mỗi nhóm đi TỪ PHÍA CỬA vào (step giảm dần — người bốc với tới được).
+    // Rải phần dư lên NÓC khối class — ƯU TIÊN: chân CÙNG MÃ trước → chân cùng loại;
+    // trong mỗi nhóm đi TỪ PHÍA TRONG ra (step tăng dần — user 13/07: "khối cao nằm
+    // trong, khối thấp ở bên ngoài", phần nổi cao hơn phải dồn về phía cabin).
     const spillOnRoof = (g: LoadGroup, gi: number, rem: number): number => {
       const cands = [...classCols]
         .filter(oc => oc !== st.openCol?.col)
         .sort((a, b) =>
-          ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (b.step - a.step))
+          ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.step - b.step))
       for (const oc of cands) {
         if (rem <= 0) break
         if (truck.height - oc.top < g.h) continue

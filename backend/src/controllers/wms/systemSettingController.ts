@@ -16,6 +16,10 @@ import { ok, fail } from '../../utils/response'
 //       shipto; không khớp DB = 'OTHER'). QR/QTY = luồng nhận-quét như cũ; NONE/OTHER = tài xế TỰ HOÀN THÀNH.
 //     Mặc định (khi chưa cấu hình) = { enabled:true, modes:['QR','QTY'] } → giữ nguyên hành vi đơn vị 1.
 
+// - truck_models: Array<{ name, l, w, h }> — sổ DÒNG XE ghi nhớ lòng thùng (mm) cho sơ đồ xếp xe 3D.
+//     ĐỘC LẬP với Loại xe TMS (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế — dims không
+//     treo trên Loại xe). Ghi = wms_settings.manage_system (nút Lưu/Xóa trong dialog 3D gate quyền này).
+
 export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
 export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
 export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
@@ -27,9 +31,20 @@ function isDeliveryConfirmation(v: unknown): v is DeliveryConfirmation {
   return o.modes.every(m => typeof m === 'string' && (DC_MODES as readonly string[]).includes(m))
 }
 
+function isTruckModels(v: unknown): boolean {
+  if (!Array.isArray(v) || v.length > 100) return false
+  return v.every(item => {
+    if (!item || typeof item !== 'object') return false
+    const o = item as Record<string, unknown>
+    if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 80) return false
+    return [o.l, o.w, o.h].every(n => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= 50000)
+  })
+}
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
   delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
+  truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
 }
 
 // Cờ label_format có cache ngắn (điểm quét đọc mỗi lần → không query DB liên tục; cờ đổi rất hiếm).

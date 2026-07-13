@@ -11,9 +11,15 @@ import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useVehicleTypes } from '@/api/hooks'
+import { useSystemSettings, useUpdateSystemSetting } from '@/api/hooks'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { computeLoadPlan, ASSUMED_CARTON, GROUP_COLORS, type LoadGroup, type LoadPlan } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
+
+// Dòng xe ghi nhớ lòng thùng (mm) — SystemSetting 'truck_models'. ĐỘC LẬP với Loại xe TMS
+// (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế, dims không treo trên Loại xe).
+type TruckModel = { name: string; l: number; w: number; h: number }
 
 type ThreeCtx = {
   THREE: typeof import('three')
@@ -85,9 +91,18 @@ function makeBadgeSprite(THREE: typeof import('three'), text: string) {
 }
 
 export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClose: () => void; gdo: GDO }) {
-  const { data: vehicleTypes = [] } = useVehicleTypes(true)
+  const { data: sysSettings = [] } = useSystemSettings()
+  const { mutateAsync: saveSetting, isPending: savingModels } = useUpdateSystemSetting()
+  const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+  const canManageModels = can(perms, 'wms_settings', 'manage_system')
+  const truckModels: TruckModel[] = useMemo(() => {
+    const v = sysSettings.find(s => s.key === 'truck_models')?.value
+    return Array.isArray(v) ? (v as TruckModel[]) : []
+  }, [sysSettings])
 
-  const [vtId, setVtId] = useState('')
+  const [tmName, setTmName] = useState('')       // tên dòng xe đang chọn / sẽ lưu
+  const [tmError, setTmError] = useState('')
   const [boxL, setBoxL] = useState('')
   const [boxW, setBoxW] = useState('')
   const [boxH, setBoxH] = useState('')
@@ -102,12 +117,35 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   })
   const selKey = [...selectedKeys].sort().join('|')
 
-  function pickVehicleType(id: string) {
-    setVtId(id)
-    const vt = vehicleTypes.find(v => v.id === id)
-    setBoxL(vt?.box_length_mm != null ? String(vt.box_length_mm) : '')
-    setBoxW(vt?.box_width_mm  != null ? String(vt.box_width_mm)  : '')
-    setBoxH(vt?.box_height_mm != null ? String(vt.box_height_mm) : '')
+  function pickTruckModel(name: string) {
+    setTmName(name)
+    setTmError('')
+    const m = truckModels.find(x => x.name === name)
+    setBoxL(m ? String(m.l) : '')
+    setBoxW(m ? String(m.w) : '')
+    setBoxH(m ? String(m.h) : '')
+  }
+
+  // Lưu dòng xe: trùng tên → ghi đè dims; tên mới → thêm vào sổ
+  async function saveTruckModel() {
+    const name = tmName.trim()
+    const l = Number(boxL), w = Number(boxW), h = Number(boxH)
+    if (!name) { setTmError('Nhập tên dòng xe trước khi lưu'); return }
+    if (!(l > 0 && w > 0 && h > 0)) { setTmError('Nhập đủ D×R×C (mm) trước khi lưu'); return }
+    const next = [...truckModels.filter(x => x.name !== name), { name, l, w, h }]
+    try {
+      await saveSetting({ key: 'truck_models', value: next })
+      setTmError('')
+    } catch { setTmError('Lưu dòng xe thất bại — thử lại') }
+  }
+
+  async function deleteTruckModel() {
+    const name = tmName.trim()
+    if (!truckModels.some(x => x.name === name)) return
+    try {
+      await saveSetting({ key: 'truck_models', value: truckModels.filter(x => x.name !== name) })
+      setTmName(''); setTmError('')
+    } catch { setTmError('Xóa dòng xe thất bại — thử lại') }
   }
 
   // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo)
@@ -513,14 +551,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         {/* Panel điều khiển */}
         <div className="shrink-0 lg:w-80 max-h-[45%] lg:max-h-none border-t lg:border-t-0 lg:border-l bg-white overflow-y-auto p-3 space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs">Loại xe</Label>
-            <select value={vtId} onChange={e => pickVehicleType(e.target.value)}
+            <Label className="text-xs">Dòng xe (ghi nhớ lòng thùng)</Label>
+            <select value={truckModels.some(x => x.name === tmName) ? tmName : ''} onChange={e => pickTruckModel(e.target.value)}
               className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
-              <option value="">— Chọn loại xe —</option>
-              {vehicleTypes.map(vt => (
-                <option key={vt.id} value={vt.id}>
-                  {vt.name}{vt.box_length_mm ? ` (${vt.box_length_mm}×${vt.box_width_mm}×${vt.box_height_mm})` : ' (chưa khai lòng thùng)'}
-                </option>
+              <option value="">— Chọn dòng xe —</option>
+              {truckModels.map(m => (
+                <option key={m.name} value={m.name}>{m.name} ({m.l}×{m.w}×{m.h})</option>
               ))}
             </select>
           </div>
@@ -533,7 +569,26 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               <span className="text-slate-400 text-xs">×</span>
               <Input type="number" min={0} className="h-8 text-xs" value={boxH} onChange={e => setBoxH(e.target.value)} placeholder="Cao" />
             </div>
-            <p className="text-[10px] text-slate-400">Khai sẵn cho từng loại xe ở Cài đặt TMS → Loại xe để khỏi nhập lại.</p>
+            {canManageModels ? (
+              <>
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <Input className="h-8 text-xs flex-1" value={tmName} onChange={e => { setTmName(e.target.value); setTmError('') }}
+                    placeholder="Tên dòng xe (vd Container 40ft)" />
+                  <Button size="sm" variant="outline" className="h-8 text-xs px-2 shrink-0" disabled={savingModels} onClick={saveTruckModel}>
+                    {savingModels ? 'Đang lưu…' : 'Lưu dòng xe'}
+                  </Button>
+                </div>
+                {truckModels.some(x => x.name === tmName.trim()) && (
+                  <button type="button" className="text-[10px] text-red-500 hover:underline" disabled={savingModels} onClick={deleteTruckModel}>
+                    Xóa dòng xe "{tmName.trim()}" khỏi sổ
+                  </button>
+                )}
+                {tmError && <p className="text-[10px] text-red-600">{tmError}</p>}
+                <p className="text-[10px] text-slate-400">Lưu kích thước đang nhập thành dòng xe để lần sau chọn lại (dùng chung toàn đơn vị).</p>
+              </>
+            ) : (
+              <p className="text-[10px] text-slate-400">Chọn dòng xe đã lưu hoặc nhập tay kích thước cho chuyến này.</p>
+            )}
           </div>
 
           <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">

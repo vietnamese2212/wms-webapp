@@ -104,13 +104,22 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
     // Đặt 1 chân MỚI của class: shelf logic; take = số lớp đổ vào (≤ std)
     const newColumn = (g: LoadGroup, gi: number, take: number, std: number, rowKey: string): boolean => {
-      if (shelfKey !== null && shelfKey !== rowKey) closeShelf()
+      if (shelfKey !== null && shelfKey !== rowKey) {
+        // ĐỔI KHỐI giữa dải: KHÔNG đóng dải — khối sau LẤP tiếp phần rộng còn trống của
+        // dải biên (hàng phải KÍN, user 13/07: "tím hết thì cam lấp vào, không để chân hở");
+        // chỉ reset hướng xoay cho khối mới.
+        shelfKey = rowKey
+        shelfOrient = null
+      }
       const opts = g.l === g.w ? [{ fl: g.l, fw: g.w }] : [{ fl: g.l, fw: g.w }, { fl: g.w, fw: g.l }]
       // Chọn hướng cho CẢ DẢI: nhiều chân / mm chiều sâu nhất (tie → dải nông hơn)
       const pickBest = () => {
         const c = opts.filter(o => shelfX + o.fl <= truck.length && o.fw <= truck.width)
         if (!c.length) return null
-        return c.sort((a, b) =>
+        // Đang lấp dải biên dở (cursorY > 0) → ưu tiên hướng còn VỪA phần rộng còn lại
+        const fitStrip = c.filter(o => cursorY + o.fw <= truck.width)
+        const pool = fitStrip.length ? fitStrip : c
+        return pool.sort((a, b) =>
           (Math.floor(truck.width / b.fw) / b.fl) - (Math.floor(truck.width / a.fw) / a.fl) || (a.fl - b.fl))[0]
       }
       if (!shelfOrient) {

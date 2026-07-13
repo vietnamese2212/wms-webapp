@@ -1,15 +1,17 @@
 // Sơ đồ xếp xe 3D — thuật toán xếp thùng carton vào lòng thùng xe (chạy thuần FE).
-// LUẬT XẾP (user chốt 12/07/2026, chỉnh lần 3):
-// 1. Trải HẾT chiều dài xe khi hàng ít (hạ số lớp chuẩn đồng loạt); các chân đầy đều
-//    nhau ở "số lớp chuẩn" của loại kích thước.
+// LUẬT XẾP (user chốt 12/07/2026, chỉnh lần 4 — 13/07):
+// 1. Trải HẾT chiều dài xe: khối chân TRONG cao kịch, đuôi hạ DẦN TỪNG BẬC ra cửa
+//    ("bậc thang thoải xuống") — không bỏ trống đuôi xe khi còn hạ lớp được.
 // 2. Xếp hết ĐƠN 1 rồi mới tới ĐƠN 2 (1 xe nhiều DO).
 // 3. Hàng CÙNG (hoặc gần) KÍCH THƯỚC gom thành 1 KHỐI chung — trong khối các mã xếp
 //    nối tiếp LIỀN MẠCH, hết mã này tới mã khác, mã sau đè tiếp lên CHÂN DỞ của mã
 //    trước (không để hở). 1 khối/dãy KHÔNG có 2 loại kích thước.
 // 4. GIAO THOA chỉ xảy ra khi đổi loại kích thước: phần dư của loại cũ không đủ 1 chân
 //    → rải LÊN NÓC khối của chính loại cũ (nếu còn trần), không thì đứng chân dở cuối khối.
-// 5. Mã hàng nhẹ (stack_on_top) xếp TRÊN mã khác: chân hàng nền HẠ ĐỀU chừa "lớp nền
-//    phẳng" (reserve) rồi hàng nhẹ trải lên nóc. max_stack_layers giới hạn số lớp.
+// 5. Mã hàng nhẹ (stack_on_top) xếp TRÊN mã khác thành KHỐI LIỀN MẠCH: đi từ PHÍA CỬA
+//    vào, mỗi nóc chồng đủ số lớp cho phép (max_stack_layers / trần xe) rồi mới sang nóc
+//    kế — KHÔNG rải mỏng 1 lớp từ trong ra ngoài. Đuôi bậc thang thấp phía cửa chính là
+//    chỗ trống tự nhiên cho khối này; hết nóc mới xuống sàn.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -45,12 +47,13 @@ export interface LoadPlan {
   placedCount: number
   totalCount: number
   weightKg: number
-  spreadLayersPct: number
+  lengthUsedPct: number   // % chiều dài xe đã dùng
 }
 
 export const ASSUMED_CARTON = { l: 422, w: 233, h: 100 }   // mm — cỡ thùng chuẩn user đưa 12/07
 
 type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number; groups: Set<number> }
+type RowStat = { cols: number; fl: number; fw: number }
 
 // "Gần kích thước" = trùng nhau khi làm tròn về cm — cùng class thì gom chung khối
 const classKeyOf = (g: LoadGroup) => `${Math.round(g.l / 10)}x${Math.round(g.w / 10)}x${Math.round(g.h / 10)}`
@@ -74,21 +77,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     return a - b
   })
 
-  // Hàng nhẹ xếp đè → HẠ ĐỀU chân hàng nền chừa reserve (lớp nền phẳng)
-  const onTopGroups = groupsIn.filter(g => g.onTop && g.count > 0)
-  let reserveH = 0
-  if (onTopGroups.length) {
-    const floorArea = truck.length * truck.width
-    const maxTopH = Math.max(...onTopGroups.map(g => g.h))
-    const area1Layer = onTopGroups.reduce((s, g) => s + g.count * g.l * g.w, 0)
-    const layers = Math.max(1, Math.ceil(area1Layer / Math.max(1, floorArea * 0.9)))
-    reserveH = Math.min(layers * maxTopH, truck.height * 0.5)
-  }
-
-  function pack(f: number) {
+  // nColsMap (tùy chọn): số CHÂN muốn dùng cho từng khối `${dk}|${ck}` — vòng tinh chỉnh
+  // bên dưới tăng dần để đuôi bậc thang trải TỚI ĐUÔI XE.
+  function pack(nColsMap?: Map<string, number>) {
     const placed: PlacedBox[] = []
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
+    const rows = new Map<string, RowStat>()   // thống kê chân/hướng theo khối (cho vòng tinh chỉnh)
     let step = 0
     // Dải (shelf) hiện tại — 1 dải chỉ 1 (đơn × loại kích thước) và 1 HƯỚNG XOAY duy nhất
     // (trộn 2 hướng trong 1 dải làm dải phình sâu mà chứa ít chân — lãng phí sàn)
@@ -130,6 +125,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         placed.push({ x: shelfX, y: cursorY, z: k * g.h, l: pick.fl, w: pick.fw, h: g.h, group: gi, step })
       const col: Col = { x: shelfX, y: cursorY, fl: pick.fl, fw: pick.fw, top: take * g.h, doKey: g.doKey, step, groups: new Set([gi]) }
       cols.push(col); classCols.push(col)
+      const rs = rows.get(rowKey)
+      if (rs) { rs.cols++; rs.fl = pick.fl; rs.fw = pick.fw } else rows.set(rowKey, { cols: 1, fl: pick.fl, fw: pick.fw })
       cursorY += pick.fw
       shelfDepth = Math.max(shelfDepth, pick.fl)
       shelfKey = rowKey
@@ -157,31 +154,49 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       return rem
     }
 
-    // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) theo dãy TARGET 2 MỨC:
-    // n1 chân TRONG cao stdBase + m chân NGOÀI thấp L2 (hạ lớp dần ra cửa, mức đều dễ nhìn
-    // — user: "hạ từ 18 xuống 16"). Giải n1·std + m·L2 = C với L2 lớn nhất có thể.
-    const buildTargets = (C: number, stdBase: number): number[] => {
-      const targets: number[] = []
-      const a = Math.floor(C / stdBase), r = C % stdBase
-      if (r === 0) { for (let i = 0; i < a; i++) targets.push(stdBase); return targets }
-      if (a === 0) { targets.push(r); return targets }
-      let found: { L2: number; m: number; n1: number } | null = null
-      for (let L2 = stdBase - 1; L2 >= 1 && !found; L2--) {
-        for (let m = 1; m * L2 <= C; m++) {
-          const rest = C - m * L2
-          if (rest % stdBase === 0) { found = { L2, m, n1: rest / stdBase }; break }
-        }
+    // Dãy TARGET dạng BẬC THANG THOẢI XUỐNG (user chốt 13/07 — thay 2 mức cũ):
+    // các MỨC lớp hạ đều bậc d (~stdBase/9) từ trong ra cửa, mỗi mức là 1 CỤM chân liền
+    // nhau (dễ nhìn); nColsWant (nếu có) = tổng số chân muốn dùng — trải hết chiều dài xe.
+    const buildTargets = (C: number, stdBase: number, nColsWant?: number): number[] => {
+      if (C <= 0) return []
+      const n = Math.max(1, Math.max(Math.ceil(C / stdBase), Math.min(nColsWant ?? 0, C)))
+      const avg = C / n
+      const d = Math.max(1, Math.round(stdBase / 9))
+      // Số mức tối đa sao cho mức đỉnh ≤ stdBase và mức đáy ≥ 1 (đỉnh ≈ avg + (k-1)d/2)
+      const k = Math.max(1, Math.floor((2 * Math.min(stdBase - avg, avg - 1)) / d) + 1)
+      const L1 = Math.min(stdBase, Math.max(1, Math.round(avg + ((k - 1) * d) / 2)))
+      const hs: number[] = []            // trong → cửa, không tăng
+      for (let j = 0; j < k; j++) {
+        const lv = Math.max(1, L1 - j * d)
+        const width = Math.floor(n / k) + (j < n % k ? 1 : 0)
+        for (let c = 0; c < width; c++) hs.push(lv)
       }
-      const { L2, m, n1 } = found!   // luôn tồn tại (L2=1, m=r)
-      for (let i = 0; i < n1; i++) targets.push(stdBase)
-      for (let i = 0; i < m; i++) targets.push(L2)
-      return targets
+      // Chỉnh tổng đúng = C, giữ dáng không tăng: thiếu → đắp chân TRONG (trần stdBase /
+      // chân kề trong); lố → gọt chân NGOÀI (sàn 1 / chân kề ngoài)
+      let diff = C - hs.reduce((s, v) => s + v, 0)
+      let guard = 0
+      while (diff !== 0 && guard++ < 100_000) {
+        let moved = false
+        if (diff > 0) {
+          for (let i = 0; i < hs.length && diff > 0; i++) {
+            const cap = i === 0 ? stdBase : hs[i - 1]
+            if (hs[i] < cap) { hs[i]++; diff--; moved = true }
+          }
+        } else {
+          for (let i = hs.length - 1; i >= 0 && diff < 0; i--) {
+            const floorV = i === hs.length - 1 ? 1 : hs[i + 1]
+            if (hs[i] > floorV) { hs[i]--; diff++; moved = true }
+          }
+        }
+        if (!moved) break
+      }
+      return hs
     }
 
-    const pourClass = (members: number[], capH: number, rowKey: string) => {
-      const stdBase = Math.max(1, Math.min(Math.round(capH * f), capH))
+    const pourClass = (members: number[], capH: number, rowKey: string, nColsWant?: number) => {
+      const stdBase = Math.max(1, capH)
       const C = members.reduce((s, gi) => s + groupsIn[gi].count, 0)
-      const targets = buildTargets(C, stdBase)
+      const targets = buildTargets(C, stdBase, nColsWant)
       let t = 0
       st.openCol = null; classCols = []
       for (const gi of members) {
@@ -235,17 +250,19 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const ck = classKeyOf(groupsIn[doFloor[i]])
         const members: number[] = []
         while (i < doFloor.length && classKeyOf(groupsIn[doFloor[i]]) === ck) members.push(doFloor[i++])
-        // Thông số class: chiều cao đại diện = max h; cap theo trần đã trừ reserve.
+        // Thông số class: chiều cao đại diện = max h.
         // maxLayers áp PER MÃ (chân của mã yếu thấp hơn) — KHÔNG kéo cả khối xuống.
         const maxH = Math.max(...members.map(gi => groupsIn[gi].h))
         if (maxH > truck.height || Math.min(...members.map(gi => Math.min(groupsIn[gi].l, groupsIn[gi].w))) > truck.width) {
           for (const gi of members) leftover.push({ group: gi, count: groupsIn[gi].count })
           continue
         }
-        const capH = Math.max(1, Math.floor((truck.height - reserveH) / maxH))
-        pourClass(members, capH, `${dk}|${ck}`)
+        const capH = Math.max(1, Math.floor(truck.height / maxH))
+        const rowKey = `${dk}|${ck}`
+        pourClass(members, capH, rowKey, nColsMap?.get(rowKey))
       }
-      // Hàng nhẹ của đơn — ưu tiên nóc chân cùng đơn, hết nóc mới xuống sàn
+      // Hàng nhẹ của đơn — KHỐI LIỀN MẠCH trên nóc: đi từ phía cửa vào, mỗi nóc chồng đủ
+      // số lớp cho phép rồi mới sang nóc kế (không rải mỏng); hết nóc mới xuống sàn.
       for (const gi of topOrder) {
         const g = groupsIn[gi]
         if (g.doKey !== dk || g.count <= 0) continue
@@ -282,17 +299,45 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         }
       }
     }
-    return { placed, leftover, step }
+    return { placed, leftover, step, rows }
   }
 
-  // f=1: chồng kịch số lớp. Nếu ĐỦ hết → hạ lớp dần (f nhỏ nhất vẫn xếp đủ) để trải TỚI ĐUÔI XE.
-  // Lưới mịn — hạ được tới 1-2 lớp; sàn hết chỗ thì phần dư tự tràn lên nóc phía cửa.
-  let best = pack(1)
-  let f = 1
+  // Vòng tinh chỉnh "trải tới đuôi xe": xếp thử → còn thừa chiều dài → chia thêm dải cho
+  // từng khối (tỷ lệ theo phần sàn nó đang chiếm) → xếp lại với đuôi bậc thang dài hơn.
+  // Hàng nhẹ chuyển dần từ sàn lên nóc đuôi thấp → lặp tới khi không cải thiện (tối đa 4).
+  const maxXOf = (placed: PlacedBox[]) => placed.length ? Math.max(...placed.map(b => b.x + b.l)) : 0
+  let best = pack()
   if (best.leftover.length === 0) {
-    for (const cand of [0.04, 0.06, 0.09, 0.12, 0.16, 0.21, 0.27, 0.34, 0.42, 0.51, 0.61, 0.72, 0.84]) {
-      const r = pack(cand)
-      if (r.leftover.length === 0) { best = r; f = cand; break }
+    for (let iter = 0; iter < 6; iter++) {
+      const maxX = maxXOf(best.placed)
+      const remLen = truck.length - maxX
+      const floorRows = [...best.rows.entries()].filter(([k]) => !k.includes('|top|'))
+      if (remLen <= 0 || !floorRows.length) break
+      let usedSum = 0
+      const info = floorRows.map(([k, s]) => {
+        const perShelf = Math.max(1, Math.floor(truck.width / s.fw))
+        const used = Math.ceil(s.cols / perShelf) * s.fl
+        usedSum += used
+        return { k, s, perShelf, used }
+      })
+      if (usedSum <= 0) break
+      const map = new Map<string, number>()
+      let any = false
+      for (const it of info) {
+        const extraShelves = Math.floor((remLen * (it.used / usedSum)) / it.s.fl)
+        map.set(it.k, it.s.cols + extraShelves * it.perShelf)
+        if (extraShelves > 0) any = true
+      }
+      if (!any) {
+        // Phần dư nhỏ hơn suất chia đều của mọi khối → dồn cả cho 1 khối sâu dải nhất còn vừa
+        const fit = [...info].filter(it => it.s.fl <= remLen).sort((a, b) => b.s.fl - a.s.fl)[0]
+        if (!fit) break
+        map.set(fit.k, fit.s.cols + fit.perShelf)
+        any = true
+      }
+      const r = pack(map)
+      if (r.leftover.length > 0 || maxXOf(r.placed) <= maxX) break
+      best = r
     }
   }
 
@@ -306,7 +351,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     volumePct: truckVol > 0 ? Math.round((usedVol / truckVol) * 1000) / 10 : 0,
     placedCount: placed.length, totalCount,
     weightKg: Math.round(weightKg * 10) / 10,
-    spreadLayersPct: Math.round(f * 100),
+    lengthUsedPct: truck.length > 0 ? Math.round((maxXOf(placed) / truck.length) * 100) : 0,
   }
 }
 

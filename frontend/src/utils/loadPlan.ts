@@ -100,6 +100,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     let spilled = 0   // số thùng tràn nóc DO SÀN HỤT (khác "hàng thừa nổi trên khối" — bình thường)
     let lightPatch = 0   // mảng nóc thềm LỘ đặt-vừa-thùng-gửi (phạt trong chọn phương án)
     let spanMiss = 0     // hàng gửi hụt phủ ngang (mm so 85% bề xe)
+    let topMiss = 0      // đỉnh vùng gửi HỤT so mức thân khối tiếp giáp (mm — user 15/07: phải cao bằng)
     const used: number[] = groupsIn.map(() => 0)          // số thùng đã dùng của từng mã
     const avail = (gi: number) => Math.max(0, groupsIn[gi].count - used[gi])
     let step = 0
@@ -379,7 +380,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         // trải m — hàng ít khối nền hạ thấp thì hàng gửi hạ theo, không thành tháp) —
         // nền + hàng gửi phải CHẠM mức này (ngang bằng hàng phía sau, không lõm)
         const m0 = mEffOf(`${dk}|${classKeyOf(bg0)}`)
-        topT = Math.min(truck.height, Math.max(bg0.h, Math.ceil(full0 / m0) * bg0.h))
+        // L0 = đúng công thức pourClass sẽ chọn cho khối nền đầu (kể cả sàn min 3 lớp)
+        // — đỉnh vùng gửi phải CAO BẰNG mức thân khối tiếp giáp (user 15/07)
+        const L0 = Math.min(full0, Math.max(Math.min(full0, 3), Math.ceil(full0 / m0)))
+        topT = Math.min(truck.height, Math.max(bg0.h, L0 * bg0.h))
         // Hướng HÀNG nhẹ chủ đạo: phủ bề rộng SÁT nhất; tie → sâu nhỏ
         const bestRowOpt = (g: LoadGroup) =>
           (g.l === g.w ? [{ d: g.l, wd: g.w }] : [{ d: g.l, wd: g.w }, { d: g.w, wd: g.l }])
@@ -416,11 +420,24 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // chiều ngang"): hàng gửi ít → hạ lớp để phủ đủ bề ngang ít nhất 1 hàng
           const cellsRowEst = Math.max(1, Math.floor(truck.width / optd.wd))
           Lf = Math.max(1, Math.min(Lf, Math.ceil(N / cellsRowEst)))
-          let platLayers = Math.max(1, Math.min(
-            Math.floor((topT - Lf * lgd.h) / bg.h),
-            Math.floor(truck.height / bg.h),
-            bg.maxLayers ?? Infinity,
-          ))
+          // Chọn cặp (lớp nền, lớp gửi) SÁT topT NHẤT — ƯU TIÊN KHÔNG HỤT (user 15/07:
+          // "xếp xong tím phải CAO BẰNG lớp tiếp giáp"; floor thuần từng hụt 80-480mm
+          // do bội nền/gửi lệch — vượt nhẹ < 1 thùng nền tốt hơn lõm)
+          let platLayers = 1
+          {
+            const plCap = Math.min(Math.floor(truck.height / bg.h), bg.maxLayers ?? Infinity)
+            const Lf0 = Lf
+            let bestSc = Infinity
+            for (let lf = Lf0; lf >= Math.max(1, Lf0 - 3); lf--) {
+              for (const pl of [Math.ceil((topT - lf * lgd.h) / bg.h), Math.floor((topT - lf * lgd.h) / bg.h)]) {
+                if (pl < 1 || pl > plCap) continue
+                if (pl * bg.h + lf * lgd.h > truck.height + 1e-9) continue
+                const delta = pl * bg.h + lf * lgd.h - topT
+                const sc = (delta < 0 ? 100000 : 0) + Math.abs(delta) * 10 + (Lf0 - lf)
+                if (sc < bestSc - 1e-9) { bestSc = sc; platLayers = pl; Lf = lf }
+              }
+            }
+          }
           // nền còn lại không đủ đổ → hạ bớt nền (đỉnh lõm nhẹ, vẫn giữ đủ lớp gửi)
           const colsNeed = Math.ceil(Math.ceil(N / Lf) * cellArea / colArea)
           while (platLayers > 1 && colsNeed * platLayers > availBase * 0.8) platLayers--
@@ -646,6 +663,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         if (laid.length) {
           const span = Math.max(...laid.map(c => c.y + c.fw)) - Math.min(...laid.map(c => c.y))
           spanMiss += Math.max(0, truck.width * 0.85 - span)
+          // đỉnh vùng gửi HỤT mức thân khối tiếp giáp (topT) → phạt (không được lõm)
+          topMiss += Math.max(0, topT - Math.max(...laid.map(c => c.top)))
           const mnD = Math.min(...doLights.map(gi => Math.min(groupsIn[gi].l, groupsIn[gi].w)))
           const mxD = Math.min(...doLights.map(gi => Math.max(groupsIn[gi].l, groupsIn[gi].w)))
           for (let ci = 0; ci < platAll.length; ci++) {
@@ -723,6 +742,12 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             leftover.push({ group: gi, count: remaining }); used[gi] += remaining
             continue
           }
+          // MẢNH LẺ (< 1 chồng) khi vùng gửi đã kẹt trần → BỎ LẠI (báo "Không vừa xe")
+          // — user 15/07: cột lùn 2 thùng đứng sàn chắn cửa là đổ hàng, không ai làm
+          if (laid.length && remaining < 2 * (g.maxLayers ?? LIGHT_MAX_DEFAULT)) {
+            leftover.push({ group: gi, count: remaining }); used[gi] += remaining
+            continue
+          }
           // khối gửi đứng sàn KHÔNG cao hơn mặt bằng hiện có (vật lý: tháp nhẹ lẻ
           // không gì đỡ — chain có thể còn nguyên trần khi toàn bộ nền đã vào thềm)
           const roof = Math.max(
@@ -733,7 +758,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         }
       }
     }
-    return { placed, leftover, step, spilled, lightPatch, spanMiss }
+    return { placed, leftover, step, spilled, lightPatch, spanMiss, topMiss }
   }
 
   // Chọn hệ số trải m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe); ƯU TIÊN phương án SẠCH
@@ -769,7 +794,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // được ≥0.5m chiều dài thì trải; maxX xấp xỉ nhau thì phương án ít hố thắng)
   const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
   const score = (p: PackResult) => maxXOf(p.placed) - closedHoles(p.placed) * 500
-    - p.lightPatch * 100 - p.spanMiss * 0.5   // phạt nhẹ vùng gửi xấu (tie-break, không đảo bố cục)
+    - p.lightPatch * 100 - p.spanMiss * 0.5 - p.topMiss * 2   // phạt vùng gửi xấu (lõm đỉnh phạt nặng hơn)
   const better = (r: PackResult, cur: PackResult): boolean => {
     const rl = leftCnt(r), cl = leftCnt(cur)
     if (rl !== cl) return rl < cl

@@ -487,30 +487,35 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           coverTo(rx0 + rowsNeed * optd.d)
           const P = platAll.reduce((s, c) => Math.max(s, c.x + c.fl), 0)
           if (P <= rx0 + 1e-9) break                 // không đổ được nền → PHA 3
-          // 2) chia HÀNG phủ khớp chiều sâu mặt thềm [rx0, P]: trộn nA hàng sâu l + nB
-          //    hàng sâu w sát P nhất (xoay lớp trên để khớp lớp dưới)
-          const da = lgd.l, db = lgd.w
-          const depthP = P - rx0
-          let bmx = { nA: 0, nB: 0, rem: depthP }
-          for (let nA = 0; nA * da <= depthP + 1e-9; nA++) {
-            const nB = Math.max(0, Math.floor((depthP - nA * da) / db))
-            const rem = depthP - nA * da - nB * db
-            if (rem < bmx.rem - 1e-9) bmx = { nA, nB, rem }
-          }
-          const rowDs: number[] = []
-          for (let r = 0; r < bmx.nA; r++) rowDs.push(da)
-          for (let r = 0; r < bmx.nB; r++) rowDs.push(db)
-          // 3) gom Ô dùng được trên toàn mặt thềm (thứ tự TRONG → ngoài, trái → phải)
-          const cells: { rx: number; cy: number; d: number; wd: number }[] = []
-          {
-            let rx = rx0
-            for (const d of rowDs) {
-              const wd = d === da ? db : da
-              for (let cy = 0; cy + wd <= truck.width + 1e-9; cy += wd)
-                if (onPlatform(rx, cy, d, wd)) cells.push({ rx, cy, d, wd })
-              rx += d
+          // 2) chia VÙNG lưới nhẹ theo BỀ RỘNG THỀM THẬT (không phải bề rộng xe — nền
+          //    hụt hơn xe thì ô cuối rớt khỏi nền → dải sát thành trống): vùng ô chính
+          //    + vùng ô XOAY sát mép thềm phủ sát nhất (lớp trên khớp lớp dưới)
+          const Py = platAll.reduce((s, c) => Math.max(s, c.y + c.fw), 0)
+          const wdP = optd.wd, wdA = optd.d          // bề ô chính / bề ô xoay
+          const nPureL = Math.floor(Py / wdP)
+          let lmx = { nP: nPureL, nA: 0 }
+          if (wdA !== wdP) {
+            let cov = nPureL * wdP
+            for (let nP = nPureL; nP >= 0; nP--) {
+              const nA = Math.floor((Py - nP * wdP) / wdA)
+              const c2 = nP * wdP + nA * wdA
+              if (c2 > cov + 1e-9) { cov = c2; lmx = { nP, nA } }
             }
+            if (lmx.nA > 0 && cov - nPureL * wdP < Math.min(lgd.l, lgd.w) * 0.25) lmx = { nP: nPureL, nA: 0 }
           }
+          const lzones = [
+            { yA: 0, yB: lmx.nP * wdP, wd: wdP, dz: optd.d },
+            ...(lmx.nA > 0 ? [{ yA: lmx.nP * wdP, yB: lmx.nP * wdP + lmx.nA * wdA, wd: wdA, dz: optd.wd }] : []),
+          ]
+          // 3) gom Ô dùng được trên toàn mặt thềm — mỗi vùng lát hàng theo nhịp sâu riêng
+          //    tới P; thứ tự TRONG → ngoài (rx tăng) để phần dư +1 dồn phía trong
+          const cells: { rx: number; cy: number; d: number; wd: number }[] = []
+          for (const z of lzones) {
+            for (let rx = rx0; rx + z.dz <= P + 1e-9; rx += z.dz)
+              for (let cy = z.yA; cy + z.wd <= z.yB + 1e-9; cy += z.wd)
+                if (onPlatform(rx, cy, z.dz, z.wd)) cells.push({ rx, cy, d: z.dz, wd: z.wd })
+          }
+          cells.sort((a, b) => a.rx - b.rx || a.cy - b.cy)
           if (!cells.length) break
           // 4) số lớp ĐỒNG ĐỀU cho mọi ô + phần dư nổi +1 ở các ô phía trong
           const Lu = Math.max(1, Math.min(capCell, Math.floor(lightRemain() / cells.length)))
@@ -623,11 +628,16 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     return n
   }
   type PackResult = ReturnType<typeof pack>
+  // Quá tải cũng phải chọn phương án TỐT NHẤT (không bỏ qua tối ưu): xếp ĐƯỢC nhiều
+  // nhất → sạch (không tràn nóc) → ít hố kín → maxX lớn
+  const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
   const better = (r: PackResult, cur: PackResult): boolean => {
-    if (r.leftover.length > 0) return false
-    if (cur.leftover.length > 0) return true
-    const rClean = r.spilled === 0, cClean = cur.spilled === 0
-    if (rClean !== cClean) return rClean
+    const rl = leftCnt(r), cl = leftCnt(cur)
+    if (rl !== cl) return rl < cl
+    if (rl === 0) {
+      const rClean = r.spilled === 0, cClean = cur.spilled === 0
+      if (rClean !== cClean) return rClean
+    }
     const rh = closedHoles(r.placed), ch = closedHoles(cur.placed)
     if (rh !== ch) return rh < ch
     return maxXOf(r.placed) >= maxXOf(cur.placed)
@@ -635,11 +645,11 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]
   let best = pack(1)
   let bestIdx = 0
-  if (best.leftover.length === 0) {
-    for (let i = 1; i < M_GRID.length; i++) {
-      const r = pack(M_GRID[i])
-      if (better(r, best)) { best = r; bestIdx = i }
-    }
+  for (let i = 1; i < M_GRID.length; i++) {
+    const r = pack(M_GRID[i])
+    if (better(r, best)) { best = r; bestIdx = i }
+  }
+  {
     let lo = M_GRID[bestIdx], hi = M_GRID[bestIdx + 1] ?? M_GRID[bestIdx] * 1.3
     for (let i = 0; i < 4; i++) {
       const mid = (lo + hi) / 2

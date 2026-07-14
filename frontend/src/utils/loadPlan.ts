@@ -706,11 +706,54 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           cand.n += 1
           remaining -= 1
         }
+        // (2) DƯ NHỎ (≤ 2 chồng) mà vùng gửi kín lớp → nổi lên NÓC CỘT CẠNH vùng gửi,
+        // đổ TRỌN chồng rồi mới lan sang host KỀ HOST TRƯỚC (thảm liền — không rắc mỗi
+        // nóc 1 thùng); thùng lẻ ở LẠI CẠNH khối mình phía cabin, không đứng cột đơn độc
+        // dưới sàn cuối xe (đổ hàng). Dư LỚN → khối riêng liền (3).
+        if (remaining > 0 && remaining <= 2 * (g.maxLayers ?? LIGHT_MAX_DEFAULT) && laid.length) {
+          // khoảng cách rect-rect (sau lưng ô gửi thường còn dải nền thò 60-300mm nên
+          // chạm-sát-2mm không bắt được cột nào → dùng bán kính 500mm)
+          const rectDist = (c: Col, r: { x: number; y: number; fl: number; fw: number }) => Math.max(
+            Math.max(0, Math.max(r.x - (c.x + c.fl), c.x - (r.x + r.fl))),
+            Math.max(0, Math.max(r.y - (c.y + c.fw), c.y - (r.y + r.fw))))
+          const usedHosts: Col[] = []
+          const nearScore = (c: Col) => usedHosts.length
+            ? Math.min(...usedHosts.map(u => rectDist(c, { x: u.x, y: u.y, fl: u.fl, fw: u.fw })))
+            : Math.min(...laid.map(l => rectDist(c, l)))
+          const maxTop0 = cols.length ? Math.max(...cols.map(c => c.top)) : truck.height
+          // trần = mặt bằng chung + 1 LỚP (SOP: thùng thừa nổi TRÊN khối); host thấp/
+          // trũng ăn TRỌN chồng trước → ít chồng lẻ nhất
+          const capTop = Math.min(truck.height, maxTop0 + g.h)
+          while (remaining > 0) {
+            const host = cols
+              .filter(c => nearScore(c) <= 500)
+              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
+              .filter(c => c.top + g.h <= capTop + 1e-9)
+              .sort((a, b) => (nearScore(a) - nearScore(b)) || (a.top - b.top) || (a.step - b.step))[0]
+            if (!host) break
+            const fit = (g.l <= host.fl && g.w <= host.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
+            const layers = Math.min(remaining, Math.floor((capTop - host.top) / g.h + 1e-9))
+            step++
+            for (let k = 0; k < layers; k++)
+              placed.push({ x: host.x, y: host.y, z: host.top + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
+            host.top += layers * g.h
+            host.groups.add(gi)
+            used[gi] += layers
+            remaining -= layers
+            usedHosts.push(host)
+          }
+        }
         if (remaining > 0) {
           if (g.h > truck.height || Math.min(g.l, g.w) > truck.width) {
             leftover.push({ group: gi, count: remaining }); used[gi] += remaining
             continue
           }
+          // khối gửi đứng sàn KHÔNG cao hơn mặt bằng hiện có (vật lý: tháp nhẹ lẻ
+          // không gì đỡ — chain có thể còn nguyên trần khi toàn bộ nền đã vào thềm)
+          const roof = Math.max(
+            cols.length ? Math.max(...cols.map(c => c.top)) : 0,
+            laid.length ? Math.max(...laid.map(l => l.top)) : 0)
+          if (roof > 0) chain.capMm = Math.min(chain.capMm, Math.max(g.h, Math.floor(roof / g.h) * g.h))
           pourClass([gi], `${dk}|top|${classKeyOf(g)}`)
         }
       }

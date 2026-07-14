@@ -93,7 +93,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   })
 
   // m = hệ số trải — vòng chọn bên dưới tìm m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe)
-  function pack(m: number) {
+  function pack(m: number, mLast = 1) {
     const placed: PlacedBox[] = []
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
@@ -263,7 +263,9 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       const idx = floorRows.indexOf(rowKey)
       const K = floorRows.length
       const w = idx < 0 ? 1 : (idx + 1) / K
-      return Math.pow(m, w)
+      // mLast = nấc hạ RIÊNG khối cuối (user 15/07: "tất cả các lớp bám tới cuối xe" —
+      // khối cuối hạ thêm để mép cuối CHẠM đuôi mà không kéo cả đoàn hạ theo)
+      return Math.pow(m, w) * (idx === K - 1 ? mLast : 1)
     }
 
     // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) thành KHỐI BẰNG MẶT — MỘT chiều cao L.
@@ -687,80 +689,34 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
       // PHA 3 — hàng gửi còn dư: KHÔNG rải nóc lung tung (SOP: "lên hết loại hàng này
       // rồi mới đến loại hàng khác" — hàng nhóm nào đi LIỀN nhóm đó). Dư → (1) nổi tiếp
-      // lên chính VÙNG GỬI (đắp ô thấp nhất trước); (2) còn nữa → 1 KHỐI RIÊNG liền mạch.
+      // lên chính VÙNG GỬI: pass 1 lấp ô còn hụt lớp; pass 2 dư kịch mọi ô → NỔI THÊM
+      // 1 LỚP trên chính khối gửi, dồn PHÍA TRONG thành dải liền (SOP 996+4 nổi TRÊN
+      // KHỐI — user 15/07: "8 thùng tím đang không ở khối của nó" khi đặt sang nóc khối
+      // khác); (3) còn nữa → 1 KHỐI RIÊNG liền mạch.
       for (const gi of doLights) {
         const g = groupsIn[gi]
         let remaining = avail(gi)
         if (remaining <= 0) continue
-        while (remaining > 0) {
-          const cand = laid
-            .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
-            .filter(c => c.top + g.h <= Math.min(topT, truck.height) + 1e-9 && c.n < (g.maxLayers ?? LIGHT_MAX_DEFAULT))
-            .sort((a, b) => a.top - b.top)[0]
-          if (!cand) break
-          const fit = (g.l <= cand.fl && g.w <= cand.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
-          step++
-          placed.push({ x: cand.x, y: cand.y, z: cand.top, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
-          used[gi] += 1
-          cand.top += g.h
-          cand.n += 1
-          remaining -= 1
-        }
-        // (2) DƯ NHỎ (≤ 2 chồng) mà vùng gửi kín lớp → lát 1 CỤM Ô LIỀN KỀ SÁT NHAU
-        // trên vùng NÓC PHẲNG cạnh vùng gửi (không theo lưới cột nền — ô góc cột sẽ hở
-        // 100-120mm giữa các cục, nhìn lởm chởm); người thật: chồng gọn 1 cụm vuông
-        // vắn trên nóc hàng phía trong. Dư LỚN → khối riêng liền (3).
-        if (remaining > 0 && remaining <= 2 * (g.maxLayers ?? LIGHT_MAX_DEFAULT) && laid.length) {
-          const rectDist = (c: { x: number; y: number; fl: number; fw: number }, r: { x: number; y: number; fl: number; fw: number }) => Math.max(
-            Math.max(0, Math.max(r.x - (c.x + c.fl), c.x - (r.x + r.fl))),
-            Math.max(0, Math.max(r.y - (c.y + c.fw), c.y - (r.y + r.fw))))
-          // cột neo: gần ô gửi ≤500mm (sau lưng ô gửi thường còn dải nền thò 60-300mm
-          // nên chạm-sát không bắt được cột nào), còn ít nhất 1 lớp dưới trần
-          const distLaid = (c: { x: number; y: number; fl: number; fw: number }) =>
-            Math.min(...laid.map(l => rectDist(c, l)))
-          const anchors = cols.filter(c => distLaid(c) <= 500 && c.top + g.h <= truck.height + 1e-9)
-          const Ts = [...new Set(anchors.map(c => c.top))].sort((a, b) => a - b)
-          for (const T of Ts) {
-            if (remaining <= 0) break
-            const flat = cols.filter(c => Math.abs(c.top - T) < 1e-6)
-            const supp = (x: number, y: number, fl: number, fw: number): boolean => {
-              let cov = 0
-              for (const c of flat) {
-                const ix = Math.max(0, Math.min(x + fl, c.x + c.fl) - Math.max(x, c.x))
-                const iy = Math.max(0, Math.min(y + fw, c.y + c.fw) - Math.max(y, c.y))
-                cov += ix * iy
-              }
-              return cov >= fl * fw - 1
-            }
-            const anch = anchors.filter(c => c.top === T)
-              .sort((a, b) => (distLaid(a) - distLaid(b)) || (a.y - b.y) || (a.x - b.x))[0]
-            // hướng ô: hướng lát được NHIỀU ô liền hơn trong 1 hàng từ neo
-            const countRow = (fl: number, fw: number) => {
-              let n = 0
-              for (let y = anch.y; y + fw <= truck.width + 1e-9; y += fw) { if (!supp(anch.x, y, fl, fw)) break; n++ }
-              return n
-            }
-            const o1 = countRow(g.l, g.w), o2 = g.l === g.w ? 0 : countRow(g.w, g.l)
-            if (Math.max(o1, o2) < 1) continue
-            const [fl, fw] = o2 > o1 ? [g.w, g.l] : [g.l, g.w]
-            const maxL = Math.min(g.maxLayers ?? LIGHT_MAX_DEFAULT, Math.floor((truck.height - T) / g.h))
-            for (let x = anch.x; remaining > 0 && x + fl <= truck.length + 1e-9; x += fl) {
-              const ys: number[] = []
-              for (let y = anch.y; y + fw <= truck.width + 1e-9; y += fw) { if (!supp(x, y, fl, fw)) break; ys.push(y) }
-              if (!ys.length) break
-              // cụm ĐỀU: số lớp thấp nhất phủ hết dư (chênh ≤1 giữa các ô)
-              const layers = Math.min(maxL, Math.ceil(remaining / ys.length))
-              for (const y of ys) {
-                if (remaining <= 0) break
-                const put = Math.min(layers, remaining)
-                step++
-                for (let k = 0; k < put; k++)
-                  placed.push({ x, y, z: T + k * g.h, l: fl, w: fw, h: g.h, group: gi, step })
-                used[gi] += put
-                remaining -= put
-              }
-            }
+        const capN = g.maxLayers ?? LIGHT_MAX_DEFAULT
+        for (const [capL, capZ, inward] of [
+          [capN, Math.min(topT, truck.height), false],
+          [capN + 1, Math.min(topT + g.h, truck.height), true],
+        ] as [number, number, boolean][]) {
+          while (remaining > 0) {
+            const cand = laid
+              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
+              .filter(c => c.top + g.h <= capZ + 1e-9 && c.n < capL)
+              .sort((a, b) => inward ? ((a.x - b.x) || (a.y - b.y)) : (a.top - b.top))[0]
+            if (!cand) break
+            const fit = (g.l <= cand.fl && g.w <= cand.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
+            step++
+            placed.push({ x: cand.x, y: cand.y, z: cand.top, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
+            used[gi] += 1
+            cand.top += g.h
+            cand.n += 1
+            remaining -= 1
           }
+          if (remaining <= 0) break
         }
         if (remaining > 0) {
           if (g.h > truck.height || Math.min(g.l, g.w) > truck.width) {
@@ -826,17 +782,25 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]
   let best = pack(1)
   let bestIdx = 0
+  let bestM = 1
   for (let i = 1; i < M_GRID.length; i++) {
     const r = pack(M_GRID[i])
-    if (better(r, best)) { best = r; bestIdx = i }
+    if (better(r, best)) { best = r; bestIdx = i; bestM = M_GRID[i] }
   }
   {
     let lo = M_GRID[bestIdx], hi = M_GRID[bestIdx + 1] ?? M_GRID[bestIdx] * 1.3
     for (let i = 0; i < 4; i++) {
       const mid = (lo + hi) / 2
       const r = pack(mid)
-      if (better(r, best)) { best = r; lo = mid } else hi = mid
+      if (better(r, best)) { best = r; lo = mid; bestM = mid } else hi = mid
     }
+  }
+  // Tinh chỉnh RIÊNG KHỐI CUỐI (user 15/07: "tất cả các lớp bám tới cuối xe"): hạ thêm
+  // chỉ khối cuối để mép cuối CHẠM đuôi xe — không kéo cả đoàn hạ theo. better() giữ
+  // luật cũ: phải vẫn xếp đủ + sạch, maxX lớn hơn mới nhận.
+  for (const mL of [1.1, 1.2, 1.35, 1.5, 1.7, 2]) {
+    const r = pack(bestM, mL)
+    if (better(r, best)) best = r
   }
 
   const { placed, leftover, step } = best

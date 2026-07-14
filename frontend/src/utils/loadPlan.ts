@@ -16,6 +16,9 @@
 // 6. SÀN XẾP KIỂU SKYLINE (user 14/07: "khoảng hở như thế này là không thực tế"): mỗi
 //    chân hàng ĐẨY LÙI ÁP SÁT hàng phía sau nó (mặt tiền từng làn bề rộng) — không còn
 //    khe hở dọc giữa các khối do dải cứng; khoảng trống chỉ tồn tại ở đuôi xe.
+// 7. XOAY THEO DÃY (user 14/07): thùng ĐƯỢC quay ngang/dọc, nhưng theo TỪNG DÃY (dãy =
+//    một lượt mặt tiền x, tính từ trong ra ngoài) — dãy đã bắt đầu hướng nào thì cả dãy
+//    hướng đó tới khi hết, KHÔNG "cái dọc cái ngang" trong 1 dãy; sang dãy mới được đổi.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -131,7 +134,11 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     // Trạng thái KHỐI kích thước đang mở — object để TS không narrow sai qua closure
     const st: { openCol: { col: Col; used: number; cap: number } | null } = { openCol: null }   // chân dở — mã sau CÙNG class lấp tiếp
     let classCols: Col[] = []                               // các chân của class hiện tại
-    let classOrient: { fl: number; fw: number } | null = null   // 1 hướng xoay / khối (khối vuông vắn)
+    // SỔ HƯỚNG THEO DÃY (toàn xe): dãy = (class, mặt tiền x) trên sàn — dãy đã bắt đầu
+    // hướng nào thì MỌI chân sau tại dãy đó phải đúng hướng ấy (kể cả quay lại lấp đoạn
+    // dư, kể cả nền thềm PHA 1 với khối PHA 2 cùng class)
+    const rankOrient = new Map<string, { fl: number; fw: number }>()
+    const rankKey = (g: LoadGroup, x: number) => `${classKeyOf(g)}@${Math.round(x)}`
     // Dây chuyền BẬC THANG TOÀN XE: mức trần (mm) khối kế tiếp được phép bắt đầu
     const chain = { capMm: truck.height }
 
@@ -142,21 +149,31 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         (Math.floor(truck.width / b.fw) / b.fl) - (Math.floor(truck.width / a.fw) / a.fl) || (a.fl - b.fl))[0] ?? null
     }
 
-    // Đặt 1 chân MỚI của class qua skyline; take = số lớp đổ vào (≤ std)
+    // Đặt 1 chân MỚI của class qua skyline; take = số lớp đổ vào (≤ std).
+    // Hướng xoay chốt theo TỪNG DÃY (sổ rankOrient): dãy đã có hướng → chỉ được đặt
+    // đúng hướng đó; dãy mới → chọn hướng mặt tiền x NHỎ nhất (lấp sát), tie → mật độ.
     const newColumn = (g: LoadGroup, gi: number, take: number, std: number): boolean => {
-      if (!classOrient) classOrient = orientFor(g)
-      if (!classOrient) return false
-      let pick = classOrient
-      let spot = skyFind(pick.fw, pick.fl)
-      if (!spot && g.l !== g.w) {
-        // hết chỗ theo hướng khối → thử hướng còn lại (cuối xe, vớt thêm)
-        const alt = pick.fl === g.l ? { fl: g.w, fw: g.l } : { fl: g.l, fw: g.w }
-        if (alt.fw <= truck.width) {
-          spot = skyFind(alt.fw, alt.fl)
-          if (spot) pick = alt
-        }
+      const pref = orientFor(g)
+      if (!pref) return false
+      const opts = [pref]
+      if (g.l !== g.w) {
+        const alt = pref.fl === g.l ? { fl: g.w, fw: g.l } : { fl: g.l, fw: g.w }
+        if (alt.fw <= truck.width && alt.fl <= truck.length) opts.push(alt)
       }
-      if (!spot) return false
+      const cands = opts
+        .map(o => ({ o, s: skyFind(o.fw, o.fl) }))
+        .filter((c): c is { o: { fl: number; fw: number }; s: { x: number; y: number } } => c.s !== null)
+        // luật 1 dãy 1 hướng: rank đã chốt hướng khác → không được đặt hướng này vào đó
+        .filter(c => {
+          const ro = rankOrient.get(rankKey(g, c.s.x))
+          return !ro || (ro.fl === c.o.fl && ro.fw === c.o.fw)
+        })
+      if (!cands.length) return false
+      let bestC = cands[0]
+      for (const c of cands.slice(1)) if (c.s.x < bestC.s.x - 1e-9) bestC = c
+      const pick = bestC.o
+      const spot = bestC.s
+      rankOrient.set(rankKey(g, spot.x), pick)
       step++
       for (let k = 0; k < take; k++)
         placed.push({ x: spot.x, y: spot.y, z: k * g.h, l: pick.fl, w: pick.fw, h: g.h, group: gi, step })
@@ -219,7 +236,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
       const C = live.reduce((s, gi) => s + avail(gi), 0)
       if (C % L !== 0 && (L + 1) * maxH > truck.height) L = Math.max(1, L - 1)
-      st.openCol = null; classCols = []; classOrient = null
+      st.openCol = null; classCols = []
       for (let mi = 0; mi < live.length; mi++) {
         const gi = live[mi]
         const g = groupsIn[gi]
@@ -253,9 +270,9 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // thành 1 BẬC PHẲNG THẤP lấp KÍN hàng cuối (đuôi phẳng, mọi chân lấp kín),
           // thùng lẻ còn lại nổi lên trên khối
           if (isFinal && isLastOfClass && classCols.length > 0) {
-            // TS không thấy newColumn (closure) gán classOrient → narrow nhầm never; cast typed
-            const co = classOrient as { fl: number; fw: number } | null
-            const ow = co ? co.fw : Math.min(g.l, g.w)
+            // ước lượng bề rộng chân theo dãy gần nhất của khối (hướng có thể đổi theo dãy)
+            const lastCol = classCols[classCols.length - 1]
+            const ow = lastCol ? lastCol.fw : Math.min(g.l, g.w)
             const cl = Math.max(1, Math.floor(truck.width / ow))
             if (remaining < myL * cl) {
               const stepH = Math.floor(remaining / cl)
@@ -300,7 +317,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           used[gi] += take
         }
       }
-      st.openCol = null; classOrient = null
+      st.openCol = null
       chain.capMm = Math.min(chain.capMm, L * maxH)
     }
 
@@ -397,6 +414,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
                 placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: bo.fl, w: bo.fw, h: bg.h, group: bi, step })
               used[bi] += platLayers
               skyCommit(spot.y, bo.fw, spot.x + bo.fl)
+              rankOrient.set(rankKey(bg, spot.x), bo)   // nền thềm cũng chốt hướng dãy
               zoneCols.push(spot)
               platAll.push({ x: spot.x, y: spot.y, fl: bo.fl, fw: bo.fw })
               zoneArea += bo.fl * bo.fw

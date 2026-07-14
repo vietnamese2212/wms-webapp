@@ -278,10 +278,12 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       chain.capMm = Math.min(chain.capMm, L * maxH)
     }
 
-    // Chồng hàng nhẹ lên 1 nóc: đủ số lớp cho phép (khối liền mạch). Trả số thùng đã đặt.
+    // Chồng hàng nhẹ lên 1 nóc: đủ số lớp cho phép (khối liền mạch) nhưng KHÔNG nhô cao
+    // hơn cột cao nhất đang có (vật lý: không có gì đỡ tháp lẻ). Trả số thùng đã đặt.
     const stackLightOn = (host: Col, gi: number, remaining: number): number => {
       const g = groupsIn[gi]
-      const head = truck.height - host.top
+      const maxTop = cols.length ? Math.max(...cols.map(c => c.top)) : truck.height
+      const head = Math.min(truck.height, maxTop) - host.top
       if (head < g.h) return 0
       const fit = (g.l <= host.fl && g.w <= host.fw) ? { fl: g.l, fw: g.w }
         : (g.w <= host.fl && g.l <= host.fw) ? { fl: g.w, fw: g.l } : null
@@ -310,25 +312,32 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // Nền/nhẹ hết giữa dải → phần dải còn trống để khối sàn kế lấp tiếp (hàng kín).
       if (doLights.length && doFloor.length) {
         if (shelfDepth > 0) closeShelf()             // (hiếm — đơn sau có hàng nhẹ)
-        // Chiều cao khối nhẹ mong muốn: theo max_stack_layers; mã không khai → ~nửa trần xe
+        // TRẦN VẬT LÝ T của vùng thềm+nhẹ = chiều cao KHỐI NỀN ĐẦU TIÊN sẽ đứng ngay sau
+        // (user 13/07: khối nhẹ không được nhô cao đơn độc — không có gì đỡ; hở dồn ra
+        // đuôi). Nhẹ bị khóa trần T → tự lát RỘNG ra thay vì chồng tháp.
+        const bg0 = groupsIn[doFloor[0]]
+        const full0 = Math.max(1, Math.floor(truck.height / bg0.h))
+        // +1 lớp nền: đỉnh thềm bám được cả phần thùng NỔI của khối kế (du di lượng tử)
+        const T = Math.min(truck.height, Math.max(bg0.h, (Math.ceil(full0 / m) + 1) * bg0.h))
+        // Chiều cao khối nhẹ mong muốn dưới trần T: theo max_stack_layers; không khai → ~T/2
         const wantStackMm = Math.max(...doLights.map(gi => {
           const g = groupsIn[gi]
-          const layers = g.maxLayers ?? Math.max(1, Math.floor((truck.height * 0.5) / g.h))
-          return Math.min(layers * g.h, truck.height - g.h)
+          const layers = g.maxLayers ?? Math.max(1, Math.floor((T * 0.5) / g.h))
+          return Math.min(layers * g.h, Math.max(0, T - bg0.h))
         }))
         let li = 0                                   // mã nhẹ đang lát (lần lượt, liền mạch)
         let baseIdx = 0                              // mã nền đang dùng
         const lightRemain = () => doLights.reduce((s, gi) => s + avail(gi), 0)
-        while (lightRemain() > 0) {
+        while (lightRemain() > 0 && wantStackMm > 0) {
           while (baseIdx < doFloor.length && avail(doFloor[baseIdx]) <= 0) baseIdx++
           if (baseIdx >= doFloor.length) break       // hết hàng nền → phần nhẹ còn lại đi PHA 3
           const bi = doFloor[baseIdx]
           const bg = groupsIn[bi]
           if (bg.h > truck.height || Math.min(bg.l, bg.w) > truck.width) { baseIdx++; continue }
-          // Thềm phẳng: nền cao (trần − khối nhẹ), tối thiểu 1 lớp
+          // Thềm phẳng: nền cao (T − khối nhẹ), tối thiểu 1 lớp, không vượt T
           const platLayers = Math.max(1, Math.min(
-            Math.floor(Math.max(bg.h, truck.height - wantStackMm) / bg.h),
-            Math.floor(truck.height / bg.h),
+            Math.floor(Math.max(bg.h, T - wantStackMm) / bg.h),
+            Math.floor(T / bg.h),
             bg.maxLayers ?? Infinity,
           ))
           const platMm = platLayers * bg.h
@@ -341,13 +350,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           while (li < doLights.length && avail(doLights[li]) <= 0) li++
           if (li >= doLights.length) break
           const lg0 = groupsIn[doLights[li]]
-          if (truck.height - platMm < lg0.h) break   // nền cao quá, không còn trần cho nhẹ
+          if (T - platMm < lg0.h) break              // dưới trần T không còn chỗ cho nhẹ
           const lopts = lg0.l === lg0.w ? [{ a: lg0.l, b: lg0.w }] : [{ a: lg0.l, b: lg0.w }, { a: lg0.w, b: lg0.l }]
           const lo = lopts.filter(o => o.a <= bo.fl && o.b <= truck.width).sort((x, y) =>
             (Math.floor(bo.fl / y.a) * Math.floor(truck.width / y.b)) - (Math.floor(bo.fl / x.a) * Math.floor(truck.width / x.b)))[0]
           if (!lo) break                             // nhẹ sâu hơn dải nền → PHA 3
           const nxTiles = Math.floor(bo.fl / lo.a)
-          const capStack0 = Math.max(1, Math.min(Math.floor((truck.height - platMm) / lg0.h), lg0.maxLayers ?? Infinity))
+          const capStack0 = Math.max(1, Math.min(Math.floor((T - platMm) / lg0.h), lg0.maxLayers ?? Infinity))
           // Bề rộng nền cần cho số nhẹ còn lại (làm tròn lên theo hàng lưới)
           const rowsNeed = Math.ceil(Math.ceil(lightRemain() / capStack0) / Math.max(1, nxTiles)) * lo.b
           // Đổ chân nền dải tới khi phủ đủ rowsNeed / hết bề rộng / hết mã nền
@@ -373,7 +382,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
               const fitCell = (g.l <= lo.a && g.w <= lo.b) ? { fl: g.l, fw: g.w }
                 : (g.w <= lo.a && g.l <= lo.b) ? { fl: g.w, fw: g.l } : null
               if (!fitCell) { li++; continue }       // mã nhẹ khác cỡ không vừa ô lưới → chờ PHA 3
-              const cap2 = Math.max(0, Math.min(Math.floor((truck.height - platMm) / g.h), g.maxLayers ?? Infinity))
+              const cap2 = Math.max(0, Math.min(Math.floor((T - platMm) / g.h), g.maxLayers ?? Infinity))
               if (cap2 <= 0) { li++; continue }
               const layers = Math.min(cap2, avail(gi))
               step++

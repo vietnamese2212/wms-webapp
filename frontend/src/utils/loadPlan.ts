@@ -441,32 +441,6 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // làn nông/sâu lệch mặt tiền, không cần ước lượng diện tích trước
           let bIdx = baseIdx
           let baseOut = false                        // hết hàng nền cùng class giữa chừng
-          // Đổ nền (nép skyline theo vùng) tới khi TOÀN mặt thềm phủ tới target
-          const coverTo = (target: number): void => {
-            for (;;) {
-              let pick: { fl: number; fw: number } | null = null
-              let spot: { x: number; y: number } | null = null
-              for (const z of bZones) {
-                const d = zoneDims(bg, z)
-                const s = skyFindZone(d.fw, d.fl, z.yA, z.yB)
-                if (s && s.x < target - 1e-9 && (!spot || s.x < spot.x - 1e-9)) { pick = d; spot = s }
-              }
-              if (!pick || !spot) return              // mọi chỗ đều đã phủ tới target (hoặc hết dài)
-              while (bIdx < doFloor.length && (
-                avail(doFloor[bIdx]) < platLayers ||
-                classKeyOf(groupsIn[doFloor[bIdx]]) !== classKeyOf(bg) ||
-                (groupsIn[doFloor[bIdx]].maxLayers ?? Infinity) < platLayers   // mã trần thấp không làm nền cao được
-              )) bIdx++
-              if (bIdx >= doFloor.length) { baseOut = true; return }   // hết nền cùng class
-              const bi = doFloor[bIdx]
-              step++
-              for (let k = 0; k < platLayers; k++)
-                placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: pick.fl, w: pick.fw, h: bg.h, group: bi, step })
-              used[bi] += platLayers
-              skyCommit(spot.y, pick.fw, spot.x + pick.fl)
-              platAll.push({ x: spot.x, y: spot.y, fl: pick.fl, fw: pick.fw })
-            }
-          }
           // ô phải nằm TRỌN trên nền thật (tính GỘP mọi cột nền của thềm)
           const onPlatform = (x: number, y: number, fl: number, fw: number): boolean => {
             let cov = 0
@@ -477,26 +451,54 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             }
             return cov >= fl * fw - 1
           }
-          // KHỚP LỚP TRÊN VỚI LỚP DƯỚI: lớp gửi DÙNG HẾT diện tích mặt thềm, mỗi ô chồng
-          // TỚI MỨC CHUNG topT (không lõm), ô lẻ được XOAY TỰ DO vá kín
-          const cellsPerRow = Math.max(1, Math.floor(truck.width / optd.wd))
-          const rowsNeed = Math.max(1, Math.ceil(Math.ceil(N / Lf) / cellsPerRow))
+          // NỀN CHỈ MỌC DƯỚI ĐÚNG Ô CẦN (user 14/07: "không bốc xếp nào để hàng trơ
+          // trọi" — thềm đổ dư sẽ thành mảng nền trống cạnh khối gửi): trước khi lát 1 ô,
+          // đổ đủ cột nền CHẠM vùng ô đó; thềm ôm sát khối gửi, dư chỉ phần rìa bội cột
+          const ensureCell = (rx: number, cy: number, d: number, wd: number): boolean => {
+            let guard = 0
+            while (!onPlatform(rx, cy, d, wd)) {
+              if (guard++ > 60) return false
+              // đặt 1 cột nền GIAO ô theo bề rộng, tại dải còn nông nhất
+              let pick: { fl: number; fw: number } | null = null
+              let spot: { x: number; y: number } | null = null
+              for (const z of bZones) {
+                const dd = zoneDims(bg, z)
+                for (let y = z.yA; y + dd.fw <= z.yB + 1e-9; y += dd.fw) {
+                  if (y + dd.fw <= cy + 1e-9 || y >= cy + wd - 1e-9) continue   // không giao ô
+                  const fx = skyMaxX(y, y + dd.fw)
+                  if (fx + dd.fl > truck.length + 1e-9) continue
+                  if (fx >= rx + d - 1e-9) continue   // dải này đã phủ đủ sâu cho ô
+                  if (!spot || fx < spot.x - 1e-9) { pick = dd; spot = { x: fx, y } }
+                }
+              }
+              if (!pick || !spot) return false        // không phủ nổi ô (hết sàn/vướng)
+              while (bIdx < doFloor.length && (
+                avail(doFloor[bIdx]) < platLayers ||
+                classKeyOf(groupsIn[doFloor[bIdx]]) !== classKeyOf(bg) ||
+                (groupsIn[doFloor[bIdx]].maxLayers ?? Infinity) < platLayers   // mã trần thấp không làm nền cao được
+              )) bIdx++
+              if (bIdx >= doFloor.length) { baseOut = true; return false }   // hết nền cùng class
+              const bi = doFloor[bIdx]
+              step++
+              for (let k = 0; k < platLayers; k++)
+                placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: pick.fl, w: pick.fw, h: bg.h, group: bi, step })
+              used[bi] += platLayers
+              skyCommit(spot.y, pick.fw, spot.x + pick.fl)
+              platAll.push({ x: spot.x, y: spot.y, fl: pick.fl, fw: pick.fw })
+            }
+            return true
+          }
           const rx0 = Math.max(0, lightFront)
-          // 1) đổ thềm TRỌN cho lượng nhẹ còn lại
-          coverTo(rx0 + rowsNeed * optd.d)
-          const P = platAll.reduce((s, c) => Math.max(s, c.x + c.fl), 0)
-          if (P <= rx0 + 1e-9) break                 // không đổ được nền → PHA 3
-          // 2) chia VÙNG lưới nhẹ theo BỀ RỘNG THỀM THẬT (không phải bề rộng xe — nền
-          //    hụt hơn xe thì ô cuối rớt khỏi nền → dải sát thành trống): vùng ô chính
-          //    + vùng ô XOAY sát mép thềm phủ sát nhất (lớp trên khớp lớp dưới)
-          const Py = platAll.reduce((s, c) => Math.max(s, c.y + c.fw), 0)
+          // Lưới ô hàng gửi CHỈ trên VÙNG NỀN CHÍNH (cột nông — ít dư mép; vùng nền xoay
+          // sâu hơn sẽ dư mảng lớn): phần bề rộng còn lại nhường khối sàn đứng cao từ sàn
+          const Wp = bZones[0].yB
           const wdP = optd.wd, wdA = optd.d          // bề ô chính / bề ô xoay
-          const nPureL = Math.floor(Py / wdP)
+          const nPureL = Math.floor(Wp / wdP)
           let lmx = { nP: nPureL, nA: 0 }
           if (wdA !== wdP) {
             let cov = nPureL * wdP
             for (let nP = nPureL; nP >= 0; nP--) {
-              const nA = Math.floor((Py - nP * wdP) / wdA)
+              const nA = Math.floor((Wp - nP * wdP) / wdA)
               const c2 = nP * wdP + nA * wdA
               if (c2 > cov + 1e-9) { cov = c2; lmx = { nP, nA } }
             }
@@ -507,14 +509,19 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             ...(lmx.nA > 0 ? [{ yA: lmx.nP * wdP, yB: lmx.nP * wdP + lmx.nA * wdA, wd: wdA, dz: optd.wd }] : []),
           ]
           // 3) gom Ô dùng được trên toàn mặt thềm — mỗi vùng lát hàng theo nhịp sâu riêng
-          //    tới P; thứ tự TRONG → ngoài (rx tăng) để phần dư +1 dồn phía trong
+          // Sinh Ô theo SÓNG 2 vùng (vùng nào mặt tiền nông hơn sinh trước) — ĐÚNG số ô
+          // cần, thứ tự TRONG → ngoài
+          const cellsNeed = Math.ceil(N / Lf)
           const cells: { rx: number; cy: number; d: number; wd: number }[] = []
-          for (const z of lzones) {
-            for (let rx = rx0; rx + z.dz <= P + 1e-9; rx += z.dz)
-              for (let cy = z.yA; cy + z.wd <= z.yB + 1e-9; cy += z.wd)
-                if (onPlatform(rx, cy, z.dz, z.wd)) cells.push({ rx, cy, d: z.dz, wd: z.wd })
+          const zPtr = lzones.map(z => ({ z, rx: rx0, cy: z.yA }))
+          while (cells.length < cellsNeed) {
+            zPtr.sort((a, b) => a.rx - b.rx)
+            const p = zPtr.find(q => q.rx + q.z.dz <= truck.length + 1e-9 && q.z.yB - q.z.yA >= q.z.wd - 1e-9)
+            if (!p) break                              // hết chiều dài xe
+            cells.push({ rx: p.rx, cy: p.cy, d: p.z.dz, wd: p.z.wd })
+            p.cy += p.z.wd
+            if (p.cy + p.z.wd > p.z.yB + 1e-9) { p.cy = p.z.yA; p.rx += p.z.dz }
           }
-          cells.sort((a, b) => a.rx - b.rx || a.cy - b.cy)
           // 4) lát: mỗi ô chồng TỚI MỨC CHUNG topT (ngang bằng hàng phía sau — không lõm)
           const overlapLaid = (x: number, y: number, fl: number, fw: number) =>
             laid.some(c => x + 1e-9 < c.x + c.fl && c.x + 1e-9 < x + fl && y + 1e-9 < c.y + c.fw && c.y + 1e-9 < y + fw)
@@ -552,6 +559,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           let placedAny = false
           for (const cell of cells) {
             if (lightRemain() <= 0) break
+            if (!ensureCell(cell.rx, cell.cy, cell.d, cell.wd)) { if (baseOut) break; continue }
             if (layCell(cell.rx, cell.cy, cell.d, cell.wd)) placedAny = true
           }
           // 5) PASS VÁ — hàng gửi XOAY TỰ DO từng ô (user: chỉ hàng gửi không cần luật

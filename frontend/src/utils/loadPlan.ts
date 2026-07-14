@@ -209,17 +209,19 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       return true
     }
 
-    // Rải phần dư lên NÓC khối class — ƯU TIÊN: chân CÙNG MÃ trước → chân cùng loại;
-    // trong mỗi nhóm đi TỪ PHÍA TRONG ra (user: phần nổi cao hơn dồn về phía cabin).
+    // Rải phần dư lên NÓC khối class — ĐẮP CHỖ TRŨNG trước (user 14/07: không tạo cục
+    // 9 lớp trơ trọi khi xung quanh còn chân 7/8): chân nóc THẤP nhất ăn trước; bằng
+    // nhau → ưu tiên chân cùng mã rồi PHÍA TRONG (nổi dồn về cabin).
     const spillOnRoof = (g: LoadGroup, gi: number, rem: number): number => {
-      const cands = [...classCols]
-        .filter(oc => oc !== st.openCol?.col)
-        .sort((a, b) =>
-          ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.step - b.step))
-      for (const oc of cands) {
-        if (rem <= 0) break
-        if (truck.height - oc.top < g.h) continue
-        if (g.maxLayers != null && Math.round(oc.top / g.h) >= g.maxLayers) continue
+      while (rem > 0) {
+        const cands = classCols
+          .filter(oc => oc !== st.openCol?.col)
+          .filter(oc => truck.height - oc.top >= g.h)
+          .filter(oc => g.maxLayers == null || Math.round(oc.top / g.h) < g.maxLayers)
+          .sort((a, b) => (a.top - b.top) ||
+            ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.step - b.step))
+        const oc = cands[0]
+        if (!oc) break
         step++
         placed.push({ x: oc.x, y: oc.y, z: oc.top, l: oc.fl, w: oc.fw, h: g.h, group: gi, step })
         oc.top += g.h

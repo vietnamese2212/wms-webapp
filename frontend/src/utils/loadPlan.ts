@@ -225,20 +225,23 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       return true
     }
 
-    // Rải phần dư lên NÓC khối class — ĐẮP CHỖ TRŨNG trước (user 14/07: không tạo cục
-    // 9 lớp trơ trọi khi xung quanh còn chân 7/8): chân nóc THẤP nhất ăn trước; bằng
-    // nhau → ưu tiên chân cùng mã rồi PHÍA TRONG (nổi dồn về cabin).
+    // Phần dư NỔI lên NÓC khối class — ĐẮP CHỖ TRŨNG trước (chân thấp nhất ăn trước),
+    // bằng nhau → dồn LIỀN DẢI từ PHÍA TRONG (x,y nhỏ — không xen kẽ theo thứ tự đặt
+    // cột thành ụ rải, user 15/07 đơn 130726_01: "rải quá nhiều"); TRẦN NỔI = mặt thân
+    // khối + 1 LỚP (SOP 996+4 nổi — dư hơn nữa bỏ lại, không chất tầng lởm chởm).
     const spillOnRoof = (g: LoadGroup, gi: number, rem: number): number => {
+      const body = classCols.length ? Math.max(...classCols.map(c => c.top)) : 0
+      const capTop = Math.min(truck.height, body + g.h)
       while (rem > 0) {
         const cands = classCols
           .filter(oc => oc !== st.openCol?.col)
-          .filter(oc => truck.height - oc.top >= g.h)
+          .filter(oc => oc.top + g.h <= capTop + 1e-9)
           .filter(oc => {
             const cap = g.maxLayers ?? (g.onTop ? LIGHT_MAX_DEFAULT : Infinity)
             return cap === Infinity || Math.round(oc.top / g.h) < cap
           })
           .sort((a, b) => (a.top - b.top) ||
-            ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.step - b.step))
+            ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.x - b.x) || (a.y - b.y))
         const oc = cands[0]
         if (!oc) break
         step++

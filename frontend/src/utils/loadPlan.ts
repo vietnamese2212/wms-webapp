@@ -376,12 +376,32 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const full0 = Math.max(1, Math.floor(truck.height / bg0.h))
         const m0 = mEffOf(`${dk}|${classKeyOf(bg0)}`)
         const T = Math.min(truck.height, Math.max(bg0.h, (Math.ceil(full0 / m0) + 1) * bg0.h))
-        // Chiều cao khối nhẹ mong muốn dưới trần T: theo max_stack_layers; không khai → ~T/2
-        const wantStackMm = Math.max(...doLights.map(gi => {
+        // Hướng HÀNG nhẹ: phủ bề rộng xe SÁT nhất (2 bên thành không trống); tie → sâu nhỏ
+        const bestRowOpt = (g: LoadGroup) =>
+          (g.l === g.w ? [{ d: g.l, wd: g.w }] : [{ d: g.l, wd: g.w }, { d: g.w, wd: g.l }])
+            .filter(o => o.wd <= truck.width)
+            .sort((a, b) =>
+              (Math.floor(truck.width / b.wd) * b.wd) - (Math.floor(truck.width / a.wd) * a.wd) || (a.d - b.d))[0] ?? null
+        // Số lớp nhẹ MONG MUỐN per mã: khai max_stack_layers → theo đó; không khai → chọn
+        // số lớp LỚN NHẤT sao cho khối nhẹ CÂN (cao ≤ sâu vùng — hàng ít thì rải thấp mà
+        // rộng, KHÔNG tháp mỏng 1 hàng cao cả mét — user 14/07: "không đúng thực tế")
+        const lightTotal = doLights.reduce((s, gi) => s + avail(gi), 0)
+        const wantL = new Map<number, number>()
+        for (const gi of doLights) {
           const g = groupsIn[gi]
-          const layers = g.maxLayers ?? Math.max(1, Math.floor((T * 0.5) / g.h))
-          return Math.min(layers * g.h, Math.max(0, T - bg0.h))
-        }))
+          const capPhys = Math.max(1, Math.floor(Math.max(0, T - bg0.h) / g.h))
+          if (g.maxLayers != null) { wantL.set(gi, Math.min(g.maxLayers, capPhys)); continue }
+          const opt = bestRowOpt(g)
+          const cells = opt ? Math.max(1, Math.floor(truck.width / opt.wd)) : 1
+          let bestL = 1
+          for (let L = 1; L <= capPhys; L++) {
+            const R = Math.ceil(lightTotal / (cells * L))
+            if (L * g.h <= R * (opt ? opt.d : g.l) + 1e-9) bestL = L
+          }
+          wantL.set(gi, bestL)
+        }
+        const wantStackMm = Math.max(...doLights.map(gi =>
+          Math.min((wantL.get(gi) ?? 1) * groupsIn[gi].h, Math.max(0, T - bg0.h))))
         let li = 0                                   // mã nhẹ đang lát (lần lượt, liền mạch)
         let baseIdx = 0                              // mã nền đang dùng
         const lightRemain = () => doLights.reduce((s, gi) => s + avail(gi), 0)
@@ -454,13 +474,9 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             while (li < doLights.length && avail(doLights[li]) <= 0) li++
             if (li >= doLights.length) break
             const lg = groupsIn[doLights[li]]
-            // Hướng HÀNG nhẹ: phủ bề rộng xe SÁT nhất (2 bên thành không trống); tie → sâu nhỏ
-            const rowOpts = (lg.l === lg.w ? [{ d: lg.l, wd: lg.w }] : [{ d: lg.l, wd: lg.w }, { d: lg.w, wd: lg.l }])
-              .filter(o => o.wd <= truck.width)
-              .sort((a, b) =>
-                (Math.floor(truck.width / b.wd) * b.wd) - (Math.floor(truck.width / a.wd) * a.wd) || (a.d - b.d))
-            if (!rowOpts.length) break
-            const { d, wd } = rowOpts[0]
+            const opt = bestRowOpt(lg)
+            if (!opt) break
+            const { d, wd } = opt
             // 1) nền đổ đuổi tới rx + d (toàn mặt thềm)
             coverTo(rx + d)
             // 2) lát hàng — chỉ ô nằm trọn trên nền
@@ -473,7 +489,11 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
               const fitCell = (g.l <= d && g.w <= wd) ? { fl: g.l, fw: g.w }
                 : (g.w <= d && g.l <= wd) ? { fl: g.w, fw: g.l } : null
               if (!fitCell) { li++; continue }       // mã nhẹ khác cỡ không vừa ô → chờ PHA 3
-              const cap2 = Math.max(0, Math.min(Math.floor((T - platMm) / g.h), g.maxLayers ?? Infinity))
+              const cap2 = Math.max(0, Math.min(
+                Math.floor((T - platMm) / g.h),
+                g.maxLayers ?? Infinity,
+                wantL.get(gi) ?? Infinity,           // khối nhẹ cân: không chồng quá số lớp mong muốn
+              ))
               if (cap2 <= 0) { li++; continue }
               if (!onPlatform(rx, cy, d, wd)) continue
               const layers = Math.min(cap2, avail(gi))

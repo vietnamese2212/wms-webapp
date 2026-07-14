@@ -94,6 +94,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
     let spilled = 0   // số thùng tràn nóc DO SÀN HỤT (khác "hàng thừa nổi trên khối" — bình thường)
+    let lightPatch = 0   // mảng nóc thềm LỘ đặt-vừa-thùng-gửi (phạt trong chọn phương án)
+    let spanMiss = 0     // hàng gửi hụt phủ ngang (mm so 85% bề xe)
     const used: number[] = groupsIn.map(() => 0)          // số thùng đã dùng của từng mã
     const avail = (gi: number) => Math.max(0, groupsIn[gi].count - used[gi])
     let step = 0
@@ -126,6 +128,9 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
     // Trạng thái KHỐI kích thước đang mở — object để TS không narrow sai qua closure
     const st: { openCol: { col: Col; used: number; cap: number } | null } = { openCol: null }   // chân dở — mã sau CÙNG class lấp tiếp
+    // Cột thềm KHÔNG có hàng gửi đè (thềm thừa) — khối sàn cùng class XÂY TIẾP lên cho
+    // ngang mặt khối (user 14/07: "hết lớp trên thì xếp hàng khác vào, không ô trống")
+    const pendingStubs: { x: number; y: number; fl: number; fw: number; top: number; ck: string; doKey: string }[] = []
     let classCols: Col[] = []                               // các chân của class hiện tại
     // VÙNG HƯỚNG của khối hiện tại: bề rộng xe chia tối đa 2 vùng — vùng hướng ưu tiên
     // + vùng hướng xoay (sát thành phải, khi trộn phủ bề rộng sát hơn đáng kể). Trong
@@ -217,7 +222,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const cands = classCols
           .filter(oc => oc !== st.openCol?.col)
           .filter(oc => truck.height - oc.top >= g.h)
-          .filter(oc => g.maxLayers == null || Math.round(oc.top / g.h) < g.maxLayers)
+          .filter(oc => {
+            const cap = g.maxLayers ?? (g.onTop ? LIGHT_MAX_DEFAULT : Infinity)
+            return cap === Infinity || Math.round(oc.top / g.h) < cap
+          })
           .sort((a, b) => (a.top - b.top) ||
             ((b.groups.has(gi) ? 1 : 0) - (a.groups.has(gi) ? 1 : 0)) || (a.step - b.step))
         const oc = cands[0]
@@ -259,7 +267,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // Bám mức đuôi khối trước — ceil: chỉ DU DI +1 thùng khi lệch bước (chia hết thì
       // KHÔNG nhô thêm)
       const cap = Math.max(1, Math.min(full, Math.ceil(chain.capMm / maxH)))
-      let L = Math.max(1, Math.ceil(cap / mEffOf(rowKey)))   // khối càng về sau hạ càng sâu
+      // sàn không hạ dưới 3 lớp (thảm 1-2 lớp kín sàn = phi thực tế — thợ dồn gọn)
+      let L = Math.max(Math.min(cap, 3), Math.ceil(cap / mEffOf(rowKey)))
       // BẬC THANG THOẢI (user 14/07: "hạ độ cao phải hạ DẦN, không rơi vực — đổ hàng"):
       // từ khối thứ 2, mức thân không thấp hơn mức khối trước quá 1 bậc an toàn
       if (floorRows.indexOf(rowKey) > 0) {
@@ -279,6 +288,17 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         const isLastOfClass = mi === live.length - 1
         let remaining = avail(gi)
         while (remaining > 0) {
+          // 0) Nhận CỘT THỀM THỪA cùng class làm chân dở — xây tiếp lên mức thân khối
+          // (hết hàng gửi thì hàng khác vào, không để ô trống trên nóc thềm)
+          if (!st.openCol) {
+            const si = pendingStubs.findIndex(s => s.ck === classKeyOf(g) && s.doKey === g.doKey)
+            if (si >= 0) {
+              const s = pendingStubs.splice(si, 1)[0]
+              const col: Col = { x: s.x, y: s.y, fl: s.fl, fw: s.fw, top: s.top, doKey: g.doKey, step, groups: new Set<number>() }
+              cols.push(col); classCols.push(col)
+              st.openCol = { col, used: Math.round(s.top / maxH), cap: L }
+            }
+          }
           // 1) Lấp tiếp CHÂN DỞ (mã sau đè lên chân dở mã trước — không hở)
           // TS không thấy newColumn (closure) gán st.openCol → narrow nhầm null; cast typed
           const oc = st.openCol as { col: Col; used: number; cap: number } | null
@@ -402,9 +422,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         let li = 0                                   // mã nhẹ đang lát (lần lượt, liền mạch)
         let baseIdx = 0                              // mã nền đang dùng
         const lightRemain = () => doLights.reduce((s, gi) => s + avail(gi), 0)
-        const platAll: { x: number; y: number; fl: number; fw: number }[] = []
-        const laid: { x: number; y: number; fl: number; fw: number }[] = []   // ô nhẹ đã lát
+        const platAll: { x: number; y: number; fl: number; fw: number; top: number; ck: string }[] = []
+        const laid: { x: number; y: number; fl: number; fw: number; top: number; n: number }[] = []   // ô nhẹ đã lát
         let lightFront = -1
+        let firstPlatMm = -1                         // thềm CHỈ MỘT MỨC (đa mức = lởm chởm)
         while (lightRemain() > 0) {
           while (baseIdx < doFloor.length && avail(doFloor[baseIdx]) <= 0) baseIdx++
           if (baseIdx >= doFloor.length) break       // hết hàng nền → phần nhẹ còn lại đi PHA 3
@@ -423,8 +444,12 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             .reduce((s, x) => s + avail(x), 0)
           const cellArea = lgd.l * lgd.w, colArea = bg.l * bg.w
           const N = lightRemain()
-          const Lf = Math.min(lgd.maxLayers ?? LIGHT_MAX_DEFAULT, Math.floor((topT - bg.h) / lgd.h))
+          let Lf = Math.min(lgd.maxLayers ?? LIGHT_MAX_DEFAULT, Math.floor((topT - bg.h) / lgd.h))
           if (Lf < 1) break                          // không còn chỗ cho gửi → PHA 3
+          // ĐI HẾT CHIỀU NGANG (user 14/07: "không khối nào nằm 1 góc — dùng tối đa
+          // chiều ngang"): hàng gửi ít → hạ lớp để phủ đủ bề ngang ít nhất 1 hàng
+          const cellsRowEst = Math.max(1, Math.floor(truck.width / optd.wd))
+          Lf = Math.max(1, Math.min(Lf, Math.ceil(N / cellsRowEst)))
           let platLayers = Math.max(1, Math.min(
             Math.floor((topT - Lf * lgd.h) / bg.h),
             Math.floor(truck.height / bg.h),
@@ -434,6 +459,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           const colsNeed = Math.ceil(Math.ceil(N / Lf) * cellArea / colArea)
           while (platLayers > 1 && colsNeed * platLayers > availBase * 0.8) platLayers--
           const platMm = platLayers * bg.h
+          if (firstPlatMm < 0) firstPlatMm = platMm
+          else if (platMm !== firstPlatMm) break     // KHÔNG mở thềm mức khác
           const bZones = zoneMixFor(bg)   // nền thềm cũng chia vùng phủ kín bề rộng
           if (!bZones.length) break
           // TILE-DRIVEN: đi TỪNG HÀNG NHẸ (sâu d theo x) — nền các làn đổ ĐUỔI THEO phủ
@@ -484,51 +511,23 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
                 placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: pick.fl, w: pick.fw, h: bg.h, group: bi, step })
               used[bi] += platLayers
               skyCommit(spot.y, pick.fw, spot.x + pick.fl)
-              platAll.push({ x: spot.x, y: spot.y, fl: pick.fl, fw: pick.fw })
+              platAll.push({ x: spot.x, y: spot.y, fl: pick.fl, fw: pick.fw, top: platMm, ck: classKeyOf(bg) })
             }
             return true
           }
           const rx0 = Math.max(0, lightFront)
-          // Lưới ô hàng gửi CHỈ trên VÙNG NỀN CHÍNH (cột nông — ít dư mép; vùng nền xoay
-          // sâu hơn sẽ dư mảng lớn): phần bề rộng còn lại nhường khối sàn đứng cao từ sàn
-          const Wp = bZones[0].yB
-          const wdP = optd.wd, wdA = optd.d          // bề ô chính / bề ô xoay
-          const nPureL = Math.floor(Wp / wdP)
-          let lmx = { nP: nPureL, nA: 0 }
-          if (wdA !== wdP) {
-            let cov = nPureL * wdP
-            for (let nP = nPureL; nP >= 0; nP--) {
-              const nA = Math.floor((Wp - nP * wdP) / wdA)
-              const c2 = nP * wdP + nA * wdA
-              if (c2 > cov + 1e-9) { cov = c2; lmx = { nP, nA } }
-            }
-            if (lmx.nA > 0 && cov - nPureL * wdP < Math.min(lgd.l, lgd.w) * 0.25) lmx = { nP: nPureL, nA: 0 }
-          }
-          const lzones = [
-            { yA: 0, yB: lmx.nP * wdP, wd: wdP, dz: optd.d },
-            ...(lmx.nA > 0 ? [{ yA: lmx.nP * wdP, yB: lmx.nP * wdP + lmx.nA * wdA, wd: wdA, dz: optd.wd }] : []),
-          ]
-          // 3) gom Ô dùng được trên toàn mặt thềm — mỗi vùng lát hàng theo nhịp sâu riêng
-          // Sinh Ô theo SÓNG 2 vùng (vùng nào mặt tiền nông hơn sinh trước) — ĐÚNG số ô
-          // cần, thứ tự TRONG → ngoài
-          const cellsNeed = Math.ceil(N / Lf)
-          const cells: { rx: number; cy: number; d: number; wd: number }[] = []
-          const zPtr = lzones.map(z => ({ z, rx: rx0, cy: z.yA }))
-          while (cells.length < cellsNeed) {
-            zPtr.sort((a, b) => a.rx - b.rx)
-            const p = zPtr.find(q => q.rx + q.z.dz <= truck.length + 1e-9 && q.z.yB - q.z.yA >= q.z.wd - 1e-9)
-            if (!p) break                              // hết chiều dài xe
-            cells.push({ rx: p.rx, cy: p.cy, d: p.z.dz, wd: p.z.wd })
-            p.cy += p.z.wd
-            if (p.cy + p.z.wd > p.z.yB + 1e-9) { p.cy = p.z.yA; p.rx += p.z.dz }
-          }
+          // Lưới ô hàng gửi: LƯỚI LIỀN TOÀN BỀ RỘNG XE (user: đi hết chiều ngang, không
+          // dồn cục 1 góc) — mỗi HÀNG thuần 1 cỡ ô (bề ô = chiều còn lại của thùng theo
+          // nhịp hàng); nhịp SÂU từng hàng chọn realtime KHỚP mặt cột nền (lớp trên ăn
+          // khớp lớp đáy — hết hàng gửi là mặt cắt gọn, không khe hở ô trống)
           // 4) lát: mỗi ô chồng TỚI MỨC CHUNG topT (ngang bằng hàng phía sau — không lõm)
           const overlapLaid = (x: number, y: number, fl: number, fw: number) =>
             laid.some(c => x + 1e-9 < c.x + c.fl && c.x + 1e-9 < x + fl && y + 1e-9 < c.y + c.fw && c.y + 1e-9 < y + fw)
-          const layCell = (rx: number, cy: number, d: number, wd: number): boolean => {
+          const layCell = (rx: number, cy: number, d: number, wd: number, capL = Lf): boolean => {
             if (overlapLaid(rx, cy, d, wd)) return false
             let z = platMm
             let putAny = false
+            let totalLayers = 0                        // tổng lớp trong Ô (cap — đều tăm tắp)
             const inCell = new Map<number, number>()   // số lớp từng mã đã chồng trong Ô
             for (;;) {
               while (li < doLights.length && avail(doLights[li]) <= 0) li++
@@ -540,50 +539,159 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
               if (!fit) break                        // mã kế khác cỡ không vừa ô → sang ô sau
               const gCap = Math.min(avail(gi),
                 Math.max(0, Math.floor((topT - z) / g.h)),
-                (g.maxLayers ?? LIGHT_MAX_DEFAULT) - (inCell.get(gi) ?? 0))
+                (g.maxLayers ?? LIGHT_MAX_DEFAULT) - (inCell.get(gi) ?? 0),
+                capL - totalLayers)
               if (gCap <= 0) break                   // mã đạt trần lớp trong ô
               step++
               for (let k = 0; k < gCap; k++)
                 placed.push({ x: rx, y: cy, z: z + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
               used[gi] += gCap
               inCell.set(gi, (inCell.get(gi) ?? 0) + gCap)
+              totalLayers += gCap
               z += gCap * g.h
               putAny = true
             }
             if (putAny) {
-              laid.push({ x: rx, y: cy, fl: d, fw: wd })
+              laid.push({ x: rx, y: cy, fl: d, fw: wd, top: z, n: totalLayers })
               lightFront = Math.max(lightFront, rx + d)
             }
             return putAny
           }
           let placedAny = false
-          for (const cell of cells) {
-            if (lightRemain() <= 0) break
-            if (!ensureCell(cell.rx, cell.cy, cell.d, cell.wd)) { if (baseOut) break; continue }
-            if (layCell(cell.rx, cell.cy, cell.d, cell.wd)) placedAny = true
-          }
-          // 5) PASS VÁ — hàng gửi XOAY TỰ DO từng ô (user: chỉ hàng gửi không cần luật
-          // 1 hàng 1 hướng): chèn ô xoay vào mảnh thềm còn lộ tới khi không thêm được
-          let patching = lightRemain() > 0
-          while (patching) {
-            patching = false
-            while (li < doLights.length && avail(doLights[li]) <= 0) li++
-            if (li >= doLights.length) break
-            const g = groupsIn[doLights[li]]
-            const orients = g.l === g.w ? [{ d: g.l, wd: g.w }] : [{ d: g.l, wd: g.w }, { d: g.w, wd: g.l }]
-            const anchors: { x: number; y: number }[] = []
-            for (const c of laid) anchors.push({ x: c.x + c.fl, y: c.y }, { x: c.x, y: c.y + c.fw })
-            for (const c of platAll) if (c.x + 1e-9 >= rx0) anchors.push({ x: c.x, y: c.y })
-            patch: for (const a of anchors) {
-              for (const o of orients) {
-                if (!onPlatform(a.x, a.y, o.d, o.wd)) continue
-                if (layCell(a.x, a.y, o.d, o.wd)) { placedAny = true; patching = lightRemain() > 0; break patch }
+          {
+            // SÓNG THEO VÙNG NỀN: mỗi vùng con trỏ hàng riêng — (1) phủ NGANG mọi vùng
+            // 1 hàng trước (đi hết chiều ngang); (2) rồi mở hàng ở vùng RẺ nhất (thò
+            // nền / ô ít nhất — lớp trên ăn khớp lớp đáy, nhịp nền vùng nào theo vùng đó)
+            const zonesL = bZones.map(z => ({ yA: z.yA, yB: z.yB, flB: zoneDims(bg, z).fl, rx: rx0 }))
+            let thinDone = false
+            while (lightRemain() > 0 && !baseOut && !thinDone) {
+              let bestZ: typeof zonesL[number] | null = null
+              let bestCost = Infinity, bestD = 0
+              for (const z of zonesL) {
+                if (z.rx >= truck.length - 1e-9) continue
+                const zf = skyMaxX(z.yA, z.yB)
+                const overAt = (need: number) =>
+                  zf >= need - 1e-9 ? 0 : Math.ceil((need - zf) / z.flB) * z.flB + zf - need
+                for (const dd of [...new Set([lgd.l, lgd.w])]) {
+                  if (z.rx + dd > truck.length + 1e-9) continue
+                  const wd2 = dd === lgd.l ? lgd.w : lgd.l
+                  const cellsZ = Math.floor((z.yB - z.yA) / wd2)
+                  if (cellsZ < 1) continue
+                  // NHÌN TRƯỚC 2 HÀNG: còn đủ hàng gửi thì tính thò nền theo CHUỖI 2 nhịp
+                  // (vd [180,180]=360 khớp cột 400 chỉ thò 40 — greedy 250 sẽ ép thò 300)
+                  const two = lightRemain() >= 2 * Lf * cellsZ
+                  const ov = two
+                    ? Math.min(...[...new Set([lgd.l, lgd.w])].map(d2 => overAt(z.rx + dd + d2)))
+                    : overAt(z.rx + dd)
+                  const cost = ov / cellsZ - dd * 0.001 - (z.rx <= rx0 + 1e-9 ? 1e6 : 0)
+                  if (cost < bestCost - 1e-9) { bestCost = cost; bestZ = z; bestD = dd }
+                }
               }
+              if (!bestZ) break
+              const d = bestD, wd = d === lgd.l ? lgd.w : lgd.l
+              const cellsRow = Math.max(1, Math.floor((bestZ.yB - bestZ.yA) / wd))
+              const rem = lightRemain()
+              let baseL = Lf, extra = 0
+              if (rem < Lf * cellsRow) {
+                // hàng cuối: TRẢI MỎNG phủ đủ ngang; quá lẻ (<2 lớp/hàng) hoặc phải kéo
+                // NHỊP NỀN MỚI (thò > 40% cột nền) → thôi, thùng lẻ nổi/PHA 3
+                if (rem < 2 * cellsRow && laid.length > 0) break
+                const zfx = skyMaxX(bestZ.yA, bestZ.yB)
+                const needx = bestZ.rx + d
+                const ovx = zfx >= needx - 1e-9 ? 0 : Math.ceil((needx - zfx) / bestZ.flB) * bestZ.flB + zfx - needx
+                if (ovx > bestZ.flB * 0.4 && laid.length > 0) break
+                baseL = Math.max(1, Math.floor(rem / cellsRow))
+                extra = Math.max(0, rem - baseL * cellsRow)
+                thinDone = true
+              }
+              let rowAny = false
+              for (let cy = bestZ.yA; cy + wd <= bestZ.yB + 1e-9; cy += wd) {
+                if (lightRemain() <= 0) break
+                const capL = baseL + (extra > 0 ? 1 : 0)
+                let ok = ensureCell(bestZ.rx, cy, d, wd) && layCell(bestZ.rx, cy, d, wd, capL)
+                // Ô kẹt → XOAY TẠI CHỖ (hàng gửi tự do hướng — miễn ăn khớp lớp đáy)
+                if (!ok && !baseOut && d !== wd &&
+                  ensureCell(bestZ.rx, cy, wd, d) && layCell(bestZ.rx, cy, wd, d, capL)) ok = true
+                if (ok) { rowAny = true; placedAny = true; if (extra > 0) extra-- }
+                if (baseOut) break
+              }
+              if (!rowAny) { bestZ.rx = truck.length; continue }   // vùng tắc → khóa vùng
+              bestZ.rx += d
             }
           }
-          baseIdx = bIdx                             // nền đã tiêu tới đâu
-          // Nền cạn / không lát được → nhẹ còn lại đi PHA 3 (KHÔNG mở thềm mức khác — tránh lỗ)
-          if (baseOut || !placedAny) break
+          // Thùng lẻ còn lại → NỔI trên ô gửi THẤP nhất (đắp trũng), không mở hàng mới
+          for (;;) {
+            if (lightRemain() <= 0) break
+            while (li < doLights.length && avail(doLights[li]) <= 0) li++
+            if (li >= doLights.length) break
+            const gi = doLights[li]
+            const g = groupsIn[gi]
+            const cand = laid
+              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
+              .filter(c => c.top + g.h <= topT + 1e-9 && c.n < (g.maxLayers ?? LIGHT_MAX_DEFAULT))
+              .sort((a, b) => a.top - b.top)[0]
+            if (!cand) break
+            const fit = (g.l <= cand.fl && g.w <= cand.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
+            step++
+            placed.push({ x: cand.x, y: cand.y, z: cand.top, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
+            used[gi] += 1
+            cand.top += g.h
+            cand.n += 1
+            placedAny = true
+          }
+          // (KHÔNG gán baseIdx = bIdx — bIdx là con trỏ scan cục bộ, có thể đã trôi qua
+          // mã CÒN HÀNG khác class → vòng sau sẽ dựng thềm mức khác. Vòng sau tự skip
+          // mã cạn ở đầu vòng.)
+          // Nền cạn / không lát được / còn quá lẻ (mở vòng nữa sẽ thành hàng 1-2 lớp
+          // kéo nền) → nhẹ còn lại đi PHA 3
+          if (baseOut || !placedAny || lightRemain() < 2 * cellsRowEst) break
+        }
+        // Có hàng gửi mà KHÔNG dựng được thềm (toàn bộ rơi PHA 3 rải nóc) → phạt nặng
+        // để m-search né phương án này
+        if (!laid.length && doLights.length) spanMiss += truck.width * 2
+        // Cột thềm KHÔNG có hàng gửi đè → giao khối sàn cùng class XÂY TIẾP lên mức
+        // thân khối (hết hàng gửi thì hàng khác vào — không ô trống trên nóc thềm)
+        const stubbed = new Set<number>()
+        for (let ci = 0; ci < platAll.length; ci++) {
+          const c = platAll[ci]
+          let cov = 0
+          for (const l of laid) {
+            const ix = Math.max(0, Math.min(c.x + c.fl, l.x + l.fl) - Math.max(c.x, l.x))
+            const iy = Math.max(0, Math.min(c.y + c.fw, l.y + l.fw) - Math.max(c.y, l.y))
+            cov += ix * iy
+          }
+          if (cov < 1) {   // tuyệt đối KHÔNG thùng gửi chạm cột (chờm mép cũng không xây được)
+            pendingStubs.push({ x: c.x, y: c.y, fl: c.fl, fw: c.fw, top: c.top, ck: c.ck, doKey: dk })
+            stubbed.add(ci)
+          }
+        }
+        // CHẤT LƯỢNG vùng gửi (phạt trong chọn phương án): mảng nóc thềm lộ ĐẶT VỪA
+        // thùng gửi (quét lát cắt 20mm) + hụt phủ ngang
+        if (laid.length) {
+          const span = Math.max(...laid.map(c => c.y + c.fw)) - Math.min(...laid.map(c => c.y))
+          spanMiss += Math.max(0, truck.width * 0.85 - span)
+          const mnD = Math.min(...doLights.map(gi => Math.min(groupsIn[gi].l, groupsIn[gi].w)))
+          const mxD = Math.min(...doLights.map(gi => Math.max(groupsIn[gi].l, groupsIn[gi].w)))
+          for (let ci = 0; ci < platAll.length; ci++) {
+            if (stubbed.has(ci)) continue
+            const c = platAll[ci]
+            let big = false
+            for (const [minY, minX] of [[mnD, mxD], [mxD, mnD]]) {
+              let run = 0
+              for (let sx = c.x; sx < c.x + c.fl - 1e-9 && !big; sx += 20) {
+                const mx = sx + 10   // lấy mẫu ĐIỂM GIỮA lát cắt (tránh false-positive biên)
+                const segs = laid.filter(l => l.x <= mx && l.x + l.fl >= mx && l.y < c.y + c.fw && l.y + l.fw > c.y)
+                  .map(l => [Math.max(l.y, c.y), Math.min(l.y + l.fw, c.y + c.fw)] as [number, number])
+                  .sort((a, b) => a[0] - b[0])
+                let gap = 0, cur = c.y
+                for (const [a, b] of segs) { gap = Math.max(gap, a - cur); cur = Math.max(cur, b) }
+                gap = Math.max(gap, c.y + c.fw - cur)
+                if (gap >= minY - 1e-9) { run += 20; if (run >= minX) big = true } else run = 0
+              }
+              if (big) break
+            }
+            if (big) lightPatch++
+          }
         }
       }
 
@@ -628,7 +736,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         }
       }
     }
-    return { placed, leftover, step, spilled }
+    return { placed, leftover, step, spilled, lightPatch, spanMiss }
   }
 
   // Chọn hệ số trải m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe); ƯU TIÊN phương án SẠCH
@@ -664,6 +772,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // được ≥0.5m chiều dài thì trải; maxX xấp xỉ nhau thì phương án ít hố thắng)
   const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
   const score = (p: PackResult) => maxXOf(p.placed) - closedHoles(p.placed) * 500
+    - p.lightPatch * 100 - p.spanMiss * 0.5   // phạt nhẹ vùng gửi xấu (tie-break, không đảo bố cục)
   const better = (r: PackResult, cur: PackResult): boolean => {
     const rl = leftCnt(r), cl = leftCnt(cur)
     if (rl !== cl) return rl < cl

@@ -706,41 +706,60 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           cand.n += 1
           remaining -= 1
         }
-        // (2) DƯ NHỎ (≤ 2 chồng) mà vùng gửi kín lớp → nổi lên NÓC CỘT CẠNH vùng gửi,
-        // đổ TRỌN chồng rồi mới lan sang host KỀ HOST TRƯỚC (thảm liền — không rắc mỗi
-        // nóc 1 thùng); thùng lẻ ở LẠI CẠNH khối mình phía cabin, không đứng cột đơn độc
-        // dưới sàn cuối xe (đổ hàng). Dư LỚN → khối riêng liền (3).
+        // (2) DƯ NHỎ (≤ 2 chồng) mà vùng gửi kín lớp → lát 1 CỤM Ô LIỀN KỀ SÁT NHAU
+        // trên vùng NÓC PHẲNG cạnh vùng gửi (không theo lưới cột nền — ô góc cột sẽ hở
+        // 100-120mm giữa các cục, nhìn lởm chởm); người thật: chồng gọn 1 cụm vuông
+        // vắn trên nóc hàng phía trong. Dư LỚN → khối riêng liền (3).
         if (remaining > 0 && remaining <= 2 * (g.maxLayers ?? LIGHT_MAX_DEFAULT) && laid.length) {
-          // khoảng cách rect-rect (sau lưng ô gửi thường còn dải nền thò 60-300mm nên
-          // chạm-sát-2mm không bắt được cột nào → dùng bán kính 500mm)
-          const rectDist = (c: Col, r: { x: number; y: number; fl: number; fw: number }) => Math.max(
+          const rectDist = (c: { x: number; y: number; fl: number; fw: number }, r: { x: number; y: number; fl: number; fw: number }) => Math.max(
             Math.max(0, Math.max(r.x - (c.x + c.fl), c.x - (r.x + r.fl))),
             Math.max(0, Math.max(r.y - (c.y + c.fw), c.y - (r.y + r.fw))))
-          const usedHosts: Col[] = []
-          const nearScore = (c: Col) => usedHosts.length
-            ? Math.min(...usedHosts.map(u => rectDist(c, { x: u.x, y: u.y, fl: u.fl, fw: u.fw })))
-            : Math.min(...laid.map(l => rectDist(c, l)))
-          const maxTop0 = cols.length ? Math.max(...cols.map(c => c.top)) : truck.height
-          // trần = mặt bằng chung + 1 LỚP (SOP: thùng thừa nổi TRÊN khối); host thấp/
-          // trũng ăn TRỌN chồng trước → ít chồng lẻ nhất
-          const capTop = Math.min(truck.height, maxTop0 + g.h)
-          while (remaining > 0) {
-            const host = cols
-              .filter(c => nearScore(c) <= 500)
-              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
-              .filter(c => c.top + g.h <= capTop + 1e-9)
-              .sort((a, b) => (nearScore(a) - nearScore(b)) || (a.top - b.top) || (a.step - b.step))[0]
-            if (!host) break
-            const fit = (g.l <= host.fl && g.w <= host.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
-            const layers = Math.min(remaining, Math.floor((capTop - host.top) / g.h + 1e-9))
-            step++
-            for (let k = 0; k < layers; k++)
-              placed.push({ x: host.x, y: host.y, z: host.top + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
-            host.top += layers * g.h
-            host.groups.add(gi)
-            used[gi] += layers
-            remaining -= layers
-            usedHosts.push(host)
+          // cột neo: gần ô gửi ≤500mm (sau lưng ô gửi thường còn dải nền thò 60-300mm
+          // nên chạm-sát không bắt được cột nào), còn ít nhất 1 lớp dưới trần
+          const distLaid = (c: { x: number; y: number; fl: number; fw: number }) =>
+            Math.min(...laid.map(l => rectDist(c, l)))
+          const anchors = cols.filter(c => distLaid(c) <= 500 && c.top + g.h <= truck.height + 1e-9)
+          const Ts = [...new Set(anchors.map(c => c.top))].sort((a, b) => a - b)
+          for (const T of Ts) {
+            if (remaining <= 0) break
+            const flat = cols.filter(c => Math.abs(c.top - T) < 1e-6)
+            const supp = (x: number, y: number, fl: number, fw: number): boolean => {
+              let cov = 0
+              for (const c of flat) {
+                const ix = Math.max(0, Math.min(x + fl, c.x + c.fl) - Math.max(x, c.x))
+                const iy = Math.max(0, Math.min(y + fw, c.y + c.fw) - Math.max(y, c.y))
+                cov += ix * iy
+              }
+              return cov >= fl * fw - 1
+            }
+            const anch = anchors.filter(c => c.top === T)
+              .sort((a, b) => (distLaid(a) - distLaid(b)) || (a.y - b.y) || (a.x - b.x))[0]
+            // hướng ô: hướng lát được NHIỀU ô liền hơn trong 1 hàng từ neo
+            const countRow = (fl: number, fw: number) => {
+              let n = 0
+              for (let y = anch.y; y + fw <= truck.width + 1e-9; y += fw) { if (!supp(anch.x, y, fl, fw)) break; n++ }
+              return n
+            }
+            const o1 = countRow(g.l, g.w), o2 = g.l === g.w ? 0 : countRow(g.w, g.l)
+            if (Math.max(o1, o2) < 1) continue
+            const [fl, fw] = o2 > o1 ? [g.w, g.l] : [g.l, g.w]
+            const maxL = Math.min(g.maxLayers ?? LIGHT_MAX_DEFAULT, Math.floor((truck.height - T) / g.h))
+            for (let x = anch.x; remaining > 0 && x + fl <= truck.length + 1e-9; x += fl) {
+              const ys: number[] = []
+              for (let y = anch.y; y + fw <= truck.width + 1e-9; y += fw) { if (!supp(x, y, fl, fw)) break; ys.push(y) }
+              if (!ys.length) break
+              // cụm ĐỀU: số lớp thấp nhất phủ hết dư (chênh ≤1 giữa các ô)
+              const layers = Math.min(maxL, Math.ceil(remaining / ys.length))
+              for (const y of ys) {
+                if (remaining <= 0) break
+                const put = Math.min(layers, remaining)
+                step++
+                for (let k = 0; k < put; k++)
+                  placed.push({ x, y, z: T + k * g.h, l: fl, w: fw, h: g.h, group: gi, step })
+                used[gi] += put
+                remaining -= put
+              }
+            }
           }
         }
         if (remaining > 0) {

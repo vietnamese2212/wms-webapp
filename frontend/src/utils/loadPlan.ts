@@ -1,10 +1,14 @@
 // Sơ đồ xếp xe 3D — thuật toán xếp thùng carton vào lòng thùng xe (chạy thuần FE).
-// LUẬT XẾP — theo "Quy trình kiểm soát xuất kho" NM Ba Vì (file user đưa 13/07) + các chốt
-// của user 12-14/07:
+// LUẬT XẾP — theo SOP "Quy trình kiểm soát xuất kho" NM Ba Vì (file "Quy trình đếm chân
+// xe xá.xlsx" thư mục gốc, user đưa 14/07) + các chốt của user 12-14/07:
 // 1. XẾP BẰNG MẶT: mỗi KHỐI hàng (loại kích thước) chỉ có MỘT CHIỀU CAO duy nhất —
 //    "tuyệt đối không xếp 1 loại hàng có 2 chiều cao trở lên". HÀNG THỪA không đủ bằng
 //    mặt → CHO HẾT LÊN TRÊN KHỐI (nổi trên nóc, dồn về PHÍA TRONG), KHÔNG đứng dưới sàn —
 //    thủ kho đối chiếu: n chân × cao + thừa nổi (vd 1000 thùng cao 12 = 996 + 4 nổi).
+// 1b. NHÓM LIỀN (SOP "lên hết loại hàng này rồi mới đến loại hàng khác"): mỗi loại = 1
+//    mảng liền — cột mới ưu tiên CHẠM khối đang mở; hàng gửi lát LƯỚI LIỀN xuyên biên
+//    vùng nền (không chừa rãnh giữa xe); gửi dư KHÔNG rải nóc lung tung — nổi tiếp lên
+//    vùng gửi, còn nữa mới đứng thành 1 khối riêng liền mạch.
 // 2. BẬC THANG BỐ CỤC từ trong ra ngoài: khối TRONG giữ CAO kịch (nhường sàn), các khối
 //    sau THẤP DẦN ra cửa (trọng số trải tăng dần); hàng ít → hạ để trải HẾT chiều dài xe.
 // 3. HÀNG GHÉP PHÍA TRÊN (stack_on_top — túi/POSM) xếp TRƯỚC TIÊN, ở SÂU NHẤT trong
@@ -182,12 +186,17 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     // skyFind trong 1 vùng y — cột đặt theo LƯỚI CỐ ĐỊNH của vùng (yA + k·fw, KHÔNG nép
     // segment thừa kế từ khối trước — lệch mốc sẽ kẹt dải hở dọc biên vùng); trong lưới
     // chọn mặt tiền THẤP nhất (tie → y nhỏ)
-    const skyFindZone = (fw: number, fl: number, yA: number, yB: number): { x: number; y: number } | null => {
-      let best: { x: number; y: number } | null = null
+    // Ưu tiên spot CHẠM khối đang mở (SOP nhóm liền — không mọc cột lẻ cách xa khi
+    // skyline đuôi lởm chởm); cùng mức chạm → mặt tiền x nhỏ nhất (tie → y nhỏ)
+    const touchesClass = (x: number, y: number, fl: number, fw: number) =>
+      classCols.some(c => x < c.x + c.fl + 2 && c.x < x + fl + 2 && y < c.y + c.fw + 2 && c.y < y + fw + 2)
+    const skyFindZone = (fw: number, fl: number, yA: number, yB: number): { x: number; y: number; t: boolean } | null => {
+      let best: { x: number; y: number; t: boolean } | null = null
       for (let y = yA; y + fw <= yB + 1e-9; y += fw) {
         const x = skyMaxX(y, y + fw)
         if (x + fl > truck.length + 1e-9) continue
-        if (!best || x < best.x - 1e-9) best = { x, y }
+        const t = classCols.length > 0 && touchesClass(x, y, fl, fw)
+        if (!best || (t && !best.t) || (t === best.t && x < best.x - 1e-9)) best = { x, y, t }
       }
       return best
     }
@@ -197,11 +206,12 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     const newColumn = (g: LoadGroup, gi: number, take: number, std: number): boolean => {
       if (!zones.length) zones = zoneMixFor(g)
       let pick: { fl: number; fw: number } | null = null
-      let spot: { x: number; y: number } | null = null
+      let spot: { x: number; y: number; t: boolean } | null = null
       for (const z of zones) {
         const d = zoneDims(g, z)
         const s = skyFindZone(d.fw, d.fl, z.yA, z.yB)
-        if (s && (!spot || s.x < spot.x - 1e-9)) { pick = d; spot = s }
+        if (!s) continue
+        if (!spot || (s.t && !spot.t) || (s.t === spot.t && s.x < spot.x - 1e-9)) { pick = d; spot = s }
       }
       if (!pick || !spot) return false
       step++
@@ -246,7 +256,6 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       const rk = `${groupsIn[gi].doKey}|${classKeyOf(groupsIn[gi])}`
       if (!floorRows.includes(rk)) floorRows.push(rk)
     }
-    const finalRow = floorRows[floorRows.length - 1] ?? ''
     // m hiệu dụng của khối thứ idx: m^w, w = (idx+1)/K — CẢ ĐOÀN hạ dần đều (khối đầu
     // hạ nhẹ nhất, khối cuối hạ sâu nhất; user 14/07: "sắp xếp phải cân đối, không thể
     // đầu xe cao chót vót đuôi xe thấp lè tè"). Xe chật → m≈1 → mọi khối vẫn cao kịch.
@@ -259,7 +268,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
     // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) thành KHỐI BẰNG MẶT — MỘT chiều cao L.
     // PHẦN THỪA cuối khối không đủ bằng mặt → NỔI LÊN TRÊN KHỐI, không đứng sàn.
-    const pourClass = (members: number[], rowKey: string, isFinal = false) => {
+    const pourClass = (members: number[], rowKey: string) => {
       const live = members.filter(gi => avail(gi) > 0)
       if (!live.length) return
       const maxH = Math.max(...live.map(gi => groupsIn[gi].h))
@@ -321,37 +330,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             continue
           }
           const myL = Math.min(L, myCap)
-          // 2a) KHỐI CUỐI CÙNG của chuyến: phần cuối không đủ hàng ngang đầy cao L → hạ
-          // thành 1 BẬC PHẲNG THẤP lấp KÍN hàng cuối (đuôi phẳng, mọi chân lấp kín),
-          // thùng lẻ còn lại nổi lên trên khối
-          if (isFinal && isLastOfClass && classCols.length > 0) {
-            // số chân 1 lượt ngang = tổng số cột các vùng chứa được
-            const cl = Math.max(1, zones.reduce((s, z) => {
-              const d = zoneDims(g, z)
-              return s + Math.floor((z.yB - z.yA) / d.fw)
-            }, 0) || Math.floor(truck.width / Math.min(g.l, g.w)))
-            if (remaining < myL * cl) {
-              const stepH = Math.floor(remaining / cl)
-              if (stepH >= 1) {
-                for (let c = 0; c < cl && remaining >= stepH; c++) {
-                  if (!newColumn(g, gi, stepH, stepH)) break
-                  st.openCol = null
-                  remaining -= stepH
-                  used[gi] += stepH
-                }
-              }
-              if (remaining > 0) {
-                const b4 = remaining
-                remaining = spillOnRoof(g, gi, remaining)
-                used[gi] += b4 - remaining
-              }
-              if (remaining > 0) { leftover.push({ group: gi, count: remaining }); used[gi] += remaining }
-              break
-            }
-          }
-          // 2b) HÀNG THỪA cuối khối GIỮA chuyến (mã cuối, không đủ 1 chân bằng mặt) →
-          // NỔI LÊN TRÊN KHỐI (mặt tiền dở để khối sau áp sát lấp tiếp — hàng kín)
-          if (!isFinal && isLastOfClass && remaining < myL && classCols.length > 0) {
+          // 2) HÀNG THỪA cuối khối (mã cuối, không đủ 1 chân bằng mặt) → NỔI LÊN TRÊN
+          // KHỐI (SOP: "cho hết lên trên khối, KHÔNG xếp dưới sàn — khối 100% vuông vắn,
+          // hàng thừa lên trên"; 1 loại hàng TUYỆT ĐỐI không 2 chiều cao thân)
+          if (isLastOfClass && remaining < myL && classCols.length > 0) {
             const before = remaining
             remaining = spillOnRoof(g, gi, remaining)
             used[gi] += before - remaining
@@ -377,29 +359,12 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       chain.capMm = Math.min(chain.capMm, L * maxH)
     }
 
-    // Chồng hàng nhẹ lên 1 nóc: đủ số lớp cho phép nhưng KHÔNG nhô cao hơn cột cao nhất
-    // đang có (vật lý: không có gì đỡ tháp lẻ). Trả số thùng đã đặt.
-    const stackLightOn = (host: Col, gi: number, remaining: number): number => {
-      const g = groupsIn[gi]
-      const maxTop = cols.length ? Math.max(...cols.map(c => c.top)) : truck.height
-      const head = Math.min(truck.height, maxTop) - host.top
-      if (head < g.h) return 0
-      const fit = (g.l <= host.fl && g.w <= host.fw) ? { fl: g.l, fw: g.w }
-        : (g.w <= host.fl && g.l <= host.fw) ? { fl: g.w, fw: g.l } : null
-      if (!fit) return 0
-      const capOwn = Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? LIGHT_MAX_DEFAULT)
-      const layers = Math.min(capOwn, Math.floor(head / g.h), remaining)
-      if (layers <= 0) return 0
-      step++
-      for (let k = 0; k < layers; k++)
-        placed.push({ x: host.x, y: host.y, z: host.top + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
-      host.top += layers * g.h
-      return layers
-    }
-
     for (const dk of doOrder) {
       const doFloor = orderFloor.filter(gi => groupsIn[gi].doKey === dk && groupsIn[gi].count > 0)
       const doLights = topOrder.filter(gi => groupsIn[gi].doKey === dk && groupsIn[gi].count > 0)
+      // Vùng gửi của đơn này (ô đã lát + mức mặt bằng chung) — PHA 3 nổi tiếp lên đây
+      const laid: { x: number; y: number; fl: number; fw: number; top: number; n: number }[] = []
+      let topT = truck.height
 
       // PHA 1 — HÀNG GỬI (ghép phía trên) xếp TRƯỚC TIÊN, sâu nhất, trên THỀM NỀN PHẲNG.
       // LUẬT NGƯỜI XẾP HÀNG (user 14/07): đỉnh hàng gửi phải NGANG BẰNG hàng phía sau
@@ -412,7 +377,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         // trải m — hàng ít khối nền hạ thấp thì hàng gửi hạ theo, không thành tháp) —
         // nền + hàng gửi phải CHẠM mức này (ngang bằng hàng phía sau, không lõm)
         const m0 = mEffOf(`${dk}|${classKeyOf(bg0)}`)
-        const topT = Math.min(truck.height, Math.max(bg0.h, Math.ceil(full0 / m0) * bg0.h))
+        topT = Math.min(truck.height, Math.max(bg0.h, Math.ceil(full0 / m0) * bg0.h))
         // Hướng HÀNG nhẹ chủ đạo: phủ bề rộng SÁT nhất; tie → sâu nhỏ
         const bestRowOpt = (g: LoadGroup) =>
           (g.l === g.w ? [{ d: g.l, wd: g.w }] : [{ d: g.l, wd: g.w }, { d: g.w, wd: g.l }])
@@ -423,7 +388,6 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         let baseIdx = 0                              // mã nền đang dùng
         const lightRemain = () => doLights.reduce((s, gi) => s + avail(gi), 0)
         const platAll: { x: number; y: number; fl: number; fw: number; top: number; ck: string }[] = []
-        const laid: { x: number; y: number; fl: number; fw: number; top: number; n: number }[] = []   // ô nhẹ đã lát
         let lightFront = -1
         let firstPlatMm = -1                         // thềm CHỈ MỘT MỨC (đa mức = lởm chởm)
         while (lightRemain() > 0) {
@@ -605,7 +569,17 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
                 thinDone = true
               }
               let rowAny = false
-              for (let cy = bestZ.yA; cy + wd <= bestZ.yB + 1e-9; cy += wd) {
+              // LƯỚI LIỀN xuyên biên vùng nền (SOP nhóm liền — không chừa rãnh giữa xe):
+              // vùng sau bắt lưới từ MÉP ô đã lát sát biên (ô được vắt qua biên vùng,
+              // ensureCell tự đổ nền cả 2 vùng dưới ô)
+              let yStart = bestZ.yA
+              if (bestZ.yA > 1e-9) {
+                const below = laid.filter(c => c.y < bestZ.yA - 1e-9 && c.y + c.fw > bestZ.yA - wd + 1e-9 && c.y + c.fw <= bestZ.yA + 1e-9)
+                // chưa có ô bám → SNAP về lưới toàn-xe (bội wd từ 0) — biên vùng nền lẻ
+                // bội sẽ tạo khe 10-60mm xé vùng gửi
+                yStart = below.length ? Math.max(...below.map(c => c.y + c.fw)) : Math.floor(bestZ.yA / wd) * wd
+              }
+              for (let cy = yStart; cy + wd <= bestZ.yB + 1e-9; cy += wd) {
                 if (lightRemain() <= 0) break
                 const capL = baseL + (extra > 0 ? 1 : 0)
                 let ok = ensureCell(bestZ.rx, cy, d, wd) && layCell(bestZ.rx, cy, d, wd, capL)
@@ -708,24 +682,29 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           for (const gi of live) { leftover.push({ group: gi, count: avail(gi) }); used[gi] += avail(gi) }
           continue
         }
-        pourClass(members, `${dk}|${ck}`, `${dk}|${ck}` === finalRow)
+        pourClass(members, `${dk}|${ck}`)
       }
 
-      // PHA 3 — hàng nhẹ còn dư (thềm hết nền/hết chỗ): nóc chân cùng đơn từ phía cửa,
-      // hết nóc mới xuống sàn như 1 class riêng
+      // PHA 3 — hàng gửi còn dư: KHÔNG rải nóc lung tung (SOP: "lên hết loại hàng này
+      // rồi mới đến loại hàng khác" — hàng nhóm nào đi LIỀN nhóm đó). Dư → (1) nổi tiếp
+      // lên chính VÙNG GỬI (đắp ô thấp nhất trước); (2) còn nữa → 1 KHỐI RIÊNG liền mạch.
       for (const gi of doLights) {
         const g = groupsIn[gi]
         let remaining = avail(gi)
         if (remaining <= 0) continue
-        if (g.h <= truck.height) {
-          const hosts = [...cols].sort((a, b) =>
-            ((a.doKey === dk ? 0 : 1) - (b.doKey === dk ? 0 : 1)) || (b.step - a.step))
-          for (const host of hosts) {
-            if (remaining <= 0) break
-            const put = stackLightOn(host, gi, remaining)
-            remaining -= put
-            used[gi] += put
-          }
+        while (remaining > 0) {
+          const cand = laid
+            .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
+            .filter(c => c.top + g.h <= Math.min(topT, truck.height) + 1e-9 && c.n < (g.maxLayers ?? LIGHT_MAX_DEFAULT))
+            .sort((a, b) => a.top - b.top)[0]
+          if (!cand) break
+          const fit = (g.l <= cand.fl && g.w <= cand.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
+          step++
+          placed.push({ x: cand.x, y: cand.y, z: cand.top, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
+          used[gi] += 1
+          cand.top += g.h
+          cand.n += 1
+          remaining -= 1
         }
         if (remaining > 0) {
           if (g.h > truck.height || Math.min(g.l, g.w) > truck.width) {

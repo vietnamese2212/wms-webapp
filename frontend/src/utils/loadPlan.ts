@@ -345,11 +345,14 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         let li = 0                                   // mã nhẹ đang lát (lần lượt, liền mạch)
         let baseIdx = 0                              // mã nền đang dùng
         const lightRemain = () => doLights.reduce((s, gi) => s + avail(gi), 0)
+        // nền tích lũy toàn thềm + mép lưới nhẹ đã lát (vùng sau bắt lưới NỐI TIẾP — không lệch mốc)
+        const platAll: { x: number; y: number; fl: number; fw: number }[] = []
+        let lightFront = -1
         while (lightRemain() > 0 && wantStackMm > 0) {
           while (baseIdx < doFloor.length && avail(doFloor[baseIdx]) <= 0) baseIdx++
           if (baseIdx >= doFloor.length) break       // hết hàng nền → phần nhẹ còn lại đi PHA 3
-          const bi = doFloor[baseIdx]
-          const bg = groupsIn[bi]
+          const bi0 = doFloor[baseIdx]
+          const bg = groupsIn[bi0]
           if (bg.h > truck.height || Math.min(bg.l, bg.w) > truck.width) { baseIdx++; continue }
           // Thềm phẳng: nền cao (T − khối nhẹ), tối thiểu 1 lớp, không vượt T
           const platLayers = Math.max(1, Math.min(
@@ -360,60 +363,102 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           const platMm = platLayers * bg.h
           const bo = orientFor(bg)
           if (!bo) break
-          // Hướng lát nhẹ trong dải (theo mã nhẹ đầu còn hàng): nhiều ô nhất
           while (li < doLights.length && avail(doLights[li]) <= 0) li++
           if (li >= doLights.length) break
           const lg0 = groupsIn[doLights[li]]
           if (T - platMm < lg0.h) break              // dưới trần T không còn chỗ cho nhẹ
-          const lopts = lg0.l === lg0.w ? [{ a: lg0.l, b: lg0.w }] : [{ a: lg0.l, b: lg0.w }, { a: lg0.w, b: lg0.l }]
-          const lo = lopts.filter(o => o.a <= bo.fl && o.b <= truck.width).sort((x, y) =>
-            (Math.floor(bo.fl / y.a) * Math.floor(truck.width / y.b)) - (Math.floor(bo.fl / x.a) * Math.floor(truck.width / x.b)))[0]
-          if (!lo) break                             // nhẹ sâu hơn dải nền → PHA 3
-          const nxTiles = Math.floor(bo.fl / lo.a)
           const capStack0 = Math.max(1, Math.min(Math.floor((T - platMm) / lg0.h), lg0.maxLayers ?? Infinity))
-          // Bề rộng nền cần cho số nhẹ còn lại (làm tròn lên theo hàng lưới)
-          const rowsNeed = Math.ceil(Math.ceil(lightRemain() / capStack0) / Math.max(1, nxTiles)) * lo.b
-          // Đổ chân nền 1 DẢI (các chân cùng mặt tiền x) tới đủ rowsNeed / hết rộng / hết nền
-          const stripCols: { x: number; y: number }[] = []
-          let covered = 0
-          while (covered < rowsNeed && avail(bi) >= platLayers) {
-            const spot = skyFind(bo.fw, bo.fl)
-            if (!spot) break
-            if (stripCols.length && Math.abs(spot.x - stripCols[0].x) > 1e-9) break   // sang dải mới → lát đã
-            step++
-            for (let k = 0; k < platLayers; k++)
-              placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: bo.fl, w: bo.fw, h: bg.h, group: bi, step })
-            used[bi] += platLayers
-            skyCommit(spot.y, bo.fw, spot.x + bo.fl)
-            stripCols.push(spot)
+          const cellArea = lg0.l * lg0.w
+          const areaNeed = Math.ceil(lightRemain() / capStack0) * cellArea * 1.08   // +8% viền lưới
+          // 1) ĐỔ NỀN thành VÙNG PHẲNG LIÊN TỤC (nhiều dải, mã nền CÙNG CLASS nối tiếp)
+          //    đủ diện tích cho toàn bộ nhẹ còn lại
+          const zoneCols: { x: number; y: number }[] = []
+          let zoneArea = 0
+          let bIdx = baseIdx
+          let pourDone = false
+          // Đổ theo DẢI TRỌN VẸN (kiểm đủ diện tích SAU mỗi dải — vùng luôn chữ nhật sạch,
+          // không chữ L làm ô lưới rơi phần khuyết)
+          while (!pourDone && zoneArea < areaNeed) {
+            let stripX: number | null = null
+            for (;;) {
+              while (bIdx < doFloor.length && (
+                avail(doFloor[bIdx]) < platLayers ||
+                classKeyOf(groupsIn[doFloor[bIdx]]) !== classKeyOf(bg) ||
+                (groupsIn[doFloor[bIdx]].maxLayers ?? Infinity) < platLayers   // mã trần thấp không làm nền cao được
+              )) bIdx++
+              if (bIdx >= doFloor.length) { pourDone = true; break }   // hết nền cùng class
+              const bi = doFloor[bIdx]
+              const spot = skyFind(bo.fw, bo.fl)
+              if (!spot) { pourDone = true; break }                    // hết sàn
+              if (stripX !== null && Math.abs(spot.x - stripX) > 1e-9) break   // dải xong
+              stripX = spot.x
+              step++
+              for (let k = 0; k < platLayers; k++)
+                placed.push({ x: spot.x, y: spot.y, z: k * bg.h, l: bo.fl, w: bo.fw, h: bg.h, group: bi, step })
+              used[bi] += platLayers
+              skyCommit(spot.y, bo.fw, spot.x + bo.fl)
+              zoneCols.push(spot)
+              platAll.push({ x: spot.x, y: spot.y, fl: bo.fl, fw: bo.fw })
+              zoneArea += bo.fl * bo.fw
+            }
           }
-          if (!stripCols.length) { baseIdx++; continue }   // mã nền cạn → mã kế
-          // LÁT nhẹ kín mặt dải nền vừa đổ [x, x+fl) × [yMin, yMax+fw)
-          const sx = stripCols[0].x
-          const yMin = Math.min(...stripCols.map(c => c.y))
-          const yMax = Math.max(...stripCols.map(c => c.y)) + bo.fw
-          const nyTiles = Math.floor((yMax - yMin) / lo.b)
+          if (!zoneCols.length) break                // không đổ được nền → PHA 3
+          // 2) LÁT NHẸ theo lưới hàng-trộn trên vùng thềm; vùng sau NỐI LƯỚI từ mép lưới
+          //    nhẹ trước (không lệch mốc → không khe giữa 2 vùng)
+          const zx0 = Math.max(lightFront, Math.min(...zoneCols.map(c => c.x)))
+          const zx1 = Math.max(...zoneCols.map(c => c.x)) + bo.fl
+          const zy0 = Math.min(...platAll.map(c => c.y))
+          const zy1 = Math.max(...platAll.map(c => c.y + c.fw))
+          // ô phải nằm TRỌN trên nền thật (tính GỘP mọi cột nền của thềm — vùng có thể chữ L)
+          const onPlatform = (x: number, y: number, fl: number, fw: number): boolean => {
+            let cov = 0
+            for (const c of platAll) {
+              const ix = Math.max(0, Math.min(x + fl, c.x + c.fl) - Math.max(x, c.x))
+              const iy = Math.max(0, Math.min(y + fw, c.y + c.fw) - Math.max(y, c.y))
+              cov += ix * iy
+            }
+            return cov >= fl * fw - 1
+          }
+          // Lưới HÀNG-TRỘN: giải tổ hợp nA hàng sâu a + nB hàng sâu b phủ SÁT chiều sâu
+          // vùng (vd sâu 900 = 5 hàng 180 khít) — mỗi hàng lát kín 1 hướng → không lỗ trong
+          const da = lg0.l, db = lg0.w
+          const depth = zx1 - zx0
+          let bestMix = { nA: 0, nB: 0, rem: depth }
+          for (let nA = 0; nA * da <= depth + 1e-9; nA++) {
+            const nB = Math.max(0, Math.floor((depth - nA * da) / db))
+            const rem = depth - nA * da - nB * db
+            if (rem < bestMix.rem - 1e-9) bestMix = { nA, nB, rem }
+          }
+          const rowDepths: number[] = []
+          for (let r = 0; r < bestMix.nA; r++) rowDepths.push(da)
+          for (let r = 0; r < bestMix.nB; r++) rowDepths.push(db)
           let placedAny = false
-          outerTiles: for (let iy = 0; iy < nyTiles; iy++) {
-            for (let ix = 0; ix < nxTiles; ix++) {
+          let rx = zx0
+          tileRows: for (const d of rowDepths) {
+            const wd = d === da ? db : da            // bề rộng ô = chiều còn lại
+            for (let cy = zy0; cy + wd <= zy1 + 1e-9; cy += wd) {
               while (li < doLights.length && avail(doLights[li]) <= 0) li++
-              if (li >= doLights.length) break outerTiles
+              if (li >= doLights.length) break tileRows
               const gi = doLights[li]
               const g = groupsIn[gi]
-              const fitCell = (g.l <= lo.a && g.w <= lo.b) ? { fl: g.l, fw: g.w }
-                : (g.w <= lo.a && g.l <= lo.b) ? { fl: g.w, fw: g.l } : null
-              if (!fitCell) { li++; continue }       // mã nhẹ khác cỡ không vừa ô lưới → chờ PHA 3
+              const fitCell = (g.l <= d && g.w <= wd) ? { fl: g.l, fw: g.w }
+                : (g.w <= d && g.l <= wd) ? { fl: g.w, fw: g.l } : null
+              if (!fitCell) { li++; continue }       // mã nhẹ khác cỡ không vừa ô → chờ PHA 3
               const cap2 = Math.max(0, Math.min(Math.floor((T - platMm) / g.h), g.maxLayers ?? Infinity))
               if (cap2 <= 0) { li++; continue }
+              if (!onPlatform(rx, cy, d, wd)) continue   // ô rơi phần khuyết (vùng chữ L)
               const layers = Math.min(cap2, avail(gi))
               step++
               for (let k = 0; k < layers; k++)
-                placed.push({ x: sx + ix * lo.a, y: yMin + iy * lo.b, z: platMm + k * g.h, l: fitCell.fl, w: fitCell.fw, h: g.h, group: gi, step })
+                placed.push({ x: rx, y: cy, z: platMm + k * g.h, l: fitCell.fl, w: fitCell.fw, h: g.h, group: gi, step })
               used[gi] += layers
               placedAny = true
+              lightFront = Math.max(lightFront, rx + d)
             }
+            rx += d
           }
-          if (!placedAny) break                      // không lát được ô nào (cỡ nhẹ lệch) → PHA 3
+          baseIdx = bIdx                             // nền đã tiêu tới đâu
+          if (!placedAny) break                      // không lát được ô nào → PHA 3
         }
       }
 

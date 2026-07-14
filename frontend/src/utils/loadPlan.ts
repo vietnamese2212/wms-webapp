@@ -234,12 +234,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       if (!floorRows.includes(rk)) floorRows.push(rk)
     }
     const finalRow = floorRows[floorRows.length - 1] ?? ''
-    // m hiệu dụng của khối thứ idx: m^w, w chạy 0 (khối đầu — giữ nguyên cao) → 1 (khối
-    // cuối — hạ đủ m). Chỉ có 1 khối → w=1 (hàng ít hạ cả khối để trải hết xe như cũ).
+    // m hiệu dụng của khối thứ idx: m^w, w = (idx+1)/K — CẢ ĐOÀN hạ dần đều (khối đầu
+    // hạ nhẹ nhất, khối cuối hạ sâu nhất; user 14/07: "sắp xếp phải cân đối, không thể
+    // đầu xe cao chót vót đuôi xe thấp lè tè"). Xe chật → m≈1 → mọi khối vẫn cao kịch.
     const mEffOf = (rowKey: string): number => {
       const idx = floorRows.indexOf(rowKey)
       const K = floorRows.length
-      const w = idx < 0 ? 1 : (K > 1 ? idx / (K - 1) : 1)
+      const w = idx < 0 ? 1 : (idx + 1) / K
       return Math.pow(m, w)
     }
 
@@ -254,6 +255,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // KHÔNG nhô thêm)
       const cap = Math.max(1, Math.min(full, Math.ceil(chain.capMm / maxH)))
       let L = Math.max(1, Math.ceil(cap / mEffOf(rowKey)))   // khối càng về sau hạ càng sâu
+      // BẬC THANG THOẢI (user 14/07: "hạ độ cao phải hạ DẦN, không rơi vực — đổ hàng"):
+      // từ khối thứ 2, mức thân không thấp hơn mức khối trước quá 1 bậc an toàn
+      if (floorRows.indexOf(rowKey) > 0) {
+        const drop = Math.max(2 * maxH, truck.height * 0.25)
+        const Lmin = Math.min(cap, Math.max(1, Math.ceil((chain.capMm - drop) / maxH)))
+        if (L < Lmin) L = Lmin
+      }
       // Có hàng thừa mà trần không còn chỗ nổi (khối kịch trần) → hạ khối 1 lớp để thừa
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
       const C = live.reduce((s, gi) => s + avail(gi), 0)
@@ -641,8 +649,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   }
   type PackResult = ReturnType<typeof pack>
   // Quá tải cũng phải chọn phương án TỐT NHẤT (không bỏ qua tối ưu): xếp ĐƯỢC nhiều
-  // nhất → sạch (không tràn nóc) → ít hố kín → maxX lớn
+  // nhất → sạch (không tràn nóc) → ĐIỂM = maxX − 500mm/hố kín (đánh đổi: 1 hố nhỏ đổi
+  // được ≥0.5m chiều dài thì trải; maxX xấp xỉ nhau thì phương án ít hố thắng)
   const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
+  const score = (p: PackResult) => maxXOf(p.placed) - closedHoles(p.placed) * 500
   const better = (r: PackResult, cur: PackResult): boolean => {
     const rl = leftCnt(r), cl = leftCnt(cur)
     if (rl !== cl) return rl < cl
@@ -650,9 +660,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       const rClean = r.spilled === 0, cClean = cur.spilled === 0
       if (rClean !== cClean) return rClean
     }
-    const rh = closedHoles(r.placed), ch = closedHoles(cur.placed)
-    if (rh !== ch) return rh < ch
-    return maxXOf(r.placed) >= maxXOf(cur.placed)
+    return score(r) >= score(cur)
   }
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]
   let best = pack(1)

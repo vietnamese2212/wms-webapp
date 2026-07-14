@@ -60,6 +60,9 @@ export interface LoadPlan {
 }
 
 export const ASSUMED_CARTON = { l: 422, w: 233, h: 100 }   // mm — cỡ thùng chuẩn user đưa 12/07
+// Hàng gửi (stack_on_top) không khai max_stack_layers → mặc định 8 LỚP (user chốt 14/07:
+// xếp đủ lớp tối đa, chỉ hạ khi xe quá rộng cần trải hết xe)
+const LIGHT_MAX_DEFAULT = 8
 
 type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number; groups: Set<number> }
 
@@ -270,7 +273,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       for (let mi = 0; mi < live.length; mi++) {
         const gi = live[mi]
         const g = groupsIn[gi]
-        const myCap = g.maxLayers ?? Infinity
+        const myCap = g.maxLayers ?? (g.onTop ? LIGHT_MAX_DEFAULT : Infinity)
         const isLastOfClass = mi === live.length - 1
         let remaining = avail(gi)
         while (remaining > 0) {
@@ -362,7 +365,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       const fit = (g.l <= host.fl && g.w <= host.fw) ? { fl: g.l, fw: g.w }
         : (g.w <= host.fl && g.l <= host.fw) ? { fl: g.w, fw: g.l } : null
       if (!fit) return 0
-      const capOwn = Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? Infinity)
+      const capOwn = Math.min(Math.floor(truck.height / g.h), g.maxLayers ?? LIGHT_MAX_DEFAULT)
       const layers = Math.min(capOwn, Math.floor(head / g.h), remaining)
       if (layers <= 0) return 0
       step++
@@ -411,27 +414,23 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           const lgd = groupsIn[doLights[li]]         // mã nhẹ chủ đạo
           const optd = bestRowOpt(lgd)
           if (!optd) break
-          // Chọn (lớp nền, lớp gửi) sao cho NỀN + GỬI chạm mức chung topT; nền CAO nhất
-          // có thể mà lượng nền còn lại vẫn đủ đổ (không thì hạ nền → gửi dày lên)
+          // GỬI ĐỦ LỚP TỐI ĐA trước (khai max_stack_layers hoặc mặc định 8), NỀN bù bên
+          // dưới cho sát mức chung topT; xe quá rộng → topT hạ theo m → lớp gửi tự giảm
           const availBase = doFloor
             .filter(x => classKeyOf(groupsIn[x]) === classKeyOf(bg))
             .reduce((s, x) => s + avail(x), 0)
           const cellArea = lgd.l * lgd.w, colArea = bg.l * bg.w
           const N = lightRemain()
-          let platLayers = 0, Lf = 0
-          const plMax = Math.min(
-            Math.floor((topT - lgd.h) / bg.h),
+          const Lf = Math.min(lgd.maxLayers ?? LIGHT_MAX_DEFAULT, Math.floor((topT - bg.h) / lgd.h))
+          if (Lf < 1) break                          // không còn chỗ cho gửi → PHA 3
+          let platLayers = Math.max(1, Math.min(
+            Math.floor((topT - Lf * lgd.h) / bg.h),
             Math.floor(truck.height / bg.h),
             bg.maxLayers ?? Infinity,
-          )
-          for (let pl = plMax; pl >= 1; pl--) {
-            const L = Math.min(Math.floor((topT - pl * bg.h) / lgd.h), lgd.maxLayers ?? Infinity)
-            if (L < 1) continue
-            platLayers = pl; Lf = L
-            const colsNeed = Math.ceil(Math.ceil(N / L) * cellArea / colArea)
-            if (colsNeed * pl <= availBase * 0.8) break   // đủ nền → chốt
-          }
-          if (platLayers < 1) break                  // không dựng được thềm chạm mức → PHA 3
+          ))
+          // nền còn lại không đủ đổ → hạ bớt nền (đỉnh lõm nhẹ, vẫn giữ đủ lớp gửi)
+          const colsNeed = Math.ceil(Math.ceil(N / Lf) * cellArea / colArea)
+          while (platLayers > 1 && colsNeed * platLayers > availBase * 0.8) platLayers--
           const platMm = platLayers * bg.h
           const bZones = zoneMixFor(bg)   // nền thềm cũng chia vùng phủ kín bề rộng
           if (!bZones.length) break
@@ -521,6 +520,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             if (overlapLaid(rx, cy, d, wd)) return false
             let z = platMm
             let putAny = false
+            const inCell = new Map<number, number>()   // số lớp từng mã đã chồng trong Ô
             for (;;) {
               while (li < doLights.length && avail(doLights[li]) <= 0) li++
               if (li >= doLights.length) break
@@ -531,12 +531,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
               if (!fit) break                        // mã kế khác cỡ không vừa ô → sang ô sau
               const gCap = Math.min(avail(gi),
                 Math.max(0, Math.floor((topT - z) / g.h)),
-                g.maxLayers ?? Infinity)
-              if (gCap <= 0) break
+                (g.maxLayers ?? LIGHT_MAX_DEFAULT) - (inCell.get(gi) ?? 0))
+              if (gCap <= 0) break                   // mã đạt trần lớp trong ô
               step++
               for (let k = 0; k < gCap; k++)
                 placed.push({ x: rx, y: cy, z: z + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
               used[gi] += gCap
+              inCell.set(gi, (inCell.get(gi) ?? 0) + gCap)
               z += gCap * g.h
               putAny = true
             }

@@ -184,10 +184,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       if (!live.length) return
       const maxH = Math.max(...live.map(gi => groupsIn[gi].h))
       const full = Math.max(1, Math.floor(truck.height / maxH))
-      // Bám mức đuôi khối trước, DU DI +1 thùng của chính khối này (thùng khác cỡ không
-      // bao giờ khớp mm tuyệt đối — thiếu du di sẽ mất trần oan → hụt sàn)
-      const cap = Math.max(1, Math.min(full, Math.floor(chain.capMm / maxH) + 1))
-      let L = Math.max(1, Math.ceil(cap / m))            // chiều cao khối (m lớn → khối thấp, trải dài)
+      // Bám mức đuôi khối trước — ceil: chỉ DU DI +1 thùng khi lệch bước (thùng khác cỡ
+      // không khớp mm tuyệt đối; chia hết thì KHÔNG nhô thêm)
+      const cap = Math.max(1, Math.min(full, Math.ceil(chain.capMm / maxH)))
+      let L = Math.max(1, Math.ceil(cap / mEffOf(rowKey)))   // khối càng về sau hạ càng sâu
       // Có hàng thừa mà trần không còn chỗ nổi (khối kịch trần) → hạ khối 1 lớp để thừa
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
       const C = live.reduce((s, gi) => s + avail(gi), 0)
@@ -298,9 +298,23 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       return layers
     }
 
-    // Khối sàn CUỐI CÙNG của cả chuyến — được phép hạ bậc phẳng lấp kín đuôi
-    let finalRow = ''
-    for (const gi of orderFloor) if (groupsIn[gi].count > 0) finalRow = `${groupsIn[gi].doKey}|${classKeyOf(groupsIn[gi])}`
+    // Danh sách KHỐI sàn theo thứ tự xếp — hệ số trải m đánh TRỌNG SỐ TĂNG DẦN theo vị
+    // trí khối (user 13/07: khối TRONG giữ CAO kịch nhường sàn, phần hạ thấp dồn về các
+    // khối sau/đuôi — không hạ đều mọi khối). Khối cuối cùng được hạ bậc phẳng lấp kín đuôi.
+    const floorRows: string[] = []
+    for (const gi of orderFloor) if (groupsIn[gi].count > 0) {
+      const rk = `${groupsIn[gi].doKey}|${classKeyOf(groupsIn[gi])}`
+      if (!floorRows.includes(rk)) floorRows.push(rk)
+    }
+    const finalRow = floorRows[floorRows.length - 1] ?? ''
+    // m hiệu dụng của khối thứ idx: m^w, w chạy 0 (khối đầu — giữ nguyên cao) → 1 (khối
+    // cuối — hạ đủ m). Chỉ có 1 khối → w=1 (hàng ít hạ cả khối để trải hết xe như cũ).
+    const mEffOf = (rowKey: string): number => {
+      const idx = floorRows.indexOf(rowKey)
+      const K = floorRows.length
+      const w = idx < 0 ? 1 : (K > 1 ? idx / (K - 1) : 1)
+      return Math.pow(m, w)
+    }
 
     for (const dk of doOrder) {
       const doFloor = orderFloor.filter(gi => groupsIn[gi].doKey === dk && groupsIn[gi].count > 0)
@@ -317,8 +331,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         // đuôi). Nhẹ bị khóa trần T → tự lát RỘNG ra thay vì chồng tháp.
         const bg0 = groupsIn[doFloor[0]]
         const full0 = Math.max(1, Math.floor(truck.height / bg0.h))
-        // +1 lớp nền: đỉnh thềm bám được cả phần thùng NỔI của khối kế (du di lượng tử)
-        const T = Math.min(truck.height, Math.max(bg0.h, (Math.ceil(full0 / m) + 1) * bg0.h))
+        // Trần T theo chiều cao DỰ KIẾN của khối nền đầu (trọng số trải riêng của nó);
+        // +1 lớp nền để đỉnh thềm bám được cả phần thùng NỔI của khối kế (du di lượng tử)
+        const m0 = mEffOf(`${dk}|${classKeyOf(bg0)}`)
+        const T = Math.min(truck.height, Math.max(bg0.h, (Math.ceil(full0 / m0) + 1) * bg0.h))
         // Chiều cao khối nhẹ mong muốn dưới trần T: theo max_stack_layers; không khai → ~T/2
         const wantStackMm = Math.max(...doLights.map(gi => {
           const g = groupsIn[gi]

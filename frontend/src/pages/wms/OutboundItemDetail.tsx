@@ -5,7 +5,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare, ScanBarcode,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -972,7 +972,7 @@ export default function OutboundItemDetail() {
                                 disabled={isPaused}
                                 onClick={() => !isPaused && setCartonRowId(se.id)}
                               >
-                                <ScanBarcode className="h-3.5 w-3.5" />
+                                <QrCode className="h-3.5 w-3.5" />
                               </button>
                             )}
                           </div>

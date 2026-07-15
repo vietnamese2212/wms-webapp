@@ -3,11 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
 import {
-  ClipboardList, ChevronLeft, ChevronRight, QrCode, AlertTriangle, Download, Boxes, Search, ExternalLink,
+  ClipboardList, ChevronLeft, ChevronRight, QrCode, AlertTriangle, Download,
 } from 'lucide-react'
 import type { AxiosError } from 'axios'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -22,7 +20,7 @@ import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
   useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
-  fetchScanLogExport, fetchCartonLookup, useScanLogSearch, type CartonLookupResult,
+  fetchScanLogExport, useScanLogSearch,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -129,105 +127,12 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
   }
 }
 
-// ─── Tra cứu NGƯỢC tem thùng (user chốt 15/07): dán/quét 1 mã tem → đơn/pallet/chuyến/người quét ───
-
-function CartonLookupDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const navigate = useNavigate()
-  const [code, setCode]         = useState('')
-  const [results, setResults]   = useState<CartonLookupResult[] | null>(null)
-  const [searching, setSearching] = useState(false)
-  const [error, setError]       = useState('')
-  const [showCam, setShowCam]   = useState(false)
-  const camRef = useRef<QRScannerHandle>(null)
-
-  async function search(q?: string) {
-    const target = (q ?? code).trim()
-    if (!target) return
-    setSearching(true); setError(''); setResults(null)
-    try {
-      setResults(await fetchCartonLookup(target))
-    } catch (e) {
-      const err = e as AxiosError<{ error?: { message?: string } }>
-      setError(err?.response?.data?.error?.message ?? 'Lỗi tra cứu — thử lại')
-    } finally {
-      setSearching(false)
-    }
-  }
-  function handleCamScan(raw: string) {
-    setShowCam(false)
-    setCode(raw.trim())
-    void search(raw)
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={o => { if (!o) onClose() }}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="text-sm flex items-center gap-2">
-            <Boxes className="h-4 w-4 text-sky-600" /> Tra cứu tem thùng
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex items-center gap-1.5">
-          <Input
-            value={code} onChange={e => setCode(e.target.value)} autoFocus
-            placeholder="Dán / gõ mã tem thùng…" className="h-8 text-xs font-mono flex-1"
-            onKeyDown={e => { if (e.key === 'Enter') void search() }}
-          />
-          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={searching || !code.trim()} onClick={() => void search()}>
-            <Search className="h-3.5 w-3.5 mr-1" />{searching ? 'Đang tìm…' : 'Tìm'}
-          </Button>
-          <Button size="sm" variant="outline" className="h-8" onClick={() => setShowCam(v => !v)} title="Quét tem bằng camera">
-            <QrCode className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        {showCam && <QRScanner ref={camRef} onScan={handleCamScan} onClose={() => setShowCam(false)} />}
-        {error && <p className="text-[11px] text-red-500 font-medium">{error}</p>}
-        {results !== null && results.length === 0 && (
-          <p className="text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg p-4 text-center">
-            Không tìm thấy tem này trong dữ liệu xuất kho
-          </p>
-        )}
-        {results !== null && results.length > 0 && (
-          <div className="max-h-[55vh] overflow-auto space-y-2">
-            {results.map((r, i) => (
-              <div key={i} className="rounded-lg border border-slate-200 p-2.5 space-y-1 text-[11px]">
-                <div className="flex items-center gap-2">
-                  <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${r.carton.match ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {r.carton.match ? '✓ khớp mã' : 'lạ mã hàng'}
-                  </span>
-                  <span className="font-mono font-semibold text-slate-700 truncate">{r.carton.code}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-slate-600">
-                  <div><span className="text-slate-400">Pallet:</span> <span className="font-mono font-semibold">{r.pallet_code}</span></div>
-                  <div><span className="text-slate-400">Tem/pallet:</span> <span className="font-semibold tabular-nums">{r.cartons_on_pallet}</span> <span className="text-slate-400">({r.cartons_scanned} thùng xuất)</span></div>
-                  <div><span className="text-slate-400">Số xe:</span> <span className="font-mono font-semibold">{r.group_code ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày xuất:</span> {r.delivery_date ? formatDate(r.delivery_date) : '—'}</div>
-                  <div><span className="text-slate-400">Kho:</span> {r.warehouse_name ?? '—'}</div>
-                  <div><span className="text-slate-400">Biển số:</span> {r.license_plate ?? '—'}</div>
-                  <div><span className="text-slate-400">NPP:</span> {r.distributor_name ?? '—'}</div>
-                  <div><span className="text-slate-400">Số DO:</span> {r.delivery_code ?? '—'}</div>
-                  <div className="col-span-2"><span className="text-slate-400">Mã hàng:</span> <span className="font-mono font-semibold">{r.material_code ?? '—'}</span> {r.material_name && <span className="text-slate-500">· {r.material_name}</span>}</div>
-                  <div className="col-span-2"><span className="text-slate-400">Quét lúc:</span> {r.scanned_at ? `${formatTimestampDate(r.scanned_at, true)} ${formatTimestampTime(r.scanned_at)}` : '—'} {r.scanned_by_name && <span className="text-slate-500">· {r.scanned_by_name}</span>}</div>
-                </div>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] !min-h-0"
-                  onClick={() => { onClose(); navigate(r.item_id ? `/wms/outbound/${r.gdo_id}/items/${r.item_id}` : `/wms/outbound/${r.gdo_id}`) }}>
-                  <ExternalLink className="h-3 w-3 mr-1" /> Mở đơn xuất
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 // ─── Page ──────────────────────────────────────────────────────
 
 export default function OutboundScanLog() {
+  const navigate = useNavigate()
   const [page, setPage]                 = useState(1)
   const [showScanner, setShowScanner]   = useState(false)
-  const [showCartonLookup, setShowCartonLookup] = useState(false)
   const [exporting, setExporting]       = useState(false)
   const [exportError, setExportError]   = useState('')
   const scannerRef = useRef<QRScannerHandle>(null)
@@ -448,16 +353,11 @@ export default function OutboundScanLog() {
               onClick: () => setShowScanner(true),
             } satisfies ActionItem,
             {
-              key: 'carton', icon: Boxes, label: 'Tra tem thùng', tip: 'Dán/quét 1 mã tem thùng → tìm đơn xuất, pallet, chuyến xe chứa tem đó',
-              onClick: () => setShowCartonLookup(true),
-            } satisfies ActionItem,
-            {
               key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
               mobileHidden: true, disabled: !canFetch, busy: exporting,
               onClick: () => { void handleExport() },
             } satisfies ActionItem,
           ]} />
-          {showCartonLookup && <CartonLookupDialog open onClose={() => setShowCartonLookup(false)} />}
         </div>
 
         {/* Row 2: FilterBar (chip) */}
@@ -543,8 +443,13 @@ export default function OutboundScanLog() {
               {rows.map(row => {
                 const expiryDate = calcExpiryDate(row.production_date, row.shelf_life_days)
                 const pct        = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+                // Kết quả SEARCH TỔNG: click dòng → mở thẳng đơn xuất (RPC search trả gdo_id/item_id)
+                const openable = searchMode && !!row.gdo_id
                 return (
-                  <TableRow key={row.id}>
+                  <TableRow key={row.id}
+                    className={openable ? 'cursor-pointer hover:bg-sky-50' : ''}
+                    title={openable ? 'Bấm để mở đơn xuất' : undefined}
+                    onClick={() => { if (openable) navigate(row.item_id ? `/wms/outbound/${row.gdo_id}/items/${row.item_id}` : `/wms/outbound/${row.gdo_id}`) }}>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">
                       {row.delivery_date ? formatDate(row.delivery_date) : <span className="text-slate-300">—</span>}
                     </TableCell>

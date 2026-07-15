@@ -2,14 +2,16 @@
 -- tên NPP, tên hàng, mã hàng, số DO, số xe, biển số, vị trí, người quét, tên kho.
 -- BYPASS bắt buộc chọn Kho/Loại kho ở FE — nhưng VẪN cắt theo scope user (p_warehouse_ids +
 -- p_allowed_categories từ JWT, controller truyền). Shape cột GIỐNG get_outbound_scan_log
--- để FE tái dùng nguyên bảng render.
+-- để FE tái dùng nguyên bảng render + THÊM gdo_id/item_id (click dòng kết quả → mở đơn xuất).
+DROP FUNCTION IF EXISTS public.search_outbound_scan_log(text, text, text, integer, integer);
+
 CREATE OR REPLACE FUNCTION public.search_outbound_scan_log(
   p_q text,
   p_warehouse_ids text DEFAULT NULL,
   p_allowed_categories text DEFAULT NULL,
   p_limit integer DEFAULT 500, p_offset integer DEFAULT 0
 )
-RETURNS TABLE(id text, pallet_code text, cartons_scanned numeric, production_date text, best_available_date text, scanned_at timestamp with time zone, is_loose_picking boolean, loose_confirmed_at timestamp with time zone, loose_confirmed_by_name text, group_code text, delivery_date date, license_plate text, container_number text, forklift_driver_names text, loader_name text, assigned_at timestamp with time zone, started_at timestamp with time zone, last_scanned_at timestamp with time zone, completed_at timestamp with time zone, warehouse_name text, delivery_code text, distributor_name text, header_text text, material_code_raw text, material_code text, material_name text, material_category text, shelf_life_days integer, cycle text, machine_code text, nmsx text, import_date timestamp with time zone, location_code text, scanner_name text, total_count bigint)
+RETURNS TABLE(id text, pallet_code text, cartons_scanned numeric, production_date text, best_available_date text, scanned_at timestamp with time zone, is_loose_picking boolean, loose_confirmed_at timestamp with time zone, loose_confirmed_by_name text, group_code text, delivery_date date, license_plate text, container_number text, forklift_driver_names text, loader_name text, assigned_at timestamp with time zone, started_at timestamp with time zone, last_scanned_at timestamp with time zone, completed_at timestamp with time zone, warehouse_name text, delivery_code text, distributor_name text, header_text text, material_code_raw text, material_code text, material_name text, material_category text, shelf_life_days integer, cycle text, machine_code text, nmsx text, import_date timestamp with time zone, location_code text, scanner_name text, total_count bigint, gdo_id text, item_id text)
 LANGUAGE sql STABLE
 AS $function$
   SELECT
@@ -52,7 +54,9 @@ AS $function$
     ie.import_date,
     l.location_code,
     e.name                 AS scanner_name,
-    COUNT(*) OVER()        AS total_count
+    COUNT(*) OVER()        AS total_count,
+    gdo.id::text           AS gdo_id,
+    oi.id::text            AS item_id
   FROM "OutboundScanEntry"   ose
   JOIN "OutboundItem"        oi  ON oi.id  = ose.item_id
   JOIN "OutboundDelivery"    od  ON od.id  = oi.do_id

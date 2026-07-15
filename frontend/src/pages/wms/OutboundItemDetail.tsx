@@ -427,6 +427,9 @@ export default function OutboundItemDetail() {
   const [loscamError,      setLoscamError]      = useState('')
   // Mở panel quét tem THÙNG từ 1 dòng pallet đã quét (nút inline cột Mã pallet) — lưu id, derive entry từ scans để luôn fresh
   const [cartonRowId,      setCartonRowId]      = useState<string | null>(null)
+  // Dialog DANH SÁCH tem thùng của 1 pallet (bấm badge 🧰) — có ô tìm, thay tooltip
+  const [cartonListId,     setCartonListId]     = useState<string | null>(null)
+  const [cartonListQ,      setCartonListQ]      = useState('')
 
   // Ref để auto-open scan chỉ chạy 1 lần khi trang load lần đầu (tránh tái kích hoạt sau mỗi lần delete/confirm)
   const hasAutoScanned = useRef(false)
@@ -595,6 +598,12 @@ export default function OutboundItemDetail() {
 
   // Quét tem thùng từ nút inline trên dòng pallet — nạp list đã lưu (replace khi Lưu)
   const cartonRow = cartonRowId ? scans.find(s => s.id === cartonRowId) ?? null : null
+  // Danh sách tem thùng (badge 🧰) — lọc theo ô tìm, giới hạn render 500 dòng
+  const cartonList = cartonListId ? scans.find(s => s.id === cartonListId) ?? null : null
+  const cartonListAll = cartonList?.carton_scans ?? []
+  const cartonListFiltered = cartonListQ.trim()
+    ? cartonListAll.filter(c => c.code.toLowerCase().includes(cartonListQ.trim().toLowerCase()))
+    : cartonListAll
 
   return (
     <>
@@ -619,6 +628,42 @@ export default function OutboundItemDetail() {
           onSkip={() => setCartonRowId(null)}
         />
       )}
+
+      {/* Dialog danh sách tem thùng của 1 pallet (badge 🧰) — ô tìm thay tooltip */}
+      <Dialog open={!!cartonList} onOpenChange={o => { if (!o) { setCartonListId(null); setCartonListQ('') } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              🧰 Tem thùng — pallet <span className="font-mono">{cartonList?.pallet_code}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <span><b className="text-green-700">{cartonListAll.filter(c => c.match !== false).length}</b> khớp mã</span>
+            {cartonListAll.some(c => c.match === false) && (
+              <span><b className="text-amber-600">{cartonListAll.filter(c => c.match === false).length}</b> lạ mã hàng</span>
+            )}
+            <span className="ml-auto">{cartonListAll.length} tem</span>
+          </div>
+          <Input value={cartonListQ} onChange={e => setCartonListQ(e.target.value)}
+            placeholder="Tìm mã tem…" className="h-8 text-xs font-mono" />
+          <div className="max-h-[50vh] overflow-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+            {cartonListFiltered.length === 0 ? (
+              <p className="text-xs text-slate-400 p-4 text-center">Không có tem khớp từ khóa</p>
+            ) : cartonListFiltered.slice(0, 500).map(c => (
+              <div key={c.code} className="flex items-center gap-2 px-2 py-1">
+                <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${c.match !== false ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {c.match !== false ? '✓' : 'lạ'}
+                </span>
+                <span className="font-mono text-[10px] font-semibold text-slate-700 truncate">{c.code}</span>
+                {c.at && <span className="ml-auto shrink-0 text-[9px] text-slate-400 tabular-nums">{formatTimestampTime(c.at)}</span>}
+              </div>
+            ))}
+            {cartonListFiltered.length > 500 && (
+              <p className="text-[10px] text-slate-400 p-2 text-center">Hiện 500/{cartonListFiltered.length} — gõ từ khóa để thu hẹp</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={!!confirmScanId}
@@ -980,10 +1025,12 @@ export default function OutboundItemDetail() {
                             const cs = se.carton_scans!
                             const odd = cs.filter(c => c.match === false).length
                             return (
-                              <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5"
-                                title={cs.map(c => `${c.match === false ? '⚠ lạ · ' : ''}${c.code}`).join('\n')}>
+                              <button
+                                className="inline-flex items-center gap-1 mt-0.5 text-[9px] text-slate-500 bg-slate-100 hover:bg-sky-100 hover:text-sky-700 rounded px-1.5 py-0.5 !min-h-0 !min-w-0 transition-colors"
+                                title="Xem danh sách tem thùng đã quét"
+                                onClick={e => { e.stopPropagation(); setCartonListId(se.id) }}>
                                 🧰 {cs.length} thùng{odd > 0 && <span className="text-amber-600 font-semibold">· {odd} lạ</span>}
-                              </span>
+                              </button>
                             )
                           })()}
                         </TableCell>

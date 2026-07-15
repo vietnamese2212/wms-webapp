@@ -146,6 +146,8 @@ router.get('/outbound/scan-log',                              requirePerm('scanl
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)
 router.get('/outbound/pallet-lookup',                         requirePerm('outbound', 'view'), outbound.lookupPalletGdos)
+// Tra cứu NGƯỢC tem thùng — nút ở trang Lịch sử quét, chấp nhận quyền của cả 2 module (đọc-only)
+router.get('/outbound/carton-lookup',                         requireAnyPerm(['scanlog', 'view'], ['outbound', 'view']), outbound.lookupCartonScan)
 // Cảnh báo thiếu tồn theo (kho, ngày giao) — dùng ở cả Xuất kho lẫn Nhặt lẻ (read-only)
 router.get('/outbound/shortages',                             requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getOutboundShortages)
 router.get('/outbound/:id',                                   requireAnyPerm(['outbound', 'view'], ['loosepicking', 'view']), outbound.getGDO)

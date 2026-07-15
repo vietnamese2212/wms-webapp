@@ -2195,6 +2195,31 @@ export async function fetchScanLogExport(applied: ScanLogParams): Promise<Outbou
   return all
 }
 
+// Tra cứu NGƯỢC tem thùng → pallet/đơn/chuyến (nút ở trang Lịch sử quét)
+export interface CartonLookupResult {
+  carton: { code: string; match: boolean; at: string | null }
+  pallet_code: string
+  cartons_on_pallet: number
+  cartons_scanned: number
+  scanned_at: string | null
+  scanned_by_name: string | null
+  gdo_id: string
+  item_id: string | null
+  group_code: string | null
+  delivery_date: string | null
+  gdo_status: string | null
+  license_plate: string | null
+  warehouse_name: string | null
+  delivery_code: string | null
+  distributor_name: string | null
+  material_code: string | null
+  material_name: string | null
+}
+export async function fetchCartonLookup(code: string): Promise<CartonLookupResult[]> {
+  const { data } = await apiClient.get('/wms/outbound/carton-lookup', { params: { code } })
+  return (data.data ?? []) as CartonLookupResult[]
+}
+
 // ─── TMS ─────────────────────────────────────────────────────────────────────
 
 export function useVehicleTypesByWarehouse(warehouseId: string | null, cargoType?: string) {

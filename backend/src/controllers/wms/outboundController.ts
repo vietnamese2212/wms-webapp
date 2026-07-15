@@ -432,6 +432,71 @@ export async function lookupPalletGdos(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Tra cứu NGƯỢC tem THÙNG (user chốt 15/07) ─────────────────
+// GET /wms/outbound/carton-lookup?code=<tem> — cầm 1 mã tem thùng → dòng scan pallet chứa nó
+// → đơn/chuyến/khách/người quét. jsonb containment + GIN index (migration 20260715_carton_lookup_index).
+export async function lookupCartonScan(req: Request, res: Response) {
+  try {
+    const code = normalizeQR(String(req.query.code ?? ''))
+    if (code.length < 4) return ok(res, [])
+    const { data: scans, error } = await supabase.from('OutboundScanEntry')
+      .select('id, item_id, pallet_code, cartons_scanned, carton_scans, scanned_at, scanned_by_emp:Employee!scanned_by(id, name)')
+      .contains('carton_scans', JSON.stringify([{ code }]))
+      .limit(20)
+    if (error) return fail(res, error.message)
+    const rows = (scans ?? []) as unknown as {
+      id: string; item_id: string | null; pallet_code: string; cartons_scanned: number
+      carton_scans: { code: string; match?: boolean; at?: string }[] | null
+      scanned_at: string | null; scanned_by_emp: { name: string | null } | null
+    }[]
+    if (!rows.length) return ok(res, [])
+
+    // Chuỗi item → DO → GDO (kết quả tối đa 20 dòng — join tay, không cap)
+    const itemIds = [...new Set(rows.map(r => r.item_id).filter((v): v is string => !!v))]
+    const { data: items } = await supabase.from('OutboundItem')
+      .select('id, do_id, material_code_raw, material:Material(material_code, short_name)').in('id', itemIds)
+    const itemMap = new Map(((items ?? []) as unknown as { id: string; do_id: string | null; material_code_raw: string | null; material: { material_code: string | null; short_name: string | null } | null }[]).map(i => [i.id, i]))
+    const doIds = [...new Set([...itemMap.values()].map(i => i.do_id).filter((v): v is string => !!v))]
+    const { data: dos } = doIds.length
+      ? await supabase.from('OutboundDelivery').select('id, gdo_id, delivery_code, distributor_name').in('id', doIds)
+      : { data: [] }
+    const doMap = new Map(((dos ?? []) as { id: string; gdo_id: string | null; delivery_code: string | null; distributor_name: string | null }[]).map(d => [d.id, d]))
+    const gdoIds = [...new Set([...doMap.values()].map(d => d.gdo_id).filter((v): v is string => !!v))]
+    const { data: gdos } = gdoIds.length
+      ? await supabase.from('GroupDeliveryOrder')
+          .select('id, group_code, delivery_date, status, license_plate, warehouse_id, warehouse_type, warehouse:Warehouse(name)').in('id', gdoIds)
+      : { data: [] }
+    const gdoMap = new Map(((gdos ?? []) as unknown as { id: string; group_code: string | null; delivery_date: string | null; status: string | null; license_plate: string | null; warehouse_id: string | null; warehouse_type: string | null; warehouse: { name: string | null } | null }[]).map(g => [g.id, g]))
+
+    // Cắt theo phạm vi kho + loại hàng của user (mirror listGDOs)
+    const whScope = scopeWhIds(req)
+    const out = rows.map(r => {
+      const it = r.item_id ? itemMap.get(r.item_id) : undefined
+      const d = it?.do_id ? doMap.get(it.do_id) : undefined
+      const g = d?.gdo_id ? gdoMap.get(d.gdo_id) : undefined
+      if (!g) return null
+      if (whScope && (!g.warehouse_id || !whScope.includes(g.warehouse_id))) return null
+      if (!categoryAllowed(req, g.warehouse_type)) return null
+      const carton = (r.carton_scans ?? []).find(c => c.code === code) ?? null
+      return {
+        carton: { code, match: carton?.match !== false, at: carton?.at ?? null },
+        pallet_code: r.pallet_code,
+        cartons_on_pallet: (r.carton_scans ?? []).length,
+        cartons_scanned: r.cartons_scanned,
+        scanned_at: r.scanned_at,
+        scanned_by_name: r.scanned_by_emp?.name ?? null,
+        gdo_id: g.id, item_id: r.item_id,
+        group_code: g.group_code, delivery_date: g.delivery_date, gdo_status: g.status,
+        license_plate: g.license_plate, warehouse_name: g.warehouse?.name ?? null,
+        delivery_code: d?.delivery_code ?? null, distributor_name: d?.distributor_name ?? null,
+        material_code: it?.material?.material_code ?? it?.material_code_raw ?? null,
+        material_name: it?.material?.short_name ?? null,
+      }
+    }).filter(Boolean)
+    return ok(res, out)
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Get GDO detail ───────────────────────────────────────────
 
 export async function getGDO(req: Request, res: Response) {

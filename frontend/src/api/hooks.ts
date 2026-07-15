@@ -2166,6 +2166,20 @@ export function useOutboundScanLog(params: ScanLogParams, enabled = true) {
   })
 }
 
+// SEARCH TỔNG lịch sử quét — 1 ô tìm mọi thứ, bypass chọn Kho/Loại kho (BE vẫn cắt scope user)
+export function useScanLogSearch(q: string, page: number, enabled = true) {
+  return useQuery({
+    queryKey: ['outbound-scan-log-search', q, page],
+    enabled: enabled && q.trim().length >= 2,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/scan-log/search', { params: { q, page, limit: 500 } })
+      return data.data as { rows: OutboundScanLogEntry[]; total: number; page: number; limit: number }
+    },
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
 export function useOutboundScanLogFacets(materialCategory?: string) {
   return useQuery({
     queryKey: ['scan-log-facets', materialCategory],

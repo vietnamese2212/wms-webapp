@@ -73,6 +73,7 @@ export interface ScanLogFilters {
   cycles: string[]
   scanner_name: string
   nmsx: string[]
+  search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
 interface LocationsFilters {
   search: string
@@ -245,6 +246,7 @@ function initialFilters() {
       warehouses: [], material_category: '',
       group_code: '', distributor: '', delivery_code: '',
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
+      search: '',
     },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },

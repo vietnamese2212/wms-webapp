@@ -3489,6 +3489,39 @@ export async function getScanLog(req: Request, res: Response) {
   return ok(res, { rows: data ?? [], total, page: pageNum, limit: limitNum })
 }
 
+// SEARCH TỔNG lịch sử quét (user chốt 15/07): 1 ô tìm mọi thứ (QR pallet/tem thùng/NPP/tên
+// hàng/mã hàng/DO/số xe/biển số/vị trí/người quét) — BYPASS chọn Kho+Loại kho ở FE nhưng
+// VẪN cắt theo scope kho + loại hàng của user (JWT). RPC search_outbound_scan_log
+// (migration 20260715_scanlog_search) — shape giống get_outbound_scan_log để FE tái dùng bảng.
+export async function searchScanLog(req: Request, res: Response) {
+  const { q, page = '1', limit = '500' } = req.query
+  const query = normalizeQR(String(q ?? ''))   // tem V2 đệm space → chuẩn hóa như mọi điểm quét
+  const pageNum  = Math.max(1, parseInt(String(page)))
+  const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
+  if (query.length < 2) return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })
+
+  // Scope kho từ JWT (không nhận warehouse_ids từ FE — search toàn phạm vi user được thấy)
+  const whScope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
+  const scanCats = scopeCategoriesOf(req)
+  const rpcParams: Record<string, unknown> = {
+    p_q: query,
+    p_warehouse_ids: whScope.length > 0 ? whScope.join(',') : null,
+    p_allowed_categories: scanCats ? scanCats.join(',') : null,
+    p_limit: limitNum,
+    p_offset: (pageNum - 1) * limitNum,
+  }
+  const { data, error } = await supabase.rpc('search_outbound_scan_log', rpcParams)
+  if (error) {
+    // RPC chưa apply migration → báo rõ thay vì lỗi mù
+    if (/search_outbound_scan_log|schema cache/i.test(error.message))
+      return fail(res, 'Chức năng search chưa sẵn sàng — cần apply migration 20260715_scanlog_search', 503)
+    return fail(res, error.message, 500)
+  }
+  const rows = (data ?? []) as { total_count?: number }[]
+  const total = rows[0]?.total_count ?? 0
+  return ok(res, { rows, total: Number(total), page: pageNum, limit: limitNum })
+}
+
 export async function getScanLogFacets(req: Request, res: Response) {
   const { material_category, warehouse_ids } = req.query
 

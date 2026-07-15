@@ -8,6 +8,7 @@ import {
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
@@ -21,7 +22,7 @@ import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
   useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
-  fetchScanLogExport, fetchCartonLookup, type CartonLookupResult,
+  fetchScanLogExport, fetchCartonLookup, useScanLogSearch, type CartonLookupResult,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -330,15 +331,27 @@ export default function OutboundScanLog() {
 
   const canFetch = filters.warehouses.length > 0 && !!filters.material_category
 
+  // SEARCH TỔNG (bypass Kho/Loại kho — BE cắt scope user): debounce 500ms rồi mới gọi server
+  const [debouncedQ, setDebouncedQ] = useState(filters.search)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(filters.search), 500)
+    return () => clearTimeout(t)
+  }, [filters.search])
+  const searchMode = debouncedQ.trim().length >= 2
+
   const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: PAGE_SIZE }), [filters, page])
-  const { data, isLoading, isError } = useOutboundScanLog(params, canFetch)
+  const { data: listData, isLoading: listLoading, isError: listError } = useOutboundScanLog(params, canFetch && !searchMode)
+  const { data: searchData, isLoading: searchLoading, isError: searchError } = useScanLogSearch(debouncedQ, page, searchMode)
+  const data      = searchMode ? searchData : listData
+  const isLoading = searchMode ? searchLoading : listLoading
+  const isError   = searchMode ? searchError : listError
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const isBlocked = canFetch && !isLoading && total > 200_000
+  const isBlocked = !searchMode && canFetch && !isLoading && total > 200_000
 
-  // Đổi filter → về trang 1
-  const paramsKey = JSON.stringify(buildParams(filters))
+  // Đổi filter / từ khóa search → về trang 1
+  const paramsKey = JSON.stringify(buildParams(filters)) + '|' + debouncedQ
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setPage(1) }, [paramsKey])
 
@@ -346,8 +359,9 @@ export default function OutboundScanLog() {
     setScanLog({ ...(f as Partial<ScanLogFilters>) })
   }
 
+  // Quét QR (scanner chuẩn) → đổ thẳng vào ô SEARCH TỔNG (tem pallet lẫn tem thùng đều tra được)
   function handlePalletScan(raw: string) {
-    setScanLog({ pallet_code: raw.trim() })
+    setScanLog({ search: raw.trim() })
     setShowScanner(false)
   }
 
@@ -416,7 +430,9 @@ export default function OutboundScanLog() {
             <ClipboardList className="h-4 w-4 text-slate-500" />
             Lịch sử quét xuất kho
           </span>
-          <div className="flex-1" />
+          {/* SEARCH TỔNG (đồng bộ Xuất/Nhập): tra QR pallet/thùng, NPP, tên/mã hàng… — bỏ qua bắt buộc chọn Kho/Loại kho */}
+          <SearchInput value={filters.search} onChange={v => setScanLog({ search: v })}
+            placeholder="Truy cứu QR pallet / tem thùng, NPP, tên hàng, mã hàng, DO, số xe…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="scanlog"
@@ -427,7 +443,7 @@ export default function OutboundScanLog() {
           {/* Cụm action toolbar (chuẩn ActionCluster): quét QR lọc pallet (chủ lực mobile) + Export (chỉ PC) */}
           <ActionCluster className="shrink-0" items={[
             {
-              key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR lọc theo mã pallet',
+              key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR pallet / tem thùng → đổ vào ô truy cứu',
               primary: true,
               onClick: () => setShowScanner(true),
             } satisfies ActionItem,
@@ -452,9 +468,9 @@ export default function OutboundScanLog() {
 
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
-        { label: 'Bản ghi', value: canFetch && !isLoading ? total.toLocaleString('vi-VN') : '—' },
-        { label: 'Loại hàng', value: filters.material_category || '—' },
-        { label: 'Bộ lọc', value: activeCount, accent: activeCount > 0 },
+        { label: searchMode ? 'Kết quả tìm' : 'Bản ghi', value: (canFetch || searchMode) && !isLoading ? total.toLocaleString('vi-VN') : '—', accent: searchMode },
+        { label: 'Loại hàng', value: searchMode ? 'Tất cả (truy cứu)' : (filters.material_category || '—') },
+        { label: 'Bộ lọc', value: searchMode ? '—' : activeCount, accent: !searchMode && activeCount > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
 
@@ -463,7 +479,7 @@ export default function OutboundScanLog() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-2">
-              <QrCode className="h-4 w-4" /> Quét QR mã pallet
+              <QrCode className="h-4 w-4" /> Quét QR truy cứu (tem pallet / tem thùng)
             </DialogTitle>
           </DialogHeader>
           {showScanner && (
@@ -478,10 +494,11 @@ export default function OutboundScanLog() {
 
       {/* Table area — single overflow-auto container for sticky header + horizontal scroll */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        {!canFetch ? (
+        {!canFetch && !searchMode ? (
           <div className="p-8 text-center text-sm text-slate-400">
             Vui lòng chọn <span className="font-semibold text-slate-600">Kho</span> và{' '}
-            <span className="font-semibold text-slate-600">Loại hàng</span> ở thanh lọc để xem dữ liệu
+            <span className="font-semibold text-slate-600">Loại hàng</span> ở thanh lọc — hoặc gõ/quét vào ô{' '}
+            <span className="font-semibold text-slate-600">truy cứu</span> để tìm ngay không cần chọn
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={12} rows={12} />
@@ -498,7 +515,7 @@ export default function OutboundScanLog() {
             </p>
           </div>
         ) : rows.length === 0 ? (
-          <EmptyState title="Không có dữ liệu scan trong khoảng thời gian này" />
+          <EmptyState title={searchMode ? `Không tìm thấy "${debouncedQ}" trong lịch sử quét` : 'Không có dữ liệu scan trong khoảng thời gian này'} />
         ) : (
           <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
             <colgroup>

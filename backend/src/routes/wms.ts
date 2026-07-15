@@ -142,6 +142,7 @@ router.post('/outbound/quick-export',                         requirePerm('outbo
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
+router.get('/outbound/scan-log/search',                       requirePerm('scanlog', 'view'), outbound.searchScanLog)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)

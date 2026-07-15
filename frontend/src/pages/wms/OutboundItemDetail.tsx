@@ -5,7 +5,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare, ScanBarcode,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -410,6 +410,7 @@ export default function OutboundItemDetail() {
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
   const { mutate: confirmLoose,        isPending: confirming    } = useConfirmLoosePickingItem()
+  const { mutate: attachCartonsRow,    isPending: attachingRow  } = useAttachCartonScans()
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { data: stock, isLoading: loadingStock } = useManualItemStock(gdoId, itemId)
   const { vehicles } = useActiveVehiclesStore()
@@ -424,6 +425,8 @@ export default function OutboundItemDetail() {
   const [showLoscamDialog, setShowLoscamDialog] = useState(false)
   const [loscamCartons,    setLoscamCartons]    = useState('')
   const [loscamError,      setLoscamError]      = useState('')
+  // Mở panel quét tem THÙNG từ 1 dòng pallet đã quét (nút inline cột Mã pallet) — lưu id, derive entry từ scans để luôn fresh
+  const [cartonRowId,      setCartonRowId]      = useState<string | null>(null)
 
   // Ref để auto-open scan chỉ chạy 1 lần khi trang load lần đầu (tránh tái kích hoạt sau mỗi lần delete/confirm)
   const hasAutoScanned = useRef(false)
@@ -590,10 +593,31 @@ export default function OutboundItemDetail() {
     })
   }
 
+  // Quét tem thùng từ nút inline trên dòng pallet — nạp list đã lưu (replace khi Lưu)
+  const cartonRow = cartonRowId ? scans.find(s => s.id === cartonRowId) ?? null : null
+
   return (
     <>
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled} onClose={() => setShowScan(false)} />
+      )}
+
+      {cartonRow && (
+        <CartonScanSheet
+          open
+          palletCode={cartonRow.pallet_code}
+          expectedMaterialCode={item.material?.material_code ?? materialCodeOf(item.material_code_raw) ?? ''}
+          initial={(cartonRow.carton_scans ?? []).map(c => ({ code: c.code, match: c.match, at: c.at ? new Date(c.at).getTime() : Date.now() }))}
+          saving={attachingRow}
+          onSave={list => attachCartonsRow({ gdoId: gdoId!, scanId: cartonRow.id, cartons: list }, {
+            onSuccess: () => setCartonRowId(null),
+            onError: (err) => toast({
+              variant: 'destructive', title: 'Lưu mã thùng lỗi',
+              description: (err as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được danh sách thùng',
+            }),
+          })}
+          onSkip={() => setCartonRowId(null)}
+        />
       )}
 
       <ConfirmDialog
@@ -936,8 +960,21 @@ export default function OutboundItemDetail() {
                     return (
                       <TableRow key={se.id} className={se.is_loose_picking && !se.loose_confirmed ? 'bg-purple-50' : ''}>
                         <TableCell className="px-2 py-1.5">
-                          <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
-                            {se.pallet_code}
+                          <div className="flex items-center gap-1.5">
+                            <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
+                              {se.pallet_code}
+                            </div>
+                            {/* Quét tem thùng cho pallet này — quyền đi chung Quét pallet (BE PATCH cartons cũng gate outbound.scan) */}
+                            {!!gdo.carton_scan_enabled && can(perms, 'outbound', 'scan') && (
+                              <button
+                                className={`ml-auto shrink-0 !min-h-0 !min-w-0 p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-sky-500 hover:text-sky-700 hover:bg-sky-50'}`}
+                                title={isPaused ? 'Chuyến đang tạm dừng' : `Quét tem thùng của pallet này${Array.isArray(se.carton_scans) && se.carton_scans.length > 0 ? ' (đã có ' + se.carton_scans.length + ' thùng — quét thêm/sửa)' : ''}`}
+                                disabled={isPaused}
+                                onClick={() => !isPaused && setCartonRowId(se.id)}
+                              >
+                                <ScanBarcode className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                           {Array.isArray(se.carton_scans) && se.carton_scans.length > 0 && (() => {
                             const cs = se.carton_scans!

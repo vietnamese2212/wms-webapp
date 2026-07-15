@@ -348,7 +348,7 @@ export default function OutboundScanLog() {
           {/* Cụm action toolbar (chuẩn ActionCluster): quét QR lọc pallet (chủ lực mobile) + Export (chỉ PC) */}
           <ActionCluster className="shrink-0" items={[
             {
-              key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR pallet / tem thùng → đổ vào ô truy cứu',
+              key: 'scan', icon: QrCode, label: 'Quét truy cứu', tip: 'Quét QR tem pallet / tem thùng → đổ vào ô truy cứu, trả kết quả ngay',
               primary: true,
               onClick: () => setShowScanner(true),
             } satisfies ActionItem,
@@ -379,7 +379,7 @@ export default function OutboundScanLog() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-2">
-              <QrCode className="h-4 w-4" /> Quét QR truy cứu (tem pallet / tem thùng)
+              <QrCode className="h-4 w-4" /> Quét truy cứu — tem pallet / tem thùng
             </DialogTitle>
           </DialogHeader>
           {showScanner && (

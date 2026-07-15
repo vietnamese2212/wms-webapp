@@ -714,4 +714,6 @@ export interface GDO {
   delivery_orders?: OutboundDelivery[]
   // Xuất: Kho/Loại kho có bắt multiscan tem thùng sau khi quét pallet không (getGDO tính, Kho đè Loại kho)
   carton_scan_enabled?: boolean
+  // Kho chọn "Bắt buộc quét đủ thùng" → BE chặn Hoàn thành chuyến khi pallet thiếu tem (15/07)
+  carton_scan_require_full?: boolean
 }

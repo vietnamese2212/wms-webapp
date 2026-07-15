@@ -11,7 +11,7 @@ import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
-import { warehouseRequiresCartonScan } from '../../utils/cartonScan'
+import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 
 const now = () => new Date().toISOString()
 
@@ -445,8 +445,8 @@ export async function getGDO(req: Request, res: Response) {
     }
     // Cờ quét-tới-thùng: KHO bật VÀ Loại hàng của chuyến bật → FE mở panel multiscan thùng sau khi quét pallet
     const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
-    const carton_scan_enabled = await warehouseRequiresCartonScan(r.warehouse_id, r.warehouse_type)
-    return ok(res, { ...result, carton_scan_enabled })
+    const cartonPolicy = await warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type)
+    return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -1415,12 +1415,41 @@ export async function patchGDO(req: Request, res: Response) {
       const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
       if (doIds.length) {
         const { data: items } = await supabase.from('OutboundItem')
-          .select('material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
-        const short = ((items ?? []) as { material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number }[])
-          .filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
+          .select('id, material_id, material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
+        const itemRows = (items ?? []) as { id: string; material_id: string | null; material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number }[]
+        const short = itemRows.filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
         if (short.length) {
           const e = short[0]
           return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${Number(e.cartons_scanned)}/${Number(e.cartons_ordered)}). Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.`, 400)
+        }
+
+        // Gác QUÉT ĐỦ TEM THÙNG (kho chọn "Bắt buộc" trong Cài đặt Kho, user chốt 15/07):
+        // mỗi pallet đã quét phải có số tem thùng KHỚP mã >= số thùng của pallet.
+        // Loại khỏi gác: dòng nhặt lẻ (chưa có UI quét thùng) + item no-QR (hàng không tem).
+        const { data: gRow } = await supabase.from('GroupDeliveryOrder')
+          .select('warehouse_id, warehouse_type').eq('id', req.params.id).maybeSingle()
+        const gr = gRow as { warehouse_id?: string | null; warehouse_type?: string | null } | null
+        const cartonPolicy = await warehouseCartonScanPolicy(gr?.warehouse_id, gr?.warehouse_type)
+        if (cartonPolicy.requireFull) {
+          const matIds = [...new Set(itemRows.map(i => i.material_id).filter(Boolean))] as string[]
+          const { data: mats } = matIds.length
+            ? await supabase.from('Material').select('id, no_qr_tracking').in('id', matIds)
+            : { data: [] }
+          const noQrSet = new Set(((mats ?? []) as { id: string; no_qr_tracking?: boolean | null }[])
+            .filter(m => m.no_qr_tracking === true).map(m => m.id))
+          const qrItemIds = itemRows.filter(i => !i.material_id || !noQrSet.has(i.material_id)).map(i => i.id)
+          if (qrItemIds.length) {
+            const { data: scans } = await supabase.from('OutboundScanEntry')
+              .select('pallet_code, cartons_scanned, carton_scans, is_loose_picking').in('item_id', qrItemIds)
+            const missing = ((scans ?? []) as { pallet_code: string; cartons_scanned: number; carton_scans?: { match?: boolean }[] | null; is_loose_picking?: boolean | null }[])
+              .filter(s => !s.is_loose_picking && Number(s.cartons_scanned) > 0)
+              .map(s => ({ pallet: s.pallet_code, need: Number(s.cartons_scanned), got: (s.carton_scans ?? []).filter(c => c?.match !== false).length }))
+              .filter(s => s.got < s.need)
+            if (missing.length) {
+              const e = missing[0]
+              return fail(res, `Kho yêu cầu QUÉT ĐỦ tem thùng — còn ${missing.length} pallet thiếu (vd ${e.pallet}: ${e.got}/${e.need} thùng). Bấm nút quét thùng trên dòng pallet để quét bổ sung rồi hoàn thành.`, 400)
+            }
+          }
         }
       }
     }

@@ -167,7 +167,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+
+// Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
+const CARTON_REQUIRE_OPTS = [
+  { value: 'optional', label: 'Không bắt buộc quét đủ', sub: 'quét được bao nhiêu lưu bấy nhiêu — truy vết mềm' },
+  { value: 'required', label: 'Bắt buộc quét đủ thùng',  sub: 'pallet thiếu tem thùng → CHẶN Hoàn thành chuyến' },
+]
 
 // Chế độ quản tồn — độc lập với warehouse_type (CENTRAL/NPP). Xem migration 20260626_warehouse_inventory_mode.sql
 type InvMode = 'QR' | 'QTY' | 'QTY_DATE' | 'NONE'
@@ -193,6 +199,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
   const [cartonScan,    setCartonScan]    = useState(wh?.carton_scan_override === true)
   const [cartonCats,    setCartonCats]    = useState<string[]>(wh?.carton_scan_categories ?? [])
+  const [cartonRequire, setCartonRequire] = useState(wh?.carton_scan_require_full === true ? 'required' : 'optional')
   const { data: whTypesForCarton = [] } = useWarehouseTypes()   // taxonomy đầy đủ (trang quản trị)
   const [err, setErr] = useState('')
 
@@ -216,14 +223,15 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     if (cartonScan && cartonCats.length === 0) { setErr('Bật quét tới thùng thì chọn ít nhất 1 Loại kho phải quét'); return }
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
+    const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -312,6 +320,10 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                     </label>
                   ))}
                 </div>
+                <Label className="text-xs pt-1 block">Quét đủ thùng</Label>
+                <SingleSelect options={CARTON_REQUIRE_OPTS} value={cartonRequire} onChange={setCartonRequire}
+                  triggerClassName="h-8 w-full text-sm" />
+                <p className="text-[10px] text-slate-400">Bắt buộc: khi Hoàn thành chuyến, mỗi pallet đã quét phải đính đủ tem thùng khớp mã (bằng số thùng của pallet) — thiếu sẽ bị chặn kèm danh sách pallet.</p>
               </div>
             )}
           </div>

@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
 import {
-  ClipboardList, ChevronLeft, ChevronRight, QrCode, AlertTriangle, Download,
+  ClipboardList, ChevronLeft, ChevronRight, AlertTriangle, Download,
 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -16,8 +15,6 @@ import { SavedViews } from '@/components/shared/SavedViews'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { QRScanner } from '@/components/shared/QRScanner'
-import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import {
   useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
   fetchScanLogExport, useScanLogSearch,
@@ -132,10 +129,8 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
 export default function OutboundScanLog() {
   const navigate = useNavigate()
   const [page, setPage]                 = useState(1)
-  const [showScanner, setShowScanner]   = useState(false)
   const [exporting, setExporting]       = useState(false)
   const [exportError, setExportError]   = useState('')
-  const scannerRef = useRef<QRScannerHandle>(null)
   const { widths: colW, startResize, totalWidth } = useColumnResize('scanlog_col_widths', SCANLOG_COL_DEFAULTS)
 
   const user = useAuthStore(s => s.user)
@@ -264,12 +259,6 @@ export default function OutboundScanLog() {
     setScanLog({ ...(f as Partial<ScanLogFilters>) })
   }
 
-  // Quét QR (scanner chuẩn) → đổ thẳng vào ô SEARCH TỔNG (tem pallet lẫn tem thùng đều tra được)
-  function handlePalletScan(raw: string) {
-    setScanLog({ search: raw.trim() })
-    setShowScanner(false)
-  }
-
   async function handleExport() {
     setExportError('')
     if (!canFetch) { setExportError('Chọn Kho và Loại hàng trước khi xuất'); return }
@@ -345,13 +334,8 @@ export default function OutboundScanLog() {
             onApply={applyView}
             activeId={activeViewId}
           />
-          {/* Cụm action toolbar (chuẩn ActionCluster): quét QR lọc pallet (chủ lực mobile) + Export (chỉ PC) */}
+          {/* Cụm action toolbar (chuẩn ActionCluster) — quét QR truy cứu dùng nút QR CÓ SẴN trong ô search (SearchInput) */}
           <ActionCluster className="shrink-0" items={[
-            {
-              key: 'scan', icon: QrCode, label: 'Quét truy cứu', tip: 'Quét QR tem pallet / tem thùng → đổ vào ô truy cứu, trả kết quả ngay',
-              primary: true,
-              onClick: () => setShowScanner(true),
-            } satisfies ActionItem,
             {
               key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
               mobileHidden: true, disabled: !canFetch, busy: exporting,
@@ -373,24 +357,6 @@ export default function OutboundScanLog() {
         { label: 'Bộ lọc', value: searchMode ? '—' : activeCount, accent: !searchMode && activeCount > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
-
-      {/* QR Scanner Dialog */}
-      <Dialog open={showScanner} onOpenChange={open => { if (!open) setShowScanner(false) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-sm flex items-center gap-2">
-              <QrCode className="h-4 w-4" /> Quét truy cứu — tem pallet / tem thùng
-            </DialogTitle>
-          </DialogHeader>
-          {showScanner && (
-            <QRScanner
-              ref={scannerRef}
-              onScan={handlePalletScan}
-              onClose={() => setShowScanner(false)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Table area — single overflow-auto container for sticky header + horizontal scroll */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

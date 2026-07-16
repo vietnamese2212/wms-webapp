@@ -34,4 +34,13 @@ CREATE INDEX IF NOT EXISTS idx_weigh_date       ON public."WeighTicket" (weigh_d
 CREATE INDEX IF NOT EXISTS idx_weigh_gdo        ON public."WeighTicket" (gdo_id);
 
 ALTER TABLE public."WeighTicket" ENABLE ROW LEVEL SECURITY;  -- chặn anon (service role bypass)
-ALTER PUBLICATION supabase_realtime ADD TABLE public."WeighTicket";
+-- Thêm vào realtime CÓ ĐIỀU KIỆN (env có publication FOR ALL TABLES / đã thêm rồi → bỏ qua,
+-- tránh 42710 làm rollback cả transaction như lần chạy đầu 16/07)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'WeighTicket'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public."WeighTicket";
+  END IF;
+END $$;

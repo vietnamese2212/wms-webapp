@@ -49,39 +49,65 @@ Log "Bat dau agent | DB: $MdbPath | provider: $provider | WMS: $WmsUrl | tram: $
 $cols = 'id, OrderNum, GDate, TruckNum, TransCompany, GoodsName, GrossWeight, TareWeight, NetWeight, GrossTime, TareTime, GInTime, GOutTime, ImExType, InOut'
 $lastSent = ''   # dau van cua lo truoc - trung thi khoi goi mang cho do ton
 
+function Read-Tickets($sql) {
+  $cn = New-Object System.Data.OleDb.OleDbConnection("Provider=$provider;Data Source=$MdbPath;Jet OLEDB:Database Password=$MdbPassword")
+  $cn.Open()
+  $cmd = New-Object System.Data.OleDb.OleDbCommand($sql, $cn)
+  $da = New-Object System.Data.OleDb.OleDbDataAdapter($cmd)
+  $dt = New-Object System.Data.DataTable
+  [void]$da.Fill($dt)
+  $cn.Close()
+  $list = @()
+  foreach ($row in $dt.Rows) {
+    $o = @{}
+    foreach ($c in $dt.Columns) {
+      $v = $row[$c.ColumnName]
+      if ($v -is [System.DBNull]) { $v = $null }
+      $o[$c.ColumnName] = $v
+    }
+    $list += $o
+  }
+  return ,$list
+}
+function Send-Tickets($tickets) {
+  $body = @{ station_code = $StationCode; tickets = $tickets } | ConvertTo-Json -Depth 4
+  return Invoke-RestMethod -Uri "$WmsUrl/api/integration/v1/weigh/tickets" -Method Post `
+    -Headers @{ 'X-API-Key' = $ApiKey } -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 120
+}
+
+# LAN DAU chay tren may nay: day TOAN BO lich su phieu can (theo lo 500). Xong ghi file
+# danh dau .backfill-done de cac lan sau chi poll phieu moi.
+$doneFlag = Join-Path $PSScriptRoot '.backfill-done'
+if (-not (Test-Path $doneFlag)) {
+  try {
+    Log 'Lan dau: day TOAN BO lich su phieu can len WMS (co the mat vai phut)...'
+    $all = Read-Tickets "SELECT $cols FROM WeightForm ORDER BY id"
+    Log "Doc duoc $($all.Count) phieu - day theo lo 500..."
+    for ($i = 0; $i -lt $all.Count; $i += 500) {
+      $chunk = $all[$i..([Math]::Min($i + 499, $all.Count - 1))]
+      $resp = Send-Tickets $chunk
+      Log "  lo $([Math]::Floor($i/500)+1): upserted $($resp.data.upserted), auto-khop $($resp.data.matched)"
+    }
+    Set-Content -Path $doneFlag -Value (Get-Date -Format 'dd/MM/yyyy HH:mm:ss')
+    Log 'Backfill XONG - chuyen sang che do poll phieu moi.'
+  } catch {
+    Log "LOI backfill: $($_.Exception.Message) - se thu lai khi khoi dong lan sau."
+  }
+}
+
 while ($true) {
   try {
     # 1. Doc N phieu moi nhat (lay ca phieu cu vua duoc can lan 2 nho ORDER BY id DESC + upsert)
-    $cn = New-Object System.Data.OleDb.OleDbConnection("Provider=$provider;Data Source=$MdbPath;Jet OLEDB:Database Password=$MdbPassword")
-    $cn.Open()
-    $cmd = New-Object System.Data.OleDb.OleDbCommand("SELECT TOP $BatchRows $cols FROM WeightForm ORDER BY id DESC", $cn)
-    $da = New-Object System.Data.OleDb.OleDbDataAdapter($cmd)
-    $dt = New-Object System.Data.DataTable
-    [void]$da.Fill($dt)
-    $cn.Close()
-
-    # 2. DataTable -> mang hashtable (DBNull -> null)
-    $tickets = @()
-    foreach ($row in $dt.Rows) {
-      $o = @{}
-      foreach ($c in $dt.Columns) {
-        $v = $row[$c.ColumnName]
-        if ($v -is [System.DBNull]) { $v = $null }
-        $o[$c.ColumnName] = $v
-      }
-      $tickets += $o
-    }
+    $tickets = Read-Tickets "SELECT TOP $BatchRows $cols FROM WeightForm ORDER BY id DESC"
     if ($tickets.Count -eq 0) { Start-Sleep -Seconds $PollSeconds; continue }
 
-    # 3. Chi goi mang khi du lieu DOI so voi lan gui truoc (dau van = id max + so phieu + tong net)
+    # 2. Chi goi mang khi du lieu DOI so voi lan gui truoc (dau van = id max + so phieu + tong net)
     $sig = "$($tickets[0].id)|$($tickets.Count)|$(($tickets | ForEach-Object { $_.NetWeight }) -join ',')"
     if ($sig -eq $lastSent) { Start-Sleep -Seconds $PollSeconds; continue }
 
-    # 4. POST len WMS
-    $body = @{ station_code = $StationCode; tickets = $tickets } | ConvertTo-Json -Depth 4
-    $resp = Invoke-RestMethod -Uri "$WmsUrl/api/integration/v1/weigh/tickets" -Method Post `
-      -Headers @{ 'X-API-Key' = $ApiKey } -ContentType 'application/json; charset=utf-8' `
-      -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
+    # 3. POST len WMS
+    $resp = Send-Tickets $tickets
     if ($resp.success) {
       Log "Day $($tickets.Count) phieu (id moi nhat $($tickets[0].id)) -> upsert $($resp.data.upserted), auto-khop $($resp.data.matched)"
       $lastSent = $sig

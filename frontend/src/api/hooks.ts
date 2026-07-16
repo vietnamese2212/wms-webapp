@@ -2282,12 +2282,23 @@ export interface ControlTowerGateRow {
 export interface ControlTowerTrip {
   id: string; group_code: string; status: string; plate: string | null
   warehouse_name: string | null; planned: number; scanned: number; started_at: string | null
+  npp: string | null; n_materials: number
+}
+export interface ControlTowerMatOut {
+  code: string; name: string; category: string; ordered: number; scanned: number; loose: number
+}
+export interface ControlTowerMatIn {
+  code: string; name: string; category: string; pallets: number; cartons: number
 }
 export interface ControlTowerData {
   date: string
   gate: { registered: number; called: number; inside: number; completed: number; inside_list: ControlTowerGateRow[] }
   outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number
-              planned: number; scanned: number; active: ControlTowerTrip[] }
+              planned: number; scanned: number; loose_planned?: number; loose_scanned?: number
+              active: ControlTowerTrip[] }
+  // 2 nhánh v2 — optional: RPC v1 chưa re-apply thì FE vẫn chạy, khối hàng-theo-mã tự ẩn
+  out_by_material?: { n_materials: number; list: ControlTowerMatOut[] }
+  in_by_material?:  { n_materials: number; list: ControlTowerMatIn[] }
   inbound: { orders: number; pallets: number; cartons: number }
   weigh: { tickets: number; pending2: number; net_kg: number }
   hourly: { h: number; out_cartons: number; out_scans: number; in_pallets: number }[]

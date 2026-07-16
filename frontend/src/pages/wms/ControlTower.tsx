@@ -3,7 +3,7 @@
 // Chế độ TV: overlay tối full-screen treo màn hình kho (requestFullscreen, thoát = Esc/nút).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Tv, X, Truck, PackageMinus, Scale } from 'lucide-react'
+import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -47,6 +47,116 @@ function Block({ title, icon: Icon, count, dark, children }: {
       </div>
       <div className="flex-1 min-h-0 overflow-auto">{children}</div>
     </div>
+  )
+}
+
+// Dải tiến độ xuất hôm nay: KH / đã xuất / còn lại / % (user chốt 16/07)
+function OutProgressStrip({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+  const o = data.outbound
+  const remaining = Math.max(0, o.planned - o.scanned)
+  const pct = o.planned > 0 ? Math.min(100, Math.round((o.scanned / o.planned) * 100)) : 0
+  const full = o.planned > 0 && o.scanned >= o.planned
+  const lbl = `text-[9px] uppercase ${dark ? 'text-slate-400' : 'text-slate-500'}`
+  const num = `font-semibold tabular-nums ${dark ? 'text-white' : 'text-slate-800'}`
+  return (
+    <div className={`px-3 py-2 border-b ${dark ? 'border-slate-700 bg-slate-800/60 rounded-lg border' : 'bg-white border-slate-200'}`}>
+      <div className="flex items-center gap-4 flex-wrap">
+        <span className={`text-[10px] font-semibold uppercase tracking-wide ${dark ? 'text-slate-200' : 'text-slate-600'}`}>Tiến độ xuất hôm nay</span>
+        <span className={lbl}>Kế hoạch <span className={`${num} text-sm`}>{nf.format(o.planned)}</span></span>
+        <span className={lbl}>Đã xuất <span className={`${num} text-sm ${full ? '!text-green-500' : '!text-sky-500'}`}>{nf.format(o.scanned)}</span></span>
+        <span className={lbl}>Còn lại <span className={`${num} text-sm ${remaining > 0 ? '!text-amber-500' : ''}`}>{nf.format(remaining)}</span></span>
+        <span className={`ml-auto text-lg font-semibold tabular-nums ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>{pct}%</span>
+      </div>
+      <div className={`mt-1.5 h-2.5 rounded ${dark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+        <div className={`h-2.5 rounded ${full ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+// Hàng XUẤT hôm nay theo mã (KH / đã xuất / còn / % bar từng mã)
+function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+  const list = data.out_by_material?.list ?? []
+  const total = data.out_by_material?.n_materials ?? 0
+  return (
+    <Block title="Hàng xuất hôm nay theo mã" icon={PackageMinus} count={total} dark={dark}>
+      {list.length === 0 ? (
+        <p className="px-3 py-4 text-[11px] text-slate-400">Chưa có kế hoạch xuất hôm nay.</p>
+      ) : (
+        <table className="w-full">
+          <thead>
+            <tr className={`text-[8px] uppercase ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+              <th className="px-2.5 py-1 text-left font-medium">Mã hàng</th>
+              <th className="px-1 py-1 text-right font-medium">KH</th>
+              <th className="px-1 py-1 text-right font-medium">Đã xuất</th>
+              <th className="px-1 py-1 text-right font-medium">Còn</th>
+              <th className="px-2.5 py-1 text-left font-medium w-24">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map(m => {
+              const remaining = Math.max(0, m.ordered - m.scanned)
+              const pct = m.ordered > 0 ? Math.min(100, Math.round((m.scanned / m.ordered) * 100)) : 0
+              const full = m.ordered > 0 && m.scanned >= m.ordered
+              return (
+                <tr key={m.code} className={`border-b last:border-0 ${dark ? 'border-slate-700/60' : 'border-slate-100'}`}>
+                  <td className="px-2.5 py-1 whitespace-nowrap">
+                    <div className={`text-[10px] font-medium truncate max-w-[180px] ${dark ? 'text-white' : 'text-slate-700'}`} title={`${m.code} — ${m.name}`}>{m.name}</div>
+                    <div className={`text-[8px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{m.code} · {m.category}{m.loose > 0 ? ` · lẻ ${nf.format(m.loose)}` : ''}</div>
+                  </td>
+                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${dark ? 'text-slate-300' : 'text-slate-600'}`}>{nf.format(m.ordered)}</td>
+                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>{nf.format(m.scanned)}</td>
+                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${remaining > 0 ? 'text-amber-600' : dark ? 'text-slate-500' : 'text-slate-400'}`}>{nf.format(remaining)}</td>
+                  <td className="px-2.5 py-1 w-24">
+                    <div className="flex items-center gap-1">
+                      <div className={`flex-1 h-1.5 rounded ${dark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                        <div className={`h-1.5 rounded ${full ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className={`text-[9px] tabular-nums w-7 text-right ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{pct}%</span>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </Block>
+  )
+}
+
+// Hàng NHẬP hôm nay theo mã
+function InMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+  const list = data.in_by_material?.list ?? []
+  const total = data.in_by_material?.n_materials ?? 0
+  return (
+    <Block title="Hàng nhập hôm nay theo mã" icon={PackagePlus} count={total} dark={dark}>
+      {list.length === 0 ? (
+        <p className="px-3 py-4 text-[11px] text-slate-400">Chưa có hàng nhập hôm nay.</p>
+      ) : (
+        <table className="w-full">
+          <thead>
+            <tr className={`text-[8px] uppercase ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+              <th className="px-2.5 py-1 text-left font-medium">Mã hàng</th>
+              <th className="px-1 py-1 text-right font-medium">Pallet</th>
+              <th className="px-2.5 py-1 text-right font-medium">Thùng</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map(m => (
+              <tr key={m.code} className={`border-b last:border-0 ${dark ? 'border-slate-700/60' : 'border-slate-100'}`}>
+                <td className="px-2.5 py-1 whitespace-nowrap">
+                  <div className={`text-[10px] font-medium truncate max-w-[200px] ${dark ? 'text-white' : 'text-slate-700'}`} title={`${m.code} — ${m.name}`}>{m.name}</div>
+                  <div className={`text-[8px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{m.code} · {m.category}</div>
+                </td>
+                <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${dark ? 'text-slate-300' : 'text-slate-600'}`}>{nf.format(m.pallets)}</td>
+                <td className={`px-2.5 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap ${dark ? 'text-green-400' : 'text-green-600'}`}>{nf.format(m.cartons)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Block>
   )
 }
 
@@ -99,8 +209,9 @@ function TripsBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[11px] font-mono font-semibold ${dark ? 'text-white' : ''}`}>{t.group_code}</span>
                   {t.status === 'PAUSED' && <span className="text-[9px] px-1.5 rounded-full bg-red-100 text-red-600 font-medium">Tạm dừng</span>}
+                  {t.npp && <span className={`text-[10px] font-medium truncate max-w-[160px] ${dark ? 'text-slate-200' : 'text-slate-600'}`} title={t.npp}>{t.npp}</span>}
                   <span className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{t.plate ?? ''}</span>
-                  <span className={`text-[10px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{t.warehouse_name ?? ''}</span>
+                  {t.n_materials > 0 && <span className={`text-[9px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{t.n_materials} mã</span>}
                   <span className={`ml-auto text-[10px] tabular-nums font-semibold ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>
                     {nf.format(t.scanned)}/{nf.format(t.planned)} · {pct}%
                   </span>
@@ -213,13 +324,18 @@ export default function ControlTower() {
   ]
 
   const clock = now.toLocaleTimeString('vi-VN', { hour12: false })
+  const loosePlanned = data?.outbound.loose_planned ?? 0
+  const loosePct = data && data.outbound.planned > 0
+    ? Math.round((loosePlanned / data.outbound.planned) * 100) : 0
   const tiles = data ? [
     { label: 'Xe trong cổng', value: data.gate.inside, accent: data.gate.inside > 0 },
     { label: 'Xe chờ gọi', value: data.gate.registered + data.gate.called },
     { label: 'Chuyến hôm nay', value: data.outbound.total },
     { label: 'Đang soạn', value: data.outbound.in_progress, accent: data.outbound.in_progress > 0 },
     { label: 'Chuyến xong', value: data.outbound.completed },
-    { label: 'Thùng xuất', value: `${nf.format(data.outbound.scanned)}/${nf.format(data.outbound.planned)}` },
+    { label: 'Mã hàng xuất', value: data.out_by_material?.n_materials ?? 0 },
+    { label: 'Nhặt lẻ (thùng)', value: nf.format(loosePlanned) },
+    { label: 'Tỷ lệ nhặt lẻ', value: `${loosePct}%` },
     { label: 'Pallet nhập', value: nf.format(data.inbound.pallets) },
     { label: 'Lượt cân', value: data.weigh.tickets },
   ] : []
@@ -254,12 +370,17 @@ export default function ControlTower() {
             {(error as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi tải số liệu giám sát.'}
           </div>
         ) : data ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
-            <GateBlock data={data} now={now} />
-            <TripsBlock data={data} />
-            <HourlyBlock data={data} />
-            <WeighBlock data={data} />
-          </div>
+          <>
+            <OutProgressStrip data={data} />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
+              <OutMatBlock data={data} />
+              <TripsBlock data={data} />
+              <InMatBlock data={data} />
+              <GateBlock data={data} now={now} />
+              <WeighBlock data={data} />
+              <HourlyBlock data={data} />
+            </div>
+          </>
         ) : null}
       </div>
      </div>
@@ -275,7 +396,7 @@ export default function ControlTower() {
               <X className="h-5 w-5" />
             </button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 shrink-0">
+          <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 shrink-0">
             {tiles.map(t => (
               <div key={t.label} className={`rounded-lg px-3 py-2 ${t.accent ? 'bg-sky-600' : 'bg-slate-800'}`}>
                 <div className="text-[10px] uppercase text-slate-300">{t.label}</div>
@@ -283,11 +404,12 @@ export default function ControlTower() {
               </div>
             ))}
           </div>
+          <OutProgressStrip data={data} dark />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-0">
-            <GateBlock data={data} now={now} dark />
+            <OutMatBlock data={data} dark />
             <TripsBlock data={data} dark />
-            <HourlyBlock data={data} dark />
-            <WeighBlock data={data} dark />
+            <InMatBlock data={data} dark />
+            <GateBlock data={data} now={now} dark />
           </div>
         </div>
       )}

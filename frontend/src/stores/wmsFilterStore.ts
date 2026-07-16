@@ -80,6 +80,7 @@ export interface WeighTicketFilters {
   to_date: string
   direction: string     // '' | 'Cân Xuất' | 'Cân Nhập'
   match_state: string   // '' | 'matched' | 'unmatched' | 'pending'
+  warehouse_ids: string[]  // kho của trạm cân (nhiều kho tích hợp sau này)
   search: string
 }
 interface LocationsFilters {
@@ -257,7 +258,7 @@ function initialFilters() {
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
       search: '',
     },
-    weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', search: '' },
+    weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },

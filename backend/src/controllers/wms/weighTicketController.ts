@@ -48,14 +48,22 @@ interface KbTicket {
   ImExType?: string; InOut?: number
 }
 
-// POST /api/integration/v1/weigh/tickets  { station_code?, tickets: KbTicket[] }
+// POST /api/integration/v1/weigh/tickets  { station_code?, warehouse_id?, tickets: KbTicket[] }
 export async function ingestWeighTickets(req: Request, res: Response) {
   try {
-    const { station_code, tickets } = req.body as { station_code?: string; tickets?: KbTicket[] }
+    const { station_code, warehouse_id, tickets } =
+      req.body as { station_code?: string; warehouse_id?: string; tickets?: KbTicket[] }
     const station = String(station_code ?? 'KB01').trim() || 'KB01'
     if (!Array.isArray(tickets)) return fail(res, 'tickets phải là mảng', 400, 'VALIDATION_ERROR')
     if (tickets.length === 0) return ok(res, { upserted: 0, matched: 0 })
     if (tickets.length > 500) return fail(res, 'Tối đa 500 phiếu/lần', 400, 'VALIDATION_ERROR')
+
+    // Kho của trạm cân (config agent) — validate để bắt lỗi cấu hình ngay, không lưu id rác
+    const whId = String(warehouse_id ?? '').trim() || null
+    if (whId) {
+      const { data: wh } = await supabase.from('Warehouse').select('id').eq('id', whId).maybeSingle()
+      if (!wh) return fail(res, `warehouse_id không tồn tại: ${whId}`, 400, 'VALIDATION_ERROR')
+    }
 
     const t = now()
     const rows = tickets
@@ -83,6 +91,8 @@ export async function ingestWeighTickets(req: Request, res: Response) {
           is_complete: (net ?? 0) > 0,
           raw: k as unknown,
           updated_at: t,
+          // chỉ đưa key khi agent có khai kho — chưa apply migration warehouse_id vẫn ingest được
+          ...(whId ? { warehouse_id: whId } : {}),
         }
       })
     if (rows.length === 0) return fail(res, 'Không có phiếu hợp lệ (thiếu id)', 400, 'VALIDATION_ERROR')
@@ -142,16 +152,27 @@ export async function ingestWeighTickets(req: Request, res: Response) {
 
 // ─── API cho trang Phiếu cân (WMS UI) ─────────────────────────────────────────
 
-// GET /wms/weigh-tickets?from_date&to_date&q&direction&match_state&page&limit
+// GET /wms/weigh-tickets?from_date&to_date&q&direction&match_state&warehouse_ids&page&limit
 export async function listWeighTickets(req: Request, res: Response) {
   try {
-    const { from_date, to_date, q, direction, match_state, page = '1', limit = '500' } = req.query
+    const { from_date, to_date, q, direction, match_state, warehouse_ids, page = '1', limit = '500' } = req.query
     const pageNum = Math.max(1, parseInt(String(page)))
     const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
     let query = supabase.from('WeighTicket')
       .select('*', { count: 'exact' })
       .order('source_id', { ascending: false })
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
+    // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
+    const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
+    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const effective = scopeWhIds.length > 0
+      ? (requested.length > 0 ? requested.filter(id => scopeWhIds.includes(id)) : scopeWhIds)
+      : requested
+    if (requested.length > 0 && effective.length === 0)
+      return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
+    if (requested.length > 0) query = query.in('warehouse_id', effective)
+    else if (effective.length > 0)
+      query = query.or(`warehouse_id.in.(${effective.join(',')}),warehouse_id.is.null`)
     if (from_date) query = query.gte('weigh_date', String(from_date))
     if (to_date)   query = query.lte('weigh_date', String(to_date))
     if (direction) query = query.eq('direction', String(direction))
@@ -169,10 +190,18 @@ export async function listWeighTickets(req: Request, res: Response) {
     if (error) {
       if (/relation .*WeighTicket.* does not exist/i.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_tickets', 503, 'NOT_READY')
+      if (/warehouse_id/.test(error.message))
+        return fail(res, 'Chưa apply migration 20260716_weigh_ticket_warehouse', 503, 'NOT_READY')
       return fail(res, error.message, 500, 'DB_ERROR')
     }
-    // Đính group_code của chuyến đã gắn (soft link — join tay, ids ít)
-    const rows = (data ?? []) as { gdo_id: string | null }[]
+    // Đính group_code của chuyến đã gắn + tên kho (soft link — join tay, ids ít)
+    const rows = (data ?? []) as { gdo_id: string | null; warehouse_id?: string | null }[]
+    const whIds = [...new Set(rows.map(r => r.warehouse_id).filter((v): v is string => !!v))]
+    const whMap = new Map<string, string>()
+    if (whIds.length > 0) {
+      const { data: whs } = await supabase.from('Warehouse').select('id, name').in('id', whIds.slice(0, 300))
+      for (const w of (whs ?? []) as { id: string; name: string }[]) whMap.set(w.id, w.name)
+    }
     const gdoIds = [...new Set(rows.map(r => r.gdo_id).filter((v): v is string => !!v))]
     const gdoMap = new Map<string, { group_code: string | null; status: string | null }>()
     for (let i = 0; i < gdoIds.length; i += 300) {
@@ -183,6 +212,7 @@ export async function listWeighTickets(req: Request, res: Response) {
     }
     const out = rows.map(r => ({
       ...r,
+      warehouse_name: r.warehouse_id ? (whMap.get(r.warehouse_id) ?? null) : null,
       gdo_group_code: r.gdo_id ? (gdoMap.get(r.gdo_id)?.group_code ?? null) : null,
       gdo_status:     r.gdo_id ? (gdoMap.get(r.gdo_id)?.status ?? null) : null,
     }))

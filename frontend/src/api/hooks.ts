@@ -2234,12 +2234,14 @@ export interface WeighTicket {
   gdo_id: string | null
   matched_at: string | null
   matched_by: string | null         // 'auto' hoặc tên user
+  warehouse_id?: string | null      // kho của trạm cân (agent khai)
+  warehouse_name?: string | null    // join tay từ BE
   gdo_group_code?: string | null    // join tay từ BE
   gdo_status?: string | null
 }
 export type WeighTicketParams = {
   from_date?: string; to_date?: string; q?: string
-  direction?: string; match_state?: string; page?: number; limit?: number
+  direction?: string; match_state?: string; warehouse_ids?: string; page?: number; limit?: number
 }
 export function useWeighTickets(params: WeighTicketParams) {
   return useQuery({

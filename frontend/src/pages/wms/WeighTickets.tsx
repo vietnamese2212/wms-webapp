@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
 import { useWeighTickets, useMatchWeighTicket, useGDOs, type WeighTicket } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -24,6 +25,7 @@ const PAGE_SIZE = 500
 
 const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'weigh_date',  label: 'Ngày cân' },
+  { id: 'warehouse',   label: 'Kho' },
   { id: 'ticket_no',   label: 'Số phiếu' },
   { id: 'plate',       label: 'Biển số' },
   { id: 'direction',   label: 'Chiều' },
@@ -38,7 +40,7 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'trans',       label: 'ĐVVT' },
   { id: 'action',      label: '' },
 ]
-const COL_DEFAULTS = [80, 70, 95, 78, 90, 70, 95, 70, 100, 90, 105, 150, 110, 60]
+const COL_DEFAULTS = [80, 90, 70, 95, 78, 90, 70, 95, 70, 100, 90, 105, 150, 110, 60]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function kg(v: number | null | undefined) {
@@ -57,12 +59,15 @@ export default function WeighTickets() {
   const [matchFor, setMatchFor] = useState<WeighTicket | null>(null)
   const { widths: colW, startResize, totalWidth } = useColumnResize('weigh_col_widths', COL_DEFAULTS)
 
+  const { data: warehouses = [] } = useScopedWarehouses()
+
   const params = useMemo(() => ({
     from_date: filters.from_date || undefined,
     to_date:   filters.to_date   || undefined,
     q:         filters.search.trim() || undefined,
     direction: filters.direction || undefined,
     match_state: filters.match_state || undefined,
+    warehouse_ids: filters.warehouse_ids.length > 0 ? filters.warehouse_ids.join(',') : undefined,
     page, limit: PAGE_SIZE,
   }), [filters, page])
   const { data, isLoading, isError, error } = useWeighTickets(params)
@@ -77,6 +82,10 @@ export default function WeighTickets() {
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày cân', type: 'daterange', from: filters.from_date, to: filters.to_date,
       onChange: (from, to) => setF({ from_date: from, to_date: to }) },
+    { key: 'warehouse', label: 'Kho', type: 'multi', searchable: true,
+      options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
+      selected: filters.warehouse_ids,
+      onChange: v => setF({ warehouse_ids: v }) },
     { key: 'direction', label: 'Chiều', type: 'single', allLabel: 'Tất cả chiều', value: filters.direction,
       options: [{ value: 'Cân Xuất', label: 'Cân Xuất' }, { value: 'Cân Nhập', label: 'Cân Nhập' }],
       onChange: v => setF({ direction: v }) },
@@ -128,10 +137,12 @@ export default function WeighTickets() {
             <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <TableHeader>
               <TableRow>
+                {/* KHÔNG đặt `relative` lên TableHead — đè mất `sticky top-0` của base → header hết freeze */}
                 {COLS.map((c, i) => (
-                  <TableHead key={c.id} className={`relative px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''}`}>
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.label}
-                    <span onPointerDown={e => startResize(i, e)} className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
                   </TableHead>
                 ))}
               </TableRow>
@@ -141,7 +152,8 @@ export default function WeighTickets() {
                 const rowCls = !r.is_complete ? 'text-amber-600' : r.gdo_id ? 'text-green-700' : 'text-slate-700'
                 return (
                   <TableRow key={r.id} className={rowCls}>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.weigh_date ? formatDate(r.weigh_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{r.weigh_date ? formatDate(r.weigh_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.warehouse_name ?? undefined}>{r.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{r.ticket_no ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{r.license_plate ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.direction ?? '—'}</TableCell>

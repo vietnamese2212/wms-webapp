@@ -30,8 +30,12 @@ Windows hay phần mềm cân — chỉ ĐỌC `TVTDB.mdb` (SELECT) rồi gọi 
 1. Copy 2 file `agent-tram-can.ps1` + `CHAY-AGENT.bat` vào 1 thư mục trên máy cân (vd `C:\WMS-Agent\`).
 2. Mở `agent-tram-can.ps1` bằng Notepad, sửa khối CONFIG đầu file:
    - `$MdbPath` = đường dẫn thật tới `TVTDB.mdb` (cùng thư mục phần mềm cân)
-   - `$ApiKey`  = API key scope `weigh:write` (admin WMS tạo trong Quản lý API key)
+   - `$ApiKey`  = API key scope `weigh:write` — admin WMS tạo trong Quản lý API key,
+     **quy ước tên: `Kho <Tên kho>_Agent trạm cân`** (vd `Kho Ba Vì_Agent trạm cân`) — mỗi kho/trạm 1 key riêng để thu hồi độc lập
    - `$WmsUrl`  = URL WMS (production: `https://wms-webapp.vercel.app`)
+   - `$WarehouseId` = **id Kho** của trạm cân trong WMS (mỗi phiếu đẩy lên tự gắn kho này → trang Phiếu cân filter theo Kho).
+     Phiếu cũ đẩy trước khi khai kho = chưa gắn kho; gán lại 1 lần bằng SQL:
+     `UPDATE "WeighTicket" SET warehouse_id = '<id kho>' WHERE station_code = 'KB01' AND warehouse_id IS NULL;`
 3. Nháy đúp `CHAY-AGENT.bat` → thấy dòng "Day N phieu..." là chạy. Máy chỉ có driver Access
    cũ 32-bit (Jet 4.0 — chính là driver phần mềm cân đang dùng) → bat TỰ chuyển PowerShell 32-bit.
 4. Tự chạy khi bật máy: Win+R → gõ `shell:startup` → Enter → kéo shortcut của `CHAY-AGENT.bat` vào.

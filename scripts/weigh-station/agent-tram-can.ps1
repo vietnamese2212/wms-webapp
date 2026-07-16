@@ -12,8 +12,9 @@
 $MdbPath     = 'C:\CanOto\TVTDB.mdb'      # duong dan file TVTDB.mdb (local hoac \\may-can\share\TVTDB.mdb)
 $MdbPassword = 'nhucu2012'                # password DB (trong file .config cua PM can)
 $WmsUrl      = 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'  # URL WMS (production: https://wms-webapp.vercel.app)
-$ApiKey      = 'DAN_API_KEY_VAO_DAY'      # API key co scope weigh:write (admin WMS cap)
+$ApiKey      = 'DAN_API_KEY_VAO_DAY'      # API key co scope weigh:write (admin WMS cap - dat ten "Kho <Ten>_Agent tram can")
 $StationCode = 'KB01'                     # ma tram can (nhieu tram thi dat khac nhau)
+$WarehouseId = ''                         # id KHO cua tram can trong WMS (de trong = chua gan kho; lay id tu admin WMS)
 $PollSeconds = 20                         # bao lau quet 1 lan
 $BatchRows   = 100                        # moi vong lay N phieu MOI NHAT (upsert nen gui lai vo hai)
 # -----------------------------------------------------------------------------
@@ -70,7 +71,9 @@ function Read-Tickets($sql) {
   return ,$list
 }
 function Send-Tickets($tickets) {
-  $body = @{ station_code = $StationCode; tickets = $tickets } | ConvertTo-Json -Depth 4
+  $payload = @{ station_code = $StationCode; tickets = $tickets }
+  if ($WarehouseId) { $payload.warehouse_id = $WarehouseId }
+  $body = $payload | ConvertTo-Json -Depth 4
   return Invoke-RestMethod -Uri "$WmsUrl/api/integration/v1/weigh/tickets" -Method Post `
     -Headers @{ 'X-API-Key' = $ApiKey } -ContentType 'application/json; charset=utf-8' `
     -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 120

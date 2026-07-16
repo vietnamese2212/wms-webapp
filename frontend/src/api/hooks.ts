@@ -2212,6 +2212,55 @@ export async function fetchScanLogExport(applied: ScanLogParams): Promise<Outbou
   return all
 }
 
+// ─── Phiếu cân trạm cân (WeighTicket) ────────────────────────────────────────
+export interface WeighTicket {
+  id: string
+  station_code: string
+  source_id: number
+  ticket_no: string | null
+  weigh_date: string | null
+  license_plate: string | null
+  direction: string | null          // 'Cân Xuất' / 'Cân Nhập' (nguyên văn PM cân)
+  goods_name: string | null
+  trans_company: string | null
+  tare_kg: number | null
+  tare_at: string | null
+  gross_kg: number | null
+  gross_at: string | null
+  net_kg: number | null
+  in_time: string | null
+  out_time: string | null
+  is_complete: boolean
+  gdo_id: string | null
+  matched_at: string | null
+  matched_by: string | null         // 'auto' hoặc tên user
+  gdo_group_code?: string | null    // join tay từ BE
+  gdo_status?: string | null
+}
+export type WeighTicketParams = {
+  from_date?: string; to_date?: string; q?: string
+  direction?: string; match_state?: string; page?: number; limit?: number
+}
+export function useWeighTickets(params: WeighTicketParams) {
+  return useQuery({
+    queryKey: ['weigh-tickets', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/weigh-tickets', { params })
+      return data.data as { rows: WeighTicket[]; total: number; page: number; limit: number }
+    },
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  })
+}
+export function useMatchWeighTicket() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, gdo_id }: { id: string; gdo_id: string | null }) =>
+      apiClient.patch(`/wms/weigh-tickets/${id}/match`, { gdo_id }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['weigh-tickets'] }),
+  })
+}
+
 // ─── TMS ─────────────────────────────────────────────────────────────────────
 
 export function useVehicleTypesByWarehouse(warehouseId: string | null, cargoType?: string) {

@@ -66,3 +66,7 @@ Employee_Template.xlsx
 docs/handover/pdf/__render_tmp.html
 
 .vercel
+
+# DB phan mem can (du lieu that + password) - KHONG commit
+TVTDB.mdb
+*.mdb

@@ -8,6 +8,7 @@ import * as zone from '../controllers/wms/zoneController'
 import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
+import * as weigh from '../controllers/wms/weighTicketController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -141,6 +142,10 @@ router.post('/outbound/upload',                               requirePerm('outbo
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
+// Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
+router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
+router.patch('/weigh-tickets/:id/match',                      requirePerm('weigh_station', 'match'), weigh.matchWeighTicket)
+
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
 router.get('/outbound/scan-log/search',                       requirePerm('scanlog', 'view'), outbound.searchScanLog)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)

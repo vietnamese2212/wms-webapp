@@ -5,7 +5,7 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -48,8 +48,9 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Điều vận (TMS)',
     operational: true,
     items: [
-      { to: '/tms/bookings', icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms_plan' },
-      { to: '/tms/gate',     icon: ShieldCheck,   label: 'Đăng ký cổng', module: 'gate_registration' },
+      { to: '/tms/bookings',      icon: ClipboardList, label: 'Kế hoạch VC',  module: 'tms_plan' },
+      { to: '/tms/gate',          icon: ShieldCheck,   label: 'Đăng ký cổng', module: 'gate_registration' },
+      { to: '/wms/weigh-tickets', icon: Scale,         label: 'Phiếu cân',    module: 'weigh_station' },
     ],
   },
   {

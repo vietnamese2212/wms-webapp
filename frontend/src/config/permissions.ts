@@ -209,6 +209,13 @@ export const MODULES = {
       exit:   'Xác nhận xe ra + hoàn tác (Bảo vệ)',
     },
   },
+  weigh_station: {
+    page: 'Phiếu cân (trạm cân)',
+    actions: {
+      view:  'Xem phiếu cân',
+      match: 'Gắn / gỡ phiếu cân với chuyến xe',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

@@ -2,6 +2,7 @@ import { Router, type Request } from 'express'
 import rateLimit from 'express-rate-limit'
 import { requireApiKey } from '../middlewares/apiKey'
 import * as ex from '../controllers/integration/exportController'
+import { ingestWeighTickets } from '../controllers/wms/weighTicketController'
 
 // Cổng tích hợp ERP — READ-ONLY, xác thực bằng API key (KHÔNG qua verifyToken/anon).
 // Mount ở /api/integration (app.ts), tách hẳn khỏi các router người-dùng.
@@ -29,5 +30,8 @@ router.get('/v1/inventory',        requireApiKey('inventory:read'), ex.exportInv
 router.get('/v1/inbound-receipts', requireApiKey('inbound:read'),   ex.exportInboundReceipts)
 router.get('/v1/outbound-orders',  requireApiKey('outbound:read'),  ex.exportOutboundOrders)
 router.get('/v1/scan-entries',     requireApiKey('scans:read'),     ex.exportScanEntries)
+
+// Trạm cân: agent LAN đẩy phiếu cân lên (WRITE duy nhất của cổng tích hợp — scope riêng)
+router.post('/v1/weigh/tickets',   requireApiKey('weigh:write'),    ingestWeighTickets)
 
 export default router

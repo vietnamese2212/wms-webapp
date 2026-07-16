@@ -75,6 +75,13 @@ export interface ScanLogFilters {
   nmsx: string[]
   search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
+export interface WeighTicketFilters {
+  from_date: string
+  to_date: string
+  direction: string     // '' | 'Cân Xuất' | 'Cân Nhập'
+  match_state: string   // '' | 'matched' | 'unmatched' | 'pending'
+  search: string
+}
 interface LocationsFilters {
   search: string
   warehouseId: string
@@ -179,6 +186,7 @@ interface WmsFilterState {
   inventory:         InventoryFilters
   loosePicking:      LoosePickingFilters
   scanLog:           ScanLogFilters
+  weighTickets:      WeighTicketFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   locations:         LocationsFilters
@@ -201,6 +209,7 @@ interface WmsFilterState {
   setInventory:         (f: Partial<InventoryFilters>)         => void
   setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
   setScanLog:           (f: Partial<ScanLogFilters>)          => void
+  setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
@@ -248,6 +257,7 @@ function initialFilters() {
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
       search: '',
     },
+    weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', search: '' },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
@@ -279,6 +289,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setInventory:        (f) => set(s => ({ inventory:        { ...s.inventory,        ...f } })),
       setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),
       setScanLog:          (f) => set(s => ({ scanLog:          { ...s.scanLog,          ...f } })),
+      setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),

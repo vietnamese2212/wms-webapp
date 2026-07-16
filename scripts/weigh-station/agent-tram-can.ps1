@@ -42,8 +42,9 @@ if (-not $provider) {
     Log "Khong thay provider 64-bit - chuyen sang che do 32-bit (Jet 4.0)..."
     exit 2
   }
+  # Khong Read-Host o day - chay ngam qua Task Scheduler se treo; chay tay thi .bat co pause giu cua so
   Log "LOI: khong mo duoc DB. Kiem tra: (1) duong dan $MdbPath, (2) password, (3) file dang bi khoa."
-  Read-Host 'Nhan Enter de thoat'; exit 1
+  exit 1
 }
 Log "Bat dau agent | DB: $MdbPath | provider: $provider | WMS: $WmsUrl | tram: $StationCode | poll: ${PollSeconds}s"
 

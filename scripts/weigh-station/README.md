@@ -38,9 +38,17 @@ Windows hay phần mềm cân — chỉ ĐỌC `TVTDB.mdb` (SELECT) rồi gọi 
      `UPDATE "WeighTicket" SET warehouse_id = '<id kho>' WHERE station_code = 'KB01' AND warehouse_id IS NULL;`
 3. Nháy đúp `CHAY-AGENT.bat` → thấy dòng "Day N phieu..." là chạy. Máy chỉ có driver Access
    cũ 32-bit (Jet 4.0 — chính là driver phần mềm cân đang dùng) → bat TỰ chuyển PowerShell 32-bit.
-4. Tự chạy khi bật máy: Win+R → gõ `shell:startup` → Enter → kéo shortcut của `CHAY-AGENT.bat` vào.
-5. Theo dõi: file `agent-tram-can.log` cùng thư mục. Mất mạng → agent tự thử lại mỗi vòng, không mất phiếu
-   (mỗi vòng lấy 100 phiếu mới nhất, server tự khử trùng).
+4. **Chạy NGẦM + tự khởi động cùng máy (khuyến nghị — không phải mở cửa sổ mãi):**
+   Task Scheduler có sẵn của Windows. Mở PowerShell **Run as Administrator** trên máy cân, dán 1 lệnh:
+   ```
+   schtasks /Create /TN "WMS Agent Tram Can" /TR "C:\WMS-Agent\CHAY-AGENT.bat" /SC ONSTART /RU SYSTEM /RL HIGHEST /F
+   ```
+   → từ nay mỗi lần bật máy agent tự chạy ẩn hoàn toàn (không cửa sổ). Chạy ngay không cần khởi động lại:
+   `schtasks /Run /TN "WMS Agent Tram Can"`. Tắt: `schtasks /End /TN "WMS Agent Tram Can"`;
+   gỡ hẳn: `schtasks /Delete /TN "WMS Agent Tram Can" /F`.
+   (Nháy đúp `CHAY-AGENT.bat` chỉ dành cho lúc cài lần đầu / cần nhìn log trực tiếp để debug.)
+5. Theo dõi: file `agent-tram-can.log` cùng thư mục (chạy ngầm vẫn ghi log này). Mất mạng → agent tự thử lại
+   mỗi vòng, không mất phiếu (mỗi vòng lấy 100 phiếu mới nhất, server tự khử trùng).
 
 ## Phương án dự phòng (nếu tuyệt đối không được đụng máy cân)
 Nhờ IT share thư mục phần mềm cân qua LAN (chỉ-đọc) → chạy agent trên 1 máy khác luôn bật,

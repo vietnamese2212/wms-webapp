@@ -220,6 +220,25 @@ export async function listWeighTickets(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /wms/weigh-tickets/warehouses — chỉ các kho THỰC CÓ phiếu cân (option filter Kho trên FE),
+// vẫn cắt scope kho JWT. Check tồn tại từng kho (limit 1, index warehouse_id) — chính xác ở mọi quy mô,
+// không dựa DISTINCT trên trang bị cap 1000.
+export async function listWeighWarehouses(req: Request, res: Response) {
+  try {
+    const scoped = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    if (scoped && scoped.length === 0) return ok(res, [])
+    let q = supabase.from('Warehouse').select('id, name').order('name')
+    if (scoped) q = q.in('id', scoped)
+    const { data: whs, error } = await q
+    if (error) return fail(res, error.message, 500, 'DB_ERROR')
+    const checks = await Promise.all(((whs ?? []) as { id: string; name: string }[]).map(async w => {
+      const { data } = await supabase.from('WeighTicket').select('id').eq('warehouse_id', w.id).limit(1)
+      return (data ?? []).length > 0 ? w : null
+    }))
+    return ok(res, checks.filter(Boolean))
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // PATCH /wms/weigh-tickets/:id/match  { gdo_id: string | null } — gắn/gỡ chuyến tay
 export async function matchWeighTicket(req: Request, res: Response) {
   try {

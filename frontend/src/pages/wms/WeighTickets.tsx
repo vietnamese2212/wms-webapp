@@ -14,8 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
-import { useWeighTickets, useMatchWeighTicket, useGDOs, type WeighTicket } from '@/api/hooks'
-import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useWeighTickets, useWeighTicketWarehouses, useMatchWeighTicket, useGDOs, type WeighTicket } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -59,7 +58,7 @@ export default function WeighTickets() {
   const [matchFor, setMatchFor] = useState<WeighTicket | null>(null)
   const { widths: colW, startResize, totalWidth } = useColumnResize('weigh_col_widths', COL_DEFAULTS)
 
-  const { data: warehouses = [] } = useScopedWarehouses()
+  const { data: warehouses = [] } = useWeighTicketWarehouses()  // chỉ kho THỰC CÓ phiếu cân
 
   const params = useMemo(() => ({
     from_date: filters.from_date || undefined,
@@ -83,7 +82,7 @@ export default function WeighTickets() {
     { key: 'date', label: 'Ngày cân', type: 'daterange', from: filters.from_date, to: filters.to_date,
       onChange: (from, to) => setF({ from_date: from, to_date: to }) },
     { key: 'warehouse', label: 'Kho', type: 'multi', searchable: true,
-      options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
+      options: warehouses.map(w => ({ value: w.id, label: w.name })),
       selected: filters.warehouse_ids,
       onChange: v => setF({ warehouse_ids: v }) },
     { key: 'direction', label: 'Chiều', type: 'single', allLabel: 'Tất cả chiều', value: filters.direction,

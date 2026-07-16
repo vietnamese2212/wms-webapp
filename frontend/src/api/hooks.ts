@@ -2254,6 +2254,17 @@ export function useWeighTickets(params: WeighTicketParams) {
     placeholderData: keepPreviousData,
   })
 }
+// Option filter Kho = chỉ các kho THỰC CÓ phiếu cân (BE cắt scope)
+export function useWeighTicketWarehouses() {
+  return useQuery({
+    queryKey: ['weigh-ticket-warehouses'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/weigh-tickets/warehouses')
+      return data.data as { id: string; name: string }[]
+    },
+    staleTime: 5 * 60_000,
+  })
+}
 export function useMatchWeighTicket() {
   const qc = useQueryClient()
   return useMutation({

@@ -144,6 +144,7 @@ router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbo
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
+router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)
 router.patch('/weigh-tickets/:id/match',                      requirePerm('weigh_station', 'match'), weigh.matchWeighTicket)
 
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)

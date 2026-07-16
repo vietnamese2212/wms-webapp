@@ -36,7 +36,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   OutboundDelivery:    [['gdo']],
   OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
   OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages']],
-  WeighTicket:         [['weigh-tickets']],
+  WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses']],
   Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],

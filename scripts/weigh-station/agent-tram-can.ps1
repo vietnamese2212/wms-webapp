@@ -26,22 +26,28 @@ function Log($s) {
   Add-Content -Path $logFile -Value $line
 }
 
-# Chon provider ACE co san tren may
+# Chon provider doc Access co san tren may (ACE 16/12 = Office moi; Jet 4.0 = may cu 32-bit -
+# PM can Kinh Bac dung Jet 4.0 nen may can CHAC CHAN co, nhung Jet chi thay duoc tu PowerShell 32-bit)
 $provider = $null
-foreach ($p in 'Microsoft.ACE.OLEDB.16.0','Microsoft.ACE.OLEDB.12.0') {
+foreach ($p in 'Microsoft.ACE.OLEDB.16.0','Microsoft.ACE.OLEDB.12.0','Microsoft.Jet.OLEDB.4.0') {
   try {
     $test = New-Object System.Data.OleDb.OleDbConnection("Provider=$p;Data Source=$MdbPath;Jet OLEDB:Database Password=$MdbPassword")
     $test.Open(); $test.Close(); $provider = $p; break
   } catch { }
 }
 if (-not $provider) {
-  Log "LOI: khong mo duoc DB. Kiem tra: (1) duong dan $MdbPath, (2) password, (3) may da cai Access Database Engine chua."
+  if ([Environment]::Is64BitProcess) {
+    # May chi co Jet 4.0 (32-bit) -> bao .bat chay lai bang PowerShell 32-bit (exit 2)
+    Log "Khong thay provider 64-bit - chuyen sang che do 32-bit (Jet 4.0)..."
+    exit 2
+  }
+  Log "LOI: khong mo duoc DB. Kiem tra: (1) duong dan $MdbPath, (2) password, (3) file dang bi khoa."
   Read-Host 'Nhan Enter de thoat'; exit 1
 }
 Log "Bat dau agent | DB: $MdbPath | provider: $provider | WMS: $WmsUrl | tram: $StationCode | poll: ${PollSeconds}s"
 
 $cols = 'id, OrderNum, GDate, TruckNum, TransCompany, GoodsName, GrossWeight, TareWeight, NetWeight, GrossTime, TareTime, GInTime, GOutTime, ImExType, InOut'
-$lastSent = ''   # dau van cua lo truoc — trung thi khoi goi mang cho do ton
+$lastSent = ''   # dau van cua lo truoc - trung thi khoi goi mang cho do ton
 
 while ($true) {
   try {

@@ -18,3 +18,27 @@ Script CHỈ ĐỌC — không sửa, không xóa, không gửi gì lên mạng 
 - Lưu ý: file kết quả có thể chứa mật khẩu DB trong connection string — không gửi ra ngoài công ty.
 
 Bước tiếp theo (sau khi có kết quả): viết agent `scripts/weigh-station/agent/` đọc DB cân → POST `/api/integration/v1/weigh/tickets` (thiết kế đã chốt 16/07 — xem memory `weigh-station-integration`).
+
+---
+
+# Agent đồng bộ (đã build — `agent-tram-can.ps1` + `CHAY-AGENT.bat`)
+
+Agent = **2 file, KHÔNG phải cài đặt**: không installer, không service, không sửa gì của
+Windows hay phần mềm cân — chỉ ĐỌC `TVTDB.mdb` (SELECT) rồi gọi HTTPS lên WMS. Xóa 2 file là hết.
+
+## Triển khai KHUYẾN NGHỊ: chạy ngay trên máy trạm cân (máy có Internet)
+1. Copy 2 file `agent-tram-can.ps1` + `CHAY-AGENT.bat` vào 1 thư mục trên máy cân (vd `C:\WMS-Agent\`).
+2. Mở `agent-tram-can.ps1` bằng Notepad, sửa khối CONFIG đầu file:
+   - `$MdbPath` = đường dẫn thật tới `TVTDB.mdb` (cùng thư mục phần mềm cân)
+   - `$ApiKey`  = API key scope `weigh:write` (admin WMS tạo trong Quản lý API key)
+   - `$WmsUrl`  = URL WMS (production: `https://wms-webapp.vercel.app`)
+3. Nháy đúp `CHAY-AGENT.bat` → thấy dòng "Day N phieu..." là chạy. Máy chỉ có driver Access
+   cũ 32-bit (Jet 4.0 — chính là driver phần mềm cân đang dùng) → bat TỰ chuyển PowerShell 32-bit.
+4. Tự chạy khi bật máy: Win+R → gõ `shell:startup` → Enter → kéo shortcut của `CHAY-AGENT.bat` vào.
+5. Theo dõi: file `agent-tram-can.log` cùng thư mục. Mất mạng → agent tự thử lại mỗi vòng, không mất phiếu
+   (mỗi vòng lấy 100 phiếu mới nhất, server tự khử trùng).
+
+## Phương án dự phòng (nếu tuyệt đối không được đụng máy cân)
+Nhờ IT share thư mục phần mềm cân qua LAN (chỉ-đọc) → chạy agent trên 1 máy khác luôn bật,
+`$MdbPath = '\\ten-may-can\ten-share\TVTDB.mdb'`. Nhược: thêm 1 điểm hỏng + đọc Access qua
+mạng kém bền hơn đọc tại chỗ.

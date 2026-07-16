@@ -5,7 +5,7 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -29,6 +29,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Tổng quan',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
     ],
   },
   {

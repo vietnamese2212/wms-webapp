@@ -5,7 +5,7 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
-  ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard']],
+  ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard'], ['control-tower']],
   // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
   InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages']],
   Location:            [['locations-real'], ['sub-groups']],
@@ -30,13 +30,13 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TmsOrder:            [['tms-orders'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
   TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
-  gate_registrations:  [['gate-registrations']],
+  gate_registrations:  [['gate-registrations'], ['control-tower']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
-  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages']],
+  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower']],
   OutboundDelivery:    [['gdo']],
   OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
-  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages']],
-  WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses']],
+  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
+  WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],

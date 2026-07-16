@@ -216,6 +216,12 @@ export const MODULES = {
       match: 'Gắn / gỡ phiếu cân với chuyến xe',
     },
   },
+  control_tower: {
+    page: 'Giám sát vận hành (Control Tower)',
+    actions: {
+      view: 'Xem bảng giám sát + chế độ TV',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

@@ -36,6 +36,7 @@ const outboundItemDetail = () => import('@/pages/wms/OutboundItemDetail')
 const outboundScanLog    = () => import('@/pages/wms/OutboundScanLog')
 const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const weighTickets       = () => import('@/pages/wms/WeighTickets')
+const controlTower       = () => import('@/pages/wms/ControlTower')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
@@ -70,6 +71,7 @@ export const Pages = {
   OutboundScanLog: lazyRetry(outboundScanLog),
   OutboundPrepare: lazyRetry(outboundPrepare),
   WeighTickets: lazyRetry(weighTickets),
+  ControlTower: lazyRetry(controlTower),
   LoosePicking: lazyRetry(loosePicking),
   LoosePickingDetail: lazyRetry(loosePickingDetail),
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),

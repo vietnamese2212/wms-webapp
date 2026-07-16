@@ -208,6 +208,8 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `tms_companies` | TMS — ĐVVT / NCC | Cài đặt TMS | view, manage |
 | `tms_vehicles` | TMS — Xe | Cài đặt TMS | view, manage |
 | `gate_registration` | Đăng ký cổng | Đăng ký cổng | view, create, edit, delete, call, entry, exit |
+| `weigh_station` | Phiếu cân (trạm cân) | Phiếu cân (menu Điều vận) | view, match=gắn/gỡ phiếu cân với chuyến |
+| `control_tower` | Giám sát vận hành | Giám sát vận hành (menu Tổng quan) — dashboard realtime + chế độ TV | view |
 | `inbound_plan` | Kế hoạch nhập chuyển kho | trong TMS Bookings (tab Kế hoạch) — KH nhập kho đích của chuyển kho, auto-tạo từ Outbound + upload. **KHÔNG còn khái niệm "KH nhập từ ngoài" / trang KH nhập đứng riêng** | view, edit (create/delete/cancel ĐÃ BỎ 02/07 — mồ côi; tạo/sửa/xóa dòng KH đi theo `tms_plan.upload_inbound` hoặc `tms_plan.edit`) |
 
 > **Cross-module**:

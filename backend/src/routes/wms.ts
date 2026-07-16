@@ -9,6 +9,7 @@ import * as inboundPlan from '../controllers/wms/inboundPlanController'
 import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
 import * as weigh from '../controllers/wms/weighTicketController'
+import * as controlTower from '../controllers/wms/controlTowerController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -142,6 +143,8 @@ router.post('/outbound/upload',                               requirePerm('outbo
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
+// Control Tower — giám sát vận hành trong ngày (đọc-only, RPC aggregate)
+router.get('/control-tower',                                  requirePerm('control_tower', 'view'), controlTower.getControlTower)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)

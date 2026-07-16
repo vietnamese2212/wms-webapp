@@ -75,6 +75,9 @@ export interface ScanLogFilters {
   nmsx: string[]
   search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
+export interface ControlTowerFilters {
+  warehouse_ids: string[]   // kho đang giám sát ('' = mọi kho trong scope)
+}
 export interface WeighTicketFilters {
   from_date: string
   to_date: string
@@ -188,6 +191,7 @@ interface WmsFilterState {
   loosePicking:      LoosePickingFilters
   scanLog:           ScanLogFilters
   weighTickets:      WeighTicketFilters
+  controlTower:      ControlTowerFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   locations:         LocationsFilters
@@ -211,6 +215,7 @@ interface WmsFilterState {
   setLoosePicking:      (f: Partial<LoosePickingFilters>)      => void
   setScanLog:           (f: Partial<ScanLogFilters>)          => void
   setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
+  setControlTower:      (f: Partial<ControlTowerFilters>)     => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
@@ -259,6 +264,7 @@ function initialFilters() {
       search: '',
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
+    controlTower: { warehouse_ids: [] },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
@@ -291,6 +297,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setLoosePicking:     (f) => set(s => ({ loosePicking:     { ...s.loosePicking,     ...f } })),
       setScanLog:          (f) => set(s => ({ scanLog:          { ...s.scanLog,          ...f } })),
       setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
+      setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),

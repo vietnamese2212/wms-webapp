@@ -2274,6 +2274,38 @@ export function useMatchWeighTicket() {
   })
 }
 
+// ─── Control Tower (Giám sát vận hành) ───────────────────────────────────────
+export interface ControlTowerGateRow {
+  plate: string | null; company: string | null; direction: string | null
+  entry_at: string | null; warehouse_name: string | null; content: string | null
+}
+export interface ControlTowerTrip {
+  id: string; group_code: string; status: string; plate: string | null
+  warehouse_name: string | null; planned: number; scanned: number; started_at: string | null
+}
+export interface ControlTowerData {
+  date: string
+  gate: { registered: number; called: number; inside: number; completed: number; inside_list: ControlTowerGateRow[] }
+  outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number
+              planned: number; scanned: number; active: ControlTowerTrip[] }
+  inbound: { orders: number; pallets: number; cartons: number }
+  weigh: { tickets: number; pending2: number; net_kg: number }
+  hourly: { h: number; out_cartons: number; out_scans: number; in_pallets: number }[]
+}
+export function useControlTower(warehouseIds: string[]) {
+  return useQuery({
+    queryKey: ['control-tower', warehouseIds.join(',')],
+    queryFn: async () => {
+      const params = warehouseIds.length > 0 ? { warehouse_ids: warehouseIds.join(',') } : undefined
+      const { data } = await apiClient.get('/wms/control-tower', { params })
+      return data.data as ControlTowerData
+    },
+    staleTime: 20_000,
+    refetchInterval: 60_000,   // lưới an toàn khi realtime im (TV treo cả ngày)
+    placeholderData: keepPreviousData,
+  })
+}
+
 // ─── TMS ─────────────────────────────────────────────────────────────────────
 
 export function useVehicleTypesByWarehouse(warehouseId: string | null, cargoType?: string) {

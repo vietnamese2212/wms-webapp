@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -130,11 +131,12 @@ export async function ingestWeighTickets(req: Request, res: Response) {
       && !(oldMap.get(r.source_id)?.gdo_id))
     const dates = [...new Set(candidates.map(r => r.weigh_date))] as string[]
     for (const d of dates) {
-      const { data: gdos } = await supabase.from('GroupDeliveryOrder')
+      // Phân trang đủ MỌI chuyến trong ngày (cap-1000): cắt cụt → khớp NHẦM khi biển trùng
+      const gdos = await fetchAllRowsParallel(() => supabase.from('GroupDeliveryOrder')
         .select('id, license_plate').eq('delivery_date', d)
-        .not('license_plate', 'is', null).neq('status', 'CANCELLED').limit(1000)
+        .not('license_plate', 'is', null).neq('status', 'CANCELLED').order('id'))
       const byPlate = new Map<string, string[]>()
-      for (const g of (gdos ?? []) as { id: string; license_plate: string | null }[]) {
+      for (const g of gdos as { id: string; license_plate: string | null }[]) {
         const p = normPlate(g.license_plate)
         if (!p) continue
         byPlate.set(p, [...(byPlate.get(p) ?? []), g.id])

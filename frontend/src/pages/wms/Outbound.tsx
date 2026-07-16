@@ -91,7 +91,7 @@ function fTime(ts: string | null | undefined): string {
 }
 
 // useWarehouses() trả any[] (dùng nhiều nơi) → cast cục bộ sang type tối thiểu thay cho `as any`
-type WarehouseLite = { id: string; name: string; code?: string; warehouse_type?: string | null; inventory_mode?: string | null; parent_warehouse_id?: string | null; shipto_codes?: string[] | null }
+type WarehouseLite = { id: string; name: string; code?: string; is_active?: boolean; warehouse_type?: string | null; inventory_mode?: string | null; parent_warehouse_id?: string | null; shipto_codes?: string[] | null }
 
 // Cặp nội bộ parent↔kho phụ (cùng site): biển số tùy chọn khi Xuất luôn (BE cũng nới tương ứng)
 function isInternalPairFE(whs: WarehouseLite[], sourceWhId: string, shiptoCode: string): boolean {
@@ -1029,14 +1029,14 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
   value: string
   onChange: (v: string) => void
   onNPPChange: (code: string) => void  // '' = không phải NPP
-  warehouses: any[]
+  warehouses: WarehouseLite[]
 }) {
   const [open, setOpen] = useState(false)
-  const allActive = (warehouses as any[]).filter((w: any) => w.is_active)
+  const allActive = warehouses.filter(w => w.is_active)
   const filtered = value.trim()
-    ? allActive.filter((w: any) =>
+    ? allActive.filter(w =>
         w.name.toLowerCase().includes(value.toLowerCase()) ||
-        w.code.toLowerCase().includes(value.toLowerCase())
+        (w.code ?? '').toLowerCase().includes(value.toLowerCase())
       )
     : allActive
 
@@ -1052,14 +1052,14 @@ function CustomerCombobox({ value, onChange, onNPPChange, warehouses }: {
       />
       {open && filtered.length > 0 && (
         <div className="absolute z-50 w-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto">
-          {filtered.map((w: any) => (
+          {filtered.map(w => (
             <button key={w.id} type="button"
               className="w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-slate-50 flex items-center justify-between gap-2"
               onMouseDown={() => {
                 onChange(w.name)
                 // Khách khớp kho trong danh mục (MỌI chế độ QR/QTY/NONE) → gắn shipto để theo dõi
                 // vận chuyển bên TMS Chuyển kho; có tạo booking hay không do cờ Xác nhận giao hàng quyết.
-                onNPPChange(w.code)
+                onNPPChange(w.code ?? '')
                 setOpen(false)
               }}
             >
@@ -1420,7 +1420,7 @@ function GDOFormBody({
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
             <WarehouseSingleSelect
-              warehouses={(warehouses as any[]).filter((w: any) => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
+              warehouses={(warehouses as WarehouseLite[]).filter(w => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
               value={warehouseId}
               onChange={setWarehouseId}
               placeholder="Chọn kho…"
@@ -1740,14 +1740,14 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const { mutate: createGDO, isPending } = useCreateGDO()
   const { mutate: quickExportGDO, isPending: quickPending } = useQuickExportGDO()
   const { data: warehousesForCreate = [] } = useWarehouses(true)
-  const isNPPCreate = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  const isNPPCreate = (warehousesForCreate as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
 
   // "Xuất luôn" — chỉ khi có quyền + MỌI mã trong đơn là hàng không tem (mã no-QR hoặc kho QTY)
   const modalUser = useAuthStore(s => s.user)
   const modalPerms = (modalUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuick = can(modalPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate]   = useState('')
-  const quickWhMode: string | null = (warehousesForCreate as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
+  const quickWhMode: string | null = (warehousesForCreate as WarehouseLite[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   // "Tạo & Xuất luôn" CHỈ cho kho QTY/QTY_DATE/NONE (kho QR đi luồng quét tem) — không phụ thuộc mã hàng.
   const isQtyOrNone = isQtyLike(quickWhMode) || quickWhMode === 'NONE'
   const showQuick = canQuick && isQtyOrNone            // kho QTY/NONE → hiện ô Biển số + (khi đủ) nút xuất luôn
@@ -1876,7 +1876,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const editPerms = (editUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuickEdit = can(editPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate] = useState('')
-  const editWhMode: string | null = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
+  const editWhMode: string | null = (warehousesForEdit as WarehouseLite[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   const isQtyOrNoneEdit = isQtyLike(editWhMode) || editWhMode === 'NONE'
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
   // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (như form Tạo)
@@ -1914,7 +1914,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
 
     // Build items from delivery_orders (single DO for manual, all DOs for multi-DO)
     const allItems: ItemRow[] = (gdo.delivery_orders ?? []).flatMap(doRow =>
-      (doRow.items ?? []).map((item: any) => ({
+      (doRow.items ?? []).map(item => ({
         id: uid(),
         db_id: item.id,
         material_code: item.material_code_raw ?? '',
@@ -1934,7 +1934,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     setItems(allItems.length ? allItems : [makeItem()])
   }, [gdo, initialized, allVehicleTypes])
 
-  const isNPPEdit = (warehousesForEdit as any[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
+  const isNPPEdit = (warehousesForEdit as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
 
   function handleSubmit(quick = false) {
     // Đa-NPP (chuẩn 04/07) — DO chỉ là tham khảo, không dùng làm tiêu chí

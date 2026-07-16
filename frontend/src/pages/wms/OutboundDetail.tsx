@@ -859,7 +859,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
               { gdoId, itemId, cartons, production_date: prodDate || undefined },
               {
                 onSuccess: onClose,
-                onError: (e: any) => setErr(e?.response?.data?.error?.message ?? 'Lỗi khi lưu'),
+                onError: (e) => setErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi khi lưu'),
               }
             )}>
             {saving ? 'Đang lưu…' : 'Lưu'}

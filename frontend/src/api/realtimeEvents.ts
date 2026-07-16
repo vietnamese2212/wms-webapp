@@ -119,6 +119,7 @@ function scheduleScanLogRefresh(): void {
   scanLogTimer = setTimeout(() => {
     scanLogTimer = null
     queryClient.invalidateQueries({ queryKey: ['outbound-scan-log'] })
+    queryClient.invalidateQueries({ queryKey: ['outbound-scan-log-search'] })
   }, 3000)
 }
 

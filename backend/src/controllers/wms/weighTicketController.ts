@@ -70,6 +70,9 @@ export async function ingestWeighTickets(req: Request, res: Response) {
       .filter(k => Number.isFinite(Number(k?.id)))
       .map(k => {
         const net = numOrNull(k.NetWeight)
+        const tareAt = parseKbTime(k.TareTime), grossAt = parseKbTime(k.GrossTime)
+        // giờ cân LẦN 1 = GInTime; thiếu thì lấy mốc cân sớm nhất (bì hoặc tổng) — dùng để sort list
+        const firstWeigh = [tareAt, grossAt].filter((v): v is string => !!v).sort()[0] ?? null
         return {
           id: randomUUID() as string,   // chỉ dùng khi INSERT — dòng đã có sẽ được đắp id cũ bên dưới
           station_code: station,
@@ -82,11 +85,11 @@ export async function ingestWeighTickets(req: Request, res: Response) {
           goods_name: String(k.GoodsName ?? '').trim() || null,
           trans_company: String(k.TransCompany ?? '').trim() || null,
           tare_kg: numOrNull(k.TareWeight),
-          tare_at: parseKbTime(k.TareTime),
+          tare_at: tareAt,
           gross_kg: numOrNull(k.GrossWeight),
-          gross_at: parseKbTime(k.GrossTime),
+          gross_at: grossAt,
           net_kg: net,
-          in_time: parseKbTime(k.GInTime),
+          in_time: parseKbTime(k.GInTime) ?? firstWeigh,
           out_time: parseKbTime(k.GOutTime),
           is_complete: (net ?? 0) > 0,
           raw: k as unknown,
@@ -160,6 +163,8 @@ export async function listWeighTickets(req: Request, res: Response) {
     const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
     let query = supabase.from('WeighTicket')
       .select('*', { count: 'exact' })
+      // sort theo GIỜ CÂN LẦN 1 (in_time = GInTime, fallback mốc cân sớm nhất) — user chốt 16/07
+      .order('in_time', { ascending: false, nullsFirst: false })
       .order('source_id', { ascending: false })
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn

@@ -22,7 +22,7 @@ description: BẮT BUỘC làm theo khi thêm/sửa endpoint có INSERT/UPDATE, 
 ## C. Đổi DB schema (migration)
 1. Viết SQL → `backend/migrations/YYYYMMDD_<desc>.sql`.
 2. Apply qua Supabase Dashboard → SQL Editor (hoặc Postgres MCP read-only để kiểm tra trước/sau).
-3. Bảng mới cần realtime → thêm vào publication `supabase_realtime`.
+3. Bảng mới cần realtime → thêm vào publication `supabase_realtime` **VÀ policy RLS** `CREATE POLICY rls_auth_select ON public."<Bảng>" FOR SELECT TO authenticated USING (true);` — FE nhận Realtime qua JWT role=authenticated (setRealtimeAuth); từ đợt khóa RLS 12/07, bảng bật RLS mà thiếu policy này = Realtime bị chặn ÂM THẦM (phải refresh tay — dính thật với WeighTicket 16/07).
 4. Push GitHub + cập nhật `SCHEMA_REVIEW.md`.
 
 ## D. Sau khi xong

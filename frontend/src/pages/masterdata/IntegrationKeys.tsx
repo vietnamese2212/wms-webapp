@@ -24,6 +24,7 @@ const SCOPE_OPTS: { key: string; label: string }[] = [
   { key: 'inbound:read',   label: 'Phiếu nhập' },
   { key: 'outbound:read',  label: 'Phiếu xuất' },
   { key: 'scans:read',     label: 'Lịch sử quét' },
+  { key: 'weigh:write',    label: 'Trạm cân (đẩy phiếu cân vào)' },
 ]
 const ALL_SCOPES = SCOPE_OPTS.map(s => s.key)
 
@@ -34,6 +35,7 @@ const ENDPOINT_DOCS: { path: string; scope: string; label: string; fields: strin
   { path: '/inbound-receipts', scope: 'inbound:read',   label: 'Phiếu nhập',   fields: 'import_code, material_code, warehouse_id, warehouse_type, planned_cartons, planned_pallets, status, source_type, ncc_id, import_date' },
   { path: '/outbound-orders',  scope: 'outbound:read',  label: 'Phiếu xuất',   fields: 'group_code, planned_date, delivery_date, warehouse_id, warehouse_type, dvvt, shipto_party, license_plate, status, transfer_status, completed_at' },
   { path: '/scan-entries',     scope: 'scans:read',     label: 'Lịch sử quét', fields: 'item_id, inventory_entry_id, pallet_code, cartons_scanned, production_date, pct_date, is_loose_picking, scanned_at, scanned_by' },
+  { path: '/weigh/tickets (POST)', scope: 'weigh:write', label: 'Phiếu cân (agent trạm cân ĐẨY VÀO)', fields: 'station_code + tickets[] (cột gốc WeightForm của PM cân: id, OrderNum, GDate, TruckNum, Tare/Gross/NetWeight, TareTime/GrossTime, ImExType…)' },
 ]
 const errMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Có lỗi xảy ra, thử lại'

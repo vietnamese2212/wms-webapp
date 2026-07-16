@@ -8,7 +8,7 @@ import { encryptSecret, decryptSecret } from '../../utils/secretBox'
 // Quản lý API key — CHỈ superadmin (khóa cấp tài khoản, không phải quyền nghiệp vụ thường).
 const isSuper = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
 
-const VALID_SCOPES = ['materials:read', 'inventory:read', 'inbound:read', 'outbound:read', 'scans:read', '*']
+const VALID_SCOPES = ['materials:read', 'inventory:read', 'inbound:read', 'outbound:read', 'scans:read', 'weigh:write', '*']
 
 // POST /wms/integration-keys — tạo key mới, trả key thô 1 LẦN DUY NHẤT (sau đó chỉ còn băm).
 export async function createKey(req: Request, res: Response) {

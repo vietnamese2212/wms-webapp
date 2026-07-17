@@ -198,6 +198,9 @@ function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dar
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_name ?? '—'}</td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_type ?? <span className="text-slate-300">—</span>}</td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.vehicle_type ?? <span className="text-slate-300">—</span>}</td>
+                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {g.content ? <span className="block truncate max-w-[140px]" title={g.content}>{g.content}</span> : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.entry_at ? formatTimestampTime(g.entry_at).slice(0, 5) : '—'}</td>
                   <td className={`px-2.5 py-1 text-[10px] text-right whitespace-nowrap tabular-nums ${dwellClass(mins)}`}>{fmtDwell(mins)}</td>
                 </tr>
@@ -225,6 +228,7 @@ function TripsBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
               <div key={t.id} className={`px-2.5 py-1.5 ${dark ? 'border-slate-700/60' : ''}`}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[11px] font-mono font-semibold ${dark ? 'text-white' : ''}`}>{t.group_code}</span>
+                  <span className={`text-[9px] px-1 rounded border font-medium ${dark ? 'text-sky-400 border-sky-500/60' : 'text-sky-500 border-sky-400/60'}`}>Xuất</span>
                   {t.status === 'PAUSED' && <span className="text-[9px] px-1.5 rounded-full bg-red-100 text-red-600 font-medium">Tạm dừng</span>}
                   {t.npp && <span className={`text-[10px] font-medium truncate max-w-[160px] ${dark ? 'text-slate-200' : 'text-slate-600'}`} title={t.npp}>{t.npp}</span>}
                   <span className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{t.plate ?? ''}</span>

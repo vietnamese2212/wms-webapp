@@ -765,7 +765,7 @@ export function useReorderWarehouseTypes() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; slot_group?: string | null; flow_type?: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -792,7 +792,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; pick_rank?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; pick_rank?: number | null; slot_group?: string | null; flow_type?: string | null }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -2323,20 +2323,28 @@ export function useControlTower(warehouseIds: string[], categories: string[] = [
 }
 
 // ─── Slotting (Tối ưu vị trí) ────────────────────────────────────────────────
+export type SlottingLevel = 'EASY' | 'NORMAL' | 'HARD'
+export type SlottingPrinciple = 'FIFO' | 'FEFO' | 'LIFO'
 export interface SlottingZone {
   id: string; code: string; name: string; category: string | null
-  pick_rank: number | null; capacity: number; used_slots: number; band: 'A' | 'B' | 'C' | null
+  pick_rank: number | null; slot_group: string | null; flow_type: string | null
+  capacity: number; used_slots: number; band: 'A' | 'B' | 'C' | null
 }
 export interface SlottingMaterial {
   material_id: string; code: string; name: string | null; category: string | null
+  slot_group: string | null
   picks: number; cartons_out: number; pallets_touched: number
   stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number
   zones_current: { sub_code: string | null; pallets: number; cartons: number }[]
   suggested_zones: string[]; misplaced_pallets: number
 }
+export interface SlottingWarning {
+  type: 'FOREIGN_IN_GROUP' | 'GROUP_OUTSIDE'
+  material_code: string; material_name: string | null; zone_code: string; group: string; pallets: number
+}
 export interface SlottingData {
   window_days: number; total_picks: number; has_ranked_zones: boolean
-  zones: SlottingZone[]; materials: SlottingMaterial[]
+  zones: SlottingZone[]; materials: SlottingMaterial[]; warnings: SlottingWarning[]
 }
 export function useSlotting(warehouseId: string, categories: string[] = [], days = 30) {
   return useQuery({
@@ -2353,27 +2361,35 @@ export function useSlotting(warehouseId: string, categories: string[] = [], days
   })
 }
 
+// Dòng kế hoạch GOM theo (mã + date) — user chốt 17/07, không per-pallet
 export interface SlottingPlanLineDraft {
-  inventory_entry_id: string; pallet_code: string
-  material_code: string | null; material_name: string | null; abc: 'A' | 'B' | 'C'; reason: string
+  material_id: string; material_code: string | null; material_name: string | null
+  date_key: string | null; n_pallets: number; entry_ids: string[]
+  abc: 'A' | 'B' | 'C' | null; reason: string; flow_note: string | null
   from_location_id: string | null; from_location_code: string | null
   to_location_id: string; to_location_code: string | null
 }
 export interface SlottingPlanRow {
   id: string; warehouse_id: string; name: string; status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
+  level: SlottingLevel | null; principle: SlottingPrinciple | null
   note: string | null; window_days: number | null; n_lines: number
   created_by: string | null; created_at: string; completed_at: string | null; completed_by: string | null
-  progress: { done: number; gone: number; total: number } | null
+  progress: { done_pallets: number; total_pallets: number; done_lines: number; total_lines: number } | null
 }
 export interface SlottingPlanLineRow {
-  id: string; pallet_code: string; material_code: string | null; material_name: string | null
-  abc: string | null; reason: string | null
+  id: string; material_code: string | null; material_name: string | null; date_key: string | null
+  abc: string | null; reason: string | null; flow_note: string | null
   from_location_code: string | null; to_location_code: string | null; to_location_id: string
-  status: 'PENDING' | 'DONE' | 'MOVED_OTHER' | 'GONE'; current_location_code: string | null
+  n_pallets: number
+  status: 'PENDING' | 'PARTIAL' | 'DONE' | 'GONE'
+  done: number; pending: number; moved_other: number; gone: number
   moved_at: string | null; moved_by_name: string | null
 }
 export interface SlottingPlanDetailData extends Omit<SlottingPlanRow, 'progress'> {
-  summary: { total: number; done: number; moved_other: number; gone: number; pending: number }
+  summary: {
+    total_lines: number; done_lines: number; partial_lines: number; pending_lines: number
+    total_pallets: number; done_pallets: number; gone_pallets: number; moved_other_pallets: number; pending_pallets: number
+  }
   lines: SlottingPlanLineRow[]
 }
 export function useSlottingPlans(warehouseId?: string) {
@@ -2401,16 +2417,16 @@ export function useSlottingPlan(id: string | undefined) {
 }
 export function useSlottingPreview() {
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; days: number; max_moves: number; categories?: string[] }) =>
+    mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; categories?: string[] }) =>
       apiClient.post('/wms/slotting/plans/preview', body).then(r => r.data.data as {
-        lines: SlottingPlanLineDraft[]; skipped_no_capacity: number; total_candidates?: number; message?: string
+        lines: SlottingPlanLineDraft[]; skipped_no_capacity: number; warnings: SlottingWarning[]; message?: string
       }),
   })
 }
 export function useCreateSlottingPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; name: string; window_days?: number; note?: string; lines: SlottingPlanLineDraft[] }) =>
+    mutationFn: (body: { warehouse_id: string; name: string; level: SlottingLevel; principle: SlottingPrinciple; window_days?: number; note?: string; lines: SlottingPlanLineDraft[] }) =>
       apiClient.post('/wms/slotting/plans', body).then(r => r.data.data as { id: string; n_lines: number }),
     onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
   })

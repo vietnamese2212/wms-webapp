@@ -19,6 +19,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
+  type SlottingLevel, type SlottingPrinciple, type SlottingWarning,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -64,6 +65,17 @@ const DAYS_OPTS = [
   { value: '60', label: '60 ngày' },
   { value: '90', label: '90 ngày' },
 ]
+const LEVEL_OPTS = [
+  { value: 'EASY',   label: 'Easy — Gom giải phóng chỗ' },
+  { value: 'NORMAL', label: 'Normal — Gom theo date' },
+  { value: 'HARD',   label: 'Hard — Tối ưu toàn diện (ABC)' },
+]
+const PRINCIPLE_OPTS = [
+  { value: 'FEFO', label: 'FEFO — theo HSD' },
+  { value: 'FIFO', label: 'FIFO — theo NSX' },
+  { value: 'LIFO', label: 'LIFO — hàng mới trước' },
+]
+const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
 export default function Slotting() {
   const navigate = useNavigate()
@@ -72,7 +84,7 @@ export default function Slotting() {
   const admin = isAdmin(user?.name)
   const canPlan = admin || can(perms, 'slotting', 'plan')
 
-  const { warehouseId, categories, days, tab } = useWmsFilterStore(s => s.slotting)
+  const { warehouseId, categories, days, level, principle, tab } = useWmsFilterStore(s => s.slotting)
   const setSlotting = useWmsFilterStore(s => s.setSlotting)
 
   const { data: rawWarehouses = [] } = useScopedWarehouses(true)
@@ -95,7 +107,13 @@ export default function Slotting() {
     { key: 'cat', label: 'Loại kho', type: 'multi', selected: categories,
       onChange: (v: string[]) => setSlotting({ categories: v }),
       options: whTypes.map(t => ({ value: t.value, label: t.value })) },
-    { key: 'days', label: 'Cửa sổ', type: 'single', value: String(days),
+    { key: 'level', label: 'Mức độ', type: 'single', value: level,
+      onChange: v => setSlotting({ level: (v || 'NORMAL') as SlottingLevel }), allLabel: 'Normal — Gom theo date',
+      options: LEVEL_OPTS },
+    { key: 'principle', label: 'Nguyên tắc', type: 'single', value: principle,
+      onChange: v => setSlotting({ principle: (v || 'FEFO') as SlottingPrinciple }), allLabel: 'FEFO — theo HSD',
+      options: PRINCIPLE_OPTS },
+    { key: 'days', label: 'Cửa sổ ABC', type: 'single', value: String(days),
       onChange: v => setSlotting({ days: Number(v) || 30 }), allLabel: '30 ngày',
       options: DAYS_OPTS },
   ]
@@ -125,7 +143,7 @@ export default function Slotting() {
         </div>
 
         {tab === 'analysis'
-          ? <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} search={search} canPlan={canPlan} />
+          ? <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} search={search} canPlan={canPlan} />
           : <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
       </div>
     </div>
@@ -133,8 +151,9 @@ export default function Slotting() {
 }
 
 // ─── Tab Phân tích ABC ─────────────────────────────────────────────────────────
-function AnalysisTab({ warehouseId, categories, days, search, canPlan }: {
-  warehouseId: string; categories: string[]; days: number; search: string; canPlan: boolean
+function AnalysisTab({ warehouseId, categories, days, level, principle, search, canPlan }: {
+  warehouseId: string; categories: string[]; days: number
+  level: SlottingLevel; principle: SlottingPrinciple; search: string; canPlan: boolean
 }) {
   const { data, isLoading, error, refetch } = useSlotting(warehouseId, categories, days)
   const [showPlanSheet, setShowPlanSheet] = useState(false)
@@ -179,24 +198,27 @@ function AnalysisTab({ warehouseId, categories, days, search, canPlan }: {
       <div className="border-b bg-slate-50 px-3 py-1.5 shrink-0 flex items-center gap-1.5 flex-wrap">
         <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu (hạng nhặt):</span>
         {(data?.zones ?? []).map(z => (
-          <span key={z.id} title={`${z.name} — sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
-            {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}
+          <span key={z.id} title={`${z.name} — sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}${z.slot_group ? ` · khu riêng ${z.slot_group}` : ''}`}
+            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${z.slot_group ? 'bg-purple-50 text-purple-700 border-purple-200' : z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
+            {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}{z.slot_group ? ` · 🔒${z.slot_group}` : ''}
           </span>
         ))}
-        {data && !data.has_ranked_zones && (
+        {data && !data.has_ranked_zones && level === 'HARD' && (
           <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" /> Chưa khu nào có Hạng nhặt —
-            <Link to="/wms/settings" className="underline font-medium">khai trong Cài đặt WMS → Khu vực</Link> để nhận gợi ý
+            <AlertTriangle className="h-3 w-3" /> Mức Hard cần Hạng nhặt của khu —
+            <Link to="/wms/settings" className="underline font-medium">khai trong Cài đặt WMS → Khu vực</Link>
           </span>
         )}
         {canPlan && (
-          <Button size="sm" className="ml-auto h-7 text-[11px]" disabled={!data?.has_ranked_zones}
+          <Button size="sm" className="ml-auto h-7 text-[11px]" disabled={!data || (level === 'HARD' && !data.has_ranked_zones)}
             onClick={() => setShowPlanSheet(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> Tạo kế hoạch sắp xếp
+            <Plus className="h-3.5 w-3.5 mr-1" /> Tạo kế hoạch sắp xếp ({LEVEL_LABEL[level]} · {principle})
           </Button>
         )}
       </div>
+
+      {/* Cảnh báo nhóm riêng (SCA…) — hàng lạ trong khu riêng KHÔNG tự sinh lệnh (user chốt) */}
+      {(data?.warnings ?? []).length > 0 && <GroupWarnings warnings={data!.warnings} />}
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {error ? (
@@ -236,9 +258,35 @@ function AnalysisTab({ warehouseId, categories, days, search, canPlan }: {
 
       {showPlanSheet && data && (
         <PlanCreateSheet open={showPlanSheet} onClose={() => setShowPlanSheet(false)}
-          warehouseId={warehouseId} warehouseName={undefined} categories={categories} days={days} />
+          warehouseId={warehouseId} categories={categories} days={days} level={level} principle={principle} />
       )}
     </>
+  )
+}
+
+// Cảnh báo nhóm riêng: GROUP_OUTSIDE = sẽ được kéo về khi tạo KH; FOREIGN_IN_GROUP = chỉ cảnh báo
+function GroupWarnings({ warnings }: { warnings: SlottingWarning[] }) {
+  const foreign = warnings.filter(w => w.type === 'FOREIGN_IN_GROUP')
+  const outside = warnings.filter(w => w.type === 'GROUP_OUTSIDE')
+  return (
+    <div className="border-b bg-amber-50/60 px-3 py-1.5 shrink-0 space-y-0.5 text-[10px]">
+      {foreign.length > 0 && (
+        <p className="text-amber-800 flex items-start gap-1 flex-wrap">
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+          <span><b>Hàng lạ trong khu riêng</b> (chỉ cảnh báo — không tự sinh lệnh):{' '}
+            {foreign.slice(0, 6).map(w => `${w.material_code} (${w.pallets} pallet ở ${w.zone_code}·${w.group})`).join(' · ')}
+            {foreign.length > 6 ? ` … +${foreign.length - 6} mục` : ''}</span>
+        </p>
+      )}
+      {outside.length > 0 && (
+        <p className="text-purple-800 flex items-start gap-1 flex-wrap">
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+          <span><b>Mã thuộc khu riêng đang nằm ngoài</b> (tạo kế hoạch sẽ kéo về, ưu tiên cao nhất):{' '}
+            {outside.slice(0, 6).map(w => `${w.material_code} (${w.pallets} pallet ở ${w.zone_code} → về khu ${w.group})`).join(' · ')}
+            {outside.length > 6 ? ` … +${outside.length - 6} mục` : ''}</span>
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -282,14 +330,17 @@ function MatRow({ m, zoneByCode }: { m: SlottingMaterial; zoneByCode: Map<string
   )
 }
 
-// ─── Sheet tạo kế hoạch (preview → chọn dòng → lưu) ───────────────────────────
-function PlanCreateSheet({ open, onClose, warehouseId, warehouseName, categories, days }: {
+// ─── Sheet tạo kế hoạch (preview → chọn dòng → lưu) — dòng GOM (mã + date) ─────
+const lineKey = (l: SlottingPlanLineDraft) => `${l.material_id}|${l.date_key ?? ''}|${l.from_location_id ?? ''}|${l.to_location_id}`
+
+function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, principle }: {
   open: boolean; onClose: () => void
-  warehouseId: string; warehouseName?: string; categories: string[]; days: number
+  warehouseId: string; categories: string[]; days: number
+  level: SlottingLevel; principle: SlottingPrinciple
 }) {
   const navigate = useNavigate()
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [name, setName] = useState(`Sắp xếp kho ${today}`)
+  const [name, setName] = useState(`Sắp xếp kho ${today} (${LEVEL_LABEL[level]} · ${principle})`)
   const [maxMoves, setMaxMoves] = useState('100')
   const [err, setErr] = useState('')
   const [lines, setLines] = useState<SlottingPlanLineDraft[] | null>(null)
@@ -302,10 +353,10 @@ function PlanCreateSheet({ open, onClose, warehouseId, warehouseName, categories
   function handlePreview() {
     setErr('')
     const mm = Math.min(300, Math.max(1, Number(maxMoves) || 100))
-    preview({ warehouse_id: warehouseId, days, max_moves: mm, categories: categories.length > 0 ? categories : undefined }, {
+    preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, categories: categories.length > 0 ? categories : undefined }, {
       onSuccess: r => {
         setLines(r.lines)
-        setChecked(new Set(r.lines.map(l => l.inventory_entry_id)))
+        setChecked(new Set(r.lines.map(lineKey)))
         setSkipped(r.skipped_no_capacity)
         if (r.lines.length === 0) setErr(r.message ?? 'Không sinh được gợi ý nào')
       },
@@ -314,21 +365,22 @@ function PlanCreateSheet({ open, onClose, warehouseId, warehouseName, categories
   }
   function handleSave() {
     setErr('')
-    const selected = (lines ?? []).filter(l => checked.has(l.inventory_entry_id))
+    const selected = (lines ?? []).filter(l => checked.has(lineKey(l)))
     if (!name.trim()) { setErr('Nhập tên kế hoạch'); return }
     if (selected.length === 0) { setErr('Chọn ít nhất 1 dòng chuyển'); return }
-    create({ warehouse_id: warehouseId, name: name.trim(), window_days: days, lines: selected }, {
+    create({ warehouse_id: warehouseId, name: name.trim(), level, principle, window_days: days, lines: selected }, {
       onSuccess: r => { onClose(); navigate(`/wms/slotting/plans/${r.id}`) },
       onError: e => setErr(apiMsg(e)),
     })
   }
-  const nSel = (lines ?? []).filter(l => checked.has(l.inventory_entry_id)).length
+  const nSel = (lines ?? []).filter(l => checked.has(lineKey(l))).length
+  const nPallets = (lines ?? []).filter(l => checked.has(lineKey(l))).reduce((s, l) => s + l.n_pallets, 0)
 
   return (
-    <FormSheet open={open} onClose={onClose} title={`Tạo kế hoạch sắp xếp${warehouseName ? ` — ${warehouseName}` : ''}`} widthClass="sm:max-w-2xl" footer={<>
+    <FormSheet open={open} onClose={onClose} title={`Tạo kế hoạch sắp xếp — ${LEVEL_LABEL[level]} · ${principle}`} widthClass="sm:max-w-3xl" footer={<>
       <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
       <Button size="sm" onClick={handleSave} disabled={creating || nSel === 0}>
-        {creating ? 'Đang lưu…' : `Lưu kế hoạch (${nSel} dòng)`}
+        {creating ? 'Đang lưu…' : `Lưu kế hoạch (${nSel} dòng · ${nPallets} pallet)`}
       </Button>
     </>}>
       <div className="space-y-3">
@@ -347,10 +399,14 @@ function PlanCreateSheet({ open, onClose, warehouseId, warehouseName, categories
           </Button>
         </div>
         <p className="text-[10px] text-slate-400">
-          Gợi ý theo cửa sổ phân tích {days} ngày: ưu tiên mã A đang ở khu xa cửa → về khu gần cửa, mã C chiếm khu gần cửa → ra khu xa.
-          Pallet đang giữ cho đơn xuất được bỏ qua. Vị trí đích đã kiểm sức chứa lúc sinh gợi ý.
+          {level === 'EASY' && 'Easy: gom mã đang rải nhiều vị trí về ít vị trí — giải phóng chỗ trống, không quan tâm date.'}
+          {level === 'NORMAL' && (principle === 'LIFO'
+            ? 'Normal · LIFO: dồn hàng cùng mã date DÀI vào vị trí đang chứa date ngắn.'
+            : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo NSX)'}.`)}
+          {level === 'HARD' && `Hard: đảo khu theo ABC (${days} ngày) + gom theo date ${principle} — cần chỗ trống đệm.`}
+          {' '}Mã thuộc khu riêng nằm ngoài luôn được kéo về trước tiên. Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa vị trí đích.
         </p>
-        {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} dòng bị bỏ vì khu đích hết chỗ trống</p>}
+        {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} pallet bị bỏ vì vị trí đích hết chỗ trống</p>}
 
         {lines && lines.length > 0 && (
           <div className="border rounded-lg overflow-x-auto">
@@ -360,36 +416,41 @@ function PlanCreateSheet({ open, onClose, warehouseId, warehouseName, categories
                   <TableHead className="px-2 py-1.5 w-8">
                     <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600"
                       checked={nSel === lines.length}
-                      onChange={e => setChecked(e.target.checked ? new Set(lines.map(l => l.inventory_entry_id)) : new Set())} />
+                      onChange={e => setChecked(e.target.checked ? new Set(lines.map(lineKey)) : new Set())} />
                   </TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Pallet</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã hàng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Date</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">SL pallet</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Từ vị trí</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Đến vị trí</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lý do</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.map(l => (
-                  <TableRow key={l.inventory_entry_id} className="cursor-pointer"
-                    onClick={() => setChecked(prev => {
-                      const next = new Set(prev)
-                      if (next.has(l.inventory_entry_id)) next.delete(l.inventory_entry_id)
-                      else next.add(l.inventory_entry_id)
-                      return next
-                    })}>
-                    <TableCell className="px-2 py-1">
-                      <input type="checkbox" readOnly className="h-3.5 w-3.5 accent-blue-600 pointer-events-none" checked={checked.has(l.inventory_entry_id)} />
-                    </TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap"><span className="block max-w-[160px] truncate" title={l.pallet_code}>{l.pallet_code}</span></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{l.material_code}<span className="text-slate-400 ml-1">{l.material_name}</span></TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap"><AbcBadge abc={l.abc} /></TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? '—'}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap">{l.to_location_code ?? '—'}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap"><span className="block max-w-[220px] truncate" title={l.reason}>{l.reason}</span></TableCell>
-                  </TableRow>
-                ))}
+                {lines.map(l => {
+                  const k = lineKey(l)
+                  return (
+                    <TableRow key={k} className="cursor-pointer"
+                      onClick={() => setChecked(prev => {
+                        const next = new Set(prev)
+                        if (next.has(k)) next.delete(k)
+                        else next.add(k)
+                        return next
+                      })}>
+                      <TableCell className="px-2 py-1">
+                        <input type="checkbox" readOnly className="h-3.5 w-3.5 accent-blue-600 pointer-events-none" checked={checked.has(k)} />
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap"><span className="font-mono font-semibold">{l.material_code}</span><span className="text-slate-400 ml-1">{l.material_name}</span></TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.date_key ?? <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap"><AbcBadge abc={l.abc} /></TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{l.n_pallets}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap">{l.to_location_code ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap"><span className="block max-w-[240px] truncate" title={`${l.reason}${l.flow_note ? ` · ${l.flow_note}` : ''}`}>{l.reason}{l.flow_note ? ` · ${l.flow_note}` : ''}</span></TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </div>
@@ -439,9 +500,10 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
               <TableRow>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên kế hoạch</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tiến độ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tiến độ (pallet)</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Số dòng</TableHead>
-                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Cửa sổ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mức độ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
                 {canPlan && <TableHead className="px-2 py-1.5 w-10" />}
@@ -449,8 +511,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
             </TableHeader>
             <TableBody>
               {plans.map(p => {
-                const done = p.progress ? p.progress.done + p.progress.gone : null
-                const pct = p.progress && p.progress.total > 0 ? Math.round(((p.progress.done + p.progress.gone) / p.progress.total) * 100) : null
+                const pct = p.progress && p.progress.total_pallets > 0 ? Math.round((p.progress.done_pallets / p.progress.total_pallets) * 100) : null
                 return (
                   <TableRow key={p.id} className="cursor-pointer hover:bg-slate-50" onClick={() => onOpen(p.id)}>
                     <TableCell className="px-2 py-1 text-[10px] font-medium whitespace-nowrap">{p.name}</TableCell>
@@ -463,12 +524,13 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
                           <span className="w-20 h-1.5 rounded bg-slate-200 overflow-hidden inline-block">
                             <span className="block h-1.5 bg-sky-500" style={{ width: `${pct}%` }} />
                           </span>
-                          <span className="text-[10px] tabular-nums font-semibold">{done}/{p.progress.total}</span>
+                          <span className="text-[10px] tabular-nums font-semibold">{p.progress.done_pallets}/{p.progress.total_pallets}</span>
                         </span>
                       ) : <span className="text-slate-300 text-[10px]">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{p.n_lines}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.window_days ? `${p.window_days} ngày` : '—'}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.level ? LEVEL_LABEL[p.level] : '—'}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.principle ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
                     {canPlan && (

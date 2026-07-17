@@ -1,7 +1,6 @@
-// Chi tiết kế hoạch sắp xếp kho (Slotting) — trạng thái từng dòng SUY SỐNG từ vị trí
-// hiện tại của pallet trên tồn kho: DONE = đã về đúng vị trí đích; MOVED_OTHER = đã rời
-// vị trí cũ nhưng sang chỗ khác; GONE = pallet hết tồn/đã xuất; PENDING = chưa chuyển.
-// Công nhân chuyển pallet bằng tính năng "Chuyển vị trí" ở trang Tồn kho — trang này tự nhảy tick (realtime).
+// Chi tiết kế hoạch sắp xếp kho (Slotting v2) — dòng GOM theo (Mã + Date): "N pallet:
+// vị trí 1 → vị trí 2". Tiến độ x/N SUY SỐNG từ vị trí hiện tại của các pallet trong dòng
+// (công nhân chuyển bằng "Chuyển vị trí" ở Tồn kho — trang này tự nhảy tick realtime).
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
@@ -22,20 +21,21 @@ function apiMsg(err: unknown) {
 }
 
 const LINE_BADGE: Record<string, string> = {
-  PENDING:     'bg-slate-100 text-slate-500',
-  DONE:        'bg-green-100 text-green-700',
-  MOVED_OTHER: 'bg-amber-100 text-amber-700',
-  GONE:        'bg-slate-100 text-slate-400 line-through',
+  PENDING: 'bg-slate-100 text-slate-500',
+  PARTIAL: 'bg-amber-100 text-amber-700',
+  DONE:    'bg-green-100 text-green-700',
+  GONE:    'bg-slate-100 text-slate-400 line-through',
 }
 const LINE_LABEL: Record<string, string> = {
-  PENDING: 'Chưa chuyển', DONE: 'Đã về đúng chỗ', MOVED_OTHER: 'Khác vị trí đề xuất', GONE: 'Hết tồn',
+  PENDING: 'Chưa chuyển', PARTIAL: 'Đang chuyển', DONE: 'Xong', GONE: 'Hết tồn',
 }
 const PLAN_BADGE: Record<string, string> = {
   ACTIVE: 'bg-sky-100 text-sky-700', COMPLETED: 'bg-green-100 text-green-700', CANCELLED: 'bg-slate-100 text-slate-500',
 }
 const PLAN_LABEL: Record<string, string> = { ACTIVE: 'Đang thực hiện', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy' }
+const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
-type LineFilter = '' | 'PENDING' | 'DONE' | 'MOVED_OTHER' | 'GONE'
+type LineFilter = '' | 'PENDING' | 'PARTIAL' | 'DONE' | 'GONE'
 
 export default function SlottingPlanDetail() {
   const { id } = useParams<{ id: string }>()
@@ -57,7 +57,7 @@ export default function SlottingPlanDetail() {
     let list = plan?.lines ?? []
     if (lineFilter) list = list.filter(l => l.status === lineFilter)
     const q = search.trim().toLowerCase()
-    if (q) list = list.filter(l => `${l.pallet_code} ${l.material_code ?? ''} ${l.material_name ?? ''} ${l.from_location_code ?? ''} ${l.to_location_code ?? ''}`.toLowerCase().includes(q))
+    if (q) list = list.filter(l => `${l.material_code ?? ''} ${l.material_name ?? ''} ${l.date_key ?? ''} ${l.from_location_code ?? ''} ${l.to_location_code ?? ''}`.toLowerCase().includes(q))
     return list
   }, [plan?.lines, search, lineFilter])
 
@@ -85,23 +85,22 @@ export default function SlottingPlanDetail() {
   )
 
   const s = plan.summary
-  const resolved = s.done + s.gone
-  const pct = s.total > 0 ? Math.round(((s.done + s.moved_other + s.gone) / s.total) * 100) : 0
+  const pct = s.total_pallets > 0 ? Math.round(((s.done_pallets + s.gone_pallets) / s.total_pallets) * 100) : 0
   const tiles: BandTile[] = [
-    { label: 'Tổng dòng', value: nf.format(s.total) },
-    { label: 'Đã về đúng chỗ', value: nf.format(s.done), accent: s.done > 0 },
-    { label: 'Khác vị trí đề xuất', value: nf.format(s.moved_other), danger: s.moved_other > 0 },
-    { label: 'Hết tồn', value: nf.format(s.gone) },
-    { label: 'Chưa chuyển', value: nf.format(s.pending) },
+    { label: 'Dòng chuyển', value: nf.format(s.total_lines) },
+    { label: 'Pallet phải chuyển', value: nf.format(s.total_pallets) },
+    { label: 'Đã về đúng chỗ', value: nf.format(s.done_pallets), accent: s.done_pallets > 0 },
+    { label: 'Khác vị trí đề xuất', value: nf.format(s.moved_other_pallets), danger: s.moved_other_pallets > 0 },
+    { label: 'Hết tồn', value: nf.format(s.gone_pallets) },
+    { label: 'Chưa chuyển', value: nf.format(s.pending_pallets) },
     { label: 'Tiến độ', value: `${pct}%`, accent: true },
   ]
 
   const statusChips: { key: LineFilter; label: string; n: number }[] = [
-    { key: '', label: 'Tất cả', n: s.total },
-    { key: 'PENDING', label: LINE_LABEL.PENDING, n: s.pending },
-    { key: 'DONE', label: LINE_LABEL.DONE, n: s.done },
-    { key: 'MOVED_OTHER', label: LINE_LABEL.MOVED_OTHER, n: s.moved_other },
-    { key: 'GONE', label: LINE_LABEL.GONE, n: s.gone },
+    { key: '', label: 'Tất cả', n: s.total_lines },
+    { key: 'PENDING', label: LINE_LABEL.PENDING, n: s.pending_lines },
+    { key: 'PARTIAL', label: LINE_LABEL.PARTIAL, n: s.partial_lines },
+    { key: 'DONE', label: LINE_LABEL.DONE, n: s.done_lines },
   ]
 
   return (
@@ -115,9 +114,9 @@ export default function SlottingPlanDetail() {
               <Boxes className="h-4 w-4 text-sky-600" /> {plan.name}
             </h1>
             <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${PLAN_BADGE[plan.status]}`}>{PLAN_LABEL[plan.status]}</span>
+            {plan.level && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{LEVEL_LABEL[plan.level]} · {plan.principle ?? '—'}</span>}
             <span className="text-[10px] text-slate-400">
               {plan.created_by ?? '—'} · {formatDateTime(plan.created_at)}
-              {plan.window_days ? ` · cửa sổ ${plan.window_days} ngày` : ''}
               {plan.completed_at ? ` · đóng ${formatDateTime(plan.completed_at)} (${plan.completed_by ?? '—'})` : ''}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
@@ -127,7 +126,7 @@ export default function SlottingPlanDetail() {
               {canComplete && plan.status === 'ACTIVE' && (
                 <>
                   <Button size="sm" className="h-7 text-[11px] bg-green-600 hover:bg-green-700" disabled={updating}
-                    onClick={() => setStatus('COMPLETED', `Hoàn thành kế hoạch "${plan.name}"?\n${resolved}/${s.total} dòng đã xử lý${s.pending > 0 ? ` — CÒN ${s.pending} dòng chưa chuyển` : ''}.`)}>
+                    onClick={() => setStatus('COMPLETED', `Hoàn thành kế hoạch "${plan.name}"?\n${s.done_pallets + s.gone_pallets}/${s.total_pallets} pallet đã xử lý${s.pending_pallets > 0 ? ` — CÒN ${s.pending_pallets} pallet chưa chuyển` : ''}.`)}>
                     <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Hoàn thành
                   </Button>
                   <Button size="sm" variant="outline" className="h-7 text-[11px] text-red-600 border-red-200 hover:bg-red-50" disabled={updating}
@@ -154,7 +153,7 @@ export default function SlottingPlanDetail() {
 
         <SummaryBand tiles={tiles} />
 
-        {/* Lọc trạng thái + tìm */}
+        {/* Lọc trạng thái dòng + tìm */}
         <div className="border-b bg-slate-50 px-3 py-1.5 shrink-0 flex items-center gap-1.5 flex-wrap print:hidden">
           {statusChips.map(c => (
             <button key={c.key || 'all'}
@@ -163,10 +162,10 @@ export default function SlottingPlanDetail() {
               {c.label} ({nf.format(c.n)})
             </button>
           ))}
-          <SearchInput value={search} onChange={setSearch} placeholder="Tìm pallet, mã, vị trí…" className="flex-1 min-w-[140px] max-w-xs ml-auto" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, date, vị trí…" className="flex-1 min-w-[140px] max-w-xs ml-auto" />
         </div>
 
-        {/* Bảng dòng chuyển */}
+        {/* Bảng dòng gom (Mã + Date) */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {lines.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-sm">Không có dòng khớp bộ lọc</div>
@@ -174,16 +173,16 @@ export default function SlottingPlanDetail() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Pallet</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã hàng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Mã hàng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Date</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Từ vị trí</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Đến vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tiến độ</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Vị trí hiện tại</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người chuyển</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người chuyển cuối</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc</TableHead>
-                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lý do</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lý do · HD xếp</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -193,7 +192,7 @@ export default function SlottingPlanDetail() {
           )}
         </div>
         <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0 print:hidden">
-          1–{lines.length} / {plan.lines.length} dòng · pallet chuyển bằng nút "Chuyển vị trí" ở trang Tồn kho — tick tự nhảy khi pallet về đúng vị trí đích
+          1–{lines.length} / {plan.lines.length} dòng · 1 dòng = 1 lệnh gom (Mã + Date); pallet chuyển bằng nút "Chuyển vị trí" ở Tồn kho — tiến độ tự nhảy khi pallet về đúng vị trí đích
         </div>
       </div>
     </div>
@@ -202,32 +201,36 @@ export default function SlottingPlanDetail() {
 
 function LineRow({ l }: { l: SlottingPlanLineRow }) {
   const abcCls = l.abc === 'A' ? 'bg-sky-600 text-white' : l.abc === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
+  const resolved = l.done + l.gone
+  const pctLine = l.n_pallets > 0 ? Math.round((resolved / l.n_pallets) * 100) : 0
   return (
     <TableRow className={l.status === 'GONE' ? 'opacity-50' : undefined}>
-      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white">
-        <span className="block max-w-[170px] truncate" title={l.pallet_code}>{l.pallet_code}</span>
-      </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">
         <span className="font-mono font-semibold">{l.material_code ?? '—'}</span>
         {l.material_name && <span className="text-slate-400 ml-1">{l.material_name}</span>}
       </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.date_key ?? <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {l.abc ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${abcCls}`}>{l.abc}</span> : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap">{l.to_location_code ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${LINE_BADGE[l.status]}`}>{LINE_LABEL[l.status]}</span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-14 h-1.5 rounded bg-slate-200 overflow-hidden inline-block">
+            <span className={`block h-1.5 ${resolved >= l.n_pallets ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pctLine}%` }} />
+          </span>
+          <span className="text-[10px] tabular-nums font-semibold">{l.done}/{l.n_pallets}</span>
+          {l.moved_other > 0 && <span className="text-[9px] text-amber-600 font-semibold" title="Pallet đã rời vị trí cũ nhưng sang chỗ khác đề xuất">⚠{l.moved_other}</span>}
+        </span>
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
-        {l.status === 'MOVED_OTHER'
-          ? <span className="text-amber-700 font-semibold">{l.current_location_code ?? '—'}</span>
-          : <span className="text-slate-400">{l.current_location_code ?? '—'}</span>}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${LINE_BADGE[l.status]}`}>{LINE_LABEL[l.status]}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{l.moved_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{l.moved_at ? formatDateTime(l.moved_at) : <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
-        <span className="block max-w-[240px] truncate" title={l.reason ?? ''}>{l.reason ?? '—'}</span>
+        <span className="block max-w-[280px] truncate" title={`${l.reason ?? ''}${l.flow_note ? ` · ${l.flow_note}` : ''}`}>{l.reason ?? '—'}{l.flow_note ? ` · ${l.flow_note}` : ''}</span>
       </TableCell>
     </TableRow>
   )

@@ -187,7 +187,9 @@ interface LeaveFilters {
 interface SlottingFilters {
   warehouseId: string
   categories: string[]
-  days: number                    // cửa sổ phân tích ABC: 30/60/90 ngày
+  days: number                    // cửa sổ phân tích ABC: 30/60/90 ngày (dùng ở mức Hard)
+  level: 'EASY' | 'NORMAL' | 'HARD'      // mức độ slotting (filter — user chốt không cài trên kho)
+  principle: 'FIFO' | 'FEFO' | 'LIFO'    // nguyên tắc xuất → hướng dồn theo date
   tab: 'analysis' | 'plans'
 }
 interface WmsFilterState {
@@ -275,7 +277,7 @@ function initialFilters() {
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
-    slotting:     { warehouseId: '', categories: [], days: 30, tab: 'analysis' as const },
+    slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },

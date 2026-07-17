@@ -351,6 +351,8 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const [category, setCategory] = useState(zone?.category ?? '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
   const [pickRank, setPickRank] = useState(zone?.pick_rank != null ? String(zone.pick_rank) : '')
+  const [slotGroup, setSlotGroup] = useState(zone?.slot_group ?? '')
+  const [flowType, setFlowType] = useState(zone?.flow_type ?? '')
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateWarehouseZone()
@@ -367,7 +369,8 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
         setErr('Hạng nhặt phải là số nguyên 1–999 (hoặc để trống)'); return
       }
       update(
-        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive, pick_rank: rankNum },
+        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive, pick_rank: rankNum,
+          slot_group: slotGroup.trim() ? slotGroup.trim().toUpperCase() : null, flow_type: flowType || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
@@ -456,6 +459,24 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
                 <Input type="number" min={1} max={999} value={pickRank}
                   onChange={e => setPickRank(e.target.value)} placeholder="vd: 1" className="w-28" />
                 <p className="text-[10px] text-slate-400">Độ gần cửa xuất của khu — <b>1 = gần nhất</b>. Dùng cho trang Tối ưu vị trí (gợi ý mã nhặt nhiều về khu gần cửa). Để trống = khu không tham gia gợi ý.</p>
+              </div>
+              {/* Nhóm riêng — khu chỉ định (vd SCA lạnh): chỉ nhận mã cùng nhóm; slotting không đưa hàng lạ vào */}
+              <div className="space-y-1">
+                <Label className="text-xs">Nhóm riêng <span className="text-slate-400">(tùy chọn)</span></Label>
+                <Input value={slotGroup} onChange={e => setSlotGroup(e.target.value.toUpperCase())} placeholder="vd: SCA" className="w-40" />
+                <p className="text-[10px] text-slate-400">Khu chỉ định riêng (kho lạnh…): chỉ nhận mã hàng gán cùng nhóm (ô "Khu vực đặc biệt" trong Mã hàng). Trống = khu thường.</p>
+              </div>
+              {/* Luồng cửa — quyết định hướng dẫn xếp trong dãy trên phiếu kế hoạch sắp xếp */}
+              <div className="space-y-1">
+                <Label className="text-xs">Luồng cửa <span className="text-slate-400">(tùy chọn — dùng cho Tối ưu vị trí)</span></Label>
+                <Select value={flowType || '__none__'} onValueChange={v => setFlowType(v === '__none__' ? '' : v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Chưa khai</SelectItem>
+                    <SelectItem value="SAME_END">Xuất nhập cùng 1 đầu</SelectItem>
+                    <SelectItem value="FLOW_THROUGH">Nhập 1 đầu, xuất 1 đầu</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex items-center gap-2">
                 <input id="zone-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
@@ -1187,6 +1208,8 @@ export default function WMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên khu vực</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng nhặt</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nhóm riêng</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Luồng cửa</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
                         {canManageZone && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
@@ -1200,6 +1223,14 @@ export default function WMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{z.name}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{z.pick_rank ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            {z.slot_group
+                              ? <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">🔒 {z.slot_group}</span>
+                              : <span className="text-slate-300 text-[10px]">—</span>}
+                          </TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
+                            {z.flow_type === 'SAME_END' ? 'Cùng 1 đầu' : z.flow_type === 'FLOW_THROUGH' ? '2 đầu' : <span className="text-slate-300">—</span>}
+                          </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
@@ -1234,6 +1265,8 @@ export default function WMSSettings() {
                 </div>
                 <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.category ?? '—'}</span></div>
                 <div><span className="text-slate-400">Hạng nhặt:</span> <span className="font-medium">{detailZone.pick_rank ?? '—'}</span> <span className="text-slate-400">(1 = gần cửa xuất nhất)</span></div>
+                <div><span className="text-slate-400">Nhóm riêng:</span> <span className="font-medium">{detailZone.slot_group ?? '—'}</span></div>
+                <div><span className="text-slate-400">Luồng cửa:</span> <span className="font-medium">{detailZone.flow_type === 'SAME_END' ? 'Xuất nhập cùng 1 đầu' : detailZone.flow_type === 'FLOW_THROUGH' ? 'Nhập 1 đầu, xuất 1 đầu' : '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailZone.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

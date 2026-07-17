@@ -2296,18 +2296,20 @@ export interface ControlTowerData {
   outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number
               planned: number; scanned: number; loose_planned?: number; loose_scanned?: number
               active: ControlTowerTrip[] }
-  // 2 nhánh v2 — optional: RPC v1 chưa re-apply thì FE vẫn chạy, khối hàng-theo-mã tự ẩn
-  out_by_material?: { n_materials: number; list: ControlTowerMatOut[] }
+  // 2 nhánh v2/v3 — optional: RPC cũ chưa re-apply thì FE vẫn chạy, khối hàng-theo-mã tự ẩn
+  out_by_material?: { n_materials: number; n_done?: number; n_short?: number; list: ControlTowerMatOut[] }
   in_by_material?:  { n_materials: number; list: ControlTowerMatIn[] }
   inbound: { orders: number; pallets: number; cartons: number }
   weigh: { tickets: number; pending2: number; net_kg: number }
   hourly: { h: number; out_cartons: number; out_scans: number; in_pallets: number }[]
 }
-export function useControlTower(warehouseIds: string[]) {
+export function useControlTower(warehouseIds: string[], categories: string[] = []) {
   return useQuery({
-    queryKey: ['control-tower', warehouseIds.join(',')],
+    queryKey: ['control-tower', warehouseIds.join(','), categories.join(',')],
     queryFn: async () => {
-      const params = warehouseIds.length > 0 ? { warehouse_ids: warehouseIds.join(',') } : undefined
+      const params: Record<string, string> = {}
+      if (warehouseIds.length > 0) params.warehouse_ids = warehouseIds.join(',')
+      if (categories.length > 0) params.categories = categories.join(',')
       const { data } = await apiClient.get('/wms/control-tower', { params })
       return data.data as ControlTowerData
     },

@@ -13,7 +13,7 @@ function fail(res: Response, message: string, status = 500, code = 'ERROR') {
   return res.status(status).json({ success: false, error: { code, message } })
 }
 
-// GET /wms/control-tower?warehouse_ids=a,b,c
+// GET /wms/control-tower?warehouse_ids=a,b,c&categories=x,y
 export async function getControlTower(req: Request, res: Response) {
   try {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -26,10 +26,19 @@ export async function getControlTower(req: Request, res: Response) {
       : requested
     if (requested.length > 0 && effective.length === 0)
       return fail(res, 'Kho chọn ngoài phạm vi được phân quyền', 403, 'FORBIDDEN')
+    // Loại kho: filter user chọn ∩ scope loại JWT
+    const scopeCats = scopeCategoriesOf(req)
+    const reqCats = req.query.categories
+      ? String(req.query.categories).split(',').filter(Boolean) : []
+    const effCats = scopeCats
+      ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
+      : reqCats
+    if (reqCats.length > 0 && effCats.length === 0)
+      return fail(res, 'Loại kho chọn ngoài phạm vi được phân quyền', 403, 'FORBIDDEN')
 
     const { data, error } = await supabase.rpc('control_tower_stats', {
       p_warehouse_ids: effective.length > 0 ? effective : null,
-      p_categories: scopeCategoriesOf(req),
+      p_categories: effCats.length > 0 ? effCats : null,
       p_today: today,
     })
     if (error) {

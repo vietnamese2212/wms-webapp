@@ -8,7 +8,7 @@ import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useControlTower, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
-import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 
@@ -34,8 +34,8 @@ function fmtDwell(mins: number | null): string {
 }
 
 // ─── khối dùng chung (sáng / TV tối) ──────────────────────────────────────────
-function Block({ title, icon: Icon, count, dark, children }: {
-  title: string; icon: typeof Truck; count?: number; dark?: boolean; children: React.ReactNode
+function Block({ title, icon: Icon, count, dark, extra, children }: {
+  title: string; icon: typeof Truck; count?: number; dark?: boolean; extra?: React.ReactNode; children: React.ReactNode
 }) {
   return (
     <div className={`rounded-lg border flex flex-col min-h-0 ${dark ? 'border-slate-700 bg-slate-800/60' : 'border-slate-200 bg-white'}`}>
@@ -43,7 +43,8 @@ function Block({ title, icon: Icon, count, dark, children }: {
         <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
         <Icon className={`h-3.5 w-3.5 ${dark ? 'text-slate-300' : 'text-slate-500'}`} />
         <span className={`text-[10px] font-semibold uppercase tracking-wide ${dark ? 'text-slate-200' : 'text-slate-600'}`}>{title}</span>
-        {count != null && <span className={`text-[10px] font-semibold ${dark ? 'text-sky-300' : 'text-sky-600'}`}>({count})</span>}
+        {count != null && <span className={`text-[10px] font-semibold ${dark ? 'text-sky-300' : 'text-sky-600'}`}>({nf.format(count)})</span>}
+        {extra}
       </div>
       <div className="flex-1 min-h-0 overflow-auto">{children}</div>
     </div>
@@ -74,12 +75,21 @@ function OutProgressStrip({ data, dark }: { data: ControlTowerData; dark?: boole
   )
 }
 
-// Hàng XUẤT hôm nay theo mã (KH / đã xuất / còn / % bar từng mã)
+// Hàng XUẤT hôm nay theo mã — KIỂU ĐIỀU HÀNH cho ngày cả trăm/nghìn mã (user 17/07):
+// server sort mã CÒN THIẾU nhiều nhất lên đầu (top 30), mã đã đủ gộp thành số đếm ở header.
 function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
   const list = data.out_by_material?.list ?? []
   const total = data.out_by_material?.n_materials ?? 0
+  const nDone = data.out_by_material?.n_done ?? 0
+  const nShort = data.out_by_material?.n_short ?? 0
   return (
-    <Block title="Hàng xuất hôm nay theo mã" icon={PackageMinus} count={total} dark={dark}>
+    <Block title="Hàng xuất hôm nay theo mã" icon={PackageMinus} count={total} dark={dark}
+      extra={total > 0 ? (
+        <span className="ml-auto flex items-center gap-1.5 text-[9px] font-medium">
+          <span className={`px-1.5 py-0.5 rounded-full ${dark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'}`}>{nf.format(nDone)} đủ</span>
+          <span className={`px-1.5 py-0.5 rounded-full ${nShort > 0 ? (dark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700') : (dark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>{nf.format(nShort)} còn thiếu</span>
+        </span>
+      ) : undefined}>
       {list.length === 0 ? (
         <p className="px-3 py-4 text-[11px] text-slate-400">Chưa có kế hoạch xuất hôm nay.</p>
       ) : (
@@ -120,6 +130,11 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
             })}
           </tbody>
         </table>
+      )}
+      {total > list.length && (
+        <p className={`px-2.5 py-1 text-[9px] border-t ${dark ? 'text-slate-500 border-slate-700/60' : 'text-slate-400 border-slate-100'}`}>
+          Hiện 30 mã cần chú ý nhất (còn thiếu nhiều nhất) trong {nf.format(total)} mã — lọc Kho / Loại kho để thu hẹp.
+        </p>
       )}
     </Block>
   )
@@ -293,7 +308,8 @@ export default function ControlTower() {
   const filters = useWmsFilterStore(s => s.controlTower)
   const setF    = useWmsFilterStore(s => s.setControlTower)
   const { data: warehouses = [] } = useScopedWarehouses(true)
-  const { data, isLoading, isError, error } = useControlTower(filters.warehouse_ids)
+  const { data: whTypes = [] } = useScopedWhTypes()
+  const { data, isLoading, isError, error } = useControlTower(filters.warehouse_ids, filters.categories)
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -321,6 +337,10 @@ export default function ControlTower() {
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
       selected: filters.warehouse_ids,
       onChange: v => setF({ warehouse_ids: v }) },
+    { key: 'category', label: 'Loại kho', type: 'multi',
+      options: (whTypes as { value: string }[]).map(t => ({ value: t.value, label: t.value })),
+      selected: filters.categories,
+      onChange: v => setF({ categories: v }) },
   ]
 
   const clock = now.toLocaleTimeString('vi-VN', { hour12: false })

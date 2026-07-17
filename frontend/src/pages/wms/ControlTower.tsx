@@ -364,6 +364,8 @@ export default function ControlTower() {
   if (filters.warehouse_ids.length > 0) tvFilterChips.push('Kho: ' + filters.warehouse_ids.map(id => whNameById.get(id) ?? id).join(', '))
   if (filters.categories.length > 0) tvFilterChips.push('Loại: ' + filters.categories.join(', '))
   if (filters.material_codes.length > 0) tvFilterChips.push(`Mã hàng: ${filters.material_codes.length} mã`)
+  // LUÔN hiện phạm vi đang xem (user chốt) — không lọc gì thì ghi rõ là toàn bộ
+  if (tvFilterChips.length === 0) tvFilterChips.push('Đang xem: Toàn bộ kho')
   const loosePlanned = data?.outbound.loose_planned ?? 0
   const loosePct = data && data.outbound.planned > 0
     ? Math.round((loosePlanned / data.outbound.planned) * 100) : 0

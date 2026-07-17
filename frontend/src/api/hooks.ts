@@ -2278,11 +2278,13 @@ export function useMatchWeighTicket() {
 export interface ControlTowerGateRow {
   plate: string | null; company: string | null; direction: string | null
   entry_at: string | null; warehouse_name: string | null; content: string | null
+  warehouse_type?: string | null; vehicle_type?: string | null
 }
 export interface ControlTowerTrip {
   id: string; group_code: string; status: string; plate: string | null
   warehouse_name: string | null; planned: number; scanned: number; started_at: string | null
   npp: string | null; n_materials: number
+  warehouse_type?: string | null; export_type?: string | null
 }
 export interface ControlTowerMatOut {
   code: string; name: string; category: string; ordered: number; scanned: number; loose: number

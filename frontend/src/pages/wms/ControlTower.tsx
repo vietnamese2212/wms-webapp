@@ -196,6 +196,8 @@ function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dar
                     <span className="truncate">{g.company ?? '—'}</span>
                   </td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_name ?? '—'}</td>
+                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_type ?? <span className="text-slate-300">—</span>}</td>
+                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.vehicle_type ?? <span className="text-slate-300">—</span>}</td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.entry_at ? formatTimestampTime(g.entry_at).slice(0, 5) : '—'}</td>
                   <td className={`px-2.5 py-1 text-[10px] text-right whitespace-nowrap tabular-nums ${dwellClass(mins)}`}>{fmtDwell(mins)}</td>
                 </tr>
@@ -226,6 +228,8 @@ function TripsBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
                   {t.status === 'PAUSED' && <span className="text-[9px] px-1.5 rounded-full bg-red-100 text-red-600 font-medium">Tạm dừng</span>}
                   {t.npp && <span className={`text-[10px] font-medium truncate max-w-[160px] ${dark ? 'text-slate-200' : 'text-slate-600'}`} title={t.npp}>{t.npp}</span>}
                   <span className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{t.plate ?? ''}</span>
+                  {t.warehouse_type && <span className={`text-[9px] px-1 rounded border ${dark ? 'text-sky-300 border-sky-500/50' : 'text-sky-600 border-sky-300'}`}>{t.warehouse_type}</span>}
+                  {t.export_type && <span className={`text-[9px] ${dark ? 'text-slate-500' : 'text-slate-400'}`} title="Loại xe">{t.export_type}</span>}
                   {t.n_materials > 0 && <span className={`text-[9px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{t.n_materials} mã</span>}
                   <span className={`ml-auto text-[10px] tabular-nums font-semibold ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>
                     {nf.format(t.scanned)}/{nf.format(t.planned)} · {pct}%

@@ -358,6 +358,12 @@ export default function ControlTower() {
   ]
 
   const clock = now.toLocaleTimeString('vi-VN', { hour12: false })
+  // Chips tóm tắt filter đang áp — hiện trên header TV (màn thường đã có FilterBar)
+  const whNameById = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
+  const tvFilterChips: string[] = []
+  if (filters.warehouse_ids.length > 0) tvFilterChips.push('Kho: ' + filters.warehouse_ids.map(id => whNameById.get(id) ?? id).join(', '))
+  if (filters.categories.length > 0) tvFilterChips.push('Loại: ' + filters.categories.join(', '))
+  if (filters.material_codes.length > 0) tvFilterChips.push(`Mã hàng: ${filters.material_codes.length} mã`)
   const loosePlanned = data?.outbound.loose_planned ?? 0
   const loosePct = data && data.outbound.planned > 0
     ? Math.round((loosePlanned / data.outbound.planned) * 100) : 0
@@ -420,11 +426,17 @@ export default function ControlTower() {
      </div>
 
       {tv && data && (
-        <div className="fixed inset-0 z-[100] bg-slate-900 text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
-          <div className="flex items-center gap-3 shrink-0">
+        // z-[45]: TRÊN app chrome (header z-40) nhưng DƯỚI Dialog z-50 — để sheet bộ lọc mở đè lên TV được
+        <div className="fixed inset-0 z-[45] bg-slate-900 text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
+          <div className="flex items-center gap-3 shrink-0 flex-wrap">
             <Activity className="h-6 w-6 text-sky-400" />
             <span className="text-xl font-semibold">Giám sát vận hành</span>
             <span className="text-sm text-slate-400">{formatDate(data.date)}</span>
+            {/* Filter trên TV (user chốt): chips đang-lọc-gì + nút mở sheet chỉnh lọc */}
+            {tvFilterChips.map(c => (
+              <span key={c} className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 max-w-[300px] truncate" title={c}>{c}</span>
+            ))}
+            <FilterSheetButton defs={filterDefs} />
             <span className="ml-auto text-3xl font-mono font-semibold tabular-nums text-sky-300">{clock}</span>
             <button onClick={exitTv} className="p-2 rounded-md hover:bg-white/10" title="Thoát chế độ TV">
               <X className="h-5 w-5" />

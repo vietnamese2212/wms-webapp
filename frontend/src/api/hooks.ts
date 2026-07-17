@@ -765,7 +765,7 @@ export function useReorderWarehouseTypes() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; slot_group?: string | null; flow_type?: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -792,7 +792,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; pick_rank?: number | null; slot_group?: string | null; flow_type?: string | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -2327,20 +2327,21 @@ export type SlottingLevel = 'EASY' | 'NORMAL' | 'HARD'
 export type SlottingPrinciple = 'FIFO' | 'FEFO' | 'LIFO'
 export interface SlottingZone {
   id: string; code: string; name: string; category: string | null
-  pick_rank: number | null; slot_group: string | null; flow_type: string | null
+  pick_rank: number | null; flow_type: string | null
   capacity: number; used_slots: number; band: 'A' | 'B' | 'C' | null
 }
 export interface SlottingMaterial {
   material_id: string; code: string; name: string | null; category: string | null
-  slot_group: string | null
   picks: number; cartons_out: number; pallets_touched: number
   stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number
   zones_current: { sub_code: string | null; pallets: number; cartons: number }[]
   suggested_zones: string[]; misplaced_pallets: number
 }
+// Pallet nằm ở khu có Loại KHÁC Loại của mã (vd hàng thường trong khu SCA) — chỉ cảnh báo
 export interface SlottingWarning {
-  type: 'FOREIGN_IN_GROUP' | 'GROUP_OUTSIDE'
-  material_code: string; material_name: string | null; zone_code: string; group: string; pallets: number
+  type: 'WRONG_CATEGORY'
+  material_code: string; material_name: string | null; material_category: string | null
+  zone_code: string; zone_category: string; pallets: number
 }
 export interface SlottingData {
   window_days: number; total_picks: number; has_ranked_zones: boolean
@@ -2417,7 +2418,7 @@ export function useSlottingPlan(id: string | undefined) {
 }
 export function useSlottingPreview() {
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; categories?: string[] }) =>
+    mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; pull_wrong_zone?: boolean; categories?: string[] }) =>
       apiClient.post('/wms/slotting/plans/preview', body).then(r => r.data.data as {
         lines: SlottingPlanLineDraft[]; skipped_no_capacity: number; warnings: SlottingWarning[]; message?: string
       }),
@@ -2447,6 +2448,18 @@ export function useDeleteSlottingPlan() {
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/wms/slotting/plans/${id}`).then(r => r.data),
     onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
+  })
+}
+// Cấu hình slotting của KHU (tab Cài đặt trang Tối ưu vị trí — quyền slotting.configure)
+export function useUpdateSlottingZoneConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; pick_rank?: number | null; flow_type?: string | null }) =>
+      apiClient.patch(`/wms/slotting/zone-config/${id}`, body).then(r => r.data.data),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['warehouse-zones'] })
+      qc.invalidateQueries({ queryKey: ['slotting'] })
+    },
   })
 }
 

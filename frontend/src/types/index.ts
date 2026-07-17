@@ -226,7 +226,6 @@ export interface Material {
   storage_category:           string | null
   old_code:                   string | null
   batch_prefix:               string | null   // ĐV2 tem `;`: 2 ký tự tắt hàng để sinh mã lô (khớp kế toán); null với ĐV1
-  slot_group?:                string | null   // Khu vực đặc biệt (slotting — vd SCA lạnh): chỉ vào khu cùng nhóm; null = hàng thường
   carton_length_mm?:          number | null   // kích thước thùng carton (cm) — phục vụ sơ đồ xếp xe 3D
   carton_width_mm?:           number | null
   carton_height_mm?:          number | null

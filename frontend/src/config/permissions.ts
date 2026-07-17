@@ -225,9 +225,10 @@ export const MODULES = {
   slotting: {
     page: 'Tối ưu vị trí (Slotting)',
     actions: {
-      view:     'Xem phân tích ABC + kế hoạch sắp xếp',
-      plan:     'Tạo / xóa kế hoạch sắp xếp',
-      complete: 'Hoàn thành / hủy / mở lại kế hoạch',
+      view:      'Xem phân tích ABC + kế hoạch sắp xếp',
+      plan:      'Tạo / xóa kế hoạch sắp xếp',
+      complete:  'Hoàn thành / hủy / mở lại kế hoạch',
+      configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
     },
   },
   materials: {

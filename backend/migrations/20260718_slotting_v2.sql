@@ -1,8 +1,8 @@
 -- SLOTTING v2 (user chỉnh rule 17/07 sau khi review đợt 1):
 -- 1) Mức độ (Easy/Normal/Hard) + Nguyên tắc (FIFO/FEFO/LIFO) = FILTER trên trang (không cột trên Warehouse).
--- 2) NHÓM RIÊNG (segregation, vd SCA lạnh): WarehouseZone.slot_group + Material.slot_group —
---    khu có nhóm chỉ nhận mã cùng nhóm; mã có nhóm bị kéo VỀ khu nhóm (ưu tiên cao nhất);
---    hàng lạ trong khu riêng chỉ CẢNH BÁO, không tự sinh lệnh.
+-- 2) Khu đặc thù (SCA lạnh…) dùng LOẠI KHO có sẵn (user chốt v3 — KHÔNG thêm trường khớp tay):
+--    engine siết khớp đúng Loại (khu có loại chỉ nhận mã đúng loại) + cảnh báo pallet sai loại
+--    + checkbox kéo-về-đúng-khu lúc tạo kế hoạch. DROP cột slot_group của bản v2 cũ (nếu đã lỡ apply).
 -- 3) Luồng cửa per khu (SAME_END = xuất nhập cùng 1 đầu / FLOW_THROUGH = nhập 1 đầu xuất 1 đầu)
 --    → hướng dẫn xếp trong dãy in trên phiếu.
 -- 4) Dòng kế hoạch GOM theo (mã + date): "Mã A date X — N pallet: vị trí 1 → vị trí 2",
@@ -10,9 +10,9 @@
 --    entry_ids jsonb = danh sách pallet lúc sinh, để suy tiến độ x/N sống từ vị trí hiện tại.
 -- Production: chạy 20260717_slotting.sql TRƯỚC rồi file này.
 
-ALTER TABLE public."WarehouseZone" ADD COLUMN IF NOT EXISTS slot_group text;
 ALTER TABLE public."WarehouseZone" ADD COLUMN IF NOT EXISTS flow_type text;   -- 'SAME_END' | 'FLOW_THROUGH' | null
-ALTER TABLE public."Material"      ADD COLUMN IF NOT EXISTS slot_group text;
+ALTER TABLE public."Material"      DROP COLUMN IF EXISTS slot_group;   -- dọn bản v2 cũ nếu đã lỡ apply
+ALTER TABLE public."WarehouseZone" DROP COLUMN IF EXISTS slot_group;
 
 ALTER TABLE public."SlottingPlan" ADD COLUMN IF NOT EXISTS level text;        -- EASY | NORMAL | HARD (lúc tạo)
 ALTER TABLE public."SlottingPlan" ADD COLUMN IF NOT EXISTS principle text;    -- FIFO | FEFO | LIFO (lúc tạo)
@@ -46,7 +46,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- RPC REPLACE (cùng chữ ký): + materials.slot_group + zones.slot_group/flow_type
+-- RPC REPLACE (cùng chữ ký): + zones.flow_type
 CREATE OR REPLACE FUNCTION public.slotting_stats(
   p_warehouse_id text,
   p_categories   text[] DEFAULT NULL,
@@ -82,7 +82,7 @@ stock_tot AS (
   FROM stock GROUP BY material_id
 ),
 mats AS (
-  SELECT mu.material_id, m.material_code, m.short_name, m.category, m.slot_group,
+  SELECT mu.material_id, m.material_code, m.short_name, m.category,
          COALESCE(p.picks, 0)           AS picks,
          COALESCE(p.cartons_out, 0)     AS cartons_out,
          COALESCE(p.pallets_touched, 0) AS pallets_touched,
@@ -123,7 +123,7 @@ SELECT jsonb_build_object(
   'total_picks', COALESCE((SELECT sum(picks) FROM mats), 0),
   'materials', COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'material_id', c.material_id, 'code', c.material_code, 'name', c.short_name,
-      'category', c.category, 'slot_group', c.slot_group,
+      'category', c.category,
       'picks', c.picks, 'cartons_out', c.cartons_out,
       'pallets_touched', c.pallets_touched, 'stock_pallets', c.stock_pallets,
       'stock_cartons', c.stock_cartons, 'abc', c.abc,
@@ -135,7 +135,7 @@ SELECT jsonb_build_object(
     FROM stock s WHERE s.material_id IN (SELECT material_id FROM mats)), '[]'::jsonb),
   'zones', COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'id', z.id, 'code', z.code, 'name', z.name, 'category', z.category,
-      'pick_rank', z.pick_rank, 'slot_group', z.slot_group, 'flow_type', z.flow_type,
+      'pick_rank', z.pick_rank, 'flow_type', z.flow_type,
       'capacity', COALESCE(zc.capacity, 0), 'used_slots', COALESCE(zc.used_slots, 0))
       ORDER BY z.pick_rank NULLS LAST, z.sort_order)
     FROM "WarehouseZone" z

@@ -190,7 +190,7 @@ interface SlottingFilters {
   days: number                    // cửa sổ phân tích ABC: 30/60/90 ngày (dùng ở mức Hard)
   level: 'EASY' | 'NORMAL' | 'HARD'      // mức độ slotting (filter — user chốt không cài trên kho)
   principle: 'FIFO' | 'FEFO' | 'LIFO'    // nguyên tắc xuất → hướng dồn theo date
-  tab: 'analysis' | 'plans'
+  tab: 'analysis' | 'plans' | 'config'
 }
 interface WmsFilterState {
   assignment:        AssignmentFilters

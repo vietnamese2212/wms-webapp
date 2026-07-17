@@ -9,8 +9,9 @@ import { fetchAllRowsParallel } from '../../utils/pagination'
 // phóng chỗ, không quan tâm date) · NORMAL = gom theo DATE + nguyên tắc FIFO/FEFO/LIFO
 // (LIFO: date dài dồn VÀO vị trí date ngắn; FIFO/FEFO: date ngắn dồn vào vị trí date dài)
 // · HARD = NORMAL + đảo khu theo ABC velocity (cần chỗ trống đệm).
-// NHÓM RIÊNG (slot_group, vd SCA lạnh): mã có nhóm bị kéo VỀ khu nhóm (ưu tiên cao nhất);
-// khu có nhóm không nhận mã lạ; hàng lạ đang nằm trong khu riêng CHỈ cảnh báo.
+// KHU ĐẶC THÙ (SCA lạnh…) = LOẠI KHO có sẵn (user chốt v3 — không trường khớp tay): khu có Loại
+// CHỈ nhận mã đúng Loại; pallet nằm sai Loại khu → CẢNH BÁO; checkbox "kéo về đúng khu" lúc tạo KH
+// (pull_wrong_zone) mới sinh lệnh kéo — mặc định tắt (hàng để tạm có chủ đích không bị đuổi).
 // DÒNG KẾ HOẠCH GOM theo (mã + date): "Mã A date X — N pallet: vị trí 1 → 2", không per-pallet;
 // tiến độ x/N suy sống từ vị trí hiện tại của các pallet trong entry_ids.
 
@@ -43,8 +44,8 @@ const LEVELS: Level[] = ['EASY', 'NORMAL', 'HARD']
 const PRINCIPLES: Principle[] = ['FIFO', 'FEFO', 'LIFO']
 
 // ─── Kiểu dữ liệu từ RPC ─────────────────────────────────────────────────────
-interface StatsZone { id: string; code: string; name: string; category: string | null; pick_rank: number | null; slot_group: string | null; flow_type: string | null; capacity: number; used_slots: number }
-interface StatsMaterial { material_id: string; code: string; name: string | null; category: string | null; slot_group: string | null; picks: number; cartons_out: number; pallets_touched: number; stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number }
+interface StatsZone { id: string; code: string; name: string; category: string | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
+interface StatsMaterial { material_id: string; code: string; name: string | null; category: string | null; picks: number; cartons_out: number; pallets_touched: number; stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number }
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
 interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number }
 interface Stats { total_picks: number; materials: StatsMaterial[]; placement: StatsPlacement[]; zones: StatsZone[]; locations: StatsLocation[] }
@@ -62,16 +63,16 @@ async function fetchStats(warehouseId: string, categories: string[] | null, days
   return { stats: data as Stats }
 }
 
-// ─── Luật khớp hàng ↔ khu ────────────────────────────────────────────────────
-// Nhóm riêng phải KHỚP TUYỆT ĐỐI (null = thường); Loại kho khớp null-inclusive.
-function zoneAccepts(zone: StatsZone, mat: { category: string | null; slot_group: string | null }): boolean {
-  if ((zone.slot_group ?? '') !== (mat.slot_group ?? '')) return false
-  return zone.category == null || mat.category == null || zone.category === mat.category
+// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3) ─────────────
+// Khu có Loại → CHỈ nhận mã đúng Loại (khu SCA chỉ nhận mã loại SCA; mã chưa khai loại KHÔNG vào được).
+// Khu chưa gắn Loại → nhận mọi mã (khu đa dụng).
+function zoneAccepts(zone: StatsZone, mat: { category: string | null }): boolean {
+  return zone.category == null || zone.category === mat.category
 }
 
 // ─── Banding khu theo hạng nhặt (chỉ dùng mức HARD) ─────────────────────────
 type Band = 'A' | 'B' | 'C'
-function eligibleRankedZones(zones: StatsZone[], mat: { category: string | null; slot_group: string | null }): StatsZone[] {
+function eligibleRankedZones(zones: StatsZone[], mat: { category: string | null }): StatsZone[] {
   return zones
     .filter(z => z.pick_rank != null && zoneAccepts(z, mat))
     .sort((a, b) => (a.pick_rank! - b.pick_rank!) || a.code.localeCompare(b.code))
@@ -110,24 +111,23 @@ function enrichMaterials(stats: Stats): EnrichedMaterial[] {
   })
 }
 
-// Cảnh báo nhóm riêng (từ placement — dùng cho cả GET analysis và preview):
-// FOREIGN_IN_GROUP = hàng lạ nằm trong khu riêng (CHỈ cảnh báo, user chốt không tự sinh lệnh)
-// GROUP_OUTSIDE    = mã thuộc nhóm đang nằm ngoài khu nhóm (preview SẼ sinh lệnh kéo về)
-interface GroupWarning { type: 'FOREIGN_IN_GROUP' | 'GROUP_OUTSIDE'; material_code: string; material_name: string | null; zone_code: string; group: string; pallets: number }
-function groupWarnings(stats: Stats): GroupWarning[] {
+// Cảnh báo LOẠI (từ placement — dùng cho GET analysis + preview): pallet nằm ở khu có Loại
+// khác Loại của mã (vd hàng thường trong khu SCA, hoặc mã SCA lạc ra khu Thành phẩm).
+// CHỈ cảnh báo mặc định; sinh lệnh kéo về = checkbox pull_wrong_zone lúc tạo kế hoạch.
+interface CategoryWarning { type: 'WRONG_CATEGORY'; material_code: string; material_name: string | null; material_category: string | null; zone_code: string; zone_category: string; pallets: number }
+function categoryWarnings(stats: Stats): CategoryWarning[] {
   const zoneByCode = new Map(stats.zones.map(z => [z.code, z]))
   const matById = new Map(stats.materials.map(m => [m.material_id, m]))
-  const out: GroupWarning[] = []
+  const out: CategoryWarning[] = []
   for (const p of stats.placement) {
     if (!p.sub_code) continue
     const zone = zoneByCode.get(p.sub_code)
     const mat = matById.get(p.material_id)
-    if (!zone || !mat) continue
-    const zg = zone.slot_group ?? '', mg = mat.slot_group ?? ''
-    if (zg && mg !== zg) out.push({ type: 'FOREIGN_IN_GROUP', material_code: mat.code, material_name: mat.name, zone_code: zone.code, group: zone.slot_group!, pallets: p.pallets })
-    else if (mg && zg !== mg) out.push({ type: 'GROUP_OUTSIDE', material_code: mat.code, material_name: mat.name, zone_code: zone.code, group: mat.slot_group!, pallets: p.pallets })
+    if (!zone || !mat || zone.category == null) continue
+    if (zone.category !== mat.category)
+      out.push({ type: 'WRONG_CATEGORY', material_code: mat.code, material_name: mat.name, material_category: mat.category, zone_code: zone.code, zone_category: zone.category, pallets: p.pallets })
   }
-  return out.sort((a, b) => a.type.localeCompare(b.type) || b.pallets - a.pallets)
+  return out.sort((a, b) => b.pallets - a.pallets)
 }
 
 function parseDays(raw: unknown): number {
@@ -158,14 +158,14 @@ export async function getSlotting(req: Request, res: Response) {
     const materials = enrichMaterials(stats)
     const hasRanked = stats.zones.some(z => z.pick_rank != null)
     const zones = stats.zones.map(z => {
-      // band hiển thị = band trong nhóm khu cùng điều kiện với chính khu đó
-      const ranked = eligibleRankedZones(stats.zones, { category: z.category, slot_group: z.slot_group })
+      // band hiển thị = band trong nhóm khu cùng Loại với chính khu đó
+      const ranked = eligibleRankedZones(stats.zones, { category: z.category })
       const idx = ranked.findIndex(r => r.code === z.code)
       return { ...z, band: z.pick_rank != null && idx >= 0 ? bandOfIndex(idx, ranked.length) : null }
     })
     return ok(res, {
       window_days: days, total_picks: stats.total_picks, has_ranked_zones: hasRanked,
-      zones, materials, warnings: groupWarnings(stats),
+      zones, materials, warnings: categoryWarnings(stats),
     })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
@@ -195,11 +195,11 @@ interface PlanLineDraft {
   to_location_id: string; to_location_code: string | null
 }
 
-// POST /wms/slotting/plans/preview { warehouse_id, level, principle, days, max_moves, categories? }
+// POST /wms/slotting/plans/preview { warehouse_id, level, principle, days, max_moves, pull_wrong_zone?, categories? }
 export async function previewPlan(req: Request, res: Response) {
   try {
-    const { warehouse_id, level: rawLevel, principle: rawPrinciple, days: rawDays, max_moves, categories } = req.body as {
-      warehouse_id?: string; level?: string; principle?: string; days?: number; max_moves?: number; categories?: string[]
+    const { warehouse_id, level: rawLevel, principle: rawPrinciple, days: rawDays, max_moves, pull_wrong_zone, categories } = req.body as {
+      warehouse_id?: string; level?: string; principle?: string; days?: number; max_moves?: number; pull_wrong_zone?: boolean; categories?: string[]
     }
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouse_id)) return
@@ -298,26 +298,33 @@ export async function previewPlan(req: Request, res: Response) {
 
     let skippedNoCapacity = 0
 
-    // ── P0: NHÓM RIÊNG — mã thuộc nhóm đang nằm ngoài khu nhóm → kéo về (ưu tiên cao nhất)
-    for (const mat of stats.materials) {
-      if (!mat.slot_group) continue
-      const groupZones = stats.zones
-        .filter(z => z.slot_group === mat.slot_group && (z.category == null || mat.category == null || z.category === mat.category))
-        .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
-      if (groupZones.length === 0) continue                 // nhóm khai trên mã nhưng kho này không có khu nhóm đó
-      const outside = entries.filter(e => e.material_id === mat.material_id && !movedEntry.has(e.id)
-        && zoneOfLoc(e.location_id)?.slot_group !== mat.slot_group)
-      if (outside.length === 0) continue
-      skippedNoCapacity += assignTargets(outside, groupZones,
-        `Mã thuộc khu riêng ${mat.slot_group} — kéo về đúng khu`, 0)
-    }
-
-    // Hàng lạ trong khu riêng: ĐÓNG BĂNG (không sinh lệnh, không gom) — chỉ cảnh báo
+    // Pallet nằm SAI LOẠI khu (vd hàng thường trong khu SCA / mã SCA lạc ra khu Thành phẩm):
+    // mặc định ĐÓNG BĂNG (chỉ cảnh báo — hàng để tạm có chủ đích không bị đuổi);
+    // pull_wrong_zone=true → P0: sinh lệnh kéo về khu ĐÚNG Loại (ưu tiên cao nhất).
     const frozen = new Set<string>()
     for (const e of entries) {
       const z = zoneOfLoc(e.location_id)
       const mat = matById.get(e.material_id)
-      if (z?.slot_group && (mat?.slot_group ?? '') !== z.slot_group) frozen.add(e.id)
+      if (z?.category != null && mat && z.category !== mat.category) frozen.add(e.id)
+    }
+    if (pull_wrong_zone) {
+      const wrongByMat = new Map<string, EntryRow[]>()
+      for (const e of entries) {
+        if (!frozen.has(e.id)) continue
+        const arr = wrongByMat.get(e.material_id) ?? []
+        arr.push(e)
+        wrongByMat.set(e.material_id, arr)
+      }
+      for (const [mid, list] of wrongByMat) {
+        const mat = matById.get(mid)!
+        const homeZones = stats.zones
+          .filter(z => zoneAccepts(z, mat))
+          .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
+        if (homeZones.length === 0) continue               // kho không có khu nào nhận loại này
+        skippedNoCapacity += assignTargets(list, homeZones,
+          `Nằm sai loại khu — kéo về khu ${mat.category ?? 'đúng loại'}`, 0)
+        for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
+      }
     }
 
     // ── P1 (chỉ HARD): đảo khu theo ABC velocity
@@ -432,7 +439,7 @@ export async function previewPlan(req: Request, res: Response) {
       level, principle,
       lines: lines.map(({ priority: _p, ...rest }) => rest),
       skipped_no_capacity: skippedNoCapacity,
-      warnings: groupWarnings(stats).filter(w => w.type === 'FOREIGN_IN_GROUP'),
+      warnings: pull_wrong_zone ? [] : categoryWarnings(stats),
       message: lines.length === 0 ? 'Không có gì cần sắp xếp theo mức độ/nguyên tắc đã chọn' : undefined,
     })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
@@ -632,6 +639,36 @@ export async function updatePlan(req: Request, res: Response) {
     const { error } = await supabase.from('SlottingPlan').update(patch).eq('id', plan.id)
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
     return ok(res, { id: plan.id, status })
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
+// PATCH /wms/slotting/zone-config/:id { pick_rank?, flow_type? } — cấu hình slotting của KHU
+// (tab Cài đặt trang Tối ưu vị trí, quyền slotting.configure). Route RIÊNG, không đi ké
+// PUT /wms/zones (quyền manage_zone sửa tên/loại khu) — tránh gộp quyền.
+export async function updateZoneConfig(req: Request, res: Response) {
+  try {
+    const { pick_rank, flow_type } = req.body as { pick_rank?: number | null; flow_type?: string | null }
+    const { data: zone } = await supabase.from('WarehouseZone')
+      .select('id, warehouse_id').eq('id', req.params.id).maybeSingle()
+    if (!zone) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy khu vực')
+    if (!guardWarehouse(req, res, zone.warehouse_id)) return
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name ?? null }
+    if (pick_rank !== undefined) {
+      const n = pick_rank === null ? null : Number(pick_rank)
+      if (n !== null && (!Number.isInteger(n) || n < 1 || n > 999))
+        return fail(res, 400, 'INVALID_INPUT', 'Hạng nhặt phải là số nguyên 1–999 (hoặc trống)')
+      patch.pick_rank = n
+    }
+    if (flow_type !== undefined) {
+      if (flow_type !== null && !['SAME_END', 'FLOW_THROUGH'].includes(flow_type))
+        return fail(res, 400, 'INVALID_INPUT', 'flow_type phải là SAME_END / FLOW_THROUGH / null')
+      patch.flow_type = flow_type
+    }
+    const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
+      .select('id, code, name, category, pick_rank, flow_type').single()
+    if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

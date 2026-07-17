@@ -18,9 +18,11 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
+  useWarehouseZones, useUpdateSlottingZoneConfig, type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
   type SlottingLevel, type SlottingPrinciple, type SlottingWarning,
 } from '@/api/hooks'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -83,6 +85,7 @@ export default function Slotting() {
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const admin = isAdmin(user?.name)
   const canPlan = admin || can(perms, 'slotting', 'plan')
+  const canConfigure = admin || can(perms, 'slotting', 'configure')
 
   const { warehouseId, categories, days, level, principle, tab } = useWmsFilterStore(s => s.slotting)
   const setSlotting = useWmsFilterStore(s => s.setSlotting)
@@ -133,6 +136,10 @@ export default function Slotting() {
                 onClick={() => setSlotting({ tab: 'analysis' })}>Phân tích ABC</button>
               <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'plans' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
                 onClick={() => setSlotting({ tab: 'plans' })}>Kế hoạch sắp xếp</button>
+              {canConfigure && (
+                <button className={`px-2.5 py-1 border-l border-slate-200 ${tab === 'config' ? 'bg-sky-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setSlotting({ tab: 'config' })}>Cài đặt</button>
+              )}
             </div>
             {tab === 'analysis' && (
               <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên hàng…" className="flex-1 min-w-[140px]" />
@@ -142,9 +149,11 @@ export default function Slotting() {
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
-        {tab === 'analysis'
-          ? <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} search={search} canPlan={canPlan} />
-          : <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
+        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} search={search} canPlan={canPlan} />}
+        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
+        {tab === 'config' && (canConfigure
+          ? <ConfigTab warehouseId={effectiveWhId} />
+          : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
       </div>
     </div>
   )
@@ -198,9 +207,9 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, search, 
       <div className="border-b bg-slate-50 px-3 py-1.5 shrink-0 flex items-center gap-1.5 flex-wrap">
         <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu (hạng nhặt):</span>
         {(data?.zones ?? []).map(z => (
-          <span key={z.id} title={`${z.name} — sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}${z.slot_group ? ` · khu riêng ${z.slot_group}` : ''}`}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${z.slot_group ? 'bg-purple-50 text-purple-700 border-purple-200' : z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
-            {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}{z.slot_group ? ` · 🔒${z.slot_group}` : ''}
+          <span key={z.id} title={`${z.name} — loại ${z.category ?? 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
+            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
+            {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}
           </span>
         ))}
         {data && !data.has_ranked_zones && level === 'HARD' && (
@@ -217,8 +226,9 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, search, 
         )}
       </div>
 
-      {/* Cảnh báo nhóm riêng (SCA…) — hàng lạ trong khu riêng KHÔNG tự sinh lệnh (user chốt) */}
-      {(data?.warnings ?? []).length > 0 && <GroupWarnings warnings={data!.warnings} />}
+      {/* Cảnh báo pallet nằm SAI LOẠI khu (vd hàng thường trong khu SCA) — chỉ cảnh báo,
+          muốn sinh lệnh kéo về thì tick ô trong sheet Tạo kế hoạch (user chốt) */}
+      {(data?.warnings ?? []).length > 0 && <CategoryWarnings warnings={data!.warnings} />}
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {error ? (
@@ -264,28 +274,17 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, search, 
   )
 }
 
-// Cảnh báo nhóm riêng: GROUP_OUTSIDE = sẽ được kéo về khi tạo KH; FOREIGN_IN_GROUP = chỉ cảnh báo
-function GroupWarnings({ warnings }: { warnings: SlottingWarning[] }) {
-  const foreign = warnings.filter(w => w.type === 'FOREIGN_IN_GROUP')
-  const outside = warnings.filter(w => w.type === 'GROUP_OUTSIDE')
+// Cảnh báo pallet nằm SAI LOẠI khu — chỉ cảnh báo; kéo về = checkbox lúc tạo kế hoạch
+function CategoryWarnings({ warnings }: { warnings: SlottingWarning[] }) {
+  const total = warnings.reduce((s, w) => s + w.pallets, 0)
   return (
-    <div className="border-b bg-amber-50/60 px-3 py-1.5 shrink-0 space-y-0.5 text-[10px]">
-      {foreign.length > 0 && (
-        <p className="text-amber-800 flex items-start gap-1 flex-wrap">
-          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-          <span><b>Hàng lạ trong khu riêng</b> (chỉ cảnh báo — không tự sinh lệnh):{' '}
-            {foreign.slice(0, 6).map(w => `${w.material_code} (${w.pallets} pallet ở ${w.zone_code}·${w.group})`).join(' · ')}
-            {foreign.length > 6 ? ` … +${foreign.length - 6} mục` : ''}</span>
-        </p>
-      )}
-      {outside.length > 0 && (
-        <p className="text-purple-800 flex items-start gap-1 flex-wrap">
-          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-          <span><b>Mã thuộc khu riêng đang nằm ngoài</b> (tạo kế hoạch sẽ kéo về, ưu tiên cao nhất):{' '}
-            {outside.slice(0, 6).map(w => `${w.material_code} (${w.pallets} pallet ở ${w.zone_code} → về khu ${w.group})`).join(' · ')}
-            {outside.length > 6 ? ` … +${outside.length - 6} mục` : ''}</span>
-        </p>
-      )}
+    <div className="border-b bg-amber-50/60 px-3 py-1.5 shrink-0 text-[10px]">
+      <p className="text-amber-800 flex items-start gap-1 flex-wrap">
+        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+        <span><b>{nf.format(total)} pallet nằm sai loại khu</b> (chỉ cảnh báo — muốn sinh lệnh kéo về đúng khu, tick ô trong "Tạo kế hoạch sắp xếp"):{' '}
+          {warnings.slice(0, 6).map(w => `${w.material_code} [${w.material_category ?? 'chưa khai loại'}] — ${w.pallets} pallet ở ${w.zone_code} (khu ${w.zone_category})`).join(' · ')}
+          {warnings.length > 6 ? ` … +${warnings.length - 6} mục` : ''}</span>
+      </p>
     </div>
   )
 }
@@ -342,6 +341,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [name, setName] = useState(`Sắp xếp kho ${today} (${LEVEL_LABEL[level]} · ${principle})`)
   const [maxMoves, setMaxMoves] = useState('100')
+  const [pullWrongZone, setPullWrongZone] = useState(false)
   const [err, setErr] = useState('')
   const [lines, setLines] = useState<SlottingPlanLineDraft[] | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -353,7 +353,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
   function handlePreview() {
     setErr('')
     const mm = Math.min(300, Math.max(1, Number(maxMoves) || 100))
-    preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, categories: categories.length > 0 ? categories : undefined }, {
+    preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, pull_wrong_zone: pullWrongZone, categories: categories.length > 0 ? categories : undefined }, {
       onSuccess: r => {
         setLines(r.lines)
         setChecked(new Set(r.lines.map(lineKey)))
@@ -398,6 +398,11 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
             {previewing ? 'Đang sinh…' : lines ? 'Sinh lại gợi ý' : 'Sinh gợi ý'}
           </Button>
         </div>
+        {/* Kéo pallet nằm sai loại khu về đúng khu (vd hàng thường lạc trong khu SCA, mã SCA lạc ra ngoài) */}
+        <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+          <input type="checkbox" checked={pullWrongZone} onChange={e => setPullWrongZone(e.target.checked)} className="h-3.5 w-3.5 rounded accent-blue-600" />
+          Kéo hàng nằm <b>sai loại khu</b> về đúng khu (ưu tiên cao nhất — mặc định chỉ cảnh báo)
+        </label>
         <p className="text-[10px] text-slate-400">
           {level === 'EASY' && 'Easy: gom mã đang rải nhiều vị trí về ít vị trí — giải phóng chỗ trống, không quan tâm date.'}
           {level === 'NORMAL' && (principle === 'LIFO'
@@ -457,6 +462,85 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
         )}
       </div>
     </FormSheet>
+  )
+}
+
+// ─── Tab Cài đặt (quyền slotting.configure) — cấu hình slotting per KHU ───────
+// Hạng nhặt (1 = gần cửa xuất nhất) + Luồng cửa. Loại kho của khu/mã quản ở chỗ cũ
+// (Cài đặt WMS / Mã hàng) — khu SCA = tạo Loại kho riêng rồi gán khu + mã (user chốt v3).
+function ConfigTab({ warehouseId }: { warehouseId: string }) {
+  const { data: zones = [], isLoading } = useWarehouseZones(warehouseId || undefined)
+  const { mutate: updateCfg, isPending } = useUpdateSlottingZoneConfig()
+  const [err, setErr] = useState('')
+  const [draftRank, setDraftRank] = useState<Record<string, string>>({})
+
+  function saveRank(z: WarehouseZone, raw: string) {
+    const trimmed = raw.trim()
+    const current = z.pick_rank != null ? String(z.pick_rank) : ''
+    if (trimmed === current) return
+    const n = trimmed === '' ? null : Number(trimmed)
+    if (n !== null && (!Number.isInteger(n) || n < 1 || n > 999)) { setErr(`Hạng nhặt khu ${z.code}: phải là số nguyên 1–999 (hoặc trống)`); return }
+    setErr('')
+    updateCfg({ id: z.id, pick_rank: n }, { onError: e => setErr(apiMsg(e)) })
+  }
+  function saveFlow(z: WarehouseZone, v: string) {
+    setErr('')
+    updateCfg({ id: z.id, flow_type: v || null }, { onError: e => setErr(apiMsg(e)) })
+  }
+
+  if (!warehouseId) return <div className="p-8 text-center text-sm text-slate-400">Chọn kho để cài đặt</div>
+  return (
+    <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      <div className="px-3 py-2 text-[10px] text-slate-500 border-b bg-slate-50">
+        <b>Hạng nhặt</b>: độ gần cửa xuất của khu — 1 = gần nhất; trống = khu không tham gia gợi ý ABC (mức Hard).{' '}
+        <b>Luồng cửa</b>: quyết định hướng dẫn xếp trong dãy in trên phiếu kế hoạch.{' '}
+        Khu đặc thù (kho lạnh…): dùng <b>Loại kho</b> — tạo Loại riêng (vd SCA) trong Cài đặt WMS → Loại kho, gán cho khu + các mã hàng của nó; slotting chỉ ghép mã đúng Loại với khu đúng Loại.
+      </div>
+      {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+      {isLoading ? (
+        <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã khu</TableHead>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên khu</TableHead>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho</TableHead>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng nhặt (1 = gần cửa nhất)</TableHead>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Luồng cửa</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(zones as WarehouseZone[]).filter(z => z.is_active).map(z => (
+              <TableRow key={z.id}>
+                <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{z.code}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{z.name}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">— đa dụng</span>}</TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <Input type="number" min={1} max={999} disabled={isPending}
+                    className="h-7 w-20 text-xs !min-h-0"
+                    value={draftRank[z.id] ?? (z.pick_rank != null ? String(z.pick_rank) : '')}
+                    onChange={e => setDraftRank(prev => ({ ...prev, [z.id]: e.target.value }))}
+                    onBlur={e => saveRank(z, e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    placeholder="—" />
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <Select value={z.flow_type ?? '__none__'} onValueChange={v => saveFlow(z, v === '__none__' ? '' : v)} disabled={isPending}>
+                    <SelectTrigger className="h-7 w-52 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__" className="text-xs">— Chưa khai</SelectItem>
+                      <SelectItem value="SAME_END" className="text-xs">Xuất nhập cùng 1 đầu</SelectItem>
+                      <SelectItem value="FLOW_THROUGH" className="text-xs">Nhập 1 đầu, xuất 1 đầu</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
   )
 }
 

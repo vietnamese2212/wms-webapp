@@ -94,7 +94,6 @@ const EMPTY_FORM = {
   max_stack_layers: '',
   old_code: '',
   batch_prefix: '',
-  slot_group: '',
   notes: '',
 }
 
@@ -314,7 +313,6 @@ export default function Materials() {
       max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
-      slot_group:           mat.slot_group ?? '',
       notes:                mat.notes ?? '',
     })
     setOverrides(
@@ -367,7 +365,6 @@ export default function Materials() {
         stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
-        slot_group:                    form.slot_group.trim().toUpperCase() || null,
         notes:                         form.notes.trim() || undefined,
         no_qr_tracking:                noQr,
         warehouse_pallet_overrides:    palletOverrides,
@@ -1073,18 +1070,6 @@ export default function Materials() {
                 </div>
               </div>
             )}
-
-            {/* Khu vực đặc biệt (slotting — nhóm riêng, vd SCA lạnh): mã chỉ được gợi ý vào khu cùng nhóm,
-                nằm ngoài sẽ bị kế hoạch sắp xếp kéo về đúng khu (ưu tiên cao nhất) */}
-            <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">Khu vực đặc biệt</Label>
-              <div className="col-span-2">
-                <Input className="h-7 text-xs uppercase w-32" value={form.slot_group}
-                  onChange={e => setField('slot_group', e.target.value.toUpperCase())}
-                  placeholder="vd: SCA" />
-                <p className="text-[10px] text-slate-400 mt-0.5">Khớp "Nhóm riêng" của khu (Cài đặt WMS → Khu vực). Mã có nhóm chỉ vào khu cùng nhóm; Tối ưu vị trí sẽ kéo về đúng khu nếu nằm ngoài. Trống = hàng thường.</p>
-              </div>
-            </div>
 
             {/* HSD ngoại lệ theo NCC */}
             <div className="grid grid-cols-3 items-start gap-2">

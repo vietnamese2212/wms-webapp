@@ -2303,13 +2303,14 @@ export interface ControlTowerData {
   weigh: { tickets: number; pending2: number; net_kg: number }
   hourly: { h: number; out_cartons: number; out_scans: number; in_pallets: number }[]
 }
-export function useControlTower(warehouseIds: string[], categories: string[] = []) {
+export function useControlTower(warehouseIds: string[], categories: string[] = [], materialCodes: string[] = []) {
   return useQuery({
-    queryKey: ['control-tower', warehouseIds.join(','), categories.join(',')],
+    queryKey: ['control-tower', warehouseIds.join(','), categories.join(','), materialCodes.join(',')],
     queryFn: async () => {
       const params: Record<string, string> = {}
       if (warehouseIds.length > 0) params.warehouse_ids = warehouseIds.join(',')
       if (categories.length > 0) params.categories = categories.join(',')
+      if (materialCodes.length > 0) params.material_codes = materialCodes.join(',')
       const { data } = await apiClient.get('/wms/control-tower', { params })
       return data.data as ControlTowerData
     },

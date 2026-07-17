@@ -1,13 +1,19 @@
 -- Control Tower v3 (user 17/07: "1 ngày đi cả trăm/nghìn mã, nhiều loại kho"):
 -- (a) bảng hàng-theo-mã đổi sang KIỂU ĐIỀU HÀNH — sort mã CÒN THIẾU nhiều nhất lên đầu
 --     (mã đã đủ chìm xuống, gộp thành số đếm), top 30 + đếm n_done/n_short;
--- (b) nhập theo mã nâng top 30. Filter Loại kho đi qua p_categories sẵn có (controller ∩ scope JWT).
--- CREATE OR REPLACE — chạy đè bản v2. CHỈ đổi 2 CTE out_by_mat / in_by_mat.
+-- (b) nhập theo mã nâng top 30. Filter Loại kho đi qua p_categories sẵn có (controller ∩ scope JWT);
+-- (c) filter MÃ HÀNG `p_material_codes` (user: soi đích danh mã ngoài top 30) — CHỈ cắt 2 khối
+--     hàng-theo-mã, không đụng gate/chuyến/tổng ngày.
+-- Đổi CHỮ KÝ hàm (thêm tham số) → DROP bản cũ trước để không tồn tại 2 overload trùng tên
+-- (PostgREST gọi named-args sẽ dính PGRST203 ambiguous nếu còn cả 2 bản).
+
+drop function if exists control_tower_stats(text[], text[], date);
 
 create or replace function control_tower_stats(
-  p_warehouse_ids text[] default null,
-  p_categories    text[] default null,
-  p_today         date   default null
+  p_warehouse_ids  text[] default null,
+  p_categories     text[] default null,
+  p_today          date   default null,
+  p_material_codes text[] default null   -- lọc đích danh mã hàng (2 khối theo mã)
 ) returns jsonb
 language sql
 stable
@@ -83,6 +89,8 @@ out_mat_rows as (
   join "OutboundDelivery" d on d.gdo_id = g.id
   join "OutboundItem" oi on oi.do_id = d.id
   left join "Material" m on m.id = oi.material_id
+  where (p_material_codes is null
+         or coalesce(m.material_code, oi.material_code_raw) = any(p_material_codes))
   group by 1, 2, 3
 ),
 out_by_mat as (
@@ -105,6 +113,7 @@ in_mat_rows as (
   where ie.import_date::date = p_today
     and (p_warehouse_ids is null or ie.warehouse_id::text = any(p_warehouse_ids))
     and (p_categories is null or m.category is null or m.category = any(p_categories))
+    and (p_material_codes is null or m.material_code = any(p_material_codes))
   group by 1, 2, 3
 ),
 in_by_mat as (

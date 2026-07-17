@@ -7,7 +7,7 @@ import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale } from 'lucide
 import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { useControlTower, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
+import { useControlTower, useMaterials, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
@@ -133,7 +133,7 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
       )}
       {total > list.length && (
         <p className={`px-2.5 py-1 text-[9px] border-t ${dark ? 'text-slate-500 border-slate-700/60' : 'text-slate-400 border-slate-100'}`}>
-          Hiện 30 mã cần chú ý nhất (còn thiếu nhiều nhất) trong {nf.format(total)} mã — lọc Kho / Loại kho để thu hẹp.
+          Hiện 30 mã cần chú ý nhất (còn thiếu nhiều nhất) trong {nf.format(total)} mã — lọc Kho / Loại kho / Mã hàng để soi phần còn lại.
         </p>
       )}
     </Block>
@@ -309,7 +309,8 @@ export default function ControlTower() {
   const setF    = useWmsFilterStore(s => s.setControlTower)
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: whTypes = [] } = useScopedWhTypes()
-  const { data, isLoading, isError, error } = useControlTower(filters.warehouse_ids, filters.categories)
+  const { data: allMaterials = [] } = useMaterials()   // danh mục mã (cache 5') — options filter Mã hàng
+  const { data, isLoading, isError, error } = useControlTower(filters.warehouse_ids, filters.categories, filters.material_codes)
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -341,6 +342,11 @@ export default function ControlTower() {
       options: (whTypes as { value: string }[]).map(t => ({ value: t.value, label: t.value })),
       selected: filters.categories,
       onChange: v => setF({ categories: v }) },
+    // Soi đích danh mã (kể cả mã ngoài top 30) — chỉ ảnh hưởng 2 khối hàng-theo-mã
+    { key: 'material', label: 'Mã hàng', type: 'multi', searchable: true,
+      options: allMaterials.map(m => ({ value: m.material_code, label: `${m.material_code} — ${m.short_name ?? ''}` })),
+      selected: filters.material_codes,
+      onChange: v => setF({ material_codes: v }) },
   ]
 
   const clock = now.toLocaleTimeString('vi-VN', { hour12: false })

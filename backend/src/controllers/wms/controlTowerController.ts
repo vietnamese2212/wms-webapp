@@ -35,11 +35,15 @@ export async function getControlTower(req: Request, res: Response) {
       : reqCats
     if (reqCats.length > 0 && effCats.length === 0)
       return fail(res, 'Loại kho chọn ngoài phạm vi được phân quyền', 403, 'FORBIDDEN')
+    // Mã hàng: lọc đích danh (chỉ cắt 2 khối hàng-theo-mã trong RPC)
+    const matCodes = req.query.material_codes
+      ? String(req.query.material_codes).split(',').filter(Boolean).slice(0, 100) : []
 
     const { data, error } = await supabase.rpc('control_tower_stats', {
       p_warehouse_ids: effective.length > 0 ? effective : null,
       p_categories: effCats.length > 0 ? effCats : null,
       p_today: today,
+      p_material_codes: matCodes.length > 0 ? matCodes : null,
     })
     if (error) {
       if (/control_tower_stats/i.test(error.message) || error.code === 'PGRST202')

@@ -76,8 +76,9 @@ export interface ScanLogFilters {
   search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
 export interface ControlTowerFilters {
-  warehouse_ids: string[]   // kho đang giám sát (rỗng = mọi kho trong scope)
-  categories: string[]      // Loại kho (rỗng = mọi loại trong scope)
+  warehouse_ids: string[]     // kho đang giám sát (rỗng = mọi kho trong scope)
+  categories: string[]        // Loại kho (rỗng = mọi loại trong scope)
+  material_codes: string[]    // soi đích danh mã hàng (2 khối hàng-theo-mã)
 }
 export interface WeighTicketFilters {
   from_date: string
@@ -265,7 +266,7 @@ function initialFilters() {
       search: '',
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
-    controlTower: { warehouse_ids: [], categories: [] },
+    controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },

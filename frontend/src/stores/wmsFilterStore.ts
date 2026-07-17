@@ -184,6 +184,12 @@ interface LeaveFilters {
   from: string
   to: string
 }
+interface SlottingFilters {
+  warehouseId: string
+  categories: string[]
+  days: number                    // cửa sổ phân tích ABC: 30/60/90 ngày
+  tab: 'analysis' | 'plans'
+}
 interface WmsFilterState {
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
@@ -194,6 +200,7 @@ interface WmsFilterState {
   scanLog:           ScanLogFilters
   weighTickets:      WeighTicketFilters
   controlTower:      ControlTowerFilters
+  slotting:          SlottingFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   locations:         LocationsFilters
@@ -218,6 +225,7 @@ interface WmsFilterState {
   setScanLog:           (f: Partial<ScanLogFilters>)          => void
   setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
   setControlTower:      (f: Partial<ControlTowerFilters>)     => void
+  setSlotting:          (f: Partial<SlottingFilters>)          => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
@@ -267,6 +275,7 @@ function initialFilters() {
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
+    slotting:     { warehouseId: '', categories: [], days: 30, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
@@ -300,6 +309,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setScanLog:          (f) => set(s => ({ scanLog:          { ...s.scanLog,          ...f } })),
       setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
       setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
+      setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),

@@ -222,6 +222,14 @@ export const MODULES = {
       view: 'Xem bảng giám sát + chế độ TV',
     },
   },
+  slotting: {
+    page: 'Tối ưu vị trí (Slotting)',
+    actions: {
+      view:     'Xem phân tích ABC + kế hoạch sắp xếp',
+      plan:     'Tạo / xóa kế hoạch sắp xếp',
+      complete: 'Hoàn thành / hủy / mở lại kế hoạch',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

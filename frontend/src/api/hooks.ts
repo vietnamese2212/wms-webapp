@@ -765,7 +765,7 @@ export function useReorderWarehouseTypes() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -792,7 +792,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; pick_rank?: number | null }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -2319,6 +2319,118 @@ export function useControlTower(warehouseIds: string[], categories: string[] = [
     staleTime: 20_000,
     refetchInterval: 60_000,   // lưới an toàn khi realtime im (TV treo cả ngày)
     placeholderData: keepPreviousData,
+  })
+}
+
+// ─── Slotting (Tối ưu vị trí) ────────────────────────────────────────────────
+export interface SlottingZone {
+  id: string; code: string; name: string; category: string | null
+  pick_rank: number | null; capacity: number; used_slots: number; band: 'A' | 'B' | 'C' | null
+}
+export interface SlottingMaterial {
+  material_id: string; code: string; name: string | null; category: string | null
+  picks: number; cartons_out: number; pallets_touched: number
+  stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number
+  zones_current: { sub_code: string | null; pallets: number; cartons: number }[]
+  suggested_zones: string[]; misplaced_pallets: number
+}
+export interface SlottingData {
+  window_days: number; total_picks: number; has_ranked_zones: boolean
+  zones: SlottingZone[]; materials: SlottingMaterial[]
+}
+export function useSlotting(warehouseId: string, categories: string[] = [], days = 30) {
+  return useQuery({
+    queryKey: ['slotting', warehouseId, categories.join(','), days],
+    enabled: !!warehouseId,
+    queryFn: async () => {
+      const params: Record<string, string> = { warehouse_id: warehouseId, days: String(days) }
+      if (categories.length > 0) params.categories = categories.join(',')
+      const { data } = await apiClient.get('/wms/slotting', { params })
+      return data.data as SlottingData
+    },
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export interface SlottingPlanLineDraft {
+  inventory_entry_id: string; pallet_code: string
+  material_code: string | null; material_name: string | null; abc: 'A' | 'B' | 'C'; reason: string
+  from_location_id: string | null; from_location_code: string | null
+  to_location_id: string; to_location_code: string | null
+}
+export interface SlottingPlanRow {
+  id: string; warehouse_id: string; name: string; status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
+  note: string | null; window_days: number | null; n_lines: number
+  created_by: string | null; created_at: string; completed_at: string | null; completed_by: string | null
+  progress: { done: number; gone: number; total: number } | null
+}
+export interface SlottingPlanLineRow {
+  id: string; pallet_code: string; material_code: string | null; material_name: string | null
+  abc: string | null; reason: string | null
+  from_location_code: string | null; to_location_code: string | null; to_location_id: string
+  status: 'PENDING' | 'DONE' | 'MOVED_OTHER' | 'GONE'; current_location_code: string | null
+  moved_at: string | null; moved_by_name: string | null
+}
+export interface SlottingPlanDetailData extends Omit<SlottingPlanRow, 'progress'> {
+  summary: { total: number; done: number; moved_other: number; gone: number; pending: number }
+  lines: SlottingPlanLineRow[]
+}
+export function useSlottingPlans(warehouseId?: string) {
+  return useQuery({
+    queryKey: ['slotting-plans', warehouseId ?? 'all'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/slotting/plans', {
+        params: warehouseId ? { warehouse_id: warehouseId } : undefined,
+      })
+      return data.data as SlottingPlanRow[]
+    },
+    staleTime: 20_000,
+  })
+}
+export function useSlottingPlan(id: string | undefined) {
+  return useQuery({
+    queryKey: ['slotting-plan', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/slotting/plans/${id}`)
+      return data.data as SlottingPlanDetailData
+    },
+    staleTime: 10_000,
+  })
+}
+export function useSlottingPreview() {
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; days: number; max_moves: number; categories?: string[] }) =>
+      apiClient.post('/wms/slotting/plans/preview', body).then(r => r.data.data as {
+        lines: SlottingPlanLineDraft[]; skipped_no_capacity: number; total_candidates?: number; message?: string
+      }),
+  })
+}
+export function useCreateSlottingPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; name: string; window_days?: number; note?: string; lines: SlottingPlanLineDraft[] }) =>
+      apiClient.post('/wms/slotting/plans', body).then(r => r.data.data as { id: string; n_lines: number }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
+  })
+}
+export function useUpdateSlottingPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'COMPLETED' | 'CANCELLED' | 'ACTIVE' }) =>
+      apiClient.patch(`/wms/slotting/plans/${id}`, { status }).then(r => r.data.data),
+    onSettled: (_d, _e, v) => {
+      qc.invalidateQueries({ queryKey: ['slotting-plans'] })
+      qc.invalidateQueries({ queryKey: ['slotting-plan', v.id] })
+    },
+  })
+}
+export function useDeleteSlottingPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/slotting/plans/${id}`).then(r => r.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
   })
 }
 

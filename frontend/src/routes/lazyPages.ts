@@ -37,6 +37,8 @@ const outboundScanLog    = () => import('@/pages/wms/OutboundScanLog')
 const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const weighTickets       = () => import('@/pages/wms/WeighTickets')
 const controlTower       = () => import('@/pages/wms/ControlTower')
+const slotting           = () => import('@/pages/wms/Slotting')
+const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
@@ -72,6 +74,8 @@ export const Pages = {
   OutboundPrepare: lazyRetry(outboundPrepare),
   WeighTickets: lazyRetry(weighTickets),
   ControlTower: lazyRetry(controlTower),
+  Slotting: lazyRetry(slotting),
+  SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   LoosePicking: lazyRetry(loosePicking),
   LoosePickingDetail: lazyRetry(loosePickingDetail),
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
@@ -111,6 +115,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/loosepicking': loosePicking,
   '/wms/locations': locations,
   '/wms/stocktake': stocktake,
+  '/wms/slotting': slotting,
   '/wms/stocktake/summary': stocktakeDashboard,
   '/wms/settings': wmsSettings,
   '/tms/bookings': tmsBookings,

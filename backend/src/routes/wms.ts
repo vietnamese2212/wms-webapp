@@ -10,6 +10,7 @@ import * as palletPrint from '../controllers/wms/palletPrintController'
 import * as palletOps from '../controllers/wms/palletOpsController'
 import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
+import * as slotting from '../controllers/wms/slottingController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -145,6 +146,14 @@ router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbo
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
 // Control Tower — giám sát vận hành trong ngày (đọc-only, RPC aggregate)
 router.get('/control-tower',                                  requirePerm('control_tower', 'view'), controlTower.getControlTower)
+// Slotting (Tối ưu vị trí) — phân tích ABC + kế hoạch sắp xếp lại kho
+router.get('/slotting',                                       requirePerm('slotting', 'view'),     slotting.getSlotting)
+router.get('/slotting/plans',                                 requirePerm('slotting', 'view'),     slotting.listPlans)
+router.get('/slotting/plans/:id',                             requirePerm('slotting', 'view'),     slotting.getPlan)
+router.post('/slotting/plans/preview',                        requirePerm('slotting', 'plan'),     slotting.previewPlan)
+router.post('/slotting/plans',                                requirePerm('slotting', 'plan'),     slotting.createPlan)
+router.patch('/slotting/plans/:id',                           requirePerm('slotting', 'complete'), slotting.updatePlan)
+router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)

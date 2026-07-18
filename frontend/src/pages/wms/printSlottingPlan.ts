@@ -90,7 +90,13 @@ export function printSlottingPlan(
   <div class="head">
     <div>
       <h1>KẾ HOẠCH SẮP XẾP KHO</h1>
-      <div class="note">${esc(plan.name)} · ${esc(plan.level ?? '')}${plan.principle ? ` · ${esc(plan.principle)}` : ''}</div>
+      <div class="note">${esc(plan.name)}${(() => {
+        // Không lặp level/principle nếu tên kế hoạch đã chứa sẵn (tên mặc định luôn kèm)
+        const nameLc = plan.name.toLowerCase()
+        const tag = [plan.level, plan.principle].map(v => v ?? '')
+          .filter(v => v && !nameLc.includes(v.toLowerCase())).join(' · ')
+        return tag ? ` · ${esc(tag)}` : ''
+      })()}</div>
     </div>
     <div class="meta">
       <div>Tạo: <b>${esc(plan.created_by ?? '—')}</b> · ${format(new Date(plan.created_at), 'dd-MM-yyyy HH:mm')}</div>

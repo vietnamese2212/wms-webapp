@@ -173,7 +173,7 @@ export async function getSlotting(req: Request, res: Response) {
 }
 
 // ─── Engine sinh gợi ý (preview) ─────────────────────────────────────────────
-interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; expiry_date: string | null }
+interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; expiry_date: string | null; stack_layer?: number | null }
 
 // date đại diện theo nguyên tắc: FEFO = HSD (thiếu thì NSX); FIFO/LIFO = NSX
 function dateKeyOf(e: EntryRow, principle: Principle): string | null {
@@ -192,7 +192,7 @@ function flowNote(zone: StatsZone | undefined, principle: Principle): string | n
 interface PlanLineDraft {
   material_id: string; material_code: string | null; material_name: string | null
   date_key: string | null; n_pallets: number; entry_ids: string[]
-  abc: Band | null; reason: string; flow_note: string | null; priority: number
+  abc: Band | null; reason: string; flow_note: string | null; priority: number; pass: number
   from_location_id: string | null; from_location_code: string | null
   to_location_id: string; to_location_code: string | null
 }
@@ -248,7 +248,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved')
+        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, stack_layer')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -267,23 +267,35 @@ export async function previewPlan(req: Request, res: Response) {
       }
     }
 
-    // Gom dòng draft theo (mã, date, from, to)
+    // ── Mô phỏng ẢO nhiều lượt (fix hội tụ 18/07 — user test: làm xong vòng 1 mà sinh lại
+    // vẫn ra yêu cầu nghĩa là vòng 1 sai). 3 mấu chốt:
+    // (a) locOf = vị trí ẢO của pallet, cập nhật khi gán lệnh — các bước sau nhìn thấy trạng thái SAU lệnh trước;
+    // (b) pallet đã gán lệnh vẫn làm MỎ NEO nhóm gom (không bốc lại, nhưng được tính "mã đang ở đây");
+    // (c) lặp các bước tới khi không sinh thêm lệnh — chỗ trống giải phóng ở nguồn được cộng lại giữa các lượt.
+    const locOf = new Map<string, string>()
+    for (const e of entries) locOf.set(e.id, e.location_id)
+    const zoneOfEntry = (eid: string) => zoneOfLoc(locOf.get(eid) ?? null)
+
     const draftMap = new Map<string, PlanLineDraft>()
     const movedEntry = new Set<string>()
+    const movedOutL1 = new Map<string, number>()  // slot tầng-1 được giải phóng ở nguồn (cộng lại giữa các lượt)
+    const movedInCnt = new Map<string, number>()
+    let pass = 0
     function addMoves(list: EntryRow[], toLoc: StatsLocation, reason: string, priority: number) {
       for (const e of list) {
         const mat = matById.get(e.material_id)!
         const dk = dateKeyOf(e, principle)
-        const fromLoc = locById.get(e.location_id)
-        const key = `${e.material_id}|${dk ?? ''}|${e.location_id}|${toLoc.id}`
+        const fromId = locOf.get(e.id)!                    // = vị trí gốc (pallet chỉ được gán lệnh 1 lần)
+        const fromLoc = locById.get(fromId)
+        const key = `${e.material_id}|${dk ?? ''}|${fromId}|${toLoc.id}`
         let d = draftMap.get(key)
         if (!d) {
           d = {
             material_id: e.material_id, material_code: mat.code, material_name: mat.name,
             date_key: dk, n_pallets: 0, entry_ids: [],
             abc: mat.abc, reason, flow_note: flowNote(zoneOfLoc(toLoc.id) ?? zoneByCode.get(toLoc.sub_code ?? ''), principle),
-            priority,
-            from_location_id: e.location_id, from_location_code: fromLoc?.location_code ?? null,
+            priority, pass,
+            from_location_id: fromId, from_location_code: fromLoc?.location_code ?? null,
             to_location_id: toLoc.id, to_location_code: toLoc.location_code,
           }
           draftMap.set(key, d)
@@ -291,191 +303,224 @@ export async function previewPlan(req: Request, res: Response) {
         d.n_pallets++
         d.entry_ids.push(e.id)
         movedEntry.add(e.id)
+        if ((e.stack_layer ?? 1) === 1) movedOutL1.set(fromId, (movedOutL1.get(fromId) ?? 0) + 1)
+        movedInCnt.set(toLoc.id, (movedInCnt.get(toLoc.id) ?? 0) + 1)
+        locOf.set(e.id, toLoc.id)
         freeByLoc.set(toLoc.id, (freeByLoc.get(toLoc.id) ?? 1) - 1)
       }
     }
-    // Chọn dãy vị trí đích trong 1 tập khu (theo thứ tự khu), rót theo sức chứa còn lại
-    function assignTargets(list: EntryRow[], targetZones: StatsZone[], reason: string, priority: number): number {
-      let skipped = 0
-      let queue = [...list]
-      for (const z of targetZones) {
-        if (queue.length === 0) break
-        const locs = stats!.locations
-          .filter(l => l.sub_code === z.code && (freeByLoc.get(l.id) ?? 0) > 0)
-          .sort((a, b) => (freeByLoc.get(b.id)! - freeByLoc.get(a.id)!) || a.location_code.localeCompare(b.location_code))
+    // Chọn dãy vị trí đích trong 1 tập khu, rót theo sức chứa còn lại.
+    // ƯU TIÊN vị trí ĐANG chứa cùng mã (tránh tự tạo phân mảnh — bài học test hội tụ 18/07),
+    // sau đó mới quét theo thứ tự khu (chỗ trống nhiều trước).
+    function assignTargets(list: EntryRow[], targetZones: StatsZone[], reason: string, priority: number, matId?: string): number {
+      const queue = list.filter(e => !movedEntry.has(e.id))
+      const pour = (locs: StatsLocation[]) => {
         for (const loc of locs) {
           if (queue.length === 0) break
           const free = freeByLoc.get(loc.id) ?? 0
           if (free <= 0) continue
-          const take = queue.splice(0, free).filter(e => e.location_id !== loc.id)   // không "chuyển" vào chính nó
+          const take = queue.splice(0, free).filter(e => locOf.get(e.id) !== loc.id)   // không "chuyển" vào chính nó
           addMoves(take, loc, reason, priority)
         }
       }
-      skipped += queue.length
-      return skipped
+      if (matId) {
+        const zoneOk = new Set(targetZones.map(z => z.code))
+        const matLocIds = new Set(entries.filter(e => e.material_id === matId).map(e => locOf.get(e.id)!))
+        pour([...matLocIds]
+          .map(id => locById.get(id))
+          .filter((l): l is StatsLocation => !!l && !!l.sub_code && zoneOk.has(l.sub_code) && (freeByLoc.get(l.id) ?? 0) > 0)
+          .sort((a, b) => (freeByLoc.get(b.id)! - freeByLoc.get(a.id)!) || a.location_code.localeCompare(b.location_code)))
+      }
+      for (const z of targetZones) {
+        if (queue.length === 0) break
+        pour(stats!.locations
+          .filter(l => l.sub_code === z.code && (freeByLoc.get(l.id) ?? 0) > 0)
+          .sort((a, b) => (freeByLoc.get(b.id)! - freeByLoc.get(a.id)!) || a.location_code.localeCompare(b.location_code)))
+      }
+      return queue.length
     }
 
     let skippedNoCapacity = 0
 
-    // Pallet nằm SAI LOẠI khu (vd hàng thường trong khu SCA / mã SCA lạc ra khu Thành phẩm):
-    // mặc định ĐÓNG BĂNG (chỉ cảnh báo — hàng để tạm có chủ đích không bị đuổi);
-    // pull_wrong_zone=true → P0: sinh lệnh kéo về khu ĐÚNG Loại (ưu tiên cao nhất).
+    // Pallet nằm SAI LOẠI khu: mặc định ĐÓNG BĂNG (chỉ cảnh báo — hàng để tạm có chủ đích
+    // không bị đuổi); pull_wrong_zone=true → P0 kéo về khu đúng Loại (ưu tiên cao nhất).
     const frozen = new Set<string>()
     for (const e of entries) {
       const z = zoneOfLoc(e.location_id)
       const mat = matById.get(e.material_id)
       if (z?.category != null && mat && z.category !== mat.category) frozen.add(e.id)
     }
-    if (pull_wrong_zone) {
-      const wrongByMat = new Map<string, EntryRow[]>()
-      for (const e of entries) {
-        if (!frozen.has(e.id)) continue
-        const arr = wrongByMat.get(e.material_id) ?? []
-        arr.push(e)
-        wrongByMat.set(e.material_id, arr)
-      }
-      for (const [mid, list] of wrongByMat) {
-        const mat = matById.get(mid)!
-        const homeZones = stats.zones
-          .filter(z => zoneAccepts(z, mat))
-          .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
-        if (homeZones.length === 0) continue               // kho không có khu nào nhận loại này
-        skippedNoCapacity += assignTargets(list, homeZones,
-          `Nằm sai loại khu — kéo về khu ${mat.category ?? 'đúng loại'}`, 0)
-        for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
-      }
-    }
 
-    // ── P1: VỊ TRÍ KHÔNG ĐƯA HÀNG VÀO (kho tạm) — hàng nằm đó LUÔN bị kéo đi
-    // (nguyên tắc user: vị trí tạm phải dọn — không cần checkbox, kể cả hàng đang sai loại khu)
-    {
-      const tempByMat = new Map<string, EntryRow[]>()
-      for (const e of entries) {
-        if (movedEntry.has(e.id)) continue
-        if (!locById.get(e.location_id)?.slot_no_in) continue
-        const arr = tempByMat.get(e.material_id) ?? []
-        arr.push(e)
-        tempByMat.set(e.material_id, arr)
-      }
-      for (const [mid, list] of tempByMat) {
-        const mat = matById.get(mid)!
-        const homeZones = stats.zones
-          .filter(z => zoneAccepts(z, mat))
-          .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
-        if (homeZones.length === 0) continue
-        skippedNoCapacity += assignTargets(list, homeZones, 'Vị trí tạm (không chứa hàng) — kéo hàng đi', 1)
-        for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
-      }
-    }
+    const homeZonesOf = (mat: StatsMaterial) => stats!.zones
+      .filter(z => zoneAccepts(z, mat))
+      .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
 
-    // ── P1 (chỉ HARD): đảo khu theo ABC velocity
-    if (level === 'HARD') {
-      interface Cand { e: EntryRow; mat: EnrichedMaterialLite; prio: number }
-      type EnrichedMaterialLite = StatsMaterial
-      const cands: Cand[] = []
-      for (const e of entries) {
-        if (movedEntry.has(e.id) || frozen.has(e.id)) continue
-        const mat = matById.get(e.material_id)
-        if (!mat) continue
-        const ranked = eligibleRankedZones(stats.zones, mat)
-        if (ranked.length === 0) continue
-        const bands = new Map<string, Band>()
-        ranked.forEach((z, i) => bands.set(z.code, bandOfIndex(i, ranked.length)))
-        const z = zoneOfLoc(e.location_id)
-        const band = z ? bands.get(z.code) : undefined
-        if (!band || band === mat.abc) continue
-        const prio =
-          mat.abc === 'A' && band === 'C' ? 1 :
-          mat.abc === 'A' && band === 'B' ? 2 :
-          mat.abc === 'C' && band === 'A' ? 3 :
-          mat.abc === 'C' && band === 'B' ? 4 : 5
-        cands.push({ e, mat, prio })
+    // Vòng lặp mô phỏng: mỗi lượt tính lại chỗ trống ẢO (đã cộng slot giải phóng ở nguồn),
+    // chạy đủ các bước; dừng khi không sinh thêm lệnh nào (đã hội tụ) hoặc hết 4 lượt.
+    let prevDrafts = -1
+    for (pass = 0; pass < 4 && draftMap.size !== prevDrafts; pass++) {
+      prevDrafts = draftMap.size
+      skippedNoCapacity = 0   // chỉ giữ số của lượt cuối (lượt sau đã xử được phần lượt trước bỏ)
+      for (const l of stats.locations) {
+        freeByLoc.set(l.id, l.slot_no_in ? 0
+          : Math.max(0, Math.max(0, l.max_pallets - l.used_slots) + (movedOutL1.get(l.id) ?? 0) - (movedInCnt.get(l.id) ?? 0)))
       }
-      cands.sort((a, b) => (a.prio - b.prio) || (b.mat.picks - a.mat.picks))
-      // gán theo từng mã để giữ nhóm gọn
-      const byMat = new Map<string, Cand[]>()
-      for (const c of cands) {
-        const arr = byMat.get(c.e.material_id) ?? []
-        arr.push(c)
-        byMat.set(c.e.material_id, arr)
-      }
-      for (const [mid, list] of byMat) {
-        const mat = matById.get(mid)!
-        const ranked = eligibleRankedZones(stats.zones, mat)
-        const bands = new Map<string, Band>()
-        ranked.forEach((z, i) => bands.set(z.code, bandOfIndex(i, ranked.length)))
-        const targetZones = ranked.filter(z => bands.get(z.code) === mat.abc)
-        const reason = mat.abc === 'A'
-          ? 'Mã nhặt nhiều (A) đang ở khu xa cửa — đưa về khu gần cửa'
-          : mat.abc === 'C' ? 'Mã nhặt ít (C) chiếm khu gần cửa — chuyển ra khu xa'
-          : 'Mã hạng B lệch khu'
-        skippedNoCapacity += assignTargets(list.map(c => c.e), targetZones, reason, 2)
-      }
-    }
 
-    // ── P2/P3: GOM trong-cùng-mã (mọi mức; NORMAL/HARD thêm hướng theo date)
-    for (const mat of stats.materials) {
-      const rest = entries.filter(e => e.material_id === mat.material_id && !movedEntry.has(e.id) && !frozen.has(e.id)
-        && (() => { const z = zoneOfLoc(e.location_id); return z ? zoneAccepts(z, mat) : false })())
-      if (rest.length === 0) continue
-      const byLoc = new Map<string, EntryRow[]>()
-      for (const e of rest) {
-        const arr = byLoc.get(e.location_id) ?? []
-        arr.push(e)
-        byLoc.set(e.location_id, arr)
-      }
-      if (byLoc.size <= 1) continue
-
-      interface LocGroup { loc: StatsLocation; entries: EntryRow[]; minDate: string; maxDate: string }
-      const groups: LocGroup[] = []
-      for (const [locId, list] of byLoc) {
-        const loc = locById.get(locId)
-        if (!loc) continue
-        const dates = list.map(e => dateKeyOf(e, principle)).filter(Boolean) as string[]
-        groups.push({ loc, entries: list, minDate: dates.length ? dates.reduce((a, b) => a < b ? a : b) : '9999', maxDate: dates.length ? dates.reduce((a, b) => a > b ? a : b) : '0000' })
-      }
-      if (groups.length <= 1) continue
-
-      const useDate = level !== 'EASY' && groups.some(g => g.minDate !== '9999')
-      // anchors[0] = vị trí NHẬN (đích); cuối mảng = nguồn bốc đi trước
-      // LIFO: đích = vị trí chứa date NGẮN nhất (dồn date dài vào) · FIFO/FEFO: đích = chứa date DÀI nhất
-      const anchors = [...groups].sort((a, b) => {
-        if (useDate) {
-          if (principle === 'LIFO') { if (a.minDate !== b.minDate) return a.minDate < b.minDate ? -1 : 1 }
-          else { if (a.maxDate !== b.maxDate) return a.maxDate > b.maxDate ? -1 : 1 }
+      // ── P0 (checkbox): kéo pallet sai loại khu về khu đúng Loại
+      if (pull_wrong_zone) {
+        const wrongByMat = new Map<string, EntryRow[]>()
+        for (const e of entries) {
+          if (!frozen.has(e.id) || movedEntry.has(e.id)) continue
+          const arr = wrongByMat.get(e.material_id) ?? []
+          arr.push(e)
+          wrongByMat.set(e.material_id, arr)
         }
-        return b.entries.length - a.entries.length
-      })
-      const reason = !useDate
-        ? 'Gom mã về ít vị trí — giải phóng chỗ'
-        : principle === 'LIFO' ? 'Dồn date dài vào vị trí chứa date ngắn (LIFO)'
-        : principle === 'FEFO' ? 'Dồn date ngắn (theo HSD) vào vị trí chứa date dài (FEFO)'
-        : 'Dồn date ngắn vào vị trí chứa date dài (FIFO)'
-      const priority = useDate ? 3 : 4
+        for (const [mid, list] of wrongByMat) {
+          const mat = matById.get(mid)!
+          const homeZones = homeZonesOf(mat)
+          if (homeZones.length === 0) continue             // kho không có khu nào nhận loại này
+          skippedNoCapacity += assignTargets(list, homeZones,
+            `Nằm sai loại khu — kéo về khu ${mat.category ?? 'đúng loại'}`, 0, mid)
+          for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
+        }
+      }
 
-      let ti = 0, si = anchors.length - 1
-      while (si > ti) {
-        const tgt = anchors[ti], src = anchors[si]
-        const free = freeByLoc.get(tgt.loc.id) ?? 0
-        if (free <= 0) { ti++; continue }
-        // nguồn bốc theo chiều date: FIFO/FEFO bốc date ngắn trước; LIFO bốc date dài trước
-        const ordered = [...src.entries].sort((a, b) => {
-          const da = dateKeyOf(a, principle) ?? '9999', db2 = dateKeyOf(b, principle) ?? '9999'
-          return principle === 'LIFO' ? (da > db2 ? -1 : da < db2 ? 1 : 0) : (da < db2 ? -1 : da > db2 ? 1 : 0)
+      // ── P1: VỊ TRÍ KHÔNG ĐƯA HÀNG VÀO (kho tạm) — hàng nằm đó LUÔN bị kéo đi
+      {
+        const tempByMat = new Map<string, EntryRow[]>()
+        for (const e of entries) {
+          if (movedEntry.has(e.id)) continue
+          if (!locById.get(locOf.get(e.id)!)?.slot_no_in) continue
+          const arr = tempByMat.get(e.material_id) ?? []
+          arr.push(e)
+          tempByMat.set(e.material_id, arr)
+        }
+        for (const [mid, list] of tempByMat) {
+          const mat = matById.get(mid)!
+          const homeZones = homeZonesOf(mat)
+          if (homeZones.length === 0) continue
+          skippedNoCapacity += assignTargets(list, homeZones, 'Vị trí tạm (không chứa hàng) — kéo hàng đi', 1, mid)
+          for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
+        }
+      }
+
+      // ── P2 (chỉ HARD): đảo khu theo ABC velocity
+      if (level === 'HARD') {
+        interface Cand { e: EntryRow; mat: StatsMaterial; prio: number }
+        const cands: Cand[] = []
+        for (const e of entries) {
+          if (movedEntry.has(e.id) || frozen.has(e.id)) continue
+          const mat = matById.get(e.material_id)
+          if (!mat) continue
+          const ranked = eligibleRankedZones(stats.zones, mat)
+          if (ranked.length === 0) continue
+          const bands = new Map<string, Band>()
+          ranked.forEach((z, i) => bands.set(z.code, bandOfIndex(i, ranked.length)))
+          const z = zoneOfEntry(e.id)
+          const band = z ? bands.get(z.code) : undefined
+          if (!band || band === mat.abc) continue
+          const prio =
+            mat.abc === 'A' && band === 'C' ? 1 :
+            mat.abc === 'A' && band === 'B' ? 2 :
+            mat.abc === 'C' && band === 'A' ? 3 :
+            mat.abc === 'C' && band === 'B' ? 4 : 5
+          cands.push({ e, mat, prio })
+        }
+        cands.sort((a, b) => (a.prio - b.prio) || (b.mat.picks - a.mat.picks))
+        // gán theo từng mã để giữ nhóm gọn
+        const byMat = new Map<string, Cand[]>()
+        for (const c of cands) {
+          const arr = byMat.get(c.e.material_id) ?? []
+          arr.push(c)
+          byMat.set(c.e.material_id, arr)
+        }
+        for (const [mid, list] of byMat) {
+          const mat = matById.get(mid)!
+          const ranked = eligibleRankedZones(stats.zones, mat)
+          const bands = new Map<string, Band>()
+          ranked.forEach((z, i) => bands.set(z.code, bandOfIndex(i, ranked.length)))
+          const targetZones = ranked.filter(z => bands.get(z.code) === mat.abc)
+          const reason = mat.abc === 'A'
+            ? 'Mã nhặt nhiều (A) đang ở khu xa cửa — đưa về khu gần cửa'
+            : mat.abc === 'C' ? 'Mã nhặt ít (C) chiếm khu gần cửa — chuyển ra khu xa'
+            : 'Mã hạng B lệch khu'
+          skippedNoCapacity += assignTargets(list.map(c => c.e), targetZones, reason, 2, mid)
+        }
+      }
+
+      // ── P3/P4: GOM trong-cùng-mã (mọi mức; NORMAL/HARD thêm hướng theo date).
+      // Nhóm theo vị trí ẢO của TẤT CẢ pallet của mã — pallet đã gán lệnh vẫn là MỎ NEO
+      // (đích nhận thêm), chỉ pallet CHƯA gán lệnh mới được bốc đi.
+      for (const mat of stats.materials) {
+        const all = entries.filter(e => e.material_id === mat.material_id && !frozen.has(e.id)
+          && (() => { const z = zoneOfEntry(e.id); return z ? zoneAccepts(z, mat) : false })())
+        if (all.length === 0) continue
+        const byLoc = new Map<string, EntryRow[]>()
+        for (const e of all) {
+          const lid = locOf.get(e.id)!
+          const arr = byLoc.get(lid) ?? []
+          arr.push(e)
+          byLoc.set(lid, arr)
+        }
+        if (byLoc.size <= 1) continue
+
+        interface LocGroup { loc: StatsLocation; movable: EntryRow[]; minDate: string; maxDate: string }
+        const groups: LocGroup[] = []
+        for (const [locId, list] of byLoc) {
+          const loc = locById.get(locId)
+          if (!loc) continue
+          const dates = list.map(e => dateKeyOf(e, principle)).filter(Boolean) as string[]
+          groups.push({
+            loc, movable: list.filter(e => !movedEntry.has(e.id)),
+            minDate: dates.length ? dates.reduce((a, b) => a < b ? a : b) : '9999',
+            maxDate: dates.length ? dates.reduce((a, b) => a > b ? a : b) : '0000',
+          })
+        }
+        if (groups.length <= 1 || !groups.some(g => g.movable.length > 0)) continue
+
+        const useDate = level !== 'EASY' && groups.some(g => g.minDate !== '9999')
+        // anchors[0] = vị trí NHẬN (đích); cuối mảng = nguồn bốc đi trước
+        // LIFO: đích = vị trí chứa date NGẮN nhất (dồn date dài vào) · FIFO/FEFO: đích = chứa date DÀI nhất
+        const anchors = [...groups].sort((a, b) => {
+          if (useDate) {
+            if (principle === 'LIFO') { if (a.minDate !== b.minDate) return a.minDate < b.minDate ? -1 : 1 }
+            else { if (a.maxDate !== b.maxDate) return a.maxDate > b.maxDate ? -1 : 1 }
+          }
+          return b.movable.length - a.movable.length
         })
-        const take = ordered.slice(0, free)
-        addMoves(take, tgt.loc, reason, priority)
-        src.entries = src.entries.filter(e => !movedEntry.has(e.id))
-        if (src.entries.length === 0) si--
-        else ti++
+        const reason = !useDate
+          ? 'Gom mã về ít vị trí — giải phóng chỗ'
+          : principle === 'LIFO' ? 'Dồn date dài vào vị trí chứa date ngắn (LIFO)'
+          : principle === 'FEFO' ? 'Dồn date ngắn (theo HSD) vào vị trí chứa date dài (FEFO)'
+          : 'Dồn date ngắn vào vị trí chứa date dài (FIFO)'
+        const priority = useDate ? 3 : 4
+
+        let ti = 0, si = anchors.length - 1
+        while (si > ti) {
+          const tgt = anchors[ti], src = anchors[si]
+          if (src.movable.length === 0) { si--; continue }   // nguồn chỉ còn pallet mỏ neo — bỏ qua
+          const free = freeByLoc.get(tgt.loc.id) ?? 0
+          if (free <= 0) { ti++; continue }
+          // nguồn bốc theo chiều date: FIFO/FEFO bốc date ngắn trước; LIFO bốc date dài trước
+          const ordered = [...src.movable].sort((a, b) => {
+            const da = dateKeyOf(a, principle) ?? '9999', db2 = dateKeyOf(b, principle) ?? '9999'
+            return principle === 'LIFO' ? (da > db2 ? -1 : da < db2 ? 1 : 0) : (da < db2 ? -1 : da > db2 ? 1 : 0)
+          })
+          const take = ordered.slice(0, free)
+          addMoves(take, tgt.loc, reason, priority)
+          src.movable = src.movable.filter(e => !movedEntry.has(e.id))
+          if (src.movable.length === 0) si--
+          else ti++
+        }
       }
     }
 
-    // Chốt danh sách: sort ưu tiên rồi cắt trần số dòng (dòng = 1 lệnh gom mã+date).
+    // Chốt danh sách: sort ưu tiên → lượt mô phỏng (lệnh lượt sau có thể cần chỗ trống do lệnh
+    // lượt trước giải phóng — thực hiện theo thứ tự từ trên xuống) → cỡ dòng.
     // KHÔNG cắt âm thầm: trả total_generated để FE báo "còn M dòng chưa hiện".
     const totalGenerated = draftMap.size
     const lines = [...draftMap.values()]
-      .sort((a, b) => (a.priority - b.priority) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
+      .sort((a, b) => (a.priority - b.priority) || (a.pass - b.pass) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
       .slice(0, cap)
 
     // ── Phân tích kết quả kỳ vọng (user 18/07: "biết làm nhưng chưa biết đúng sai") ──
@@ -527,7 +572,7 @@ export async function previewPlan(req: Request, res: Response) {
 
     return ok(res, {
       level, principle,
-      lines: lines.map(({ priority: _p, ...rest }) => ({
+      lines: lines.map(({ priority: _p, pass: _pass, ...rest }) => ({
         ...rest,
         to_current: describeLoc(rest.to_location_id, rest.material_id),
         // Chỗ trống còn lại ở đích SAU khi thực hiện kế hoạch (freeByLoc đã trừ dần khi gán)

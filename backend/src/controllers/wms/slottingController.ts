@@ -212,10 +212,16 @@ export async function previewPlan(req: Request, res: Response) {
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats
+    // Nguyên tắc (user 18/07): PHẢI chọn Loại kho mới được sinh kế hoạch —
+    // kế hoạch đi theo từng loại hàng, không trộn Thành phẩm/Thùng/Raw trong 1 bản
+    if (reqCats.length === 0)
+      return fail(res, 400, 'CHOOSE_CATEGORY', 'Chọn Loại kho (filter) trước khi sinh kế hoạch sắp xếp')
+    if (effCats.length === 0)
+      return fail(res, 403, 'FORBIDDEN', 'Loại kho chọn ngoài phạm vi được phân quyền')
     const days = parseDays(rawDays)
     const cap = Math.min(300, Math.max(1, Math.round(Number(max_moves ?? 100)) || 100))
 
-    const { stats, notReady, error } = await fetchStats(warehouse_id, effCats.length > 0 ? effCats : null, days)
+    const { stats, notReady, error } = await fetchStats(warehouse_id, effCats, days)
     if (notReady) return fail(res, 503, 'NOT_READY', 'Chưa apply migration slotting (RPC slotting_stats)')
     if (error || !stats) return fail(res, 500, 'DB_ERROR', error ?? 'RPC không trả dữ liệu')
     if (level === 'HARD' && !stats.zones.some(z => z.pick_rank != null))

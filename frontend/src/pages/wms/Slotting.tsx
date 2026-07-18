@@ -221,9 +221,12 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, search, 
           </span>
         )}
         {canPlan && (
-          <Button size="sm" className="ml-auto h-7 text-[11px]" disabled={!data || (level === 'HARD' && !data.has_ranked_zones)}
+          <Button size="sm" className="ml-auto h-7 text-[11px]"
+            disabled={!data || categories.length === 0 || (level === 'HARD' && !data.has_ranked_zones)}
+            title={categories.length === 0 ? 'Chọn Loại kho (filter) trước — kế hoạch đi theo từng loại hàng' : undefined}
             onClick={() => setShowPlanSheet(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> Tạo kế hoạch sắp xếp ({LEVEL_LABEL[level]} · {principle})
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {categories.length === 0 ? 'Tạo kế hoạch — chọn Loại kho trước' : `Tạo kế hoạch sắp xếp (${LEVEL_LABEL[level]} · ${principle})`}
           </Button>
         )}
       </div>
@@ -341,7 +344,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
 }) {
   const navigate = useNavigate()
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const [name, setName] = useState(`Sắp xếp kho ${today} (${LEVEL_LABEL[level]} · ${principle})`)
+  const [name, setName] = useState(`Sắp xếp ${categories.length > 0 ? categories.join('+') : 'kho'} ${today} (${LEVEL_LABEL[level]} · ${principle})`)
   const [maxMoves, setMaxMoves] = useState('100')
   const [pullWrongZone, setPullWrongZone] = useState(false)
   const [err, setErr] = useState('')

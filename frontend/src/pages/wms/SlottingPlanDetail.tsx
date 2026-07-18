@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Boxes, CheckCircle2, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, QrCode, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
@@ -14,6 +14,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
 import { printSlottingPlan, computeFreesSet } from './printSlottingPlan'
+import { PlanScanOverlay } from './PlanScanOverlay'
+import { unlockAudio } from '@/utils/audio'
 
 const nf = new Intl.NumberFormat('vi-VN')
 
@@ -47,6 +49,10 @@ export default function SlottingPlanDetail() {
   const admin = isAdmin(user?.name)
   const canPlan = admin || can(perms, 'slotting', 'plan')
   const canComplete = admin || can(perms, 'slotting', 'complete')
+  // Quét thực hiện lệnh = thao tác Chuyển vị trí pallet → đúng quyền inventory.move_location (cross-module)
+  const canScanMove = admin || can(perms, 'inventory', 'move_location')
+  const [scanOpen, setScanOpen] = useState(false)
+  const [scanEverOpened, setScanEverOpened] = useState(false)
 
   const { data: plan, isLoading, error } = useSlottingPlan(id)
   const { mutate: updatePlan, isPending: updating } = useUpdateSlottingPlan()
@@ -131,8 +137,13 @@ export default function SlottingPlanDetail() {
     { key: 'DONE', label: LINE_LABEL.DONE, n: s.done_lines },
   ]
 
+  const openScan = () => { unlockAudio(); setScanEverOpened(true); setScanOpen(true) }
+
   return (
     <div className="flex flex-col h-full sm:p-3">
+      {scanEverOpened && (
+        <PlanScanOverlay plan={{ id: plan.id, name: plan.name }} open={scanOpen} onClose={() => setScanOpen(false)} />
+      )}
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Header */}
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1.5 print:hidden">
@@ -220,7 +231,10 @@ export default function SlottingPlanDetail() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.map(l => <LineRow key={l.id} l={l} bracketPos={bracketPositions.get(l.id) ?? 'only'} frees={freesSet.has(l.id)} />)}
+                {lines.map(l => (
+                  <LineRow key={l.id} l={l} bracketPos={bracketPositions.get(l.id) ?? 'only'} frees={freesSet.has(l.id)}
+                    onScan={canScanMove && plan.status === 'ACTIVE' && (l.status === 'PENDING' || l.status === 'PARTIAL') ? openScan : undefined} />
+                ))}
               </TableBody>
             </Table>
           )}
@@ -233,7 +247,9 @@ export default function SlottingPlanDetail() {
   )
 }
 
-function LineRow({ l, bracketPos = 'only', frees = false }: { l: SlottingPlanLineRow; bracketPos?: BracketPos; frees?: boolean }) {
+function LineRow({ l, bracketPos = 'only', frees = false, onScan }: {
+  l: SlottingPlanLineRow; bracketPos?: BracketPos; frees?: boolean; onScan?: () => void
+}) {
   const abcCls = l.abc === 'A' ? 'bg-sky-600 text-white' : l.abc === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
   const resolved = l.done + l.gone
   const pctLine = l.n_pallets > 0 ? Math.round((resolved / l.n_pallets) * 100) : 0
@@ -254,13 +270,27 @@ function LineRow({ l, bracketPos = 'only', frees = false }: { l: SlottingPlanLin
           }} />
         )}
         <span className="font-mono font-semibold">{l.material_code ?? '—'}</span>
-        {l.material_name && <span className="text-slate-400 ml-1">{l.material_name}</span>}
+        {/* Tên dài phải cắt — cột này FREEZE, để nguyên sẽ rộng gần hết màn phone che các cột sau (user 19/07) */}
+        {l.material_name && (
+          <span className="text-slate-400 ml-1 inline-block align-bottom truncate max-w-[96px] sm:max-w-[260px]" title={l.material_name}>
+            {l.material_name}
+          </span>
+        )}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.date_key ?? <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {l.abc ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${abcCls}`}>{l.abc}</span> : <span className="text-slate-300">—</span>}
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? <span className="text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
+        {l.from_location_code ?? <span className="text-slate-300">—</span>}
+        {onScan && (
+          <button className="ml-1.5 align-middle text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded !min-h-0 !min-w-0"
+            title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
+            onClick={e => { e.stopPropagation(); onScan() }}>
+            <QrCode className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </TableCell>
       <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
         {l.from_pallets_now != null ? l.from_pallets_now : <span className="text-slate-300">—</span>}
         {frees && <span className="ml-1 text-[9px] font-semibold text-green-700" title="Chuyển xong là TRỐNG được vị trí nguồn — nên làm trước để có chỗ trống cho các lệnh sau">→trống</span>}

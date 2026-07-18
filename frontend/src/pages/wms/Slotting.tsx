@@ -419,7 +419,8 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
             ? 'Normal · LIFO: dồn hàng cùng mã date DÀI vào vị trí đang chứa date ngắn.'
             : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo NSX)'}.`)}
           {level === 'HARD' && `Hard: đảo khu theo ABC (${days} ngày) + gom theo date ${principle} — cần chỗ trống đệm.`}
-          {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa vị trí đích.
+          {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa đích tại từng thời điểm.
+          {' '}<b>Thứ tự dòng = thứ tự thực hiện (làm từ trên xuống)</b>: cùng mã đứng cạnh nhau, cùng đích nhiều date thì dòng xếp vào TRƯỚC nằm trên ({principle === 'LIFO' ? 'LIFO: date ngắn vào trước, date dài nằm ngoài' : `${principle}: date dài vào trước, date ngắn nằm ngoài để lấy trước`}).
         </p>
         {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} pallet bị bỏ vì vị trí đích hết chỗ trống</p>}
         {/* KHÔNG cắt âm thầm: gợi ý sinh nhiều hơn trần → báo rõ còn bao nhiêu dòng chưa hiện */}

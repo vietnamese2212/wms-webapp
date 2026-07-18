@@ -387,9 +387,10 @@ export async function previewPlan(req: Request, res: Response) {
       .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
 
     // Vòng lặp mô phỏng: mỗi lượt tính lại chỗ trống ẢO (đã cộng slot giải phóng ở nguồn),
-    // chạy đủ các bước; dừng khi không sinh thêm lệnh nào (đã hội tụ) hoặc hết 6 lượt.
+    // chạy đủ các bước; dừng khi không sinh thêm lệnh nào (đã hội tụ). Trần 20 chỉ là chốt an toàn —
+    // thực tế hội tụ sau vài lượt (test 18/07: trần 4 → dư 15 dòng, trần 6 → dư 7; đừng hạ lại).
     let prevDrafts = -1
-    for (pass = 0; pass < 6 && draftMap.size !== prevDrafts; pass++) {
+    for (pass = 0; pass < 20 && draftMap.size !== prevDrafts; pass++) {
       prevDrafts = draftMap.size
       skippedNoCapacity = 0   // chỉ giữ số của lượt cuối (lượt sau đã xử được phần lượt trước bỏ)
       for (const l of stats.locations) {
@@ -546,12 +547,27 @@ export async function previewPlan(req: Request, res: Response) {
       }
     }
 
-    // Chốt danh sách: sort LƯỢT mô phỏng TRƯỚC (lệnh lượt sau cần chỗ trống do lệnh lượt trước —
-    // BẤT KỂ ưu tiên — giải phóng; thực hiện tuần tự từ trên xuống là luôn đủ chỗ) → ưu tiên → cỡ dòng.
+    // Chốt danh sách — thứ tự dòng = THỨ TỰ THỰC HIỆN (trên xuống):
+    // 1) LƯỢT mô phỏng trước (lệnh lượt sau cần chỗ do lệnh lượt trước giải phóng — trong 1 lượt thì
+    //    đảo thứ tự vẫn an toàn vì engine không tính chỗ giải-phóng-trong-lượt);
+    // 2) trong lượt: gom CÙNG MÃ cạnh nhau → cùng VỊ TRÍ ĐÍCH liền nhau (user 18/07);
+    // 3) cùng đích nhiều date: dòng XẾP VÀO TRƯỚC nằm trên — FEFO/FIFO: date DÀI vào trước (vào sâu,
+    //    date ngắn nằm ngoài lấy trước); LIFO: date NGẮN vào trước.
     // KHÔNG cắt âm thầm: trả total_generated để FE báo "còn M dòng chưa hiện".
+    const dateIn = (a: PlanLineDraft, b: PlanLineDraft) => {
+      const da = a.date_key ?? '', db2 = b.date_key ?? ''
+      if (da === db2) return 0
+      if (!da) return 1
+      if (!db2) return -1
+      return principle === 'LIFO' ? (da < db2 ? -1 : 1) : (da > db2 ? -1 : 1)
+    }
     const totalGenerated = draftMap.size
     const lines = [...draftMap.values()]
-      .sort((a, b) => (a.pass - b.pass) || (a.priority - b.priority) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
+      .sort((a, b) => (a.pass - b.pass)
+        || (a.material_code ?? '').localeCompare(b.material_code ?? '')
+        || (a.to_location_code ?? '').localeCompare(b.to_location_code ?? '')
+        || dateIn(a, b)
+        || (a.priority - b.priority))
       .slice(0, cap)
 
     // ── Phân tích kết quả kỳ vọng (user 18/07: "biết làm nhưng chưa biết đúng sai") ──

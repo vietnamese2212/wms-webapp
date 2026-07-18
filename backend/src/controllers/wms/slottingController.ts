@@ -503,14 +503,14 @@ export async function previewPlan(req: Request, res: Response) {
         }
         if (byLoc.size <= 1) continue
 
-        interface LocGroup { loc: StatsLocation; movable: EntryRow[]; minDate: string; maxDate: string }
+        interface LocGroup { loc: StatsLocation; movable: EntryRow[]; total: number; minDate: string; maxDate: string }
         const groups: LocGroup[] = []
         for (const [locId, list] of byLoc) {
           const loc = locById.get(locId)
           if (!loc) continue
           const dates = list.map(e => dateKeyOf(e, principle)).filter(Boolean) as string[]
           groups.push({
-            loc, movable: list.filter(e => !movedEntry.has(e.id)),
+            loc, movable: list.filter(e => !movedEntry.has(e.id)), total: list.length,
             minDate: dates.length ? dates.reduce((a, b) => a < b ? a : b) : '9999',
             maxDate: dates.length ? dates.reduce((a, b) => a > b ? a : b) : '0000',
           })
@@ -520,12 +520,15 @@ export async function previewPlan(req: Request, res: Response) {
         const useDate = level !== 'EASY' && groups.some(g => g.minDate !== '9999')
         // anchors[0] = vị trí NHẬN (đích); cuối mảng = nguồn bốc đi trước
         // LIFO: đích = vị trí chứa date NGẮN nhất (dồn date dài vào) · FIFO/FEFO: đích = chứa date DÀI nhất
+        // Tie-break khi date BẰNG NHAU: nhóm TỔNG khối lượng lớn (kể cả pallet mỏ neo đã gán lệnh)
+        // làm neo hút hàng — tie-break theo movable làm nhóm nhỏ-nhưng-bốc-được bị "phong" neo oan,
+        // không bao giờ thành nguồn dù neo thật (đông + còn chỗ) nằm sau (test hội tụ 18/07, mã 510000084)
         const anchors = [...groups].sort((a, b) => {
           if (useDate) {
             if (principle === 'LIFO') { if (a.minDate !== b.minDate) return a.minDate < b.minDate ? -1 : 1 }
             else { if (a.maxDate !== b.maxDate) return a.maxDate > b.maxDate ? -1 : 1 }
           }
-          return b.movable.length - a.movable.length
+          return b.total - a.total
         })
         const reason = !useDate
           ? 'Gom mã về ít vị trí — giải phóng chỗ'

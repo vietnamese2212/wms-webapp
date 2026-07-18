@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { normalizeQR } from '../../utils/qrParser'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -939,6 +940,87 @@ export async function updateLocationConfig(req: Request, res: Response) {
       if (error) return fail(res, 500, 'DB_ERROR', error.message)
     }
     return ok(res, { no_in: inIds.length, no_out: outIds.length })
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
+// POST /wms/slotting/plans/:id/scan-move { qr } — QUÉT THỰC HIỆN lệnh (nút inline tab Kế hoạch,
+// user chốt 19/07): pallet phải ĐANG Ở ĐÚNG vị trí nguồn của lệnh mới nhận; nhận là TỰ chuyển
+// sang vị trí đích qua RPC move_pallets_to_location (khóa sức chứa — đích đầy trả LOCATION_FULL,
+// công nhân bỏ qua quét pallet khác). Quyền: inventory.move_location (đúng quyền "Chuyển vị trí";
+// nút nằm ở trang Slotting → cross-module, ghi bảng bản đồ CLAUDE.md).
+export async function scanMovePlanPallet(req: Request, res: Response) {
+  try {
+    const { qr } = req.body as { qr?: string }
+    if (!qr || !String(qr).trim()) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã QR')
+    const { data: plan } = await supabase.from('SlottingPlan')
+      .select('id, warehouse_id, status').eq('id', req.params.id).maybeSingle()
+    if (!plan) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kế hoạch')
+    if (!guardWarehouse(req, res, plan.warehouse_id)) return
+    if (plan.status !== 'ACTIVE') return fail(res, 409, 'PLAN_NOT_ACTIVE', 'Kế hoạch không ở trạng thái Đang thực hiện')
+
+    const code = normalizeQR(String(qr))
+    const { data: entries } = await supabase.from('InventoryEntry')
+      .select('id, location_id, status, cartons_remaining')
+      .eq('warehouse_id', plan.warehouse_id).eq('pallet_code', code)
+    if (!entries || entries.length === 0)
+      return fail(res, 404, 'PALLET_NOT_FOUND', 'Không tìm thấy pallet trong kho của kế hoạch')
+
+    const lines = await fetchAllRowsParallel(() => supabase.from('SlottingPlanLine')
+      .select('id, entry_ids, material_code, material_name, date_key, n_pallets, from_location_id, from_location_code, to_location_id, to_location_code, flow_note')
+      .eq('plan_id', plan.id).order('id'))
+    type ScanLine = (typeof lines)[number]
+    const lineByEntry = new Map<string, ScanLine>()
+    for (const l of lines) for (const eid of ((l.entry_ids ?? []) as string[])) lineByEntry.set(eid, l)
+
+    const inPlan = entries.filter(e => lineByEntry.has(e.id))
+    if (inPlan.length === 0) return fail(res, 404, 'NOT_IN_PLAN', 'Pallet không nằm trong kế hoạch này')
+    const alive = inPlan.filter(e => Number(e.cartons_remaining) > 0 && e.status !== 'EXPORTED')
+    if (alive.length === 0) return fail(res, 409, 'GONE', 'Pallet trong kế hoạch đã hết tồn / đã xuất')
+
+    // Luật user 19/07: CHỈ nhận pallet đang ở ĐÚNG vị trí nguồn của lệnh
+    const candidate = alive.find(e => e.location_id === lineByEntry.get(e.id)!.from_location_id)
+    if (!candidate) {
+      if (alive.some(e => e.location_id === lineByEntry.get(e.id)!.to_location_id))
+        return fail(res, 409, 'ALREADY_DONE', 'Pallet đã ở vị trí đích')
+      const curId = alive[0].location_id
+      const { data: cur } = curId
+        ? await supabase.from('Location').select('location_code').eq('id', curId).maybeSingle()
+        : { data: null }
+      return fail(res, 409, 'NOT_AT_SOURCE',
+        `Pallet không còn ở vị trí nguồn của lệnh (đang ở ${cur?.location_code ?? 'vị trí khác'}) — không nhận`)
+    }
+    const line = lineByEntry.get(candidate.id)!
+
+    const now = new Date().toISOString()
+    const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const updatedBy = (req.user?.sub && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.user.sub))
+      ? req.user.sub : null
+    // Nguyên tử như bulkTransferLocation: RPC khóa dòng Location → đếm sức chứa dưới lock → move
+    const { data: result, error: rpcErr } = await supabase.rpc('move_pallets_to_location', {
+      p_ids: [candidate.id], p_location_id: line.to_location_id,
+      p_updated_by: updatedBy, p_update_date: vnDate, p_now: now,
+    })
+    if (rpcErr) {
+      if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
+        return fail(res, 503, 'NOT_READY', 'Chưa apply RPC move_pallets_to_location')
+      return fail(res, 500, 'DB_ERROR', rpcErr.message)
+    }
+    const parts = String(result ?? '').split('|')
+    if (parts[0] === 'NOT_FOUND') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí đích')
+    if (parts[0] === 'INACTIVE')  return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí đích không hoạt động')
+    if (parts[0] === 'FULL')      return fail(res, 400, 'LOCATION_FULL',
+      `Đích ${parts[2] ?? line.to_location_code ?? ''} đã đầy — bỏ qua, quét pallet khác`)
+
+    // Tiến độ dòng sau khi chuyển (để hiện "x/N" trên màn quét)
+    const { count: doneCnt } = await supabase.from('InventoryEntry')
+      .select('id', { count: 'exact', head: true })
+      .in('id', (line.entry_ids ?? []) as string[]).eq('location_id', line.to_location_id)
+    return ok(res, {
+      pallet_code: code,
+      material_code: line.material_code, material_name: line.material_name, date_key: line.date_key,
+      from_location_code: line.from_location_code, to_location_code: line.to_location_code,
+      flow_note: line.flow_note, done: doneCnt ?? 0, total: line.n_pallets,
+    })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

@@ -153,6 +153,8 @@ router.get('/slotting/plans/:id',                             requirePerm('slott
 router.post('/slotting/plans/preview',                        requirePerm('slotting', 'plan'),     slotting.previewPlan)
 router.post('/slotting/plans',                                requirePerm('slotting', 'plan'),     slotting.createPlan)
 router.patch('/slotting/plans/:id',                           requirePerm('slotting', 'complete'), slotting.updatePlan)
+// Quét thực hiện lệnh kế hoạch = thao tác CHUYỂN VỊ TRÍ pallet → dùng đúng quyền inventory.move_location (cross-module)
+router.post('/slotting/plans/:id/scan-move',                  requirePerm('inventory', 'move_location'), slotting.scanMovePlanPallet)
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
 router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)

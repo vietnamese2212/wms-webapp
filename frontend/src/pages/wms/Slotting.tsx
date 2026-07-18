@@ -144,7 +144,7 @@ export default function Slotting() {
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Toolbar */}
-        <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-2">
+        <div className="border-b bg-white px-3 py-1.5 shrink-0 sm:rounded-t-xl space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
               <Boxes className="h-4 w-4 text-sky-600" /> Tối ưu vị trí

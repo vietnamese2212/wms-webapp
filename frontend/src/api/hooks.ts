@@ -2390,6 +2390,7 @@ export interface SlottingPlanRow {
 export interface SlottingPlanLineRow {
   id: string; material_code: string | null; material_name: string | null; date_key: string | null
   abc: string | null; reason: string | null; flow_note: string | null
+  from_location_id: string | null
   from_location_code: string | null; to_location_code: string | null; to_location_id: string
   from_pallets_now?: number | null; to_pallets_now?: number | null // số pallet HIỆN có ở vị trí đi/đích
   n_pallets: number

@@ -13,7 +13,7 @@ import { useSlottingPlan, useUpdateSlottingPlan, useDeleteSlottingPlan, type Slo
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
-import { printSlottingPlan } from './printSlottingPlan'
+import { printSlottingPlan, computeFreesSet } from './printSlottingPlan'
 
 const nf = new Intl.NumberFormat('vi-VN')
 
@@ -55,13 +55,26 @@ export default function SlottingPlanDetail() {
   const [search, setSearch] = useState('')
   const [lineFilter, setLineFilter] = useState<LineFilter>('')
 
+  // Dòng nào làm xong TRỐNG được vị trí nguồn — tính trên TOÀN kế hoạch (không theo bộ lọc)
+  const freesSet = useMemo(() => computeFreesSet(plan?.lines ?? []), [plan?.lines])
+
   const lines = useMemo(() => {
     let list = plan?.lines ?? []
     if (lineFilter) list = list.filter(l => l.status === lineFilter)
     const q = search.trim().toLowerCase()
     if (q) list = list.filter(l => `${l.material_code ?? ''} ${l.material_name ?? ''} ${l.date_key ?? ''} ${l.from_location_code ?? ''} ${l.to_location_code ?? ''}`.toLowerCase().includes(q))
-    return list
-  }, [plan?.lines, search, lineFilter])
+    // Gom TRỌN theo vị trí đích (thứ tự xuất hiện đầu) + nhóm GIẢI PHÓNG vị trí nguồn lên đầu
+    // (user 18/07: việc dễ + hiệu quả ở trên — chuyển xong là có ô trống ngay cho các lệnh sau)
+    const groups = new Map<string, SlottingPlanLineRow[]>()
+    for (const l of list) {
+      const g = groups.get(l.to_location_id)
+      if (g) g.push(l)
+      else groups.set(l.to_location_id, [l])
+    }
+    return [...groups.values()]
+      .sort((a, b) => Number(b.some(l => freesSet.has(l.id))) - Number(a.some(l => freesSet.has(l.id))))
+      .flat()
+  }, [plan?.lines, search, lineFilter, freesSet])
 
   // Bracket nối các dòng LIỀN NHAU cùng vị trí đích (gom đích — như bảng Nhập nối theo chuyến)
   const bracketPositions = useMemo(() => {
@@ -207,7 +220,7 @@ export default function SlottingPlanDetail() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.map(l => <LineRow key={l.id} l={l} bracketPos={bracketPositions.get(l.id) ?? 'only'} />)}
+                {lines.map(l => <LineRow key={l.id} l={l} bracketPos={bracketPositions.get(l.id) ?? 'only'} frees={freesSet.has(l.id)} />)}
               </TableBody>
             </Table>
           )}
@@ -220,7 +233,7 @@ export default function SlottingPlanDetail() {
   )
 }
 
-function LineRow({ l, bracketPos = 'only' }: { l: SlottingPlanLineRow; bracketPos?: BracketPos }) {
+function LineRow({ l, bracketPos = 'only', frees = false }: { l: SlottingPlanLineRow; bracketPos?: BracketPos; frees?: boolean }) {
   const abcCls = l.abc === 'A' ? 'bg-sky-600 text-white' : l.abc === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
   const resolved = l.done + l.gone
   const pctLine = l.n_pallets > 0 ? Math.round((resolved / l.n_pallets) * 100) : 0
@@ -248,7 +261,10 @@ function LineRow({ l, bracketPos = 'only' }: { l: SlottingPlanLineRow; bracketPo
         {l.abc ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${abcCls}`}>{l.abc}</span> : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? <span className="text-slate-300">—</span>}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.from_pallets_now != null ? l.from_pallets_now : <span className="text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
+        {l.from_pallets_now != null ? l.from_pallets_now : <span className="text-slate-300">—</span>}
+        {frees && <span className="ml-1 text-[9px] font-semibold text-green-700" title="Chuyển xong là TRỐNG được vị trí nguồn — nên làm trước để có chỗ trống cho các lệnh sau">→trống</span>}
+      </TableCell>
       <TableCell className={`px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap ${repeatTo ? 'opacity-40' : ''}`}>{l.to_location_code ?? '—'}</TableCell>
       <TableCell className={`px-2 py-1 text-[10px] tabular-nums whitespace-nowrap ${repeatTo ? 'opacity-40' : ''}`}>{l.to_pallets_now != null ? l.to_pallets_now : <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

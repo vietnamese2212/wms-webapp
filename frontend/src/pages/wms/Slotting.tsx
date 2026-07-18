@@ -449,6 +449,9 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
             <p className="text-[10px] text-sky-700">
               Cách soi đúng/sai từng dòng: nhìn cột <b>"Đích đang chứa"</b> — đích hợp lý phải là vị trí trống hoặc đang chứa CÙNG MÃ với date đúng chiều {principle === 'LIFO' ? 'LIFO (đích chứa date ngắn hơn hàng chuyển đến)' : `${principle} (đích chứa date dài hơn hàng chuyển đến)`}; <b>"Trống sau"</b> = số chỗ còn dư ở đích sau khi thực hiện (0 = vừa khít, không âm).
             </p>
+            <p className="text-[10px] text-sky-700">
+              Mỗi pallet chỉ chuyển 1 lần/kế hoạch — vài pallet dạng hoán đổi dây chuyền (chỗ này trống ra thì chỗ kia mới dồn được) sẽ hiện khi <b>Sinh gợi ý lần nữa SAU khi làm xong</b> đợt này; đợt 2 thường rất nhỏ (~1–3%) và đợt 3 = 0.
+            </p>
           </div>
         )}
 

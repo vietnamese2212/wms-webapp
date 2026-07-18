@@ -13,6 +13,7 @@ import { useSlottingPlan, useUpdateSlottingPlan, useDeleteSlottingPlan, type Slo
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
+import { printSlottingPlan } from './printSlottingPlan'
 
 const nf = new Intl.NumberFormat('vi-VN')
 
@@ -36,6 +37,7 @@ const PLAN_LABEL: Record<string, string> = { ACTIVE: 'Đang thực hiện', COMP
 const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
 type LineFilter = '' | 'PENDING' | 'PARTIAL' | 'DONE' | 'GONE'
+type BracketPos = 'first' | 'mid' | 'last' | 'only'
 
 export default function SlottingPlanDetail() {
   const { id } = useParams<{ id: string }>()
@@ -60,6 +62,19 @@ export default function SlottingPlanDetail() {
     if (q) list = list.filter(l => `${l.material_code ?? ''} ${l.material_name ?? ''} ${l.date_key ?? ''} ${l.from_location_code ?? ''} ${l.to_location_code ?? ''}`.toLowerCase().includes(q))
     return list
   }, [plan?.lines, search, lineFilter])
+
+  // Bracket nối các dòng LIỀN NHAU cùng vị trí đích (gom đích — như bảng Nhập nối theo chuyến)
+  const bracketPositions = useMemo(() => {
+    const map = new Map<string, BracketPos>()
+    const n = lines.length
+    lines.forEach((l, i) => {
+      const key = l.to_location_id
+      const prevOk = i > 0 && lines[i - 1].to_location_id === key
+      const nextOk = i < n - 1 && lines[i + 1].to_location_id === key
+      map.set(l.id, prevOk && nextOk ? 'mid' : prevOk ? 'last' : nextOk ? 'first' : 'only')
+    })
+    return map
+  }, [lines])
 
   function setStatus(status: 'COMPLETED' | 'CANCELLED' | 'ACTIVE', confirmMsg: string) {
     if (!plan) return
@@ -120,7 +135,11 @@ export default function SlottingPlanDetail() {
               {plan.completed_at ? ` · đóng ${formatDateTime(plan.completed_at)} (${plan.completed_by ?? '—'})` : ''}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => window.print()}>
+              <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                title="In phiếu A4 gom theo vị trí đích — in đúng danh sách đang lọc trên màn"
+                onClick={() => {
+                  if (!printSlottingPlan(plan, lines, user?.name)) setActErr('Trình duyệt chặn cửa sổ in — cho phép popup rồi bấm In lại')
+                }}>
                 <Printer className="h-3.5 w-3.5 mr-1" /> In
               </Button>
               {canComplete && plan.status === 'ACTIVE' && (
@@ -177,7 +196,9 @@ export default function SlottingPlanDetail() {
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Date</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Từ vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap" title="Số pallet HIỆN đang nằm ở vị trí đi">PL nơi đi</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Đến vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap" title="Số pallet HIỆN đang nằm ở vị trí đích">PL đích</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tiến độ</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người chuyển cuối</TableHead>
@@ -186,7 +207,7 @@ export default function SlottingPlanDetail() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.map(l => <LineRow key={l.id} l={l} />)}
+                {lines.map(l => <LineRow key={l.id} l={l} bracketPos={bracketPositions.get(l.id) ?? 'only'} />)}
               </TableBody>
             </Table>
           )}
@@ -199,13 +220,26 @@ export default function SlottingPlanDetail() {
   )
 }
 
-function LineRow({ l }: { l: SlottingPlanLineRow }) {
+function LineRow({ l, bracketPos = 'only' }: { l: SlottingPlanLineRow; bracketPos?: BracketPos }) {
   const abcCls = l.abc === 'A' ? 'bg-sky-600 text-white' : l.abc === 'B' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
   const resolved = l.done + l.gone
   const pctLine = l.n_pallets > 0 ? Math.round((resolved / l.n_pallets) * 100) : 0
+  // Nhóm cùng vị trí đích: bracket [ ở mép trái + đóng khung cụm (như bảng Nhập nối theo chuyến)
+  const grouped = bracketPos !== 'only'
+  const repeatTo = bracketPos === 'mid' || bracketPos === 'last' // đích lặp lại trong nhóm → mờ đi
   return (
-    <TableRow className={l.status === 'GONE' ? 'opacity-50' : undefined}>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">
+    <TableRow className={`${l.status === 'GONE' ? 'opacity-50' : ''} ${grouped ? 'bg-slate-50' : ''} ${grouped && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${grouped && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`}>
+      <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 ${grouped ? 'bg-slate-50 pl-4' : 'bg-white'}`}>
+        {grouped && (
+          <span aria-hidden className="absolute" style={{
+            left: 3, width: 6,
+            top: bracketPos === 'first' ? '50%' : 0,
+            bottom: bracketPos === 'last' ? '50%' : 0,
+            borderLeft: '2px solid #0f172a',
+            ...(bracketPos === 'first' ? { borderTop: '2px solid #0f172a', borderTopLeftRadius: 3 } : {}),
+            ...(bracketPos === 'last' ? { borderBottom: '2px solid #0f172a', borderBottomLeftRadius: 3 } : {}),
+          }} />
+        )}
         <span className="font-mono font-semibold">{l.material_code ?? '—'}</span>
         {l.material_name && <span className="text-slate-400 ml-1">{l.material_name}</span>}
       </TableCell>
@@ -214,7 +248,9 @@ function LineRow({ l }: { l: SlottingPlanLineRow }) {
         {l.abc ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${abcCls}`}>{l.abc}</span> : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? <span className="text-slate-300">—</span>}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap">{l.to_location_code ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.from_pallets_now != null ? l.from_pallets_now : <span className="text-slate-300">—</span>}</TableCell>
+      <TableCell className={`px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap ${repeatTo ? 'opacity-40' : ''}`}>{l.to_location_code ?? '—'}</TableCell>
+      <TableCell className={`px-2 py-1 text-[10px] tabular-nums whitespace-nowrap ${repeatTo ? 'opacity-40' : ''}`}>{l.to_pallets_now != null ? l.to_pallets_now : <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="flex items-center gap-1.5">
           <span className="w-14 h-1.5 rounded bg-slate-200 overflow-hidden inline-block">

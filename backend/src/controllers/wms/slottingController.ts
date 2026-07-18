@@ -706,6 +706,7 @@ type LineStatus = 'PENDING' | 'PARTIAL' | 'DONE' | 'GONE'
 interface LineWithStatus {
   id: string; material_code: string | null; material_name: string | null; date_key: string | null
   abc: string | null; reason: string | null; flow_note: string | null
+  from_location_id: string | null
   from_location_code: string | null; to_location_code: string | null; to_location_id: string
   n_pallets: number
   status: LineStatus
@@ -756,6 +757,7 @@ async function deriveLineStatuses(lines: RawLine[]): Promise<LineWithStatus[]> {
     return {
       id: l.id, material_code: l.material_code, material_name: l.material_name, date_key: l.date_key,
       abc: l.abc, reason: l.reason, flow_note: l.flow_note,
+      from_location_id: l.from_location_id,
       from_location_code: l.from_location_code, to_location_code: l.to_location_code, to_location_id: l.to_location_id,
       n_pallets: total, status, done, pending, moved_other: movedOther, gone,
       moved_at: lastAt, moved_by_name: lastBy,
@@ -814,6 +816,24 @@ export async function getPlan(req: Request, res: Response) {
     const lines = await fetchAllRowsParallel(() => supabase.from('SlottingPlanLine')
       .select(LINE_SELECT).eq('plan_id', plan.id).order('id'))
     const withStatus = await deriveLineStatuses(lines)
+
+    // Số pallet HIỆN TẠI ở từng vị trí đi/đích (user 18/07) — đếm theo chuẩn sức chứa:
+    // IN_STOCK/PARTIAL/QUARANTINE + cartons_remaining > 0 (xem location-capacity-exclude-zero).
+    const locIds = [...new Set(withStatus.flatMap(l =>
+      [l.from_location_id, l.to_location_id].filter((v): v is string => !!v)))]
+    const occ = new Map<string, number>()
+    for (const ids of chunk(locIds, 300)) {
+      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+        .select('id, location_id').in('location_id', ids)
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE']).gt('cartons_remaining', 0).order('id'))
+      for (const r of rows as { location_id: string | null }[])
+        if (r.location_id) occ.set(r.location_id, (occ.get(r.location_id) ?? 0) + 1)
+    }
+    const linesOut = withStatus.map(l => ({
+      ...l,
+      from_pallets_now: l.from_location_id ? (occ.get(l.from_location_id) ?? 0) : null,
+      to_pallets_now: occ.get(l.to_location_id) ?? 0,
+    }))
     const summary = {
       total_lines: withStatus.length,
       done_lines: withStatus.filter(l => l.status === 'DONE' || l.status === 'GONE').length,
@@ -825,7 +845,7 @@ export async function getPlan(req: Request, res: Response) {
       moved_other_pallets: withStatus.reduce((s, l) => s + l.moved_other, 0),
       pending_pallets: withStatus.reduce((s, l) => s + l.pending, 0),
     }
-    return ok(res, { ...plan, summary, lines: withStatus })
+    return ok(res, { ...plan, summary, lines: linesOut })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

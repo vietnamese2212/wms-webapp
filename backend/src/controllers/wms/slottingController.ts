@@ -534,21 +534,26 @@ export async function previewPlan(req: Request, res: Response) {
           : 'Dồn date ngắn vào vị trí chứa date dài (FIFO)'
         const priority = useDate ? 3 : 4
 
-        let ti = 0, si = anchors.length - 1
-        while (si > ti) {
-          const tgt = anchors[ti], src = anchors[si]
-          if (src.movable.length === 0) { si--; continue }   // nguồn chỉ còn pallet mỏ neo — bỏ qua
+        // Tiêu thụ nguồn theo NHÓM DATE LIỀN KỀ đích (si chạy từ sát ti xuống) + trong nhóm bốc pallet
+        // có date GẦN đích nhất trước (FEFO/FIFO: date dài trước; LIFO: date ngắn trước) — giữ tầng date
+        // giữa các vị trí đơn điệu. Bốc date xa nhất trước (bản cũ) làm ĐẢO tầng: date ngắn leo lên neo dài,
+        // date dài kẹt lại dưới → vòng sau phải xếp lại (test hội tụ 18/07 dư 7 dòng).
+        let ti = 0, si = 1
+        while (ti < anchors.length - 1 && si < anchors.length) {
+          if (si <= ti) { si = ti + 1; continue }
+          const tgt = anchors[ti]
           const free = freeByLoc.get(tgt.loc.id) ?? 0
           if (free <= 0) { ti++; continue }
-          // nguồn bốc theo chiều date: FIFO/FEFO bốc date ngắn trước; LIFO bốc date dài trước
+          const src = anchors[si]
+          if (src.movable.length === 0) { si++; continue }   // nguồn chỉ còn pallet mỏ neo — bỏ qua
           const ordered = [...src.movable].sort((a, b) => {
-            const da = dateKeyOf(a, principle) ?? '9999', db2 = dateKeyOf(b, principle) ?? '9999'
-            return principle === 'LIFO' ? (da > db2 ? -1 : da < db2 ? 1 : 0) : (da < db2 ? -1 : da > db2 ? 1 : 0)
+            const da = dateKeyOf(a, principle) ?? '0000', db2 = dateKeyOf(b, principle) ?? '0000'
+            return principle === 'LIFO' ? (da < db2 ? -1 : da > db2 ? 1 : 0) : (da > db2 ? -1 : da < db2 ? 1 : 0)
           })
           const take = ordered.slice(0, free)
           addMoves(take, tgt.loc, reason, priority)
           src.movable = src.movable.filter(e => !movedEntry.has(e.id))
-          if (src.movable.length === 0) si--
+          if (src.movable.length === 0) si++
           else ti++
         }
       }

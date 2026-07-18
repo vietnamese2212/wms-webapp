@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { Boxes, Plus, Trash2, RefreshCw, AlertTriangle, QrCode } from 'lucide-react'
+import { Boxes, Plus, Trash2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,8 +30,6 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate } from '@/utils/formatters'
-import { unlockAudio } from '@/utils/audio'
-import { PlanScanOverlay } from './PlanScanOverlay'
 
 const nf = new Intl.NumberFormat('vi-VN')
 
@@ -91,8 +89,6 @@ export default function Slotting() {
   const admin = isAdmin(user?.name)
   const canPlan = admin || can(perms, 'slotting', 'plan')
   const canConfigure = admin || can(perms, 'slotting', 'configure')
-  // Quét thực hiện lệnh = thao tác Chuyển vị trí pallet → đúng quyền inventory.move_location (cross-module)
-  const canScanMove = admin || can(perms, 'inventory', 'move_location')
 
   const { warehouseId, categories, days, level, principle, tab, palletKind: rawPalletKind } = useWmsFilterStore(s => s.slotting)
   // ?? 'FULL': state persist cũ (trước khi thêm field) không có palletKind
@@ -185,7 +181,7 @@ export default function Slotting() {
         </div>
 
         {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level} search={search} />}
-        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} canScan={canScanMove} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
+        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
@@ -688,15 +684,14 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
 }
 
 // ─── Tab Kế hoạch ──────────────────────────────────────────────────────────────
-function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
-  warehouseId: string; canPlan: boolean; canScan: boolean; onOpen: (id: string) => void
+// Nút Quét thực hiện KHÔNG đặt ở tab danh sách (user bỏ 19/07 — "ở ngoài không có tác dụng gì"),
+// chỉ nằm trong trang chi tiết kế hoạch (cuối ô Từ vị trí từng dòng).
+function PlansTab({ warehouseId, canPlan, onOpen }: {
+  warehouseId: string; canPlan: boolean; onOpen: (id: string) => void
 }) {
   const { data: plans = [], isLoading, error } = useSlottingPlans(warehouseId || undefined)
   const { mutate: deletePlan, isPending: deleting } = useDeleteSlottingPlan()
   const [delErr, setDelErr] = useState('')
-  // Overlay quét thực hiện: mount 1 lần giữ camera sống (CSS hidden khi đóng — chuẩn qr-scan-flow)
-  const [scanPlan, setScanPlan] = useState<{ id: string; name: string } | null>(null)
-  const [scanOpen, setScanOpen] = useState(false)
 
   function handleDelete(p: SlottingPlanRow) {
     if (!confirm(`Xóa kế hoạch "${p.name}" (${p.n_lines} dòng)?\nChỉ xóa bản kế hoạch — pallet đã chuyển KHÔNG bị hoàn tác.`)) return
@@ -711,7 +706,6 @@ function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
 
   return (
     <>
-      {scanPlan && <PlanScanOverlay plan={scanPlan} open={scanOpen} onClose={() => setScanOpen(false)} />}
       <SummaryBand tiles={tiles} />
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {delErr && <div className="m-3 p-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded">{delErr}</div>}
@@ -737,7 +731,7 @@ function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
-                {(canPlan || canScan) && <TableHead className="px-2 py-1.5 w-16 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
+                {canPlan && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -764,21 +758,12 @@ function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.principle ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
-                    {(canPlan || canScan) && (
+                    {canPlan && (
                       <TableCell className="px-2 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-100">
-                        {canScan && p.status === 'ACTIVE' && (
-                          <button className="text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded transition-colors"
-                            title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
-                            onClick={e => { e.stopPropagation(); unlockAudio(); setScanPlan({ id: p.id, name: p.name }); setScanOpen(true) }}>
-                            <QrCode className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                        {canPlan && (
-                          <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting}
-                            onClick={e => { e.stopPropagation(); handleDelete(p) }}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
+                        <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting}
+                          onClick={e => { e.stopPropagation(); handleDelete(p) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </TableCell>
                     )}
                   </TableRow>

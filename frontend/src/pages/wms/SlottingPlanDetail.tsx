@@ -217,6 +217,7 @@ export default function SlottingPlanDetail() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Mã hàng</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên hàng</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Date</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Hạng</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Từ vị trí</TableHead>
@@ -270,12 +271,11 @@ function LineRow({ l, bracketPos = 'only', frees = false, onScan }: {
           }} />
         )}
         <span className="font-mono font-semibold">{l.material_code ?? '—'}</span>
-        {/* Tên dài phải cắt — cột này FREEZE, để nguyên sẽ rộng gần hết màn phone che các cột sau (user 19/07) */}
-        {l.material_name && (
-          <span className="text-slate-400 ml-1 inline-block align-bottom truncate max-w-[96px] sm:max-w-[260px]" title={l.material_name}>
-            {l.material_name}
-          </span>
-        )}
+      </TableCell>
+      {/* Tên hàng = cột RIÊNG sau Mã hàng (user 19/07): cột freeze chỉ còn mã (hẹp, không che màn
+          phone); tên hiện ĐỦ không cắt — bảng cuộn ngang nên không vỡ layout */}
+      <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">
+        {l.material_name ?? <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{l.date_key ?? <span className="text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

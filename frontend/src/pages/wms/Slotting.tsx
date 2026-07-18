@@ -69,15 +69,16 @@ const DAYS_OPTS = [
   { value: '60', label: '60 ngày' },
   { value: '90', label: '90 ngày' },
 ]
+// Nhãn NGẮN để chip filter gọn (user 18/07: filter nhỏ lại, bảng chiếm ~80%)
 const LEVEL_OPTS = [
-  { value: 'EASY',   label: 'Easy — Gom giải phóng chỗ' },
-  { value: 'NORMAL', label: 'Normal — Gom theo date' },
-  { value: 'HARD',   label: 'Hard — Tối ưu toàn diện (ABC)' },
+  { value: 'EASY',   label: 'Easy — gom chỗ' },
+  { value: 'NORMAL', label: 'Normal — gom date' },
+  { value: 'HARD',   label: 'Hard — ABC' },
 ]
 const PRINCIPLE_OPTS = [
-  { value: 'FEFO', label: 'FEFO — theo HSD' },
-  { value: 'FIFO', label: 'FIFO — theo NSX' },
-  { value: 'LIFO', label: 'LIFO — hàng mới trước' },
+  { value: 'FEFO', label: 'FEFO (HSD)' },
+  { value: 'FIFO', label: 'FIFO (NSX)' },
+  { value: 'LIFO', label: 'LIFO' },
 ]
 const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
@@ -106,6 +107,11 @@ export default function Slotting() {
   }, [effectiveWhId, warehouseId, setSlotting])
 
   const [search, setSearch] = useState('')
+  const [showPlanSheet, setShowPlanSheet] = useState(false)
+  // Query phân tích ở CHA để nút "Tạo kế hoạch" nằm trên toolbar (chuẩn table-format: action lên trên);
+  // chỉ fetch khi đang ở tab Phân tích ('' = disabled)
+  const analysisQuery = useSlotting(tab === 'analysis' ? effectiveWhId : '', categories, days)
+  const { data: analysisData } = analysisQuery
 
   const filterDefs: FilterDef[] = [
     { key: 'wh', label: 'Kho', type: 'single', value: effectiveWhId,
@@ -116,18 +122,18 @@ export default function Slotting() {
       onChange: (v: string[]) => setSlotting({ categories: v }),
       options: whTypes.map(t => ({ value: t.value, label: t.value })) },
     { key: 'level', label: 'Mức độ', type: 'single', value: level,
-      onChange: v => setSlotting({ level: (v || 'NORMAL') as SlottingLevel }), allLabel: 'Normal — Gom theo date',
+      onChange: v => setSlotting({ level: (v || 'NORMAL') as SlottingLevel }), allLabel: 'Normal — gom date',
       options: LEVEL_OPTS },
     { key: 'principle', label: 'Nguyên tắc', type: 'single', value: principle,
-      onChange: v => setSlotting({ principle: (v || 'FEFO') as SlottingPrinciple }), allLabel: 'FEFO — theo HSD',
+      onChange: v => setSlotting({ principle: (v || 'FEFO') as SlottingPrinciple }), allLabel: 'FEFO (HSD)',
       options: PRINCIPLE_OPTS },
     // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): mặc định = Chỉ hàng chẵn (pallet nguyên)
     { key: 'palletKind', label: 'Pallet', type: 'single', value: palletKind === 'FULL' ? '' : palletKind,
       onChange: v => setSlotting({ palletKind: (v === 'PARTIAL' || v === 'ALL') ? v : 'FULL' }),
-      allLabel: 'Chỉ hàng chẵn (pallet nguyên)',
+      allLabel: 'Hàng chẵn',
       options: [
-        { value: 'ALL', label: 'Chẵn + lẻ (tất cả)' },
-        { value: 'PARTIAL', label: 'Chỉ hàng lẻ (đã bốc dở)' },
+        { value: 'ALL', label: 'Chẵn + lẻ' },
+        { value: 'PARTIAL', label: 'Chỉ hàng lẻ' },
       ] },
     { key: 'days', label: 'Cửa sổ ABC', type: 'single', value: String(days),
       onChange: v => setSlotting({ days: Number(v) || 30 }), allLabel: '30 ngày',
@@ -157,29 +163,42 @@ export default function Slotting() {
             {tab === 'analysis' && (
               <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên hàng…" className="flex-1 min-w-[140px]" />
             )}
+            {/* Action chính trên toolbar (chuẩn table-format) */}
+            {tab === 'analysis' && canPlan && (
+              <Button size="sm" className="h-7 text-[11px] ml-auto shrink-0"
+                disabled={!analysisData || categories.length === 0 || (level === 'HARD' && !analysisData.has_ranked_zones)}
+                title={categories.length === 0 ? 'Chọn Loại kho (filter) trước — kế hoạch đi theo từng loại hàng' : undefined}
+                onClick={() => setShowPlanSheet(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {categories.length === 0 ? 'Tạo kế hoạch — chọn Loại kho trước' : `Tạo kế hoạch (${LEVEL_LABEL[level]} · ${principle})`}
+              </Button>
+            )}
             <span className="sm:hidden ml-auto"><FilterSheetButton defs={filterDefs} /></span>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
-        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} palletKind={palletKind} search={search} canPlan={canPlan} />}
+        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level} search={search} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
       </div>
+
+      {showPlanSheet && analysisData && (
+        <PlanCreateSheet open={showPlanSheet} onClose={() => setShowPlanSheet(false)}
+          warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} palletKind={palletKind} />
+      )}
     </div>
   )
 }
 
 // ─── Tab Phân tích ABC ─────────────────────────────────────────────────────────
-function AnalysisTab({ warehouseId, categories, days, level, principle, palletKind, search, canPlan }: {
-  warehouseId: string; categories: string[]; days: number
-  level: SlottingLevel; principle: SlottingPrinciple; palletKind: 'FULL' | 'PARTIAL' | 'ALL'
-  search: string; canPlan: boolean
+function AnalysisTab({ warehouseId, query, days, level, search }: {
+  warehouseId: string; query: ReturnType<typeof useSlotting>; days: number
+  level: SlottingLevel; search: string
 }) {
-  const { data, isLoading, error, refetch } = useSlotting(warehouseId, categories, days)
-  const [showPlanSheet, setShowPlanSheet] = useState(false)
+  const { data, isLoading, error, refetch } = query
 
   const cols = ['Mã hàng', 'Tên hàng', 'Loại', 'Hạng', 'Lượt nhặt', 'Thùng xuất', '% lũy kế', 'Pallet tồn', 'Khu đang nằm', 'Khu đề xuất', 'Lệch chỗ']
   const { widths, startResize, totalWidth } = useColumnResize('slotting_col_widths',
@@ -217,29 +236,20 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, palletKi
     <>
       <SummaryBand tiles={tiles} />
 
-      {/* Dải khu + band (A = gần cửa xuất) + nút tạo kế hoạch */}
-      <div className="border-b bg-slate-50 px-3 py-1.5 shrink-0 flex items-center gap-1.5 flex-wrap">
-        <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu (hạng nhặt):</span>
+      {/* Dải khu + band (A = gần cửa xuất) — 1 DÒNG cuộn ngang (nén để bảng chiếm ~80% — user 18/07) */}
+      <div className="border-b bg-slate-50 px-3 py-1 shrink-0 flex items-center gap-1.5 flex-nowrap overflow-x-auto">
+        <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu:</span>
         {(data?.zones ?? []).map(z => (
           <span key={z.id} title={`${z.name} — loại ${z.category ?? 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
+            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
             {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}
           </span>
         ))}
         {data && !data.has_ranked_zones && level === 'HARD' && (
-          <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex items-center gap-1">
+          <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex items-center gap-1 whitespace-nowrap shrink-0">
             <AlertTriangle className="h-3 w-3" /> Mức Hard cần Hạng nhặt của khu —
-            <Link to="/wms/settings" className="underline font-medium">khai trong Cài đặt WMS → Khu vực</Link>
+            <Link to="/wms/slotting" className="underline font-medium">khai ở tab Cài đặt</Link>
           </span>
-        )}
-        {canPlan && (
-          <Button size="sm" className="ml-auto h-7 text-[11px]"
-            disabled={!data || categories.length === 0 || (level === 'HARD' && !data.has_ranked_zones)}
-            title={categories.length === 0 ? 'Chọn Loại kho (filter) trước — kế hoạch đi theo từng loại hàng' : undefined}
-            onClick={() => setShowPlanSheet(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            {categories.length === 0 ? 'Tạo kế hoạch — chọn Loại kho trước' : `Tạo kế hoạch sắp xếp (${LEVEL_LABEL[level]} · ${principle})`}
-          </Button>
         )}
       </div>
 
@@ -282,26 +292,23 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, palletKi
       <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">
         1–{displayMats.length} / {(data?.materials ?? []).length} mã · xếp hạng theo lượt nhặt {days} ngày (A = 80% lượt nhặt lũy kế, B = 15% kế, C = còn lại)
       </div>
-
-      {showPlanSheet && data && (
-        <PlanCreateSheet open={showPlanSheet} onClose={() => setShowPlanSheet(false)}
-          warehouseId={warehouseId} categories={categories} days={days} level={level} principle={principle} palletKind={palletKind} />
-      )}
     </>
   )
 }
 
-// Cảnh báo pallet nằm SAI LOẠI khu — chỉ cảnh báo; kéo về = checkbox lúc tạo kế hoạch
+// Cảnh báo pallet nằm SAI LOẠI khu — chỉ cảnh báo; kéo về = checkbox lúc tạo kế hoạch.
+// NÉN 1 dòng (bảng chiếm ~80% — user 18/07): chi tiết đầy đủ trong tooltip.
 function CategoryWarnings({ warnings }: { warnings: SlottingWarning[] }) {
   const total = warnings.reduce((s, w) => s + w.pallets, 0)
+  const detail = warnings.map(w => `${w.material_code} [${w.material_category ?? 'chưa khai loại'}] — ${w.pallets} pallet ở ${w.zone_code} (khu ${w.zone_category})`).join('\n')
   return (
-    <div className="border-b bg-amber-50/60 px-3 py-1.5 shrink-0 text-[10px]">
-      <p className="text-amber-800 flex items-start gap-1 flex-wrap">
-        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-        <span><b>{nf.format(total)} pallet nằm sai loại khu</b> (chỉ cảnh báo — muốn sinh lệnh kéo về đúng khu, tick ô trong "Tạo kế hoạch sắp xếp"):{' '}
-          {warnings.slice(0, 6).map(w => `${w.material_code} [${w.material_category ?? 'chưa khai loại'}] — ${w.pallets} pallet ở ${w.zone_code} (khu ${w.zone_category})`).join(' · ')}
-          {warnings.length > 6 ? ` … +${warnings.length - 6} mục` : ''}</span>
-      </p>
+    <div className="border-b bg-amber-50/60 px-3 py-1 shrink-0 text-[10px] flex items-center gap-1 min-w-0" title={detail}>
+      <AlertTriangle className="h-3 w-3 shrink-0 text-amber-700" />
+      <span className="text-amber-800 truncate">
+        <b>{nf.format(total)} pallet nằm sai loại khu</b> (rê chuột xem chi tiết — muốn kéo về đúng khu, tick ô trong "Tạo kế hoạch"):{' '}
+        {warnings.slice(0, 6).map(w => `${w.material_code}×${w.pallets}@${w.zone_code}`).join(' · ')}
+        {warnings.length > 6 ? ` … +${warnings.length - 6}` : ''}
+      </span>
     </div>
   )
 }
@@ -555,19 +562,17 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
   }
 
   if (!warehouseId) return <div className="p-8 text-center text-sm text-slate-400">Chọn kho để cài đặt</div>
+  const guide = 'Hạng nhặt: độ gần cửa xuất của khu — 1 = gần nhất; trống = khu không tham gia gợi ý ABC (mức Hard). Luồng cửa: quyết định hướng dẫn xếp trong dãy in trên phiếu kế hoạch. Khu đặc thù (kho lạnh…): dùng Loại kho — tạo Loại riêng (vd SCA) trong Cài đặt WMS → Loại kho, gán cho khu + các mã hàng của nó; slotting chỉ ghép mã đúng Loại với khu đúng Loại.'
   return (
     <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-      <div className="px-3 py-2 text-[10px] text-slate-500 border-b bg-slate-50">
-        <b>Hạng nhặt</b>: độ gần cửa xuất của khu — 1 = gần nhất; trống = khu không tham gia gợi ý ABC (mức Hard).{' '}
-        <b>Luồng cửa</b>: quyết định hướng dẫn xếp trong dãy in trên phiếu kế hoạch.{' '}
-        Khu đặc thù (kho lạnh…): dùng <b>Loại kho</b> — tạo Loại riêng (vd SCA) trong Cài đặt WMS → Loại kho, gán cho khu + các mã hàng của nó; slotting chỉ ghép mã đúng Loại với khu đúng Loại.
-      </div>
+      {/* Hướng dẫn nén 1 dòng — rê chuột xem đủ (bảng chiếm ~80%, user 18/07) */}
+      <div className="px-3 py-1 text-[10px] text-slate-500 border-b bg-slate-50 truncate" title={guide}>{guide}</div>
       {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
       <LocationConfig warehouseId={warehouseId} categories={categories} />
       {isLoading ? (
         <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
       ) : (
-        <Table>
+        <Table className="[&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
           <TableHeader>
             <TableRow>
               <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã khu</TableHead>
@@ -654,29 +659,24 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   }
 
   return (
-    <div className="px-3 py-2.5 border-b space-y-2">
-      <div className="flex items-center gap-1.5">
+    // NÉN 1 hàng (bảng khu chiếm ~80% — user 18/07): nhãn + dropdown + Lưu nằm ngang, mô tả trong tooltip
+    <div className="px-3 py-1.5 border-b space-y-1">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Vị trí đặc biệt</span>
-        {isLoading && <span className="text-[10px] text-slate-400">Đang tải…</span>}
-      </div>
-      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-      {msg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1.5">{msg}</p>}
-      <div className="flex items-end gap-3 flex-wrap">
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG đưa hàng vào <span className="text-slate-400">(kho tạm — hàng ở đó luôn bị kéo đi)</span></p>
-          <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn)}
-            selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} width="w-64" selectedFirst />
-        </div>
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG lấy hàng đi <span className="text-slate-400">(không tính nguồn — hàng kẹt/không bốc được)</span></p>
-          <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut)}
-            selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} width="w-64" selectedFirst />
-        </div>
-        <Button size="sm" className="h-8 text-[11px]" onClick={handleSave} disabled={isPending || !dirty}>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 shrink-0">Vị trí đặc biệt</span>
+        <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi">Không đưa hàng vào:</span>
+        <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn)}
+          selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst />
+        <span className="text-[10px] text-slate-500 shrink-0" title="Hàng kẹt/không bốc được — loại khỏi nguồn tính toán, vẫn tính chiếm chỗ">Không lấy hàng đi:</span>
+        <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut)}
+          selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} selectedFirst />
+        <Button size="sm" className="h-7 text-[11px] !min-h-0" onClick={handleSave} disabled={isPending || !dirty}>
           {isPending ? 'Đang lưu…' : 'Lưu vị trí'}
         </Button>
+        {isLoading && <span className="text-[10px] text-slate-400">Đang tải…</span>}
       </div>
+      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{err}</p>}
+      {msg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{msg}</p>}
     </div>
   )
 }
@@ -716,7 +716,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
             {canPlan && <p className="text-xs">Sang tab "Phân tích ABC" → "Tạo kế hoạch sắp xếp"</p>}
           </div>
         ) : (
-          <Table>
+          <Table className="[&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
             <TableHeader>
               <TableRow>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên kế hoạch</TableHead>

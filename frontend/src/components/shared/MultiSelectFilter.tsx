@@ -11,6 +11,7 @@ export function MultiSelectFilter({
   onChange,
   searchable = true,
   width,
+  selectedFirst = false,
 }: {
   label: string
   options: MSOpt[]
@@ -18,11 +19,15 @@ export function MultiSelectFilter({
   onChange: (v: string[]) => void
   searchable?: boolean
   width?: string
+  /** true: mục ĐANG chọn nổi lên đầu danh sách — thứ tự chốt lúc MỞ panel (tick/bỏ tick không nhảy hàng) */
+  selectedFirst?: boolean
 }) {
   const [open,   setOpen]   = useState(false)
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef   = useRef<HTMLDivElement>(null)
+  // Snapshot selected tại thời điểm mở — sort selected-first ổn định trong suốt phiên mở panel
+  const openSelectedRef = useRef<Set<string>>(new Set())
   // Panel render qua portal (document.body) + position:fixed theo trigger → THOÁT mọi overflow/transform
   // (vd DialogContent có overflow-y-auto + translate → dropdown absolute/fixed bên trong bị CHE).
   const [pos, setPos] = useState<{ left: number; top: number; openUp: boolean } | null>(null)
@@ -60,9 +65,12 @@ export function MultiSelectFilter({
   }, [open])
 
   const active  = selected.length > 0
-  const visible = searchable && search
-    ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+  const ordered = selectedFirst
+    ? [...options].sort((a, b) => Number(openSelectedRef.current.has(b.value)) - Number(openSelectedRef.current.has(a.value)))
     : options
+  const visible = searchable && search
+    ? ordered.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    : ordered
   const allSelected  = visible.length > 0 && visible.every(o => selected.includes(o.value))
   const someSelected = !allSelected && visible.some(o => selected.includes(o.value))
 
@@ -88,7 +96,7 @@ export function MultiSelectFilter({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => { if (!open && selectedFirst) openSelectedRef.current = new Set(selected); setOpen(v => !v) }}
         className={`h-7 px-2 text-xs border rounded flex items-center gap-1 whitespace-nowrap transition-colors ${width ?? ''}
           ${active
             ? 'border-blue-400 bg-blue-50 text-blue-700 font-medium'

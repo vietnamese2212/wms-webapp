@@ -21,7 +21,7 @@ import {
   useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
   type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
-  type SlottingLevel, type SlottingPrinciple, type SlottingWarning,
+  type SlottingLevel, type SlottingPrinciple, type SlottingWarning, type SlottingImpact,
 } from '@/api/hooks'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -109,7 +109,8 @@ export default function Slotting() {
     { key: 'wh', label: 'Kho', type: 'single', value: effectiveWhId,
       onChange: v => setSlotting({ warehouseId: v }), allLabel: '— Chọn kho',
       options: warehouses.map(w => ({ value: w.id, label: w.name })) },
-    { key: 'cat', label: 'Loại kho', type: 'multi', selected: categories,
+    // pinned: Loại kho là filter BẮT BUỘC để tạo kế hoạch → chip luôn hiện, xóa giá trị không biến mất (user 18/07)
+    { key: 'cat', label: 'Loại kho', type: 'multi', selected: categories, pinned: true,
       onChange: (v: string[]) => setSlotting({ categories: v }),
       options: whTypes.map(t => ({ value: t.value, label: t.value })) },
     { key: 'level', label: 'Mức độ', type: 'single', value: level,
@@ -154,7 +155,7 @@ export default function Slotting() {
         {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} search={search} canPlan={canPlan} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
-          ? <ConfigTab warehouseId={effectiveWhId} />
+          ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
       </div>
     </div>
@@ -345,10 +346,12 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
   const navigate = useNavigate()
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [name, setName] = useState(`Sắp xếp ${categories.length > 0 ? categories.join('+') : 'kho'} ${today} (${LEVEL_LABEL[level]} · ${principle})`)
-  const [maxMoves, setMaxMoves] = useState('100')
+  const [maxMoves, setMaxMoves] = useState('300')
   const [pullWrongZone, setPullWrongZone] = useState(false)
   const [err, setErr] = useState('')
   const [lines, setLines] = useState<SlottingPlanLineDraft[] | null>(null)
+  const [impact, setImpact] = useState<SlottingImpact | null>(null)
+  const [totalGen, setTotalGen] = useState(0)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [skipped, setSkipped] = useState(0)
 
@@ -357,10 +360,12 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
 
   function handlePreview() {
     setErr('')
-    const mm = Math.min(300, Math.max(1, Number(maxMoves) || 100))
+    const mm = Math.min(500, Math.max(1, Number(maxMoves) || 300))
     preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, pull_wrong_zone: pullWrongZone, categories: categories.length > 0 ? categories : undefined }, {
       onSuccess: r => {
         setLines(r.lines)
+        setImpact(r.impact ?? null)
+        setTotalGen(r.total_generated ?? r.lines.length)
         setChecked(new Set(r.lines.map(lineKey)))
         setSkipped(r.skipped_no_capacity)
         if (r.lines.length === 0) setErr(r.message ?? 'Không sinh được gợi ý nào')
@@ -397,7 +402,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Số dòng tối đa</Label>
-            <Input type="number" min={1} max={300} value={maxMoves} onChange={e => setMaxMoves(e.target.value)} className="w-24" />
+            <Input type="number" min={1} max={500} value={maxMoves} onChange={e => setMaxMoves(e.target.value)} className="w-24" />
           </div>
           <Button size="sm" variant="outline" onClick={handlePreview} disabled={previewing}>
             {previewing ? 'Đang sinh…' : lines ? 'Sinh lại gợi ý' : 'Sinh gợi ý'}
@@ -417,6 +422,34 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
           {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa vị trí đích.
         </p>
         {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} pallet bị bỏ vì vị trí đích hết chỗ trống</p>}
+        {/* KHÔNG cắt âm thầm: gợi ý sinh nhiều hơn trần → báo rõ còn bao nhiêu dòng chưa hiện */}
+        {lines && totalGen > lines.length && (
+          <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+            Sinh được {nf.format(totalGen)} dòng nhưng chỉ hiện {nf.format(lines.length)} dòng đầu (ưu tiên cao trước) — làm xong kế hoạch này rồi "Tạo kế hoạch" tiếp để xử phần còn lại, hoặc tăng "Số dòng tối đa" (tối đa 500/kế hoạch).
+          </p>
+        )}
+
+        {/* Kết quả kỳ vọng — user 18/07: "biết làm nhưng chưa biết đúng sai" → phân tích để soi từng gợi ý */}
+        {impact && lines && lines.length > 0 && (
+          <div className="text-[11px] bg-sky-50 border border-sky-200 rounded px-2.5 py-2 space-y-1">
+            <p className="font-semibold text-sky-800">Kết quả kỳ vọng nếu thực hiện đủ {impact.lines} dòng ({nf.format(impact.moved_pallets)} pallet chuyển):</p>
+            <ul className="list-disc pl-4 space-y-0.5 text-sky-900">
+              {impact.freed_locations > 0 && (
+                <li><b>Giải phóng hoàn toàn {impact.freed_locations} vị trí</b> (trống để dùng — trong phạm vi loại đã chọn):{' '}
+                  <span className="font-mono">{impact.freed_location_codes.join(', ')}</span>{impact.freed_locations > impact.freed_location_codes.length ? '…' : ''}</li>
+              )}
+              {impact.temp_cleared_pallets > 0 && <li>Dọn sạch {nf.format(impact.temp_cleared_pallets)} pallet khỏi vị trí tạm (không đưa hàng vào)</li>}
+              {impact.wrong_zone_pallets > 0 && <li>{nf.format(impact.wrong_zone_pallets)} pallet nằm sai loại khu được kéo về đúng khu</li>}
+              {impact.abc_pallets > 0 && <li>{nf.format(impact.abc_pallets)} pallet đảo khu theo hạng ABC (mã nhặt nhiều về gần cửa, nhặt ít ra xa)</li>}
+              {impact.date_group_pallets > 0 && <li>{nf.format(impact.date_group_pallets)} pallet gom theo date ({principle}) — sau gom, mỗi vị trí chứa cùng mã với dải date liền nhau, xuất đúng chiều {principle}</li>}
+              {impact.free_group_pallets > 0 && <li>{nf.format(impact.free_group_pallets)} pallet gom mã đang rải rác về ít vị trí</li>}
+              {impact.freed_locations === 0 && impact.moved_pallets > 0 && <li>Chưa giải phóng trọn vị trí nào (nguồn còn pallet ở lại hoặc bị giữ cho đơn xuất)</li>}
+            </ul>
+            <p className="text-[10px] text-sky-700">
+              Cách soi đúng/sai từng dòng: nhìn cột <b>"Đích đang chứa"</b> — đích hợp lý phải là vị trí trống hoặc đang chứa CÙNG MÃ với date đúng chiều {principle === 'LIFO' ? 'LIFO (đích chứa date ngắn hơn hàng chuyển đến)' : `${principle} (đích chứa date dài hơn hàng chuyển đến)`}; <b>"Trống sau"</b> = số chỗ còn dư ở đích sau khi thực hiện (0 = vừa khít, không âm).
+            </p>
+          </div>
+        )}
 
         {lines && lines.length > 0 && (
           <div className="border rounded-lg overflow-x-auto">
@@ -434,6 +467,8 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">SL pallet</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Từ vị trí</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Đến vị trí</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Đích đang chứa</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trống sau</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lý do</TableHead>
                 </TableRow>
               </TableHeader>
@@ -457,6 +492,16 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
                       <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{l.n_pallets}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{l.from_location_code ?? '—'}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold text-green-700 whitespace-nowrap">{l.to_location_code ?? '—'}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        {l.to_current === 'Trống'
+                          ? <span className="text-slate-400">Trống</span>
+                          : <span className="block max-w-[220px] truncate text-slate-600" title={l.to_current}>{l.to_current ?? '—'}</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
+                        {l.to_free_after != null
+                          ? <span className={l.to_free_after === 0 ? 'text-amber-600 font-semibold' : 'text-slate-600'}>{l.to_free_after} chỗ</span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap"><span className="block max-w-[240px] truncate" title={`${l.reason}${l.flow_note ? ` · ${l.flow_note}` : ''}`}>{l.reason}{l.flow_note ? ` · ${l.flow_note}` : ''}</span></TableCell>
                     </TableRow>
                   )
@@ -473,7 +518,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
 // ─── Tab Cài đặt (quyền slotting.configure) — cấu hình slotting per KHU ───────
 // Hạng nhặt (1 = gần cửa xuất nhất) + Luồng cửa. Loại kho của khu/mã quản ở chỗ cũ
 // (Cài đặt WMS / Mã hàng) — khu SCA = tạo Loại kho riêng rồi gán khu + mã (user chốt v3).
-function ConfigTab({ warehouseId }: { warehouseId: string }) {
+function ConfigTab({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
   const { data: zones = [], isLoading } = useWarehouseZones(warehouseId || undefined)
   const { mutate: updateCfg, isPending } = useUpdateSlottingZoneConfig()
   const [err, setErr] = useState('')
@@ -502,7 +547,7 @@ function ConfigTab({ warehouseId }: { warehouseId: string }) {
         Khu đặc thù (kho lạnh…): dùng <b>Loại kho</b> — tạo Loại riêng (vd SCA) trong Cài đặt WMS → Loại kho, gán cho khu + các mã hàng của nó; slotting chỉ ghép mã đúng Loại với khu đúng Loại.
       </div>
       {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-      <LocationConfig warehouseId={warehouseId} />
+      <LocationConfig warehouseId={warehouseId} categories={categories} />
       {isLoading ? (
         <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
       ) : (
@@ -553,7 +598,7 @@ function ConfigTab({ warehouseId }: { warehouseId: string }) {
 // Cấu hình VỊ TRÍ (user 18/07): 2 danh sách chọn dropdown per kho —
 // "KHÔNG đưa hàng vào" (kho tạm: không làm đích + hàng ở đó luôn bị kéo đi trước)
 // và "KHÔNG lấy hàng đi" (hàng kẹt không bốc được: loại khỏi nguồn tính toán).
-function LocationConfig({ warehouseId }: { warehouseId: string }) {
+function LocationConfig({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
   const { data: locations = [], isLoading } = useLocationsReal({ warehouse_id: warehouseId }, !!warehouseId)
   const { mutate: save, isPending } = useUpdateSlottingLocationConfig()
   const [noIn, setNoIn] = useState<string[]>([])
@@ -562,10 +607,11 @@ function LocationConfig({ warehouseId }: { warehouseId: string }) {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
-  type LocRow = { id: string; location_code: string; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
+  type LocRow = { id: string; location_code: string; category?: string | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
   const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
 
-  // Nạp trạng thái hiện tại từ DB khi đổi kho / dữ liệu về (chưa sửa dở)
+  // Nạp trạng thái hiện tại từ TOÀN BỘ vị trí của kho (không theo filter Loại kho) —
+  // nút Lưu là replace-all per kho: nếu chỉ nạp vị trí trong filter sẽ XÓA NHẦM cờ của vị trí đang bị ẩn
   useEffect(() => {
     if (dirty) return
     setNoIn(locs.filter(l => l.slot_no_in).map(l => l.id))
@@ -574,7 +620,14 @@ function LocationConfig({ warehouseId }: { warehouseId: string }) {
   }, [locations, warehouseId])
   useEffect(() => { setDirty(false); setMsg(''); setErr('') }, [warehouseId])
 
-  const options = locs.map(l => ({ value: l.id, label: l.location_code }))
+  // Option theo filter Loại kho phía trên (user 18/07): vị trí đúng loại + vị trí CHƯA khai loại;
+  // vị trí ĐÃ chọn luôn hiện (kể cả ngoài filter) để còn bỏ chọn được
+  const optionsFor = (selectedIds: string[]) => {
+    const sel = new Set(selectedIds)
+    return locs
+      .filter(l => categories.length === 0 || !l.category || categories.includes(l.category) || sel.has(l.id))
+      .map(l => ({ value: l.id, label: l.category ? `${l.location_code} · ${l.category}` : l.location_code }))
+  }
 
   function handleSave() {
     setMsg(''); setErr('')
@@ -596,13 +649,13 @@ function LocationConfig({ warehouseId }: { warehouseId: string }) {
       <div className="flex items-end gap-3 flex-wrap">
         <div className="space-y-1">
           <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG đưa hàng vào <span className="text-slate-400">(kho tạm — hàng ở đó luôn bị kéo đi)</span></p>
-          <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={options}
-            selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} width="w-64" />
+          <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn)}
+            selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} width="w-64" selectedFirst />
         </div>
         <div className="space-y-1">
           <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG lấy hàng đi <span className="text-slate-400">(không tính nguồn — hàng kẹt/không bốc được)</span></p>
-          <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={options}
-            selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} width="w-64" />
+          <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut)}
+            selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} width="w-64" selectedFirst />
         </div>
         <Button size="sm" className="h-8 text-[11px]" onClick={handleSave} disabled={isPending || !dirty}>
           {isPending ? 'Đang lưu…' : 'Lưu vị trí'}

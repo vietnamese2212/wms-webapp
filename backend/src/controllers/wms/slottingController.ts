@@ -219,7 +219,8 @@ export async function previewPlan(req: Request, res: Response) {
     if (effCats.length === 0)
       return fail(res, 403, 'FORBIDDEN', 'Loại kho chọn ngoài phạm vi được phân quyền')
     const days = parseDays(rawDays)
-    const cap = Math.min(300, Math.max(1, Math.round(Number(max_moves ?? 100)) || 100))
+    // Trần 500 = khớp trần 500 dòng/kế hoạch (user 18/07: 100 quá thấp — nếu cắt phải BÁO còn bao nhiêu)
+    const cap = Math.min(500, Math.max(1, Math.round(Number(max_moves ?? 300)) || 300))
 
     const { stats, notReady, error } = await fetchStats(warehouse_id, effCats, days)
     if (notReady) return fail(res, 503, 'NOT_READY', 'Chưa apply migration slotting (RPC slotting_stats)')
@@ -241,6 +242,9 @@ export async function previewPlan(req: Request, res: Response) {
     // Kéo toàn bộ tồn của kho (mọi mã trong scope) — engine gom cần nhìn đủ
     const matIds = stats.materials.map(m => m.material_id)
     const entries: EntryRow[] = []
+    // Ảnh chụp "đang chứa gì" per vị trí (trong phạm vi loại đã chọn) — gồm CẢ pallet reserved/kẹt
+    // (không được chuyển nhưng vẫn CHIẾM chỗ): dùng cho phân tích kết quả kỳ vọng + cột "Đích đang chứa"
+    const rowsAtLoc = new Map<string, EntryRow[]>()
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
@@ -251,6 +255,11 @@ export async function previewPlan(req: Request, res: Response) {
         .gt('cartons_remaining', 0)
         .order('id'))
       for (const r of rows) {
+        if (r.location_id) {
+          const arr = rowsAtLoc.get(r.location_id) ?? []
+          arr.push(r)
+          rowsAtLoc.set(r.location_id, arr)
+        }
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
         if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
@@ -462,14 +471,70 @@ export async function previewPlan(req: Request, res: Response) {
       }
     }
 
-    // Chốt danh sách: sort ưu tiên rồi cắt trần số dòng (dòng = 1 lệnh gom mã+date)
+    // Chốt danh sách: sort ưu tiên rồi cắt trần số dòng (dòng = 1 lệnh gom mã+date).
+    // KHÔNG cắt âm thầm: trả total_generated để FE báo "còn M dòng chưa hiện".
+    const totalGenerated = draftMap.size
     const lines = [...draftMap.values()]
       .sort((a, b) => (a.priority - b.priority) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
       .slice(0, cap)
 
+    // ── Phân tích kết quả kỳ vọng (user 18/07: "biết làm nhưng chưa biết đúng sai") ──
+    // Tính trên danh sách dòng ĐÃ CẮT trần (đúng những gì sẽ vào kế hoạch).
+    const movedOutByLoc = new Map<string, number>()
+    const movedInByLoc = new Map<string, number>()
+    for (const l of lines) {
+      if (l.from_location_id) movedOutByLoc.set(l.from_location_id, (movedOutByLoc.get(l.from_location_id) ?? 0) + l.n_pallets)
+      movedInByLoc.set(l.to_location_id, (movedInByLoc.get(l.to_location_id) ?? 0) + l.n_pallets)
+    }
+    // Vị trí được GIẢI PHÓNG HOÀN TOÀN: mọi pallet đang nằm đó đều chuyển đi + không có pallet nào chuyển đến
+    const freedCodes: string[] = []
+    for (const [locId, rows] of rowsAtLoc) {
+      if (rows.length > 0 && (movedOutByLoc.get(locId) ?? 0) === rows.length && (movedInByLoc.get(locId) ?? 0) === 0)
+        freedCodes.push(locById.get(locId)?.location_code ?? '?')
+    }
+    freedCodes.sort()
+    const palletsByPrio = (p: number) => lines.filter(l => l.priority === p).reduce((s, l) => s + l.n_pallets, 0)
+    const impact = {
+      lines: lines.length,
+      moved_pallets: lines.reduce((s, l) => s + l.n_pallets, 0),
+      freed_locations: freedCodes.length,
+      freed_location_codes: freedCodes.slice(0, 30),
+      wrong_zone_pallets: palletsByPrio(0),   // kéo về đúng loại khu (P0)
+      temp_cleared_pallets: palletsByPrio(1), // dọn khỏi vị trí tạm (P1)
+      abc_pallets: palletsByPrio(2),          // đảo khu theo ABC (HARD)
+      date_group_pallets: palletsByPrio(3),   // gom theo date (NORMAL/HARD)
+      free_group_pallets: palletsByPrio(4),   // gom giải phóng chỗ (EASY)
+    }
+    // Mô tả vị trí đích ĐANG chứa gì (trước khi chuyển) — để user tự soi gợi ý đúng/sai
+    const describeLoc = (locId: string, materialId: string): string => {
+      const rows = rowsAtLoc.get(locId) ?? []
+      if (rows.length === 0) return 'Trống'
+      const same = rows.filter(r => r.material_id === materialId)
+      const parts: string[] = []
+      if (same.length > 0) {
+        const dates = same.map(e => dateKeyOf(e, principle)).filter(Boolean).sort() as string[]
+        const dr = dates.length === 0 ? ''
+          : dates[0] === dates[dates.length - 1] ? ` (date ${dates[0]})` : ` (date ${dates[0]} → ${dates[dates.length - 1]})`
+        parts.push(`${same.length} pallet cùng mã${dr}`)
+      }
+      const other = rows.length - same.length
+      if (other > 0) {
+        const nMats = new Set(rows.filter(r => r.material_id !== materialId).map(r => r.material_id)).size
+        parts.push(`${other} pallet ${nMats} mã khác`)
+      }
+      return parts.join(' + ')
+    }
+
     return ok(res, {
       level, principle,
-      lines: lines.map(({ priority: _p, ...rest }) => rest),
+      lines: lines.map(({ priority: _p, ...rest }) => ({
+        ...rest,
+        to_current: describeLoc(rest.to_location_id, rest.material_id),
+        // Chỗ trống còn lại ở đích SAU khi thực hiện kế hoạch (freeByLoc đã trừ dần khi gán)
+        to_free_after: Math.max(0, freeByLoc.get(rest.to_location_id) ?? 0),
+      })),
+      impact,
+      total_generated: totalGenerated,
       skipped_no_capacity: skippedNoCapacity,
       warnings: pull_wrong_zone ? [] : categoryWarnings(stats),
       message: lines.length === 0 ? 'Không có gì cần sắp xếp theo mức độ/nguyên tắc đã chọn' : undefined,

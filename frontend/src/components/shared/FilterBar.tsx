@@ -11,12 +11,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 
 export interface FBOpt { value: string; label: string }
 
-export type FilterDef =
+// pinned: chip LUÔN hiện trên bar kể cả khi trống (không rơi vào menu "+ Thêm lọc" khi xóa giá trị)
+export type FilterDef = (
   | { key: string; label: string; type: 'multi';     options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean }
   | { key: string; label: string; type: 'single';    options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string }
   | { key: string; label: string; type: 'date';      value: string; onChange: (v: string) => void }
   | { key: string; label: string; type: 'daterange'; from: string; to: string; onChange: (from: string, to: string) => void }
   | { key: string; label: string; type: 'text';      value: string; onChange: (v: string) => void; placeholder?: string }
+) & { pinned?: boolean }
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -92,8 +94,8 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
   }, [openKey, addOpen])
 
   const activeDefs   = defs.filter(isActive)
-  const visibleDefs  = defs.filter(d => isActive(d) || d.key === openKey)
-  const inactiveDefs = defs.filter(d => !isActive(d))
+  const visibleDefs  = defs.filter(d => isActive(d) || d.key === openKey || d.pinned)
+  const inactiveDefs = defs.filter(d => !isActive(d) && !d.pinned)
 
   // Desktop/tablet: chip bar inline. Mobile dùng <FilterSheetButton/> riêng (đặt cùng hàng action).
   return (

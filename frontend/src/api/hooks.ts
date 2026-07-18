@@ -2369,6 +2369,16 @@ export interface SlottingPlanLineDraft {
   abc: 'A' | 'B' | 'C' | null; reason: string; flow_note: string | null
   from_location_id: string | null; from_location_code: string | null
   to_location_id: string; to_location_code: string | null
+  // Phân tích kỳ vọng (chỉ có trong preview — không lưu vào plan): đích đang chứa gì / chỗ trống còn lại sau chuyển
+  to_current?: string
+  to_free_after?: number
+}
+// Kết quả kỳ vọng nếu thực hiện đủ kế hoạch (tính trên danh sách dòng preview đã cắt trần)
+export interface SlottingImpact {
+  lines: number; moved_pallets: number
+  freed_locations: number; freed_location_codes: string[]
+  wrong_zone_pallets: number; temp_cleared_pallets: number
+  abc_pallets: number; date_group_pallets: number; free_group_pallets: number
 }
 export interface SlottingPlanRow {
   id: string; warehouse_id: string; name: string; status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
@@ -2420,7 +2430,8 @@ export function useSlottingPreview() {
   return useMutation({
     mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; pull_wrong_zone?: boolean; categories?: string[] }) =>
       apiClient.post('/wms/slotting/plans/preview', body).then(r => r.data.data as {
-        lines: SlottingPlanLineDraft[]; skipped_no_capacity: number; warnings: SlottingWarning[]; message?: string
+        lines: SlottingPlanLineDraft[]; impact: SlottingImpact | undefined; total_generated?: number
+        skipped_no_capacity: number; warnings: SlottingWarning[]; message?: string
       }),
   })
 }

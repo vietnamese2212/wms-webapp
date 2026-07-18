@@ -289,7 +289,10 @@ export async function previewPlan(req: Request, res: Response) {
         const dk = dateKeyOf(e, principle)
         const fromId = locOf.get(e.id)!                    // = vị trí gốc (pallet chỉ được gán lệnh 1 lần)
         const fromLoc = locById.get(fromId)
-        const key = `${e.material_id}|${dk ?? ''}|${fromId}|${toLoc.id}`
+        // Khóa gộp CÓ pass: lệnh của lượt sau phụ thuộc chỗ trống do lệnh lượt trước giải phóng —
+        // gộp chung 1 dòng sẽ tạo lệnh "chuyển N cùng lúc" vượt chỗ trống tại-thời-điểm (test hội tụ 18/07:
+        // dòng x23 vào vị trí chỉ trống 19 → LOCATION_FULL). Tách dòng theo lượt = thực hiện được tuần tự.
+        const key = `${e.material_id}|${dk ?? ''}|${fromId}|${toLoc.id}|${pass}`
         let d = draftMap.get(key)
         if (!d) {
           d = {
@@ -517,12 +520,12 @@ export async function previewPlan(req: Request, res: Response) {
       }
     }
 
-    // Chốt danh sách: sort ưu tiên → lượt mô phỏng (lệnh lượt sau có thể cần chỗ trống do lệnh
-    // lượt trước giải phóng — thực hiện theo thứ tự từ trên xuống) → cỡ dòng.
+    // Chốt danh sách: sort LƯỢT mô phỏng TRƯỚC (lệnh lượt sau cần chỗ trống do lệnh lượt trước —
+    // BẤT KỂ ưu tiên — giải phóng; thực hiện tuần tự từ trên xuống là luôn đủ chỗ) → ưu tiên → cỡ dòng.
     // KHÔNG cắt âm thầm: trả total_generated để FE báo "còn M dòng chưa hiện".
     const totalGenerated = draftMap.size
     const lines = [...draftMap.values()]
-      .sort((a, b) => (a.priority - b.priority) || (a.pass - b.pass) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
+      .sort((a, b) => (a.pass - b.pass) || (a.priority - b.priority) || (b.n_pallets - a.n_pallets) || (a.material_code ?? '').localeCompare(b.material_code ?? ''))
       .slice(0, cap)
 
     // ── Phân tích kết quả kỳ vọng (user 18/07: "biết làm nhưng chưa biết đúng sai") ──

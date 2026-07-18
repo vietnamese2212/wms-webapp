@@ -173,7 +173,7 @@ export async function getSlotting(req: Request, res: Response) {
 }
 
 // ─── Engine sinh gợi ý (preview) ─────────────────────────────────────────────
-interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; expiry_date: string | null; stack_layer?: number | null }
+interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; expiry_date: string | null }
 
 // date đại diện theo nguyên tắc: FEFO = HSD (thiếu thì NSX); FIFO/LIFO = NSX
 function dateKeyOf(e: EntryRow, principle: Principle): string | null {
@@ -248,7 +248,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, stack_layer')
+        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -278,7 +278,9 @@ export async function previewPlan(req: Request, res: Response) {
 
     const draftMap = new Map<string, PlanLineDraft>()
     const movedEntry = new Set<string>()
-    const movedOutL1 = new Map<string, number>()  // slot tầng-1 được giải phóng ở nguồn (cộng lại giữa các lượt)
+    // Mỗi pallet rời đi giải phóng đúng 1 chỗ — KHỚP thước đo của RPC move_pallets_to_location
+    // (đếm mọi tầng; migration 20260718_slotting_capacity_fix đồng bộ slotting_stats theo cùng thước)
+    const movedOutCnt = new Map<string, number>()
     const movedInCnt = new Map<string, number>()
     let pass = 0
     function addMoves(list: EntryRow[], toLoc: StatsLocation, reason: string, priority: number) {
@@ -303,7 +305,7 @@ export async function previewPlan(req: Request, res: Response) {
         d.n_pallets++
         d.entry_ids.push(e.id)
         movedEntry.add(e.id)
-        if ((e.stack_layer ?? 1) === 1) movedOutL1.set(fromId, (movedOutL1.get(fromId) ?? 0) + 1)
+        movedOutCnt.set(fromId, (movedOutCnt.get(fromId) ?? 0) + 1)
         movedInCnt.set(toLoc.id, (movedInCnt.get(toLoc.id) ?? 0) + 1)
         locOf.set(e.id, toLoc.id)
         freeByLoc.set(toLoc.id, (freeByLoc.get(toLoc.id) ?? 1) - 1)
@@ -363,7 +365,7 @@ export async function previewPlan(req: Request, res: Response) {
       skippedNoCapacity = 0   // chỉ giữ số của lượt cuối (lượt sau đã xử được phần lượt trước bỏ)
       for (const l of stats.locations) {
         freeByLoc.set(l.id, l.slot_no_in ? 0
-          : Math.max(0, Math.max(0, l.max_pallets - l.used_slots) + (movedOutL1.get(l.id) ?? 0) - (movedInCnt.get(l.id) ?? 0)))
+          : Math.max(0, Math.max(0, l.max_pallets - l.used_slots) + (movedOutCnt.get(l.id) ?? 0) - (movedInCnt.get(l.id) ?? 0)))
       }
 
       // ── P0 (checkbox): kéo pallet sai loại khu về khu đúng Loại

@@ -200,9 +200,13 @@ interface PlanLineDraft {
 // POST /wms/slotting/plans/preview { warehouse_id, level, principle, days, max_moves, pull_wrong_zone?, categories? }
 export async function previewPlan(req: Request, res: Response) {
   try {
-    const { warehouse_id, level: rawLevel, principle: rawPrinciple, days: rawDays, max_moves, pull_wrong_zone, categories } = req.body as {
-      warehouse_id?: string; level?: string; principle?: string; days?: number; max_moves?: number; pull_wrong_zone?: boolean; categories?: string[]
+    const { warehouse_id, level: rawLevel, principle: rawPrinciple, days: rawDays, max_moves, pull_wrong_zone, categories, pallet_kind } = req.body as {
+      warehouse_id?: string; level?: string; principle?: string; days?: number; max_moves?: number; pull_wrong_zone?: boolean; categories?: string[]; pallet_kind?: string
     }
+    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): FULL = pallet còn NGUYÊN như nhập
+    // (tồn = nhập, chưa bốc lẻ) · PARTIAL = pallet đã bốc dở · ALL = cả hai. Pallet bị loại
+    // vẫn tính CHIẾM CHỖ ở vị trí (không làm nguồn/không bị xáo trộn).
+    const palletKind: 'FULL' | 'PARTIAL' | 'ALL' = pallet_kind === 'PARTIAL' || pallet_kind === 'ALL' ? pallet_kind : pallet_kind === 'FULL' ? 'FULL' : 'ALL'
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouse_id)) return
     const level: Level = LEVELS.includes(rawLevel as Level) ? rawLevel as Level : 'NORMAL'
@@ -248,7 +252,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved')
+        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -263,6 +267,9 @@ export async function previewPlan(req: Request, res: Response) {
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
         if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
+        const isFull = Number(r.cartons_remaining) >= Number(r.cartons_imported)
+        if (palletKind === 'FULL' && !isFull) continue     // chỉ dồn hàng chẵn — pallet lẻ để yên
+        if (palletKind === 'PARTIAL' && isFull) continue   // chỉ dồn hàng lẻ
         entries.push(r)
       }
     }

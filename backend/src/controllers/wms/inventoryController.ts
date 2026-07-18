@@ -110,7 +110,9 @@ interface FilterParams {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m)
 
 function applyInventoryFilters(q: any, p: FilterParams): any {
-  if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+  // Mặc định "Còn tồn" = status active VÀ tồn > 0 (user 18/07: upload cho phép tồn=0 → 31k dòng
+  // tồn=0 status IN_STOCK lọt list dù filter ghi "Còn tồn"). Muốn xem cả tồn=0 → chọn "Tất cả".
+  if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING']).gt('cartons_remaining', 0)
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
   if (p.locationFilter !== null && p.locationFilter !== undefined) {
@@ -505,7 +507,7 @@ export async function listInventory(req: Request, res: Response) {
   const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
   const sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
 
-  // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (user chốt 05/07,
+  // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list chỉ hiện pallet 0 khi chọn "Tất cả" (user 18/07,
   // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
   // catActive PHẢI embed Material!inner (filter category lọc trên bảng nhúng — thiếu là PostgREST lỗi → tile về 0).
   const cntSelect = catActive ? 'id, material:Material!inner(category)' : 'id'

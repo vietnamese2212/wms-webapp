@@ -2428,7 +2428,7 @@ export function useSlottingPlan(id: string | undefined) {
 }
 export function useSlottingPreview() {
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; pull_wrong_zone?: boolean; categories?: string[] }) =>
+    mutationFn: (body: { warehouse_id: string; level: SlottingLevel; principle: SlottingPrinciple; days: number; max_moves: number; pull_wrong_zone?: boolean; pallet_kind?: 'FULL' | 'PARTIAL' | 'ALL'; categories?: string[] }) =>
       apiClient.post('/wms/slotting/plans/preview', body).then(r => r.data.data as {
         lines: SlottingPlanLineDraft[]; impact: SlottingImpact | undefined; total_generated?: number
         skipped_no_capacity: number; warnings: SlottingWarning[]; message?: string

@@ -89,7 +89,9 @@ export default function Slotting() {
   const canPlan = admin || can(perms, 'slotting', 'plan')
   const canConfigure = admin || can(perms, 'slotting', 'configure')
 
-  const { warehouseId, categories, days, level, principle, tab } = useWmsFilterStore(s => s.slotting)
+  const { warehouseId, categories, days, level, principle, tab, palletKind: rawPalletKind } = useWmsFilterStore(s => s.slotting)
+  // ?? 'FULL': state persist cũ (trước khi thêm field) không có palletKind
+  const palletKind = rawPalletKind ?? 'FULL'
   const setSlotting = useWmsFilterStore(s => s.setSlotting)
 
   const { data: rawWarehouses = [] } = useScopedWarehouses(true)
@@ -119,6 +121,14 @@ export default function Slotting() {
     { key: 'principle', label: 'Nguyên tắc', type: 'single', value: principle,
       onChange: v => setSlotting({ principle: (v || 'FEFO') as SlottingPrinciple }), allLabel: 'FEFO — theo HSD',
       options: PRINCIPLE_OPTS },
+    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): mặc định = Chỉ hàng chẵn (pallet nguyên)
+    { key: 'palletKind', label: 'Pallet', type: 'single', value: palletKind === 'FULL' ? '' : palletKind,
+      onChange: v => setSlotting({ palletKind: (v === 'PARTIAL' || v === 'ALL') ? v : 'FULL' }),
+      allLabel: 'Chỉ hàng chẵn (pallet nguyên)',
+      options: [
+        { value: 'ALL', label: 'Chẵn + lẻ (tất cả)' },
+        { value: 'PARTIAL', label: 'Chỉ hàng lẻ (đã bốc dở)' },
+      ] },
     { key: 'days', label: 'Cửa sổ ABC', type: 'single', value: String(days),
       onChange: v => setSlotting({ days: Number(v) || 30 }), allLabel: '30 ngày',
       options: DAYS_OPTS },
@@ -152,7 +162,7 @@ export default function Slotting() {
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
-        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} search={search} canPlan={canPlan} />}
+        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} categories={categories} days={days} level={level} principle={principle} palletKind={palletKind} search={search} canPlan={canPlan} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
@@ -163,9 +173,10 @@ export default function Slotting() {
 }
 
 // ─── Tab Phân tích ABC ─────────────────────────────────────────────────────────
-function AnalysisTab({ warehouseId, categories, days, level, principle, search, canPlan }: {
+function AnalysisTab({ warehouseId, categories, days, level, principle, palletKind, search, canPlan }: {
   warehouseId: string; categories: string[]; days: number
-  level: SlottingLevel; principle: SlottingPrinciple; search: string; canPlan: boolean
+  level: SlottingLevel; principle: SlottingPrinciple; palletKind: 'FULL' | 'PARTIAL' | 'ALL'
+  search: string; canPlan: boolean
 }) {
   const { data, isLoading, error, refetch } = useSlotting(warehouseId, categories, days)
   const [showPlanSheet, setShowPlanSheet] = useState(false)
@@ -274,7 +285,7 @@ function AnalysisTab({ warehouseId, categories, days, level, principle, search, 
 
       {showPlanSheet && data && (
         <PlanCreateSheet open={showPlanSheet} onClose={() => setShowPlanSheet(false)}
-          warehouseId={warehouseId} categories={categories} days={days} level={level} principle={principle} />
+          warehouseId={warehouseId} categories={categories} days={days} level={level} principle={principle} palletKind={palletKind} />
       )}
     </>
   )
@@ -338,10 +349,10 @@ function MatRow({ m, zoneByCode }: { m: SlottingMaterial; zoneByCode: Map<string
 // ─── Sheet tạo kế hoạch (preview → chọn dòng → lưu) — dòng GOM (mã + date) ─────
 const lineKey = (l: SlottingPlanLineDraft) => `${l.material_id}|${l.date_key ?? ''}|${l.from_location_id ?? ''}|${l.to_location_id}`
 
-function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, principle }: {
+function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, principle, palletKind }: {
   open: boolean; onClose: () => void
   warehouseId: string; categories: string[]; days: number
-  level: SlottingLevel; principle: SlottingPrinciple
+  level: SlottingLevel; principle: SlottingPrinciple; palletKind: 'FULL' | 'PARTIAL' | 'ALL'
 }) {
   const navigate = useNavigate()
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -361,7 +372,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
   function handlePreview() {
     setErr('')
     const mm = Math.min(500, Math.max(1, Number(maxMoves) || 300))
-    preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, pull_wrong_zone: pullWrongZone, categories: categories.length > 0 ? categories : undefined }, {
+    preview({ warehouse_id: warehouseId, level, principle, days, max_moves: mm, pull_wrong_zone: pullWrongZone, pallet_kind: palletKind, categories: categories.length > 0 ? categories : undefined }, {
       onSuccess: r => {
         setLines(r.lines)
         setImpact(r.impact ?? null)
@@ -419,7 +430,8 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
             ? 'Normal · LIFO: dồn hàng cùng mã date DÀI vào vị trí đang chứa date ngắn.'
             : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo NSX)'}.`)}
           {level === 'HARD' && `Hard: đảo khu theo ABC (${days} ngày) + gom theo date ${principle} — cần chỗ trống đệm.`}
-          {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa đích tại từng thời điểm.
+          {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua.
+          {' '}<b>Pallet: {palletKind === 'FULL' ? 'chỉ dồn HÀNG CHẴN (pallet nguyên như nhập — pallet lẻ để yên, vẫn tính chiếm chỗ)' : palletKind === 'PARTIAL' ? 'chỉ dồn HÀNG LẺ (pallet đã bốc dở)' : 'dồn cả hàng chẵn + lẻ'}</b> (đổi ở filter "Pallet"). Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa đích tại từng thời điểm.
           {' '}<b>Thứ tự dòng = thứ tự thực hiện (làm từ trên xuống)</b>: cùng mã đứng cạnh nhau, cùng đích nhiều date thì dòng xếp vào TRƯỚC nằm trên ({principle === 'LIFO' ? 'LIFO: date ngắn vào trước, date dài nằm ngoài' : `${principle}: date dài vào trước, date ngắn nằm ngoài để lấy trước`}).
         </p>
         {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} pallet bị bỏ vì vị trí đích hết chỗ trống</p>}

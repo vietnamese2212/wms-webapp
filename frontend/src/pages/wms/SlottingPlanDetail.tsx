@@ -282,14 +282,17 @@ function LineRow({ l, bracketPos = 'only', frees = false, onScan }: {
         {l.abc ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${abcCls}`}>{l.abc}</span> : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">
-        {l.from_location_code ?? <span className="text-slate-300">—</span>}
-        {onScan && (
-          <button className="ml-1.5 align-middle text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded !min-h-0 !min-w-0"
-            title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
-            onClick={e => { e.stopPropagation(); onScan() }}>
-            <QrCode className="h-3.5 w-3.5" />
-          </button>
-        )}
+        {/* flex + ml-auto: nút QR GHIM mép phải cột — mọi dòng thẳng hàng nhau (user 19/07) */}
+        <span className="flex items-center gap-1.5 min-w-[150px]">
+          <span>{l.from_location_code ?? <span className="text-slate-300">—</span>}</span>
+          {onScan && (
+            <button className="ml-auto shrink-0 text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded !min-h-0 !min-w-0"
+              title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
+              onClick={e => { e.stopPropagation(); onScan() }}>
+              <QrCode className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </span>
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">
         {l.from_pallets_now != null ? l.from_pallets_now : <span className="text-slate-300">—</span>}

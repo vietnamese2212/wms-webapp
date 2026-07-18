@@ -318,7 +318,14 @@ export async function previewPlan(req: Request, res: Response) {
     // ƯU TIÊN vị trí ĐANG chứa cùng mã (tránh tự tạo phân mảnh — bài học test hội tụ 18/07),
     // sau đó mới quét theo thứ tự khu (chỗ trống nhiều trước).
     function assignTargets(list: EntryRow[], targetZones: StatsZone[], reason: string, priority: number, matId?: string): number {
-      const queue = list.filter(e => !movedEntry.has(e.id))
+      // Hàng đợi rót theo CHIỀU DATE (user 18/07 "date nào xếp vào trước"): FEFO/FIFO date DÀI vào
+      // vị trí neo trước (date ngắn tràn ra chỗ phụ để lấy trước); LIFO ngược lại. Không sort →
+      // pallet date dài nhất văng vào chỗ tràn phụ = sinh "mỏ neo mới" không hội tụ.
+      const queue = list.filter(e => !movedEntry.has(e.id)).sort((a, b) => {
+        const da = dateKeyOf(a, principle) ?? '0000', db2 = dateKeyOf(b, principle) ?? '0000'
+        if (da === db2) return 0
+        return principle === 'LIFO' ? (da < db2 ? -1 : 1) : (da > db2 ? -1 : 1)
+      })
       const pour = (locs: StatsLocation[]) => {
         for (const loc of locs) {
           if (queue.length === 0) break

@@ -14,13 +14,16 @@ const num = (n: number) => n.toLocaleString('vi-VN')
  *  Tính trên TOÀN BỘ dòng kế hoạch (không theo bộ lọc) — dùng chung cho sort màn hình + bản in. */
 export function computeFreesSet(allLines: SlottingPlanLineRow[]): Set<string> {
   const pendingOut = new Map<string, number>() // from_location_id → Σ pallet còn phải rời đi
+  const incoming = new Set<string>() // vị trí còn dòng ĐỔ HÀNG VÀO (chưa xong) — nguồn kiểu này không trống thật
   for (const l of allLines) {
+    if (l.done + l.gone < l.n_pallets) incoming.add(l.to_location_id)
     if (!l.from_location_id || l.pending <= 0) continue
     pendingOut.set(l.from_location_id, (pendingOut.get(l.from_location_id) ?? 0) + l.pending)
   }
   const set = new Set<string>()
   for (const l of allLines) {
     if (!l.from_location_id || l.pending <= 0 || l.from_pallets_now == null) continue
+    if (incoming.has(l.from_location_id)) continue
     if (l.from_pallets_now - (pendingOut.get(l.from_location_id) ?? 0) <= 0) set.add(l.id)
   }
   return set

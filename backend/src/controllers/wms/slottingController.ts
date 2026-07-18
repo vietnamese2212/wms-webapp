@@ -47,7 +47,9 @@ const PRINCIPLES: Principle[] = ['FIFO', 'FEFO', 'LIFO']
 interface StatsZone { id: string; code: string; name: string; category: string | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
 interface StatsMaterial { material_id: string; code: string; name: string | null; category: string | null; picks: number; cartons_out: number; pallets_touched: number; stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number }
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
-interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number }
+// slot_no_in = vị trí KHÔNG đưa hàng vào (kho tạm — không làm đích, hàng ở đó luôn kéo đi)
+// slot_no_out = vị trí KHÔNG lấy hàng đi (hàng kẹt — loại khỏi nguồn). Optional: RPC cũ chưa có cột → undefined = false.
+interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number; slot_no_in?: boolean; slot_no_out?: boolean }
 interface Stats { total_picks: number; materials: StatsMaterial[]; placement: StatsPlacement[]; zones: StatsZone[]; locations: StatsLocation[] }
 
 async function fetchStats(warehouseId: string, categories: string[] | null, days: number): Promise<{ stats?: Stats; notReady?: boolean; error?: string }> {
@@ -227,7 +229,8 @@ export async function previewPlan(req: Request, res: Response) {
       return sub ? zoneByCode.get(sub) : undefined
     }
     const freeByLoc = new Map<string, number>()
-    for (const l of stats.locations) freeByLoc.set(l.id, Math.max(0, l.max_pallets - l.used_slots))
+    // Vị trí "không đưa hàng vào" → free = 0: không bao giờ được chọn làm đích ở mọi bước
+    for (const l of stats.locations) freeByLoc.set(l.id, l.slot_no_in ? 0 : Math.max(0, l.max_pallets - l.used_slots))
 
     // Kéo toàn bộ tồn của kho (mọi mã trong scope) — engine gom cần nhìn đủ
     const matIds = stats.materials.map(m => m.material_id)
@@ -244,6 +247,7 @@ export async function previewPlan(req: Request, res: Response) {
       for (const r of rows) {
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
+        if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
         entries.push(r)
       }
     }
@@ -327,6 +331,28 @@ export async function previewPlan(req: Request, res: Response) {
       }
     }
 
+    // ── P1: VỊ TRÍ KHÔNG ĐƯA HÀNG VÀO (kho tạm) — hàng nằm đó LUÔN bị kéo đi
+    // (nguyên tắc user: vị trí tạm phải dọn — không cần checkbox, kể cả hàng đang sai loại khu)
+    {
+      const tempByMat = new Map<string, EntryRow[]>()
+      for (const e of entries) {
+        if (movedEntry.has(e.id)) continue
+        if (!locById.get(e.location_id)?.slot_no_in) continue
+        const arr = tempByMat.get(e.material_id) ?? []
+        arr.push(e)
+        tempByMat.set(e.material_id, arr)
+      }
+      for (const [mid, list] of tempByMat) {
+        const mat = matById.get(mid)!
+        const homeZones = stats.zones
+          .filter(z => zoneAccepts(z, mat))
+          .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
+        if (homeZones.length === 0) continue
+        skippedNoCapacity += assignTargets(list, homeZones, 'Vị trí tạm (không chứa hàng) — kéo hàng đi', 1)
+        for (const e of list) if (movedEntry.has(e.id)) frozen.delete(e.id)
+      }
+    }
+
     // ── P1 (chỉ HARD): đảo khu theo ABC velocity
     if (level === 'HARD') {
       interface Cand { e: EntryRow; mat: EnrichedMaterialLite; prio: number }
@@ -368,7 +394,7 @@ export async function previewPlan(req: Request, res: Response) {
           ? 'Mã nhặt nhiều (A) đang ở khu xa cửa — đưa về khu gần cửa'
           : mat.abc === 'C' ? 'Mã nhặt ít (C) chiếm khu gần cửa — chuyển ra khu xa'
           : 'Mã hạng B lệch khu'
-        skippedNoCapacity += assignTargets(list.map(c => c.e), targetZones, reason, 1)
+        skippedNoCapacity += assignTargets(list.map(c => c.e), targetZones, reason, 2)
       }
     }
 
@@ -410,7 +436,7 @@ export async function previewPlan(req: Request, res: Response) {
         : principle === 'LIFO' ? 'Dồn date dài vào vị trí chứa date ngắn (LIFO)'
         : principle === 'FEFO' ? 'Dồn date ngắn (theo HSD) vào vị trí chứa date dài (FEFO)'
         : 'Dồn date ngắn vào vị trí chứa date dài (FIFO)'
-      const priority = useDate ? 2 : 3
+      const priority = useDate ? 3 : 4
 
       let ti = 0, si = anchors.length - 1
       while (si > ti) {
@@ -669,6 +695,47 @@ export async function updateZoneConfig(req: Request, res: Response) {
       .select('id, code, name, category, pick_rank, flow_type').single()
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
     return ok(res, data)
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
+// PUT /wms/slotting/location-config { warehouse_id, no_in_ids: string[], no_out_ids: string[] }
+// Cấu hình VỊ TRÍ (tab Cài đặt): replace-all 2 danh sách per kho —
+// no_in = vị trí KHÔNG đưa hàng vào (kho tạm); no_out = vị trí KHÔNG lấy hàng đi.
+export async function updateLocationConfig(req: Request, res: Response) {
+  try {
+    const { warehouse_id, no_in_ids, no_out_ids } = req.body as {
+      warehouse_id?: string; no_in_ids?: string[]; no_out_ids?: string[]
+    }
+    if (!warehouse_id || !Array.isArray(no_in_ids) || !Array.isArray(no_out_ids))
+      return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id / no_in_ids / no_out_ids')
+    if (!guardWarehouse(req, res, warehouse_id)) return
+
+    // Chỉ nhận id vị trí THUỘC kho này (chống gán chéo kho)
+    const valid = new Set<string>(
+      (await fetchAllRowsParallel(() => supabase.from('Location')
+        .select('id').eq('warehouse_id', warehouse_id).order('id'))).map((l: { id: string }) => l.id))
+    const inIds = [...new Set(no_in_ids)].filter(id => valid.has(id))
+    const outIds = [...new Set(no_out_ids)].filter(id => valid.has(id))
+
+    const now = new Date().toISOString()
+    // Reset cả kho về false rồi bật lại theo danh sách (replace-all, khớp UI multi-select)
+    const { error: resetErr } = await supabase.from('Location')
+      .update({ slot_no_in: false, slot_no_out: false, updated_at: now })
+      .eq('warehouse_id', warehouse_id)
+    if (resetErr) {
+      if (/slot_no_in|slot_no_out/.test(resetErr.message))
+        return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260718_slotting_locations')
+      return fail(res, 500, 'DB_ERROR', resetErr.message)
+    }
+    for (const ids of chunk(inIds, 300)) {
+      const { error } = await supabase.from('Location').update({ slot_no_in: true, updated_at: now }).in('id', ids)
+      if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    }
+    for (const ids of chunk(outIds, 300)) {
+      const { error } = await supabase.from('Location').update({ slot_no_out: true, updated_at: now }).in('id', ids)
+      if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    }
+    return ok(res, { no_in: inIds.length, no_out: outIds.length })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 

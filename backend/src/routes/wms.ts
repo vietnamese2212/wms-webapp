@@ -155,6 +155,7 @@ router.post('/slotting/plans',                                requirePerm('slott
 router.patch('/slotting/plans/:id',                           requirePerm('slotting', 'complete'), slotting.updatePlan)
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
+router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)

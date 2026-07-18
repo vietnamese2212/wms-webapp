@@ -2450,6 +2450,18 @@ export function useDeleteSlottingPlan() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
   })
 }
+// Cấu hình slotting của VỊ TRÍ (tab Cài đặt): no_in = không đưa hàng vào (kho tạm); no_out = không lấy hàng đi
+export function useUpdateSlottingLocationConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; no_in_ids: string[]; no_out_ids: string[] }) =>
+      apiClient.put('/wms/slotting/location-config', body).then(r => r.data.data as { no_in: number; no_out: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['slotting'] })
+    },
+  })
+}
 // Cấu hình slotting của KHU (tab Cài đặt trang Tối ưu vị trí — quyền slotting.configure)
 export function useUpdateSlottingZoneConfig() {
   const qc = useQueryClient()

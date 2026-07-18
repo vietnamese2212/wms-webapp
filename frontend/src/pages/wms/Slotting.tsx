@@ -18,10 +18,12 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
-  useWarehouseZones, useUpdateSlottingZoneConfig, type WarehouseZone,
+  useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
+  type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
   type SlottingLevel, type SlottingPrinciple, type SlottingWarning,
 } from '@/api/hooks'
+import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -409,7 +411,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
             ? 'Normal · LIFO: dồn hàng cùng mã date DÀI vào vị trí đang chứa date ngắn.'
             : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo NSX)'}.`)}
           {level === 'HARD' && `Hard: đảo khu theo ABC (${days} ngày) + gom theo date ${principle} — cần chỗ trống đệm.`}
-          {' '}Mã thuộc khu riêng nằm ngoài luôn được kéo về trước tiên. Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa vị trí đích.
+          {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua. Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa vị trí đích.
         </p>
         {skipped > 0 && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">{skipped} pallet bị bỏ vì vị trí đích hết chỗ trống</p>}
 
@@ -497,6 +499,7 @@ function ConfigTab({ warehouseId }: { warehouseId: string }) {
         Khu đặc thù (kho lạnh…): dùng <b>Loại kho</b> — tạo Loại riêng (vd SCA) trong Cài đặt WMS → Loại kho, gán cho khu + các mã hàng của nó; slotting chỉ ghép mã đúng Loại với khu đúng Loại.
       </div>
       {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+      <LocationConfig warehouseId={warehouseId} />
       {isLoading ? (
         <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
       ) : (
@@ -540,6 +543,68 @@ function ConfigTab({ warehouseId }: { warehouseId: string }) {
           </TableBody>
         </Table>
       )}
+    </div>
+  )
+}
+
+// Cấu hình VỊ TRÍ (user 18/07): 2 danh sách chọn dropdown per kho —
+// "KHÔNG đưa hàng vào" (kho tạm: không làm đích + hàng ở đó luôn bị kéo đi trước)
+// và "KHÔNG lấy hàng đi" (hàng kẹt không bốc được: loại khỏi nguồn tính toán).
+function LocationConfig({ warehouseId }: { warehouseId: string }) {
+  const { data: locations = [], isLoading } = useLocationsReal({ warehouse_id: warehouseId }, !!warehouseId)
+  const { mutate: save, isPending } = useUpdateSlottingLocationConfig()
+  const [noIn, setNoIn] = useState<string[]>([])
+  const [noOut, setNoOut] = useState<string[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  type LocRow = { id: string; location_code: string; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
+  const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
+
+  // Nạp trạng thái hiện tại từ DB khi đổi kho / dữ liệu về (chưa sửa dở)
+  useEffect(() => {
+    if (dirty) return
+    setNoIn(locs.filter(l => l.slot_no_in).map(l => l.id))
+    setNoOut(locs.filter(l => l.slot_no_out).map(l => l.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locations, warehouseId])
+  useEffect(() => { setDirty(false); setMsg(''); setErr('') }, [warehouseId])
+
+  const options = locs.map(l => ({ value: l.id, label: l.location_code }))
+
+  function handleSave() {
+    setMsg(''); setErr('')
+    save({ warehouse_id: warehouseId, no_in_ids: noIn, no_out_ids: noOut }, {
+      onSuccess: r => { setDirty(false); setMsg(`Đã lưu: ${r.no_in} vị trí không đưa hàng vào · ${r.no_out} vị trí không lấy hàng đi`) },
+      onError: e => setErr(apiMsg(e)),
+    })
+  }
+
+  return (
+    <div className="px-3 py-2.5 border-b space-y-2">
+      <div className="flex items-center gap-1.5">
+        <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Vị trí đặc biệt</span>
+        {isLoading && <span className="text-[10px] text-slate-400">Đang tải…</span>}
+      </div>
+      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+      {msg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1.5">{msg}</p>}
+      <div className="flex items-end gap-3 flex-wrap">
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG đưa hàng vào <span className="text-slate-400">(kho tạm — hàng ở đó luôn bị kéo đi)</span></p>
+          <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={options}
+            selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} width="w-64" />
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-slate-600">Vị trí KHÔNG lấy hàng đi <span className="text-slate-400">(không tính nguồn — hàng kẹt/không bốc được)</span></p>
+          <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={options}
+            selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} width="w-64" />
+        </div>
+        <Button size="sm" className="h-8 text-[11px]" onClick={handleSave} disabled={isPending || !dirty}>
+          {isPending ? 'Đang lưu…' : 'Lưu vị trí'}
+        </Button>
+      </div>
     </div>
   )
 }

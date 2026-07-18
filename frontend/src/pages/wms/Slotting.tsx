@@ -127,13 +127,15 @@ export default function Slotting() {
     { key: 'principle', label: 'Nguyên tắc', type: 'single', value: principle,
       onChange: v => setSlotting({ principle: (v || 'FEFO') as SlottingPrinciple }), allLabel: 'FEFO (HSD)',
       options: PRINCIPLE_OPTS },
-    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): mặc định = Chỉ hàng chẵn (pallet nguyên)
-    { key: 'palletKind', label: 'Pallet', type: 'single', value: palletKind === 'FULL' ? '' : palletKind,
+    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): mặc định = Chỉ hàng chẵn (pallet nguyên).
+    // Giá trị TƯỜNG MINH (không dùng '' = allLabel) để chip luôn hiện "Pallet: Hàng chẵn" — xóa ✕ = về mặc định chẵn
+    { key: 'palletKind', label: 'Pallet', type: 'single', value: palletKind,
       onChange: v => setSlotting({ palletKind: (v === 'PARTIAL' || v === 'ALL') ? v : 'FULL' }),
-      allLabel: 'Hàng chẵn',
+      allLabel: 'Hàng chẵn (mặc định)',
       options: [
-        { value: 'ALL', label: 'Chẵn + lẻ' },
+        { value: 'FULL', label: 'Hàng chẵn (pallet nguyên)' },
         { value: 'PARTIAL', label: 'Chỉ hàng lẻ' },
+        { value: 'ALL', label: 'Chẵn + lẻ' },
       ] },
     { key: 'days', label: 'Cửa sổ ABC', type: 'single', value: String(days),
       onChange: v => setSlotting({ days: Number(v) || 30 }), allLabel: '30 ngày',

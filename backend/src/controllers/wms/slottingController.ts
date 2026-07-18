@@ -329,12 +329,38 @@ export async function previewPlan(req: Request, res: Response) {
         }
       }
       if (matId) {
+        // Thứ tự rót cùng-mã = ĐÚNG thứ tự mỏ neo của bước gom P3 (FEFO/FIFO: date dài nhất trước;
+        // LIFO: date ngắn nhất; EASY: đông pallet nhất) — rót lệch mỏ neo thì P3 vòng sau muốn dồn tiếp
+        // nhưng pallet đã đi 1 lần không đi lần 2 → dư việc sang kế hoạch sau (test hội tụ 18/07 còn 15 dòng)
         const zoneOk = new Set(targetZones.map(z => z.code))
-        const matLocIds = new Set(entries.filter(e => e.material_id === matId).map(e => locOf.get(e.id)!))
-        pour([...matLocIds]
-          .map(id => locById.get(id))
-          .filter((l): l is StatsLocation => !!l && !!l.sub_code && zoneOk.has(l.sub_code) && (freeByLoc.get(l.id) ?? 0) > 0)
-          .sort((a, b) => (freeByLoc.get(b.id)! - freeByLoc.get(a.id)!) || a.location_code.localeCompare(b.location_code)))
+        const byLoc = new Map<string, EntryRow[]>()
+        for (const e of entries) {
+          if (e.material_id !== matId) continue
+          const lid = locOf.get(e.id)!
+          const arr = byLoc.get(lid) ?? []
+          arr.push(e)
+          byLoc.set(lid, arr)
+        }
+        const anchorStats = [...byLoc.entries()].map(([lid, list]) => {
+          const dates = list.map(e => dateKeyOf(e, principle)).filter(Boolean) as string[]
+          return {
+            loc: locById.get(lid),
+            n: list.length,
+            minDate: dates.length ? dates.reduce((a, b) => a < b ? a : b) : '9999',
+            maxDate: dates.length ? dates.reduce((a, b) => a > b ? a : b) : '0000',
+          }
+        })
+        pour(anchorStats
+          .filter((s): s is typeof s & { loc: StatsLocation } =>
+            !!s.loc && !!s.loc.sub_code && zoneOk.has(s.loc.sub_code) && (freeByLoc.get(s.loc.id) ?? 0) > 0)
+          .sort((a, b) => {
+            if (level !== 'EASY') {
+              if (principle === 'LIFO') { if (a.minDate !== b.minDate) return a.minDate < b.minDate ? -1 : 1 }
+              else { if (a.maxDate !== b.maxDate) return a.maxDate > b.maxDate ? -1 : 1 }
+            }
+            return (b.n - a.n) || a.loc.location_code.localeCompare(b.loc.location_code)
+          })
+          .map(s => s.loc))
       }
       for (const z of targetZones) {
         if (queue.length === 0) break
@@ -361,9 +387,9 @@ export async function previewPlan(req: Request, res: Response) {
       .sort((a, b) => ((a.pick_rank ?? 9999) - (b.pick_rank ?? 9999)) || a.code.localeCompare(b.code))
 
     // Vòng lặp mô phỏng: mỗi lượt tính lại chỗ trống ẢO (đã cộng slot giải phóng ở nguồn),
-    // chạy đủ các bước; dừng khi không sinh thêm lệnh nào (đã hội tụ) hoặc hết 4 lượt.
+    // chạy đủ các bước; dừng khi không sinh thêm lệnh nào (đã hội tụ) hoặc hết 6 lượt.
     let prevDrafts = -1
-    for (pass = 0; pass < 4 && draftMap.size !== prevDrafts; pass++) {
+    for (pass = 0; pass < 6 && draftMap.size !== prevDrafts; pass++) {
       prevDrafts = draftMap.size
       skippedNoCapacity = 0   // chỉ giữ số của lượt cuối (lượt sau đã xử được phần lượt trước bỏ)
       for (const l of stats.locations) {

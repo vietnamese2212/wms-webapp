@@ -739,7 +739,7 @@ function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
-                {(canPlan || canScan) && <TableHead className="px-2 py-1.5 w-16" />}
+                {(canPlan || canScan) && <TableHead className="px-2 py-1.5 w-16 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -767,7 +767,7 @@ function PlansTab({ warehouseId, canPlan, canScan, onOpen }: {
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
                     {(canPlan || canScan) && (
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <TableCell className="px-2 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-100">
                         {canScan && p.status === 'ACTIVE' && (
                           <button className="text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded transition-colors"
                             title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"

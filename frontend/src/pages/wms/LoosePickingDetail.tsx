@@ -287,18 +287,17 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                     </div>
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top">
-                    <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
-                    <ProgressBar compact scanned={looseDone} target={effective} />
+                    {/* Gọn (user 19/07, đồng bộ Xuất): bỏ progress bar từng dòng; mobile tên tối đa 3 dòng */}
+                    <div className={`text-[10px] font-medium leading-tight max-sm:line-clamp-3 ${textCls}`}>{matName}</div>
                     {looseScanEntries.length > 0 && (
                       <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
                     )}
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     <div className="flex flex-col items-end gap-0.5">
-                      <span className={`text-[10px] tabular-nums ${textCls}`}>
-                        <span className="font-semibold">{effective}</span>
-                        <span className="text-slate-400"> / {item.cartons_ordered}</span>
-                      </span>
+                      {/* Đã nhặt / Cần nhặt lẻ (0/23) · tổng đơn nhỏ bên dưới */}
+                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{looseDone}/{effective}</span>
+                      <span className="text-[9px] text-slate-400 tabular-nums">tổng {item.cartons_ordered}</span>
                       {!isDone && (
                         <button
                           onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
@@ -371,7 +370,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   {hasHeaderText && (
                     <TableCell className="px-2 py-1 align-top whitespace-normal min-w-[180px] max-w-[380px]">
                       {item.header_text
-                        ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
+                        ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words max-sm:line-clamp-3" title={item.header_text}>{item.header_text}</p>
                         : <span className="text-[10px] text-slate-300">—</span>}
                     </TableCell>
                   )}

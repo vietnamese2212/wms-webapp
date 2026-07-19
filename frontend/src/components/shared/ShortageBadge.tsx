@@ -1,12 +1,13 @@
 import type { OutboundShortage } from '@/api/hooks'
+import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 
 // Badge cảnh báo thiếu tồn (đặt cuối cột Mã hàng — Xuất kho / Nhặt lẻ / Chuẩn bị hàng).
 // Cấp 1 (vàng): tồn thiếu nhưng tồn + KH nhập về đủ → push hàng về đúng kế hoạch.
 // Cấp 2 (đỏ): tồn + KH nhập vẫn thiếu.
-export function ShortageBadge({ s }: { s: OutboundShortage | undefined }) {
+// demand/available/planned từ RPC = số BASE → quy đổi "N thùng + M hộp" qua qtyLabel(mat).
+export function ShortageBadge({ s, mat }: { s: OutboundShortage | undefined; mat?: MatUnits | null }) {
   if (!s) return null
-  const fmt = (n: number) => n.toLocaleString('vi-VN')
-  const title = `Cần ${fmt(s.demand)} thùng (cả ngày) · Tồn ${fmt(s.available)} · KH nhập về ${fmt(s.planned)}`
+  const title = `Cần ${qtyLabel(s.demand, mat)} (cả ngày) · Tồn ${qtyLabel(s.available, mat)} · KH nhập về ${qtyLabel(s.planned, mat)}`
   return (
     <span
       title={title}

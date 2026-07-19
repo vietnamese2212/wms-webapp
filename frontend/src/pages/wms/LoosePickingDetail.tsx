@@ -307,7 +307,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   <TableCell className={`px-2 py-1 align-top whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
                     <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
                       {matCode}
-                      <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
+                      <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} mat={item.material} />
                     </div>
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top">

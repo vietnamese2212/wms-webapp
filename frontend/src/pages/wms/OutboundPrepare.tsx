@@ -357,7 +357,7 @@ export default function OutboundPrepare() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] font-mono font-semibold text-slate-700">{r.material_code}</span>
-                      <ShortageBadge s={r.material_id ? shortageByMat.get(r.material_id) : undefined} />
+                      <ShortageBadge s={r.material_id ? shortageByMat.get(r.material_id) : undefined} mat={r} />
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <div className="flex items-center gap-1 min-w-0">

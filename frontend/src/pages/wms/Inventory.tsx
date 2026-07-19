@@ -31,7 +31,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtyEntryText, qtyEntryDecimal, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryDecimal, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -100,11 +100,11 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'pallet',    label: 'Mã pallet',w: 110 },
   { id: 'nmsx',      label: 'NMSX',     w: 52 },
   { id: 'location',  label: 'Vị trí',   w: 90 },
-  { id: 'imported',  label: 'Nhập',     w: 60, align: 'right' },
-  { id: 'exported',  label: 'Xuất',     w: 60, align: 'right' },
+  { id: 'imported',  label: 'Nhập',     w: 116, align: 'right' },
+  { id: 'exported',  label: 'Xuất',     w: 116, align: 'right' },
   { id: 'remaining', label: 'Tồn',      w: 116, align: 'right' },
-  { id: 'reserved',  label: 'Nhặt lẻ',  w: 64, align: 'right' },
-  { id: 'available', label: 'Khả dụng', w: 70, align: 'right' },
+  { id: 'reserved',  label: 'Nhặt lẻ',  w: 110, align: 'right' },
+  { id: 'available', label: 'Khả dụng', w: 116, align: 'right' },
   { id: 'date',      label: 'Date',     w: 70 },
   { id: 'datePct',   label: '%Date',    w: 60, align: 'right' },
   { id: 'qa',        label: 'QA',       w: 60 },
@@ -122,8 +122,8 @@ const SUMMARY_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'ncc',       label: 'NCC',      w: 110 },
   { id: 'date',      label: 'Date',     w: 80 },
   { id: 'datePct',   label: '%Date',    w: 64, align: 'right' },
-  { id: 'imported',  label: 'Nhập',     w: 70, align: 'right' },
-  { id: 'exported',  label: 'Xuất',     w: 70, align: 'right' },
+  { id: 'imported',  label: 'Nhập',     w: 124, align: 'right' },
+  { id: 'exported',  label: 'Xuất',     w: 124, align: 'right' },
   { id: 'remaining', label: 'Tồn',      w: 124, align: 'right' },
   { id: 'pallets',   label: 'Số pallet',w: 72, align: 'right' },
 ]
@@ -1287,10 +1287,11 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         <span className="text-[10px] font-mono text-slate-700 truncate block" title={loc}>{loc}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{qtyEntryText(Number(e.cartons_imported), e.material)}</span>
+        {/* BASE UNIT: Nhập/Xuất/Giữ/Khả dụng đồng bộ Thùng + Hộp lẻ như cột Tồn */}
+        <span className="text-[10px] tabular-nums text-slate-500">{qtyLabel(Number(e.cartons_imported), e.material)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? qtyEntryText(exported, e.material) : '—'}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? qtyLabel(exported, e.material) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {/* BASE UNIT: Tồn thể hiện Thùng + Hộp lẻ (base là lõi) */}
@@ -1299,12 +1300,12 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       {/* Giữ chỗ / Khả dụng: bỏ màu riêng (purple/blue) → kế thừa màu dòng (entryRowText) cho đồng nhất */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {(e.cartons_reserved ?? 0) > 0
-          ? <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(Number(e.cartons_reserved), e.material)}</span>
+          ? <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(Number(e.cartons_reserved), e.material)}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">
-          {qtyEntryText(Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0)), e.material)}
+          {qtyLabel(Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0)), e.material)}
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1387,10 +1388,10 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{qtyEntryText(g.cartons_imported, g)}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{qtyLabel(g.cartons_imported, g)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? qtyEntryText(g.cartons_exported, g) : '—'}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? qtyLabel(g.cartons_exported, g) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {/* BASE UNIT: Tồn tổng hợp thể hiện Thùng + Hộp lẻ */}

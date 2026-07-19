@@ -99,3 +99,40 @@ Thành phần mới (per-silo, cờ trong `SystemSetting` — KHÔNG if-tenant):
 | G3 | Business Partner + KH xuất + KH nhập | G2 nghiệm thu |
 | G4 | SAP dựng job post GR/GI từ dữ liệu Chiều 1; test đối chiếu QAS | song song G2–G3 (phía SAP) |
 | G5 | Trỏ production, cắt dần upload Excel | 2 tuần chạy song song không lệch |
+
+---
+
+## 7. Mô hình dữ liệu XUẤT/NHẬP theo OD & STO (chốt hướng 19/07)
+
+Phía SAP xác nhận: **OD (Outbound Delivery) = khóa giao dịch mua bán; PO loại STO (Stock Transport Order) = khóa trung chuyển giữa kho.** Hiện WMS upload Excel theo "Group OD" (gom nhiều OD thành 1 chuyến).
+
+### Nguyên tắc khớp mô hình
+- **OD (SAP) ↔ DO (WMS) 1-1** — `OutboundDelivery.do_code` = số OD. Số thực quét trả về SAP cũng theo OD để họ post PGI từng OD.
+- **GDO (chuyến xe) = khái niệm RIÊNG của WMS** (điều vận gom OD nào đi chung xe) — SAP không quản chuyến, KHÔNG bắt SAP thêm trường "group". *(Ngoại lệ: nếu SAP có dùng Shipment/Freight Order (SAP TM) để gom sẵn — hỏi IT, có thì kéo luôn nhóm, đỡ gom tay.)*
+- **Trung chuyển**: STO number = khóa liên kết; STO thường sinh OD riêng (movement 641/643) → WMS xuất theo OD đó, luồng chuyển kho nội bộ hiện có (auto TmsOrder + KH nhập kho đích khi ship-to = kho nội bộ) giữ nguyên; kho đích nhận xong → SAP post GR đối ứng STO. Cần lưu thêm **tham chiếu STO** trên đơn WMS.
+- **NPP vẫn là khóa tách dòng** (luật 04/07): ship-to party của OD → resolve NPP (đã có sẵn shipto verbatim + `Warehouse.shipto_codes`).
+
+### Cấu trúc dữ liệu WMS cần từ mỗi OD (mức dòng hàng)
+| Trường | Từ SAP | Ghi chú |
+|---|---|---|
+| `od_number` + `od_item_no` | OD | khóa chính dòng |
+| `so_number` / `sto_number` | SO gốc / STO | phân loại mua bán vs trung chuyển + khóa đối chiếu |
+| `ship_to_code`, `ship_to_name` | Ship-to party | resolve NPP / kho nội bộ |
+| `material_code` | Material | khớp `Material.material_code` |
+| `qty` + `uom` | số lượng + đơn vị | ⚠️ BẪY UoM: WMS quản THÙNG + lẻ; SAP có thể là EA/CS — phải chốt đơn vị trong OD & hệ số quy đổi (WMS có `units_per_carton`) |
+| `batch` | nếu SAP chỉ định lô | map cột Batch yêu cầu hiện có |
+| `delivery_date` | ngày giao kế hoạch | ngày chuyến |
+| `plant` + `storage_location` | | map → kho WMS (bảng map cần IT cấp danh sách plant/SLoc) |
+
+### Lộ trình chuyển đổi cách nhập KH xuất (đề xuất — ít rủi ro nhất)
+1. **GĐ A — Đối chiếu (không đổi thao tác):** giữ nguyên upload Excel Group OD như hiện nay; WMS kéo OD từ SAP về bảng staging `erp_outbound_orders` (pool) và **đối chiếu**: OD trong Excel không có trên SAP / lệch số lượng / lệch mã → cảnh báo đỏ ngay lúc upload. Chạy 2–4 tuần để tin dữ liệu.
+2. **GĐ B — Excel rút gọn:** file upload chỉ còn cột **OD + chuyến/biển số** (gom chuyến); toàn bộ chi tiết dòng hàng (mã, SL, NPP, batch) lấy từ OD đã kéo về — hết sai chính tả/copy nhầm.
+3. **GĐ C — Gom chuyến trên màn hình:** bỏ Excel; trang "Đơn chờ xếp chuyến" (pool OD theo ngày giao/NPP/tuyến) → tick chọn → tạo GDO. Điều vận làm trực tiếp trên WMS.
+
+### Câu hỏi bổ sung cho IT (ngoài docx)
+1. STO có sinh Outbound Delivery không, hay xuất thẳng theo PO? (quyết luồng trung chuyển)
+2. Đơn vị (UoM) trên dòng OD là gì — EA, CS hay cả hai? Có conversion trong Material master không?
+3. OD có batch split (1 dòng nhiều lô) không? WMS quét tem thực tế sẽ trả lô THẬT — SAP chấp nhận lô khác đề xuất không?
+4. Có dùng Shipment / Freight Order (SAP TM) gom chuyến sẵn không?
+5. Trạng thái OD nào thì WMS được phép kéo về soạn hàng (created / picked / released)? Và OD bị SỬA/HỦY sau khi WMS đã kéo → báo qua delta thế nào?
+6. Chiều nhập MUA từ NCC: khóa là PO + Inbound Delivery hay chỉ PO? (để dựng KH nhập)

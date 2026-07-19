@@ -129,10 +129,23 @@ Phía SAP xác nhận: **OD (Outbound Delivery) = khóa giao dịch mua bán; PO
 2. **GĐ B — Excel rút gọn:** file upload chỉ còn cột **OD + chuyến/biển số** (gom chuyến); toàn bộ chi tiết dòng hàng (mã, SL, NPP, batch) lấy từ OD đã kéo về — hết sai chính tả/copy nhầm.
 3. **GĐ C — Gom chuyến trên màn hình:** bỏ Excel; trang "Đơn chờ xếp chuyến" (pool OD theo ngày giao/NPP/tuyến) → tick chọn → tạo GDO. Điều vận làm trực tiếp trên WMS.
 
+### UoM — quy tắc quy đổi (chốt brainstorm 19/07, user xác nhận thực tế SAP)
+SAP nhiều đơn vị theo loại hàng: **thành phẩm = THUNG + HOP** (THUNG ↔ Thùng/CAR của WMS; phần lẻ SAP tính bằng HOP và **WMS phải xuất theo hộp**); **NVL = EA/KG/BAG…** tùy mã.
+- OD line **THUNG** → thùng nguyên WMS; OD line **HOP** → **số nhặt lẻ** (luồng Nhặt lẻ, đơn vị hộp); NVL → kho QTY/QTY_DATE nhận số thẳng theo `Material.unit`.
+- ⇒ Kéo từ SAP sẽ **hết thập phân** (515.5 thùng hiện nay là hệ quả cách upload Excel tự quy đổi, không phải bản chất). Chiều trả về SAP: post PGI đúng 2 đơn vị (thùng thực quét = THUNG, lẻ thực soạn = HOP).
+- **Bắt buộc:** hệ số `1 THUNG = N HOP` (Alternative UoM trong Material master SAP) phải khớp `units_per_carton` WMS — khi kéo Mã hàng, kéo luôn conversion để **ĐỐI CHIẾU, lệch = cảnh báo, KHÔNG tự sửa**. Đưa vào checklist GĐ A.
+
+### Batch — khớp MỀM date + chu kỳ (chốt brainstorm 19/07)
+SAP batch xác định theo **Date + chu kỳ**; date SAP vs date tem WMS **chênh được 1–3 ngày, chu kỳ thì khớp**.
+- Quy tắc: **chu kỳ = khớp CỨNG** (bằng tuyệt đối) · **date = khớp MỀM** (cửa sổ ≤3 ngày, nhiều ứng viên → chọn gần ngày nhất).
+- Logic khớp đặt ở **phía SAP/CPI** (đúng hướng SAP-tự-post); WMS trả nguyên liệu: scan entry kèm `production_date` + `cycle` (hiện parse được từ `pallet_code`; **nợ nhỏ**: thêm 2 cột phẳng vào export scan-entries cho SAP đỡ parse).
+- Áp cho đơn vị 1 (tem `_` V1). Đơn vị 2 (tem `;` V2) có mã lô tường minh → khớp thẳng, không cần cửa sổ.
+
 ### Câu hỏi bổ sung cho IT (ngoài docx)
 1. STO có sinh Outbound Delivery không, hay xuất thẳng theo PO? (quyết luồng trung chuyển)
-2. Đơn vị (UoM) trên dòng OD là gì — EA, CS hay cả hai? Có conversion trong Material master không?
+2. UoM: xin **bảng Alternative UoM per material** ($metadata + conversion THUNG↔HOP, và base UoM từng mã NVL) để đối chiếu `units_per_carton`.
 3. OD có batch split (1 dòng nhiều lô) không? WMS quét tem thực tế sẽ trả lô THẬT — SAP chấp nhận lô khác đề xuất không?
-4. Có dùng Shipment / Freight Order (SAP TM) gom chuyến sẵn không?
-5. Trạng thái OD nào thì WMS được phép kéo về soạn hàng (created / picked / released)? Và OD bị SỬA/HỦY sau khi WMS đã kéo → báo qua delta thế nào?
-6. Chiều nhập MUA từ NCC: khóa là PO + Inbound Delivery hay chỉ PO? (để dựng KH nhập)
+4. **Batch:** trong cùng 1 chu kỳ, có bao giờ 2 batch cách nhau ≤3 ngày không? (nếu có, cửa sổ khớp mềm ±3 ngày sẽ mơ hồ — cần tie-break)
+5. Có dùng Shipment / Freight Order (SAP TM) gom chuyến sẵn không?
+6. Trạng thái OD nào thì WMS được phép kéo về soạn hàng (created / picked / released)? Và OD bị SỬA/HỦY sau khi WMS đã kéo → báo qua delta thế nào?
+7. Chiều nhập MUA từ NCC: khóa là PO + Inbound Delivery hay chỉ PO? (để dựng KH nhập)

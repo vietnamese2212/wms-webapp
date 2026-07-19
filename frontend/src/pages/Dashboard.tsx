@@ -1,14 +1,16 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck,
+  Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck, Grid3X3,
 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatsCard } from '@/components/shared/StatsCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useDashboardStats } from '@/api/hooks'
+import { useDashboardStats, type DashboardStats } from '@/api/hooks'
+
+type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
 const nf = (n: number) => Number(n ?? 0).toLocaleString('vi-VN')
 // KPI tile: bỏ thập phân cho gọn (card hẹp trên phone) — chi tiết đủ số lẻ nằm ở bảng dưới
@@ -49,6 +51,17 @@ export default function Dashboard() {
   }, [stats])
 
   const t = stats?.today
+
+  // Sức chứa khu vực: gom theo kho (chỉ hiện header kho khi có nhiều kho)
+  const zonesByWh = useMemo(() => {
+    const map = new Map<string, { warehouse_name: string; zones: ZoneCap[] }>()
+    for (const z of stats?.zones ?? []) {
+      let g = map.get(z.warehouse_id)
+      if (!g) { g = { warehouse_name: z.warehouse_name, zones: [] }; map.set(z.warehouse_id, g) }
+      g.zones.push(z)
+    }
+    return [...map.values()]
+  }, [stats])
 
   return (
     <div className="space-y-0">
@@ -109,6 +122,62 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
+
+        {/* Sức chứa khu vực kho: pallet đang chiếm chỗ / pallet tối đa (Σ max_pallets vị trí) */}
+        {(isLoading || zonesByWh.length > 0) && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2">
+                <Grid3X3 className="h-4 w-4 text-muted-foreground" />
+                Sức chứa khu vực kho
+                <span className="text-[10px] font-normal text-slate-400">pallet tồn / pallet tối đa</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+                </div>
+              ) : zonesByWh.map(g => (
+                <div key={g.warehouse_name}>
+                  {zonesByWh.length > 1 && (
+                    <p className="mb-1.5 text-[11px] font-semibold text-slate-600">{g.warehouse_name}</p>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {g.zones.map(z => {
+                      const pct = z.capacity > 0 ? (z.used / z.capacity) * 100 : null
+                      const barColor = pct == null ? 'bg-slate-300'
+                        : pct >= 100 ? 'bg-red-500'
+                        : pct >= 80 ? 'bg-amber-500'
+                        : 'bg-sky-500'
+                      return (
+                        <div key={z.zone_id} className="rounded-lg border border-slate-200 px-3 py-2">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <p className="min-w-0 truncate text-[11px] font-medium text-slate-700" title={`${z.name} (${z.code})${z.category ? ` · ${z.category}` : ''}`}>
+                              {z.name}
+                              <span className="ml-1 text-[9px] font-normal text-slate-400">{z.code}</span>
+                            </p>
+                            <p className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-700">
+                              {nf(z.used)}<span className="font-normal text-slate-400"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
+                            </p>
+                          </div>
+                          <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct == null ? 0 : Math.min(100, pct)}%` }} />
+                          </div>
+                          <p className={`mt-0.5 text-[9px] tabular-nums ${pct != null && pct >= 100 ? 'text-red-600 font-semibold' : pct != null && pct >= 80 ? 'text-amber-600' : 'text-slate-400'}`}>
+                            {pct == null
+                              ? (z.used > 0 ? `${nf(z.used)} pallet — chưa khai pallet tối đa` : 'Chưa khai pallet tối đa')
+                              : `${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Bảng tồn theo kho */}

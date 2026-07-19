@@ -1162,6 +1162,11 @@ export type DashboardStats = {
     inbound_orders: number; inbound_cartons: number
     outbound_gdos: number; outbound_planned: number; outbound_scanned: number
   }
+  zones?: Array<{
+    zone_id: string; warehouse_id: string; warehouse_name: string
+    code: string; name: string; category: string | null
+    capacity: number; used: number
+  }>
   source?: 'rpc' | 'fallback'
 }
 export function useDashboardStats() {

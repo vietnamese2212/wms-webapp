@@ -27,17 +27,106 @@ function scopeWhIds(req: Request): string[] | null {
   return ids.length ? ids : null
 }
 
+type ZoneCapRow = {
+  zone_id: string; warehouse_id: string; warehouse_name: string
+  code: string; name: string; category: string | null
+  capacity: number; used: number
+}
+
+// Sức chứa theo KHU VỰC: capacity = Σ Location.max_pallets (vị trí active trong khu),
+// used = số pallet active còn tồn đang gắn vị trí (cùng thước đo used_slots của slotting/move RPC).
+// Bảng nhỏ (khu vực + vị trí vật lý) — đếm pallet gom phía DB (aggregate), không kéo bảng tồn.
+async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null): Promise<ZoneCapRow[]> {
+  const [zones, locations, warehouses] = await Promise.all([
+    fetchAllRowsParallel(() => {
+      let q = supabase.from('WarehouseZone')
+        .select('id, warehouse_id, code, name, category, sort_order')
+        .eq('is_active', true).order('id')
+      if (whIds) q = q.in('warehouse_id', whIds)
+      return q
+    }),
+    fetchAllRowsParallel(() => {
+      let q = supabase.from('Location')
+        .select('id, warehouse_id, sub_code, max_pallets')
+        .eq('is_active', true).order('id')
+      if (whIds) q = q.in('warehouse_id', whIds)
+      return q
+    }),
+    supabase.from('Warehouse').select('id, name').then(r => r.data ?? []),
+  ])
+
+  let usedByLoc: Map<string, number>
+  try {
+    const usedRows = await fetchAllRowsParallel(() => {
+      let q = supabase.from('InventoryEntry')
+        .select('location_id, used:id.count()')
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+        .gt('cartons_remaining', 0)
+        .not('location_id', 'is', null)
+        .order('location_id')
+      if (whIds) q = q.in('warehouse_id', whIds)
+      return q
+    })
+    usedByLoc = new Map(usedRows.map(u => [String(u.location_id), Number(u.used) || 0]))
+  } catch {
+    // Aggregate tắt (silo chưa bật pgrst.db_aggregates_enabled) → đếm JS; tồn active gắn vị trí bounded theo sức chứa vật lý
+    const entries = await fetchAllRowsParallel(() => {
+      let q = supabase.from('InventoryEntry').select('location_id')
+        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+        .gt('cartons_remaining', 0)
+        .not('location_id', 'is', null)
+        .order('id')
+      if (whIds) q = q.in('warehouse_id', whIds)
+      return q
+    })
+    usedByLoc = new Map()
+    for (const e of entries as { location_id: string }[])
+      usedByLoc.set(String(e.location_id), (usedByLoc.get(String(e.location_id)) ?? 0) + 1)
+  }
+
+  // Gom vị trí theo (kho, khu) — sub_code của Location = code của WarehouseZone trong cùng kho
+  const byZoneKey = new Map<string, { capacity: number; used: number }>()
+  for (const l of locations as { id: string; warehouse_id: string; sub_code: string | null; max_pallets: number }[]) {
+    if (!l.sub_code) continue
+    const key = `${l.warehouse_id}|${l.sub_code}`
+    const agg = byZoneKey.get(key) ?? { capacity: 0, used: 0 }
+    agg.capacity += Number(l.max_pallets) || 0
+    agg.used += usedByLoc.get(String(l.id)) ?? 0
+    byZoneKey.set(key, agg)
+  }
+
+  const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
+  return (zones as { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number | null }[])
+    .filter(z => !cats || !z.category || cats.includes(z.category)) // null-inclusive theo scope Loại hàng
+    .map(z => {
+      const agg = byZoneKey.get(`${z.warehouse_id}|${z.code}`)
+      return {
+        zone_id: z.id, warehouse_id: z.warehouse_id,
+        warehouse_name: whName.get(z.warehouse_id) ?? z.warehouse_id,
+        code: z.code, name: z.name, category: z.category,
+        capacity: agg?.capacity ?? 0, used: agg?.used ?? 0,
+        sort_order: z.sort_order,
+      }
+    })
+    .sort((a, b) => a.warehouse_name.localeCompare(b.warehouse_name)
+      || (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || a.code.localeCompare(b.code))
+    .map(({ sort_order: _s, ...r }) => r)
+}
+
 export async function getDashboard(req: Request, res: Response) {
   try {
     const whIds = scopeWhIds(req)
     const cats = scopeCategoriesOf(req)
     const today = todayVN()
 
+    // Sức chứa khu vực chạy song song với RPC — lỗi phần khu không được kéo sập dashboard
+    const zonesPromise = computeZoneCapacity(whIds, cats).catch(() => [] as ZoneCapRow[])
+
     // Fast-path: RPC aggregate phía DB (migration 20260704_dashboard_stats.sql)
     const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_stats', {
       p_warehouse_ids: whIds, p_categories: cats, p_today: today,
     })
-    if (!rpcErr && rpcData) return ok(res, { ...(rpcData as object), source: 'rpc' })
+    if (!rpcErr && rpcData) return ok(res, { ...(rpcData as object), zones: await zonesPromise, source: 'rpc' })
 
     // Fallback khi RPC chưa apply: tính bằng JS (phân trang, không dính cap-1000).
     // Chậm hơn RPC — chỉ là cầu nối tới khi migration được apply.
@@ -134,6 +223,6 @@ export async function getDashboard(req: Request, res: Response) {
       outbound_scanned: outboundScanned,
     }
 
-    return ok(res, { inventory, today: todayStats, source: 'fallback' })
+    return ok(res, { inventory, today: todayStats, zones: await zonesPromise, source: 'fallback' })
   } catch (e) { return fail(res, String(e)) }
 }

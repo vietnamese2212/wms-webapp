@@ -511,7 +511,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
     // Plan lines (kế hoạch)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: planLines, error: planErr } = await supabase.from('inbound_plan_lines')
-      .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description)')
+      .select('material_id, planned_boxes, planned_pallets, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
     if (planErr) return fail(res, planErr.message)
@@ -519,7 +519,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
     // ProductionImport records cho order này (kèm no_qr + mode kho nhận để tính "no-QR hiệu lực")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: actualOrders, error: actErr } = await supabase.from('ProductionImport')
-      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .eq('tms_order_id', orderId)
       .neq('status', 'CANCELLED')
     if (actErr) return fail(res, actErr.message)
@@ -618,7 +618,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // 1) Kế hoạch từ inbound_plan_lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const planLines = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('inbound_plan_lines')
-      .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, unit)')
+      .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, unit, base_unit, entry_unit, units_per_carton)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const l of planLines as any[]) {
@@ -629,7 +629,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
-      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
     const importToMat = new Map<string, string>()
@@ -689,7 +689,7 @@ export async function getInboundReport(req: Request, res: Response) {
           .select(`
             id, date, warehouse_id, ncc_id, material_id, po_number,
             planned_boxes, tms_order_id, status,
-            material:Material!material_id(material_code, short_name, unit, category),
+            material:Material!material_id(material_code, short_name, unit, category, base_unit, entry_unit, units_per_carton),
             ncc:TransportCompany!ncc_id(code, name),
             warehouse:Warehouse!warehouse_id(code, name)
           `)
@@ -716,7 +716,7 @@ export async function getInboundReport(req: Request, res: Response) {
     const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let allImports: any[] = []
-    const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, unit, category), warehouse:Warehouse!warehouse_id(name)'
+    const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, unit, category, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(name)'
 
     if (orderIds.length > 0) {
       // Chunk orderIds (URL 414 khi hàng trăm/nghìn lệnh) + phân trang mỗi lô (cap ~1000)
@@ -1213,7 +1213,7 @@ export async function getTransferGoods(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: planLines } = await supabase.from('inbound_plan_lines')
-      .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit)')
+      .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit, base_unit, entry_unit, units_per_carton)')
       .eq('tms_order_id', id)
       .neq('status', 'CANCELLED')
 

@@ -19,7 +19,7 @@ const ENTRY_SELECT = `
   stocktake_at, stocktake_flagged, stocktake_flag_note,
   created_at, updated_at,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
-  material:Material(id, material_code, short_name, shelf_life_days, supplier_shelf_life_overrides, category),
+  material:Material(id, material_code, short_name, shelf_life_days, supplier_shelf_life_overrides, category, base_unit, entry_unit, units_per_carton),
   ncc:TransportCompany!ncc_id(id, name),
   manufacturer:Manufacturer(id, code, name),
   qa_status:QAStatus(id, code, name),
@@ -546,7 +546,7 @@ export async function summaryInventory(req: Request, res: Response) {
   const summarySelect = 'id, warehouse_id, production_date, expiry_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
     + 'location:Location(warehouse:Warehouse(id, name)), '
     + 'ncc:TransportCompany!ncc_id(id, name), '
-    + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides)'
+    + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton)'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let rows: any[]
   try {
@@ -565,6 +565,7 @@ export async function summaryInventory(req: Request, res: Response) {
     material_code: string | null; short_name: string | null; category: string | null
     production_date: string | null; date_pct: number | null; ncc_name: string | null
     cartons_imported: number; cartons_remaining: number; pallet_count: number
+    base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   }
   const map = new Map<string, Group>()
 
@@ -591,6 +592,9 @@ export async function summaryInventory(req: Request, res: Response) {
         date_pct: pct == null ? null : Math.round(pct),
         ncc_name: e.ncc?.name ?? null,
         cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
+        base_unit: e.material?.base_unit ?? null,
+        entry_unit: e.material?.entry_unit ?? null,
+        units_per_carton: e.material?.units_per_carton ?? null,
       }
       map.set(key, g)
     }
@@ -1112,7 +1116,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
             id, pallet_code, cartons_remaining, import_date,
             stocktake_flagged, stocktake_flag_note, stocktake_at,
             location:Location(id, location_code),
-            material:Material(material_code, short_name),
+            material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton),
             stocktake_by_emp:Employee!stocktake_by(id, name)
           `)
           .in('location_id', chunk)

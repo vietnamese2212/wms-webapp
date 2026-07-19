@@ -34,6 +34,7 @@ import { inboundKey, inboundGroupKey } from './Inbound'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
+import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
@@ -442,7 +443,7 @@ export default function InboundDetail() {
                 autoFocus
               />
               {(order?.planned_cartons ?? 0) > 0 && (
-                <p className="text-xs text-slate-400 text-center">Kế hoạch: {order.planned_cartons} thùng</p>
+                <p className="text-xs text-slate-400 text-center">Kế hoạch: {qtyLabel(order.planned_cartons ?? 0, order.material)}</p>
               )}
             </div>
             {manualFeedback && (
@@ -526,8 +527,8 @@ export default function InboundDetail() {
           : diff === 0
             ? <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">Đúng kế hoạch</span>
             : diff < 0
-              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {Math.abs(diff)} thùng so với kế hoạch</span>
-              : <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">Thừa {diff} thùng so với kế hoạch</span>
+              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {qtyLabel(Math.abs(diff), order.material)} so với kế hoạch</span>
+              : <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">Thừa {qtyLabel(diff, order.material)} so với kế hoạch</span>
         const isComplete = completeDlg === 'complete'
         return (
           <Dialog open onOpenChange={(v) => { if (!v) setCompleteDlg(null) }}>
@@ -539,11 +540,11 @@ export default function InboundDetail() {
                 <div className="py-2 space-y-2 text-sm">
                   <div className="flex justify-between text-slate-600">
                     <span>Kế hoạch</span>
-                    <span className="font-medium">{hasPlan ? `${planned} thùng` : '—'}</span>
+                    <span className="font-medium">{hasPlan ? qtyLabel(planned, order.material) : '—'}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Thực nhập</span>
-                    <span className="font-semibold">{actual} thùng</span>
+                    <span className="font-semibold">{qtyLabel(actual, order.material)}</span>
                   </div>
                   <div className="pt-1">{statusEl}</div>
                 </div>
@@ -777,7 +778,7 @@ export default function InboundDetail() {
             {(order.source_type === 'NCC' || order.source_type === 'TRANSFER') && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">Thực:</span>
-                <span className="font-semibold font-mono tabular-nums">{totalScanned} thùng</span>
+                <span className="font-semibold font-mono tabular-nums">{qtyLabel(totalScanned, order.material)}</span>
               </span>
             )}
 
@@ -786,7 +787,7 @@ export default function InboundDetail() {
                 <span className="text-slate-400 text-[10px]">KH:</span>
                 {order.source_type === 'TRANSFER' ? (
                   <span className="font-semibold font-mono">
-                    {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
+                    {order.planned_cartons != null ? qtyLabel(order.planned_cartons, order.material) : <span className="text-slate-400 font-normal">—</span>}
                   </span>
                 ) : editingPlannedCartons ? (
                   <span className="flex items-center gap-1">
@@ -826,7 +827,7 @@ export default function InboundDetail() {
                       }}
                       title={canEditPlan ? 'Click để sửa SL dự kiến' : undefined}
                     >
-                      {order.planned_cartons != null ? `${order.planned_cartons} thùng` : <span className="text-slate-400 font-normal">—</span>}
+                      {order.planned_cartons != null ? qtyLabel(order.planned_cartons, order.material) : <span className="text-slate-400 font-normal">—</span>}
                       {canEditPlan && <Pencil className="inline h-2.5 w-2.5 ml-1 text-slate-400" />}
                     </span>
                   )
@@ -847,7 +848,7 @@ export default function InboundDetail() {
         {/* Dải tile tổng hợp (đồng bộ với list) */}
         <SummaryBand tiles={[
           { label: 'Pallet',    value: entries.length },
-          { label: 'Thực nhập', value: `${totalScanned.toLocaleString()} thùng` },
+          { label: 'Thực nhập', value: qtyLabel(totalScanned, order.material) },
           { label: 'Thùng KH',  value: order.planned_cartons != null ? `${order.planned_cartons}` : '—' },
           // Phiếu chuyển kho vào kho QTY_DATE: 1 phiếu = 1 NSX (kế thừa tem quét xuất)
           ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
@@ -884,14 +885,14 @@ export default function InboundDetail() {
                 key: 'manual', icon: Plus,
                 label: order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công',
                 tip: order.posm_entry_id ? 'Phiếu này đã lưu thủ công rồi'
-                  : isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch`
+                  : isNccFull ? `Đã nhập đủ ${qtyLabel(order.planned_cartons ?? 0, order.material)} theo kế hoạch`
                   : 'Nhập số thùng thực nhập thủ công (mã no-QR)',
                 primary: true, disabled: isNccFull || !!order.posm_entry_id,
                 onClick: () => { setManualCartons(order.planned_cartons?.toString() ?? ''); setManualFeedback(null); setShowManualDialog(true) },
               } satisfies ActionItem : {
                 key: 'scan', icon: Plus,
                 label: isNccFull ? 'Đủ kế hoạch' : order.location_id ? 'Thêm pallet' : 'Chọn vị trí trước',
-                tip: isNccFull ? `Đã nhập đủ ${order.planned_cartons} thùng theo kế hoạch`
+                tip: isNccFull ? `Đã nhập đủ ${qtyLabel(order.planned_cartons ?? 0, order.material)} theo kế hoạch`
                   : !order.location_id ? 'Chọn vị trí cho phiếu trước rồi mới quét pallet'
                   : 'Quét QR thêm pallet vào phiếu',
                 primary: true, variant: 'default', disabled: !order.location_id || isNccFull,
@@ -982,7 +983,7 @@ export default function InboundDetail() {
                           {entry.pallet_code}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
-                          {entry.cartons_imported}
+                          {qtyEntryText(entry.cartons_imported, order.material)}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600">
                           {entry.location?.location_code ?? '—'}

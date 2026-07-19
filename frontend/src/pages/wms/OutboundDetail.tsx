@@ -6,6 +6,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
   ArrowLeft, CheckCircle2,
   Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes,
@@ -637,8 +638,8 @@ function itemRowBg(item: OutboundItem): string {
 
 // ─── Inventory modal per item ──────────────────────────────────
 
-function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
-  gdoId: string; itemId: string; matCode: string; matName: string; onClose: () => void
+function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
+  gdoId: string; itemId: string; matCode: string; matName: string; mat?: MatUnits | null; onClose: () => void
 }) {
   const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
@@ -730,8 +731,8 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
                           <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
-                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, mat)}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-slate-400">
@@ -749,8 +750,8 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
                               </button>
                             </TableCell>
                             <TableCell className="px-3 py-1 text-right whitespace-nowrap">
-                              <span className="text-[10px] font-semibold tabular-nums text-blue-700">{e.available}</span>
-                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                              <span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyEntryText(e.available, mat)}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
                             </TableCell>
                             <TableCell className="px-2 py-1" />
                           </TableRow>
@@ -770,8 +771,8 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
 
 // ─── Manual complete dialog ────────────────────────────────────
 
-function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose }: {
-  gdoId: string; itemId: string; matName: string; initialCartons: number; onClose: () => void
+function ManualCompleteDialog({ gdoId, itemId, matName, mat, initialCartons, onClose }: {
+  gdoId: string; itemId: string; matName: string; mat?: MatUnits | null; initialCartons: number; onClose: () => void
 }) {
   const [cartons, setCartons] = useState(initialCartons)
   const [prodDate, setProdDate] = useState('')   // kho QTY_DATE: '' = FEFO tự động, khác = chọn đúng NSX
@@ -809,14 +810,14 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
             <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Kế hoạch</div>
-                <div className="text-base font-bold tabular-nums text-slate-700">{ordered}</div>
-                <div className="text-[9px] text-slate-400">thùng</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{qtyEntryText(ordered, mat)}</div>
+                <div className="text-[9px] text-slate-400">{qtyUnitLabel(mat)}</div>
               </div>
               <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Tồn khả dụng</div>
-                <div className={`text-base font-bold tabular-nums ${hasCeiling && elastic === 0 ? 'text-red-600' : 'text-green-600'}`}>{hasCeiling ? elastic : '—'}</div>
-                <div className="text-[9px] text-slate-400">thùng</div>
+                <div className={`text-base font-bold tabular-nums ${hasCeiling && elastic === 0 ? 'text-red-600' : 'text-green-600'}`}>{hasCeiling ? qtyEntryText(elastic, mat) : '—'}</div>
+                <div className="text-[9px] text-slate-400">{qtyUnitLabel(mat)}</div>
               </div>
             </div>
           )}
@@ -832,7 +833,7 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
                 <option value="">Tự động FEFO — NSX cũ nhất trước</option>
                 {datePools.map(p => (
                   <option key={p.production_date ?? '_none'} value={p.production_date ?? ''}>
-                    {p.production_date ? `NSX ${fmtD(p.production_date)}` : 'Không NSX'} — còn {p.cartons_remaining} thùng
+                    {p.production_date ? `NSX ${fmtD(p.production_date)}` : 'Không NSX'} — còn {qtyLabel(p.cartons_remaining, mat)}
                   </option>
                 ))}
               </select>
@@ -848,10 +849,10 @@ function ManualCompleteDialog({ gdoId, itemId, matName, initialCartons, onClose 
               onChange={e => { setCartons(parseInt(e.target.value) || 0); setErr(null) }}
             />
             {overPlan && (
-              <p className="text-xs text-red-600">Vượt kế hoạch ({ordered} thùng)</p>
+              <p className="text-xs text-red-600">Vượt kế hoạch ({qtyLabel(ordered, mat)})</p>
             )}
             {!overPlan && overStock && (
-              <p className="text-xs text-amber-600">Vượt tồn khả dụng ({elastic} thùng)</p>
+              <p className="text-xs text-amber-600">Vượt tồn khả dụng ({qtyLabel(elastic, mat)})</p>
             )}
           </div>
 
@@ -953,6 +954,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
         itemId={inventoryItem.id}
         matCode={inventoryItem.material?.material_code ?? inventoryItem.material_code_raw ?? '—'}
         matName={inventoryItem.material?.short_name ?? inventoryItem.material_code_raw ?? '—'}
+        mat={inventoryItem.material}
         onClose={() => setInventoryItemId(null)}
       />
     )}
@@ -961,6 +963,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
         gdoId={gdoId}
         itemId={manualDlg.itemId}
         matName={manualDlg.matName}
+        mat={allItems.find(i => i.id === manualDlg.itemId)?.material}
         initialCartons={manualDlg.cartons}
         onClose={() => setManualDlg(null)}
       />
@@ -1013,7 +1016,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
                   <div className="flex flex-col items-end gap-0.5">
                     {/* Đã quét / Kế hoạch — mặc định chưa xuất là 0/100 (user 19/07) */}
-                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{item.cartons_scanned}/{item.cartons_ordered}</span>
+                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{qtyEntryText(item.cartons_scanned, item.material)}/{qtyEntryText(item.cartons_ordered, item.material)}</span>
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
                       // Cả 2 nút đều là "ghi nhận xuất" → cần trạng thái cho phép (canScan) + quyền outbound.scan
@@ -1091,7 +1094,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 {hasLoosePicking && (
                   <TableCell className="px-2 py-1 align-top text-right">
                     {item.loose_picking > 0
-                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{item.loose_picking}</span>
+                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{qtyEntryText(item.loose_picking, item.material)}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
@@ -1173,7 +1176,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                                     </span>
                                   </td>
                                   <td className="pr-3 py-0.5 text-right">
-                                    <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
+                                    <span className="text-[10px] tabular-nums text-slate-400">{qtyLabel(se.cartons_scanned, item.material)}</span>
                                   </td>
                                   <td className="pr-3 py-0.5">
                                     {se.pct_date !== null ? (

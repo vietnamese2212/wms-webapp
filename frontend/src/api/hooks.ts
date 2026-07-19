@@ -865,6 +865,9 @@ export interface InventorySummaryGroup {
   cartons_remaining: number
   cartons_exported: number
   pallet_count: number
+  base_unit: string | null
+  entry_unit: string | null
+  units_per_carton: number | null
 }
 
 // View tổng hợp tồn kho theo Kho × Mã hàng × Ngày SX. Dùng CHUNG params filter với useInventoryEntries.
@@ -1103,7 +1106,7 @@ export interface StocktakeEntryRow {
   stocktake_flag_note: string | null
   stocktake_at:        string | null
   location:            { id: string; location_code: string } | null
-  material:            { material_code: string; short_name: string | null } | null
+  material:            { material_code: string; short_name: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   stocktake_by_emp:    { id: string; name: string } | null
 }
 
@@ -1942,6 +1945,7 @@ export type PrepareRow = {
   material_id: string | null; material_code: string; material_name: string | null
   cartons_ordered: number; cartons_scanned: number; cartons_remaining: number
   cartons_per_pallet: number; pallets_remaining: number; no_qr_tracking: boolean
+  base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   suggestions: PickSuggestion[]
 }
 export type PrepareBoard = { rows: PrepareRow[]; total_cartons: number; total_pallets: number }

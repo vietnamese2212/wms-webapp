@@ -14,6 +14,7 @@ import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
@@ -24,7 +25,7 @@ const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'code',    label: 'Mã hàng',       w: 110 },
   { id: 'name',    label: 'Tên hàng',      w: 220 },
   { id: 'pallets', label: 'Pallet cần',    w: 90, align: 'right' },
-  { id: 'cartons', label: 'Còn (thùng)',   w: 96, align: 'right' },
+  { id: 'cartons', label: 'Còn lại',       w: 96, align: 'right' },
   { id: 'avail',   label: 'Khả dụng',      w: 96, align: 'right' },
 ]
 const PREPARE_COL_DEFAULTS = PREPARE_COLS.map(c => c.w)
@@ -35,8 +36,8 @@ function pctColor(pct: number | null): string {
 }
 
 // ─── Dialog tồn kho theo mã hàng (như search tồn ở xuất bình thường) ──
-function InventoryDialog({ materialId, materialCode, materialName, warehouseId, onClose }: {
-  materialId: string; materialCode: string; materialName: string; warehouseId: string | undefined; onClose: () => void
+function InventoryDialog({ materialId, materialCode, materialName, mat, warehouseId, onClose }: {
+  materialId: string; materialCode: string; materialName: string; mat?: MatUnits | null; warehouseId: string | undefined; onClose: () => void
 }) {
   const { data: inv = [], isLoading } = useInventoryByMaterial(materialId, warehouseId)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -73,7 +74,7 @@ function InventoryDialog({ materialId, materialCode, materialName, warehouseId, 
           <DialogTitle className="text-sm font-semibold">
             <span className="font-mono">{materialCode}</span> · {materialName}
           </DialogTitle>
-          <p className="text-xs text-slate-500 mt-0.5">Tồn kho theo %Date · lấy thấp trước · {inv.length} pallet · {total.toLocaleString('vi-VN')} thùng</p>
+          <p className="text-xs text-slate-500 mt-0.5">Tồn kho theo %Date · lấy thấp trước · {inv.length} pallet · {qtyEntryText(total, mat)} {qtyUnitLabel(mat)}</p>
         </DialogHeader>
         <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
           {isLoading ? (
@@ -106,8 +107,8 @@ function InventoryDialog({ materialId, materialCode, materialName, warehouseId, 
                         </TableCell>
                         <TableCell className="px-3 py-1.5"><span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span></TableCell>
                         <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons.toLocaleString('vi-VN')}</span>
-                          <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                          <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, mat)}</span>
+                          <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
                           <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
                         </TableCell>
                         <TableCell className="px-2 py-1.5 text-slate-400">{open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</TableCell>
@@ -115,7 +116,7 @@ function InventoryDialog({ materialId, materialCode, materialName, warehouseId, 
                       {open && row.entries.map(e => (
                         <TableRow key={e.id} className={row.is_qa ? 'bg-purple-50/60' : 'bg-slate-50'}>
                           <TableCell className="px-3 py-1 pl-7" colSpan={2}><span className="font-mono text-[10px] font-semibold text-slate-600">{e.pallet_code}</span></TableCell>
-                          <TableCell className="px-3 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-blue-700">{e.available}</span><span className="text-[9px] text-slate-400 ml-0.5">thùng</span></TableCell>
+                          <TableCell className="px-3 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyEntryText(e.available, mat)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span></TableCell>
                           <TableCell className="px-2 py-1" />
                         </TableRow>
                       ))}
@@ -147,7 +148,7 @@ export default function OutboundPrepare() {
   const [didInit, setDidInit]         = useState(false)
   const [addOpen, setAddOpen]         = useState(false)
   const [addSearch, setAddSearch]     = useState('')
-  const [invMat, setInvMat]           = useState<{ id: string; code: string; name: string } | null>(null)
+  const [invMat, setInvMat]           = useState<{ id: string; code: string; name: string; mat?: MatUnits | null } | null>(null)
 
   const { data: warehouses = [] } = useWarehouses(true)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
@@ -217,7 +218,7 @@ export default function OutboundPrepare() {
   return (
     <div className="flex flex-col h-full sm:p-3">
      {invMat && (
-       <InventoryDialog materialId={invMat.id} materialCode={invMat.code} materialName={invMat.name}
+       <InventoryDialog materialId={invMat.id} materialCode={invMat.code} materialName={invMat.name} mat={invMat.mat}
          warehouseId={warehouseId || undefined} onClose={() => setInvMat(null)} />
      )}
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -346,7 +347,7 @@ export default function OutboundPrepare() {
                         <MapPin className="h-3 w-3 text-sky-500 shrink-0" />
                         <span className="text-[10px] font-mono text-slate-700">{sug?.location_code ?? '—'}</span>
                         {r.material_id && (
-                          <button onClick={() => setInvMat({ id: r.material_id!, code: r.material_code, name: r.material_name ?? r.material_code })}
+                          <button onClick={() => setInvMat({ id: r.material_id!, code: r.material_code, name: r.material_name ?? r.material_code, mat: r })}
                             className="inline-flex items-center justify-center h-5 w-5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors shrink-0" title="Xem tồn kho">
                             <Search className="h-3.5 w-3.5" />
                           </button>
@@ -368,11 +369,11 @@ export default function OutboundPrepare() {
                       <span className="text-[12px] font-bold tabular-nums text-sky-700">{r.pallets_remaining || '—'}</span>
                       {r.cartons_per_pallet > 0 && <span className="text-[9px] text-slate-400 ml-0.5">pl</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{r.cartons_remaining.toLocaleString('vi-VN')}</span></TableCell>
+                    <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyEntryText(r.cartons_remaining, r)}</span><span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(r)}</span></TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       {sug ? (
                         <span className={`text-[10px] tabular-nums ${short ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
-                          {avail.toLocaleString('vi-VN')}{short && <span className="ml-0.5" title="Tồn gợi ý ít hơn số cần">⚠</span>}
+                          {qtyEntryText(avail, r)}{short && <span className="ml-0.5" title="Tồn gợi ý ít hơn số cần">⚠</span>}
                         </span>
                       ) : <span className="text-[10px] text-red-500">hết tồn</span>}
                     </TableCell>

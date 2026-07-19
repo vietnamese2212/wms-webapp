@@ -22,6 +22,7 @@ import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { qtyLabel } from '@/utils/qtyUnits'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 type Tab = 'merge' | 'split' | 'history'
@@ -416,7 +417,7 @@ export default function PalletOps() {
                   {srcEntry && (
                     <div className="rounded bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 space-y-0.5">
                       <div><span className="text-slate-400">Hàng:</span> <b>{srcEntry.material?.material_code}</b> — {srcEntry.material?.short_name ?? '—'}</div>
-                      <div className="tabular-nums"><span className="text-slate-400">Tồn:</span> <b>{remaining}</b> thùng{reserved > 0 && <span className="text-amber-600"> · giữ chỗ {reserved} (không tách được)</span>}</div>
+                      <div className="tabular-nums"><span className="text-slate-400">Tồn:</span> <b>{qtyLabel(remaining, srcEntry?.material)}</b>{reserved > 0 && <span className="text-amber-600"> · giữ chỗ {qtyLabel(reserved, srcEntry?.material)} (không tách được)</span>}</div>
                     </div>
                   )}
                   {srcEntry && srcSplitChildren.length > 0 && (

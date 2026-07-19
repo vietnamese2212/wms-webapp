@@ -31,6 +31,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
+import { qtyLabel, qtyEntryText, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -740,8 +741,9 @@ export default function Inventory() {
         writeXlsx(groups.map(g => ({
           'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
           'Tên hàng': g.short_name ?? '', 'NCC': g.ncc_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
-          '% Date': g.date_pct ?? '', 'Nhập': g.cartons_imported, 'Xuất': g.cartons_exported,
-          'Tồn': g.cartons_remaining, 'Số pallet': g.pallet_count,
+          '% Date': g.date_pct ?? '', 'ĐVT': qtyUnitLabel(g),
+          'Nhập': qtyEntryDecimal(g.cartons_imported, g), 'Xuất': qtyEntryDecimal(g.cartons_exported, g),
+          'Tồn': qtyEntryDecimal(g.cartons_remaining, g), 'Số pallet': g.pallet_count,
         })), `ton_kho_tong_hop_${stamp}`)
       } else {
         if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
@@ -758,10 +760,11 @@ export default function Inventory() {
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
             'NCC': e.ncc?.name ?? '', 'Shelflife (ngày)': e.shelf_life_days ?? '',
             'Mã pallet': e.pallet_code, 'NMSX': e.nmsx ?? '', 'Vị trí': e.location?.location_code ?? '',
-            'Nhập': e.cartons_imported, 'Xuất': exported, 'Tồn': remaining,
-            'Nhặt lẻ': reserved, 'Khả dụng': Math.max(0, Number(remaining) - Number(reserved)),
+            'ĐVT': qtyUnitLabel(e.material),
+            'Nhập': qtyEntryDecimal(Number(e.cartons_imported), e.material), 'Xuất': qtyEntryDecimal(exported, e.material), 'Tồn': qtyEntryDecimal(Number(remaining), e.material),
+            'Nhặt lẻ': qtyEntryDecimal(Number(reserved), e.material), 'Khả dụng': qtyEntryDecimal(Math.max(0, Number(remaining) - Number(reserved)), e.material),
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
-            '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '', 'Điều chỉnh': e.adjustment_qty ?? 0,
+            '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '', 'Điều chỉnh': qtyEntryDecimal(Number(e.adjustment_qty ?? 0), e.material),
           }
         }), `ton_kho_chi_tiet_${stamp}`)
       }
@@ -1283,24 +1286,24 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         <span className="text-[10px] font-mono text-slate-700 truncate block" title={loc}>{loc}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{e.cartons_imported}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{qtyEntryText(Number(e.cartons_imported), e.material)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? exported : '—'}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? qtyEntryText(exported, e.material) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{remaining}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(Number(remaining), e.material)}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(e.material)}</span>
       </TableCell>
       {/* Giữ chỗ / Khả dụng: bỏ màu riêng (purple/blue) → kế thừa màu dòng (entryRowText) cho đồng nhất */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {(e.cartons_reserved ?? 0) > 0
-          ? <span className="text-[10px] font-semibold tabular-nums">{e.cartons_reserved}</span>
+          ? <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(Number(e.cartons_reserved), e.material)}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">
-          {Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))}
+          {qtyEntryText(Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0)), e.material)}
         </span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1383,14 +1386,14 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_imported}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{qtyEntryText(g.cartons_imported, g)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? g.cartons_exported : '—'}</span>
+        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? qtyEntryText(g.cartons_exported, g) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{g.cartons_remaining}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(g.cartons_remaining, g)}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(g)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{g.pallet_count}</span>
@@ -1467,18 +1470,18 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
 
         {/* Quantities */}
         <Section title="Số lượng">
-          <Row label="Nhập"       value={`${e.cartons_imported} thùng`} />
-          <Row label="Xuất"       value={exported > 0 ? `${exported} thùng` : '—'} />
-          <Row label="Tồn"        value={`${remaining} thùng`} bold />
+          <Row label="Nhập"       value={qtyLabel(Number(e.cartons_imported), e.material)} />
+          <Row label="Xuất"       value={exported > 0 ? qtyLabel(exported, e.material) : '—'} />
+          <Row label="Tồn"        value={qtyLabel(Number(remaining), e.material)} bold />
           {e.status === 'LOOSE_PICKING' && (e.cartons_reserved ?? 0) > 0 && (<>
             <Row label="Nhặt lẻ (giữ)"
-              value={`${e.cartons_reserved} thùng`}
+              value={qtyLabel(Number(e.cartons_reserved), e.material)}
               cls="text-purple-700 font-semibold" />
             <Row label="Khả dụng"
-              value={`${Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))} thùng`}
+              value={qtyLabel(Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0)), e.material)}
               bold cls="text-blue-700" />
           </>)}
-          <Row label="Điều chỉnh" value={e.adjustment_qty ? `${Number(e.adjustment_qty) > 0 ? '+' : ''}${e.adjustment_qty}` : '—'}
+          <Row label="Điều chỉnh" value={e.adjustment_qty ? `${Number(e.adjustment_qty) > 0 ? '+' : ''}${qtyLabel(Number(e.adjustment_qty), e.material)}` : '—'}
             cls={e.adjustment_qty ? (Number(e.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600') : ''} />
         </Section>
 
@@ -1569,7 +1572,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           ) : (
             <div className="space-y-2">
               <p className="text-[10px] text-slate-500">
-                Tồn hiện tại: <strong>{remaining}</strong> thùng. Nhập số điều chỉnh (+ hoặc −).
+                Tồn hiện tại: <strong>{qtyLabel(Number(remaining), e.material)}</strong>. Nhập số điều chỉnh (+ hoặc −).
               </p>
               <Input
                 type="number"
@@ -1586,7 +1589,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
               />
               {adjInput && !isNaN(parseFloat(adjInput)) && (
                 <p className="text-[10px] text-slate-500 text-center">
-                  Tồn mới: <strong>{Number(remaining) + parseFloat(adjInput)}</strong> thùng
+                  Tồn mới: <strong>{qtyLabel(Number(remaining) + parseFloat(adjInput), e.material)}</strong>
                 </p>
               )}
               {adjError && <p className="text-[10px] text-red-500">{adjError}</p>}
@@ -1617,12 +1620,12 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
                     <div key={log.id} className="rounded border px-2 py-1.5 text-[10px] bg-slate-50">
                       <div className="flex items-center justify-between">
                         <span className={`font-semibold font-mono ${log.delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {log.delta > 0 ? '+' : ''}{log.delta} thùng
+                          {log.delta > 0 ? '+' : ''}{qtyLabel(log.delta, e.material)}
                         </span>
                         <span className="text-slate-400">{formatTimestampDate(log.adjusted_at, true)} {formatTimestampTime(log.adjusted_at)}</span>
                       </div>
                       <div className="text-slate-500">
-                        {log.cartons_before} → {log.cartons_after} thùng
+                        {qtyLabel(log.cartons_before, e.material)} → {qtyLabel(log.cartons_after, e.material)}
                         {log.actor_name && <span className="ml-1">· {log.actor_name}</span>}
                       </div>
                       {log.note && <div className="text-slate-600 italic mt-0.5">{log.note}</div>}

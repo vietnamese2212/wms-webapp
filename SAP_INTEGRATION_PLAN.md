@@ -178,6 +178,8 @@ SAP: base unit = **HỘP**, mọi số trong hệ là SỐ NGUYÊN; CAR là đơ
 Kèm 2 quyết định UI: (a) **form tạo/sửa đơn tay đổi thành 2 ô "Thùng (nguyên) + Hộp (nguyên)"** — hàng chẵn chỉ điền Thùng, hết cửa key thập phân (upload cũ vẫn nhận thập phân tới khi bỏ); (b) **nút Upload GỘP "Up raw"** — 1 nút mở panel 2 khu vực: khu 1 file VL06O, khu 2 file KH điều vận.
 
 ### CHỐT vòng 11 — quy tắc CONVERT từ Actual (user chốt 19/07, GIẢI câu treo STOP 2)
+**Bổ sung 19/07 (user): nguồn số lượng khi THIẾU Actual.** Người đặt hàng nghĩ theo THÙNG (10 thùng, không ai đặt 480 hộp) — nên: (a) đơn KHÔNG từ SAP (upload tay/form): key **Thùng + Hộp nguyên**, app quy đổi tại rìa `qty_base = thùng×hệ_số + hộp`; (b) file kiểu VL06O nhưng **thiếu cột Actual** → suy `qty_base = Delivery Quantity × (Sales Unit=CAR ? units_per_carton : 1)` (Sales Unit HOP/EA → Delivery chính là base). Khi có đủ cả 2 thì Actual là chuẩn, Delivery+Sales Unit chỉ kiểm chéo.
+
 **Hàng có entry unit: lấy TỔNG Actual (base) của mã → ĐÔN TỐI ĐA về entry (DIV), phần dư theo base (MOD).** Vd Σ Actual = 840 HOP, hệ số 48 → sinh **dòng "17 CAR" + dòng "24 HOP"** (khớp mô hình 2 dòng vòng 9 — 2 dòng là KẾT QUẢ CHUẨN HÓA từ tổng Actual, KHÔNG chép cơ cấu dòng SAP key). Hàng không entry → giữ nguyên base 1 dòng. Sales Unit SAP chỉ còn 2 vai trò: kiểm chéo hệ số + post lại theo đơn vị key từng OD (từ RAW). Post per OD vẫn theo số key gốc trong raw — rule "không xuất thiếu" đảm bảo tổng thực xuất = tổng key.
 
 ### CHỐT vòng 9 — dòng đơn theo ĐƠN VỊ (user chọn, 19/07)

@@ -2,6 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useInventoryEntry } from '@/api/hooks'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { computePctDate } from '@/utils/shelfLife'
+import { qtyLabel } from '@/utils/qtyUnits'
 
 const STATUS_LABEL: Record<string, string> = {
   IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
@@ -82,12 +83,12 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
               </Section>
 
               <Section title="Số lượng">
-                <Row label="Nhập" value={`${entry.cartons_imported} thùng`} />
-                {exported > 0 && <Row label="Xuất" value={`${exported} thùng`} />}
-                <Row label="Tồn"  value={`${remaining} thùng`} bold />
+                <Row label="Nhập" value={qtyLabel(Number(entry.cartons_imported), entry.material)} />
+                {exported > 0 && <Row label="Xuất" value={qtyLabel(exported, entry.material)} />}
+                <Row label="Tồn"  value={qtyLabel(Number(remaining), entry.material)} bold />
                 {entry.adjustment_qty != null && Number(entry.adjustment_qty) !== 0 && (
                   <Row label="Điều chỉnh"
-                    value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${entry.adjustment_qty}`}
+                    value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${qtyLabel(Number(entry.adjustment_qty), entry.material)}`}
                     cls={Number(entry.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600'} />
                 )}
               </Section>

@@ -18,6 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -68,8 +69,8 @@ function itemLooseProgress(item: OutboundItem) {
 
 // ─── Inventory modal per item ──────────────────────────────────
 
-function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
-  gdoId: string; itemId: string; matCode: string; matName: string; onClose: () => void
+function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
+  gdoId: string; itemId: string; matCode: string; matName: string; mat?: MatUnits | null; onClose: () => void
 }) {
   const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
@@ -161,8 +162,8 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
                           <TableCell className="px-3 py-1.5 text-right whitespace-nowrap">
-                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
-                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, mat)}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-slate-400">
@@ -180,8 +181,8 @@ function InventoryModal({ gdoId, itemId, matCode, matName, onClose }: {
                               </button>
                             </TableCell>
                             <TableCell className="px-3 py-1 text-right whitespace-nowrap">
-                              <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining ?? e.cartons_imported ?? 0}</span>
-                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                              <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(e.cartons_remaining ?? e.cartons_imported ?? 0, mat)}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(mat)}</span>
                             </TableCell>
                             <TableCell className="px-2 py-1" />
                           </TableRow>
@@ -268,6 +269,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
           itemId={inventoryItem.id}
           matCode={inventoryItem.material?.material_code ?? inventoryItem.material_code_raw ?? '—'}
           matName={inventoryItem.material?.short_name ?? inventoryItem.material_code_raw ?? '—'}
+          mat={inventoryItem.material}
           onClose={() => setInventoryItemId(null)}
         />
       )}
@@ -307,8 +309,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     <div className="flex flex-col items-end gap-0.5">
                       {/* Đã nhặt / Cần nhặt lẻ (0/23) · tổng đơn nhỏ bên dưới */}
-                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{looseDone}/{effective}</span>
-                      <span className="text-[9px] text-slate-400 tabular-nums">tổng {item.cartons_ordered}</span>
+                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{qtyEntryText(looseDone, item.material)}/{qtyEntryText(effective, item.material)}</span>
+                      <span className="text-[9px] text-slate-400 tabular-nums">tổng {qtyEntryText(item.cartons_ordered, item.material)}</span>
                       {!isDone && (
                         <button
                           onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
@@ -424,7 +426,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                                     </span>
                                   </td>
                                   <td className="pr-3 py-0.5 text-right">
-                                    <span className="text-[10px] tabular-nums text-slate-400">{se.cartons_scanned}<span className="text-slate-300 ml-0.5">th</span></span>
+                                    <span className="text-[10px] tabular-nums text-slate-400">{qtyLabel(se.cartons_scanned, item.material)}</span>
                                   </td>
                                   <td className="pr-3 py-0.5">
                                     {se.pct_date !== null && se.pct_date !== undefined ? (

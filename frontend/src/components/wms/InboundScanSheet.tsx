@@ -11,6 +11,7 @@ import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, 
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { OfflineError } from '@/api/client'
 import { playBeep } from '@/utils/audio'
+import { qtyLabel } from '@/utils/qtyUnits'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
@@ -223,8 +224,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           setOutboundCartons(null)
           setCartons(defaultCartons)
           const successMsg = data.merged
-            ? `✓ Đã cộng ${data.added_cartons} thùng · Tồn mới: ${data.new_remaining} thùng`
-            : `✓ ${data.entry.pallet_code} · ${data.entry.cartons_imported} thùng · ${data.entry.location?.location_code ?? ''}`
+            ? `✓ Đã cộng ${qtyLabel(data.added_cartons, order.material)} · Tồn mới: ${qtyLabel(data.new_remaining, order.material)}`
+            : `✓ ${data.entry.pallet_code} · ${qtyLabel(data.entry.cartons_imported, order.material)} · ${data.entry.location?.location_code ?? ''}`
           const warns: string[] = data.warnings ?? []
           // Có cảnh báo (vd chưa xác định NCC) → giữ lâu hơn để đọc
           setFeedback(warns.length ? { type: 'error', msg: `${successMsg} · ⚠ ${warns.join(' · ')}` } : { type: 'success', msg: successMsg })

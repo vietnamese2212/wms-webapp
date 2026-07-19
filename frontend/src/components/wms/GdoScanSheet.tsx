@@ -22,6 +22,7 @@ import {
 import { materialCodeOf, normalizeQR } from '@/utils/qr'
 import { formatTimestampDate } from '@/utils/formatters'
 import { playBeep } from '@/utils/audio'
+import { qtyLabel } from '@/utils/qtyUnits'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
@@ -185,7 +186,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     }
     setFeedback({
       type: 'success',
-      msg: `✓ ${data.scan_entry.pallet_code} · ${Number(data.scan_entry.cartons_scanned)} thùng — ${target.material?.material_code ?? target.material_code_raw ?? ''}`,
+      msg: `✓ ${data.scan_entry.pallet_code} · ${qtyLabel(Number(data.scan_entry.cartons_scanned), target.material)} — ${target.material?.material_code ?? target.material_code_raw ?? ''}`,
     })
     setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
   }
@@ -271,7 +272,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 <span className="font-mono text-sm font-semibold text-slate-800">{activeMatCode}</span>
                 <span className="text-sm font-medium text-slate-700">{activeMatName}</span>
                 <span className="ml-auto text-xs text-slate-500 whitespace-nowrap">
-                  còn <strong>{activeRemaining}</strong> thùng {mode === 'loose' ? 'nhặt lẻ' : 'cần xuất'}
+                  còn <strong>{qtyLabel(activeRemaining, activeItem?.material)}</strong> {mode === 'loose' ? 'nhặt lẻ' : 'cần xuất'}
                 </span>
               </div>
               {activeItem.distributor_name && (

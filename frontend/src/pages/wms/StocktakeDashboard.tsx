@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 
@@ -160,12 +161,12 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
             </Sec>
 
             <Sec title="Số lượng">
-              <DR label="Nhập" value={`${entry.cartons_imported} thùng`} />
-              {exported > 0 && <DR label="Xuất" value={`${exported} thùng`} />}
-              <DR label="Tồn"  value={`${remaining} thùng`} bold />
+              <DR label="Nhập" value={qtyLabel(Number(entry.cartons_imported), entry.material)} />
+              {exported > 0 && <DR label="Xuất" value={qtyLabel(exported, entry.material)} />}
+              <DR label="Tồn"  value={qtyLabel(Number(remaining), entry.material)} bold />
               {entry.adjustment_qty != null && Number(entry.adjustment_qty) !== 0 && (
                 <DR label="Điều chỉnh"
-                  value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${entry.adjustment_qty}`}
+                  value={`${Number(entry.adjustment_qty) > 0 ? '+' : ''}${qtyLabel(Number(entry.adjustment_qty), entry.material)}`}
                   cls={Number(entry.adjustment_qty) > 0 ? 'text-green-600' : 'text-red-600'} />
               )}
             </Sec>
@@ -296,7 +297,7 @@ export default function StocktakeDashboard() {
       return {
         'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
         'Tên hàng': e.material?.short_name ?? e.material?.material_code ?? '',
-        'Tồn App': e.cartons_remaining, 'Thực tế': diff?.actual ?? '', 'Chênh lệch': diff?.diff ?? '',
+        'Tồn App': qtyEntryDecimal(e.cartons_remaining, e.material), 'Thực tế': diff?.actual ?? '', 'Chênh lệch': diff?.diff ?? '',
         'Người kiểm': e.stocktake_by_emp?.name ?? '',
         'TG kiểm': e.stocktake_at ? `${formatTimestampDate(e.stocktake_at, true)} ${formatTimestampTime(e.stocktake_at)}` : '',
         'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
@@ -438,7 +439,7 @@ export default function StocktakeDashboard() {
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap text-right">
-                          <span className="text-[10px] font-semibold tabular-nums">{e.cartons_remaining}</span>
+                          <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(e.cartons_remaining, e.material)}</span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           {diff

@@ -257,7 +257,7 @@ export interface InboundOrder {
   location_id:     string | null
   location:        { id: string; location_code: string; sub_code: string; max_pallets: number } | null
   material_id:     string | null
-  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null } | null
+  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   planned_pallets: number | null
   shift_id:        string | null
   shift:           { id: string; code: string; name: string } | null
@@ -388,7 +388,7 @@ export interface InventoryEntry {
   created_at:          string
   updated_at:          string
   location:              { id: string; location_code: string; sub_code: string; sub_name: string | null; sub_type: string | null; warehouse?: { id: string; name: string; code: string } | null } | null
-  material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; category: string | null } | null
+  material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; category: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   manufacturer:          { id: string; code: string; name: string | null } | null
   ncc:                   { id: string; name: string } | null
   qa_status:             { id: string; code: string; name: string } | null
@@ -633,7 +633,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered:    number
   boxes_display:      number
   weight:             number | null

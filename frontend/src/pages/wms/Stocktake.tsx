@@ -14,6 +14,7 @@ import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } f
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
 
 interface StocktakeEntryData {
   id:                string
@@ -24,7 +25,7 @@ interface StocktakeEntryData {
   stocktake_flagged: boolean
   stocktake_at:      string | null
   location:          { id: string; location_code: string } | null
-  material:          { material_code: string; short_name: string | null } | null
+  material:          { material_code: string; short_name: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   qa_status:         { id: string; code: string; name: string } | null
   stocktake_by_emp:  { id: string; name: string } | null
 }
@@ -295,9 +296,9 @@ export default function Stocktake() {
                     <p className="text-[10px] text-slate-400 mb-0.5">Tồn app</p>
                     <div className="flex items-baseline gap-1">
                       <span className="text-3xl font-bold tabular-nums text-slate-800">
-                        {entry.cartons_remaining}
+                        {qtyEntryText(entry.cartons_remaining, entry.material)}
                       </span>
-                      <span className="text-xs text-slate-400">thùng</span>
+                      <span className="text-xs text-slate-400">{qtyUnitLabel(entry.material)}</span>
                     </div>
                   </div>
                   {entry.qa_status && (
@@ -370,7 +371,7 @@ export default function Stocktake() {
                         className="h-7 text-sm w-28"
                         autoFocus
                       />
-                      <span className="text-xs text-slate-400">thùng (app: {entry.cartons_remaining})</span>
+                      <span className="text-xs text-slate-400">{qtyUnitLabel(entry.material)} (app: {qtyEntryText(entry.cartons_remaining, entry.material)})</span>
                     </div>
                     {physCount !== '' && Number(physCount) !== entry.cartons_remaining && (
                       <p className="text-[10px] text-red-600 mt-1 font-medium">

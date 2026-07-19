@@ -1,6 +1,7 @@
 // In Phiếu xuất kho — mở cửa sổ in với layout tối giản (A4, đen trắng).
 // Chỉ ĐỌC dữ liệu GDO đang hiển thị, không gọi API.
 import { format, parseISO } from 'date-fns'
+import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import type { GDO } from '@/types'
 
 function esc(s: string | null | undefined): string {
@@ -32,16 +33,16 @@ export function printDeliveryNote(gdo: GDO, printedBy?: string | null): boolean 
     }
     for (const i of d.items) {
       stt++
-      totalOrdered += i.cartons_ordered
-      totalScanned += i.cartons_scanned
-      totalLoose   += i.loose_picking ?? 0
+      totalOrdered += qtyEntryDecimal(i.cartons_ordered, i.material)
+      totalScanned += qtyEntryDecimal(i.cartons_scanned, i.material)
+      totalLoose   += qtyEntryDecimal(i.loose_picking ?? 0, i.material)
       bodyRows.push(`<tr>
         <td class="c">${stt}</td>
         <td class="mono">${esc(i.material?.material_code ?? i.material_code_raw)}</td>
         <td>${esc(i.material?.short_name ?? i.material_code_raw ?? '—')}</td>
-        <td class="r">${num(i.cartons_ordered)}</td>
-        ${hasLoose ? `<td class="r">${(i.loose_picking ?? 0) > 0 ? num(i.loose_picking) : ''}</td>` : ''}
-        <td class="r">${num(i.cartons_scanned)}</td>
+        <td class="r">${num(qtyEntryDecimal(i.cartons_ordered, i.material))}</td>
+        ${hasLoose ? `<td class="r">${(i.loose_picking ?? 0) > 0 ? num(qtyEntryDecimal(i.loose_picking, i.material)) : ''}</td>` : ''}
+        <td class="r">${num(qtyEntryDecimal(i.cartons_scanned, i.material))}</td>
         ${hasNote ? `<td class="note">${esc(i.header_text)}</td>` : ''}
       </tr>`)
     }

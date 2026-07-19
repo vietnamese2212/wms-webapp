@@ -209,7 +209,7 @@ async function fetchGDOFull(id: string) {
   // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,unit,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,unit,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
         .in('do_id', chunk)
         .order('id'))
     : []
@@ -2463,11 +2463,11 @@ export async function getPrepareBoard(req: Request, res: Response) {
 
     // Board gom nhiều chuyến — thiếu item (cap-1000) = thiếu dòng cần chuẩn bị → chunk + phân trang
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, warehouse_pallet_overrides, no_qr_tracking)')
+      .select('do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(short_name, cartons_per_pallet, warehouse_pallet_overrides, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
       .in('do_id', chunk).order('id')) as Array<{
         do_id: string; material_id: string | null; material_code_raw: string | null
         cartons_ordered: number | null; cartons_scanned: number | null; loose_picking: number | null
-        material: { short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides: { warehouse_id: string; cartons_per_pallet: number }[] | null; no_qr_tracking: boolean | null } | null
+        material: { short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides: { warehouse_id: string; cartons_per_pallet: number }[] | null; no_qr_tracking: boolean | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
       }>
 
     // Gom theo mã hàng (material_id, fallback material_code_raw)
@@ -2475,6 +2475,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
       material_id: string | null; material_code: string; material_name: string | null
       cartons_ordered: number; cartons_scanned: number; cartons_remaining: number
       cartons_per_pallet: number; pallets_remaining: number; no_qr_tracking: boolean
+      base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
       suggestions: { location_code: string | null; pct_date: number | null; available: number }[]
     }
     const rowMap = new Map<string, Row>()
@@ -2488,6 +2489,9 @@ export async function getPrepareBoard(req: Request, res: Response) {
         cartons_ordered: 0, cartons_scanned: 0, cartons_remaining: 0,
         cartons_per_pallet: effCartonsPerPallet(i.material, prepareWarehouseId),
         pallets_remaining: 0, no_qr_tracking: itemNoQr,
+        base_unit: i.material?.base_unit ?? null,
+        entry_unit: i.material?.entry_unit ?? null,
+        units_per_carton: i.material?.units_per_carton ?? null,
         suggestions: [],
       }
       cur.no_qr_tracking = cur.no_qr_tracking || itemNoQr
@@ -3108,7 +3112,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     if (!doIds.length) return ok(res, [])
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('*, material:Material(id,material_code,short_name)')
+      .select('*, material:Material(id,material_code,short_name,base_unit,entry_unit,units_per_carton)')
       .in('do_id', chunk)
       .gt('loose_picking', 0)
       .neq('status', 'CANCELLED')

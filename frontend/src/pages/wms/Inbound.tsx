@@ -38,6 +38,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
+import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
@@ -1875,8 +1876,8 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
       {/* Col 7: Thực nhập */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{order.total_cartons ?? 0}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(order.total_cartons ?? 0, order.material)}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(order.material)}</span>
       </TableCell>
 
       {/* Col 8: Thùng KH */}
@@ -1884,9 +1885,9 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         {order.planned_cartons != null ? (
           <>
             <span className={`text-[10px] font-semibold tabular-nums ${(order.total_cartons ?? 0) < order.planned_cartons ? 'text-red-600' : ''}`}>
-              {order.planned_cartons}
+              {qtyEntryText(order.planned_cartons, order.material)}
             </span>
-            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(order.material)}</span>
           </>
         ) : (
           <span className="text-[10px] text-slate-300">—</span>

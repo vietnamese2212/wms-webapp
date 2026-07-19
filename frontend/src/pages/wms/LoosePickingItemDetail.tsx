@@ -21,6 +21,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -44,7 +45,7 @@ function Badge({ status }: { status: string }) {
   )
 }
 
-function ProgressBar({ scanned, target }: { scanned: number; target: number }) {
+function ProgressBar({ scanned, target, mat }: { scanned: number; target: number; mat?: MatUnits | null }) {
   const pct = target > 0 ? Math.min(100, (scanned / target) * 100) : 0
   const cls = pct >= 100 ? 'bg-green-500' : pct > 0 ? 'bg-amber-500' : 'bg-slate-200'
   return (
@@ -53,7 +54,7 @@ function ProgressBar({ scanned, target }: { scanned: number; target: number }) {
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-sm tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {scanned}/{target} thùng
+        {qtyEntryText(scanned, mat)}/{qtyEntryText(target, mat)} {qtyUnitLabel(mat)}
       </span>
     </div>
   )
@@ -150,7 +151,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
           setCheckResult(null)
           const scannedNow = Number(data.scan_entry.cartons_scanned)
           const isNowComplete = scannedNow >= remaining
-          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${scannedNow} thùng` })
+          setFeedback({ type: 'success', msg: `✓ ${data.scan_entry.pallet_code} · ${qtyLabel(scannedNow, item.material)}` })
           setTimeout(() => {
             if (isNowComplete) { onClose() }
             else { scannerRef.current?.resume(); setFeedback(null) }
@@ -191,7 +192,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
             <p className="font-semibold text-lg text-slate-800">{matName}</p>
             <p className="text-sm text-slate-500">
               {item.material?.material_code ?? item.material_code_raw}
-              {' · '}còn <strong>{remaining}</strong> thùng nhặt lẻ cần chuẩn bị
+              {' · '}còn <strong>{qtyLabel(remaining, item.material)}</strong> nhặt lẻ cần chuẩn bị
             </p>
           </div>
 
@@ -474,7 +475,7 @@ export default function LoosePickingItemDetail() {
 
   async function saveManualLoose() {
     const qty = Math.max(0, parseInt(manualLooseCartons) || 0)
-    if (qty > manualLooseMax) { setManualLooseError(`Vượt số cần nhặt lẻ (tối đa ${manualLooseMax} thùng)`); return }
+    if (qty > manualLooseMax) { setManualLooseError(`Vượt số cần nhặt lẻ (tối đa ${qtyLabel(manualLooseMax, item?.material)})`); return }
     setManualLooseSaving(true); setManualLooseError('')
     try {
       // BE upsert: ghi/sửa/xóa bản ghi lẻ thủ công + reserve tồn theo delta (trừ khi "Check nhặt lẻ")
@@ -501,7 +502,7 @@ export default function LoosePickingItemDetail() {
   if (!!gdo.started_at && item.loose_picking > 0 && looseUnconfirmedCount > 0 && can(perms, 'loosepicking', 'complete'))
     actionItems.push({
       key: 'confirm-loose', icon: CheckCircle2, label: `Check nhặt lẻ (${looseUnconfirmedCount})`,
-      tip: `Xác nhận đã kiểm ${looseUnconfirmedCount} thùng nhặt lẻ — tồn kho sẽ trừ ngay`,
+      tip: `Xác nhận đã kiểm ${qtyLabel(looseUnconfirmedCount, item.material)} nhặt lẻ — tồn kho sẽ trừ ngay`,
       primary: true, busy: confirming,
       className: 'border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100',
       onClick: () => setConfirmLooseOpen(true),
@@ -535,7 +536,7 @@ export default function LoosePickingItemDetail() {
       <ConfirmDialog
         open={confirmLooseOpen}
         title="Xác nhận nhặt lẻ"
-        message={`Xác nhận đã kiểm tra ${looseUnconfirmedCount} thùng nhặt lẻ cho mã này? Tồn kho sẽ được trừ ngay.`}
+        message={`Xác nhận đã kiểm tra ${qtyLabel(looseUnconfirmedCount, item.material)} nhặt lẻ cho mã này? Tồn kho sẽ được trừ ngay.`}
         onConfirm={() => {
           setLooseError(null)
           confirmLoose(
@@ -563,14 +564,14 @@ export default function LoosePickingItemDetail() {
             <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Cần nhặt lẻ</div>
-                <div className="text-base font-bold tabular-nums text-slate-700">{effectiveLoose}</div>
-                <div className="text-[9px] text-slate-400">thùng</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{qtyEntryText(effectiveLoose, item.material)}</div>
+                <div className="text-[9px] text-slate-400">{qtyUnitLabel(item.material)}</div>
               </div>
               <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Còn thiếu</div>
-                <div className={`text-base font-bold tabular-nums ${looseRemaining === 0 ? 'text-green-600' : 'text-amber-600'}`}>{looseRemaining}</div>
-                <div className="text-[9px] text-slate-400">thùng</div>
+                <div className={`text-base font-bold tabular-nums ${looseRemaining === 0 ? 'text-green-600' : 'text-amber-600'}`}>{qtyEntryText(looseRemaining, item.material)}</div>
+                <div className="text-[9px] text-slate-400">{qtyUnitLabel(item.material)}</div>
               </div>
             </div>
             <div className="space-y-1">
@@ -582,7 +583,7 @@ export default function LoosePickingItemDetail() {
                 className={`text-center font-semibold text-lg h-11 ${overLooseMax ? 'border-red-400 focus-visible:ring-red-400' : ''}`}
                 autoFocus
               />
-              {overLooseMax && <p className="text-xs text-red-600">Vượt số cần nhặt lẻ (tối đa {manualLooseMax} thùng)</p>}
+              {overLooseMax && <p className="text-xs text-red-600">Vượt số cần nhặt lẻ (tối đa {qtyLabel(manualLooseMax, item.material)})</p>}
             </div>
             {manualLooseError && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{manualLooseError}</p>}
           </div>
@@ -621,19 +622,19 @@ export default function LoosePickingItemDetail() {
           {/* Row 2: name + progress */}
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
-            <ProgressBar scanned={looseDone} target={effectiveLoose} />
+            <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
           </div>
 
           {/* Row 3: metadata */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
             <span className="flex items-center gap-1">
               <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
-              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{effectiveLoose}</span>
-              {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {item.loose_picking})</span>}
+              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(effectiveLoose, item.material)}</span>
+              {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {qtyEntryText(item.loose_picking, item.material)})</span>}
             </span>
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              Tổng: <span className="font-medium text-slate-700 ml-0.5">{item.cartons_ordered}</span> thùng
+              Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
             </span>
           </div>
 
@@ -707,8 +708,8 @@ export default function LoosePickingItemDetail() {
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
-                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{row.cartons}</span>
-                            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                            <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, item.material)}</span>
+                            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(item.material)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
                           </TableCell>
                           <TableCell className="px-1 py-1.5 text-slate-400">
@@ -726,8 +727,8 @@ export default function LoosePickingItemDetail() {
                               </button>
                             </TableCell>
                             <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-                              <span className="text-[10px] font-semibold tabular-nums text-blue-700">{e.available}</span>
-                              <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                              <span className="text-[10px] font-semibold tabular-nums text-blue-700">{qtyEntryText(e.available, item.material)}</span>
+                              <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(item.material)}</span>
                             </TableCell>
                             <TableCell className="px-1 py-1" />
                           </TableRow>
@@ -817,7 +818,7 @@ export default function LoosePickingItemDetail() {
                             </div>
                           </TableCell>
                           <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
-                            {se.cartons_scanned}
+                            {qtyEntryText(se.cartons_scanned, item.material)}
                           </TableCell>
                           <TableCell className="px-2 py-1.5 whitespace-nowrap">
                             {se.pct_date !== null ? (

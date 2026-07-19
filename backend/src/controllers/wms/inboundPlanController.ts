@@ -24,7 +24,7 @@ function guardPlanWrite(req: Request, res: Response, whId: string | null | undef
 const LINE_SELECT = `
   *,
   ncc:TransportCompany!ncc_id(id, code, name),
-  material:Material!material_id(id, material_code, short_name),
+  material:Material!material_id(id, material_code, short_name, base_unit, entry_unit, units_per_carton),
   tms_order:TmsOrder!tms_order_id(id, order_code, status, planned_boxes, planned_pallets)
 `
 

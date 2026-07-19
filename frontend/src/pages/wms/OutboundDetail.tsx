@@ -6,7 +6,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
@@ -930,11 +930,12 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   const cols: RtColDef[] = [
     { id: 'mat',  label: 'Mã hàng', w: 92 },
     { id: 'name', label: 'Tên hàng', w: nameMinW },
-    { id: 'qty',  label: 'Thùng', w: 92, align: 'right' },
+    { id: 'qty_c', label: 'Tổng thùng', w: 78, align: 'right' },
+    { id: 'qty_b', label: 'Tổng hộp', w: 62, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
-    ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp', w: 60, align: 'right' as const }] : []),
-    ...(hasLoosePicking ? [{ id: 'loose', label: 'Nhặt lẻ', w: 64, align: 'right' as const }] : []),
+    ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp (KH)', w: 60, align: 'right' as const }] : []),
+    ...(hasLoosePicking ? [{ id: 'loose_c', label: 'Lẻ thùng', w: 60, align: 'right' as const }, { id: 'loose_b', label: 'Lẻ hộp', w: 54, align: 'right' as const }] : []),
     ...(hasCsResp ? [{ id: 'cs', label: 'CS', w: 90 }] : []),
     { id: 'do',   label: 'Số DO', w: 105 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
@@ -993,6 +994,19 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
               .filter(s => s.is_loose_picking && !s.loose_confirmed)
               .reduce((sum, s) => sum + s.cartons_scanned, 0)
 
+            // BASE UNIT (4 số): tách Tổng + Nhặt lẻ thành Thùng/Hộp per-mã (mã KG không entry → dồn vào cột thùng)
+            const hasEnt       = hasEntry(item.material)
+            const ordSplit     = qtySplit(item.cartons_ordered, item.material)
+            const scnSplit     = qtySplit(item.cartons_scanned, item.material)
+            const looseDoneSum = scans.filter(s => s.is_loose_picking).reduce((a, s) => a + Number(s.cartons_scanned), 0)
+            const looseSplit   = qtySplit(item.loose_picking, item.material)
+            const looseDnSplit  = qtySplit(looseDoneSum, item.material)
+            // Cell "đã/kế hoạch" cho 1 đơn vị (thùng hoặc hộp)
+            const dkThung = `${scnSplit.entry}/${ordSplit.entry}`
+            const dkHop   = ordSplit.base > 0 || scnSplit.base > 0 ? `${scnSplit.base}/${ordSplit.base}` : null
+            const leThung = looseSplit.entry > 0 || looseDnSplit.entry > 0 ? `${looseDnSplit.entry}/${looseSplit.entry}` : null
+            const leHop   = looseSplit.base > 0 || looseDnSplit.base > 0 ? `${looseDnSplit.base}/${looseSplit.base}` : null
+
             // Cột đầu sticky-left cần NỀN ĐẶC theo trạng thái (không dùng hover class)
             const stickyBg = item.status === 'COMPLETED' ? 'bg-blue-50' : item.status === 'IN_PROGRESS' ? 'bg-amber-50' : 'bg-white'
             return (
@@ -1016,8 +1030,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
                   <div className="flex flex-col items-end gap-0.5">
-                    {/* Đã quét / Kế hoạch — mặc định chưa xuất là 0/100 (user 19/07) */}
-                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{qtyEntryText(item.cartons_scanned, item.material)}/{qtyEntryText(item.cartons_ordered, item.material)}</span>
+                    {/* BASE UNIT: Tổng THÙNG (đã/KH) — mã KG không entry giữ số base thập phân */}
+                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{hasEnt ? dkThung : `${qtyEntryText(item.cartons_scanned, item.material)}/${qtyEntryText(item.cartons_ordered, item.material)}`}</span>
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
                       // Cả 2 nút đều là "ghi nhận xuất" → cần trạng thái cho phép (canScan) + quyền outbound.scan
@@ -1047,6 +1061,12 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       )
                     })()}
                   </div>
+                </TableCell>
+                <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
+                  {/* BASE UNIT: Tổng HỘP lẻ (đã/KH) — 0 hoặc mã KG → "—" */}
+                  {hasEnt && dkHop
+                    ? <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{dkHop}</span>
+                    : <span className="text-[10px] text-slate-300">—</span>}
                 </TableCell>
                 <TableCell className="px-1 py-1 align-middle text-center">
                   <button
@@ -1093,11 +1113,22 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </TableCell>
                 )}
                 {hasLoosePicking && (
-                  <TableCell className="px-2 py-1 align-top text-right">
-                    {item.loose_picking > 0
-                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{qtyEntryText(item.loose_picking, item.material)}</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
+                  <>
+                    {/* BASE UNIT: Nhặt lẻ THÙNG (đã/KH) — mã KG giữ số base */}
+                    <TableCell className="px-2 py-1 align-top text-right">
+                      {leThung
+                        ? <span className={`text-[10px] tabular-nums ${textCls}`}>{leThung}</span>
+                        : (item.loose_picking > 0 && !hasEnt
+                            ? <span className={`text-[10px] tabular-nums ${textCls}`}>{qtyEntryText(item.loose_picking, item.material)}</span>
+                            : <span className="text-[10px] text-slate-300">—</span>)}
+                    </TableCell>
+                    {/* BASE UNIT: Nhặt lẻ HỘP lẻ (đã/KH) — 0 → "—" */}
+                    <TableCell className="px-2 py-1 align-top text-right">
+                      {leHop
+                        ? <span className={`text-[10px] tabular-nums ${textCls}`}>{leHop}</span>
+                        : <span className="text-[10px] text-slate-300">—</span>}
+                    </TableCell>
+                  </>
                 )}
                 {hasCsResp && (
                   <TableCell className="px-2 py-1 align-top">

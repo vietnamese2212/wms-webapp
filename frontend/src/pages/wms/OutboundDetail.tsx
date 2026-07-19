@@ -28,6 +28,8 @@ import {
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
 } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
+import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { unlockAudio } from '@/utils/audio'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { printDeliveryNote } from './printDeliveryNote'
 import { statusText } from '@/lib/rowStatus'
@@ -901,12 +903,12 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   const showGroups = new Set(nppGroups.map(g => g.npp)).size > 1
 
   // Determine which optional columns have data
-  const hasBatchRequired = allItems.some(i => i.batch_required)
-  const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
   const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
   const hasCsResp        = allItems.some(i => i.cs_responsible)
-  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasBatchRequired, hasDateRequired, hasCsResp].filter(Boolean).length
+  // Cột CUỐI "Yêu cầu xuất" (user 19/07): gom header text + Batch + %Date yêu cầu — hiển thị ĐỦ (wrap)
+  const hasRequirement   = allItems.some(i => i.header_text || i.batch_required || (i.date_required != null && i.date_required > 0))
+  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasRequirement].filter(Boolean).length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -939,10 +941,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
             {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
             {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
-            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
-            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>}
             {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
+            {hasRequirement   && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 min-w-[180px]">Yêu cầu xuất</TableHead>}
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
         </TableHeader>
@@ -1044,20 +1045,6 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
-                {hasBatchRequired && (
-                  <TableCell className="px-2 py-1 align-top">
-                    {item.batch_required
-                      ? <span className="text-[10px] text-slate-600">{item.batch_required}</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
-                )}
-                {hasDateRequired && (
-                  <TableCell className="px-2 py-1 align-top text-right">
-                    {item.date_required != null && item.date_required > 0
-                      ? <span className="text-[10px] font-semibold tabular-nums text-amber-700">{item.date_required}%</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
-                )}
                 {hasCsResp && (
                   <TableCell className="px-2 py-1 align-top">
                     {item.cs_responsible
@@ -1074,6 +1061,27 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                     return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
                   })()}
                 </TableCell>
+                {hasRequirement && (
+                  <TableCell className="px-2 py-1 align-top whitespace-normal min-w-[180px] max-w-[380px]">
+                    {(item.header_text || item.batch_required || (item.date_required != null && item.date_required > 0)) ? (
+                      <div className="space-y-0.5">
+                        {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+                          <div className="flex flex-wrap gap-1">
+                            {item.batch_required && (
+                              <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">Batch: {item.batch_required}</span>
+                            )}
+                            {item.date_required != null && item.date_required > 0 && (
+                              <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">%Date ≥ {item.date_required}%</span>
+                            )}
+                          </div>
+                        )}
+                        {item.header_text && (
+                          <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
+                        )}
+                      </div>
+                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                )}
                 <TableCell className="px-1 py-1 align-top">
                   {scans.length > 0 && (
                     <button
@@ -1088,13 +1096,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
               </TableRow>
               {expanded && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell className="px-2 py-1.5 align-top border-b border-slate-100">
-                    {item.header_text && (
-                      <p className="text-[9px] text-red-600 leading-snug">{item.header_text}</p>
-                    )}
-                  </TableCell>
-                  <TableCell colSpan={totalCols - 1} className="px-0 py-0 border-b border-slate-100">
-                    <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
+                  <TableCell colSpan={totalCols} className="px-0 py-0 border-b border-slate-100">
+                    <div className="ml-3 pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                       {scans.length === 0 ? (
                         <p className="text-[10px] italic text-slate-400">Chưa có pallet nào được quét</p>
                       ) : (
@@ -1225,6 +1228,7 @@ export default function OutboundDetail() {
   const canManagePause = can(perms, 'outbound', 'edit')  // Tạm dừng/Tiếp tục = patchGDO → route đòi outbound.edit
 
   const [showStart,         setShowStart]         = useState(false)
+  const [showOrderScan,     setShowOrderScan]     = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
   const [showEditGDO,       setShowEditGDO]       = useState(false)
@@ -1386,6 +1390,17 @@ export default function OutboundDetail() {
       primary: true, variant: 'default',
       onClick: () => setShowStart(true),
     })
+  // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.
+  // Cùng điều kiện với nút Quét từng mã (đơn đã Bắt đầu, không tạm dừng/hoàn thành, quyền outbound.scan).
+  const hasScannableRemaining = allItems.some(i =>
+    i.material?.no_qr_tracking !== true && i.status !== 'COMPLETED' && i.cartons_scanned < i.cartons_ordered)
+  if (!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED' && hasScannableRemaining && can(perms, 'outbound', 'scan'))
+    actionItems.push({
+      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện xuất của mã đó',
+      primary: true, variant: 'default',
+      onClick: () => { unlockAudio(); setShowOrderScan(true) },
+    })
   // "Xác nhận nhanh" — CHỈ kho QR (chuyến lẫn hàng không tem): ghi nhận mọi mã không tem = đúng KH.
   // Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành).
   if (!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan'))
@@ -1481,6 +1496,9 @@ export default function OutboundDetail() {
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}
+      {showOrderScan && (
+        <GdoScanSheet gdo={gdo} mode="outbound" onClose={() => setShowOrderScan(false)} />
+      )}
       {showLoadPlan && (
         <LoadPlan3DDialog open={showLoadPlan} onClose={() => setShowLoadPlan(false)} gdo={gdo} />
       )}
@@ -1531,8 +1549,8 @@ export default function OutboundDetail() {
       <div className="flex flex-col h-full sm:p-3">
        <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm overflow-hidden">
 
-        {/* ── Header: ~20% ── */}
-        <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
+        {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung nén gọn, cao theo thực tế ── */}
+        <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1">
 
           {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
           <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
@@ -1604,32 +1622,28 @@ export default function OutboundDetail() {
             </Card>
           )}
 
-          {(gdo.assigned_at || gdo.scan_completed_at || gdo.completed_at) && (
-            <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px] font-medium">
-              {gdo.assigned_at && (
-                <span className="text-green-600">
-                  Giao đơn:{gdo.assigned_by ? <span className="font-normal"> {gdo.assigned_by} · </span> : ' '}
-                  {formatDateTime(gdo.assigned_at)}
-                </span>
-              )}
-              {gdo.scan_completed_at && (
-                <span className="text-pink-600">Quét xong: {formatDateTime(gdo.scan_completed_at)}</span>
-              )}
-              {gdo.completed_at && (
-                <span className="text-blue-600">Kết thúc: {formatDateTime(gdo.completed_at)}</span>
-              )}
-            </div>
-          )}
-
-          <div className={`flex flex-wrap gap-x-4 gap-y-0 text-[10px] ${statusText(gdoKey(gdo))}`}>
+          {/* Mốc thời gian + audit GỘP 1 hàng (header không scroll — nén gọn) */}
+          <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px]">
+            {gdo.assigned_at && (
+              <span className="text-green-600 font-medium">
+                Giao đơn:{gdo.assigned_by ? <span className="font-normal"> {gdo.assigned_by} · </span> : ' '}
+                {formatDateTime(gdo.assigned_at)}
+              </span>
+            )}
+            {gdo.scan_completed_at && (
+              <span className="text-pink-600 font-medium">Quét xong: {formatDateTime(gdo.scan_completed_at)}</span>
+            )}
+            {gdo.completed_at && (
+              <span className="text-blue-600 font-medium">Kết thúc: {formatDateTime(gdo.completed_at)}</span>
+            )}
             {gdo.created_by && (
-              <span>Tạo bởi: <span className="font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
+              <span className={statusText(gdoKey(gdo))}>Tạo bởi: <span className="font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
             )}
             {!gdo.created_by && gdo.created_at && (
-              <span>Ngày tạo: {formatDateTime(gdo.created_at)}</span>
+              <span className={statusText(gdoKey(gdo))}>Ngày tạo: {formatDateTime(gdo.created_at)}</span>
             )}
             {gdo.updated_by && (
-              <span>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
+              <span className={statusText(gdoKey(gdo))}>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
             )}
           </div>
 

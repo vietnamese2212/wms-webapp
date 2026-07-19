@@ -10,8 +10,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useGDO, useItemInventory, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
+import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
+import { unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -214,9 +218,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
       .filter(i => i.loose_picking > 0)
       .map(i => ({ ...i, delivery_code: d.delivery_code, distributor_name: d.distributor_name }))
   )
-  // Cột Batch/%Date chỉ hiện khi có mã yêu cầu (đồng bộ Xuất) — tránh làm bảng rộng vô ích
-  const hasBatchRequired = allItems.some(i => i.batch_required)
-  const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
+  // Cột CUỐI "Yêu cầu" (user 19/07, đồng bộ Xuất): gom header text + Batch + %Date yêu cầu — hiển thị ĐỦ (wrap)
+  const hasRequirement = allItems.some(i => i.header_text || i.batch_required || (i.date_required != null && i.date_required > 0))
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -247,9 +250,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
-            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch</TableHead>}
-            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">%Date</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
+            {hasRequirement && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 min-w-[180px]">Yêu cầu</TableHead>}
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
         </TableHeader>
@@ -308,20 +310,6 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       <Search className="h-5 w-5" />
                     </button>
                   </TableCell>
-                  {hasBatchRequired && (
-                    <TableCell className="px-2 py-1 align-top">
-                      {item.batch_required
-                        ? <span className="text-[10px] text-slate-600">{item.batch_required}</span>
-                        : <span className="text-[10px] text-slate-300">—</span>}
-                    </TableCell>
-                  )}
-                  {hasDateRequired && (
-                    <TableCell className="px-2 py-1 align-top text-right">
-                      {item.date_required != null && item.date_required > 0
-                        ? <span className="text-[10px] font-semibold tabular-nums text-amber-700">{item.date_required}%</span>
-                        : <span className="text-[10px] text-slate-300">—</span>}
-                    </TableCell>
-                  )}
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {(() => {
                       const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
@@ -330,6 +318,27 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
                     })()}
                   </TableCell>
+                  {hasRequirement && (
+                    <TableCell className="px-2 py-1 align-top whitespace-normal min-w-[180px] max-w-[380px]">
+                      {(item.header_text || item.batch_required || (item.date_required != null && item.date_required > 0)) ? (
+                        <div className="space-y-0.5">
+                          {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+                            <div className="flex flex-wrap gap-1">
+                              {item.batch_required && (
+                                <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">Batch: {item.batch_required}</span>
+                              )}
+                              {item.date_required != null && item.date_required > 0 && (
+                                <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">%Date ≥ {item.date_required}%</span>
+                              )}
+                            </div>
+                          )}
+                          {item.header_text && (
+                            <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
+                          )}
+                        </div>
+                      ) : <span className="text-[10px] text-slate-300">—</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="px-1 py-1 align-top">
                     {looseScanEntries.length > 0 && (
                       <button
@@ -345,13 +354,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
                 {expanded && (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell className="px-2 py-1.5 align-top border-b border-slate-100">
-                      {item.header_text && (
-                        <p className="text-[9px] text-red-600 leading-snug">{item.header_text}</p>
-                      )}
-                    </TableCell>
-                    <TableCell colSpan={5 + (hasBatchRequired ? 1 : 0) + (hasDateRequired ? 1 : 0)} className="px-0 py-0 border-b border-slate-100">
-                      <div className="pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
+                    <TableCell colSpan={6 + (hasRequirement ? 1 : 0)} className="px-0 py-0 border-b border-slate-100">
+                      <div className="ml-3 pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                         <table className="w-full border-collapse whitespace-nowrap">
                           <thead>
                             <tr>
@@ -418,9 +422,12 @@ export default function LoosePickingDetail() {
   const navigate = useNavigate()
   const { vehicles, pin, unpin, isPinned, update } = useActiveLoosePickingStore()
   const pinned = isPinned(id ?? '')
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
 
   const { data: gdo, isLoading } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
+  const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
 
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
@@ -461,6 +468,17 @@ export default function LoosePickingDetail() {
 
   // ── Cụm action header (ActionCluster) — đồng bộ nút "Xem pallet" với OutboundDetail ──
   const actionItems: ActionItem[] = []
+  // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.
+  // Rule chặn giữ nguyên (BE kiểm theo item): sai mã, không vượt số nhặt lẻ, tạm dừng…
+  const hasLooseRemaining = allLooseItems.some(i =>
+    i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0)
+  if (hasLooseRemaining && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'loosepicking', 'scan'))
+    actionItems.push({
+      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện của mã đó',
+      primary: true, variant: 'default',
+      onClick: () => { unlockAudio(); setShowOrderScan(true) },
+    })
   if (hasScanEntries)
     actionItems.push({
       key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet',
@@ -471,9 +489,12 @@ export default function LoosePickingDetail() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {showOrderScan && (
+        <GdoScanSheet gdo={gdo} mode="loose" onClose={() => setShowOrderScan(false)} />
+      )}
 
-      {/* ── Header ── */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '22vh' }}>
+      {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
 
         {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
         <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">

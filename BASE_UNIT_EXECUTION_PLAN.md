@@ -60,9 +60,9 @@ Quy mô đo thực tế: ~358 điểm backend (nặng nhất `outboundController
 2. **Sweep FE**: mọi chỗ render số thùng/tồn/số lượng đơn → qua `qtyLabel`/`qtySplit` (22 file đã liệt kê bằng grep `cartons_` — Inventory, Outbound*, LoosePicking*, Inbound*, Stocktake*, PalletOps, Prepare, ScanLog, Dashboard, PalletDetailDialog, GdoScanSheet, printDeliveryNote…). Cell hẹp dùng `qtyEntryDecimal`. KHÔNG đổi logic, chỉ đổi cách render.
 3. **Verify**: Playwright desktop+mobile các trang chính — số hiển thị "89 thùng + 24 hộp" đúng với 35 dòng tồn lẻ thật trên staging (query: `cartons_remaining % 1 <> 0`); tổng/summary không đổi giá trị.
 
-## ĐỢT 2 — SEMANTIC FLIP (LỚN — cần user duyệt kịch bản trước khi chạy)
+## ĐỢT 2 — SEMANTIC FLIP — ✅ STAGING ĐÃ FLIP 20/07 (commit `f12a437`)
 
-> ⛔ **STOP 1:** trước khi code đợt 2, trình user danh sách cột + kịch bản migration (mục 2.1–2.4) để duyệt.
+> STOP 1 đã duyệt 20/07 ("flip ngay, cả main/dev đều test"). **STAGING đã chạy `run-flip.mjs`: verify per-row 0 lệch, báo cáo round 67 giá trị (tổng lệch <5 hộp) trong bảng `base_unit_flip_round_report`; backup `x_flip_bak_*` GIỮ tới khi user cho xóa.** PRODUCTION: khi merge main phải chạy `node scripts/base-unit-flip/run-flip.mjs` (đọc .mcp.json — trỏ production cần connection string riêng) CÙNG CỬA SỔ deploy. Quy ước đã chốt khi thi công: **mọi trường số lượng qua API = BASE** (kể cả `cartons_override` — pallet chuyển kho lẻ hộp cần vậy); cờ `qty_semantics:'base'` gắn tự động (interceptor axios + QA lib) — BE `requireBaseQty` chặn 409 bundle/queue cũ (upload multipart không cần cờ — validate bằng nội dung file). Lưu ý vận hành: hàng đợi quét offline enqueue TRƯỚC flip nếu có `cartons_override` sẽ sai đơn vị khi replay — dặn kho xóa queue cũ (test env, rủi ro ~0).
 
 ### 2.1. Migration dữ liệu ×hệ_số (CHỈ mã có `entry_unit` — mã không entry giữ nguyên)
 Cột đã xác minh trên DB staging (19/07) — nhân với `Material.units_per_carton` qua JOIN material:

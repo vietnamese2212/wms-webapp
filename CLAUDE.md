@@ -97,6 +97,14 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 **Phân quyền** (skill `add-permission`):
 - Mọi nút/route gọi API write phải gate `can(perms, module, action)` (FE) + `requirePerm` (BE). Mỗi action = 1 permission riêng (không gộp `manage`). Thêm action = đủ **4 nơi**: FE config, **BE config** (thiếu → admin mất quyền), gate nút, route BE.
 
+**BASE UNIT — lõi số lượng (LUẬT CỐT TỬ, user chốt 19–20/07 — "làm sai là vứt đi"):**
+- **App TÍNH TOÁN toàn bộ bằng BASE UNIT** (hộp/chai/KG… = đơn vị gốc khai per mã ở `Material.base_unit`): MỌI lưu trữ, cộng/trừ, tồn kho, xuất/nhập/nhặt lẻ, đối chiếu = số **BASE**. **Entry unit (thùng, `Material.entry_unit`, hệ số `units_per_carton`) CHỈ là lớp THỂ HIỆN.**
+- **Hiển thị = Entry + phần Base thừa**: số base → `qtySplit` = **"N thùng + M hộp"** (M = phần lẻ vượt bội số 1 thùng). Mã KHÔNG entry → hiện nguyên base (KG/EA). Tồn kho, Xuất, Nhặt lẻ, quét… đều phải thể hiện **Thùng + Hộp lẻ**. Helper TẬP TRUNG BE+FE mirror `utils/qtyUnits.ts`: `qtySplit`/`qtyLabel`/`qtyEntryDecimal`/`qtyFromEntryBase`/`qtyIntegerError` — **sửa công thức = sửa 1 chỗ, KHÔNG tự `/`·`%`·`× upc` rải rác**.
+- **Luật số nguyên**: mã có entry → base phải **SỐ NGUYÊN** (hộp không có 0,5); nhập liệu = **2 ô Thùng+Hộp** (`components/shared/QtyInput`), quy đổi tại rìa bằng `qtyFromEntryBase`. Mã không entry (KG) → thập phân tự do. BE chặn 422 (`qtyIntegerError`) + upload lỗi theo dòng kèm gợi ý quy đổi.
+- **Tổng cross-mã (khác `units_per_carton`) PHẢI `qtyEntryDecimal` per-mã TRƯỚC khi cộng** → "thùng quy đổi" (cộng base thô rồi gắn nhãn "thùng" = SAI, thổi tổng). Mọi trường số lượng qua API = BASE (cờ `qty_semantics:'base'` chặn bundle cũ 409); FE quy đổi tại rìa.
+- **Quét nhặt lẻ HỘP = quét QR PALLET (đã có) + trừ số hộp khỏi tồn base** — KHÔNG cần QR tới hộp (QR nhỏ nhất = pallet/thùng). Thùng lẻ = quét; hộp lẻ = nhập tay/đếm.
+- **BẮT BUỘC CHÍNH XÁC + fix MỌI lỗi hiển thị/tính toán liên quan.** Rà kỹ mọi điểm đọc `cartons_*`/`loose_picking` (nhất là **tổng ở list/detail** + **Nhặt lẻ** — hay sót). **Luôn VERIFY SỐNG số hiển thị, đừng tin "đã kiểm OK".** Chi tiết + tiến độ: memory `base-unit-campaign` + `BASE_UNIT_EXECUTION_PLAN.md`.
+
 **Timezone — Asia/Ho_Chi_Minh (UTC+7):**
 - Business date (`import_date`…): lưu ngày VN `new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })`. System timestamp (`created_at`…): UTC `toISOString()`. Query khoảng ngày VN: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`.
 - Hiển thị: date-only → `formatDate()`; timestamp → `formatDateTime()`/`formatTimestampDate()`/`formatTimestampTime()` (dùng `Intl` + timezone VN, không phụ thuộc OS). Cell hẹp: `formatTimestampDate(s, true)` → `dd-MM-yy`. Tất cả từ `utils/formatters.ts`.

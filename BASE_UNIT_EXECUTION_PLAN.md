@@ -40,7 +40,10 @@ Quy mô đo thực tế: ~358 điểm backend (nặng nhất `outboundController
 3. **Nhãn hiển thị đơn vị**: bảng map code→nhãn vi đặt trong helper đợt 1 (`CAR`→"thùng", `HOP`→"hộp", `KG`→"kg", `BAG`→"bao", `EA`→"cái"; code lạ → hiển thị nguyên văn). KHÔNG hardcode nhãn rải rác.
 4. **Verify**: tsc/build; DB soi backfill đúng (mã có upc → HOP/CAR; NVL → KG/BAG/EA theo `unit`); form + upload lưu được; KHÔNG hành vi nào khác đổi.
 
-## ĐỢT 1 — Formatter số lượng TRUNG TÂM (gom hiển thị về 1 hàm)
+## ĐỢT 1 — Formatter số lượng TRUNG TÂM (gom hiển thị về 1 hàm) — ✅ XONG 19/07 (commit `3292285`)
+
+> Đã ship: helper mirror `qtyUnits.ts` BE+FE (thêm `qtyEntryText`/`qtyUnitLabel`/`unitLabel` ngoài 3 hàm thiết kế); 16 Material embed BE + type FE mang `base_unit/entry_unit/units_per_carton`; sweep 15 file WMS core. Verify sống Preview: 0,67 thùng ×48 → "32 hộp" (row + detail pane, desktop + mobile 390), mã KG → "1.000 kg".
+> **Chủ đích ĐỂ LẠI cho Đợt 2** (ghi rõ để không tưởng sót): tổng CROSS-MÃ (SummaryBand, GDO totals, NPP group header — thuộc 2.2); form key tay + số thùng vật lý nhập khi quét pallet (write-side, tem giữ thùng); ScanLog/TMS/Slotting/PalletLabels-audit (RPC + select chưa mang units — thay khi làm 2.2/2.3); parseDiff note kiểm kê (text lịch sử); LoadPlan3D (thùng vật lý → 2.3 phải chia hệ số khi qty thành base).
 
 > Mục tiêu: đưa ~155 điểm hiển thị FE (+ chỗ BE xuất chuỗi) về **1 hàm duy nhất**, để đợt 2 flip chỉ đổi RUỘT hàm + tầng ghi.
 

@@ -161,6 +161,22 @@ Kèm 2 quyết định UI: (a) **form tạo/sửa đơn tay đổi thành 2 ô "
 - **Tồn kho GIỮ numeric** (không integer hóa): NVL bản chất decimal thật (KG/BAG); phần lẻ thành phẩm trừ tồn = hộp/upc — thập phân chỉ là "vết thùng mở" NỘI BỘ, không bao giờ qua biên giới SAP.
 - **KHÔNG ĐƯỢC XUẤT THIẾU (note — bàn chi tiết sau):** số liệu OD ↔ app phải khớp 100% trước khi hoàn thành + chuyển giao dữ liệu 2 chiều → KHÔNG cần thuật toán phân bổ thiếu. App đã có gác "thực quét = KH mới cho Hoàn thành" ở luồng cũ — sau mở rộng theo dòng-đơn-vị.
 
+## 8. CHIẾN DỊCH "BASE UNIT" — lõi số lượng theo đơn vị gốc (user CHỐT kiến trúc 19/07 vòng 10)
+
+**Quyết định:** WMS làm như SAP — mỗi Mã hàng khai **Base Unit** (HOP/KG/BAG/EA… — TÙY BIẾN, là dữ liệu không hardcode) + **Entry Unit** tùy chọn (CAR…) với hệ số `1 Entry = N Base`. **MỌI lưu trữ + tính toán = BASE UNIT; Entry Unit CHỈ để thể hiện.** Vd tồn 89 thùng + 24 hộp → LƯU `4296 HOP`, HIỂN THỊ "89,5 thùng"; đơn 17 thùng + 24 hộp → LƯU `840 HOP`, HIỂN THỊ "17 thùng + 24 hộp". Giải tận gốc: thập phân, mìn-đổi-upc, sai số float, khớp SAP từng đơn vị.
+
+**Khai báo (Material):** `base_unit` text + `entry_unit` text null + `units_per_entry` numeric. Suy tự động từ dữ liệu hiện có: mã có `units_per_carton` → base=HOP, entry=CAR/Thùng, factor=upc; mã còn lại → base=`unit` hiện tại, không entry. Đơn vị đo lường (KG/BAG) base decimal hợp lệ; đơn vị đếm (HOP/EA) base = integer.
+
+**Hệ quả cần re-confirm — mô hình dòng đơn (đè vòng 9?):** với lõi base, 1 dòng/mã lưu `840 HOP` là đủ — phần thùng nguyên/lẻ để LÀM VIỆC suy bằng DIV/MOD (`840 = 17×48 + 24`), không cần 2 dòng CAR/HOP nữa (user nói "WMS lấy từ base hết, entry chỉ thể hiện" — nghiêng về 1 dòng base; CHỜ user xác nhận đè vòng 9).
+
+**Điểm chạm đo thực tế (grep 4 cột cartons_*):** ~358 chỗ backend (10 controller, nặng nhất outbound 181 + inbound 67) + ~155 chỗ frontend (22 file) ≈ **500 điểm** → bắt buộc chia ĐỢT:
+- **Đợt 0 — Khai báo:** migration 3 cột Material + script suy tự động + form Mã hàng (+ upload) khai ĐVT. Chưa đổi hành vi.
+- **Đợt 1 — Formatter trung tâm:** helper `qtyDisplay(qty, material)` BE+FE (mẫu computePctDate) hiển thị "X thùng + Y hộp" từ số hiện tại — cosmetic win sớm, chưa migration.
+- **Đợt 2 — SEMANTIC FLIP (lớn):** 1 migration ×factor cho MỌI cột số lượng của mã có entry unit (InventoryEntry imported/remaining, OutboundItem ordered/scanned/loose, OutboundScanEntry, stocktake, adjustment log, planned TMS… liệt kê đủ khi làm) + toàn bộ code đọc/ghi theo base. Freeze off-hours, backup snapshot, verify tổng ×factor khớp từng bảng, QA suite full — staging chạy ổn N ngày mới production.
+- **Đợt 3 — Up raw SAP** xây TRÊN nền base (convert từ raw đơn giản hơn hẳn: qty_base cộng thẳng).
+
+**Thứ tự chốt: Base Unit core TRƯỚC → Up raw SAU** (tránh xây Up raw trên nền cũ rồi đập lại).
+
 ### Thiết kế build GĐ B (chờ user duyệt để code)
 **Bảng mới `erp_outbound_orders`** (raw, 1 dòng = 1 OD line, unique `(od_number, od_item)`): od_number · od_item · so_number(tham khảo) · ship_to_code · ship_to_name · material_code · material_name · qty_sales + sales_unit · qty_base + base_unit · plant · storage_location(tham khảo) · batch_req · date_pct_req · header_text(gộp 2 ghi chú) · shipping_point · source('EXCEL'/'SAP') · id/updated_at chuẩn.
 **Nút upload 1 "Upload VL06O (SAP)"**: parse → upsert theo (od,item) chunk 500; OD đã thành chuyến mà số liệu đổi → KHÔNG đè đơn, ghi cảnh báo (theo ma trận sửa/hủy, bản đầu = cảnh báo).

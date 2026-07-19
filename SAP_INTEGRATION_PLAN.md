@@ -141,6 +141,28 @@ Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đ�
 **Đối chiếu:** 41/41 DO của KH đều có trong VL06O (join hoàn hảo theo `DO = Delivery`); **Ship-to lệch 4/41** giữa 2 file → chốt luật: **mọi chi tiết lấy từ RAW (SAP), file điều vận chỉ quyết ngày/chuyến/ĐVVT** — đúng loại lỗi gõ tay mà luồng mới loại bỏ.
 **Mapping đơn vị:** Sales Unit `CAR` → thùng nguyên · `HOP` → nhặt lẻ (hộp) · `EA/BT/BAG` (vd Pallet Loscam 810000000) → hàng no-QR/QTY theo `Material.unit`.
 
+### MAPPING CỘT VL06O → WMS (chốt 19/07 — user cần biết field nào PHẢI CÓ khi xuất file từ SAP)
+| Cột VL06O | Lấy? | Vào bảng raw | Tương ứng WMS hiện tại |
+|---|---|---|---|
+| **Delivery** | ✅ KHÓA | `od_number` | `OutboundDelivery.do_code` (số OD = khóa link SAP) |
+| **Item** | ✅ KHÓA | `od_item` | (mới — khóa dòng trong OD) |
+| **Ship-to Party** | ✅ | `ship_to_code` | resolve NPP (cascade bậc 1) + nhận diện chuyển kho (`Warehouse.shipto_codes`) |
+| Name ship-to party | ✅ | `ship_to_name` | tên NPP fallback (cascade bậc 2) |
+| **Material** | ✅ | `material_code` | `Material.material_code` |
+| Item Description | ✅ | `material_name` | đối chiếu (hiển thị WMS dùng tên của mình) |
+| **Delivery Quantity** | ✅ | `qty_sales` | số đặt theo Sales Unit |
+| **Sales Unit** | ✅ | `sales_unit` | CAR → thùng nguyên (quét pallet) · HOP/BT → nhặt lẻ · EA/BAG → no-QR/QTY |
+| **Actual delivery qty** | ✅ | `qty_base` | **SỐ GỐC base** — nguồn số lượng chính (sau Đợt 2 cộng thẳng) |
+| Base Unit of Measure | ✅ | `base_unit` | đối chiếu `Material.base_unit` (lệch = cảnh báo) |
+| Batch SO / Batch | ✅ | `batch_req` | `OutboundItem.batch_required` (Batch yêu cầu) |
+| Date (Ngày) | ✅ | `date_req` | lưu raw (NSX yêu cầu — dùng khi có nghiệp vụ) |
+| Date (%) | ✅ | `date_pct_req` | `OutboundItem.date_required` (%Date yêu cầu) |
+| Ghi chú giao hàng + Ghi chú hoá đơn | ✅ **GỘP 2 cột** | `header_text` | `OutboundItem.header_text` (dòng đỏ trên đơn) |
+| Plant | ✅ | `plant` | tham khảo/lọc (kho thật lấy từ mã chuyến file điều vận) |
+| Storage Location | ✅ tham khảo | `storage_location` | KHÔNG dùng map kho (user chốt — không đầy đủ) |
+| Shipping Point | ✅ | `shipping_point` | tham khảo |
+| Total Weight / Unit of Weight / Created By / Biển số xe | ❌ bỏ | — | KL WMS tự tính từ `Material.weight_kg`; biển số theo file điều vận |
+
 ### Chốt vòng 6 (user trả lời 4 câu + header text)
 - **Header text = GỘP "Ghi chú giao hàng" + "Ghi chú hóa đơn"** của VL06O.
 - **OD là khóa duy nhất link SAP** — SO chỉ tham khảo (lưu nhưng không dùng làm khóa); OD `330x`/SO `430x` xử như đơn bán thường.

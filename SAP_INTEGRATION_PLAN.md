@@ -129,6 +129,12 @@ Phía SAP xác nhận: **OD (Outbound Delivery) = khóa giao dịch mua bán; PO
 2. **GĐ B — Excel rút gọn (tương lai gần, user mô tả):** file upload chỉ còn **DO + ngày kế hoạch + số chuyến + ĐVVT** → WMS lấy dữ liệu DO từ bảng raw (`erp_outbound_orders`) **convert thành chuyến xuất** (GDO/DO/dòng hàng như hiện tại), hiển thị **THÙNG + HỘP giữ nguyên theo SAP** (hộp chảy vào Nhặt lẻ).
 3. **GĐ C — Gom chuyến trên màn hình (đích, chưa làm):** bỏ Excel; trang "Đơn chờ xếp chuyến", thao tác duy nhất = gán OD → xe. Kiến trúc 2 tầng giữ nguyên: tầng raw không sửa (replace theo delta) · tầng nghiệp vụ (GDO/DO) WMS quản — luôn đối chiếu ngược lại raw được.
 
+### GĐ B khởi động BẰNG EXCEL trước khi có kết nối (user chốt 19/07 vòng 5 — sẽ gửi 2 file mẫu)
+Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đụng upload cũ):
+- **File 1 — Raw OD từ SAP** (đổ từ transaction **VL06O**): nạp vào bảng raw `erp_outbound_orders`, nguồn ghi `EXCEL` (tương lai connector ghi `SAP` — cùng bảng, chỉ đổi nguồn nạp). Upsert theo OD; đây là "dữ liệu SAP đưa".
+- **File 2 — Kế hoạch điều vận** (OD + ngày đi + ĐVVT + số xe/chuyến): join với raw → **convert thành chuyến xuất** (GDO/DO/dòng hàng đúng model hiện tại, thùng+hộp giữ theo SAP, hộp → Nhặt lẻ). OD trong file 2 không có trong raw → báo lỗi rõ từng OD. Đây là "user đưa vào" — TƯƠNG LAI CHỈ CÒN FILE 2 khi connector thay file 1.
+- Đơn sinh ra là GDO bình thường → soạn hàng/quét/chuyển kho/báo cáo phía sau KHÔNG đổi.
+
 ### Mã hàng — quyền sở hữu theo TỪNG CỘT (user chốt 19/07: WMS được bổ sung/sửa, gồm 1 thùng = ? hộp)
 | Nhóm cột | Chủ | Khi sync |
 |---|---|---|

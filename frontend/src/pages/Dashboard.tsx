@@ -167,7 +167,8 @@ export default function Dashboard() {
                           <p className={`mt-0.5 text-[9px] tabular-nums ${pct != null && pct >= 100 ? 'text-red-600 font-semibold' : pct != null && pct >= 80 ? 'text-amber-600' : 'text-slate-400'}`}>
                             {pct == null
                               ? (z.used > 0 ? `${nf(z.used)} pallet — chưa khai pallet tối đa` : 'Chưa khai pallet tối đa')
-                              : `${pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}
+                              // chưa đầy thật thì không làm tròn lên "100%" (99.6% → 99%)
+                              : `${pct >= 100 ? Math.round(pct) : pct >= 10 ? Math.min(99, Math.round(pct)) : Math.round(pct * 10) / 10}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}
                           </p>
                         </div>
                       )

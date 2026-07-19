@@ -73,9 +73,13 @@ Cột đã xác minh trên DB staging (19/07) — nhân với `Material.units_pe
 | `OutboundScanEntry` | `cartons_scanned` | lịch sử quét — nhân để báo cáo nhất quán |
 | `InventoryAdjustmentLog` | `delta`, `cartons_before`, `cartons_after` | audit nhất quán |
 | `ProductionImport` | `planned_cartons`, `posm_cartons` | INTEGER — base hộp nguyên vẫn integer, OK |
-| `TmsOrder` / `inbound_plan_lines` | `planned_boxes` | kế hoạch VC |
-| Stocktake (bảng đếm kiểm kho) | cột số lượng | ⚠️ grep xác minh tên bảng/cột khi làm |
-- **Bắt buộc grep sweep bổ sung** trước khi chốt danh sách: `rg "cartons|boxes|loose_picking|planned_" backend/migrations backend/src` — bảng nào lưu số thùng mà bảng trên chưa liệt kê (vd bảng in tem, weigh, gate) phải rà từng cái: chỉ nhân cột mang nghĩa "số lượng hàng", KHÔNG nhân cột đếm vật lý pallet/tem.
+| `inbound_plan_lines` | `planned_boxes` | kế hoạch VC per mã (join material_id) |
+
+**Kết quả XÁC MINH 19/07 (grep sweep + information_schema staging) — chốt sau trinh sát:**
+- ✅ Danh sách trên là ĐỦ các cột phải nhân. Stocktake KHÔNG có bảng/cột số riêng (số thực tế chỉ nằm trong text `stocktake_flag_note` — GIỮ nguyên text lịch sử, note mới sau flip ghi số base; `parseDiff` FE hiển thị nguyên văn).
+- ❌ **KHÔNG nhân** (đã rà từng cột số còn lại toàn DB): `TmsOrder.planned_boxes/planned_pallets/planned_tons` (material_id = NULL toàn bộ 8004 dòng — là CACHE tổng cross-mã cấp lệnh, xử như aggregate 2.2, chỉ dòng `inbound_plan_lines` per-mã mới nhân) · `PalletLabelPrint.qty` (số thùng in trên TEM = vật lý, tem giữ thùng) · `OutboundItem.pallets_estimated/weight` · `ProductionImport.planned_pallets` · `Material.cartons_per_pallet(_mn)/units_per_carton/carton_*_mm` · `Location/zone.max_pallets` · `DeliverySlot.booked_count` · `carton_scans` jsonb (đếm tem thùng vật lý) · bảng HR/weigh/gate (không có cột lượng hàng).
+- RPC trên DB sống đụng số lượng (phải REPLACE cùng cửa sổ deploy): `dashboard_stats` · `control_tower_stats` · `outbound_shortage_stats` · `slotting_stats` · `get_outbound_scan_log` (2 overload) + `search_outbound_scan_log` + facets · `move_pallets_to_location` (chỉ đọc `>0` — flip-safe, rà lại khi làm) · `scan_insert_pallet` (ghi giá trị được truyền — convert ở BE trước khi gọi).
+- Quy mô dữ liệu staging (mã có entry): InventoryEntry 35.835 · InventoryAdjustmentLog 2.012 · OutboundItem 682 (0 dòng material_id null) · OutboundScanEntry 8 · ProductionImport 17 · inbound_plan_lines 4. **37 dòng tồn đang thùng lẻ → sẽ round + vào báo cáo.** 0 mã entry thiếu hệ số; 6 mã TP/SCA không entry (5 thiếu upc + Loscam) → theo luật 2.3 tạm được thập phân.
 - `Material.cartons_per_pallet` **KHÔNG nhân** — vẫn là "thùng vật lý/pallet" (tem in thùng); pallet ước tính = `qty_base / hệ_số / cartons_per_pallet`.
 
 ### 2.2. Aggregate CROSS-MATERIAL phải chia hệ số (SUM base nhiều mã ≠ nghĩa)

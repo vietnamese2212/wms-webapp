@@ -148,6 +148,13 @@ Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đ�
 - **Tên NPP — cascade 4 bậc:** (1) danh mục WMS theo **Ship-to code** → (2) `Name ship-to party` trong VL06O → (3) Search term/`Tên NPP` file điều vận (viết tắt, vd NPPTRANGHOANG) → (4) cả 3 rỗng = **báo lỗi** dòng đó.
 - **Storage Location chỉ THAM KHẢO** (không đầy đủ) — KHÔNG dùng map kho; kho của chuyến = chọn khi upload / suy từ mã chuyến (`20000016` = mã kho WMS).
 
+### PHƯƠNG ÁN A2 — mô hình số lượng (CHỐT brainstorm vòng 7–8)
+SAP: base unit = **HỘP**, mọi số trong hệ là SỐ NGUYÊN; CAR là đơn vị nhập liệu; **cấm key thập phân**; **hàng chẵn key CAR, dính lẻ key phần lẻ bằng HOP**. Chiếu lên WMS — 3 tầng:
+1. **Tầng đơn hàng: HỘP NGUYÊN + THÙNG NGUYÊN là SỰ THẬT** — luồng upload mới lấy `qty` theo Sales Unit (CAR = thùng nguyên, HOP = hộp lẻ nguyên) làm gốc; `cartons_ordered`/`loose_picking` thập phân chỉ là số DẪN XUẤT (= CAR + HOP/upc) để bộ máy hiện tại (khớp KH, trừ tồn, nhặt lẻ) chạy NGUYÊN TRẠNG. Lưu `boxes_display` = HOP nguyên văn + hệ số upc snapshot lúc convert.
+2. **Biên giới WMS↔SAP: CHỈ SỐ NGUYÊN** — phân rã trả SAP per OD: dòng CAR = thùng nguyên quét pallet; dòng HOP = hộp lẻ thực nhặt (nhặt đủ = đúng HOP gốc; thiếu = round(loose_scanned×upc_snap)). Không bao giờ gửi thập phân qua biên.
+3. **Tồn kho nội bộ GIỮ NGUYÊN thập phân** (vết "thùng bị mở") — KHÔNG đổi lõi (đổi lõi sang hộp = chiến dịch riêng tương lai, không thuộc GĐ B).
+Kèm 2 quyết định UI: (a) **form tạo/sửa đơn tay đổi thành 2 ô "Thùng (nguyên) + Hộp (nguyên)"** — hàng chẵn chỉ điền Thùng, hết cửa key thập phân (upload cũ vẫn nhận thập phân tới khi bỏ); (b) **nút Upload GỘP "Up raw"** — 1 nút mở panel 2 khu vực: khu 1 file VL06O, khu 2 file KH điều vận.
+
 ### Thiết kế build GĐ B (chờ user duyệt để code)
 **Bảng mới `erp_outbound_orders`** (raw, 1 dòng = 1 OD line, unique `(od_number, od_item)`): od_number · od_item · so_number(tham khảo) · ship_to_code · ship_to_name · material_code · material_name · qty_sales + sales_unit · qty_base + base_unit · plant · storage_location(tham khảo) · batch_req · date_pct_req · header_text(gộp 2 ghi chú) · shipping_point · source('EXCEL'/'SAP') · id/updated_at chuẩn.
 **Nút upload 1 "Upload VL06O (SAP)"**: parse → upsert theo (od,item) chunk 500; OD đã thành chuyến mà số liệu đổi → KHÔNG đè đơn, ghi cảnh báo (theo ma trận sửa/hủy, bản đầu = cảnh báo).

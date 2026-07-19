@@ -102,7 +102,7 @@ Thiết kế nghiệp vụ đầy đủ ở `SAP_INTEGRATION_PLAN.md` mục 7 (�
 1. Bảng `erp_outbound_orders` (raw OD, unique `(od_number, od_item)`, source `EXCEL`/`SAP`) — cột theo mục 7; file mẫu thật: `Du lieu mau/vl06o.XLSX` + `Ke hoach dieu van.xlsm` (CHỈ ĐỌC).
 2. Nút **"Up raw"** (1 nút, panel 2 khu vực): khu 1 nạp VL06O → raw; khu 2 nạp KH điều vận (`Ngày xuất·Số xe·SO·DO·Ship-to·Tên NPP·Loại xe·DVVT·Ưu tiên·Note`) → nhóm theo `Số xe` (group_code NGUYÊN VĂN) → sinh GDO/DO/items; **convert giờ RẤT đơn giản: qty base = Σ base các dòng OD** (CAR×hệ_số + HOP).
 3. Mọi chi tiết lấy từ RAW; NPP cascade 4 bậc (danh mục ship-to code → tên VL06O → search term → lỗi); header_text = gộp 2 cột ghi chú; batch/%Date từ cột raw; STO (ship-to = kho nội bộ) chảy vào luồng chuyển kho có sẵn; chạy SONG SONG upload cũ; quyền `outbound.import`.
-4. ⛔ **STOP 2:** mô hình dòng đơn — lõi base làm "1 dòng/mã (qty base, thùng/lẻ = DIV/MOD)" hợp lý trở lại, NHƯNG user từng chọn "2 dòng theo ĐVT" (vòng 9, trước khi chốt base). **Hỏi user chọn lại trước khi code phần sinh items.**
+4. ~~STOP 2~~ **ĐÃ GIẢI (user chốt 19/07 vòng 11):** hàng có entry → lấy TỔNG Actual (base) của mã, ĐÔN tối đa về entry (DIV) + phần dư theo base (MOD) → sinh **2 dòng: "N CAR" + "M HOP"** (dòng CAR = quét pallet, dòng HOP = nhặt lẻ); hàng không entry → 1 dòng base. Sales Unit SAP chỉ để kiểm chéo hệ số + post lại theo đơn vị key từng OD từ raw.
 5. Test bằng chính 2 file mẫu: kỳ vọng 274 dòng raw · 13 chuyến/41 DO · 4 ca ship-to lệch phải lấy theo raw · hệ số suy từ Actual/Qty (48/24/20) khớp `units_per_carton`. Ghi staging phải DỌN SẠCH.
 
 ---

@@ -177,6 +177,9 @@ SAP: base unit = **HỘP**, mọi số trong hệ là SỐ NGUYÊN; CAR là đơ
 3. **Tồn kho nội bộ GIỮ NGUYÊN thập phân** (vết "thùng bị mở") — KHÔNG đổi lõi (đổi lõi sang hộp = chiến dịch riêng tương lai, không thuộc GĐ B).
 Kèm 2 quyết định UI: (a) **form tạo/sửa đơn tay đổi thành 2 ô "Thùng (nguyên) + Hộp (nguyên)"** — hàng chẵn chỉ điền Thùng, hết cửa key thập phân (upload cũ vẫn nhận thập phân tới khi bỏ); (b) **nút Upload GỘP "Up raw"** — 1 nút mở panel 2 khu vực: khu 1 file VL06O, khu 2 file KH điều vận.
 
+### CHỐT vòng 11 — quy tắc CONVERT từ Actual (user chốt 19/07, GIẢI câu treo STOP 2)
+**Hàng có entry unit: lấy TỔNG Actual (base) của mã → ĐÔN TỐI ĐA về entry (DIV), phần dư theo base (MOD).** Vd Σ Actual = 840 HOP, hệ số 48 → sinh **dòng "17 CAR" + dòng "24 HOP"** (khớp mô hình 2 dòng vòng 9 — 2 dòng là KẾT QUẢ CHUẨN HÓA từ tổng Actual, KHÔNG chép cơ cấu dòng SAP key). Hàng không entry → giữ nguyên base 1 dòng. Sales Unit SAP chỉ còn 2 vai trò: kiểm chéo hệ số + post lại theo đơn vị key từng OD (từ RAW). Post per OD vẫn theo số key gốc trong raw — rule "không xuất thiếu" đảm bảo tổng thực xuất = tổng key.
+
 ### CHỐT vòng 9 — dòng đơn theo ĐƠN VỊ (user chọn, 19/07)
 - **Mô hình dòng: "1 GDO × 1 mã × 1 ĐVT = 1 dòng"** (thay rule 1 mã/NPP → 1 mã/NPP/ĐVT). Vd chuyến có DO1 (mã A 15C+20H) + DO2 (mã A 100H), upc 48 → chuẩn hóa: **dòng "A — 17 CAR" + dòng "A — 24 HOP"** (2 dòng, KHÔNG phải 1 dòng 2 cột — user thích bám raw, và nó bỏ được mô hình lai cartons+loose_picking trên cùng dòng). Dòng CAR = luồng quét pallet · dòng HOP = luồng nhặt lẻ.
 - Kéo theo: `OutboundItem` thêm cột **đơn vị**; qty = SỐ NGUYÊN theo đơn vị; **luồng nhặt lẻ đổi sang đếm HỘP nguyên** (hiện là thùng thập phân); gác hoàn thành theo từng dòng-đơn-vị.

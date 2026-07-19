@@ -108,7 +108,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
       type: 'queued',
       msg: duplicate
         ? `⏸ Pallet này ĐÃ trong hàng đợi chờ mạng (${queued} chờ)`
-        : `⏸ Mất mạng — đã xếp hàng chờ (${queued} chờ) · ${norm}${cartonsOverride ? ` · ${cartonsOverride} thùng` : ' · SL chốt khi có mạng'}`,
+        : `⏸ Mất mạng — đã xếp hàng chờ (${queued} chờ) · ${norm}${cartonsOverride ? ` · ${qtyLabel(cartonsOverride, target.material)}` : ' · SL chốt khi có mạng'}`,
     })
     setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 2000)
   }

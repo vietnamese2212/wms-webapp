@@ -14,7 +14,7 @@ import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } f
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 
 interface StocktakeEntryData {
@@ -373,7 +373,7 @@ export default function Stocktake() {
                     </div>
                     {physCount !== '' && Number(physCount) !== entry.cartons_remaining && (
                       <p className="text-[10px] text-red-600 mt-1 font-medium">
-                        Chênh: {Number(physCount) - entry.cartons_remaining > 0 ? '+' : ''}{Number(physCount) - entry.cartons_remaining} thùng
+                        Chênh: {Number(physCount) - entry.cartons_remaining > 0 ? '+' : ''}{qtyLabel(Number(physCount) - entry.cartons_remaining, entry.material)}
                       </p>
                     )}
                   </div>

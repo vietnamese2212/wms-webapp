@@ -6,7 +6,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
@@ -977,7 +977,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 <TableCell colSpan={totalCols} className="px-2 py-1.5">
                   <span className="text-[11px] font-bold text-sky-900 uppercase tracking-wide">NPP: {g.npp || '—'}</span>
                   <span className="text-[9px] font-medium text-sky-700 ml-2">
-                    {g.items.length} mã hàng · {g.items.reduce((s, i) => s + i.cartons_ordered, 0)} thùng
+                    {g.items.length} mã hàng · {g.items.reduce((s, i) => s + qtyEntryDecimal(i.cartons_ordered, i.material), 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng
                   </span>
                 </TableCell>
               </TableRow>
@@ -1365,8 +1365,9 @@ export default function OutboundDetail() {
   const totalOrdered = countable.reduce((s, i) => s + i.cartons_ordered, 0)
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
   // Hiển thị Kế hoạch/Đã xuất tính CẢ hàng no_qr (khớp Tổng thùng ở list); countable chỉ dùng cho canComplete.
-  const totalOrderedAll = allItems.reduce((s, i) => s + i.cartons_ordered, 0)
-  const totalScannedAll = allItems.reduce((s, i) => s + i.cartons_scanned, 0)
+  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (tổng hiển thị = thùng quy đổi).
+  const totalOrderedAll = allItems.reduce((s, i) => s + qtyEntryDecimal(i.cartons_ordered, i.material), 0)
+  const totalScannedAll = allItems.reduce((s, i) => s + qtyEntryDecimal(i.cartons_scanned, i.material), 0)
   const manualItems  = allItems.filter(i => i.material?.no_qr_tracking === true)
   const allManualDone = manualItems.every(i => i.status === 'COMPLETED')
   const scanComplete  = countable.length === 0 || (totalOrdered > 0 && totalScanned >= totalOrdered)
@@ -1665,7 +1666,7 @@ export default function OutboundDetail() {
             )}
             <span className="flex items-center gap-1">
               <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{totalScannedAll}/{totalOrderedAll}</span> thùng
+              <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng
             </span>
           </div>
 
@@ -1760,8 +1761,8 @@ export default function OutboundDetail() {
         <SummaryBand tiles={[
           { label: 'DO',       value: allDOs.length },
           { label: 'Mã hàng',  value: allItems.length },
-          { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN')} thùng`, accent: totalScannedAll > 0 },
-          { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN')} thùng` },
+          { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
+          { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
         ]} />
 
         {/* ── Items table: ~80% ── */}

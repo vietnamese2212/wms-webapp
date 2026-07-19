@@ -16,6 +16,7 @@ import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
+import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
   useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
@@ -555,6 +556,7 @@ export default function PalletLabels() {
       location: (e.location ? `${e.location.location_code}-${e.location.sub_code}` : null) as string | null,
       cartons_imported: (e.cartons_imported ?? null) as number | null,
       cartons_remaining: (e.cartons_remaining ?? null) as number | null,
+      mat: (e.material ?? null) as MatUnits | null,   // BASE UNIT: quy đổi thùng+hộp khi hiển thị
       count: events.length,
       last: events[0]?.created_at ?? '',
       events,
@@ -1226,7 +1228,7 @@ export default function PalletLabels() {
                               <div><span className="text-slate-400">Ngày nhập:</span> <span className="font-medium">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</span></div>
                               <div><span className="text-slate-400">Người nhập:</span> <span className="font-medium">{g.imported_by ?? '—'}</span></div>
                               <div><span className="text-slate-400">Vị trí:</span> <span className="font-mono font-medium">{g.location ?? '—'}</span></div>
-                              <div><span className="text-slate-400">Nhập / Tồn:</span> <span className="font-medium tabular-nums">{g.cartons_imported ?? '—'} / {g.cartons_remaining ?? '—'} thùng</span></div>
+                              <div><span className="text-slate-400">Nhập / Tồn:</span> <span className="font-medium tabular-nums">{g.cartons_imported != null ? qtyLabel(g.cartons_imported, g.mat) : '—'} / {g.cartons_remaining != null ? qtyLabel(g.cartons_remaining, g.mat) : '—'}</span></div>
                             </div>
                             <div className="px-3 py-1.5 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5">
                               <span className="h-3.5 w-1 rounded-full bg-sky-500" />

@@ -38,7 +38,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
-import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
@@ -1398,7 +1398,8 @@ export default function Inbound() {
 
   // Totals
   const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
-  const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + (o.total_cartons ?? 0), 0), [filteredOrders])
+  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (tổng hiển thị = thùng quy đổi)
+  const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + qtyEntryDecimal(o.total_cartons ?? 0, o.material), 0), [filteredOrders])
   const srcCounts = useMemo(() => {
     let sx = 0, ncc = 0, tf = 0
     for (const o of filteredOrders) {
@@ -1419,7 +1420,7 @@ export default function Inbound() {
         for (const { loc, pallets, cartons } of byLoc) {
           const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
           cur.pallets += pallets
-          cur.cartons += cartons
+          cur.cartons += qtyEntryDecimal(cartons, order.material)   // BASE UNIT: quy đổi thùng per-mã
           map.set(loc, cur)
         }
       } else if (order._count.inventory_entries > 0) {
@@ -1429,7 +1430,7 @@ export default function Inbound() {
           : '(chưa xác định)'
         const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
         cur.pallets += order._count.inventory_entries
-        cur.cartons += order.total_cartons ?? 0
+        cur.cartons += qtyEntryDecimal(order.total_cartons ?? 0, order.material)   // BASE UNIT: quy đổi thùng per-mã
         map.set(loc, cur)
       }
     }
@@ -1558,7 +1559,7 @@ export default function Inbound() {
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
               onClick={() => setLocOpen(v => !v)}>
               <MapPin className="h-3.5 w-3.5 text-slate-400" />
-              Vị trí hàng nhập ({locationSummary.length} vị trí) · {totalPallets} pallet · {totalCartons.toLocaleString()} thùng
+              Vị trí hàng nhập ({locationSummary.length} vị trí) · {totalPallets} pallet · {totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng
               <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${locOpen ? 'rotate-180' : ''}`} />
             </button>
             {locOpen && (
@@ -1588,7 +1589,7 @@ export default function Inbound() {
                       <tr key={row.loc} className="border-b border-slate-100">
                         <td className="py-1 pr-6 font-mono text-slate-700">{row.loc}</td>
                         <td className="py-1 pr-6 text-right tabular-nums font-semibold">{row.pallets}</td>
-                        <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString()}</td>
+                        <td className="py-1 text-right tabular-nums">{row.cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1596,7 +1597,7 @@ export default function Inbound() {
                     <tr className="text-slate-500 font-semibold border-t">
                       <td className="py-1 pr-6">Tổng</td>
                       <td className="py-1 pr-6 text-right tabular-nums">{totalPallets}</td>
-                      <td className="py-1 text-right tabular-nums">{totalCartons.toLocaleString()}</td>
+                      <td className="py-1 text-right tabular-nums">{totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1613,7 +1614,7 @@ export default function Inbound() {
         { label: 'NCC',        value: srcCounts.ncc },
         { label: 'TF',         value: srcCounts.tf },
         { label: 'Pallet',     value: totalPallets },
-        { label: 'Thực nhập',  value: totalCartons.toLocaleString() },
+        { label: 'Thực nhập',  value: totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
         { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
       ]} />
 
@@ -1708,7 +1709,7 @@ export default function Inbound() {
       {!isLoading && filteredOrders.length > 0 && (
         <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between">
           <span>1–{filteredOrders.length} / {filteredOrders.length} phiếu</span>
-          <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString()} thùng</span>
+          <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng</span>
         </div>
       )}
      </div>

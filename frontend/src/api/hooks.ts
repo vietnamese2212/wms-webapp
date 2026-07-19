@@ -2829,6 +2829,10 @@ export type TransferGoodsRow = {
   material_code: string | null
   material_name: string | null
   unit: string | null
+  // BASE UNIT: planned_boxes/actual_boxes = BASE; units để FE quy đổi hiển thị (thùng quy đổi)
+  units_per_carton?: number | null
+  entry_unit?: string | null
+  base_unit?: string | null
   planned_boxes: number
   actual_boxes: number
   no_qr_tracking?: boolean
@@ -2933,7 +2937,8 @@ export function useActiveImportsByGdo(gdoId?: string | null) {
         planned_cartons: number | null; planned_pallets?: number | null; total_cartons?: number
         posm_entry_id?: string | null
         transfer_production_date?: string | null
-        material?: { no_qr_tracking?: boolean | null } | null
+        // BASE UNIT: planned_cartons/total_cartons = BASE; material.units để FE quy đổi hiển thị (giữ base cho save)
+        material?: { no_qr_tracking?: boolean | null; units_per_carton?: number | null; entry_unit?: string | null; base_unit?: string | null } | null
       }[]
     },
     enabled: !!gdoId,

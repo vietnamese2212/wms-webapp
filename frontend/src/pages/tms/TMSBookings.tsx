@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { qtyFromEntryBase, qtyEntryDecimal } from '@/utils/qtyUnits'
+import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -2327,7 +2327,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     ? goods.filter(g => !activeImports.some((ai) => ai.material_id === g.material_id))
     : []
   const cfg = tStatus ? TRANSFER_STATUS_CFG[tStatus] : null
-  const totalScanned = goods.reduce((s, g) => s + (g.actual_boxes ?? 0), 0)
+  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (khớp order.planned_boxes = thùng quy đổi)
+  const totalScanned = goods.reduce((s, g) => s + qtyEntryDecimal(g.actual_boxes ?? 0, g), 0)
   // Nhận QUÁ kế hoạch (#4): cảnh báo, KHÔNG chặn — liệt kê mã hàng thực nhận > kế hoạch
   const overReceivedMats = goods.filter(g => {
     const imps = importsByMat.get(g.material_id) ?? []
@@ -2468,7 +2469,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
       {bulkConfirm && (() => {
         const targets = activeImports.filter(ai => ai.status === 'OPEN')
         const matName = new Map(goods.map(g => [g.material_id, g.material_code ?? '—']))
-        const totalCartons = targets.reduce((s, ai) => s + (ai.planned_cartons ?? 0), 0)
+        const totalCartons = targets.reduce((s, ai) => s + qtyEntryDecimal(ai.planned_cartons ?? 0, ai.material), 0)   // BASE UNIT: quy đổi thùng per-mã
         return (
           <Dialog open onOpenChange={v => { if (!v && !bulkRunning) setBulkConfirm(false) }}>
             <DialogContent className="sm:max-w-md">
@@ -2501,14 +2502,14 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               : <span className="text-slate-300">—</span>
                           })()}
                         </td>
-                        <td className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{ai.planned_cartons ?? 0}</td>
+                        <td className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap">{qtyEntryText(ai.planned_cartons ?? 0, ai.material)}</td>
                         <td className="px-2 py-1 text-[10px] text-slate-400 tabular-nums whitespace-nowrap">{(ai.planned_pallets ?? 0) > 0 ? ai.planned_pallets : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <p className="text-[11px] text-slate-500">Tổng <b className="tabular-nums">{totalCartons}</b> thùng. Nếu thực nhận LỆCH số xuất — đừng dùng nút này, lưu số thực tế ở từng dòng trong bảng.</p>
+              <p className="text-[11px] text-slate-500">Tổng <b className="tabular-nums">{totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</b> thùng. Nếu thực nhận LỆCH số xuất — đừng dùng nút này, lưu số thực tế ở từng dòng trong bảng.</p>
               <DialogFooter className="gap-2">
                 <Button variant="outline" size="sm" disabled={bulkRunning} onClick={() => setBulkConfirm(false)}>Hủy</Button>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={bulkRunning}
@@ -2623,7 +2624,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               <div className="flex gap-2">
                 <span className="text-slate-400 w-16 shrink-0">Thùng</span>
                 <span className="tabular-nums font-semibold text-slate-800">
-                  {totalScanned > 0 ? `${totalScanned} / ` : ''}{order?.planned_boxes ?? 0} thùng
+                  {totalScanned > 0 ? `${totalScanned.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} / ` : ''}{order?.planned_boxes ?? 0} thùng
                 </span>
               </div>
               <div className="flex gap-2">
@@ -2700,6 +2701,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                       const actualCartons = isNoQrRow
                         ? Math.max(g.actual_boxes ?? 0, impTotal)
                         : (g.actual_boxes ?? 0)
+                      // BASE UNIT: quy đổi THÙNG để hiển thị/so sánh (no-op với mã không entry); giữ base cho save/logic
+                      const plannedEntry = qtyEntryDecimal(g.planned_boxes, g)
+                      const actualEntry  = qtyEntryDecimal(actualCartons, g)
+                      const diffEntry    = Math.round((actualEntry - plannedEntry) * 1000) / 1000
+                      const fmt1 = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
                       const canExpand = destQtyDate ? imps.length > 0 : g.pallets.length > 0
                       return (
                         <React.Fragment key={g.material_id}>
@@ -2720,24 +2726,24 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                               <span className="text-[10px] text-slate-400">{g.unit ?? '—'}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap text-right">
-                              <span className="text-[10px] font-semibold tabular-nums">{g.planned_boxes}</span>
+                              <span className="text-[10px] font-semibold tabular-nums">{fmt1(plannedEntry)}</span>
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap text-right">
                               <span className={`text-[10px] font-semibold tabular-nums ${actualCartons > 0 ? 'text-green-700' : 'text-slate-300'}`}>
-                                {actualCartons > 0 ? actualCartons : '—'}
+                                {actualCartons > 0 ? fmt1(actualEntry) : '—'}
                               </span>
                             </td>
                             {(() => {
-                              const diff = actualCartons - g.planned_boxes
+                              const diff = diffEntry
                               const hasData = actualCartons > 0
                               // Nhận VƯỢT kế hoạch (diff>0) = đỏ cảnh báo (#4); thiếu (đang nhận) = amber
                               const diffCls = diff === 0 ? 'text-green-700' : diff > 0 ? 'text-red-600' : 'text-amber-600'
-                              const gnLabel = diff === 0 ? 'Đủ' : diff > 0 ? `Thừa +${diff}` : `Thiếu ${diff}`
+                              const gnLabel = diff === 0 ? 'Đủ' : diff > 0 ? `Thừa +${fmt1(diff)}` : `Thiếu ${fmt1(diff)}`
                               const gnCls = diff === 0 ? 'bg-green-100 text-green-700' : diff > 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                               return (<>
                                 <td className="px-2 py-1 whitespace-nowrap text-right">
                                   {hasData
-                                    ? <span className={`text-[10px] font-semibold tabular-nums ${diffCls}`}>{diff > 0 ? `+${diff}` : diff}</span>
+                                    ? <span className={`text-[10px] font-semibold tabular-nums ${diffCls}`}>{diff > 0 ? `+${fmt1(diff)}` : fmt1(diff)}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
                                 <td className="px-2 py-1 whitespace-nowrap">
@@ -2800,7 +2806,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                           )}
                                           {canComplete && hasQty && (
                                             <Button size="sm" className="h-6 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
-                                              disabled={busy} onClick={() => setCompleteConfirm({ impId: imp.id, code: g.material_code ?? '—', name: g.material_name ?? '', planned: g.planned_boxes, actual: actualCartons })}>
+                                              disabled={busy} onClick={() => setCompleteConfirm({ impId: imp.id, code: g.material_code ?? '—', name: g.material_name ?? '', planned: plannedEntry, actual: actualEntry })}>
                                               <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                             </Button>
                                           )}
@@ -2825,7 +2831,11 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                             const busy = rowBusy === ai.id
                             const actual = ai.total_cartons ?? 0
                             const planned = ai.planned_cartons ?? 0
-                            const diff = actual - planned
+                            // BASE UNIT: giá trị hiển thị quy đổi thùng (no-op mã không entry); planned/actual base giữ cho input+save
+                            const plannedE = qtyEntryDecimal(planned, ai.material)
+                            const actualE  = qtyEntryDecimal(actual, ai.material)
+                            const diffE    = Math.round((actualE - plannedE) * 1000) / 1000
+                            const fmtE     = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
                             const nsxLabel = ai.transfer_production_date ? formatDate(ai.transfer_production_date) : null
                             // NSX gửi khi Lưu: ô đã chỉnh (draft) THẮNG NSX phiếu (BE sẽ đồng bộ lại nhãn phiếu)
                             const effNsx = nsxDraft[ai.id] ?? ai.transfer_production_date ?? TODAY_VN
@@ -2854,16 +2864,16 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                   <span className="text-[10px] text-slate-400 tabular-nums">{(ai.planned_pallets ?? 0) > 0 ? `${ai.planned_pallets} pl` : ''}</span>
                                 </td>
                                 <td className="px-2 py-0.5 whitespace-nowrap text-right">
-                                  <span className="text-[10px] tabular-nums text-slate-600">{planned}</span>
+                                  <span className="text-[10px] tabular-nums text-slate-600">{fmtE(plannedE)}</span>
                                 </td>
                                 <td className="px-2 py-0.5 whitespace-nowrap text-right">
                                   <span className={`text-[10px] tabular-nums font-semibold ${actual > 0 ? 'text-green-700' : 'text-slate-300'}`}>
-                                    {actual > 0 ? actual : '—'}
+                                    {actual > 0 ? fmtE(actualE) : '—'}
                                   </span>
                                 </td>
                                 <td className="px-2 py-0.5 whitespace-nowrap text-right">
                                   {actual > 0
-                                    ? <span className={`text-[10px] tabular-nums font-semibold ${diff === 0 ? 'text-green-700' : diff > 0 ? 'text-red-600' : 'text-amber-600'}`}>{diff > 0 ? `+${diff}` : diff}</span>
+                                    ? <span className={`text-[10px] tabular-nums font-semibold ${diffE === 0 ? 'text-green-700' : diffE > 0 ? 'text-red-600' : 'text-amber-600'}`}>{diffE > 0 ? `+${fmtE(diffE)}` : fmtE(diffE)}</span>
                                     : <span className="text-slate-300 text-[10px]">—</span>}
                                 </td>
                                 <td className="px-2 py-0.5 whitespace-nowrap">
@@ -2899,7 +2909,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                         <>
                                           <Button size="sm" className="h-5 !min-h-0 !min-w-0 text-[10px] px-1.5 gap-1 bg-green-600 hover:bg-green-700"
                                             disabled={busy}
-                                            onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned, actual })}>
+                                            onClick={() => setCompleteConfirm({ impId: ai.id, code: g.material_code ?? '—', name: `${g.material_name ?? ''}${nsxLabel ? ` · NSX ${nsxLabel}` : ''}`, planned: plannedE, actual: actualE })}>
                                             <CheckCircle2 className="h-3 w-3" /> {busy ? '…' : 'Hoàn thành'}
                                           </Button>
                                           <button type="button" className="text-amber-600 hover:text-amber-800 px-0.5 disabled:opacity-40"
@@ -3354,7 +3364,8 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
         material_code: code,
         material_name: mat?.short_name as string || '—',
         unit: (matFull as { unit?: string })?.unit ?? '',
-        planned_boxes: (line.planned_boxes as number) ?? 0,
+        // BASE UNIT: planned_boxes dòng plan = BASE → quy đổi thùng (actualMap từ plan-vs-actual đã là entry)
+        planned_boxes: qtyEntryDecimal((line.planned_boxes as number) ?? 0, matFull ?? null),
         actual_boxes: actualMap.get(code) ?? 0,
         status: line.status as string | null,
       })

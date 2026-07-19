@@ -22,6 +22,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, type MatUnits } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -564,23 +565,20 @@ export default function LoosePickingItemDetail() {
             <div className="flex gap-3 bg-slate-50 rounded-lg px-3 py-2">
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Cần nhặt lẻ</div>
-                <div className="text-base font-bold tabular-nums text-slate-700">{qtyEntryText(effectiveLoose, item.material)}</div>
-                <div className="text-[9px] text-slate-400">{qtyUnitLabel(item.material)}</div>
+                <div className="text-base font-bold tabular-nums text-slate-700">{qtyLabel(effectiveLoose, item.material)}</div>
               </div>
               <div className="w-px bg-slate-200" />
               <div className="flex-1 text-center">
                 <div className="text-[10px] text-slate-500 mb-0.5">Còn thiếu</div>
-                <div className={`text-base font-bold tabular-nums ${looseRemaining === 0 ? 'text-green-600' : 'text-amber-600'}`}>{qtyEntryText(looseRemaining, item.material)}</div>
-                <div className="text-[9px] text-slate-400">{qtyUnitLabel(item.material)}</div>
+                <div className={`text-base font-bold tabular-nums ${looseRemaining === 0 ? 'text-green-600' : 'text-amber-600'}`}>{qtyLabel(looseRemaining, item.material)}</div>
               </div>
             </div>
             <div className="space-y-1">
-              <p className="text-xs text-slate-600">Số {qtyBaseLabel(item.material)} lẻ đã chuẩn bị</p>
-              <Input
-                type="number" min={0}
-                value={manualLooseCartons}
-                onChange={e => { setManualLooseCartons(e.target.value); setManualLooseError('') }}
-                className={`text-center font-semibold text-lg h-11 ${overLooseMax ? 'border-red-400 focus-visible:ring-red-400' : ''}`}
+              <p className="text-xs text-slate-600">Số lượng lẻ đã chuẩn bị</p>
+              <QtyInput
+                value={manualLooseNum}
+                mat={item.material}
+                onChange={b => { setManualLooseCartons(String(b)); setManualLooseError('') }}
                 autoFocus
               />
               {overLooseMax && <p className="text-xs text-red-600">Vượt số cần nhặt lẻ (tối đa {qtyLabel(manualLooseMax, item.material)})</p>}

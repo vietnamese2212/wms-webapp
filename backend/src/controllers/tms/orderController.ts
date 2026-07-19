@@ -140,7 +140,7 @@ export async function listOrders(req: Request, res: Response) {
         // Chunk + phân trang né cap-1000 (nhiều lệnh → nhiều phiếu nhập)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const importOrders = await fetchAllByIdChunks(orderIds, chunk => supabase.from('ProductionImport')
-          .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking), warehouse:Warehouse!warehouse_id(inventory_mode)')
+          .select('id, tms_order_id, created_at, posm_cartons, material:Material!material_id(no_qr_tracking, units_per_carton, entry_unit, base_unit), warehouse:Warehouse!warehouse_id(inventory_mode)')
           .in('tms_order_id', chunk)
           .eq('source_type', 'TRANSFER')
           .neq('status', 'CANCELLED')
@@ -152,9 +152,10 @@ export async function listOrders(req: Request, res: Response) {
           const existing = receivingStartedAt.get(imp.tms_order_id)
           if (!existing || imp.created_at < existing) receivingStartedAt.set(imp.tms_order_id, imp.created_at)
           if (effectiveNoQr(imp.material?.no_qr_tracking, imp.warehouse?.inventory_mode)) {
-            // No-QR: nhận vào pool dùng chung (import_order_id ≠ phiếu) → cộng theo posm_cartons
+            // No-QR: nhận vào pool dùng chung (import_order_id ≠ phiếu) → cộng theo posm_cartons.
+            // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng (khớp planned_boxes cấp lệnh = thùng quy đổi).
             if (imp.posm_cartons != null)
-              actualReceivedByOrder.set(imp.tms_order_id, (actualReceivedByOrder.get(imp.tms_order_id) ?? 0) + Number(imp.posm_cartons))
+              actualReceivedByOrder.set(imp.tms_order_id, (actualReceivedByOrder.get(imp.tms_order_id) ?? 0) + qtyEntryDecimal(Number(imp.posm_cartons), imp.material as MatUnits | null))
           } else {
             qrImportIds.push(imp.id)
           }
@@ -164,12 +165,13 @@ export async function listOrders(req: Request, res: Response) {
           // Phân trang né cap-1000: tổng entry qua TẤT CẢ chuyến trong list dễ vượt 1000
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
-            .select('import_order_id, cartons_imported').in('import_order_id', qrImportIds)
+            .select('import_order_id, cartons_imported, material:Material!material_id(units_per_carton, entry_unit, base_unit)').in('import_order_id', qrImportIds)
             .order('import_order_id', { ascending: true }))
           for (const entry of entries as any[]) {
             const ordId = importToOrder.get(entry.import_order_id)
             if (!ordId) continue
-            actualReceivedByOrder.set(ordId, (actualReceivedByOrder.get(ordId) ?? 0) + (entry.cartons_imported ?? 0))
+            // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (khớp đơn vị planned_boxes cấp lệnh)
+            actualReceivedByOrder.set(ordId, (actualReceivedByOrder.get(ordId) ?? 0) + qtyEntryDecimal(entry.cartons_imported ?? 0, entry.material as MatUnits | null))
           }
         }
       }
@@ -1354,6 +1356,10 @@ export async function getTransferGoods(req: Request, res: Response) {
         material_code: l.material?.material_code ?? null,
         material_name: l.material?.short_name ?? null,
         unit: l.material?.unit ?? null,
+        // BASE UNIT: planned_boxes/actual_boxes trả BASE (khớp luật API=base) + kèm units để FE quy đổi hiển thị
+        units_per_carton: l.material?.units_per_carton ?? null,
+        entry_unit: l.material?.entry_unit ?? null,
+        base_unit: l.material?.base_unit ?? null,
         planned_boxes: l.planned_boxes,
         actual_boxes,
         no_qr_tracking: isNoQr,

@@ -85,9 +85,11 @@ interface ScanDialogProps {
   gdoId:   string
   cartonScanEnabled?: boolean
   onClose: () => void
+  pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
+  initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const user = useAuthStore(s => s.user)
   // Số lượt quét của MÃ này đang chờ mạng (hàng đợi offline)
@@ -232,6 +234,11 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
   // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
   useWedgeScanner(code => handleScan(code, 'wedge'), true)
 
+  // Mở bằng cò súng: xử lý ngay tem vừa bắn (1 lần khi mount)
+  useEffect(() => {
+    if (initialScan) handleScan(initialScan, 'wedge')
+  }, []) // eslint-disable-line
+
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
 
@@ -267,7 +274,15 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
           )}
 
           <div className="relative flex-1 min-h-0">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            {pdaMode ? (
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                <QrCode className="h-12 w-12 text-sky-400/70" />
+                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
+                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+              </div>
+            ) : (
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            )}
 
             {checking && (
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
@@ -428,6 +443,7 @@ export default function OutboundItemDetail() {
   const { vehicles } = useActiveVehiclesStore()
 
   const [showScan,         setShowScan]         = useState(false)
+  const [pdaScan,          setPdaScan]          = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   const [confirmScanId,    setConfirmScanId]    = useState<string | null>(null)
   const [showInventory,    setShowInventory]    = useState(false)
   const [confirmLooseOpen, setConfirmLooseOpen] = useState(false)
@@ -445,6 +461,20 @@ export default function OutboundItemDetail() {
 
   // Ref để auto-open scan chỉ chạy 1 lần khi trang load lần đầu (tránh tái kích hoạt sau mỗi lần delete/confirm)
   const hasAutoScanned = useRef(false)
+
+  // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
+  // validate mã giữ nguyên (BE chặn tem sai mã của item này như quét thường)
+  useWedgeScanner(code => {
+    if (!gdo || showScan) return
+    if (confirmScanId || confirmLooseOpen || showLoscamDialog || cartonRowId || cartonListId) return
+    const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
+    if (!it || it.material?.no_qr_tracking === true || it.status === 'COMPLETED') return
+    if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
+    if (!can(perms, 'outbound', 'scan')) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowScan(true)
+  }, true)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return
@@ -620,7 +650,9 @@ export default function OutboundItemDetail() {
   return (
     <>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled} onClose={() => setShowScan(false)} />
+        <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled}
+          pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
 
       {cartonRow && (

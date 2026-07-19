@@ -16,6 +16,7 @@ import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
@@ -473,10 +474,24 @@ export default function LoosePickingDetail() {
   const { data: gdo, isLoading } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
+  const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
 
   function toggleExpand(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
   }
+
+  // PDA: bóp cò ngay tại trang → tự mở màn quét chế độ SÚNG (không camera) — điều kiện = nút Quét QR
+  useWedgeScanner(code => {
+    if (!gdo || showOrderScan) return
+    if (gdo.status === 'COMPLETED' || gdo.status === 'CANCELLED') return
+    if (!can(perms, 'loosepicking', 'scan')) return
+    const anyLoose = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
+      i.loose_picking > 0 && i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0))
+    if (!anyLoose) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowOrderScan(true)
+  }, true)
 
   useEffect(() => {
     if (gdo) update(gdo.id, gdo.status)
@@ -535,7 +550,8 @@ export default function LoosePickingDetail() {
   return (
     <div className="flex flex-col h-full min-h-0">
       {showOrderScan && (
-        <GdoScanSheet gdo={gdo} mode="loose" onClose={() => setShowOrderScan(false)} />
+        <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
       )}
 
       {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}

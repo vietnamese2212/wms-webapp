@@ -96,9 +96,11 @@ interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
   onClose: () => void
+  pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
+  initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
@@ -172,6 +174,11 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
   useWedgeScanner(code => handleScan(code, 'wedge'), true)
 
+  // Mở bằng cò súng: xử lý ngay tem vừa bắn (1 lần khi mount)
+  useEffect(() => {
+    if (initialScan) handleScan(initialScan, 'wedge')
+  }, []) // eslint-disable-line
+
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
 
@@ -207,7 +214,15 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
           )}
 
           <div className="relative flex-1 min-h-0">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            {pdaMode ? (
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                <QrCode className="h-12 w-12 text-sky-400/70" />
+                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
+                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+              </div>
+            ) : (
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            )}
 
             {checking && (
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
@@ -312,6 +327,7 @@ export default function LoosePickingItemDetail() {
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const { mutateAsync: manualLooseAsync } = useManualLooseItem()
   const [showScan,          setShowScan]          = useState(false)
+  const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   const [showInventory,     setShowInventory]     = useState(false)
   const [confirmLooseOpen,  setConfirmLooseOpen]  = useState(false)
   const [looseError,        setLooseError]        = useState<string | null>(null)
@@ -324,6 +340,23 @@ export default function LoosePickingItemDetail() {
   const [manualLooseSaving, setManualLooseSaving] = useState(false)
 
   const hasAutoScanned = useRef(false)
+
+  // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
+  // rule chặn giữ nguyên (sai mã / vượt số nhặt lẻ như quét thường)
+  useWedgeScanner(code => {
+    if (!gdo || showScan) return
+    if (confirmLooseOpen || showManualLoose) return
+    const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
+    if (!it || it.material?.no_qr_tracking === true || it.loose_picking <= 0) return
+    const ls = (it.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
+    const ovr = Math.max(0, (it.cartons_scanned - ls) - (it.cartons_ordered - it.loose_picking))
+    if (ls >= Math.max(0, it.loose_picking - ovr)) return   // đã đủ số lẻ
+    if (gdo.status === 'COMPLETED' || gdo.status === 'CANCELLED') return
+    if (!can(perms, 'loosepicking', 'scan')) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowScan(true)
+  }, true)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return
@@ -495,7 +528,8 @@ export default function LoosePickingItemDetail() {
   return (
     <>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} onClose={() => setShowScan(false)} />
+        <ScanDialog item={item} gdoId={gdoId!} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
 
       <ConfirmDialog

@@ -31,6 +31,7 @@ import {
 } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { EditGDOModal, gdoKey } from './Outbound'
 import { printDeliveryNote } from './printDeliveryNote'
@@ -1278,6 +1279,7 @@ export default function OutboundDetail() {
 
   const [showStart,         setShowStart]         = useState(false)
   const [showOrderScan,     setShowOrderScan]     = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
+  const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng NGAY TẠI TRANG → mở màn quét chế độ súng (không camera)
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
   const [showEditGDO,       setShowEditGDO]       = useState(false)
@@ -1290,6 +1292,21 @@ export default function OutboundDetail() {
   function toggleExpandItem(itemId: string) {
     setExpandedItemIds(prev => { const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n })
   }
+
+  // PDA (user 19/07): bóp cò NGAY TẠI TRANG (chưa mở màn quét) → tự mở màn quét chế độ SÚNG
+  // (không bật camera) và xử lý luôn tem vừa bắn. Điều kiện = đúng điều kiện nút Quét QR.
+  useWedgeScanner(code => {
+    if (!gdo || showOrderScan) return
+    if (showStart || showEditGDO || showEditTransport || showQuickExport || showLoadPlan || pendingConfirm) return
+    if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
+    if (!can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'scan')) return
+    const anyScannable = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
+      i.material?.no_qr_tracking !== true && i.status !== 'COMPLETED' && i.cartons_scanned < i.cartons_ordered))
+    if (!anyScannable) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowOrderScan(true)
+  }, true)
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)
@@ -1546,7 +1563,8 @@ export default function OutboundDetail() {
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}
       {showOrderScan && (
-        <GdoScanSheet gdo={gdo} mode="outbound" onClose={() => setShowOrderScan(false)} />
+        <GdoScanSheet gdo={gdo} mode="outbound" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
       )}
       {showLoadPlan && (
         <LoadPlan3DDialog open={showLoadPlan} onClose={() => setShowLoadPlan(false)} gdo={gdo} />

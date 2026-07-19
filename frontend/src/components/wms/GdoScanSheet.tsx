@@ -4,10 +4,12 @@
 // quét theo mã hàng — MỌI rule chặn giữ nguyên (BE kiểm theo item): sai mã, QA giữ, %Date,
 // trùng pallet, vượt kế hoạch, nhặt lẻ không vượt số lẻ…
 // mode='outbound' (quét xuất — có hàng đợi offline + tem thùng) | mode='loose' (nhặt lẻ).
-import { useMemo, useRef, useState } from 'react'
+// pdaMode (user 19/07): mở bằng CÒ SÚNG ngay trên trang đơn → KHÔNG bật camera (panel tối
+// "bóp cò để quét"), initialScan = tem vừa bắn được xử lý luôn; bắn lại đúng tem = Lưu.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
@@ -43,8 +45,10 @@ function looseRemainingOf(item: OutboundItem): number {
   return Math.max(0, effective - Math.min(looseScanned, effective))
 }
 
-export function GdoScanSheet({ gdo, mode, onClose }: {
+export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan }: {
   gdo: GDO; mode: 'outbound' | 'loose'; onClose: () => void
+  pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
+  initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn khi mount
 }) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const user = useAuthStore(s => s.user)
@@ -238,6 +242,11 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
   // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
   useWedgeScanner(code => handleScan(code, 'wedge'), true)
 
+  // Mở bằng cò súng: xử lý ngay tem vừa bắn (1 lần khi mount)
+  useEffect(() => {
+    if (initialScan) handleScan(initialScan, 'wedge')
+  }, []) // eslint-disable-line
+
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
 
@@ -287,7 +296,15 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
           )}
 
           <div className="relative flex-1 min-h-0">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            {pdaMode ? (
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                <QrCode className="h-12 w-12 text-sky-400/70" />
+                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
+                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+              </div>
+            ) : (
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            )}
 
             {checking && (
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10

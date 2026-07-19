@@ -139,6 +139,16 @@ export async function updateMaterial(req: Request, res: Response) {
       base_unit, entry_unit,
     } = req.body
 
+    // Entry unit đòi hệ số 1 Entry = N Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch (gộp giá trị hiện tại)
+    if (entry_unit !== undefined || units_per_carton !== undefined) {
+      const { data: cur } = await supabase.from('Material')
+        .select('entry_unit, units_per_carton').eq('id', req.params.id).maybeSingle()
+      const effEntry = entry_unit !== undefined ? (entry_unit ? String(entry_unit).trim() : null) : cur?.entry_unit ?? null
+      const effUpc   = units_per_carton !== undefined ? (units_per_carton != null ? Number(units_per_carton) : null) : cur?.units_per_carton ?? null
+      if (effEntry && !(Number(effUpc) > 0))
+        return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô EA/thùng) phải > 0')
+    }
+
     let short_name: string | undefined
     if (material_description !== undefined || custom_short_name !== undefined) {
       const { data: current } = await supabase

@@ -26,6 +26,7 @@ import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
@@ -130,6 +131,8 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
   }
 
   function handleScan(qr_code: string) {
+    // Guard chung camera + súng quét: đang check/lưu/chờ xác nhận/quét thùng → bỏ qua lượt mới
+    if (checking || saving || checkResult || cartonFor) return
     playBeep()
     setCheckResult(null)
     setFeedback(null)
@@ -220,6 +223,9 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
       }),
     })
   }
+
+  // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
+  useWedgeScanner(handleScan, true)
 
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)

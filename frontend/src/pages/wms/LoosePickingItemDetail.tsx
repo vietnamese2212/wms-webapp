@@ -19,6 +19,7 @@ import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -113,6 +114,8 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
   const remaining    = Math.max(0, effectiveLoose - looseDone)
 
   function handleScan(qr_code: string) {
+    // Guard chung camera + súng quét: đang check/lưu/chờ xác nhận → bỏ qua lượt mới
+    if (checking || saving || checkResult) return
     playBeep()
     setCheckResult(null)
     setFeedback(null)
@@ -160,6 +163,9 @@ function ScanDialog({ item, gdoId, onClose }: ScanDialogProps) {
     setCheckResult(null)
     scannerRef.current?.resume()
   }
+
+  // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
+  useWedgeScanner(handleScan, true)
 
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)

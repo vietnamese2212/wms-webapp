@@ -23,6 +23,7 @@ import { playBeep } from '@/utils/audio'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { useAuthStore } from '@/stores/authStore'
 import type { GDO, OutboundItem } from '@/types'
 
@@ -107,6 +108,9 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
   }
 
   function handleScan(qr_code: string) {
+    // Guard chung camera + súng quét: đang check/lưu/chờ xác nhận/quét thùng → bỏ qua lượt mới
+    // (camera tự pause sau scan nên trước đây không cần; có súng quét bắn bất kỳ lúc nào thì cần)
+    if (checking || saving || checkResult || cartonFor) return
     playBeep()
     setCheckResult(null)
     setFeedback(null)
@@ -225,6 +229,9 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
     })
   }
 
+  // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
+  useWedgeScanner(handleScan, true)
+
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
 
@@ -238,7 +245,7 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
               {mode === 'loose' ? 'Quét nhặt lẻ' : 'Quét xuất hàng'} — <span className="font-mono">{gdo.group_code}</span>
             </p>
             <p className="text-sm text-slate-500">
-              Quét tem pallet bất kỳ thuộc đơn — tự nhận mã hàng · phiên này: <strong>{count}</strong> pallet
+              Quét tem pallet bất kỳ thuộc đơn — tự nhận mã hàng · hỗ trợ súng quét · phiên này: <strong>{count}</strong> pallet
             </p>
           </div>
 

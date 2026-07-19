@@ -8,7 +8,7 @@ import {
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGDO, useItemInventory, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, type ItemInventoryEntry } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
@@ -211,6 +211,8 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   // Cảnh báo thiếu tồn theo (kho, ngày giao) — badge cuối cột Mã hàng (đồng bộ Xuất)
   const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
+  // Cột "Vị trí lấy" — top 2 vị trí FEFO trên màn (đồng bộ trang Xuất)
+  const { data: pickSug } = useGdoPickSuggestions(gdoId)
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
 
   const allItems = doRecords.flatMap(d =>
@@ -222,6 +224,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasHeaderText    = allItems.some(i => i.header_text)
+  const hasPickSug       = !!pickSug && Object.values(pickSug).some(v => v.length > 0)
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -252,6 +255,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
+            {hasPickSug && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí lấy</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
             {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch yêu cầu</TableHead>}
             {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date yêu cầu</TableHead>}
@@ -314,6 +318,34 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       <Search className="h-5 w-5" />
                     </button>
                   </TableCell>
+                  {hasPickSug && (
+                    <TableCell
+                      className="px-2 py-1 align-top whitespace-nowrap cursor-pointer"
+                      title="Vị trí nên lấy (FEFO — %Date thấp trước) · bấm xem đầy đủ tồn kho"
+                      onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
+                    >
+                      {(() => {
+                        if (isDone) return <span className="text-[10px] text-slate-300">—</span>
+                        const sugs = item.material_id ? pickSug?.[item.material_id] ?? [] : []
+                        if (sugs.length === 0) return <span className="text-[10px] text-slate-300">—</span>
+                        return (
+                          <div className="leading-tight">
+                            {sugs.map((s, si) => (
+                              <div key={si} className="text-[10px]">
+                                <span className={`font-mono font-semibold ${si === 0 ? 'text-sky-700' : 'text-slate-500'}`}>{s.location_code ?? '—'}</span>
+                                {s.pct_date != null && (
+                                  <span className={`ml-1 font-bold tabular-nums ${
+                                    s.pct_date <= 30 ? 'text-red-600' : s.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                  }`}>{s.pct_date}%</span>
+                                )}
+                                <span className="ml-1 text-slate-400 tabular-nums">{s.available}th</span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </TableCell>
+                  )}
                   <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                     {(() => {
                       const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
@@ -358,7 +390,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
                 {expanded && (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={6 + [hasBatchRequired, hasDateRequired, hasHeaderText].filter(Boolean).length} className="px-0 py-0 border-b border-slate-100">
+                    <TableCell colSpan={6 + [hasPickSug, hasBatchRequired, hasDateRequired, hasHeaderText].filter(Boolean).length} className="px-0 py-0 border-b border-slate-100">
                       <div className="ml-3 pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                         <table className="w-full border-collapse whitespace-nowrap">
                           <thead>

@@ -26,6 +26,7 @@ import {
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
+  useGdoPickSuggestions,
 } from '@/api/hooks'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
@@ -888,6 +889,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   // Cảnh báo thiếu tồn theo (kho, ngày giao) — badge cuối cột Mã hàng
   const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
+  // Cột "Vị trí lấy" — top 2 vị trí FEFO trên màn (thủ kho khỏi in giấy; chi tiết vẫn ở kính lúp)
+  const { data: pickSug } = useGdoPickSuggestions(gdoId)
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null)
   const [manualDlg, setManualDlg] = useState<{ itemId: string; matName: string; cartons: number } | null>(null)
   const allItems = doRecords.flatMap(d =>
@@ -910,7 +913,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   const hasBatchRequired = allItems.some(i => i.batch_required)
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasHeaderText    = allItems.some(i => i.header_text)
-  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasBatchRequired, hasDateRequired, hasHeaderText].filter(Boolean).length
+  const hasPickSug       = !!pickSug && Object.values(pickSug).some(v => v.length > 0)
+  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasBatchRequired, hasDateRequired, hasHeaderText, hasPickSug].filter(Boolean).length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -941,6 +945,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
+            {hasPickSug       && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí lấy</TableHead>}
             {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
             {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
             {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
@@ -1035,6 +1040,34 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                     <Search className="h-5 w-5" />
                   </button>
                 </TableCell>
+                {hasPickSug && (
+                  <TableCell
+                    className="px-2 py-1 align-top whitespace-nowrap cursor-pointer"
+                    title="Vị trí nên lấy (FEFO — %Date thấp trước) · bấm xem đầy đủ tồn kho"
+                    onClick={e => { e.stopPropagation(); setInventoryItemId(item.id) }}
+                  >
+                    {(() => {
+                      if (item.status === 'COMPLETED') return <span className="text-[10px] text-slate-300">—</span>
+                      const sugs = item.material_id ? pickSug?.[item.material_id] ?? [] : []
+                      if (sugs.length === 0) return <span className="text-[10px] text-slate-300">—</span>
+                      return (
+                        <div className="leading-tight">
+                          {sugs.map((s, si) => (
+                            <div key={si} className="text-[10px]">
+                              <span className={`font-mono font-semibold ${si === 0 ? 'text-sky-700' : 'text-slate-500'}`}>{s.location_code ?? '—'}</span>
+                              {s.pct_date != null && (
+                                <span className={`ml-1 font-bold tabular-nums ${
+                                  s.pct_date <= 30 ? 'text-red-600' : s.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
+                                }`}>{s.pct_date}%</span>
+                              )}
+                              <span className="ml-1 text-slate-400 tabular-nums">{s.available}th</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </TableCell>
+                )}
                 {hasBoxes && (
                   <TableCell className="px-2 py-1 align-top text-right">
                     {item.boxes_display > 0

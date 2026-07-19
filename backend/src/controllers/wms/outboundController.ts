@@ -2356,6 +2356,83 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// ─── Gợi ý vị trí lấy FEFO theo mã hàng (dùng chung: board Chuẩn bị hàng + cột "Vị trí lấy") ──
+// Chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
+// lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
+// Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
+type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number }
+async function fefoSuggestionsByMaterial(matIds: string[], warehouseIds: string[]): Promise<Map<string, FefoSuggestion[]>> {
+  const out = new Map<string, FefoSuggestion[]>()
+  if (!matIds.length) return out
+  const useWhFilter = warehouseIds.length > 0
+  const entryChunks = await Promise.all(
+    Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
+      fetchAllRowsParallel(() => {
+        let q = supabase.from('InventoryEntry')
+          .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+          .in('material_id', chunk)
+          .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+          .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
+          .order('id')
+        if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
+        return q
+      })
+    )
+  )
+  const entries = entryChunks.flat() as Array<{
+    material_id: string; cartons_remaining: number | null; cartons_imported: number | null
+    cartons_reserved: number | null; production_date: string | null; expiry_date: string | null; ncc_id: string | null; shelf_life_days: number | null
+    location: { location_code: string | null } | null
+    material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
+  }>
+  const nowMs = Date.now()
+  const byMat = new Map<string, Map<string, FefoSuggestion>>()
+  for (const e of (entries ?? [])) {
+    const reserved  = Number(e.cartons_reserved ?? 0)
+    const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
+    if (available <= 0) continue
+    const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
+    const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
+    const loc = e.location?.location_code ?? '(chưa xác định)'
+    const k = `${pct_date ?? 'n'}|${loc}`
+    const locMap = byMat.get(e.material_id) ?? new Map<string, FefoSuggestion>()
+    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0 }
+    cur.available += available
+    locMap.set(k, cur)
+    byMat.set(e.material_id, locMap)
+  }
+  for (const [matId, locMap] of byMat) {
+    // Hòa %Date → ưu tiên vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí; đồng bộ luật với panel tồn kho FE
+    out.set(matId, [...locMap.values()].sort((a, b) => {
+      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
+      if (pa !== pb) return pa - pb
+      if (a.available !== b.available) return a.available - b.available
+      return (a.location_code ?? '').localeCompare(b.location_code ?? '')
+    }))
+  }
+  return out
+}
+
+// Gợi ý vị trí lấy cho MỌI mã của 1 chuyến — cột "Vị trí lấy" trang chi tiết Xuất/Nhặt lẻ
+// (thủ kho xem trên MÀN thay vì in giấy — user 19/07; chi tiết đầy đủ vẫn ở kính lúp tồn kho)
+export async function getGdoPickSuggestions(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder').select('warehouse_id').eq('id', id).single()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
+    if (!inScope(req, gdo.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
+    const dos = await fetchAllByIdChunks([id], chunk => supabase.from('OutboundDelivery')
+      .select('id').in('gdo_id', chunk).order('id'))
+    const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+    if (!doIds.length) return ok(res, {})
+    const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+      .select('material_id').in('do_id', chunk).order('id')) as Array<{ material_id: string | null }>
+    const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
+    const sugByMat = await fefoSuggestionsByMaterial(matIds, gdo.warehouse_id ? [gdo.warehouse_id] : [])
+    return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // ─── Bảng chuẩn bị hàng — gom ≥1 GDO, tính pallet CÒN PHẢI chuẩn bị + gợi ý vị trí FEFO ──
 // Realtime: FE dùng queryKey ['gdo','prepare',…] → OutboundItem/OutboundScanEntry đổi sẽ tự
 // invalidate (prefix 'gdo'), pallet cần chuẩn bị giảm dần khi quét. KHÔNG giữ chỗ (reserve).
@@ -2419,59 +2496,12 @@ export async function getPrepareBoard(req: Request, res: Response) {
       rowMap.set(key, cur)
     }
 
-    // FEFO suggestions cho các mã hàng — chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
-    // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in())
+    // FEFO suggestions cho các mã hàng — helper dùng chung với cột "Vị trí lấy" trang chi tiết đơn
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
-    const useWhFilter = warehouseIds.length > 0
-    if (matIds.length) {
-      const entryChunks = await Promise.all(
-        Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
-          fetchAllRowsParallel(() => {
-            let q = supabase.from('InventoryEntry')
-              .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
-              .in('material_id', chunk)
-              .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
-              .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
-              .order('id')
-            if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
-            return q
-          })
-        )
-      )
-      const entries = entryChunks.flat() as Array<{
-        material_id: string; cartons_remaining: number | null; cartons_imported: number | null
-        cartons_reserved: number | null; production_date: string | null; expiry_date: string | null; ncc_id: string | null; shelf_life_days: number | null
-        location: { location_code: string | null } | null
-        material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
-      }>
-      const nowMs = Date.now()
-      const byMat = new Map<string, Map<string, { location_code: string | null; pct_date: number | null; available: number }>>()
-      for (const e of (entries ?? [])) {
-        const reserved  = Number(e.cartons_reserved ?? 0)
-        const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
-        if (available <= 0) continue
-        const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
-        const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
-        const loc = e.location?.location_code ?? '(chưa xác định)'
-        const k = `${pct_date ?? 'n'}|${loc}`
-        const locMap = byMat.get(e.material_id) ?? new Map()
-        const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0 }
-        cur.available += available
-        locMap.set(k, cur)
-        byMat.set(e.material_id, locMap)
-      }
-      for (const r of rowMap.values()) {
-        if (!r.material_id) continue
-        const locMap = byMat.get(r.material_id)
-        if (!locMap) continue
-        // Hòa %Date → ưu tiên vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí; đồng bộ luật với panel tồn kho FE
-        r.suggestions = [...locMap.values()].sort((a, b) => {
-          const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-          if (pa !== pb) return pa - pb
-          if (a.available !== b.available) return a.available - b.available
-          return (a.location_code ?? '').localeCompare(b.location_code ?? '')
-        }).slice(0, 2)
-      }
+    const sugByMat = await fefoSuggestionsByMaterial(matIds, warehouseIds)
+    for (const r of rowMap.values()) {
+      if (!r.material_id) continue
+      r.suggestions = (sugByMat.get(r.material_id) ?? []).slice(0, 2)
     }
 
     // Tính còn lại + pallet cần; chỉ giữ mã còn phải chuẩn bị

@@ -1847,6 +1847,18 @@ export type ItemInventoryEntry = {
   qa_status:         { id: string; code: string; name: string } | null
 }
 
+// Gợi ý vị trí lấy FEFO theo mã hàng của 1 chuyến (cột "Vị trí lấy" — thủ kho xem trên màn).
+// Key prefix 'gdo' → realtime tự invalidate khi quét (reserve tồn đổi ⇒ gợi ý đổi).
+// Dùng chung type PickSuggestion khai ở phần Bảng chuẩn bị hàng (bên dưới).
+export function useGdoPickSuggestions(gdoId: string | undefined) {
+  return useQuery({
+    queryKey: ['gdo', 'pick-suggestions', gdoId],
+    queryFn: () => apiClient.get(`/wms/outbound/${gdoId}/pick-suggestions`)
+      .then(r => r.data.data as Record<string, PickSuggestion[]>),
+    enabled: !!gdoId,
+  })
+}
+
 export type CheckOutboundScanResult = {
   pallet_code:       string
   production_date:   string | null
@@ -1914,7 +1926,7 @@ export function useItemInventory(gdoId: string | undefined, itemId: string | und
   })
 }
 
-// Gợi ý vị trí lấy hàng FEFO (chỉ dùng ở Bảng chuẩn bị hàng).
+// Gợi ý vị trí lấy hàng FEFO (Bảng chuẩn bị hàng + cột "Vị trí lấy" trang chi tiết đơn).
 export type PickSuggestion = { location_code: string | null; pct_date: number | null; available: number }
 
 // Bảng chuẩn bị hàng — gom nhiều GDO. queryKey bắt đầu 'gdo' → OutboundItem/ScanEntry đổi

@@ -129,7 +129,12 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
 
 export async function getDashboard(req: Request, res: Response) {
   try {
-    const whIds = scopeWhIds(req)
+    const scope = scopeWhIds(req)
+    // Filter Kho trên Dashboard: ?warehouse_id= — phải nằm trong scope kho của user
+    const sel = String((req.query as { warehouse_id?: string }).warehouse_id ?? '').trim()
+    if (sel && scope && !scope.includes(sel))
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Kho ngoài phạm vi được gán' } })
+    const whIds = sel ? [sel] : scope
     const cats = scopeCategoriesOf(req)
     const today = todayVN()
 

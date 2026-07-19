@@ -9,6 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardStats, type DashboardStats } from '@/api/hooks'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
@@ -24,7 +27,12 @@ const MODE_BADGE: Record<string, string> = {
 }
 
 export default function Dashboard() {
-  const { data: stats, isLoading, isError } = useDashboardStats()
+  const { data: scopedWhs = [] } = useScopedWarehouses(true)
+  const whId = useWmsFilterStore(s => s.dashboard.warehouseId)
+  const setDashboard = useWmsFilterStore(s => s.setDashboard)
+  // Kho đã chọn không còn trong scope (đổi phân quyền) → coi như "Tất cả kho"
+  const effWhId = scopedWhs.length > 0 && whId && !scopedWhs.some(w => w.id === whId) ? '' : whId
+  const { data: stats, isLoading, isError } = useDashboardStats(effWhId)
   const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
   // Gộp theo kho (RPC trả dòng kho×loại) + tổng toàn scope
@@ -69,9 +77,18 @@ export default function Dashboard() {
         title="Tổng quan hệ thống"
         description={today}
         actions={
-          <div className="flex items-center gap-1.5">
-            <div className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs text-muted-foreground">Dữ liệu thời gian thực</span>
+          <div className="flex items-center gap-2.5">
+            <WarehouseSingleSelect
+              warehouses={scopedWhs as { id: string; code?: string; name: string }[]}
+              value={effWhId}
+              onChange={id => setDashboard({ warehouseId: id })}
+              allLabel="Tất cả kho"
+              triggerClassName="w-40 sm:w-48"
+            />
+            <div className="hidden sm:flex items-center gap-1.5">
+              <div className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-xs text-muted-foreground">Dữ liệu thời gian thực</span>
+            </div>
           </div>
         }
       />

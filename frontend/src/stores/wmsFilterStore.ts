@@ -193,7 +193,11 @@ interface SlottingFilters {
   palletKind: 'FULL' | 'PARTIAL' | 'ALL' // FULL = chỉ hàng chẵn (pallet nguyên — user 18/07: "hầu hết chỉ dồn hàng chẵn")
   tab: 'analysis' | 'plans' | 'config'
 }
+interface DashboardFilters {
+  warehouseId: string   // '' = tất cả kho trong scope
+}
 interface WmsFilterState {
+  dashboard:         DashboardFilters
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
   outboundPrepare:   OutboundPrepareFilters
@@ -216,6 +220,7 @@ interface WmsFilterState {
   attendanceTeam:    AttendanceTeamFilters
   attendanceMy:      AttendanceMyFilters
   leave:             LeaveFilters
+  setDashboard:         (f: Partial<DashboardFilters>)         => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
   setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
@@ -251,6 +256,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
+    dashboard: { warehouseId: '' },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
@@ -304,6 +310,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
   persist(
     (set) => ({
       ...initialFilters(),
+      setDashboard:        (f) => set(s => ({ dashboard:        { ...s.dashboard,        ...f } })),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),

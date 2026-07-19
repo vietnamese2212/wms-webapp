@@ -1169,11 +1169,13 @@ export type DashboardStats = {
   }>
   source?: 'rpc' | 'fallback'
 }
-export function useDashboardStats() {
+export function useDashboardStats(warehouseId?: string) {
   return useQuery<DashboardStats>({
-    queryKey: ['dashboard'],
+    queryKey: ['dashboard', warehouseId || 'all'],
     staleTime: 60_000,
-    queryFn: () => apiClient.get('/wms/dashboard').then(r => r.data.data),
+    queryFn: () => apiClient.get('/wms/dashboard', {
+      params: warehouseId ? { warehouse_id: warehouseId } : undefined,
+    }).then(r => r.data.data),
   })
 }
 

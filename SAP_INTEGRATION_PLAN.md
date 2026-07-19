@@ -155,6 +155,12 @@ SAP: base unit = **HỘP**, mọi số trong hệ là SỐ NGUYÊN; CAR là đơ
 3. **Tồn kho nội bộ GIỮ NGUYÊN thập phân** (vết "thùng bị mở") — KHÔNG đổi lõi (đổi lõi sang hộp = chiến dịch riêng tương lai, không thuộc GĐ B).
 Kèm 2 quyết định UI: (a) **form tạo/sửa đơn tay đổi thành 2 ô "Thùng (nguyên) + Hộp (nguyên)"** — hàng chẵn chỉ điền Thùng, hết cửa key thập phân (upload cũ vẫn nhận thập phân tới khi bỏ); (b) **nút Upload GỘP "Up raw"** — 1 nút mở panel 2 khu vực: khu 1 file VL06O, khu 2 file KH điều vận.
 
+### CHỐT vòng 9 — dòng đơn theo ĐƠN VỊ (user chọn, 19/07)
+- **Mô hình dòng: "1 GDO × 1 mã × 1 ĐVT = 1 dòng"** (thay rule 1 mã/NPP → 1 mã/NPP/ĐVT). Vd chuyến có DO1 (mã A 15C+20H) + DO2 (mã A 100H), upc 48 → chuẩn hóa: **dòng "A — 17 CAR" + dòng "A — 24 HOP"** (2 dòng, KHÔNG phải 1 dòng 2 cột — user thích bám raw, và nó bỏ được mô hình lai cartons+loose_picking trên cùng dòng). Dòng CAR = luồng quét pallet · dòng HOP = luồng nhặt lẻ.
+- Kéo theo: `OutboundItem` thêm cột **đơn vị**; qty = SỐ NGUYÊN theo đơn vị; **luồng nhặt lẻ đổi sang đếm HỘP nguyên** (hiện là thùng thập phân); gác hoàn thành theo từng dòng-đơn-vị.
+- **Tồn kho GIỮ numeric** (không integer hóa): NVL bản chất decimal thật (KG/BAG); phần lẻ thành phẩm trừ tồn = hộp/upc — thập phân chỉ là "vết thùng mở" NỘI BỘ, không bao giờ qua biên giới SAP.
+- **KHÔNG ĐƯỢC XUẤT THIẾU (note — bàn chi tiết sau):** số liệu OD ↔ app phải khớp 100% trước khi hoàn thành + chuyển giao dữ liệu 2 chiều → KHÔNG cần thuật toán phân bổ thiếu. App đã có gác "thực quét = KH mới cho Hoàn thành" ở luồng cũ — sau mở rộng theo dòng-đơn-vị.
+
 ### Thiết kế build GĐ B (chờ user duyệt để code)
 **Bảng mới `erp_outbound_orders`** (raw, 1 dòng = 1 OD line, unique `(od_number, od_item)`): od_number · od_item · so_number(tham khảo) · ship_to_code · ship_to_name · material_code · material_name · qty_sales + sales_unit · qty_base + base_unit · plant · storage_location(tham khảo) · batch_req · date_pct_req · header_text(gộp 2 ghi chú) · shipping_point · source('EXCEL'/'SAP') · id/updated_at chuẩn.
 **Nút upload 1 "Upload VL06O (SAP)"**: parse → upsert theo (od,item) chunk 500; OD đã thành chuyến mà số liệu đổi → KHÔNG đè đơn, ghi cảnh báo (theo ma trận sửa/hủy, bản đầu = cảnh báo).

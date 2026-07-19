@@ -31,7 +31,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtyEntryDecimal, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -732,19 +732,30 @@ export default function Inventory() {
   async function handleExport() {
     setExportError('')
     const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    // BASE UNIT: xuất 2 cột NGUYÊN Thùng + Hộp (chính xác tuyệt đối, round-trip với mẫu upload).
+    // Mã KG/EA (không entry) → cột thùng để trống, cả lượng nằm ở cột "hộp" (ĐVT cột kề làm rõ đơn vị).
+    const qc = (base: number, mat: Parameters<typeof qtySplit>[1]) => {
+      const s = qtySplit(Number(base) || 0, mat)
+      return { t: hasEntry(mat) ? s.entry : '', h: s.base }
+    }
     try {
       if (aggregate) {
         const groups = summaryData?.groups ?? []
         if (groups.length === 0) { setExportError('Không có dữ liệu để xuất'); return }
         if (groups.length > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${groups.length.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
         setExporting(true)
-        writeXlsx(groups.map(g => ({
-          'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
-          'Tên hàng': g.short_name ?? '', 'NCC': g.ncc_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
-          '% Date': g.date_pct ?? '', 'ĐVT': qtyUnitLabel(g),
-          'Nhập': qtyEntryDecimal(g.cartons_imported, g), 'Xuất': qtyEntryDecimal(g.cartons_exported, g),
-          'Tồn': qtyEntryDecimal(g.cartons_remaining, g), 'Số pallet': g.pallet_count,
-        })), `ton_kho_tong_hop_${stamp}`)
+        writeXlsx(groups.map(g => {
+          const nh = qc(g.cartons_imported, g), xu = qc(g.cartons_exported, g), to = qc(g.cartons_remaining, g)
+          return {
+            'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
+            'Tên hàng': g.short_name ?? '', 'NCC': g.ncc_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
+            '% Date': g.date_pct ?? '', 'ĐVT': qtyUnitLabel(g),
+            'Nhập (thùng)': nh.t, 'Nhập (hộp)': nh.h,
+            'Xuất (thùng)': xu.t, 'Xuất (hộp)': xu.h,
+            'Tồn (thùng)': to.t, 'Tồn (hộp)': to.h,
+            'Số pallet': g.pallet_count,
+          }
+        }), `ton_kho_tong_hop_${stamp}`)
       } else {
         if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
         if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại (kho/loại/mã) rồi xuất.`); return }
@@ -755,16 +766,23 @@ export default function Inventory() {
           const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
           const reserved  = e.cartons_reserved ?? 0
           const pct       = computePctDate(e, e.material)
+          const nh = qc(Number(e.cartons_imported), e.material), xu = qc(exported, e.material), to = qc(Number(remaining), e.material)
+          const re = qc(Number(reserved), e.material), kd = qc(Math.max(0, Number(remaining) - Number(reserved)), e.material)
+          const dc = qc(Number(e.adjustment_qty ?? 0), e.material)
           return {
             'Kho': e.location?.warehouse?.name ?? '', 'Loại kho': e.material?.category ?? '',
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
             'NCC': e.ncc?.name ?? '', 'Shelflife (ngày)': e.shelf_life_days ?? '',
             'Mã pallet': e.pallet_code, 'NMSX': e.nmsx ?? '', 'Vị trí': e.location?.location_code ?? '',
             'ĐVT': qtyUnitLabel(e.material),
-            'Nhập': qtyEntryDecimal(Number(e.cartons_imported), e.material), 'Xuất': qtyEntryDecimal(exported, e.material), 'Tồn': qtyEntryDecimal(Number(remaining), e.material),
-            'Nhặt lẻ': qtyEntryDecimal(Number(reserved), e.material), 'Khả dụng': qtyEntryDecimal(Math.max(0, Number(remaining) - Number(reserved)), e.material),
+            'Nhập (thùng)': nh.t, 'Nhập (hộp)': nh.h,
+            'Xuất (thùng)': xu.t, 'Xuất (hộp)': xu.h,
+            'Tồn (thùng)': to.t, 'Tồn (hộp)': to.h,
+            'Nhặt lẻ (thùng)': re.t, 'Nhặt lẻ (hộp)': re.h,
+            'Khả dụng (thùng)': kd.t, 'Khả dụng (hộp)': kd.h,
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
-            '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '', 'Điều chỉnh': qtyEntryDecimal(Number(e.adjustment_qty ?? 0), e.material),
+            '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '',
+            'Điều chỉnh (thùng)': dc.t, 'Điều chỉnh (hộp)': dc.h,
           }
         }), `ton_kho_chi_tiet_${stamp}`)
       }

@@ -135,6 +135,12 @@ Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đ�
 - **File 2 — Kế hoạch điều vận** (OD + ngày đi + ĐVVT + số xe/chuyến): join với raw → **convert thành chuyến xuất** (GDO/DO/dòng hàng đúng model hiện tại, thùng+hộp giữ theo SAP, hộp → Nhặt lẻ). OD trong file 2 không có trong raw → báo lỗi rõ từng OD. Đây là "user đưa vào" — TƯƠNG LAI CHỈ CÒN FILE 2 khi connector thay file 1.
 - Đơn sinh ra là GDO bình thường → soạn hàng/quét/chuyển kho/báo cáo phía sau KHÔNG đổi.
 
+### Soi 2 file mẫu thật (19/07 — `Du lieu mau/vl06o.XLSX` + `Ke hoach dieu van.xlsm`)
+**VL06O** (274 dòng, 79 OD, plant 1102): mỗi dòng OD có **2 bộ số lượng** — `Delivery Quantity`+`Sales Unit` (CAR=thùng · HOP=xuất lẻ hộp · EA) và `Actual delivery qty`+`Base Unit` (HOP/EA/BT/BAG) → **tự suy hệ số hộp/thùng = Actual/Qty** (mẫu: 48, 24, 20 — khớp "x48" trong tên hàng). Có sẵn cột `Batch`/`Batch SO`/`Date (Ngày)`/`Date (%)` (mẫu này rỗng — là chỗ điền yêu cầu batch/%Date), `Ghi chú giao hàng` (118/274 = header_text), `Ship-to Party` + tên, `Storage Location` (FG01/FG02/PM01 → map kho/loại), Shipping Point. Dải số: OD `300x`↔SO `200x` (bán) · OD `318x`↔SO `253x` (**STO trung chuyển**) · OD `330x`↔SO `430x` (hỏi user loại gì).
+**KH điều vận** (sheet "Ke hoach dieu van", 41 dòng · 13 chuyến): `Ngày xuất · Số xe · SO · DO · Ship-to · Tên NPP · Loại xe · DVVT · Ưu tiên · Note`. **"Số xe" thực chất là MÃ CHUYẾN** dạng `20000016_X_200726_100` (kho_X_ddmmyy_stt — trùng format group_code WMS!) → nhóm OD theo cột này = GDO.
+**Đối chiếu:** 41/41 DO của KH đều có trong VL06O (join hoàn hảo theo `DO = Delivery`); **Ship-to lệch 4/41** giữa 2 file → chốt luật: **mọi chi tiết lấy từ RAW (SAP), file điều vận chỉ quyết ngày/chuyến/ĐVVT** — đúng loại lỗi gõ tay mà luồng mới loại bỏ.
+**Mapping đơn vị:** Sales Unit `CAR` → thùng nguyên · `HOP` → nhặt lẻ (hộp) · `EA/BT/BAG` (vd Pallet Loscam 810000000) → hàng no-QR/QTY theo `Material.unit`.
+
 ### Mã hàng — quyền sở hữu theo TỪNG CỘT (user chốt 19/07: WMS được bổ sung/sửa, gồm 1 thùng = ? hộp)
 | Nhóm cột | Chủ | Khi sync |
 |---|---|---|

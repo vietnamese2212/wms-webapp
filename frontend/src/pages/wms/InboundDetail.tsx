@@ -493,12 +493,12 @@ export default function InboundDetail() {
         >
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs">Số thùng</Label>
-              <Input
-                type="number" min={1}
-                className="h-8 text-sm"
-                value={editState.cartons}
-                onChange={(e) => setEditState(s => s && ({ ...s, cartons: Number(e.target.value) }))}
+              <Label className="text-xs">Số lượng</Label>
+              {/* BASE UNIT: 2 ô Thùng + Hộp — cartons = BASE (mã có entry không bị nhầm đơn vị khi sửa) */}
+              <QtyInput compact
+                value={Math.max(0, Number(editState.cartons) || 0)}
+                mat={order?.material}
+                onChange={b => setEditState(s => s && ({ ...s, cartons: b }))}
               />
             </div>
             <div className="space-y-1">

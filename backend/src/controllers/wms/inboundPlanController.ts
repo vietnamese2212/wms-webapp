@@ -218,6 +218,25 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
     const { lines } = req.body as { lines: Record<string, unknown>[] }
     if (!Array.isArray(lines) || !lines.length) return fail(res, 'lines phải là array không rỗng', 400)
 
+    // BASE UNIT: chốt planned_boxes SỐ NGUYÊN cho mã có entry (upload không lọt thùng lẻ → base lẻ).
+    // Nạp units theo lô (chunk 300, né cap URL) rồi validate từng dòng, báo lỗi kèm số dòng.
+    const matIds = [...new Set(lines.map(l => l.material_id).filter(Boolean) as string[])]
+    if (matIds.length) {
+      const matMap = new Map<string, MatUnits>()
+      for (let i = 0; i < matIds.length; i += 300) {
+        const { data } = await supabase.from('Material')
+          .select('id, base_unit, entry_unit, units_per_carton').in('id', matIds.slice(i, i + 300))
+        for (const m of (data ?? []) as (MatUnits & { id: string })[]) matMap.set(m.id, m)
+      }
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i]
+        if (l.planned_boxes != null && l.material_id) {
+          const ie = qtyIntegerError(Number(l.planned_boxes), matMap.get(String(l.material_id)) ?? null)
+          if (ie) return fail(res, `Dòng ${i + 1}: ${ie}`, 422)
+        }
+      }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now  = new Date().toISOString()

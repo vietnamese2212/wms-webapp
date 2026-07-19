@@ -906,9 +906,11 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   const hasBoxes         = allItems.some(i => i.boxes_display > 0)
   const hasLoosePicking  = allItems.some(i => i.loose_picking > 0)
   const hasCsResp        = allItems.some(i => i.cs_responsible)
-  // Cột CUỐI "Yêu cầu xuất" (user 19/07): gom header text + Batch + %Date yêu cầu — hiển thị ĐỦ (wrap)
-  const hasRequirement   = allItems.some(i => i.header_text || i.batch_required || (i.date_required != null && i.date_required > 0))
-  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasRequirement].filter(Boolean).length
+  // 3 cột CUỐI riêng biệt (user 19/07): Batch yêu cầu · %Date yêu cầu · Header text — style đỏ như trang detail mã
+  const hasBatchRequired = allItems.some(i => i.batch_required)
+  const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
+  const hasHeaderText    = allItems.some(i => i.header_text)
+  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasBatchRequired, hasDateRequired, hasHeaderText].filter(Boolean).length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -943,7 +945,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
             {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
             {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
-            {hasRequirement   && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 min-w-[180px]">Yêu cầu xuất</TableHead>}
+            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch yêu cầu</TableHead>}
+            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date yêu cầu</TableHead>}
+            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 min-w-[180px]">Header text</TableHead>}
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
         </TableHeader>
@@ -1061,25 +1065,25 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                     return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
                   })()}
                 </TableCell>
-                {hasRequirement && (
+                {hasBatchRequired && (
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    {item.batch_required
+                      ? <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5">{item.batch_required}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                )}
+                {hasDateRequired && (
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    {item.date_required != null && item.date_required > 0
+                      ? <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5">≥ {item.date_required}%</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                )}
+                {hasHeaderText && (
                   <TableCell className="px-2 py-1 align-top whitespace-normal min-w-[180px] max-w-[380px]">
-                    {(item.header_text || item.batch_required || (item.date_required != null && item.date_required > 0)) ? (
-                      <div className="space-y-0.5">
-                        {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
-                          <div className="flex flex-wrap gap-1">
-                            {item.batch_required && (
-                              <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">Batch: {item.batch_required}</span>
-                            )}
-                            {item.date_required != null && item.date_required > 0 && (
-                              <span className="text-[9px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5 whitespace-nowrap">%Date ≥ {item.date_required}%</span>
-                            )}
-                          </div>
-                        )}
-                        {item.header_text && (
-                          <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
-                        )}
-                      </div>
-                    ) : <span className="text-[10px] text-slate-300">—</span>}
+                    {item.header_text
+                      ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
+                      : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                 )}
                 <TableCell className="px-1 py-1 align-top">

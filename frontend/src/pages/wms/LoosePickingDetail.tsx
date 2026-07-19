@@ -6,6 +6,7 @@ import {
   ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark,
 } from 'lucide-react'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, type ItemInventoryEntry } from '@/api/hooks'
@@ -228,9 +229,24 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
   // Cột text dài NỚI RỘNG vừa đủ để chuỗi dài nhất gói trong ≤3 dòng — KHÔNG cắt dữ liệu (đồng bộ Xuất)
   const maxNameLen   = Math.max(0, ...allItems.map(i => (i.material?.short_name ?? i.material_code_raw ?? '').length))
-  const nameMinW     = Math.min(400, Math.max(110, Math.ceil((maxNameLen / 3) * 5.4)))
+  const nameMinW     = Math.min(400, Math.max(150, Math.ceil((maxNameLen / 3) * 5.4)))
   const maxHeaderLen = Math.max(0, ...allItems.map(i => (i.header_text ?? '').length))
   const headerMinW   = Math.min(420, Math.max(180, Math.ceil((maxHeaderLen / 3) * 5)))
+
+  // Bộ cột ĐỘNG — chuẩn table-format (table-fixed + kéo giãn + sticky), đồng bộ Xuất
+  const cols: RtColDef[] = [
+    { id: 'mat',  label: 'Mã hàng', w: 92 },
+    { id: 'name', label: 'Tên hàng', w: nameMinW },
+    { id: 'qty',  label: 'Lẻ / Tổng', w: 92, align: 'right' },
+    { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
+    ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
+    { id: 'do',   label: 'Số DO', w: 105 },
+    ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
+    ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
+    ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
+    { id: 'exp',  label: '', w: 30 },
+  ]
+  const colSig = cols.map(c => c.id).join('.')
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -254,21 +270,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
           onClose={() => setInventoryItemId(null)}
         />
       )}
-      <Table className="min-w-[480px]">
-        <TableHeader>
-          <TableRow className="bg-slate-50">
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: nameMinW }}>Tên hàng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
-            {hasPickSug && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí lấy</TableHead>}
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
-            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch yêu cầu</TableHead>}
-            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date yêu cầu</TableHead>}
-            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: headerMinW }}>Header text</TableHead>}
-            <TableHead className="w-5 px-1 py-1.5" />
-          </TableRow>
-        </TableHeader>
+      <ResizableTable key={colSig} storageKey={`loosepicking_items_w:${colSig}`} cols={cols}>
         <TableBody>
           {allItems.map(item => {
             const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
@@ -280,19 +282,21 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
             const looseScanEntries = (item.scan_entries ?? []).filter(s => s.is_loose_picking)
             const expanded = expandedItemIds.has(item.id)
 
+            // Cột đầu sticky-left cần NỀN ĐẶC theo trạng thái (đồng bộ Xuất)
+            const stickyBg = isDone ? 'bg-blue-50' : looseScanned > 0 ? 'bg-amber-50' : 'bg-white'
             return (
               <Fragment key={item.id}>
                 <TableRow
                   className={`cursor-pointer transition-colors ${bgCls}`}
                   onClick={() => navigate(`/wms/loosepicking/${gdoId}/items/${item.id}`)}
                 >
-                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                  <TableCell className={`px-2 py-1 align-top whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
                     <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
                       {matCode}
                       <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
                     </div>
                   </TableCell>
-                  <TableCell className="px-2 py-1 align-top" style={{ minWidth: nameMinW }}>
+                  <TableCell className="px-2 py-1 align-top">
                     {/* Gọn (user 19/07, đồng bộ Xuất): bỏ progress bar từng dòng; cột nới đủ rộng để tên ≤3 dòng KHÔNG cắt */}
                     <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
                     {looseScanEntries.length > 0 && (
@@ -374,7 +378,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                     </TableCell>
                   )}
                   {hasHeaderText && (
-                    <TableCell className="px-2 py-1 align-top whitespace-normal" style={{ minWidth: headerMinW, maxWidth: 420 }}>
+                    <TableCell className="px-2 py-1 align-top whitespace-normal">
                       {item.header_text
                         ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
                         : <span className="text-[10px] text-slate-300">—</span>}
@@ -395,7 +399,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
                 {expanded && (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={6 + [hasPickSug, hasBatchRequired, hasDateRequired, hasHeaderText].filter(Boolean).length} className="px-0 py-0 border-b border-slate-100">
+                    <TableCell colSpan={cols.length} className="px-0 py-0 border-b border-slate-100">
                       <div className="ml-3 pl-3 pr-3 py-1.5 border-l-2 border-slate-200">
                         <table className="w-full border-collapse whitespace-nowrap">
                           <thead>
@@ -451,7 +455,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
             )
           })}
         </TableBody>
-      </Table>
+      </ResizableTable>
     </>
   )
 }

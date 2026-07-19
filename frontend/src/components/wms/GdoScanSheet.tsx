@@ -107,10 +107,16 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
     setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 2000)
   }
 
-  function handleScan(qr_code: string) {
-    // Guard chung camera + súng quét: đang check/lưu/chờ xác nhận/quét thùng → bỏ qua lượt mới
+  function handleScan(qr_code: string, src: 'camera' | 'wedge' = 'camera') {
+    // Guard chung camera + súng quét: đang check/lưu/quét thùng → bỏ qua lượt mới
     // (camera tự pause sau scan nên trước đây không cần; có súng quét bắn bất kỳ lúc nào thì cần)
-    if (checking || saving || checkResult || cartonFor) return
+    if (checking || saving || cartonFor) return
+    if (checkResult) {
+      // PDA: đang chờ xác nhận mà BẮN LẠI đúng tem đó = bấm Lưu (không cần chạm màn hình).
+      // Chỉ áp cho SÚNG — camera đứng yên vẫn nhìn tem, không được tự lưu.
+      if (src === 'wedge' && normalizeQR(qr_code) === checkResult.pallet_code) { playBeep(); handleSave() }
+      return
+    }
     playBeep()
     setCheckResult(null)
     setFeedback(null)
@@ -230,7 +236,7 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
   }
 
   // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
-  useWedgeScanner(handleScan, true)
+  useWedgeScanner(code => handleScan(code, 'wedge'), true)
 
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
@@ -348,6 +354,7 @@ export function GdoScanSheet({ gdo, mode, onClose }: {
                 />
                 <span className="text-sm text-slate-400">/ {activeRemaining} {mode === 'loose' ? 'cần chuẩn bị' : 'cần xuất'}</span>
               </div>
+              <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}
 

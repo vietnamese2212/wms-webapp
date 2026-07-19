@@ -18,6 +18,7 @@ import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
@@ -914,14 +915,32 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
   const hasDateRequired  = allItems.some(i => i.date_required != null && i.date_required > 0)
   const hasHeaderText    = allItems.some(i => i.header_text)
   const hasPickSug       = !!pickSug && Object.values(pickSug).some(v => v.length > 0)
-  const totalCols = 6 + [hasBoxes, hasLoosePicking, hasCsResp, hasBatchRequired, hasDateRequired, hasHeaderText, hasPickSug].filter(Boolean).length
 
   // Cột text dài NỚI RỘNG vừa đủ để chuỗi dài nhất gói trong ≤3 dòng — KHÔNG cắt dữ liệu
   // (user 19/07: tối đa 3 dòng nhưng phải show hết; bảng cuộn ngang nên cột rộng thêm là ổn)
   const maxNameLen   = Math.max(0, ...allItems.map(i => (i.material?.short_name ?? i.material_code_raw ?? '').length))
-  const nameMinW     = Math.min(400, Math.max(110, Math.ceil((maxNameLen / 3) * 5.4)))   // ~5.4px/ký tự @10px
+  const nameMinW     = Math.min(400, Math.max(150, Math.ceil((maxNameLen / 3) * 5.4)))   // ~5.4px/ký tự @10px
   const maxHeaderLen = Math.max(0, ...allItems.map(i => (i.header_text ?? '').length))
   const headerMinW   = Math.min(420, Math.max(180, Math.ceil((maxHeaderLen / 3) * 5)))   // ~5px/ký tự @9px
+
+  // Bộ cột ĐỘNG theo dữ liệu — chuẩn table-format: table-fixed + kéo giãn + sticky (ResizableTable)
+  const cols: RtColDef[] = [
+    { id: 'mat',  label: 'Mã hàng', w: 92 },
+    { id: 'name', label: 'Tên hàng', w: nameMinW },
+    { id: 'qty',  label: 'Thùng', w: 92, align: 'right' },
+    { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
+    ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
+    ...(hasBoxes ? [{ id: 'boxes', label: 'Hộp', w: 60, align: 'right' as const }] : []),
+    ...(hasLoosePicking ? [{ id: 'loose', label: 'Nhặt lẻ', w: 64, align: 'right' as const }] : []),
+    ...(hasCsResp ? [{ id: 'cs', label: 'CS', w: 90 }] : []),
+    { id: 'do',   label: 'Số DO', w: 105 },
+    ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
+    ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
+    ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
+    { id: 'exp',  label: '', w: 30 },
+  ]
+  const colSig = cols.map(c => c.id).join('.')
+  const totalCols = cols.length
 
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
@@ -945,24 +964,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
         onClose={() => setManualDlg(null)}
       />
     )}
-    <Table className="min-w-[540px]">
-        <TableHeader>
-          <TableRow className="bg-slate-50">
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: nameMinW }}>Tên hàng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Thùng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
-            {hasPickSug       && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí lấy</TableHead>}
-            {hasBoxes         && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Hộp</TableHead>}
-            {hasLoosePicking  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Nhặt lẻ</TableHead>}
-            {hasCsResp        && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">CS</TableHead>}
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
-            {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch yêu cầu</TableHead>}
-            {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date yêu cầu</TableHead>}
-            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: headerMinW }}>Header text</TableHead>}
-            <TableHead className="w-5 px-1 py-1.5" />
-          </TableRow>
-        </TableHeader>
+    <ResizableTable key={colSig} storageKey={`outbound_items_w:${colSig}`} cols={cols}>
         <TableBody>
           {nppGroups.flatMap(g => [
             ...(showGroups ? [(
@@ -986,19 +988,21 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
               .filter(s => s.is_loose_picking && !s.loose_confirmed)
               .reduce((sum, s) => sum + s.cartons_scanned, 0)
 
+            // Cột đầu sticky-left cần NỀN ĐẶC theo trạng thái (không dùng hover class)
+            const stickyBg = item.status === 'COMPLETED' ? 'bg-blue-50' : item.status === 'IN_PROGRESS' ? 'bg-amber-50' : 'bg-white'
             return (
               <Fragment key={item.id}>
               <TableRow
                 className={`cursor-pointer transition-colors ${rowBg}`}
                 onClick={() => navigate(`/wms/outbound/${gdoId}/items/${item.id}`)}
               >
-                <TableCell className={`px-2 py-1 align-top whitespace-nowrap`}>
+                <TableCell className={`px-2 py-1 align-top whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
                   <div className={`text-[10px] font-mono font-semibold ${textCls}`}>
                     {matCode}
                     <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
                   </div>
                 </TableCell>
-                <TableCell className={`px-2 py-1 align-top`} style={{ minWidth: nameMinW }}>
+                <TableCell className={`px-2 py-1 align-top`}>
                   {/* Gọn (user 19/07): bỏ progress bar từng dòng; cột đã nới đủ rộng để tên ≤3 dòng KHÔNG cắt */}
                   <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
                   {(item.scan_entries?.length ?? 0) > 0 && (
@@ -1121,7 +1125,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </TableCell>
                 )}
                 {hasHeaderText && (
-                  <TableCell className="px-2 py-1 align-top whitespace-normal" style={{ minWidth: headerMinW, maxWidth: 420 }}>
+                  <TableCell className="px-2 py-1 align-top whitespace-normal">
                     {item.header_text
                       ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
                       : <span className="text-[10px] text-slate-300">—</span>}
@@ -1202,7 +1206,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
           }),
           ])}
         </TableBody>
-    </Table>
+    </ResizableTable>
     </>
   )
 }

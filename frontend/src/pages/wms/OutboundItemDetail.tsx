@@ -130,9 +130,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
     setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 2000)
   }
 
-  function handleScan(qr_code: string) {
-    // Guard chung camera + súng quét: đang check/lưu/chờ xác nhận/quét thùng → bỏ qua lượt mới
-    if (checking || saving || checkResult || cartonFor) return
+  function handleScan(qr_code: string, src: 'camera' | 'wedge' = 'camera') {
+    // Guard chung camera + súng quét: đang check/lưu/quét thùng → bỏ qua lượt mới
+    if (checking || saving || cartonFor) return
+    if (checkResult) {
+      // PDA: bắn lại đúng tem đang chờ xác nhận = bấm Lưu (chỉ súng — camera không tự lưu)
+      if (src === 'wedge' && normalizeQR(qr_code) === checkResult.pallet_code) { playBeep(); handleSave() }
+      return
+    }
     playBeep()
     setCheckResult(null)
     setFeedback(null)
@@ -225,7 +230,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
   }
 
   // Súng quét PDA (keyboard-wedge) — chạy song song camera, chống double-read trong hook
-  useWedgeScanner(handleScan, true)
+  useWedgeScanner(code => handleScan(code, 'wedge'), true)
 
   const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
     checkResult.production_date > checkResult.best_available_date)
@@ -329,6 +334,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose }: ScanDialogProps
                 />
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
+              <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}
 

@@ -150,9 +150,9 @@ Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đ�
 | Name ship-to party | ✅ | `ship_to_name` | tên NPP fallback (cascade bậc 2) |
 | **Material** | ✅ | `material_code` | `Material.material_code` |
 | Item Description | ✅ | `material_name` | đối chiếu (hiển thị WMS dùng tên của mình) |
-| **Delivery Quantity** | ✅ | `qty_sales` | số đặt theo Sales Unit |
+| **Delivery Quantity** | ✅ | `qty_sales` | KHÔNG dùng để tính — 3 vai trò: phân luồng + kiểm chéo hệ số + post lại theo đơn vị key |
 | **Sales Unit** | ✅ | `sales_unit` | CAR → thùng nguyên (quét pallet) · HOP/BT → nhặt lẻ · EA/BAG → no-QR/QTY |
-| **Actual delivery qty** | ✅ | `qty_base` | **SỐ GỐC base** — nguồn số lượng chính (sau Đợt 2 cộng thẳng) |
+| **Actual delivery qty** | ✅ | `qty_base` | **SỐ GỐC base — số DUY NHẤT dùng để TÍNH** (2 số là 1 về lượng: 40 CAR ≡ 1920 HOP; upload kiểm chéo `qty_sales × units_per_carton = qty_base`, lệch = hệ số 2 hệ khác nhau → cảnh báo đỏ) |
 | Base Unit of Measure | ✅ | `base_unit` | đối chiếu `Material.base_unit` (lệch = cảnh báo) |
 | Batch SO / Batch | ✅ | `batch_req` | `OutboundItem.batch_required` (Batch yêu cầu) |
 | Date (Ngày) | ✅ | `date_req` | lưu raw (NSX yêu cầu — dùng khi có nghiệp vụ) |

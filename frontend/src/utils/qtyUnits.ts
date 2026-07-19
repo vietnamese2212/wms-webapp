@@ -1,11 +1,12 @@
-// qtyUnits — formatter số lượng TRUNG TÂM theo Base/Entry Unit (chiến dịch BASE UNIT, đợt 1).
+// qtyUnits — formatter số lượng TRUNG TÂM theo Base/Entry Unit (chiến dịch BASE UNIT).
 // BE mirror: backend/src/utils/qtyUnits.ts — 2 bản PHẢI KHỚP NHAU (mẫu như shelfLife.ts).
 //
-// ĐỢT 1 (hiện tại): `qty` truyền vào là SỐ THÙNG THẬP PHÂN (nghĩa cũ của cartons_*).
-//   - Mã có entry_unit: split = floor(qty) thùng + round(phần_lẻ × units_per_carton) hộp.
+// ĐỢT 2 (SEMANTIC FLIP — hiện hành): `qty` truyền vào là SỐ THEO BASE UNIT
+//   (mã có entry: HOP/BT… nguyên; mã không entry: KG decimal / EA…).
+//   - Mã có entry_unit: split = divmod(qty, units_per_carton) → "N thùng + M hộp".
 //   - Mã không entry: hiển thị nguyên số + nhãn base_unit (KG/EA/BAG…).
-// ĐỢT 2 (semantic flip): `qty` sẽ là BASE UNIT → CHỈ đổi ruột các hàm này (divmod theo hệ số),
-//   chữ ký GIỮ NGUYÊN — mọi điểm hiển thị đã gom về đây không phải sửa lại.
+// LUẬT SỐ NGUYÊN (user chốt 19/07): mã CÓ entry → mọi nhập liệu = 2 ô Thùng + Hộp
+//   SỐ NGUYÊN, quy đổi tại rìa bằng qtyFromEntryBase; mã KHÔNG entry → thập phân tự do.
 
 export type MatUnits = {
   base_unit?: string | null
@@ -41,8 +42,13 @@ export function qtyUnitLabel(m?: MatUnits | null): string {
   return unitLabel(m.base_unit)
 }
 
+/** Nhãn ĐVT gốc (base) của mã — cho ô Hộp / thông báo lỗi. */
+export function qtyBaseLabel(m?: MatUnits | null): string {
+  return unitLabel(m?.base_unit)
+}
+
 /**
- * Tách số lượng thành phần entry (thùng) + phần base lẻ (hộp).
+ * Tách số lượng BASE thành phần entry (thùng) + phần base lẻ (hộp) — divmod.
  * Mã không entry: { entry: 0, base: qty }.
  * Số âm: cả 2 phần mang dấu âm.
  */
@@ -53,11 +59,31 @@ export function qtySplit(qty: number, m?: MatUnits | null): { entry: number; bas
   const factor = Number(m!.units_per_carton)
   const sign = q < 0 ? -1 : 1
   const abs = Math.abs(q)
-  // ĐỢT 1: abs = thùng thập phân → floor + round(phần lẻ × hệ số)
-  let entry = Math.floor(abs)
-  let base = Math.round((abs - entry) * factor)
-  if (base >= factor) { entry += 1; base = 0 } // chống trôi float (0.99999 × 48 → 48)
+  const entry = Math.floor(abs / factor)
+  // chống trôi float khi base là số nguyên bản chất (4296/48 → 89 dư 24)
+  const base = Math.round((abs - entry * factor) * 1000) / 1000
   return { entry: sign * entry, base: sign * base }
+}
+
+/** Gộp nhập liệu 2 ô "Thùng + Hộp" → số BASE để lưu/gửi API (rìa quy đổi duy nhất). */
+export function qtyFromEntryBase(entry: number, base: number, m?: MatUnits | null): number {
+  const e = Number(entry) || 0
+  const b = Number(base) || 0
+  if (!hasEntry(m)) return b || e // mã không entry: chỉ dùng 1 ô (ưu tiên base)
+  return e * Number(m!.units_per_carton) + b
+}
+
+/**
+ * LUẬT SỐ NGUYÊN: mã có entry → qty base phải là SỐ NGUYÊN (hộp/chai không có 0,5).
+ * Trả message lỗi (vi) nếu vi phạm, null nếu hợp lệ. Dùng ở CẢ BE (422) lẫn FE.
+ */
+export function qtyIntegerError(qty: number, m?: MatUnits | null): string | null {
+  const q = Number(qty)
+  if (!isFinite(q)) return 'Số lượng không hợp lệ'
+  if (hasEntry(m) && !Number.isInteger(q)) {
+    return `Mã có đơn vị ${unitLabel(m!.entry_unit)}/${unitLabel(m!.base_unit)} — số lượng phải là SỐ NGUYÊN theo ${unitLabel(m!.base_unit)} (nhập 2 ô ${unitLabel(m!.entry_unit)} + ${unitLabel(m!.base_unit)})`
+  }
+  return null
 }
 
 function fmt(n: number): string {
@@ -85,14 +111,15 @@ export function qtyLabel(qty: number, m?: MatUnits | null): string {
 }
 
 /**
- * Một CON SỐ theo entry unit cho cell hẹp / cột số (89.5).
- * ĐỢT 1: qty đã là thùng thập phân → trả nguyên. ĐỢT 2: qty base → chia hệ số.
+ * Một CON SỐ theo entry unit cho cell hẹp / cột số / Excel (89,5).
+ * ĐỢT 2: qty là BASE → chia hệ số (làm tròn 3 số lẻ chống trôi float).
  * Mã không entry: trả nguyên (số theo base).
  */
-export function qtyEntryDecimal(qty: number, _m?: MatUnits | null): number {
+export function qtyEntryDecimal(qty: number, m?: MatUnits | null): number {
   const q = Number(qty)
   if (!isFinite(q)) return 0
-  return q
+  if (!hasEntry(m)) return q
+  return Math.round((q / Number(m!.units_per_carton)) * 1000) / 1000
 }
 
 /** Format qtyEntryDecimal kèm chuẩn số VN, tối đa 3 số lẻ (tiện cho cell). */

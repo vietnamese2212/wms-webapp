@@ -28,6 +28,8 @@ import { omniMatch } from '@/utils/omniSearch'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { qtyLabel, qtyFromEntryBase, hasEntry, type MatUnits } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
@@ -936,11 +938,11 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
 
 // ─── Material picker ──────────────────────────────────────────
 
-type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null }
+type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null } & MatUnits
 
 function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, onPaste }: {
   value: string
-  onSelect: (code: string, name: string, category: string | null, unit: string) => void
+  onSelect: (code: string, name: string, category: string | null, unit: string, mat?: MatUnits | null) => void
   disabled?: boolean
   disabledNoType?: boolean
   filterCategory?: string
@@ -1007,7 +1009,7 @@ function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, 
               key={m.id}
               className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
               onMouseDown={() => {
-                onSelect(m.material_code, m.short_name ?? '', m.category, m.unit ?? '')
+                onSelect(m.material_code, m.short_name ?? '', m.category, m.unit ?? '', m)
                 setSearch(m.material_code)
                 setOpen(false)
               }}
@@ -1169,8 +1171,9 @@ type ItemRow = {
   unit: string
   category: string | null
   cartons: number
-  min_cartons: number  // 0 for new items, cartons_scanned for existing
-  loose_picking: number
+  min_cartons: number  // 0 for new items, cartons_scanned for existing (BASE)
+  mat_units: MatUnits | null   // BASE UNIT: hệ số của mã (QtyInput 2 ô + quy đổi)
+  loose_picking: number        // BASE UNIT: số HỘP (đơn vị gốc) cần nhặt lẻ
   batch_required: string
   date_required: number
   cs_responsible: string
@@ -1180,7 +1183,7 @@ type ItemRow = {
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, loose_picking: 0, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, mat_units: null, loose_picking: 0, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
 
 // %Date chỉ nhận số nguyên 0–100 (cho phép đuôi "%"). Trả null nếu ô chứa chữ → dùng để CHẶN paste text.
 function parsePctCell(raw: string): number | null {
@@ -1240,7 +1243,7 @@ function GDOFormBody({
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
   const { data: allMatsData = [] } = useMaterials()
-  const allMats = allMatsData as { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }[]
+  const allMats = allMatsData as ({ id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits)[]
 
   // Loại xe = DANH MỤC độc lập (user chốt 04/07) — kho chưa có khung giờ vẫn tạo được đơn;
   // loại có khung giờ tại kho được ưu tiên lên đầu.
@@ -1291,6 +1294,7 @@ function GDOFormBody({
         setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
           ...r, material_code: text.trim(),
           mat_name: mat.short_name ?? '', unit: mat.unit ?? '', category: mat.category ?? null,
+          mat_units: mat,
         }))
       }
       return
@@ -1317,7 +1321,9 @@ function GDOFormBody({
           mat_name:  mat?.short_name ?? rows[startIdx + offset].mat_name,
           unit:      mat?.unit      ?? rows[startIdx + offset].unit,
           category:  mat?.category  ?? rows[startIdx + offset].category,
-          ...(cart  ? { cartons: cart }                              : {}),
+          mat_units: mat ?? rows[startIdx + offset].mat_units,
+          // BASE UNIT: cột Thùng = THÙNG NGUYÊN, cột Nhặt lẻ = SỐ LẺ (đơn vị gốc) → tổng base
+          ...(cart || loose ? { cartons: qtyFromEntryBase(cart, loose, mat) } : {}),
           ...(loose !== 0 ? { loose_picking: loose }                 : {}),
           ...(batch ? { batch_required: batch }                      : {}),
           ...(dateR ? { date_required: dateR }                       : {}),
@@ -1329,7 +1335,7 @@ function GDOFormBody({
     })
   }
 
-  function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+  function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
     const text = e.clipboardData.getData('text')
     if (!text.includes('\n')) return
     e.preventDefault()
@@ -1338,7 +1344,10 @@ function GDOFormBody({
       const rows = [...prev]
       while (rows.length < startIdx + values.length) rows.push(makeItem())
       values.forEach((val, offset) => {
-        rows[startIdx + offset] = { ...rows[startIdx + offset], cartons: parseInt(val.trim().replace(/[^0-9]/g, '')) || 0 }
+        const row = rows[startIdx + offset]
+        const u = row.mat_units ?? lookupMat(row.material_code)
+        const thung = parseInt(val.trim().replace(/[^0-9]/g, '')) || 0
+        rows[startIdx + offset] = { ...row, mat_units: row.mat_units ?? u, cartons: qtyFromEntryBase(thung, 0, u) }
       })
       return rows
     })
@@ -1538,8 +1547,8 @@ function GDOFormBody({
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Mã hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-14">DVT</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Thùng</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-36">Số lượng</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ (lẻ)</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Batch</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-16">%Date</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">CS</th>
@@ -1561,7 +1570,7 @@ function GDOFormBody({
                     <td className="px-2 py-1">
                       <MatPicker
                         value={item.material_code}
-                        onSelect={(code, name, category, unit) => updateItem(item.id, { material_code: code, mat_name: name, category, unit })}
+                        onSelect={(code, name, category, unit, mat) => updateItem(item.id, { material_code: code, mat_name: name, category, unit, mat_units: mat ?? null })}
                         disabled={item.min_cartons > 0}
                         disabledNoType={!warehouseType && item.min_cartons === 0}
                         filterCategory={undefined}
@@ -1569,21 +1578,19 @@ function GDOFormBody({
                       />
                       {item.min_cartons > 0 && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium mt-0.5 inline-block ${fullScanned ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                          Đã xuất {item.min_cartons} thùng
+                          Đã xuất {qtyLabel(item.min_cartons, item.mat_units)}
                         </span>
                       )}
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1 text-[10px] text-slate-500">{item.unit || <span className="text-slate-300">—</span>}</td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="number" min={item.min_cartons || 1}
-                        className={`h-6 w-16 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400 ${cartonsInvalid ? 'border-red-400' : ''}`}
-                        value={item.cartons || ''}
-                        onChange={e => updateItem(item.id, { cartons: parseInt(e.target.value) || 0 })}
-                        onPaste={e => handlePasteCartonsAt(idx, e)}
+                    <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}>
+                      <QtyInput compact className={`w-32 ${cartonsInvalid ? '[&_input]:border-red-400' : ''}`}
+                        value={item.cartons}
+                        mat={item.mat_units}
+                        onChange={b => updateItem(item.id, { cartons: b })}
                       />
-                      {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {item.min_cartons}</p>}
+                      {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {qtyLabel(item.min_cartons, item.mat_units)}</p>}
                     </td>
                     <td className="px-2 py-1">
                       <input
@@ -1923,6 +1930,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         category: item.material_type ?? null,
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,
+        mat_units: item.material ?? null,
         loose_picking: item.loose_picking ?? 0,
         batch_required: item.batch_required ?? '',
         date_required: item.date_required ?? 0,

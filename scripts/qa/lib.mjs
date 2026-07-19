@@ -33,10 +33,15 @@ export async function login() {
   token = j.data.token
 }
 export async function api(path, method = 'GET', body) {
+  // BASE UNIT (đợt 2): mọi body write gắn cờ qty_semantics='base' (BE chặn 409 payload thiếu cờ);
+  // số lượng trong test = BASE (mã test QA không có entry unit → giá trị như cũ).
+  const payload = body && typeof body === 'object' && !Array.isArray(body)
+    ? { qty_semantics: 'base', ...body }
+    : body
   const r = await fetch(`${BASE}/api${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: body ? JSON.stringify(body) : undefined,
+    body: payload ? JSON.stringify(payload) : undefined,
   })
   let j = null, text = ''
   try { text = await r.text(); j = JSON.parse(text) } catch { /* body không phải JSON */ }

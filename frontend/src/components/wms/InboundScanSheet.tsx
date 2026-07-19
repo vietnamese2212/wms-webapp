@@ -12,6 +12,7 @@ import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQu
 import { OfflineError } from '@/api/client'
 import { playBeep } from '@/utils/audio'
 import { qtyLabel } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
@@ -419,7 +420,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
                 <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)}
                   className="h-11 text-center text-lg font-semibold" />
                 {outboundCartons != null && (
-                  <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{outboundCartons}</span> thùng</p>
+                  <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{qtyLabel(outboundCartons ?? 0, order.material)}</span></p>
                 )}
               </div>
               <div className="space-y-1">
@@ -470,7 +471,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                {saving ? '…' : `Lưu ${cartons || 0} thùng`}
+                {saving ? '…' : `Lưu ${qtyLabel(Number(cartons) || 0, order.material)}`}
               </button>
             )}
           </div>

@@ -11,6 +11,11 @@ import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
+import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
+import { requireBaseQty } from '../../utils/qtySemantics'
+
+// BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
+const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
 
 // Cờ đơn vị: label_format ';' (semicolon) CHỈ nhận tem ';'; '_' (underscore) CHỈ nhận tem '_'
 // (mỗi đơn vị 1 format cố định — quét nhầm tem đơn vị khác phải bị chặn).
@@ -376,6 +381,7 @@ export async function listOrders(req: Request, res: Response) {
 
 export async function createOrder(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const {
       warehouse_id, material_id, location_id, planned_pallets, shift_id, import_date, notes, imported_by,
       source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, ncc_id,
@@ -392,9 +398,14 @@ export async function createOrder(req: Request, res: Response) {
     // Nhập SX = nơi nhập tay MỌI mã (kể cả no-QR: POSM/Loscam, nhập tồn đầu, dự phòng khi luồng khác sai).
     // Mã no-QR (hoặc kho QTY ép no-QR hiệu lực) → location_id tự = null, nhập số lượng thủ công ở trang chi tiết.
     const [{ data: matCheck }, { data: whMode }] = await Promise.all([
-      supabase.from('Material').select('no_qr_tracking').eq('id', material_id).maybeSingle(),
+      supabase.from('Material').select('no_qr_tracking, base_unit, entry_unit, units_per_carton').eq('id', material_id).maybeSingle(),
       supabase.from('Warehouse').select('inventory_mode, parent_warehouse_id').eq('id', warehouse_id).maybeSingle(),
     ])
+    // BASE UNIT: planned_cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
+    if (planned_cartons != null && planned_cartons !== '') {
+      const ie = qtyIntegerError(Number(planned_cartons), matCheck as MatUnits | null)
+      if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+    }
     // Kho NONE = không theo dõi tồn (NPP/khách hàng, điểm đến xuất bán) → nhập kho vô nghĩa, chặn hẳn.
     if ((whMode as { inventory_mode?: string | null } | null)?.inventory_mode === 'NONE') {
       return fail(res, 400, 'VALIDATION_ERROR', 'Kho không theo dõi tồn (NONE) — không thể tạo phiếu nhập kho')
@@ -579,6 +590,7 @@ export async function getOrder(req: Request, res: Response) {
 
 export async function updateOrder(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     if (!(await guardInboundScope(req, res, req.params.id))) return
     // KHÔNG nhận location_id ở đây — đổi vị trí có route riêng PATCH /:id/location
     // (gate edit_pallet/force_edit_pallet); nhận ở PATCH chung = quyền `edit` sửa được vị trí ké.
@@ -588,6 +600,14 @@ export async function updateOrder(req: Request, res: Response) {
       .from('ProductionImport').select('status').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể sửa')
+
+    // BASE UNIT: planned_cartons = SỐ BASE — validate nguyên theo mã của phiếu
+    if (planned_cartons !== undefined && planned_cartons !== null) {
+      const { data: ord } = await supabase.from('ProductionImport')
+        .select('material:Material!material_id(base_unit, entry_unit, units_per_carton)').eq('id', req.params.id).maybeSingle()
+      const ie = qtyIntegerError(Number(planned_cartons), (ord as any)?.material as MatUnits | null)
+      if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+    }
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (planned_pallets !== undefined) patch.planned_pallets = Number(planned_pallets)
@@ -881,15 +901,16 @@ export async function checkScanQR(req: Request, res: Response) {
       // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → cho phép merge
       if (isTransfer && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
         const mat = material as { cartons_per_pallet?: number | null }
+        // BASE UNIT: outboundCartons (OutboundScanEntry) đã là base; định mức thùng/pallet × hệ số
         return ok(res, {
           pallet_code:       parsed.pallet_code,
           production_date:   parsed.production_date ?? null,
-          suggested_cartons: outboundCartons ?? mat.cartons_per_pallet ?? 0,
+          suggested_cartons: outboundCartons ?? (mat.cartons_per_pallet ?? 0) * qtyFactorOf(material as MatUnits),
           outbound_cartons:  outboundCartons,
           will_merge:        true,
           cartons_existing:  existingPallet.cartons_remaining,
           existing_entry_id: existingPallet.id,
-          merge_warning:     `Pallet này còn ${existingPallet.cartons_remaining} thùng trong kho. Quét sẽ cộng thêm số thùng mới vào tồn hiện tại.`,
+          merge_warning:     `Pallet này còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho. Quét sẽ cộng thêm số mới vào tồn hiện tại.`,
         })
       }
       // TRANSFER + cùng phiếu = quét nhầm 2 lần → block rõ ràng
@@ -897,7 +918,7 @@ export async function checkScanQR(req: Request, res: Response) {
         return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được quét trong phiếu nhập này`)
       }
       const msg = existingPallet.status === 'PARTIAL'
-        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
+        ? `Pallet "${parsed.pallet_code}" còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho này. Để cộng thêm hàng trả về, dùng chức năng điều chỉnh tồn kho.`
         : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`
       return fail(res, 409, 'DUPLICATE_PALLET', msg)
     }
@@ -931,10 +952,11 @@ export async function checkScanQR(req: Request, res: Response) {
     }
 
     const mat = material as { cartons_per_pallet?: number | null; warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null }
+    // BASE UNIT: gợi ý = base (định mức thùng/pallet vật lý × hệ số; outboundCartons đã là base)
     return ok(res, {
       pallet_code:       parsed.pallet_code,
       production_date:   parsed.production_date ?? null,
-      suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId),
+      suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId) * qtyFactorOf(material as MatUnits),
       outbound_cartons:  outboundCartons,
     })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -942,6 +964,7 @@ export async function checkScanQR(req: Request, res: Response) {
 
 export async function scanQR(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { id: order_id } = req.params
     const { qr_code, location_id, stack_layer = 1, cartons_override, qa_status_id, employee_id, ncc_id: ncc_override, shelf_life_days: shelf_override } = req.body
 
@@ -1001,8 +1024,18 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → merge (cộng tồn)
+    // BASE UNIT (đợt 2): cartons_override từ FE = SỐ BASE (FE quy đổi tại rìa qua QtyInput);
+    // KHÔNG override → định mức thùng/pallet (vật lý) × hệ số. Payload cũ bị chặn ở guard qty_semantics.
+    const qtyFactor = qtyFactorOf(material as MatUnits)
+    if (cartons_override !== undefined && cartons_override !== null) {
+      const ie = qtyIntegerError(Number(cartons_override), material as MatUnits)
+      if (ie) return fail(res, 400, 'VALIDATION_ERROR', ie)
+    }
+
     if (isTransfer && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
-      const addCartons = cartons_override ? Number(cartons_override) : effCartonsPerPallet(material, orderWarehouseId)
+      const addCartons = cartons_override
+        ? Number(cartons_override)
+        : effCartonsPerPallet(material, orderWarehouseId) * qtyFactor
       const now = new Date().toISOString()
       const importCode = (order as any).import_code as string
 
@@ -1060,7 +1093,7 @@ export async function scanQR(req: Request, res: Response) {
         entry_id:      existingPallet.id,
         added_cartons: addCartons,
         new_remaining: mergedAfter,
-        warnings:      [`Đã cộng ${addCartons} thùng vào tồn hiện tại (${mergedBefore} → ${mergedAfter}). Log ghi nhận tại phiếu transfer ${importCode}.`],
+        warnings:      [`Đã cộng ${qtyLabel(addCartons, material as MatUnits)} vào tồn hiện tại (${qtyLabel(mergedBefore, material as MatUnits)} → ${qtyLabel(mergedAfter, material as MatUnits)}). Log ghi nhận tại phiếu transfer ${importCode}.`],
       })
     }
 
@@ -1069,7 +1102,7 @@ export async function scanQR(req: Request, res: Response) {
         return fail(res, 409, 'DUPLICATE_PALLET', `Pallet "${parsed.pallet_code}" đã được quét trong phiếu nhập này`)
       }
       const msg = existingPallet.status === 'PARTIAL'
-        ? `Pallet "${parsed.pallet_code}" còn ${existingPallet.cartons_remaining} thùng trong kho này. Để cộng thêm thùng trả về, dùng chức năng điều chỉnh tồn kho.`
+        ? `Pallet "${parsed.pallet_code}" còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho này. Để cộng thêm hàng trả về, dùng chức năng điều chỉnh tồn kho.`
         : `Pallet "${parsed.pallet_code}" đang tồn kho tại đây, chưa được xuất`
       return fail(res, 409, 'DUPLICATE_PALLET', msg)
     }
@@ -1105,7 +1138,7 @@ export async function scanQR(req: Request, res: Response) {
 
     const cartons_imported = cartons_override
       ? Number(cartons_override)
-      : effCartonsPerPallet(material, orderWarehouseId)
+      : effCartonsPerPallet(material, orderWarehouseId) * qtyFactor
 
     // NCC + shelflife của pallet:
     // - Ưu tiên giá trị operator chọn ở sheet (ncc_override + shelf_override) — selector NCC-biến-thể.
@@ -1261,6 +1294,7 @@ export async function scanQR(req: Request, res: Response) {
 
 export async function scanManual(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id } = req.params
     const { cartons, employee_id, production_date } = req.body
@@ -1269,11 +1303,17 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category)')
+      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category, base_unit, entry_unit, units_per_carton)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+
+    // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
+    {
+      const ie = qtyIntegerError(Number(cartons), (order as any).material as MatUnits)
+      if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+    }
 
     // Cờ requires_ncc của Loại kho: lưu thủ công (no-QR — entry pool không mang NCC riêng)
     // → NCC phải có ở cấp PHIẾU (ProductionImport.ncc_id). Thiếu → chặn cứng (user chốt 10/07).
@@ -1407,6 +1447,7 @@ export async function scanManual(req: Request, res: Response) {
 
 export async function updateEntry(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { id: order_id, entryId } = req.params
     const { cartons_imported, stack_layer, employee_id } = req.body
@@ -1416,12 +1457,18 @@ export async function updateEntry(req: Request, res: Response) {
         .select('status, warehouse_id, posm_entry_id, posm_cartons, created_by, imported_by, import_date, created_at')
         .eq('id', order_id).maybeSingle(),
       supabase.from('InventoryEntry')
-        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty, cartons_imported, cartons_remaining')
+        .select('id, import_order_id, created_by, import_date, created_at, status, cartons_reserved, adjustment_qty, cartons_imported, cartons_remaining, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
         .eq('id', entryId).maybeSingle(),
     ])
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng')
     if (!entry)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+
+    // BASE UNIT: cartons_imported từ FE = SỐ BASE — mã có entry phải là số nguyên
+    if (cartons_imported !== undefined) {
+      const ie = qtyIntegerError(Number(cartons_imported), (entry as any).material as MatUnits)
+      if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+    }
 
     // posm_entry_id chỉ được set bởi scanManual (chỉ dùng cho mã no_qr_tracking) → đây chính là phân biệt theo no-QR
     const isNoQrShared = (order as any).posm_entry_id === entryId

@@ -1,5 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
+import { qtyEntryDecimal, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
+import { requireBaseQty } from '../../utils/qtySemantics'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
@@ -99,11 +101,12 @@ async function recalcTmsOrder(tmsOrderId: string): Promise<void> {
   // Chỉ đếm ACTIVE lines — CANCELLED lines không tính vào kế hoạch
   const { data: activeLines } = await supabase
     .from('inbound_plan_lines')
-    .select('planned_boxes, planned_pallets')
+    .select('planned_boxes, planned_pallets, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
     .eq('tms_order_id', tmsOrderId)
     .neq('status', 'CANCELLED')
 
-  const totalBoxes   = (activeLines ?? []).reduce((s, l) => s + ((l as { planned_boxes: number | null }).planned_boxes   ?? 0), 0)
+  // BASE UNIT: line = base per mã → cache cấp LỆNH (cross-mã) = thùng quy đổi
+  const totalBoxes   = (activeLines ?? []).reduce((s, l) => s + qtyEntryDecimal(((l as { planned_boxes: number | null }).planned_boxes ?? 0), ((l as { material?: MatUnits | null }).material ?? null)), 0)
   const totalPallets = (activeLines ?? []).reduce((s, l) => s + ((l as { planned_pallets: number | null }).planned_pallets ?? 0), 0)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -162,11 +165,17 @@ export async function listPlanLines(req: Request, res: Response) {
 // POST /api/wms/inbound-plan  (single line)
 export async function createPlanLine(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const {
       date, warehouse_id, warehouse_type, vehicle_type,
       ncc_id, material_id, po_number, planned_boxes, planned_pallets,
     } = req.body
     if (!date || !warehouse_id) return fail(res, 'date và warehouse_id là bắt buộc', 400)
+    if (planned_boxes != null && material_id) {
+      const { data: m } = await supabase.from('Material').select('base_unit, entry_unit, units_per_carton').eq('id', material_id).maybeSingle()
+      const ie = qtyIntegerError(Number(planned_boxes), (m ?? null) as MatUnits | null)
+      if (ie) return fail(res, ie, 422)
+    }
     if (!guardPlanWrite(req, res, warehouse_id, warehouse_type || null)) return
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -2156,6 +2156,10 @@ export type OutboundScanLogEntry = {
   location_code: string | null
   scanner_name: string | null
   total_count: number
+  // BASE UNIT (đợt 2): RPC trả kèm units để FE format "N thùng + M hộp"
+  base_unit?: string | null
+  entry_unit?: string | null
+  units_per_carton?: number | null
   // Chỉ có ở SEARCH TỔNG (search_outbound_scan_log) — click dòng kết quả → mở đơn xuất
   gdo_id?: string | null
   item_id?: string | null

@@ -15,6 +15,7 @@ import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 
 interface StocktakeEntryData {
   id:                string
@@ -363,13 +364,10 @@ export default function Stocktake() {
                       <Flag className="h-3 w-3" /> Số lượng thực tế
                     </p>
                     <div className="flex items-center gap-2">
-                      <Input
-                        type="number" min="0"
-                        value={physCount}
-                        onChange={ev => setPhysCount(ev.target.value)}
-                        placeholder="Nhập số thực tế"
-                        className="h-7 text-sm w-28"
-                        autoFocus
+                      <QtyInput compact autoFocus className="w-44"
+                        value={Math.max(0, parseInt(physCount) || 0)}
+                        mat={entry.material}
+                        onChange={b => setPhysCount(String(b))}
                       />
                       <span className="text-xs text-slate-400">{qtyUnitLabel(entry.material)} (app: {qtyEntryText(entry.cartons_remaining, entry.material)})</span>
                     </div>

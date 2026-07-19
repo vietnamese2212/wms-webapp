@@ -7,6 +7,7 @@
 //  gdo đến từ useGDO (realtime invalidate) → quét tới đâu sơ đồ tự cập nhật tới đó.
 // Mỗi MẢNG hàng có nhãn tên + mũi tên chỉ xuống khối (sprite + cone).
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -157,19 +158,21 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         const code = it.material?.material_code ?? it.material_code_raw ?? '?'
         const key = `${d.delivery_code}|${code}`
         const hasDims = it.material?.carton_length_mm && it.material?.carton_width_mm && it.material?.carton_height_mm
+        // BASE UNIT: 3D xếp THÙNG VẬT LÝ → quy đổi base ÷ hệ_số (làm tròn lên — thùng mở vẫn chiếm chỗ)
+        const ordPhys = Math.ceil(qtyEntryDecimal(it.cartons_ordered, it.material))
         // Đã xuất thật = đã quét/ghi nhận − nhặt lẻ CHƯA xác nhận cuối
         const looseUnconfirmed = (it.scan_entries ?? [])
           .filter(s => s.is_loose_picking && !s.loose_confirmed)
           .reduce((sum, s) => sum + s.cartons_scanned, 0)
-        const done = Math.max(0, Math.min(it.cartons_ordered, it.cartons_scanned - looseUnconfirmed))
+        const done = Math.max(0, Math.min(ordPhys, Math.floor(qtyEntryDecimal(it.cartons_scanned - looseUnconfirmed, it.material))))
         const cur = map.get(key)
-        if (cur) { cur.count += it.cartons_ordered; cur.done += done; continue }
+        if (cur) { cur.count += ordPhys; cur.done += done; continue }
         map.set(key, {
           key,
           label: it.material?.short_name ?? it.material_code_raw ?? code,
           doKey: d.delivery_code,
           doLabel: d.distributor_name ? `${d.delivery_code} · ${d.distributor_name}` : d.delivery_code,
-          count: it.cartons_ordered,
+          count: ordPhys,
           done,
           l: hasDims ? Number(it.material!.carton_length_mm) : ASSUMED_CARTON.l,
           w: hasDims ? Number(it.material!.carton_width_mm)  : ASSUMED_CARTON.w,

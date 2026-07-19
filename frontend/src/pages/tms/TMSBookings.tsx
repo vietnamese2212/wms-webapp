@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
+import { qtyFromEntryBase, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -775,7 +776,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         material_id: l.material_id ?? '',
         material_name: l.material?.short_name ?? '',
         unit: l.unit ?? '',
-        planned_boxes: String(l.planned_boxes ?? ''),
+        planned_boxes: String(l.planned_boxes != null ? qtyEntryDecimal(Number(l.planned_boxes), l.material ?? null) : ''),
         planned_pallets: String(l.planned_pallets ?? ''),
       }))
     while (rows.length < 5) rows.push(EMPTY_PLAN_LINE())
@@ -816,14 +817,14 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           setPlanSaving(true)
           await Promise.all([
             ...toDelete.map((l: any) => deletePlanLine(l.id)),
-            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: Number(r.planned_boxes), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
+            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
           ])
           if (toAdd.length > 0) {
             await addPlanLines({
               tms_order_id: order.id,
               lines: toAdd.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: Number(r.planned_boxes),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -840,7 +841,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               tms_order_id: (created as import('@/types').TmsOrder).id,
               lines: validLines.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: Number(r.planned_boxes),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -1674,6 +1675,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     const valid = preview.filter(r => r._valid)
     if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
     try {
+      // BASE UNIT: cột "Số thùng" trong file = THÙNG NGUYÊN → quy đổi base theo hệ số mã
       const lines = valid.map(r => ({
         date:            r.date,
         warehouse_id:    r.kho_id   || warehouseId,
@@ -1682,7 +1684,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
         ncc_id:          r.ncc_id          || null,
         material_id:     r.material_id     || null,
         po_number:       r.po_number       || null,
-        planned_boxes:   r.planned_boxes,
+        planned_boxes:   r.planned_boxes != null ? qtyFromEntryBase(Number(r.planned_boxes), 0, (materials as import('@/types').Material[]).find(m => m.id === r.material_id) ?? null) : null,
         planned_pallets: r.planned_pallets,
       }))
       await bulkCreate.mutateAsync(lines)

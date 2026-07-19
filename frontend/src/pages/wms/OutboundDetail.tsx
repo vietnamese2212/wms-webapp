@@ -7,6 +7,7 @@ import { vi } from 'date-fns/locale'
 import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
   Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes,
@@ -841,12 +842,12 @@ function ManualCompleteDialog({ gdoId, itemId, matName, mat, initialCartons, onC
           )}
 
           <div className="space-y-1">
-            <Label className="text-xs">Số thùng xuất</Label>
-            <Input
-              type="number" min="0"
-              className={`text-lg h-10 ${overPlan ? 'border-red-400 focus-visible:ring-red-400' : overStock ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
+            <Label className="text-xs">Số lượng xuất</Label>
+            <QtyInput
+              className={`${overPlan ? '[&_input]:border-red-400' : overStock ? '[&_input]:border-amber-400' : ''}`}
               value={cartons}
-              onChange={e => { setCartons(parseInt(e.target.value) || 0); setErr(null) }}
+              mat={mat}
+              onChange={b => { setCartons(b); setErr(null) }}
             />
             {overPlan && (
               <p className="text-xs text-red-600">Vượt kế hoạch ({qtyLabel(ordered, mat)})</p>

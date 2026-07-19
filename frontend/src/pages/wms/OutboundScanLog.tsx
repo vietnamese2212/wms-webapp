@@ -20,6 +20,7 @@ import {
   fetchScanLogExport, useScanLogSearch,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
+import { qtyLabel, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
@@ -276,7 +277,7 @@ export default function OutboundScanLog() {
           'Kho': row.warehouse_name ?? '', 'Loại hàng': row.material_category ?? '',
           'Số xe': row.group_code ?? '', 'NPP': row.distributor_name ?? '', 'Số DO': row.delivery_code ?? '',
           'Mã pallet': row.pallet_code ?? '', 'Mã hàng': row.material_code ?? row.material_code_raw ?? '',
-          'Tên hàng': row.material_name ?? '', 'Thùng': row.cartons_scanned,
+          'Tên hàng': row.material_name ?? '', 'ĐVT': qtyUnitLabel(row), 'Thùng': qtyEntryDecimal(row.cartons_scanned, row),
           'NSX': row.production_date ? formatDate(row.production_date) : '',
           'HSD': expiry ? formatDate(expiry) : '',
           'Date cũ nhất': row.best_available_date ? formatDate(row.best_available_date) : '',
@@ -430,7 +431,7 @@ export default function OutboundScanLog() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.material_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap">
-                      {row.cartons_scanned}
+                      {qtyLabel(row.cartons_scanned, row)}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {row.production_date ? formatDate(row.production_date) : <span className="text-slate-300">—</span>}

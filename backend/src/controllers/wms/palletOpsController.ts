@@ -4,6 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint } from './systemSettingController'
+import { qtyLabel, type MatUnits } from '../../utils/qtyUnits'
+import { requireBaseQty } from '../../utils/qtySemantics'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
@@ -123,6 +125,7 @@ export async function ungroupPallets(req: Request, res: Response) {
 // POST /wms/pallet-ops/split  { source_pallet_code, children: [{ qty }] }
 export async function splitPallet(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: qty con = SỐ BASE (bundle cũ gửi thùng → chặn)
     const { source_pallet_code, children, warehouse_id, location_id } = req.body as { source_pallet_code?: string; children?: { qty: number }[]; warehouse_id?: string; location_id?: string }
     const src = normalizeQR(source_pallet_code ?? '')
     const isV2 = src.includes(';')          // tem V2 (`;`): mã lô nằm ở đoạn 3, KHÔNG split bằng `_`
@@ -137,7 +140,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -150,7 +153,7 @@ export async function splitPallet(req: Request, res: Response) {
     const reserved = Number(source.cartons_reserved ?? 0)
     const free = remaining - reserved
     const totalSplit = items.reduce((s, q) => s + q, 0)
-    if (totalSplit > free) return fail(res, `Tách ${totalSplit} thùng vượt số khả dụng (${free} thùng, đã trừ ${reserved} giữ chỗ)`)
+    if (totalSplit > free) return fail(res, `Tách ${qtyLabel(totalSplit, (source as any).material as MatUnits)} vượt số khả dụng (${qtyLabel(free, (source as any).material as MatUnits)}, đã trừ ${qtyLabel(reserved, (source as any).material as MatUnits)} giữ chỗ)`)
 
     // Tìm số thứ tự con kế tiếp (baseCode.N) — mã con = mã gốc + ".N".
     // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5).
@@ -248,7 +251,7 @@ export async function splitPallet(req: Request, res: Response) {
     if (!okDec) {
       await supabase.from('InventoryEntry').delete().in('id', rows.map(r => r.id))
       return fail(res, decErr === 'INSUFFICIENT'
-        ? `Pallet gốc "${src}" vừa bị tách bớt — không đủ ${totalSplit} thùng khả dụng, thử lại`
+        ? `Pallet gốc "${src}" vừa bị tách bớt — không đủ ${qtyLabel(totalSplit, (source as any).material as MatUnits)} khả dụng, thử lại`
         : `Pallet gốc "${src}" đang bận (nhiều người thao tác) — thử lại`, 409)
     }
 

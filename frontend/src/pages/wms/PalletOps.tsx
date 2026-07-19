@@ -23,6 +23,7 @@ import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 
 type Tab = 'merge' | 'split' | 'history'
@@ -275,7 +276,7 @@ export default function PalletOps() {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
                     const matName = matByCode.get(materialCodeOf(aCode))?.short_name ?? materialCodeOf(aCode) ?? '—'
                     const qtySum = (o.detail?.children ?? []).reduce((s: number, c: any) => s + (Number(c.qty) || 0), 0)
-                    const qtyText = o.type === 'SPLIT' ? `${qtySum} thùng` : `${(o.source_codes?.length ?? 0)} pallet`
+                    const qtyText = o.type === 'SPLIT' ? `SL ${qtySum}` : `${(o.source_codes?.length ?? 0)} pallet`
                     return (
                     <tr key={o.id} className={`border-b border-slate-100 ${o.undone_at ? 'opacity-50' : ''}`}>
                       <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(o.created_at, true)} {formatTimestampTime(o.created_at)}</td>
@@ -427,7 +428,7 @@ export default function PalletOps() {
                         {srcSplitChildren.map((c, i) => (
                           <div key={i} className="flex items-center justify-between gap-2 text-[10px] text-violet-700">
                             <span className="font-mono truncate">{c.code}</span>
-                            <span className="tabular-nums shrink-0">{c.qty} thùng · {formatTimestampDate(c.at, true)}</span>
+                            <span className="tabular-nums shrink-0">{qtyLabel(Number(c.qty) || 0, srcEntry?.material)} · {formatTimestampDate(c.at, true)}</span>
                           </div>
                         ))}
                       </div>
@@ -436,19 +437,21 @@ export default function PalletOps() {
                 </div>
 
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
-                  <Label className="text-xs font-semibold">Số thùng mỗi pallet con tách ra</Label>
+                  <Label className="text-xs font-semibold">Số lượng mỗi pallet con tách ra</Label>
                   {splitQtys.map((q, i) => (
                     <div key={i} className="flex items-center gap-1.5">
                       <span className="text-[11px] text-slate-400 w-12">Con {i + 1}</span>
-                      <Input type="number" min={1} className="h-9 text-sm flex-1" placeholder="Số thùng" value={q}
-                        onChange={e => setSplitQtys(p => p.map((x, j) => j === i ? e.target.value : x))} />
+                      <QtyInput compact className="flex-1"
+                        value={Math.max(0, parseInt(q) || 0)}
+                        mat={srcEntry?.material}
+                        onChange={b => setSplitQtys(p => p.map((x, j) => j === i ? String(b) : x))} />
                       {splitQtys.length > 1 && <button onClick={() => setSplitQtys(p => p.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500"><X className="h-4 w-4" /></button>}
                     </div>
                   ))}
                   <button onClick={() => setSplitQtys(p => [...p, ''])} className="text-xs text-blue-600 hover:text-blue-800 inline-flex items-center gap-0.5"><Plus className="h-3 w-3" />Thêm pallet con</button>
                   {srcEntry && (
                     <div className={`text-xs tabular-nums ${keepLeft < 0 ? 'text-red-600' : 'text-slate-500'}`}>
-                      Tách <b>{totalSplit}</b> thùng → gốc giữ lại <b>{keepLeft}</b> thùng {keepLeft < 0 && '(vượt tồn!)'} {totalSplit > free && free >= 0 && <span className="text-red-600">· vượt số khả dụng {free}</span>}
+                      Tách <b>{qtyLabel(totalSplit, srcEntry?.material)}</b> → gốc giữ lại <b>{qtyLabel(keepLeft, srcEntry?.material)}</b> {keepLeft < 0 && '(vượt tồn!)'} {totalSplit > free && free >= 0 && <span className="text-red-600">· vượt số khả dụng {qtyLabel(free, srcEntry?.material)}</span>}
                     </div>
                   )}
                 </div>
@@ -495,7 +498,7 @@ export default function PalletOps() {
                   <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 space-y-2">
                     <p className="text-xs font-semibold text-violet-800">Đã tách {splitDone.length} pallet con — chờ in tem:</p>
                     <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                      {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · {l.qty} thùng</div>)}
+                      {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · SL {l.qty}</div>)}
                     </div>
                     {/* Cụm action sau khi tách — In tem (thuần PC, window.print) + Để in sau/Đóng */}
                     <ActionCluster items={[

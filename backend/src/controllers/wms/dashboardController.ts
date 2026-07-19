@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 
 // Dashboard tổng quan tồn kho — GET hở đọc có chủ đích (auth-only như /inventory),
 // dữ liệu vẫn CẮT theo scope kho + loại hàng của user trong controller.
@@ -56,10 +57,11 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
     }),
     supabase.from('Warehouse').select('id, name').then(r => r.data ?? []),
     fetchAllRowsParallel(() => supabase.from('Material')
-      .select('id, pallet_per_ea').not('pallet_per_ea', 'is', null).order('id')),
+      .select('id, pallet_per_ea, base_unit, entry_unit, units_per_carton').not('pallet_per_ea', 'is', null).order('id')),
   ])
-  const ppeByMat = new Map((ppeMats as { id: string; pallet_per_ea: number }[])
-    .map(m => [String(m.id), Number(m.pallet_per_ea) || 0]))
+  // BASE UNIT: pallet_per_ea tính trên THÙNG (entry) → qty base chia hệ số trước khi nhân
+  const ppeByMat = new Map((ppeMats as ({ id: string; pallet_per_ea: number } & MatUnits)[])
+    .map(m => [String(m.id), { ppe: Number(m.pallet_per_ea) || 0, units: m as MatUnits }]))
 
   // pallet quy đổi theo từng vị trí — gom (location_id, material_id): n = số entry, qty = Σ tồn
   type UsedGroup = { location_id: string; material_id: string; n: number; qty: number }
@@ -98,8 +100,8 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
   }
   const usedByLoc = new Map<string, number>()
   for (const g of groups) {
-    const ppe = ppeByMat.get(g.material_id)
-    const pallets = ppe && ppe > 0 ? g.qty * ppe : g.n
+    const pm = ppeByMat.get(g.material_id)
+    const pallets = pm && pm.ppe > 0 ? qtyEntryDecimal(g.qty, pm.units) * pm.ppe : g.n
     usedByLoc.set(g.location_id, (usedByLoc.get(g.location_id) ?? 0) + pallets)
   }
 
@@ -159,13 +161,15 @@ export async function getDashboard(req: Request, res: Response) {
         return q
       }, 1000, 3),
       supabase.from('Warehouse').select('id, name, inventory_mode').then(r => r.data ?? []),
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, category').order('id')),
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, category, base_unit, entry_unit, units_per_carton').order('id')),
     ])
 
     const whById = new Map((warehouses as { id: string; name: string; inventory_mode: string | null }[])
       .map(w => [w.id, w]))
     const catByMat = new Map((materials as { id: string; category: string | null }[])
       .map(m => [String(m.id), m.category]))
+    // BASE UNIT: mọi tổng thùng fallback = THÙNG QUY ĐỔI (base ÷ hệ_số per mã)
+    const unitsByMat = new Map((materials as ({ id: string } & MatUnits)[]).map(m => [String(m.id), m as MatUnits]))
 
     const invMap = new Map<string, InvRow & { matSet: Set<string> }>()
     for (const e of entries as { warehouse_id: string; material_id: string; cartons_remaining: number }[]) {
@@ -181,7 +185,7 @@ export async function getDashboard(req: Request, res: Response) {
         invMap.set(key, row)
       }
       row.pallets += 1
-      row.cartons += Number(e.cartons_remaining) || 0
+      row.cartons += qtyEntryDecimal(Number(e.cartons_remaining) || 0, unitsByMat.get(String(e.material_id)) ?? null)
       row.matSet.add(String(e.material_id))
     }
     const inventory: InvRow[] = [...invMap.values()]
@@ -205,7 +209,7 @@ export async function getDashboard(req: Request, res: Response) {
       piQ,
       fetchAllRowsParallel(makeGdoQ),   // scope NATIONAL >1000 GDO/ngày: limit cứng làm outboundPlanned/Scanned thiếu âm thầm
       fetchAllRowsParallel(() => {
-        let q = supabase.from('InventoryEntry').select('cartons_imported')
+        let q = supabase.from('InventoryEntry').select('cartons_imported, material_id')
           .gte('import_date', dayStart).lte('import_date', dayEnd).order('id')
         if (whIds) q = q.in('warehouse_id', whIds)
         return q
@@ -225,18 +229,19 @@ export async function getDashboard(req: Request, res: Response) {
       const doChunks: string[][] = []
       for (let i = 0; i < doIds.length; i += 300) doChunks.push(doIds.slice(i, i + 300))
       const itemResults = await Promise.all(doChunks.map(chunk =>
-        fetchAllRowsParallel(() => supabase.from('OutboundItem').select('cartons_ordered, cartons_scanned, do_id').in('do_id', chunk).order('id'))
+        fetchAllRowsParallel(() => supabase.from('OutboundItem').select('cartons_ordered, cartons_scanned, do_id, material_id').in('do_id', chunk).order('id'))
       ))
       for (const it of itemResults.flat()) {
-        outboundPlanned += Number(it.cartons_ordered) || 0
-        outboundScanned += Number(it.cartons_scanned) || 0
+        const u = unitsByMat.get(String(it.material_id)) ?? null
+        outboundPlanned += qtyEntryDecimal(Number(it.cartons_ordered) || 0, u)
+        outboundScanned += qtyEntryDecimal(Number(it.cartons_scanned) || 0, u)
       }
     }
 
     const todayStats: TodayStats = {
       inbound_orders: inboundOrders ?? 0,
-      inbound_cartons: (todayEntries as { cartons_imported: number | null }[])
-        .reduce((s, e) => s + (Number(e.cartons_imported) || 0), 0),
+      inbound_cartons: (todayEntries as { cartons_imported: number | null; material_id?: string | null }[])
+        .reduce((acc, e) => acc + qtyEntryDecimal(Number(e.cartons_imported) || 0, unitsByMat.get(String(e.material_id)) ?? null), 0),
       outbound_gdos: gdoIds.length,
       outbound_planned: outboundPlanned,
       outbound_scanned: outboundScanned,

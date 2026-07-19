@@ -31,7 +31,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtyEntryText, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyEntryDecimal, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -778,9 +778,10 @@ export default function Inventory() {
 
   // Mẫu Excel Tồn kho đầu kỳ — cột KHỚP thứ tự INV_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
   function downloadInventoryTemplate() {
-    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng *', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)']
-    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days']
-    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '']
+    // BASE UNIT: mã có Hộp/thùng → "Số thùng" SỐ NGUYÊN + phần lẻ ghi cột "Hộp" (đơn vị gốc)
+    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)']
+    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base']
+    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24]
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
@@ -1411,6 +1412,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
 }) {
   const user = useAuthStore(s => s.user)
   const [adjInput, setAdjInput]       = useState('')
+  const [adjUnit, setAdjUnit]         = useState<'entry' | 'base'>('base')   // BASE UNIT: ĐVT của số vừa gõ (mã có entry)
   const [adjNote, setAdjNote]         = useState('')
   const [showAdj, setShowAdj]         = useState(false)
   const [showLog, setShowLog]         = useState(false)
@@ -1423,9 +1425,13 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
   const pct       = computePctDate(e, e.material)
 
+  // BASE UNIT: delta gửi đi = SỐ BASE (nhập theo thùng → × hệ_số); mã có entry bắt SỐ NGUYÊN
+  const adjFactor = hasEntry(e.material) && adjUnit === 'entry' ? Number(e.material!.units_per_carton) : 1
+  const adjDeltaBase = (hasEntry(e.material) ? (parseInt(adjInput) || 0) : parseFloat(adjInput)) * adjFactor
   function handleAdjust() {
-    const val = parseFloat(adjInput)
+    const val = adjDeltaBase
     if (isNaN(val) || val === 0) { setAdjError('Nhập số khác 0'); return }
+    if (hasEntry(e.material) && !Number.isInteger(val)) { setAdjError('Mã có Hộp/thùng — nhập số NGUYÊN'); return }
     setAdjError('')
     adjust(
       { id: e.id, adjustment: val, employee_id: user?.id, note: adjNote.trim() || undefined, actor_name: user?.name ?? undefined },
@@ -1574,22 +1580,31 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
               <p className="text-[10px] text-slate-500">
                 Tồn hiện tại: <strong>{qtyLabel(Number(remaining), e.material)}</strong>. Nhập số điều chỉnh (+ hoặc −).
               </p>
-              <Input
-                type="number"
-                placeholder="Vd: -2 hoặc +5"
-                value={adjInput}
-                onChange={ev => { setAdjInput(ev.target.value); setAdjError('') }}
-                className="h-8 text-sm text-center"
-              />
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  placeholder="Vd: -2 hoặc +5"
+                  value={adjInput}
+                  onChange={ev => { setAdjInput(ev.target.value); setAdjError('') }}
+                  className="h-8 text-sm text-center flex-1"
+                />
+                {hasEntry(e.material) && (
+                  <select className="h-8 border border-slate-200 rounded-md px-1.5 text-xs bg-white shrink-0"
+                    value={adjUnit} onChange={ev => setAdjUnit(ev.target.value as 'entry' | 'base')}>
+                    <option value="base">{unitLabel(e.material?.base_unit)}</option>
+                    <option value="entry">{unitLabel(e.material?.entry_unit)}</option>
+                  </select>
+                )}
+              </div>
               <Input
                 placeholder="Lý do điều chỉnh (tùy chọn)"
                 value={adjNote}
                 onChange={ev => setAdjNote(ev.target.value)}
                 className="h-8 text-xs"
               />
-              {adjInput && !isNaN(parseFloat(adjInput)) && (
+              {adjInput && !isNaN(adjDeltaBase) && (
                 <p className="text-[10px] text-slate-500 text-center">
-                  Tồn mới: <strong>{qtyLabel(Number(remaining) + parseFloat(adjInput), e.material)}</strong>
+                  Tồn mới: <strong>{qtyLabel(Number(remaining) + adjDeltaBase, e.material)}</strong>
                 </p>
               )}
               {adjError && <p className="text-[10px] text-red-500">{adjError}</p>}

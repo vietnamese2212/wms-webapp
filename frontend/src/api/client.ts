@@ -27,6 +27,13 @@ apiClient.interceptors.request.use((config) => {
   if (method !== 'get' && typeof navigator !== 'undefined' && navigator.onLine === false) {
     return Promise.reject(new OfflineError())
   }
+  // BASE UNIT (đợt 2): đánh dấu MỌI body write "số lượng theo đơn vị gốc" — BE chặn 409
+  // payload thiếu cờ (bundle cũ gửi thùng thập phân). Chỉ gắn vào object JSON thường.
+  if (method !== 'get' && config.data && typeof config.data === 'object'
+      && !(config.data instanceof FormData) && !Array.isArray(config.data)
+      && (config.data as Record<string, unknown>).qty_semantics === undefined) {
+    ;(config.data as Record<string, unknown>).qty_semantics = 'base'
+  }
   const stored = localStorage.getItem('wms-auth')
   if (stored) {
     try {

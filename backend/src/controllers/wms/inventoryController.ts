@@ -10,6 +10,8 @@ import { safeSearch, safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
+import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
+import { requireBaseQty } from '../../utils/qtySemantics'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -234,14 +236,15 @@ const IN_CHUNK = 300
 // Tổng cartons_remaining của 1 tập id (chunk 300 → tránh URL 414). Song song các lô.
 async function sumRemainingByIds(ids: string[]): Promise<number> {
   if (!ids.length) return 0
+  // BASE UNIT: tổng cross-mã = THÙNG QUY ĐỔI (base ÷ hệ_số per mã) — kéo kèm units qua embed
   const results = await Promise.all(chunkArray(ids, IN_CHUNK).map(c =>
-    supabase.from('InventoryEntry').select('cartons_remaining').in('id', c)))
+    supabase.from('InventoryEntry').select('cartons_remaining, material:Material(base_unit, entry_unit, units_per_carton)').in('id', c)))
   let total = 0
   for (const r of results) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((r as any).error) throw new Error((r as any).error.message)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const row of ((r as any).data ?? [])) total += Number(row.cartons_remaining ?? 0)
+    for (const row of ((r as any).data ?? [])) total += qtyEntryDecimal(Number(row.cartons_remaining ?? 0), row.material ?? null)
   }
   return total
 }
@@ -504,8 +507,22 @@ export async function listInventory(req: Request, res: Response) {
   // Tổng thùng tồn: aggregate SUM phía DB (db-aggregates-enabled đã bật lại) — 1 query thay vì kéo ~4000
   // dòng về Node. Tái dùng NGUYÊN applyInventoryFilters → tổng khớp tuyệt đối list. catActive: embed
   // material!inner để lọc category → PostgREST group-by category (mỗi category 1 dòng) nên cộng .sum tất cả.
-  const sumSelect = catActive ? 'cartons_remaining.sum(), material:Material!inner(category)' : 'cartons_remaining.sum()'
-  const sumQ = applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params)
+  // BASE UNIT: SUM group theo material_id để chia hệ số ra "thùng quy đổi" (JS chia sau khi nhận group).
+  // Group rows ≤ số mã khớp filter — phân trang qua fetchAllPaged để không dính cap 1000.
+  const sumSelect = catActive ? 'material_id, cartons_remaining.sum(), material:Material!inner(category)' : 'material_id, cartons_remaining.sum()'
+  const sumQ = (async () => {
+    try {
+      const groups = await fetchAllPaged(() =>
+        applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params).order('material_id'))
+      const matIds = [...new Set(groups.map((g: any) => g.material_id).filter(Boolean))] as string[]
+      const unitRows = matIds.length
+        ? (await Promise.all(chunkArray(matIds, IN_CHUNK).map(c =>
+            supabase.from('Material').select('id, base_unit, entry_unit, units_per_carton').in('id', c)))).flatMap(r2 => (r2.data ?? []) as any[])
+        : []
+      const uMap = new Map(unitRows.map((m: any) => [m.id, m]))
+      return { data: groups.map((g: any) => ({ sum: qtyEntryDecimal(Number(g.sum ?? 0), uMap.get(g.material_id) ?? null) })), error: null }
+    } catch (e) { return { data: null, error: { message: (e as Error).message } } }
+  })()
 
   // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list chỉ hiện pallet 0 khi chọn "Tất cả" (user 18/07,
   // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
@@ -613,7 +630,8 @@ export async function summaryInventory(req: Request, res: Response) {
       return (b.production_date ?? '').localeCompare(a.production_date ?? '') // ngày SX mới nhất trước
     })
 
-  const total_cartons_remaining = groups.reduce((s, g) => s + g.cartons_remaining, 0)
+  // BASE UNIT: tổng cross-mã = thùng quy đổi (group per mã đã mang units)
+  const total_cartons_remaining = groups.reduce((s, g) => s + qtyEntryDecimal(g.cartons_remaining, g), 0)
   return ok(res, { groups, total: groups.length, total_cartons_remaining })
 }
 
@@ -732,7 +750,16 @@ export async function adjustInventory(req: Request, res: Response) {
   if (typeof adjustment !== 'number' || adjustment === 0) {
     return fail(res, 400, 'INVALID_INPUT', 'adjustment phải là số khác 0')
   }
+  if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
   if (!(await guardEntriesScope(req, res, [id]))) return
+
+  // BASE UNIT: adjustment = SỐ BASE — mã có entry phải là số nguyên
+  {
+    const { data: entMat } = await supabase.from('InventoryEntry')
+      .select('material:Material!material_id(base_unit, entry_unit, units_per_carton)').eq('id', id).maybeSingle()
+    const ie = qtyIntegerError(adjustment, ((entMat as any)?.material ?? null) as MatUnits | null)
+    if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+  }
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -970,12 +997,19 @@ export async function stocktakeEntry(req: Request, res: Response) {
   }
 
   const { data: existing, error: fetchErr } = await supabase.from('InventoryEntry')
-    .select('id, location_id, cartons_remaining')
+    .select('id, location_id, cartons_remaining, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
     .eq('id', id).maybeSingle()
 
   if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
   if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
   if (!(await guardEntriesScope(req, res, [id]))) return
+
+  // BASE UNIT: physical_count từ FE = SỐ BASE (đếm N thùng + M hộp → quy đổi tại rìa) — mã entry phải nguyên
+  if (physical_count !== undefined && physical_count !== null) {
+    if (!requireBaseQty(req, res)) return
+    const ie = qtyIntegerError(Number(physical_count), ((existing as any).material ?? null) as MatUnits | null)
+    if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+  }
 
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1203,7 +1237,9 @@ export async function getInventoryEntry(req: Request, res: Response) {
 // Mirror scripts/import_inventory.js: kiểm TOÀN BỘ file trước — có BẤT KỲ lỗi nào thì KHÔNG nhập gì
 // (trả về danh sách lỗi để sửa & up lại). File sạch 100% → nhập theo lô. status=IN_STOCK, origin=IMPORT.
 // NMSX = đoạn 6 mã pallet (QR), thiếu → nmsx_code của kho. Trùng pallet (trong file / đã có) = lỗi.
-const INV_KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days'] as const
+// BASE UNIT (đợt 2): thêm cột CUỐI 'boxes_base' (Hộp — đơn vị gốc, mã có entry). File cũ 9 cột vẫn đọc được.
+const INV_KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base'] as const
+const INV_LEGACY_LEN = 9
 
 const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
 const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
@@ -1260,7 +1296,7 @@ export async function uploadExcel(req: Request, res: Response) {
     if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
 
     const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    const isKeyRow = (r: unknown[]) => INV_KEYS.every((k, i) => norm(r)[i] === k)
+    const isKeyRow = (r: unknown[]) => INV_KEYS.every((k, i) => norm(r)[i] === k || (i >= INV_LEGACY_LEN && !norm(r)[i]))
     const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1
     const rows = raw.slice(start)
       .map(r => Object.fromEntries(INV_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
@@ -1268,13 +1304,13 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
     const [mats, whs, locs, cos, qas] = await Promise.all([
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, category')),
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, category, base_unit, entry_unit, units_per_carton')),
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
       fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
       fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
     ]) as [
-      { id: string; material_code: string; category: string | null }[],
+      ({ id: string; material_code: string; category: string | null } & MatUnits)[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
       { id: string; location_code: string }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
@@ -1283,6 +1319,7 @@ export async function uploadExcel(req: Request, res: Response) {
 
     const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
     const matCatMap = new Map(mats.map(m => [m.id, m.category ?? '']))
+    const matUnitsById = new Map<string, MatUnits>(mats.map(m => [m.id, m]))
     const whTypeMeta = await getWhTypeMetaMap()   // cờ requires_ncc per Loại kho (kiểm dòng thiếu NCC)
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
@@ -1343,6 +1380,19 @@ export async function uploadExcel(req: Request, res: Response) {
       const palletLc = pallet!.toLowerCase()
       const matId = matMap.get(mcode!.toLowerCase())
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
+      // BASE UNIT: mã có entry → "Số thùng" NGUYÊN + cột Hộp NGUYÊN; lượng lưu = base
+      const mu = matUnitsById.get(matId) ?? null
+      const boxesBase = invNum(r.boxes_base) ?? 0
+      let qtyBase = cartons!
+      if (hasEntry(mu)) {
+        const f = Number(mu!.units_per_carton)
+        if (!Number.isInteger(cartons!)) {
+          const goiY = Math.round((cartons! - Math.floor(cartons!)) * f)
+          errors.push(`${at} — "Số thùng" phải là SỐ NGUYÊN (mã ${f}/thùng — ${cartons} thùng ≈ ${Math.floor(cartons!)} thùng + ${goiY}: ghi ${goiY} vào cột Hộp)`); continue
+        }
+        if (!Number.isInteger(boxesBase) || boxesBase < 0) { errors.push(`${at} — cột "Hộp" phải là SỐ NGUYÊN ≥ 0`); continue }
+        qtyBase = cartons! * f + boxesBase
+      }
       const wh = whByCode.get(whRaw!.toLowerCase()) || whByName.get(whRaw!.toLowerCase())
       if (!wh) { errors.push(`${at} — kho không khớp: ${whRaw}`); continue }
       // Scope: chặn upload ghi tồn sang kho ngoài phạm vi user (all-or-nothing như các lỗi khác)
@@ -1377,23 +1427,23 @@ export async function uploadExcel(req: Request, res: Response) {
         // Pallet đã có (active) trong ĐÚNG kho này → CẬP NHẬT theo file (user chốt 05/07).
         // Giữ nguyên: id, pallet, kho, cartons_imported, import_date, created_at, origin, status, reserved.
         const reserved = Number(ex.cartons_reserved) || 0
-        if (cartons! < reserved) {
-          errors.push(`${at} — số thùng mới ${cartons} < đang giữ chỗ ${reserved} (kho ${whRaw}) — xử lý đơn xuất đang mở trước`)
+        if (qtyBase < reserved) {
+          errors.push(`${at} — số mới ${qtyLabel(qtyBase, mu)} < đang giữ chỗ ${qtyLabel(reserved, mu)} (kho ${whRaw}) — xử lý đơn xuất đang mở trước`)
           continue
         }
         const before = Number(ex.cartons_remaining) || 0
         updates.push({
           ...ex,
           material_id: matId, location_id: locId,
-          cartons_remaining: cartons,
+          cartons_remaining: qtyBase,
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
           updated_at: now,
         })
-        if (cartons! !== before) {
+        if (qtyBase !== before) {
           adjustLogs.push({
-            id: randomUUID(), entry_id: ex.id, delta: cartons! - before,
-            cartons_before: before, cartons_after: cartons,
+            id: randomUUID(), entry_id: ex.id, delta: qtyBase - before,
+            cartons_before: before, cartons_after: qtyBase,
             note: 'Upload tồn kho (cập nhật theo file)', actor_name: actorName, actor_id: actorId,
             adjusted_at: now,
           })
@@ -1401,7 +1451,7 @@ export async function uploadExcel(req: Request, res: Response) {
       } else {
         records.push({
           id: randomUUID(), pallet_code: pallet, material_id: matId, warehouse_id: wh.id, location_id: locId,
-          cartons_imported: cartons, cartons_remaining: cartons, cartons_reserved: 0, adjustment_qty: 0,
+          cartons_imported: qtyBase, cartons_remaining: qtyBase, cartons_reserved: 0, adjustment_qty: 0,
           stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,

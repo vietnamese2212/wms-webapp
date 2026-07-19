@@ -22,7 +22,8 @@ import {
 import { materialCodeOf, normalizeQR } from '@/utils/qr'
 import { formatTimestampDate } from '@/utils/formatters'
 import { playBeep } from '@/utils/audio'
-import { qtyLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtyBaseLabel } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
@@ -332,7 +333,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu {Math.max(1, parseInt(pendingCartons) || 1)} thùng
+                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), activeItem?.material)}
               </button>
             )}
             {saving && (
@@ -362,14 +363,21 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-slate-700 shrink-0">Số thùng:</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={pendingCartons}
-                  onChange={e => setPendingCartons(e.target.value)}
-                  className="h-11 text-center font-semibold text-lg w-28"
-                />
+                <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? `Số ${qtyBaseLabel(activeItem?.material)}:` : 'Số lượng:'}</label>
+                {mode === 'loose' ? (
+                  <Input
+                    type="number" min={1}
+                    value={pendingCartons}
+                    onChange={e => setPendingCartons(e.target.value)}
+                    className="h-11 text-center font-semibold text-lg w-28"
+                  />
+                ) : (
+                  <QtyInput compact className="w-44"
+                    value={Math.max(0, parseInt(pendingCartons) || 0)}
+                    mat={activeItem?.material}
+                    onChange={b => setPendingCartons(String(b))}
+                  />
+                )}
                 <span className="text-sm text-slate-400">/ {activeRemaining} {mode === 'loose' ? 'cần chuẩn bị' : 'cần xuất'}</span>
               </div>
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>

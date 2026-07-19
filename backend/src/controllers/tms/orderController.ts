@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -558,6 +559,12 @@ export async function getPlanVsActual(req: Request, res: Response) {
       planned_boxes: number; planned_pallets: number
       actual_boxes: number; actual_pallets: number
     }
+    // BASE UNIT: hiển thị = thùng quy đổi; units gom từ material của plan lines + imports
+    const pvaUnits = new Map<string, MatUnits | null>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const l of (planLines ?? []) as any[]) if (l.material_id) pvaUnits.set(l.material_id, l.material ?? null)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const o of (actualOrders ?? []) as any[]) if (o.material_id && !pvaUnits.has(o.material_id)) pvaUnits.set(o.material_id, o.material ?? null)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const byMaterial: Record<string, PVARow> = {}
 
@@ -570,7 +577,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
         material_name: line.material?.short_name ?? line.material?.material_description ?? '',
         planned_boxes: 0, planned_pallets: 0, actual_boxes: 0, actual_pallets: 0,
       }
-      byMaterial[mid].planned_boxes   += (line.planned_boxes   ?? 0) as number
+      byMaterial[mid].planned_boxes   += qtyEntryDecimal((line.planned_boxes ?? 0) as number, pvaUnits.get(mid) ?? null)
       byMaterial[mid].planned_pallets += (line.planned_pallets ?? 0) as number
     }
 
@@ -586,7 +593,7 @@ export async function getPlanVsActual(req: Request, res: Response) {
       }
     }
     for (const [mid, boxes] of actualBoxMap.entries()) {
-      if (byMaterial[mid]) byMaterial[mid].actual_boxes = boxes
+      if (byMaterial[mid]) byMaterial[mid].actual_boxes = qtyEntryDecimal(boxes, pvaUnits.get(mid) ?? null)
     }
 
     return ok(res, Object.values(byMaterial))
@@ -603,8 +610,10 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     type Row = { material_id: string; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number }
     const byMat: Record<string, Row> = {}
+    const sumUnits = new Map<string, MatUnits | null>()   // BASE UNIT: quy đổi thùng khi cộng
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ensure = (mid: string, m: any): Row => {
+      if (!sumUnits.has(mid)) sumUnits.set(mid, (m ?? null) as MatUnits | null)
       if (!byMat[mid]) byMat[mid] = {
         material_id: mid,
         material_code: m?.material_code ?? '',
@@ -623,7 +632,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const l of planLines as any[]) {
       if (!l.material_id) continue
-      ensure(l.material_id, l.material).planned_boxes += (l.planned_boxes ?? 0) as number
+      ensure(l.material_id, l.material).planned_boxes += qtyEntryDecimal((l.planned_boxes ?? 0) as number, (l.material ?? null) as MatUnits | null)
     }
 
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
@@ -639,7 +648,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
       const row = ensure(imp.material_id, imp.material)
       importToMat.set(imp.id, imp.material_id)
       if (effectiveNoQr(imp.material?.no_qr_tracking, imp.warehouse?.inventory_mode)) {
-        if (imp.posm_cartons != null) row.actual_boxes += Number(imp.posm_cartons)
+        if (imp.posm_cartons != null) row.actual_boxes += qtyEntryDecimal(Number(imp.posm_cartons), (imp.material ?? null) as MatUnits | null)
       } else {
         qrImportIds.push(imp.id)
       }
@@ -652,7 +661,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
       for (const e of entries as any[]) {
         const mid = importToMat.get(e.import_order_id as string)
         if (!mid) continue
-        byMat[mid].actual_boxes += (e.cartons_imported ?? 0) as number
+        byMat[mid].actual_boxes += qtyEntryDecimal((e.cartons_imported ?? 0) as number, sumUnits.get(mid) ?? null)
       }
     }
 
@@ -812,8 +821,8 @@ export async function getInboundReport(req: Request, res: Response) {
       const actualKey = line.tms_order_id && line.material_id
         ? `${line.tms_order_id}/${line.material_id}` : null
       if (actualKey) planLineKeys.add(actualKey)
-      const actual_boxes = actualKey ? (actualMap.get(actualKey) ?? 0) : 0
-      const planned = (line.planned_boxes ?? 0) as number
+      const actual_boxes = qtyEntryDecimal(actualKey ? (actualMap.get(actualKey) ?? 0) : 0, (line.material ?? null) as MatUnits | null)
+      const planned = qtyEntryDecimal((line.planned_boxes ?? 0) as number, (line.material ?? null) as MatUnits | null)
       return {
         plan_line_id: line.id as string,
         date: line.date as string,
@@ -838,8 +847,8 @@ export async function getInboundReport(req: Request, res: Response) {
       if (!imp.tms_order_id || !imp.material_id) continue
       const key = `${imp.tms_order_id}/${imp.material_id}`
       if (planLineKeys.has(key) || phatSinhSeen.has(key)) continue
-      const actual_boxes = actualMap.get(key) ?? 0
-      const planned_cartons = (imp.planned_cartons ?? 0) as number
+      const actual_boxes = qtyEntryDecimal(actualMap.get(key) ?? 0, (imp.material ?? null) as MatUnits | null)
+      const planned_cartons = qtyEntryDecimal((imp.planned_cartons ?? 0) as number, (imp.material ?? null) as MatUnits | null)
       if (actual_boxes === 0 && planned_cartons === 0) continue
       phatSinhSeen.add(key)
       const info = orderInfoMap.get(imp.tms_order_id) ?? { date: '', warehouse_name: '', ncc_code: '', ncc_name: '' }

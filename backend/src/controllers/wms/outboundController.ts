@@ -12,6 +12,8 @@ import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
+import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
+import { requireBaseQty } from '../../utils/qtySemantics'
 
 const now = () => new Date().toISOString()
 
@@ -325,7 +327,7 @@ export async function listGDOs(req: Request, res: Response) {
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name)')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton)')
       .in('do_id', chunk).order('id'))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
@@ -370,13 +372,15 @@ export async function listGDOs(req: Request, res: Response) {
       // Phân bổ theo (mã hàng × NPP) — gộp để FE lọc theo mã hàng + tổng theo NPP (expand kiểu Inbound).
       // Tính MỌI item (kể cả no_qr_tracking) để khớp tile Tổng thùng (= tất cả).
       const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; cartons_scanned: number; pallets: number }>()
+      // BASE UNIT: tổng/breakdown cross-mã = THÙNG QUY ĐỔI (base ÷ hệ_số per mã; mã không entry giữ số)
+      const qEntry = (i: any, v: unknown) => qtyEntryDecimal(Number(v ?? 0), (i.material ?? null) as MatUnitsQ | null)
       for (const i of gdoItems) {
         const material_code = i.material_code_raw ?? '(?)'
         const distributor_name = distributorByDo.get(i.do_id) ?? null
         const key = `${material_code}__${distributor_name ?? ''}`
         const cur = breakdownMap.get(key) ?? { material_code, material_name: i.material?.short_name ?? null, distributor_name, cartons: 0, cartons_scanned: 0, pallets: 0 }
-        cur.cartons         += Number(i.cartons_ordered ?? 0)
-        cur.cartons_scanned += Number(i.cartons_scanned ?? 0)
+        cur.cartons         += qEntry(i, i.cartons_ordered)
+        cur.cartons_scanned += qEntry(i, i.cartons_scanned)
         cur.pallets         += Number(i.pallets_estimated ?? 0)
         breakdownMap.set(key, cur)
       }
@@ -388,10 +392,10 @@ export async function listGDOs(req: Request, res: Response) {
         delivery_codes:    deliveryCodes as string[],
         export_type:       firstExportType,
         // Tổng thùng = TẤT CẢ item (gồm hàng no_qr); thêm total_cartons_noqr = riêng hàng không QR.
-        total_cartons:      gdoItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),   0),
-        total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered),  0),
+        total_cartons:      gdoItems.reduce((s: number, i: any) => s + qEntry(i, i.cartons_ordered),   0),
+        total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + qEntry(i, i.cartons_ordered),  0),
         total_pallets:      gdoItems.reduce((s: number, i: any) => s + Number(i.pallets_estimated), 0),
-        total_loose:        gdoItems.reduce((s: number, i: any) => s + Number(i.loose_picking ?? 0), 0),
+        total_loose:        gdoItems.reduce((s: number, i: any) => s + qEntry(i, i.loose_picking), 0),
         item_breakdown:    [...breakdownMap.values()],
       }
     }))
@@ -580,8 +584,50 @@ function invalidItemQty(items: Array<{ material_code: string; cartons_ordered: u
   return null
 }
 
+// BASE UNIT (đợt 2): số lượng item = SỐ BASE — mã có entry unit phải là SỐ NGUYÊN (luật user 19/07).
+// Gọi SAU khi đã resolve material (cần hệ số); mã không resolve được → bỏ qua (không có hệ số để ràng).
+function invalidItemQtyBase(
+  items: Array<{ material_code: string; cartons_ordered: unknown; loose_picking?: unknown }>,
+  matMap: Map<string, MatUnitsQ | null | undefined>,
+): string | null {
+  for (const i of items) {
+    const m = matMap.get(i.material_code) ?? null
+    const e1 = qtyIntegerError(Number(i.cartons_ordered), m)
+    if (e1) return `Mã "${i.material_code}": ${e1}`
+    if (i.loose_picking != null) {
+      const e2 = qtyIntegerError(Number(i.loose_picking), m)
+      if (e2) return `Mã "${i.material_code}" (nhặt lẻ): ${e2}`
+    }
+  }
+  return null
+}
+
+// Upload KH xuất — BASE UNIT: mã có entry → cột Thùng/Hộp/Nhặt lẻ phải SỐ NGUYÊN
+// (Hộp + Nhặt lẻ tính theo ĐƠN VỊ GỐC); qty base = Thùng × hệ_số + Hộp. Lỗi kèm GỢI Ý quy đổi.
+function uploadRowQtyError(row: Record<string, any>, mu: MatUnitsQ | null | undefined): string | null {
+  if (!hasEntry(mu)) return null
+  const f = Number(mu!.units_per_carton)
+  const bl = unitLabel(mu!.base_unit)
+  const thung = parseDecimal(row['Thùng'])
+  const hop   = parseDecimal(row['Hộp'])
+  const loose = parseDecimal(row['Nhặt lẻ'])
+  if (!Number.isInteger(thung)) {
+    const goiY = Math.round((thung - Math.floor(thung)) * f)
+    return `cột Thùng "${row['Thùng']}" phải là SỐ NGUYÊN (mã ${f} ${bl}/thùng — ${thung} thùng ≈ ${Math.floor(thung)} thùng + ${goiY} ${bl}: ghi ${goiY} vào cột Hộp)`
+  }
+  if (!Number.isInteger(hop))   return `cột Hộp "${row['Hộp']}" phải là SỐ NGUYÊN (đơn vị ${bl})`
+  if (!Number.isInteger(loose)) return `cột Nhặt lẻ "${row['Nhặt lẻ']}" phải là SỐ NGUYÊN (đơn vị ${bl})`
+  return null
+}
+function uploadRowQtyBase(row: Record<string, any>, mu: MatUnitsQ | null | undefined): number {
+  const thung = parseDecimal(row['Thùng'])
+  if (!hasEntry(mu)) return thung
+  return thung * Number(mu!.units_per_carton) + parseDecimal(row['Hộp'])
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string
@@ -596,6 +642,17 @@ export async function createGDO(req: Request, res: Response) {
     if (!categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     const orbitErr = await internalOrbitError(warehouse_id ?? null, shipto_party)
     if (orbitErr) return fail(res, orbitErr, 400)
+
+    // Load material info TRƯỚC khi insert GDO (id + category → material_type; units → validate base
+    // nguyên — fail ở đây thì chưa ghi gì, không để lại GDO mồ côi)
+    const allCodes = [...new Set(items.map(i => i.material_code))]
+    const { data: mats } = await supabase.from('Material')
+      .select('id, material_code, category, base_unit, entry_unit, units_per_carton').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null } & MatUnitsQ>(
+      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
+    )
+    const baseErr = invalidItemQtyBase(items, matMap)
+    if (baseErr) return fail(res, baseErr, 422)
 
     // ĐVVT: khớp danh mục → dùng tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
@@ -618,14 +675,6 @@ export async function createGDO(req: Request, res: Response) {
       created_by: actor, updated_by: actor, updated_at: now(),
     })
     if (ins.error) return fail(res, ins.error)
-
-    // Load material info (id + category → material_type)
-    const allCodes = [...new Set(items.map(i => i.material_code))]
-    const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null }>(
-      (mats ?? []).map((m: any) => [m.material_code, { id: m.id, category: m.category }])
-    )
 
     // Single DO for manual orders
     const doId = randomUUID()
@@ -669,6 +718,7 @@ export async function createGDO(req: Request, res: Response) {
 // Mã hụt tồn do tranh chấp GIỮA CHỪNG → đơn dừng IN_PROGRESS + 409 kèm danh sách mã (xử tiếp trên trang chuyến).
 export async function quickExportGDO(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
@@ -704,13 +754,15 @@ export async function quickExportGDO(req: Request, res: Response) {
 
     const allCodes = [...new Set(items.map(i => i.material_code))]
     const { data: mats } = await supabase.from('Material')
-      .select('id, material_code, category, no_qr_tracking').in('material_code', allCodes)
-    const matMap = new Map<string, { id: string; category: string | null; no_qr: boolean | null }>(
-      ((mats ?? []) as { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null }[])
-        .map(m => [m.material_code, { id: m.id, category: m.category, no_qr: m.no_qr_tracking }])
+      .select('id, material_code, category, no_qr_tracking, base_unit, entry_unit, units_per_carton').in('material_code', allCodes)
+    const matMap = new Map<string, { id: string; category: string | null; no_qr: boolean | null } & MatUnitsQ>(
+      ((mats ?? []) as { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }[])
+        .map(m => [m.material_code, { id: m.id, category: m.category, no_qr: m.no_qr_tracking, base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton }])
     )
     const missing = allCodes.filter(c => !matMap.has(c))
     if (missing.length) return fail(res, `Mã hàng chưa có trong hệ thống: ${missing.join(', ')}`, 400)
+    const qxBaseErr = invalidItemQtyBase(items, matMap)
+    if (qxBaseErr) return fail(res, qxBaseErr, 422)
 
     // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ).
     // GỘP TỔNG mọi dòng cùng mã (pool đa dòng sau nhập lại / QTY_DATE 1 dòng mỗi NSX — Map thô lấy dòng CUỐI
@@ -729,7 +781,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     const short = items.filter(i => { const h = availOf(i.material_code); return h != null && h < Number(i.cartons_ordered) })
     if (short.length) {
       return fail(res, 400, 'INSUFFICIENT_STOCK',
-        `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${i.cartons_ordered}, còn ${availOf(i.material_code)}`).join(' · ')}`)
+        `Không đủ tồn: ${short.map(i => `${i.material_code} cần ${qtyLabel(Number(i.cartons_ordered), matMap.get(i.material_code))}, còn ${qtyLabel(availOf(i.material_code) ?? 0, matMap.get(i.material_code))}`).join(' · ')}`)
     }
 
     // Group code: warehouseCode_X_ddmmyy_stt (cùng quy tắc createGDO, retry+jitter chống đụng số khi tạo đồng thời)
@@ -790,7 +842,7 @@ export async function quickExportGDO(req: Request, res: Response) {
         if (r.outcome !== 'OK') {
           failed.push({
             material_code: row.material_code_raw,
-            message: r.outcome === 'INSUFFICIENT' ? `còn ${r.available} thùng` : 'tồn đang bận (nhiều người thao tác)',
+            message: r.outcome === 'INSUFFICIENT' ? `còn ${qtyLabel(r.available, matMap.get(row.material_code_raw))}` : 'tồn đang bận (nhiều người thao tác)',
           })
           continue
         }
@@ -840,6 +892,7 @@ export async function quickExportGDO(req: Request, res: Response) {
 // Bỏ nghi thức Giao đơn/Bắt đầu/quét cho kho QTY/NONE. Trừ tồn nguyên tử (chặn xuất quá). Kho QR KHÔNG dùng được.
 export async function quickExportExistingGDO(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId } = req.params
     const { license_plate } = req.body as { license_plate?: string }
     if (!(await guardGdoScope(req, res, gdoId))) return
@@ -863,12 +916,12 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
     if (!doIds.length) return fail(res, 'Chuyến chưa có đơn/mặt hàng', 400)
     const { data: items } = await supabase.from('OutboundItem')
-      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, material:Material!material_id(material_code, no_qr_tracking)')
+      .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, status, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
       .in('do_id', doIds)
     const pending = ((items ?? []) as Array<{
       id: string; material_id: string | null; material_code_raw: string | null
       cartons_ordered: number; cartons_scanned: number | null; status: string
-      material?: { material_code?: string | null; no_qr_tracking?: boolean | null } | null
+      material?: ({ material_code?: string | null; no_qr_tracking?: boolean | null } & MatUnitsQ) | null
     }>).filter(i => i.status !== 'COMPLETED')
 
     const actor = req.user?.name || null
@@ -885,7 +938,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       let invEntryId: string | null = null
       if (hasPool) {
         const r = await applySharedPoolDelta(matCode!, gdo.warehouse_id as string, delta, whMode)
-        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode!, message: `còn ${r.available} thùng` }); continue }
+        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode!, message: `còn ${qtyLabel(r.available, item.material ?? null)}` }); continue }
         if (r.outcome === 'BUSY')         { failed.push({ material_code: matCode!, message: 'tồn đang bận (nhiều người thao tác)' }); continue }
         invEntryId = r.invEntryId
       }
@@ -1023,16 +1076,16 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // Kế hoạch nhập của chuyến dựng từ list này — phải ĐỦ MỌI item (cap-1000/URL dài: chunk + phân trang)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('material_id, cartons_ordered, material_type, material:Material(category)')
+        .select('material_id, cartons_ordered, material_type, material:Material(category, base_unit, entry_unit, units_per_carton)')
         .in('do_id', chunk).order('id'))
     : ([] as any[])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null }>()
+  const matMap = new Map<string, { material_id: string; planned_boxes: number; category: string | null; units: MatUnitsQ | null }>()
   for (const item of (items ?? []) as any[]) {
     if (!item.material_id) continue
     if (!matMap.has(item.material_id))
-      matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null })
+      matMap.set(item.material_id, { material_id: item.material_id, planned_boxes: 0, category: item.material?.category ?? null, units: (item.material ?? null) as MatUnitsQ | null })
     matMap.get(item.material_id)!.planned_boxes += item.cartons_ordered || 0
   }
   if (!matMap.size) return
@@ -1080,7 +1133,8 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('inbound_plan_lines').insert(lineRows)
 
-  const totalBoxes = lineRows.reduce((s, r) => s + r.planned_boxes, 0)
+  // BASE UNIT: line = base per mã; cache cấp LỆNH (cross-mã) = THÙNG QUY ĐỔI (Σ base ÷ hệ_số)
+  const totalBoxes = [...matMap.values()].reduce((s, m) => s + qtyEntryDecimal(m.planned_boxes, m.units), 0)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabase.from('TmsOrder').update({ planned_boxes: totalBoxes, updated_at: nowTs }).eq('id', orderId)
 
@@ -1154,6 +1208,7 @@ export async function deleteGDO(req: Request, res: Response) {
 
 export async function updateGDO(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, items, gate_registration_id, shipto_party } = req.body as {
       delivery_date?: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; gate_registration_id?: string | null; shipto_party?: string | null
@@ -1210,11 +1265,22 @@ export async function updateGDO(req: Request, res: Response) {
 
     if (!items) return ok(res, await fetchGDOFull(req.params.id))
 
+    // BASE UNIT: số item = SỐ BASE — mã có entry phải nguyên (validate trước khi đụng items)
+    {
+      const codes = [...new Set(items.map(i => i.material_code).filter(Boolean))]
+      const { data: umats } = codes.length
+        ? await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', codes)
+        : { data: [] }
+      const uMap = new Map<string, MatUnitsQ>(((umats ?? []) as any[]).map(m => [m.material_code, m]))
+      const bErr = invalidItemQtyBase(items as any[], uMap)
+      if (bErr) return fail(res, bErr, 422)
+    }
+
     // Lấy tất cả items của GDO (across all DOs)
     const doIds = doList.map((d: any) => d.id as string)
     const { data: existingItems } = doIds.length
       ? await supabase.from('OutboundItem')
-          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
+          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
       : { data: [] }
 
     if (isMultiDO) {
@@ -1227,7 +1293,7 @@ export async function updateGDO(req: Request, res: Response) {
       // Kiểm tra: không xóa item đã xuất
       for (const [id, ex] of existingById) {
         if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+          return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
         }
       }
 
@@ -1236,7 +1302,7 @@ export async function updateGDO(req: Request, res: Response) {
         if (!item.db_id) continue
         const ex = existingById.get(item.db_id)
         if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số thùng "${ex.material_code_raw}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
+          return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
         }
       }
 
@@ -1324,7 +1390,7 @@ export async function updateGDO(req: Request, res: Response) {
       // Kiểm tra xóa item có scan
       for (const [code, ex] of existingByCode) {
         if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
-          return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${ex.cartons_scanned} thùng`, 400)
+          return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
         }
       }
 
@@ -1332,7 +1398,7 @@ export async function updateGDO(req: Request, res: Response) {
       for (const item of items) {
         const ex = existingByCode.get(item.material_code)
         if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
-          return fail(res, `Số thùng "${item.material_code}" (${item.cartons_ordered}) nhỏ hơn đã xuất (${ex.cartons_scanned})`, 400)
+          return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
         }
       }
 
@@ -1415,12 +1481,12 @@ export async function patchGDO(req: Request, res: Response) {
       const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
       if (doIds.length) {
         const { data: items } = await supabase.from('OutboundItem')
-          .select('id, material_id, material_code_raw, cartons_ordered, cartons_scanned').in('do_id', doIds)
-        const itemRows = (items ?? []) as { id: string; material_id: string | null; material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number }[]
+          .select('id, material_id, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
+        const itemRows = (items ?? []) as { id: string; material_id: string | null; material_code_raw: string | null; cartons_ordered: number; cartons_scanned: number; material?: MatUnitsQ | null }[]
         const short = itemRows.filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
         if (short.length) {
           const e = short[0]
-          return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${Number(e.cartons_scanned)}/${Number(e.cartons_ordered)}). Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.`, 400)
+          return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${qtyLabel(Number(e.cartons_scanned), e.material ?? null)}/${qtyLabel(Number(e.cartons_ordered), e.material ?? null)}). Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.`, 400)
         }
 
         // Gác QUÉT ĐỦ TEM THÙNG (kho chọn "Bắt buộc" trong Cài đặt Kho, user chốt 15/07):
@@ -1440,10 +1506,11 @@ export async function patchGDO(req: Request, res: Response) {
           const qrItemIds = itemRows.filter(i => !i.material_id || !noQrSet.has(i.material_id)).map(i => i.id)
           if (qrItemIds.length) {
             const { data: scans } = await supabase.from('OutboundScanEntry')
-              .select('pallet_code, cartons_scanned, carton_scans, is_loose_picking').in('item_id', qrItemIds)
-            const missing = ((scans ?? []) as { pallet_code: string; cartons_scanned: number; carton_scans?: { match?: boolean }[] | null; is_loose_picking?: boolean | null }[])
+              .select('pallet_code, cartons_scanned, carton_scans, is_loose_picking, item:OutboundItem!item_id(material:Material!material_id(base_unit, entry_unit, units_per_carton))').in('item_id', qrItemIds)
+            // BASE UNIT: cartons_scanned = base → số TEM THÙNG vật lý cần = ceil(base ÷ hệ_số)
+            const missing = ((scans ?? []) as { pallet_code: string; cartons_scanned: number; carton_scans?: { match?: boolean }[] | null; is_loose_picking?: boolean | null; item?: { material?: MatUnitsQ | null } | null }[])
               .filter(s => !s.is_loose_picking && Number(s.cartons_scanned) > 0)
-              .map(s => ({ pallet: s.pallet_code, need: Number(s.cartons_scanned), got: (s.carton_scans ?? []).filter(c => c?.match !== false).length }))
+              .map(s => ({ pallet: s.pallet_code, need: Math.ceil(qtyEntryDecimal(Number(s.cartons_scanned), s.item?.material ?? null)), got: (s.carton_scans ?? []).filter(c => c?.match !== false).length }))
               .filter(s => s.got < s.need)
             if (missing.length) {
               const e = missing[0]
@@ -1773,7 +1840,7 @@ async function mergePausedGDO(
   dvvt: string | null,
   warehouse_type: string | null,
   byNpp: Map<string, Record<string, any>[]>,
-  matMap: Map<string, string>
+  matMap: Map<string, { id: string } & MatUnitsQ>
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
@@ -1815,7 +1882,7 @@ async function mergePausedGDO(
   for (const item of scannedItems) {
     const npp = doIdToNpp.get(item.do_id) ?? ''
     if (!newFileItemKeys.has(`${npp}::${item.material_code_raw ?? ''}`)) {
-      missingScanned.push(`${item.material_code_raw} (NPP ${npp || '—'}, đã xuất ${item.cartons_scanned} thùng)`)
+      missingScanned.push(`${item.material_code_raw} (NPP ${npp || '—'}, đã xuất ${qtyLabel(Number(item.cartons_scanned), matMap.get(item.material_code_raw ?? '') ?? null)})`)
     }
   }
   if (missingScanned.length) {
@@ -1830,10 +1897,11 @@ async function mergePausedGDO(
   for (const [npp, mergedRows] of mergedByNpp) {
     for (const row of mergedRows) {
       const mat_code   = String(row['Material'] ?? '').trim()
-      const newCartons = parseDecimal(row['Thùng'])
+      const mu         = matMap.get(mat_code) ?? null
+      const newCartons = uploadRowQtyBase(row, mu)   // BASE — so cùng đơn vị với cartons_scanned
       const existing   = existingItemByNppMat.get(`${npp}::${mat_code}`)
       if (existing && newCartons < Number(existing.cartons_scanned)) {
-        cartonErrors.push(`${mat_code} (mới ${newCartons} < đã xuất ${existing.cartons_scanned})`)
+        cartonErrors.push(`${mat_code} (mới ${qtyLabel(newCartons, mu)} < đã xuất ${qtyLabel(Number(existing.cartons_scanned), mu)})`)
       }
     }
   }
@@ -1876,10 +1944,10 @@ async function mergePausedGDO(
     for (const row of mergedRows) {
       const mat_code      = String(row['Material'] ?? '').trim()
       const material_type = String(row['Material_type'] ?? '').trim() || null
-      const newCartons    = parseDecimal(row['Thùng'])
+      const newCartons    = uploadRowQtyBase(row, matMap.get(mat_code) ?? null)
       const fields = {
         do_id:             doId,
-        material_id:       matMap.get(mat_code) ?? null,
+        material_id:       matMap.get(mat_code)?.id ?? null,
         material_code_raw: mat_code,
         cartons_ordered:   newCartons,
         boxes_display:     parseDecimal(row['Hộp']),
@@ -1963,7 +2031,7 @@ export async function uploadExcel(req: Request, res: Response) {
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code')) as Promise<{ id: string; material_code: string }[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton')) as Promise<({ id: string; material_code: string } & MatUnitsQ)[]>,
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -1971,8 +2039,8 @@ export async function uploadExcel(req: Request, res: Response) {
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
     }
-    const matMap = new Map<string, string>(
-      allMaterials.map(m => [String(m.material_code).trim(), m.id])
+    const matMap = new Map<string, { id: string } & MatUnitsQ>(
+      allMaterials.map(m => [String(m.material_code).trim(), m])
     )
     const validWhTypes = new Set<string>(
       (whTypesRes.data ?? []).map((t: any) => String(t.value).trim())
@@ -2067,6 +2135,13 @@ export async function uploadExcel(req: Request, res: Response) {
       const badExport = [...new Set(dataRows.map(r => String(r['Loại xuất'] ?? '').trim()).filter(Boolean))]
         .filter(v => !resolveVehicleType(v))
       if (badExport.length) errs.push(`Loại xuất "${badExport.join(', ')}" không khớp danh mục Loại xe TMS`)
+
+      // BASE UNIT (luật user 19/07): mã có entry → Thùng/Hộp/Nhặt lẻ SỐ NGUYÊN — lỗi theo dòng kèm gợi ý quy đổi
+      for (const r of dataRows) {
+        const mc = String(r['Material']).trim()
+        const qe = uploadRowQtyError(r, matMap.get(mc) ?? null)
+        if (qe) errs.push(`Mã ${mc}: ${qe}`)
+      }
 
       // Chuyến Đang xuất / Đã hoàn thành: KHÔNG chặn cả file (user chốt 04/07) — bỏ qua chuyến đó
       // ở Phase 2 + báo rõ trong kết quả; chỉ lỗi DỮ LIỆU thật mới chặn toàn file.
@@ -2168,9 +2243,9 @@ export async function uploadExcel(req: Request, res: Response) {
             const material_type = String(row['Material_type'] ?? '').trim() || null
             itemInserts.push({
               id: randomUUID(), do_id: doId,
-              material_id:       matMap.get(mat_code) ?? null,
+              material_id:       matMap.get(mat_code)?.id ?? null,
               material_code_raw: mat_code,
-              cartons_ordered:   parseDecimal(row['Thùng']),
+              cartons_ordered:   uploadRowQtyBase(row, matMap.get(mat_code) ?? null),
               boxes_display:     parseDecimal(row['Hộp']),
               weight:            parseDecimal(row['Tải']),
               loose_picking:     parseDecimal(row['Nhặt lẻ']),
@@ -2509,9 +2584,10 @@ export async function getPrepareBoard(req: Request, res: Response) {
     }
 
     // Tính còn lại + pallet cần; chỉ giữ mã còn phải chuẩn bị
+    // BASE UNIT: cartons_remaining = base; pallet cần = ceil(thùng quy đổi ÷ thùng/pallet vật lý)
     const rows = [...rowMap.values()].map(r => {
       r.cartons_remaining = Math.max(0, r.cartons_ordered - r.cartons_scanned)
-      r.pallets_remaining = r.cartons_per_pallet > 0 ? Math.ceil(r.cartons_remaining / r.cartons_per_pallet) : 0
+      r.pallets_remaining = r.cartons_per_pallet > 0 ? Math.ceil(qtyEntryDecimal(r.cartons_remaining, r) / r.cartons_per_pallet) : 0
       return r
     }).filter(r => r.cartons_remaining > 0)
 
@@ -2525,7 +2601,8 @@ export async function getPrepareBoard(req: Request, res: Response) {
 
     return ok(res, {
       rows,
-      total_cartons: rows.reduce((s, r) => s + r.cartons_remaining, 0),
+      // BASE UNIT: tổng cross-mã = thùng quy đổi
+      total_cartons: rows.reduce((s, r) => s + qtyEntryDecimal(r.cartons_remaining, r), 0),
       total_pallets: rows.reduce((s, r) => s + r.pallets_remaining, 0),
     })
   } catch (e) { return fail(res, String(e)) }
@@ -2621,6 +2698,7 @@ export async function checkScanItem(req: Request, res: Response) {
 
 export async function scanItem(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
     const { qr_code, employee_id, cartons_override, loose_picking_mode } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean }
     const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
@@ -2656,7 +2734,7 @@ export async function scanItem(req: Request, res: Response) {
     const matId = item.material_id ?? inv.material_id
     const [{ data: shelfMat }, best_available_date] = await Promise.all([
       matId
-        ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
+        ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
         : Promise.resolve({ data: null }),
       (async (): Promise<string | null> => {
         if (!inv.material_id || !gdo?.warehouse_id) return null
@@ -2714,6 +2792,11 @@ export async function scanItem(req: Request, res: Response) {
       cap = Math.min(cap, loose_remaining)
     }
 
+    // BASE UNIT: cartons_override từ FE = SỐ BASE — mã có entry phải nguyên (0,5 hộp không tồn tại)
+    if (cartons_override != null) {
+      const ie = qtyIntegerError(Number(cartons_override), (shelfMat ?? null) as MatUnitsQ | null)
+      if (ie) return fail(res, ie, 422)
+    }
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
     // pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian (dùng lại pctRaw đã tính trên)
@@ -2988,6 +3071,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 // Entry POSM chung có location_id=null → tra theo cột warehouse_id trực tiếp (KHÔNG join Location như scanItem).
 export async function manualLooseItem(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
     const { cartons } = req.body as { cartons?: number }
     if (cartons == null || !Number.isFinite(Number(cartons)) || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
@@ -2995,12 +3079,18 @@ export async function manualLooseItem(req: Request, res: Response) {
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
       supabase.from('OutboundItem')
-        .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking)')
+        .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
         .eq('id', itemId).single(),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+
+    // BASE UNIT: cartons = SỐ BASE (nhặt lẻ đếm hộp nguyên) — mã có entry phải nguyên
+    {
+      const ie = qtyIntegerError(Number(cartons), (item.material ?? null) as MatUnitsQ | null)
+      if (ie) return fail(res, ie, 422)
+    }
 
     const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
     if (!effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)) return fail(res, 'Chỉ áp dụng cho hàng không theo dõi QR', 400)
@@ -3297,6 +3387,7 @@ async function applySharedPoolDelta(materialCode: string, warehouseId: string, d
 
 export async function manualCompleteItem(req: Request, res: Response) {
   try {
+    if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
 
     const { cartons, production_date } = req.body as { cartons?: number; production_date?: string | null }
@@ -3308,17 +3399,22 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
       supabase.from('OutboundItem')
-        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking)')
+        .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
         .eq('id', itemId).single(),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
+    // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
+    if (cartons != null) {
+      const ie = qtyIntegerError(Number(cartons), (item.material ?? null) as MatUnitsQ | null)
+      if (ie) return fail(res, ie, 422)
+    }
     const ctn = (cartons != null && Number(cartons) >= 0) ? Math.round(Number(cartons)) : Number(item.cartons_ordered)
 
     if (ctn > Number(item.cartons_ordered)) {
-      return fail(res, 400, 'EXCEEDS_PLAN', `Số thùng (${ctn}) vượt kế hoạch (${item.cartons_ordered})`)
+      return fail(res, 400, 'EXCEEDS_PLAN', `Số lượng (${qtyLabel(ctn, (item.material ?? null) as MatUnitsQ)}) vượt kế hoạch (${qtyLabel(Number(item.cartons_ordered), (item.material ?? null) as MatUnitsQ)})`)
     }
 
     // Kho QTY → ép no-QR hiệu lực (xuất tay qua pool dùng chung như mã no_qr_tracking)
@@ -3335,8 +3431,9 @@ export async function manualCompleteItem(req: Request, res: Response) {
       const r = await applySharedPoolDelta(specialMatCode, gdo.warehouse_id as string, delta, gdoMode, chosenDate)
       specialInvEntryId = r.invEntryId
       if (r.outcome === 'INSUFFICIENT') {
+        const mu = (item.material ?? null) as MatUnitsQ | null
         return fail(res, 400, 'INSUFFICIENT_STOCK',
-          `Không đủ tồn kho${chosenDate ? ` NSX ${chosenDate}` : ''} — còn ${r.available} thùng${oldCartons > 0 ? `, cần thêm ${delta} thùng` : ''}`)
+          `Không đủ tồn kho${chosenDate ? ` NSX ${chosenDate}` : ''} — còn ${qtyLabel(r.available, mu)}${oldCartons > 0 ? `, cần thêm ${qtyLabel(delta, mu)}` : ''}`)
       }
       if (r.outcome === 'BUSY') return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại')
     }

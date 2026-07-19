@@ -35,6 +35,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
@@ -433,14 +434,11 @@ export default function InboundDetail() {
               )
             )}
             <div className="space-y-1.5">
-              <p className="text-xs text-slate-500">Số thùng thực nhập</p>
-              <Input
-                type="number" min={0}
-                value={manualCartons}
-                onChange={e => setManualCartons(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleManualSave()}
-                className="text-center font-semibold text-lg h-11"
-                autoFocus
+              <p className="text-xs text-slate-500">Số lượng thực nhập</p>
+              <QtyInput autoFocus
+                value={Math.max(0, parseInt(manualCartons) || 0)}
+                mat={order?.material}
+                onChange={b => setManualCartons(String(b))}
               />
               {(order?.planned_cartons ?? 0) > 0 && (
                 <p className="text-xs text-slate-400 text-center">Kế hoạch: {qtyLabel(order.planned_cartons ?? 0, order.material)}</p>
@@ -791,19 +789,10 @@ export default function InboundDetail() {
                   </span>
                 ) : editingPlannedCartons ? (
                   <span className="flex items-center gap-1">
-                    <input
-                      type="number" min={0}
-                      value={plannedCartonsInput}
-                      onChange={e => setPlannedCartonsInput(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          updateOrder({ id: order.id, planned_cartons: plannedCartonsInput === '' ? null : Number(plannedCartonsInput) })
-                          setEditingPlannedCartons(false)
-                        }
-                        if (e.key === 'Escape') setEditingPlannedCartons(false)
-                      }}
-                      className="h-5 w-16 text-xs border border-slate-300 rounded px-1 font-mono"
-                      autoFocus
+                    <QtyInput compact autoFocus className="w-40"
+                      value={Math.max(0, parseInt(plannedCartonsInput) || 0)}
+                      mat={order.material}
+                      onChange={b => setPlannedCartonsInput(String(b))}
                     />
                     <button
                       className="text-[10px] text-green-600 hover:text-green-700"
@@ -849,7 +838,7 @@ export default function InboundDetail() {
         <SummaryBand tiles={[
           { label: 'Pallet',    value: entries.length },
           { label: 'Thực nhập', value: qtyLabel(totalScanned, order.material) },
-          { label: 'Thùng KH',  value: order.planned_cartons != null ? `${order.planned_cartons}` : '—' },
+          { label: 'SL kế hoạch',  value: order.planned_cartons != null ? qtyLabel(order.planned_cartons, order.material) : '—' },
           // Phiếu chuyển kho vào kho QTY_DATE: 1 phiếu = 1 NSX (kế thừa tem quét xuất)
           ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
         ]} />

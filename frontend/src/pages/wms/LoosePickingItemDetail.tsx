@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, type MatUnits } from '@/utils/qtyUnits'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -280,7 +280,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm text-slate-600 shrink-0">Số thùng:</label>
+                <label className="text-sm text-slate-600 shrink-0">Số {qtyBaseLabel(item.material)}:</label>
                 <Input
                   type="number"
                   min={1}
@@ -575,7 +575,7 @@ export default function LoosePickingItemDetail() {
               </div>
             </div>
             <div className="space-y-1">
-              <p className="text-xs text-slate-600">Số thùng lẻ đã chuẩn bị</p>
+              <p className="text-xs text-slate-600">Số {qtyBaseLabel(item.material)} lẻ đã chuẩn bị</p>
               <Input
                 type="number" min={0}
                 value={manualLooseCartons}

@@ -34,6 +34,31 @@ function flattenMaterialCode(r: Row): Row {
   return { ...rest, material_code: m?.material_code ?? null }
 }
 
+// BASE UNIT (đợt 2, 20/07/2026): các cột cartons_* trong DB đã LÀ SỐ BASE (HOP/KG…).
+// ERP cần CẢ HAI: số base (tính) + thùng quy đổi (đối chiếu người đọc) → bóc units, trả
+// qty_base_* + base_unit + giữ trường cartons_* = THÙNG QUY ĐỔI (base ÷ units_per_carton).
+type EmbUnits = { material_code?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null }
+function toEntryQty(v: unknown, m: EmbUnits | null | undefined): number | null {
+  if (v == null) return null
+  const q = Number(v)
+  if (!isFinite(q)) return null
+  const f = Number(m?.units_per_carton)
+  if (!m?.entry_unit || !(f > 0)) return q
+  return Math.round((q / f) * 1000) / 1000
+}
+function flattenWithBaseQty(qtyCols: string[]): (r: Row) => Row {
+  return (r: Row): Row => {
+    const m = r.material as EmbUnits | null | undefined
+    const { material: _drop, ...rest } = r
+    const out: Row = { ...rest, material_code: m?.material_code ?? null, base_unit: m?.base_unit ?? null, units_per_carton: m?.units_per_carton ?? null }
+    for (const c of qtyCols) {
+      out[`qty_base_${c}`] = r[c] ?? null            // số GỐC base — nguồn tính toán
+      out[c] = toEntryQty(r[c], m)                    // giữ tên cũ = thùng quy đổi (tương thích)
+    }
+    return out
+  }
+}
+
 async function exportTable(
   req: Request, res: Response, table: string, cols: string, mapRow?: (r: Row) => Row,
 ): Promise<void> {
@@ -73,14 +98,14 @@ export function exportMaterials(req: Request, res: Response): Promise<void> {
 // 2) Tồn kho (kèm mã lô batch + HSD — khóa đối chiếu kế toán)
 export function exportInventory(req: Request, res: Response): Promise<void> {
   return exportTable(req, res, 'InventoryEntry',
-    'id, pallet_code, batch, expiry_date, production_date, material_id, material:Material(material_code), warehouse_id, location_id, cartons_imported, cartons_remaining, cartons_reserved, status, qa_status_id, nmsx, ncc_id, origin, import_date, created_at, updated_at',
-    flattenMaterialCode)
+    'id, pallet_code, batch, expiry_date, production_date, material_id, material:Material(material_code, base_unit, entry_unit, units_per_carton), warehouse_id, location_id, cartons_imported, cartons_remaining, cartons_reserved, status, qa_status_id, nmsx, ncc_id, origin, import_date, created_at, updated_at',
+    flattenWithBaseQty(['cartons_imported', 'cartons_remaining', 'cartons_reserved']))
 }
 // 3) Phiếu nhập
 export function exportInboundReceipts(req: Request, res: Response): Promise<void> {
   return exportTable(req, res, 'ProductionImport',
-    'id, import_code, material_id, material:Material(material_code), warehouse_id, warehouse_type, planned_cartons, planned_pallets, status, source_type, ncc_id, import_date, created_at, updated_at',
-    flattenMaterialCode)
+    'id, import_code, material_id, material:Material(material_code, base_unit, entry_unit, units_per_carton), warehouse_id, warehouse_type, planned_cartons, planned_pallets, status, source_type, ncc_id, import_date, created_at, updated_at',
+    flattenWithBaseQty(['planned_cartons']))
 }
 // 4) Phiếu xuất (chuyến giao hàng)
 export function exportOutboundOrders(req: Request, res: Response): Promise<void> {
@@ -90,5 +115,17 @@ export function exportOutboundOrders(req: Request, res: Response): Promise<void>
 // 5) Lịch sử quét (từng lần quét pallet khi xuất; join tồn/phiếu qua inventory_entry_id / item_id)
 export function exportScanEntries(req: Request, res: Response): Promise<void> {
   return exportTable(req, res, 'OutboundScanEntry',
-    'id, item_id, inventory_entry_id, pallet_code, cartons_scanned, production_date, nmsx, pct_date, is_loose_picking, scanned_at, scanned_by, created_at, updated_at')
+    'id, item_id, inventory_entry_id, pallet_code, cartons_scanned, production_date, nmsx, pct_date, is_loose_picking, scanned_at, scanned_by, created_at, updated_at, item:OutboundItem!item_id(material:Material!material_id(material_code, base_unit, entry_unit, units_per_carton))',
+    (r: Row): Row => {
+      const m = ((r.item as { material?: EmbUnits | null } | null)?.material ?? null) as EmbUnits | null
+      const { item: _drop, ...rest } = r
+      return {
+        ...rest,
+        material_code: m?.material_code ?? null,
+        base_unit: m?.base_unit ?? null,
+        units_per_carton: m?.units_per_carton ?? null,
+        qty_base_cartons_scanned: r.cartons_scanned ?? null,
+        cartons_scanned: toEntryQty(r.cartons_scanned, m),
+      }
+    })
 }

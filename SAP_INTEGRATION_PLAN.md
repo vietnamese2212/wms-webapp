@@ -124,19 +124,20 @@ Phía SAP xác nhận: **OD (Outbound Delivery) = khóa giao dịch mua bán; PO
 | `delivery_date` | ngày giao kế hoạch | ngày chuyến |
 | `plant` + `storage_location` | | map → kho WMS (bảng map cần IT cấp danh sách plant/SLoc) |
 
-### Lộ trình chuyển đổi cách nhập KH xuất (user chốt 19/07: đi thẳng GĐ C, bỏ GĐ B)
-1. **GĐ A — Đối chiếu (không đổi thao tác):** giữ nguyên upload Excel Group OD như hiện nay; WMS kéo OD từ SAP về bảng staging `erp_outbound_orders` (pool, **raw nguyên văn** — kèm THUNG/HOP) và **đối chiếu**: OD trong Excel không có trên SAP / lệch số lượng / lệch mã → cảnh báo đỏ ngay lúc upload. Chạy 2–4 tuần để tin dữ liệu.
-2. **GĐ C — Gom chuyến trên màn hình (đích):** bỏ Excel; trang "Đơn chờ xếp chuyến" — thao tác con người DUY NHẤT = **gán OD → số xe/chuyến** → WMS tự dựng GDO/DO/dòng hàng như hiện tại, **hiển thị THÙNG + HỘP giữ nguyên theo SAP** (hết thập phân; hộp chảy vào luồng Nhặt lẻ). Kiến trúc 2 tầng: tầng raw không sửa (replace theo delta) · tầng nghiệp vụ (GDO/DO) do WMS quản — luôn đối chiếu ngược lại raw được.
+### Lộ trình chuyển đổi cách nhập KH xuất (user chỉnh 19/07 vòng 4: GĐ C là ĐÍCH XA — còn vướng bộ phận khác + chưa nối SAP ngay)
+1. **GĐ A — Hiện tại / chưa có kết nối:** upload Excel = **raw data SAP + thông tin Điều vận** (như đang làm). Khi connector chạy: thêm lớp **đối chiếu** OD trong Excel vs OD kéo từ SAP (không có / lệch SL / lệch mã → cảnh báo đỏ lúc upload).
+2. **GĐ B — Excel rút gọn (tương lai gần, user mô tả):** file upload chỉ còn **DO + ngày kế hoạch + số chuyến + ĐVVT** → WMS lấy dữ liệu DO từ bảng raw (`erp_outbound_orders`) **convert thành chuyến xuất** (GDO/DO/dòng hàng như hiện tại), hiển thị **THÙNG + HỘP giữ nguyên theo SAP** (hộp chảy vào Nhặt lẻ).
+3. **GĐ C — Gom chuyến trên màn hình (đích, chưa làm):** bỏ Excel; trang "Đơn chờ xếp chuyến", thao tác duy nhất = gán OD → xe. Kiến trúc 2 tầng giữ nguyên: tầng raw không sửa (replace theo delta) · tầng nghiệp vụ (GDO/DO) WMS quản — luôn đối chiếu ngược lại raw được.
 
 ### Mã hàng — quyền sở hữu theo TỪNG CỘT (user chốt 19/07: WMS được bổ sung/sửa, gồm 1 thùng = ? hộp)
 | Nhóm cột | Chủ | Khi sync |
 |---|---|---|
 | material_code, tên/description, loại hàng, base UoM, trạng thái | **SAP** | đè mỗi lần sync |
-| **units_per_carton (1 thùng=?hộp)**, cartons_per_pallet, shelf_life_days, batch_prefix, kích thước mm, max_stack_layers/stack_on_top, image, short_name, pallet_per_ea | **WMS** | SAP chỉ điền khi đang TRỐNG (seed-once); sau đó WMS toàn quyền, sync KHÔNG đè |
+| **units_per_carton (1 thùng=?hộp)** + **cartons_per_pallet (1 pallet=?thùng)** — SAP CŨNG CÓ 2 hệ số này (user xác nhận 19/07) → dùng làm giá trị SEED lần đầu; shelf_life_days, batch_prefix, kích thước mm, max_stack_layers/stack_on_top, image, short_name, pallet_per_ea | **WMS** | SAP chỉ điền khi đang TRỐNG (seed-once); sau đó WMS toàn quyền, sync KHÔNG đè — lệch chỉ cảnh báo |
 | Cột WMS đã sửa ≠ giá trị SAP | — | không đè — hiện **cảnh báo lệch** ở màn Đồng bộ |
 
 ### Batch — thang khớp 4 bậc (IT xác nhận "có thể có" 2 batch ≤3 ngày cùng chu kỳ)
-1. đúng ngày + đúng chu kỳ → lấy · 2. duy nhất trong cửa sổ ±3 ngày → lấy · 3. nhiều ứng viên → gần ngày nhất · 4. **hòa → KHÔNG auto-post, vào hàng đợi đối soát chọn tay** (mơ hồ thì dừng, không đoán). Hỏi IT: batch number SAP có quy luật chứa date/chu kỳ không → có thì khớp CỨNG theo batch number, bỏ cửa sổ.
+1. đúng ngày + đúng chu kỳ → lấy · 2. duy nhất trong cửa sổ ±3 ngày → lấy · 3. nhiều ứng viên → gần ngày nhất · 4. **hòa → KHÔNG auto-post, chọn tay TRÊN SAP** (user chốt 19/07 — vì SAP là bên post, hàng đợi đối soát nằm phía SAP/CPI; WMS chỉ cần trả đủ date+chu kỳ). Hỏi IT: batch number SAP có quy luật chứa date/chu kỳ không → có thì khớp CỨNG theo batch number, bỏ cửa sổ.
 
 ### OD SỬA/HỦY — ma trận quy tắc (user yêu cầu quy tắc chặt 19/07)
 3 nguyên tắc: **(1) không bao giờ tự xóa dữ liệu quét · (2) auto chỉ khi chưa ai đụng, đã đụng = người quyết · (3) tăng dễ hơn giảm.**

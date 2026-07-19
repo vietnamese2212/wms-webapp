@@ -1236,8 +1236,8 @@ function InboundPane({ order, onClose, canScan }: { order: InboundOrder; onClose
             <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Pallet</div>
           </div>
           <div className="rounded-lg bg-sky-700 text-white px-2 py-2.5 text-center">
-            <div className="text-xl font-bold leading-none tabular-nums">{cartons.toLocaleString()}</div>
-            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thực nhập</div>
+            <div className="text-xl font-bold leading-none tabular-nums">{qtyEntryText(cartons, order.material)}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thực nhập ({qtyUnitLabel(order.material)})</div>
           </div>
         </div>
 

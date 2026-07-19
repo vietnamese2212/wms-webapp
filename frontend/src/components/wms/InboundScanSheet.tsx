@@ -5,13 +5,12 @@ import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { Button }              from '@/components/ui/button'
-import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { OfflineError } from '@/api/client'
 import { playBeep } from '@/utils/audio'
-import { qtyLabel } from '@/utils/qtyUnits'
+import { qtyLabel, hasEntry } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
@@ -122,7 +121,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
-  const defaultCartons = effCartonsPerPallet(order.material, order.warehouse_id).toString()
+  // BASE UNIT: định mức cartons_per_pallet = THÙNG VẬT LÝ → nhân units_per_carton ra BASE (hộp)
+  // để gửi cartons_override đúng base (mã có entry). Mã không entry: hệ số 1.
+  const qtyFactor = hasEntry(order.material) ? Number(order.material?.units_per_carton) : 1
+  const defaultCartons = (effCartonsPerPallet(order.material, order.warehouse_id) * qtyFactor).toString()
   // NCC + shelflife theo lô. 1 mã + 1 NCC có thể nhiều shelflife (100/200) → chọn NCC = chọn luôn shelflife.
   const isTransfer = (order as { source_type?: string }).source_type === 'TRANSFER'
   const { data: allCompanies = [] } = useTransportCompanies(true)
@@ -416,9 +418,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
             {/* Số lượng đặt TRÊN camera — tránh bỏ sót / nhập mặc định sai */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs font-medium text-slate-700">Số thùng nhập</Label>
-                <Input type="number" min="0" value={cartons} onChange={(e) => setCartons(e.target.value)}
-                  className="h-11 text-center text-lg font-semibold" />
+                <Label className="text-xs font-medium text-slate-700">Số lượng nhập</Label>
+                {/* BASE UNIT: 2 ô Thùng + Hộp — value/onChange = BASE (hộp), quy đổi tại rìa như mọi sheet quét */}
+                <QtyInput value={Math.max(0, parseInt(cartons) || 0)} mat={order.material}
+                  onChange={b => setCartons(String(b))} />
                 {outboundCartons != null && (
                   <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{qtyLabel(outboundCartons ?? 0, order.material)}</span></p>
                 )}

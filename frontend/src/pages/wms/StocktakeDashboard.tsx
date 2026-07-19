@@ -141,10 +141,10 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
                   : '—'} />
               {diff && (
                 <>
-                  <DR label="Tồn thực tế" value={`${diff.actual} thùng`} bold />
-                  <DR label="Tồn app"     value={`${diff.app} thùng`} />
+                  <DR label="Tồn thực tế" value={qtyLabel(diff.actual, entry.material)} bold />
+                  <DR label="Tồn app"     value={qtyLabel(diff.app, entry.material)} />
                   <DR label="Chênh lệch"
-                    value={`${diff.diff > 0 ? '+' : ''}${diff.diff} thùng`}
+                    value={`${diff.diff > 0 ? '+' : ''}${qtyLabel(diff.diff, entry.material)}`}
                     cls={diff.diff < 0 ? 'text-red-600 font-semibold' : diff.diff > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400'} />
                 </>
               )}
@@ -297,7 +297,9 @@ export default function StocktakeDashboard() {
       return {
         'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
         'Tên hàng': e.material?.short_name ?? e.material?.material_code ?? '',
-        'Tồn App': qtyEntryDecimal(e.cartons_remaining, e.material), 'Thực tế': diff?.actual ?? '', 'Chênh lệch': diff?.diff ?? '',
+        'Tồn App': qtyEntryDecimal(e.cartons_remaining, e.material),
+        'Thực tế': diff ? qtyEntryDecimal(diff.actual, e.material) : '',
+        'Chênh lệch': diff ? qtyEntryDecimal(diff.diff, e.material) : '',
         'Người kiểm': e.stocktake_by_emp?.name ?? '',
         'TG kiểm': e.stocktake_at ? `${formatTimestampDate(e.stocktake_at, true)} ${formatTimestampTime(e.stocktake_at)}` : '',
         'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
@@ -443,13 +445,13 @@ export default function StocktakeDashboard() {
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           {diff
-                            ? <span className="text-[10px] tabular-nums font-semibold">{diff.actual}</span>
+                            ? <span className="text-[10px] tabular-nums font-semibold">{qtyEntryText(diff.actual, e.material)}</span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap text-right">
                           {diff
                             ? <span className={`text-[10px] font-semibold tabular-nums ${diff.diff < 0 ? 'text-red-600' : diff.diff > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                {diff.diff > 0 ? '+' : ''}{diff.diff}
+                                {diff.diff > 0 ? '+' : ''}{qtyEntryText(diff.diff, e.material)}
                               </span>
                             : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>

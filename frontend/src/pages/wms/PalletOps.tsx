@@ -180,7 +180,7 @@ export default function PalletOps() {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
       const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
       setSplitDone(labels)   // KHÔNG tự in — chờ người dùng bấm "In tem" (hoặc in sau ở tab Lịch sử)
-      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${res.source_remaining} thùng). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.` })
+      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.` })
       setSplitQtys([''])
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi tách pallet' }) }
   }
@@ -223,7 +223,7 @@ export default function PalletOps() {
         <SummaryBand tiles={tab === 'merge'
           ? [{ label: 'Pallet đích', value: mergeTarget ? 1 : 0 }, { label: 'Pallet con', value: allChildren.length, accent: allChildren.length > 0 }, { label: 'Thao tác', value: 'Gom nhóm' }, { label: 'Số lượng', value: 'Giữ nguyên' }]
           : tab === 'split'
-          ? [{ label: 'Tồn gốc', value: srcEntry ? remaining : '—' }, { label: 'Tách ra', value: totalSplit, accent: totalSplit > 0 }, { label: 'Giữ lại', value: srcEntry ? keepLeft : '—' }, { label: 'Pallet con', value: splitQtys.filter(q => Number(q) > 0).length }]
+          ? [{ label: 'Tồn gốc', value: srcEntry ? qtyLabel(remaining, srcEntry.material) : '—' }, { label: 'Tách ra', value: srcEntry ? qtyLabel(totalSplit, srcEntry.material) : totalSplit, accent: totalSplit > 0 }, { label: 'Giữ lại', value: srcEntry ? qtyLabel(keepLeft, srcEntry.material) : '—' }, { label: 'Pallet con', value: splitQtys.filter(q => Number(q) > 0).length }]
           : [{ label: 'Số thao tác', value: ops.length, accent: ops.length > 0 }, { label: 'Dồn', value: ops.filter(o => o.type === 'MERGE').length }, { label: 'Tách', value: ops.filter(o => o.type === 'SPLIT').length }, { label: 'Đã hoàn tác', value: ops.filter(o => o.undone_at).length }]} />
 
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">

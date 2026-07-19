@@ -365,7 +365,7 @@ export default function Stocktake() {
                     </p>
                     <div className="flex items-center gap-2">
                       <QtyInput compact autoFocus className="w-44"
-                        value={Math.max(0, parseInt(physCount) || 0)}
+                        value={Math.max(0, parseFloat(physCount) || 0)}
                         mat={entry.material}
                         onChange={b => setPhysCount(String(b))}
                       />

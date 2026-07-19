@@ -141,6 +141,18 @@ Xây NGAY luồng upload mới chạy **SONG SONG** với upload cũ (không đ�
 **Đối chiếu:** 41/41 DO của KH đều có trong VL06O (join hoàn hảo theo `DO = Delivery`); **Ship-to lệch 4/41** giữa 2 file → chốt luật: **mọi chi tiết lấy từ RAW (SAP), file điều vận chỉ quyết ngày/chuyến/ĐVVT** — đúng loại lỗi gõ tay mà luồng mới loại bỏ.
 **Mapping đơn vị:** Sales Unit `CAR` → thùng nguyên · `HOP` → nhặt lẻ (hộp) · `EA/BT/BAG` (vd Pallet Loscam 810000000) → hàng no-QR/QTY theo `Material.unit`.
 
+### Chốt vòng 6 (user trả lời 4 câu + header text)
+- **Header text = GỘP "Ghi chú giao hàng" + "Ghi chú hóa đơn"** của VL06O.
+- **OD là khóa duy nhất link SAP** — SO chỉ tham khảo (lưu nhưng không dùng làm khóa); OD `330x`/SO `430x` xử như đơn bán thường.
+- **Mã chuyến ("Số xe")** = điều vận đặt tay; WMS dùng **nguyên văn** làm group_code.
+- **Tên NPP — cascade 4 bậc:** (1) danh mục WMS theo **Ship-to code** → (2) `Name ship-to party` trong VL06O → (3) Search term/`Tên NPP` file điều vận (viết tắt, vd NPPTRANGHOANG) → (4) cả 3 rỗng = **báo lỗi** dòng đó.
+- **Storage Location chỉ THAM KHẢO** (không đầy đủ) — KHÔNG dùng map kho; kho của chuyến = chọn khi upload / suy từ mã chuyến (`20000016` = mã kho WMS).
+
+### Thiết kế build GĐ B (chờ user duyệt để code)
+**Bảng mới `erp_outbound_orders`** (raw, 1 dòng = 1 OD line, unique `(od_number, od_item)`): od_number · od_item · so_number(tham khảo) · ship_to_code · ship_to_name · material_code · material_name · qty_sales + sales_unit · qty_base + base_unit · plant · storage_location(tham khảo) · batch_req · date_pct_req · header_text(gộp 2 ghi chú) · shipping_point · source('EXCEL'/'SAP') · id/updated_at chuẩn.
+**Nút upload 1 "Upload VL06O (SAP)"**: parse → upsert theo (od,item) chunk 500; OD đã thành chuyến mà số liệu đổi → KHÔNG đè đơn, ghi cảnh báo (theo ma trận sửa/hủy, bản đầu = cảnh báo).
+**Nút upload 2 "Upload KH điều vận"**: cột `Ngày xuất · Số xe · SO · DO · Ship-to · Tên NPP · Loại xe · DVVT · Ưu tiên · Note` — validate DO nào thiếu trong raw thì liệt kê lỗi từng DO; nhóm `Số xe` → 1 GDO (group_code nguyên văn, delivery_date=Ngày xuất, kho chọn lúc upload); mỗi DO → OutboundDelivery (do_code=OD); item từ raw (CAR→thùng, HOP→lẻ, EA/BT/BAG→no-QR); NPP theo cascade; header_text/batch/%Date từ raw; ship-to khớp kho nội bộ → luồng chuyển kho như cũ. Quyền: dùng lại `outbound.import`. Chạy SONG SONG upload cũ.
+
 ### Mã hàng — quyền sở hữu theo TỪNG CỘT (user chốt 19/07: WMS được bổ sung/sửa, gồm 1 thùng = ? hộp)
 | Nhóm cột | Chủ | Khi sync |
 |---|---|---|

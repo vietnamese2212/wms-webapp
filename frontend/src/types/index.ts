@@ -231,6 +231,8 @@ export interface Material {
   carton_height_mm?:          number | null
   max_stack_layers?:          number | null   // số lớp xếp tối đa 1 chân hàng (null = theo chiều cao xe)
   stack_on_top?:              boolean         // hàng nhẹ — được xếp TRÊN mã hàng khác (ưu tiên lên nóc)
+  base_unit?:                 string | null   // ĐV GỐC (lưu trữ/tính toán sau semantic flip): HOP/BT/KG/EA… — tùy biến
+  entry_unit?:                string | null   // ĐV NHẬP LIỆU (chỉ hiển thị): CAR…; hệ số 1 Entry = N Base = units_per_carton
   warehouse_pallet_overrides:     WarehousePalletOverride[] | null
   supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null
   manufacturer_id:                string | null

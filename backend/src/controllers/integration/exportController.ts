@@ -68,7 +68,7 @@ async function exportTable(
 // 1) Mã hàng
 export function exportMaterials(req: Request, res: Response): Promise<void> {
   return exportTable(req, res, 'Material',
-    'id, material_code, material_description, short_name, category, product_type, unit, cartons_per_pallet, units_per_carton, pallet_per_ea, weight_kg, shelf_life_days, batch_prefix, is_active, created_at, updated_at')
+    'id, material_code, material_description, short_name, category, product_type, unit, base_unit, entry_unit, cartons_per_pallet, units_per_carton, pallet_per_ea, weight_kg, shelf_life_days, batch_prefix, is_active, created_at, updated_at')
 }
 // 2) Tồn kho (kèm mã lô batch + HSD — khóa đối chiếu kế toán)
 export function exportInventory(req: Request, res: Response): Promise<void> {

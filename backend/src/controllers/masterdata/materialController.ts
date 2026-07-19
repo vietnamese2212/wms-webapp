@@ -68,9 +68,13 @@ export async function createMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
+      base_unit, entry_unit,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
+    // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
+    if (entry_unit && !(Number(units_per_carton) > 0))
+      return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
 
     const short_name = buildShortName(material_description, material_code, custom_short_name)
 
@@ -96,6 +100,8 @@ export async function createMaterial(req: Request, res: Response) {
         carton_height_mm: carton_height_mm != null ? Number(carton_height_mm) : null,
         max_stack_layers: max_stack_layers != null ? Number(max_stack_layers) : null,
         stack_on_top:     Boolean(stack_on_top),
+        base_unit: base_unit ? String(base_unit).trim().toUpperCase() : null,
+        entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
@@ -130,6 +136,7 @@ export async function updateMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
+      base_unit, entry_unit,
     } = req.body
 
     let short_name: string | undefined
@@ -162,6 +169,8 @@ export async function updateMaterial(req: Request, res: Response) {
     if (carton_height_mm !== undefined) patch.carton_height_mm = carton_height_mm != null ? Number(carton_height_mm) : null
     if (max_stack_layers !== undefined) patch.max_stack_layers = max_stack_layers != null ? Number(max_stack_layers) : null
     if (stack_on_top     !== undefined) patch.stack_on_top     = Boolean(stack_on_top)
+    if (base_unit !== undefined)  patch.base_unit  = base_unit ? String(base_unit).trim().toUpperCase() : null
+    if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null
@@ -223,7 +232,8 @@ export async function listCategories(_req: Request, res: Response) {
 const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
   'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix',
   'carton_length_mm', 'carton_width_mm', 'carton_height_mm',
-  'max_stack_layers', 'stack_on_top'] as const   // kích thước thùng (cm) + luật xếp chồng THÊM Ở CUỐI — file cũ ngắn hơn → giữ nguyên
+  'max_stack_layers', 'stack_on_top',
+  'base_unit', 'entry_unit'] as const   // ĐVT base/entry (chiến dịch Base Unit) THÊM Ở CUỐI — file cũ ngắn hơn → giữ nguyên
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
@@ -294,6 +304,8 @@ export async function uploadExcel(req: Request, res: Response) {
       // Xếp trên hàng khác: 1/x/có/yes → true; 0/không/no → false; ô trống → giữ nguyên
       const onTopRaw     = mStr(row.stack_on_top)?.toLowerCase() ?? null
       const onTop        = onTopRaw == null ? null : ['1', 'x', 'true', 'có', 'co', 'yes'].includes(onTopRaw)
+      const baseUnit     = (() => { const s = mStr(row.base_unit);  return s ? s.toUpperCase() : null })()
+      const entryUnit    = (() => { const s = mStr(row.entry_unit); return s ? s.toUpperCase() : null })()
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
       // Đắp ô CÓ GIÁ TRỊ lên base (ô trống → giữ nguyên base)
       const apply = (base: Record<string, unknown>) => {
@@ -314,6 +326,8 @@ export async function uploadExcel(req: Request, res: Response) {
         if (cHei         != null) base.carton_height_mm = cHei
         if (maxLayers    != null) base.max_stack_layers = maxLayers
         if (onTop        != null) base.stack_on_top = onTop
+        if (baseUnit     != null) base.base_unit = baseUnit
+        if (entryUnit    != null) base.entry_unit = entryUnit
         base.updated_at = now
         return base
       }
@@ -344,6 +358,7 @@ export async function uploadExcel(req: Request, res: Response) {
           shelf_life_days: sld, notes, batch_prefix: batchPrefix,
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,
           max_stack_layers: maxLayers, stack_on_top: onTop ?? false,
+          base_unit: baseUnit, entry_unit: entryUnit,
           is_active: true, created_at: now, updated_at: now,
         })
       }

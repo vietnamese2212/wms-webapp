@@ -9,7 +9,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
   // slotting-plan(s): tiến độ kế hoạch sắp xếp suy từ location_id hiện tại — pallet được chuyển phải nhảy tick ngay
   InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans']],
-  Location:            [['locations-real'], ['sub-groups']],
+  Location:            [['locations-real'], ['sub-groups'], ['dashboard']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   Material:            [['materials'], ['gdos'], ['gdo']],
@@ -18,7 +18,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   PalletOperation:     [['pallet-ops-log']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],
-  WarehouseZone:       [['warehouse-zones']],
+  WarehouseZone:       [['warehouse-zones'], ['dashboard']],
   LookupValue:         [['lookup']],            // prefix khớp ['lookup','warehouse_type'] & ['lookup',type]
   ImportShift:         [['import-shifts']],
   QAStatus:            [['qa-statuses']],

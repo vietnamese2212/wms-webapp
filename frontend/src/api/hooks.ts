@@ -1433,7 +1433,8 @@ export type LoosePickingItem = {
   do_id: string
   material_id: string | null
   material_code_raw: string | null
-  material: { id: string; material_code: string; short_name: string } | null
+  // BASE UNIT: units để quy đổi thùng khi cộng loose cross-mã ở list (BE đã embed sẵn)
+  material: { id: string; material_code: string; short_name: string; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered: number
   loose_picking: number
   cartons_scanned: number

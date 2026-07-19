@@ -11,6 +11,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
+import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -113,8 +114,9 @@ export default function LoosePicking() {
     }
     return [...map.values()]
       .map(({ gdo, items: gdoItems }) => {
-        const totalLoose    = gdoItems.reduce((s, i) => s + itemLooseStats(i).effective, 0)
-        const totalLooseDone = gdoItems.reduce((s, i) => s + itemLooseStats(i).done, 0)
+        // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (loose_picking lưu base)
+        const totalLoose    = gdoItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseStats(i).effective, i.material), 0)
+        const totalLooseDone = gdoItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseStats(i).done, i.material), 0)
         const pendingCount  = gdoItems.filter(i => itemLooseStats(i).remaining > 0).length
         return { gdo, items: gdoItems, totalLoose, totalLooseDone, pendingCount }
       })
@@ -237,7 +239,7 @@ export default function LoosePicking() {
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
         { label: 'Mặt hàng', value: summary.items },
-        { label: 'Nhặt lẻ', value: `${summary.looseDone}/${summary.looseTotal}` },
+        { label: 'Nhặt lẻ', value: `${summary.looseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/${summary.looseTotal.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}` },
         { label: 'Chưa xong', value: totalPending, accent: totalPending > 0 },
       ]} />
 
@@ -328,8 +330,8 @@ export default function LoosePicking() {
                       <span className="text-[9px] text-slate-400 ml-0.5">mặt hàng</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-                      <span className="text-[10px] font-semibold tabular-nums">{s.totalLooseDone}</span>
-                      <span className="text-[9px] text-slate-400">/{s.totalLoose}</span>
+                      <span className="text-[10px] font-semibold tabular-nums">{s.totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
+                      <span className="text-[9px] text-slate-400">/{s.totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
                       <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
                     </TableCell>
                     <TableCell className="px-2 py-1">

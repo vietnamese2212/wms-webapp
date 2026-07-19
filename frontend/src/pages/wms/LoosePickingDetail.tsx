@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -509,8 +509,9 @@ export default function LoosePickingDetail() {
 
   const allDOs        = gdo.delivery_orders ?? []
   const allLooseItems = allDOs.flatMap(d => d.items.filter(i => i.loose_picking > 0))
-  const totalLoose    = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).effective, 0)
-  const totalLooseDone = allLooseItems.reduce((s, i) => s + itemLooseProgress(i).done, 0)
+  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (loose_picking lưu base)
+  const totalLoose    = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).effective, i.material), 0)
+  const totalLooseDone = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).done, i.material), 0)
 
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
@@ -593,7 +594,7 @@ export default function LoosePickingDetail() {
           {npp && <span className="text-slate-500 break-words">{npp}</span>}
           <span className="flex items-center gap-1">
             <Package className="h-3 w-3 text-slate-400 shrink-0" />
-            Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone}/{totalLoose}</span>
+            Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
             <span className="text-slate-400 ml-0.5">thùng</span>
           </span>
         </div>

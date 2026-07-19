@@ -83,6 +83,7 @@ Mọi chỗ đang `SUM(cartons_*)` qua nhiều mã → đổi thành `SUM(qty / 
 `dashboard_stats` · `control_tower_stats` (v5) · `outbound_shortage_stats` · `slotting_stats` · inventory list/facets/summary (PostgREST aggregate `.sum()` → phải chuyển RPC hoặc tính JS chia hệ số) · cổng integration `/v1/inventory` + `scan-entries` (**thêm trường `qty_base` + `base_unit` + giữ trường thùng quy đổi** — ERP cần cả hai) · dashboard "Tồn (thùng)" / SummaryBand các trang.
 
 ### 2.3. Code sweep (BE ~358 + FE ~155 điểm — theo module)
+- **LUẬT SỐ NGUYÊN (user chốt 19/07): mã CÓ `entry_unit` → cấm thập phân ở MỌI nhập liệu số lượng (form key tay, upload, nhập kho, điều chỉnh, kiểm kê, tách pallet, lưu thủ công) — nhập bằng 2 ô "Thùng + Hộp" SỐ NGUYÊN (cả 2 ô đều nguyên); mã KHÔNG entry → 1 ô, thập phân tự do (KG/EA/BAG…).** Điều kiện = `hasEntry(m)` sẵn có trong `qtyUnits.ts` — thêm helper validate/parse input TẬP TRUNG tại đây (BE+FE mirror), KHÔNG rải điều kiện ở từng form. FE: component `QtyInput` dùng chung cho mọi điểm nhập. BE: guard 422 "Mã X — nhập số nguyên (Thùng + Hộp)" là hàng rào thật. **Upload áp CÙNG luật, KHÔNG đường chuyển tiếp**: cột thùng thập phân với mã có entry → lỗi THEO DÒNG kèm gợi ý quy đổi tính sẵn ("0,33 thùng ≈ 16 hộp — ghi vào cột Hộp"); template upload KH xuất + Tồn đầu kỳ thêm cột Hộp. Lưu ý: mã thiếu units_per_carton (entry null) tạm thoát luật — thúc user khai đủ hệ số.
 - **Ghi (convert tại rìa):** inbound scan/manual (tem N thùng → `N×hệ_số`); outbound `scanItem`/`checkScanItem`/quick-export; **nhặt lẻ = đếm HỘP nguyên trực tiếp** (bỏ quy đổi thùng thập phân — luồng tự nhiên hơn); upload KH xuất cũ (thùng thập phân → `round(x×hệ_số)`); upload Tồn kho (cột thùng → ×hệ_số khi mã có entry, template ghi chú rõ); điều chỉnh tồn; dồn/tách pallet; chuyển kho/nhận hàng; RPC `consumeInventoryExact`/`adjustInventoryAtomic`/`addItemScanned` (chữ ký giữ, số truyền vào đã là base).
 - **So sánh/gác:** mọi `>=`/khớp KH giữ nguyên phép toán (2 vế cùng base); gác "KH khớp thực quét mới Hoàn thành" giữ nguyên.
 - **Hiển thị:** chỉ đổi RUỘT `qtyUnits` (đợt 1 đã gom) + các chỗ BE trả chuỗi.
@@ -93,7 +94,7 @@ Mọi chỗ đang `SUM(cartons_*)` qua nhiều mã → đổi thành `SUM(qty / 
 1. Chọn giờ trống + báo user; kho đồng bộ offline queue.
 2. Backup: `CREATE TABLE x_backup_YYYYMMDD AS SELECT ...` cho mọi bảng ở 2.1.
 3. Chạy migration ×hệ_số (1 transaction/bảng, JOIN Material, WHERE entry_unit IS NOT NULL).
-4. **Verify số học:** per bảng per mã: `SUM(new) = SUM(old)×hệ_số` (script so backup) — lệch 1 dòng = dừng, rollback.
+4. **Verify số học:** per bảng per mã: `SUM(new) = SUM(old)×hệ_số` (script so backup) — lệch NGOÀI danh sách round = dừng, rollback. Dòng tồn lịch sử đang thùng lẻ phải `round(x×hệ_số)` (vd 0,674×6 → 4 hộp, lệch 0,044) → **xuất BÁO CÁO danh sách dòng bị round kèm chênh lệch** (một lần duy nhất lúc flip; từ đó về sau số nguyên tuyệt đối theo luật 2.3).
 5. Deploy code base-semantics CÙNG cửa sổ (merge dev đã chứa code, bump rebuild-token).
 6. QA suite full + smoke tay (nhập → tồn → xuất → nhặt lẻ → kiểm kho → dashboard) + Playwright.
 7. Ngâm staging ≥ vài ngày vận hành thử → user gật → lặp kịch bản trên production.

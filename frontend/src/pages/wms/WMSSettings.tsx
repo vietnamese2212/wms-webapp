@@ -349,6 +349,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const [code,     setCode]     = useState(zone?.code ?? '')
   const [name,     setName]     = useState(zone?.name ?? '')
   const [category, setCategory] = useState(zone?.category ?? '')
+  const [maxPallets, setMaxPallets] = useState(zone?.max_pallets != null ? String(zone.max_pallets) : '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
   const [err, setErr] = useState('')
 
@@ -360,14 +361,17 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
     setErr('')
     if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
     if (!name.trim()) { setErr('Tên khu vực là bắt buộc'); return }
+    const mpRaw = maxPallets.trim()
+    if (mpRaw && (!Number.isFinite(Number(mpRaw)) || Number(mpRaw) < 0)) { setErr('Pallet tối đa phải là số ≥ 0'); return }
+    const mp = mpRaw ? Math.round(Number(mpRaw)) : null
     if (isEdit) {
       update(
-        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive },
+        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined, code: code.trim() || undefined },
+        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined, code: code.trim() || undefined, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -441,6 +445,13 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
           <div className="space-y-1">
             <Label className="text-xs">Tên khu vực *</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Khu Thành phẩm, Khu NVL…" />
+          </div>
+
+          {/* Pallet tối đa (sức chứa khai tay — Dashboard so tồn vs tối đa) */}
+          <div className="space-y-1">
+            <Label className="text-xs">Pallet tối đa <span className="text-slate-400">(tùy chọn)</span></Label>
+            <Input type="number" min={0} value={maxPallets} onChange={e => setMaxPallets(e.target.value)} placeholder="vd: 5000" />
+            <p className="text-[10px] text-slate-400">Sức chứa pallet của khu — Dashboard so sánh pallet tồn với số này. Để trống = chưa khai.</p>
           </div>
 
           {isEdit && (
@@ -1173,6 +1184,7 @@ export default function WMSSettings() {
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã khu vực</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên khu vực</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại kho</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Pallet tối đa</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
                         {canManageZone && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
@@ -1185,6 +1197,7 @@ export default function WMSSettings() {
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{z.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{z.name}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{z.max_pallets != null ? z.max_pallets.toLocaleString('vi-VN') : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
@@ -1218,6 +1231,7 @@ export default function WMSSettings() {
                   <button onClick={() => setDetailZone(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.category ?? '—'}</span></div>
+                <div><span className="text-slate-400">Pallet tối đa:</span> <span className="font-medium tabular-nums">{detailZone.max_pallets != null ? detailZone.max_pallets.toLocaleString('vi-VN') : 'Chưa khai'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailZone.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

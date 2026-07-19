@@ -765,7 +765,7 @@ export function useReorderWarehouseTypes() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; max_pallets?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -783,7 +783,7 @@ export function useWarehouseZones(warehouseId?: string) {
 export function useCreateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; name: string; category?: string; code?: string }) =>
+    mutationFn: (body: { warehouse_id: string; name: string; category?: string; code?: string; max_pallets?: number | null }) =>
       apiClient.post('/wms/zones', body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -792,7 +792,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; max_pallets?: number | null }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })

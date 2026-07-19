@@ -12,7 +12,7 @@ export async function listZones(req: Request, res: Response) {
 
   let query = supabase
     .from('WarehouseZone')
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, is_active, created_at, updated_at, created_by, updated_by')
+    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
     .order('sort_order')
     .order('created_at')
 
@@ -32,9 +32,19 @@ export async function listZones(req: Request, res: Response) {
   res.json({ success: true, data })
 }
 
+// Pallet tối đa khai tay tại khu (Dashboard so tồn vs sức chứa): null = chưa khai; số nguyên ≥ 0
+function parseMaxPallets(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === undefined || v === null || v === '') return { ok: true, value: null }
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return { ok: false }
+  return { ok: true, value: Math.round(n) }
+}
+
 export async function createZone(req: Request, res: Response) {
-  const { warehouse_id, name, category, code } = req.body as { warehouse_id?: string; name?: string; category?: string; code?: string }
+  const { warehouse_id, name, category, code, max_pallets } = req.body as { warehouse_id?: string; name?: string; category?: string; code?: string; max_pallets?: number | string | null }
   if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc')
+  const mp = parseMaxPallets(max_pallets)
+  if (!mp.ok) return fail(res, 'Pallet tối đa phải là số ≥ 0')
 
   const reqUser = req.user
   if (reqUser?.warehouse_scope === 'ASSIGNED') {
@@ -83,11 +93,12 @@ export async function createZone(req: Request, res: Response) {
       name:         name.trim(),
       category:     category?.trim() || null,
       sort_order:   nextSort,
+      max_pallets:  mp.value,
       created_by:   actorName,
       updated_by:   actorName,
       updated_at:   t,
     })
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, is_active, created_at, updated_at, created_by, updated_by')
+    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
   if (error) {
@@ -101,7 +112,7 @@ export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
   // pick_rank/flow_type KHÔNG sửa ở đây — cấu hình slotting đi route riêng
   // PATCH /wms/slotting/zone-config/:id (quyền slotting.configure), tab Cài đặt trang Tối ưu vị trí
-  const { name, category, is_active } = req.body as { name?: string; category?: string | null; is_active?: boolean }
+  const { name, category, is_active, max_pallets } = req.body as { name?: string; category?: string | null; is_active?: boolean; max_pallets?: number | string | null }
 
   const actor = req.user
   const scopeCats = scopeCategoriesOf(req)
@@ -121,12 +132,17 @@ export async function updateZone(req: Request, res: Response) {
   if (name !== undefined) updates.name = name.trim()
   if (category !== undefined) updates.category = category?.trim() || null
   if (is_active !== undefined) updates.is_active = is_active
+  if (max_pallets !== undefined) {
+    const mp = parseMaxPallets(max_pallets)
+    if (!mp.ok) return fail(res, 'Pallet tối đa phải là số ≥ 0')
+    updates.max_pallets = mp.value
+  }
 
   const { data, error } = await supabase
     .from('WarehouseZone')
     .update(updates)
     .eq('id', id)
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, is_active, created_at, updated_at, created_by, updated_by')
+    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
     .single()
 
   if (error) return fail(res, error.message, 500)

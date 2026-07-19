@@ -33,45 +33,53 @@ type ZoneCapRow = {
   capacity: number; used: number
 }
 
-// Sức chứa theo KHU VỰC: capacity = Σ Location.max_pallets (vị trí active trong khu),
-// used = số pallet active còn tồn đang gắn vị trí (cùng thước đo used_slots của slotting/move RPC).
-// Bảng nhỏ (khu vực + vị trí vật lý) — đếm pallet gom phía DB (aggregate), không kéo bảng tồn.
+// Sức chứa theo KHU VỰC (user chốt 19/07):
+// - capacity = WarehouseZone.max_pallets KHAI TAY (null = chưa khai, KHÔNG cộng tự động từ vị trí)
+// - used = pallet tồn quy đổi: mã có EA/Pallet (Material.pallet_per_ea) → Σ số lượng × EA/Pallet;
+//   mã không có → đếm pallet (mỗi entry active còn tồn gắn vị trí = 1).
+// Gom (vị trí, mã) phía DB bằng aggregate — không kéo bảng tồn về Node.
 async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null): Promise<ZoneCapRow[]> {
-  const [zones, locations, warehouses] = await Promise.all([
+  const [zones, locations, warehouses, ppeMats] = await Promise.all([
     fetchAllRowsParallel(() => {
       let q = supabase.from('WarehouseZone')
-        .select('id, warehouse_id, code, name, category, sort_order')
+        .select('id, warehouse_id, code, name, category, sort_order, max_pallets')
         .eq('is_active', true).order('id')
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
     }),
     fetchAllRowsParallel(() => {
       let q = supabase.from('Location')
-        .select('id, warehouse_id, sub_code, max_pallets')
+        .select('id, warehouse_id, sub_code')
         .eq('is_active', true).order('id')
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
     }),
     supabase.from('Warehouse').select('id, name').then(r => r.data ?? []),
+    fetchAllRowsParallel(() => supabase.from('Material')
+      .select('id, pallet_per_ea').not('pallet_per_ea', 'is', null).order('id')),
   ])
+  const ppeByMat = new Map((ppeMats as { id: string; pallet_per_ea: number }[])
+    .map(m => [String(m.id), Number(m.pallet_per_ea) || 0]))
 
-  let usedByLoc: Map<string, number>
+  // pallet quy đổi theo từng vị trí — gom (location_id, material_id): n = số entry, qty = Σ tồn
+  type UsedGroup = { location_id: string; material_id: string; n: number; qty: number }
+  let groups: UsedGroup[]
   try {
-    const usedRows = await fetchAllRowsParallel(() => {
+    const rows = await fetchAllRowsParallel(() => {
       let q = supabase.from('InventoryEntry')
-        .select('location_id, used:id.count()')
+        .select('location_id, material_id, n:id.count(), qty:cartons_remaining.sum()')
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
         .gt('cartons_remaining', 0)
         .not('location_id', 'is', null)
-        .order('location_id')
+        .order('location_id').order('material_id')
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
     })
-    usedByLoc = new Map(usedRows.map(u => [String(u.location_id), Number(u.used) || 0]))
+    groups = rows.map(r => ({ location_id: String(r.location_id), material_id: String(r.material_id), n: Number(r.n) || 0, qty: Number(r.qty) || 0 }))
   } catch {
-    // Aggregate tắt (silo chưa bật pgrst.db_aggregates_enabled) → đếm JS; tồn active gắn vị trí bounded theo sức chứa vật lý
+    // Aggregate tắt (silo chưa bật pgrst.db_aggregates_enabled) → gom JS; tồn active gắn vị trí bounded theo sức chứa vật lý
     const entries = await fetchAllRowsParallel(() => {
-      let q = supabase.from('InventoryEntry').select('location_id')
+      let q = supabase.from('InventoryEntry').select('location_id, material_id, cartons_remaining')
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
         .gt('cartons_remaining', 0)
         .not('location_id', 'is', null)
@@ -79,35 +87,41 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
     })
-    usedByLoc = new Map()
-    for (const e of entries as { location_id: string }[])
-      usedByLoc.set(String(e.location_id), (usedByLoc.get(String(e.location_id)) ?? 0) + 1)
+    const m = new Map<string, UsedGroup>()
+    for (const e of entries as { location_id: string; material_id: string; cartons_remaining: number }[]) {
+      const key = `${e.location_id}|${e.material_id}`
+      const g = m.get(key) ?? { location_id: String(e.location_id), material_id: String(e.material_id), n: 0, qty: 0 }
+      g.n += 1; g.qty += Number(e.cartons_remaining) || 0
+      m.set(key, g)
+    }
+    groups = [...m.values()]
+  }
+  const usedByLoc = new Map<string, number>()
+  for (const g of groups) {
+    const ppe = ppeByMat.get(g.material_id)
+    const pallets = ppe && ppe > 0 ? g.qty * ppe : g.n
+    usedByLoc.set(g.location_id, (usedByLoc.get(g.location_id) ?? 0) + pallets)
   }
 
   // Gom vị trí theo (kho, khu) — sub_code của Location = code của WarehouseZone trong cùng kho
-  const byZoneKey = new Map<string, { capacity: number; used: number }>()
-  for (const l of locations as { id: string; warehouse_id: string; sub_code: string | null; max_pallets: number }[]) {
+  const usedByZoneKey = new Map<string, number>()
+  for (const l of locations as { id: string; warehouse_id: string; sub_code: string | null }[]) {
     if (!l.sub_code) continue
     const key = `${l.warehouse_id}|${l.sub_code}`
-    const agg = byZoneKey.get(key) ?? { capacity: 0, used: 0 }
-    agg.capacity += Number(l.max_pallets) || 0
-    agg.used += usedByLoc.get(String(l.id)) ?? 0
-    byZoneKey.set(key, agg)
+    usedByZoneKey.set(key, (usedByZoneKey.get(key) ?? 0) + (usedByLoc.get(String(l.id)) ?? 0))
   }
 
   const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
-  return (zones as { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number | null }[])
+  return (zones as { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number | null; max_pallets: number | null }[])
     .filter(z => !cats || !z.category || cats.includes(z.category)) // null-inclusive theo scope Loại hàng
-    .map(z => {
-      const agg = byZoneKey.get(`${z.warehouse_id}|${z.code}`)
-      return {
-        zone_id: z.id, warehouse_id: z.warehouse_id,
-        warehouse_name: whName.get(z.warehouse_id) ?? z.warehouse_id,
-        code: z.code, name: z.name, category: z.category,
-        capacity: agg?.capacity ?? 0, used: agg?.used ?? 0,
-        sort_order: z.sort_order,
-      }
-    })
+    .map(z => ({
+      zone_id: z.id, warehouse_id: z.warehouse_id,
+      warehouse_name: whName.get(z.warehouse_id) ?? z.warehouse_id,
+      code: z.code, name: z.name, category: z.category,
+      capacity: z.max_pallets ?? 0,
+      used: Math.round((usedByZoneKey.get(`${z.warehouse_id}|${z.code}`) ?? 0) * 10) / 10,
+      sort_order: z.sort_order,
+    }))
     .sort((a, b) => a.warehouse_name.localeCompare(b.warehouse_name)
       || (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || a.code.localeCompare(b.code))
     .map(({ sort_order: _s, ...r }) => r)

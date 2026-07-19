@@ -226,6 +226,12 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const hasHeaderText    = allItems.some(i => i.header_text)
   const hasPickSug       = !!pickSug && Object.values(pickSug).some(v => v.length > 0)
 
+  // Cột text dài NỚI RỘNG vừa đủ để chuỗi dài nhất gói trong ≤3 dòng — KHÔNG cắt dữ liệu (đồng bộ Xuất)
+  const maxNameLen   = Math.max(0, ...allItems.map(i => (i.material?.short_name ?? i.material_code_raw ?? '').length))
+  const nameMinW     = Math.min(400, Math.max(110, Math.ceil((maxNameLen / 3) * 5.4)))
+  const maxHeaderLen = Math.max(0, ...allItems.map(i => (i.header_text ?? '').length))
+  const headerMinW   = Math.min(420, Math.max(180, Math.ceil((maxHeaderLen / 3) * 5)))
+
   const inventoryItem = inventoryItemId ? allItems.find(i => i.id === inventoryItemId) : null
 
   if (allItems.length === 0) {
@@ -252,14 +258,14 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
         <TableHeader>
           <TableRow className="bg-slate-50">
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Mã hàng</TableHead>
-            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5">Tên hàng</TableHead>
+            <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: nameMinW }}>Tên hàng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 text-right whitespace-nowrap">Lẻ / Tổng</TableHead>
             <TableHead className="text-[9px] font-medium text-slate-500 px-1 py-1.5 text-center w-8">Kho</TableHead>
             {hasPickSug && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Vị trí lấy</TableHead>}
             <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Số DO</TableHead>
             {hasBatchRequired && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Batch yêu cầu</TableHead>}
             {hasDateRequired  && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">%Date yêu cầu</TableHead>}
-            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 min-w-[180px]">Header text</TableHead>}
+            {hasHeaderText    && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5" style={{ minWidth: headerMinW }}>Header text</TableHead>}
             <TableHead className="w-5 px-1 py-1.5" />
           </TableRow>
         </TableHeader>
@@ -286,9 +292,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} />
                     </div>
                   </TableCell>
-                  <TableCell className="px-2 py-1 align-top">
-                    {/* Gọn (user 19/07, đồng bộ Xuất): bỏ progress bar từng dòng; mobile tên tối đa 3 dòng */}
-                    <div className={`text-[10px] font-medium leading-tight max-sm:line-clamp-3 ${textCls}`}>{matName}</div>
+                  <TableCell className="px-2 py-1 align-top" style={{ minWidth: nameMinW }}>
+                    {/* Gọn (user 19/07, đồng bộ Xuất): bỏ progress bar từng dòng; cột nới đủ rộng để tên ≤3 dòng KHÔNG cắt */}
+                    <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
                     {looseScanEntries.length > 0 && (
                       <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
                     )}
@@ -368,9 +374,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                     </TableCell>
                   )}
                   {hasHeaderText && (
-                    <TableCell className="px-2 py-1 align-top whitespace-normal min-w-[180px] max-w-[380px]">
+                    <TableCell className="px-2 py-1 align-top whitespace-normal" style={{ minWidth: headerMinW, maxWidth: 420 }}>
                       {item.header_text
-                        ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words max-sm:line-clamp-3" title={item.header_text}>{item.header_text}</p>
+                        ? <p className="text-[9px] font-medium text-red-600 leading-snug break-words">{item.header_text}</p>
                         : <span className="text-[10px] text-slate-300">—</span>}
                     </TableCell>
                   )}

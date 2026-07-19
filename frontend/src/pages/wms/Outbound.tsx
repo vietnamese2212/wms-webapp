@@ -1353,7 +1353,7 @@ function GDOFormBody({
     })
   }
 
-  function handlePasteLooseAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+  function handlePasteLooseAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
     const text = e.clipboardData.getData('text')
     if (!text.includes('\n')) return
     e.preventDefault()
@@ -1548,7 +1548,7 @@ function GDOFormBody({
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-14">DVT</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-36">Số lượng</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-20">Nhặt lẻ (lẻ)</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-36">Nhặt lẻ (lẻ)</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Batch</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-16">%Date</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">CS</th>
@@ -1592,13 +1592,12 @@ function GDOFormBody({
                       />
                       {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {qtyLabel(item.min_cartons, item.mat_units)}</p>}
                     </td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="number" min={0}
-                        className="h-6 w-16 rounded border border-slate-200 px-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        value={item.loose_picking || ''}
-                        onChange={e => updateItem(item.id, { loose_picking: parseInt(e.target.value) || 0 })}
-                        onPaste={e => handlePasteLooseAt(idx, e)}
+                    <td className="px-2 py-1" onPaste={e => handlePasteLooseAt(idx, e)}>
+                      {/* BASE UNIT "1 dòng 2 cột": nhặt lẻ nhập 2 ô Thùng+Hộp (như cột Số lượng) — value/onChange = BASE */}
+                      <QtyInput compact className="w-32"
+                        value={item.loose_picking}
+                        mat={item.mat_units}
+                        onChange={b => updateItem(item.id, { loose_picking: b })}
                       />
                     </td>
                     <td className="px-2 py-1">

@@ -363,21 +363,14 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? `Số ${qtyBaseLabel(activeItem?.material)}:` : 'Số lượng:'}</label>
-                {mode === 'loose' ? (
-                  <Input
-                    type="number" min={1}
-                    value={pendingCartons}
-                    onChange={e => setPendingCartons(e.target.value)}
-                    className="h-11 text-center font-semibold text-lg w-28"
-                  />
-                ) : (
-                  <QtyInput compact className="w-44"
-                    value={Math.max(0, parseInt(pendingCartons) || 0)}
-                    mat={activeItem?.material}
-                    onChange={b => setPendingCartons(String(b))}
-                  />
-                )}
+                <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? 'Lấy (lẻ):' : 'Số lượng:'}</label>
+                {/* BASE UNIT: cả quét thường lẫn quét lẻ đều nhập 2 ô Thùng+Hộp (lấy N thùng + M hộp từ pallet, trừ base) */}
+                <QtyInput compact className="w-44"
+                  value={Math.max(0, parseInt(pendingCartons) || 0)}
+                  mat={activeItem?.material}
+                  onChange={b => setPendingCartons(String(b))}
+                />
+                {mode === 'loose' && <span className="text-[10px] text-amber-600">lấy cả thùng lẻ + hộp lẻ</span>}
                 <span className="text-sm text-slate-400">/ {activeRemaining} {mode === 'loose' ? 'cần chuẩn bị' : 'cần xuất'}</span>
               </div>
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>

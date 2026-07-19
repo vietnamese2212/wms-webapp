@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -239,7 +239,10 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const cols: RtColDef[] = [
     { id: 'mat',  label: 'Mã hàng', w: 92 },
     { id: 'name', label: 'Tên hàng', w: nameMinW },
-    { id: 'qty',  label: 'Lẻ / Tổng', w: 92, align: 'right' },
+    { id: 'tong_c', label: 'Tổng thùng', w: 74, align: 'right' },
+    { id: 'tong_b', label: 'Tổng hộp', w: 62, align: 'right' },
+    { id: 'le_c',   label: 'Lẻ thùng', w: 78, align: 'right' },
+    { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
     { id: 'do',   label: 'Số DO', w: 105 },
@@ -277,6 +280,14 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
         <TableBody>
           {allItems.map(item => {
             const { effective, done: looseDone, looseScanned } = itemLooseProgress(item)
+            // BASE UNIT (4 số): tách Tổng + Nhặt lẻ thành Thùng/Hộp (mã KG không entry → giữ base ở cột thùng)
+            const hasEnt     = hasEntry(item.material)
+            const ordSplit   = qtySplit(item.cartons_ordered, item.material)
+            const effSplit   = qtySplit(effective, item.material)
+            const doneSplit  = qtySplit(looseDone, item.material)
+            const tHop       = ordSplit.base > 0 ? String(ordSplit.base) : null
+            const leThung    = effSplit.entry > 0 || doneSplit.entry > 0 ? `${doneSplit.entry}/${effSplit.entry}` : null
+            const leHop      = effSplit.base > 0 || doneSplit.base > 0 ? `${doneSplit.base}/${effSplit.base}` : null
             const isDone   = looseDone >= effective
             const textCls  = isDone ? 'text-blue-700' : looseScanned > 0 ? 'text-amber-700' : 'text-slate-700'
             const bgCls    = isDone ? 'bg-blue-50 hover:bg-blue-100' : looseScanned > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'
@@ -306,11 +317,22 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
                     )}
                   </TableCell>
+                  {/* BASE UNIT: Tổng thùng (kế hoạch) — mã KG giữ số base */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    <span className={`text-[10px] tabular-nums ${textCls}`}>{hasEnt ? ordSplit.entry : qtyEntryText(item.cartons_ordered, item.material)}</span>
+                  </TableCell>
+                  {/* Tổng hộp lẻ — 0 → "—" */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    {hasEnt && tHop
+                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{tHop}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                  {/* Nhặt lẻ THÙNG (đã/cần) + nút Quét */}
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     <div className="flex flex-col items-end gap-0.5">
-                      {/* Đã nhặt / Cần nhặt lẻ (0/23) · tổng đơn nhỏ bên dưới */}
-                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{qtyEntryText(looseDone, item.material)}/{qtyEntryText(effective, item.material)}</span>
-                      <span className="text-[9px] text-slate-400 tabular-nums">tổng {qtyEntryText(item.cartons_ordered, item.material)}</span>
+                      <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>
+                        {leThung ?? (!hasEnt && effective > 0 ? `${qtyEntryText(looseDone, item.material)}/${qtyEntryText(effective, item.material)}` : '—')}
+                      </span>
                       {!isDone && (
                         <button
                           onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
@@ -320,6 +342,12 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                         </button>
                       )}
                     </div>
+                  </TableCell>
+                  {/* Nhặt lẻ HỘP (đã/cần) — 0 → "—" */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    {leHop
+                      ? <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{leHop}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-1 py-1 align-middle text-center">
                     <button

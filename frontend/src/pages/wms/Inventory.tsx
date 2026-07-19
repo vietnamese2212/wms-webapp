@@ -102,7 +102,7 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'location',  label: 'Vị trí',   w: 90 },
   { id: 'imported',  label: 'Nhập',     w: 60, align: 'right' },
   { id: 'exported',  label: 'Xuất',     w: 60, align: 'right' },
-  { id: 'remaining', label: 'Tồn',      w: 70, align: 'right' },
+  { id: 'remaining', label: 'Tồn',      w: 116, align: 'right' },
   { id: 'reserved',  label: 'Nhặt lẻ',  w: 64, align: 'right' },
   { id: 'available', label: 'Khả dụng', w: 70, align: 'right' },
   { id: 'date',      label: 'Date',     w: 70 },
@@ -124,7 +124,7 @@ const SUMMARY_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'datePct',   label: '%Date',    w: 64, align: 'right' },
   { id: 'imported',  label: 'Nhập',     w: 70, align: 'right' },
   { id: 'exported',  label: 'Xuất',     w: 70, align: 'right' },
-  { id: 'remaining', label: 'Tồn',      w: 80, align: 'right' },
+  { id: 'remaining', label: 'Tồn',      w: 124, align: 'right' },
   { id: 'pallets',   label: 'Số pallet',w: 72, align: 'right' },
 ]
 const SUMMARY_COL_DEFAULTS = SUMMARY_COLS.map(c => c.w)
@@ -1293,8 +1293,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? qtyEntryText(exported, e.material) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(Number(remaining), e.material)}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(e.material)}</span>
+        {/* BASE UNIT: Tồn thể hiện Thùng + Hộp lẻ (base là lõi) */}
+        <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(Number(remaining), e.material)}</span>
       </TableCell>
       {/* Giữ chỗ / Khả dụng: bỏ màu riêng (purple/blue) → kế thừa màu dòng (entryRowText) cho đồng nhất */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
@@ -1393,8 +1393,8 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
         <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? qtyEntryText(g.cartons_exported, g) : '—'}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(g.cartons_remaining, g)}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(g)}</span>
+        {/* BASE UNIT: Tồn tổng hợp thể hiện Thùng + Hộp lẻ */}
+        <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(g.cartons_remaining, g)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{g.pallet_count}</span>

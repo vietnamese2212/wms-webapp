@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint } from './systemSettingController'
-import { qtyLabel, type MatUnits } from '../../utils/qtyUnits'
+import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
@@ -132,7 +132,9 @@ export async function splitPallet(req: Request, res: Response) {
     const parts = src.split('_')
     const segs = isV2 ? src.split(';') : []          // V2: đoạn 3 (index 2) = mã lô
     const baseMalo = isV2 ? (segs[2] ?? '') : ''
-    const items = Array.isArray(children) ? children.map(c => Math.floor(Number(c?.qty) || 0)).filter(q => q > 0) : []
+    // BASE UNIT: qty con = SỐ BASE. KHÔNG floor (mã KG tách được phần lẻ; mã entry tách được hộp lẻ).
+    // Số nguyên cho mã có entry được chốt qtyIntegerError sau khi biết material (dưới).
+    const items = Array.isArray(children) ? children.map(c => Number(c?.qty) || 0).filter(q => q > 0) : []
     if (!src) return fail(res, 'Thiếu mã pallet gốc')
     if (!isV2 && parts.length < 6) return fail(res, 'Mã pallet gốc không đúng định dạng QR')
     if (isV2 && (segs.length < 3 || !baseMalo)) return fail(res, 'Mã pallet V2 thiếu mã lô (đoạn 3)')
@@ -152,6 +154,11 @@ export async function splitPallet(req: Request, res: Response) {
     const remaining = Number(source.cartons_remaining ?? 0)
     const reserved = Number(source.cartons_reserved ?? 0)
     const free = remaining - reserved
+    // BASE UNIT: mã có entry → mỗi phần tách phải SỐ NGUYÊN theo base (không tách 0,5 hộp)
+    for (const q of items) {
+      const ie = qtyIntegerError(q, (source as any).material as MatUnits)
+      if (ie) return fail(res, ie)
+    }
     const totalSplit = items.reduce((s, q) => s + q, 0)
     if (totalSplit > free) return fail(res, `Tách ${qtyLabel(totalSplit, (source as any).material as MatUnits)} vượt số khả dụng (${qtyLabel(free, (source as any).material as MatUnits)}, đã trừ ${qtyLabel(reserved, (source as any).material as MatUnits)} giữ chỗ)`)
 

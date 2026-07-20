@@ -104,7 +104,7 @@ export default function PalletOps() {
   const remaining = Number(srcEntry?.cartons_remaining ?? 0)
   const reserved  = Number(srcEntry?.cartons_reserved ?? 0)
   const free = remaining - reserved
-  const totalSplit = splitQtys.reduce((s, q) => s + (Math.floor(Number(q) || 0)), 0)
+  const totalSplit = splitQtys.reduce((s, q) => s + (Number(q) || 0), 0)
   const keepLeft = remaining - totalSplit
   const split = useSplitPallet()
   const logPrints = useLogPalletPrints()
@@ -175,7 +175,7 @@ export default function PalletOps() {
   async function doSplit() {
     setMsg(null); setSplitDone(null)
     if (!scopeReady) { setMsg({ ok: false, text: 'Chọn Kho và Loại kho trước khi tách' }); return }
-    const children = splitQtys.map(q => Math.floor(Number(q) || 0)).filter(q => q > 0).map(qty => ({ qty }))
+    const children = splitQtys.map(q => Number(q) || 0).filter(q => q > 0).map(qty => ({ qty }))
     try {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
       const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
@@ -276,7 +276,7 @@ export default function PalletOps() {
                     const aCode = (o.target_codes?.[0] || o.source_codes?.[0] || '')
                     const matName = matByCode.get(materialCodeOf(aCode))?.short_name ?? materialCodeOf(aCode) ?? '—'
                     const qtySum = (o.detail?.children ?? []).reduce((s: number, c: any) => s + (Number(c.qty) || 0), 0)
-                    const qtyText = o.type === 'SPLIT' ? `SL ${qtySum}` : `${(o.source_codes?.length ?? 0)} pallet`
+                    const qtyText = o.type === 'SPLIT' ? `SL ${qtyLabel(qtySum, matByCode.get(materialCodeOf(aCode)))}` : `${(o.source_codes?.length ?? 0)} pallet`
                     return (
                     <tr key={o.id} className={`border-b border-slate-100 ${o.undone_at ? 'opacity-50' : ''}`}>
                       <td className="px-2 py-1 tabular-nums whitespace-nowrap">{formatTimestampDate(o.created_at, true)} {formatTimestampTime(o.created_at)}</td>
@@ -498,7 +498,7 @@ export default function PalletOps() {
                   <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 space-y-2">
                     <p className="text-xs font-semibold text-violet-800">Đã tách {splitDone.length} pallet con — chờ in tem:</p>
                     <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                      {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · SL {l.qty}</div>)}
+                      {splitDone.map(l => <div key={l.key} className="font-mono text-[10px] text-violet-700">{l.qr} · SL {qtyLabel(Number(l.qty), srcEntry?.material)}</div>)}
                     </div>
                     {/* Cụm action sau khi tách — In tem (thuần PC, window.print) + Để in sau/Đóng */}
                     <ActionCluster items={[

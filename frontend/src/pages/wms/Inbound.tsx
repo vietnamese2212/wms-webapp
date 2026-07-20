@@ -38,7 +38,8 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
-import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
@@ -64,6 +65,7 @@ type EditRow = {
   id: string; material_id: string; materialCode: string; matName: string
   locationCode: string; palletCount: number
   planned_cartons: number | null; notes: string; toCancel: boolean
+  mat_units: MatUnits | null   // BASE UNIT: ô SL dự kiến 2 khung Thùng + Hộp
 }
 
 // ─── Create order dialog ─────────────────────────────────────
@@ -74,10 +76,14 @@ type NccMatRow = {
   material_code: string; material_id: string
   mat_name: string; mat_unit: string
   unit_input: string; planned_qty: string
+  // BASE UNIT: units của mã để ô SL dự kiến hiện 2 khung Thùng + Hộp (null → 1 ô như cũ)
+  mat_units: MatUnits | null
 }
 const emptyNccRow = (): NccMatRow => ({
-  material_code: '', material_id: '', mat_name: '', mat_unit: '', unit_input: '', planned_qty: '',
+  material_code: '', material_id: '', mat_name: '', mat_unit: '', unit_input: '', planned_qty: '', mat_units: null,
 })
+const matUnitsOf = (m: { base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null | undefined): MatUnits | null =>
+  m ? { base_unit: m.base_unit ?? null, entry_unit: m.entry_unit ?? null, units_per_carton: m.units_per_carton ?? null } : null
 
 // Dòng danh sách hàng NCC — memo hóa để gõ ô nào chỉ render lại dòng đó
 // (trước đây mỗi phím gõ re-render toàn bộ N dòng → form chậm khi paste nhiều dòng)
@@ -162,12 +168,10 @@ const NccRowItem = React.memo(function NccRowItem({
           {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
         </div>
       </td>
-      <td className="px-1.5 py-1">
-        <input type="number" min="0" value={row.planned_qty}
-          onChange={e => onField(idx, 'planned_qty', e.target.value)}
-          onPaste={e => onQtyPaste(idx, e)}
-          className="w-full h-7 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-        />
+      <td className="px-1.5 py-1 min-w-[136px]" onPaste={e => onQtyPaste(idx, e)}>
+        {/* BASE UNIT: 2 khung Thùng + Hộp (mã có entry) → hiện/nhập "N thùng + M hộp"; mã không entry → 1 ô. value/onChange = BASE */}
+        <QtyInput compact value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
+          onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
       <td className="px-1 py-1 text-center">
         <button type="button" onClick={() => onRemove(idx)}
@@ -231,6 +235,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
           planned_cartons: (o as any).planned_cartons != null ? Number((o as any).planned_cartons) : null,
           notes:           (o as any).notes ?? '',
           toCancel:        false,
+          mat_units:       matUnitsOf(o.material),
         })))
       } else {
         setSourceType('FACTORY')
@@ -401,7 +406,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const lookupNccRow = useCallback((code: string): NccMatRow => {
     const found = nccMatByCode.get(code.trim().toUpperCase())
     const valid = found && (!subType || found.category === subType) ? found : null
-    return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: valid?.unit ?? '', unit_input: valid?.unit ?? '', planned_qty: '' }
+    return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: valid?.unit ?? '', unit_input: valid?.unit ?? '', planned_qty: '', mat_units: matUnitsOf(valid) }
   }, [nccMatByCode, subType])
 
   const handleNccMatCodeChange = useCallback((idx: number, code: string) => {
@@ -411,6 +416,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       ...r, material_code: code,
       material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '',
       mat_unit: valid?.unit ?? '', unit_input: valid ? (valid.unit ?? '') : r.unit_input,
+      mat_units: matUnitsOf(valid),
     }))
   }, [nccMatByCode, subType])
 
@@ -432,6 +438,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: m.material_code, material_id: m.id,
       mat_name: m.short_name ?? '', mat_unit: m.unit ?? '', unit_input: m.unit ?? '',
+      mat_units: matUnitsOf(m),
     }))
     setNccDropdownIdx(null)
   }, [])
@@ -501,6 +508,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         mat_unit:      unit,
         unit_input:    unit,
         planned_qty:   qty > 0 ? String(qty) : '',
+        mat_units:     matUnitsOf(fullMat),
       }
     }))
   }
@@ -1037,14 +1045,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
                           <td className="px-1.5 py-1">
                             {!row.toCancel && (
-                              <input type="number" min="0"
-                                value={row.planned_cartons ?? ''}
-                                onChange={e => setEditRows(prev => prev.map((r, i) => i !== idx ? r : {
-                                  ...r, planned_cartons: e.target.value === '' ? null : Number(e.target.value)
-                                }))}
-                                className="w-full h-6 px-1.5 text-[10px] border border-slate-200 rounded text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                placeholder="—"
-                              />
+                              /* BASE UNIT: 2 khung Thùng + Hộp — value/onChange = BASE (mã có entry hiện/nhập thùng+hộp) */
+                              <QtyInput compact value={Math.max(0, Number(row.planned_cartons) || 0)} mat={row.mat_units}
+                                onChange={b => setEditRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, planned_cartons: b || null }))} />
                             )}
                           </td>
                           <td className="px-1.5 py-1">

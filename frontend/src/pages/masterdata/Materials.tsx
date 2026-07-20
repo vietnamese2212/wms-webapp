@@ -964,17 +964,19 @@ export default function Materials() {
               </div>
             </div>
 
-            {/* Loại hàng — từ WMS Settings */}
+            {/* Loại hàng — từ WMS Settings (SingleSelect chuẩn: có ô tìm) */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Loại hàng *</Label>
-              <Select value={form.category || undefined} onValueChange={v => setField('category', v)}>
-                <SelectTrigger className="col-span-2 h-7 text-xs">
-                  <SelectValue placeholder="Chọn loại hàng" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map(c => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <div className="col-span-2">
+                <SingleSelect
+                  options={categories.map(c => ({ value: c, label: c }))}
+                  value={form.category}
+                  onChange={v => setField('category', v)}
+                  placeholder="Chọn loại hàng"
+                  searchPlaceholder="Tìm loại hàng…"
+                  triggerClassName="h-7 w-full text-xs"
+                />
+              </div>
             </div>
 
             {/* Loại SP (product_type) */}
@@ -1176,19 +1178,21 @@ export default function Materials() {
               <Input className="col-span-2 h-7 text-xs" value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Ghi chú thêm (tùy chọn)" />
             </div>
 
-            {/* Quản QR / số lượng */}
+            {/* Quản tồn — chọn cách theo dõi tồn (SingleSelect cho rõ) */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Quản tồn</Label>
-              <label className="col-span-2 flex items-center gap-2 text-xs cursor-pointer">
-                <div
-                  onClick={() => setNoQr(v => !v)}
-                  className={`w-3.5 h-3.5 border rounded flex items-center justify-center cursor-pointer transition-colors
-                    ${noQr ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}
-                >
-                  {noQr && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                </div>
-                <span>{noQr ? 'Không quản QR (theo số lượng)' : 'Quản theo QR từng pallet'}</span>
-              </label>
+              <div className="col-span-2">
+                <SingleSelect
+                  options={[
+                    { value: 'qr',  label: 'Quản theo QR từng pallet' },
+                    { value: 'qty', label: 'Không quản QR (theo số lượng)' },
+                  ]}
+                  value={noQr ? 'qty' : 'qr'}
+                  onChange={v => setNoQr(v === 'qty')}
+                  searchable={false}
+                  triggerClassName="h-7 w-full text-xs"
+                />
+              </div>
             </div>
 
             {/* Trạng thái (edit only) */}

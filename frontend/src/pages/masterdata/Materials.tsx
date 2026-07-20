@@ -803,6 +803,8 @@ export default function Materials() {
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Phân loại</p>
                   <div className="space-y-0">
                     <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
+                    <DRow label="Loại SP"    value={detailMat.product_type} />
+                    <DRow label="Quản tồn"   value={detailMat.no_qr_tracking ? 'Không QR (theo số lượng)' : 'Theo QR từng pallet'} />
                   </div>
                 </div>
 
@@ -819,6 +821,10 @@ export default function Materials() {
                       : <span className="text-slate-300">— (không có)</span>} />
                     <DRow label="Khối lượng"         value={detailMat.weight_kg         != null ? `${detailMat.weight_kg} kg`            : null} />
                     <DRow label="HSD"                value={detailMat.shelf_life_days   != null ? `${detailMat.shelf_life_days} ngày`     : null} />
+                    <DRow label="Thùng D×R×C"        value={(detailMat.carton_length_mm != null || detailMat.carton_width_mm != null || detailMat.carton_height_mm != null)
+                      ? `${detailMat.carton_length_mm ?? '?'} × ${detailMat.carton_width_mm ?? '?'} × ${detailMat.carton_height_mm ?? '?'} mm` : null} />
+                    <DRow label="Số lớp xếp tối đa"  value={detailMat.max_stack_layers != null ? `${detailMat.max_stack_layers} lớp` : <span className="text-slate-400">∞ (theo trần xe)</span>} />
+                    <DRow label="Xếp trên hàng khác" value={detailMat.stack_on_top ? 'Có (hàng nhẹ được lên nóc)' : 'Không'} />
                   </div>
                 </div>
 
@@ -860,9 +866,11 @@ export default function Materials() {
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Thông tin khác</p>
                   <div className="space-y-0">
                     <DRow label="Mã cũ" value={detailMat.old_code} />
+                    {detailMat.batch_prefix && <DRow label="Mã tắt (mã lô)" value={detailMat.batch_prefix} />}
                     {detailMat.manufacturer && (
                       <DRow label="Nhà SX" value={`${detailMat.manufacturer.code}${detailMat.manufacturer.name ? ` – ${detailMat.manufacturer.name}` : ''}`} />
                     )}
+                    <DRow label="Ghi chú" value={detailMat.notes} />
                   </div>
                 </div>
 

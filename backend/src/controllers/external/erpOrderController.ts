@@ -118,6 +118,18 @@ export async function updateDoSap(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
+    // Đổi khóa (od_number, od_item) → chặn trùng dòng khác (unique index; báo 409 rõ thay vì 500 khó hiểu)
+    if ('od_number' in fields || 'od_item' in fields) {
+      const { data: cur } = await supabase.from('erp_outbound_orders')
+        .select('od_number, od_item').eq('id', req.params.id).maybeSingle()
+      const od = (fields.od_number ?? cur?.od_number) as string | null
+      const item = (fields.od_item ?? cur?.od_item) as string | null
+      if (od && item) {
+        const { data: dup } = await supabase.from('erp_outbound_orders').select('id')
+          .eq('od_number', od).eq('od_item', item).neq('id', req.params.id).maybeSingle()
+        if (dup) return fail(res, `Đã tồn tại dòng DO ${od} / Item ${item}`, 409)
+      }
+    }
     const { data, error } = await supabase.from('erp_outbound_orders')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now() })
       .eq('id', req.params.id).select().maybeSingle()

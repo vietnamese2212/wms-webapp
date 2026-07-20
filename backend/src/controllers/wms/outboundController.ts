@@ -633,6 +633,25 @@ function uploadRowQtyBase(row: Record<string, any>, mu: MatUnitsQ | null | undef
   return thung * Number(mu!.units_per_carton) + parseDecimal(row['Hộp'])
 }
 
+// Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho).
+type MatPalletUnits = MatUnitsQ & {
+  cartons_per_pallet?: number | null
+  warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
+}
+
+// ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07): loose = phần base KHÔNG đủ xếp 1 pallet nguyên
+// (thùng lẻ < 1 pallet → phải nhặt từng thùng, không quét được nguyên pallet). SAP luôn key thùng chẵn
+// nên nhặt lẻ theo hộp-lẻ-dưới-thùng gần như không phát sinh → dùng ngưỡng PALLET. Tính trên qty base ĐÃ GỘP
+// (nhiều dòng cùng mã/NPP đã cộng lại) — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). Mã không entry /
+// thiếu cartons_per_pallet → 0 (không ép nhặt lẻ).
+function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | null | undefined, warehouseId: string | null | undefined): number {
+  if (!hasEntry(mu)) return 0
+  const cpp = effCartonsPerPallet(mu, warehouseId ?? null)
+  const palletBase = cpp > 0 ? cpp * Number(mu!.units_per_carton) : 0
+  if (palletBase <= 0) return 0
+  return Number(orderedBase) % palletBase
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
@@ -1848,7 +1867,8 @@ async function mergePausedGDO(
   dvvt: string | null,
   warehouse_type: string | null,
   byNpp: Map<string, Record<string, any>[]>,
-  matMap: Map<string, { id: string } & MatUnitsQ>
+  matMap: Map<string, { id: string } & MatPalletUnits>,
+  autoLoosePallet = false,   // true (KHVC/SAP): loose = phần thùng lẻ < 1 pallet, tính trên qty base đã gộp
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
@@ -1952,15 +1972,16 @@ async function mergePausedGDO(
     for (const row of mergedRows) {
       const mat_code      = String(row['Material'] ?? '').trim()
       const material_type = String(row['Material_type'] ?? '').trim() || null
-      const newCartons    = uploadRowQtyBase(row, matMap.get(mat_code) ?? null)
+      const mu            = matMap.get(mat_code) ?? null
+      const newCartons    = uploadRowQtyBase(row, mu)
       const fields = {
         do_id:             doId,
-        material_id:       matMap.get(mat_code)?.id ?? null,
+        material_id:       mu?.id ?? null,
         material_code_raw: mat_code,
         cartons_ordered:   newCartons,
         boxes_display:     parseDecimal(row['Hộp']),
         weight:            parseDecimal(row['Tải']),
-        loose_picking:     parseDecimal(row['Nhặt lẻ']),
+        loose_picking:     autoLoosePallet ? loosePalletRemainder(newCartons, mu, warehouse_id) : parseDecimal(row['Nhặt lẻ']),
         pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
         material_type,
         export_type:    String(row['Loại xuất']     ?? '').trim() || null,
@@ -2039,6 +2060,7 @@ async function processVehicleGroups(
   byVehicle: Map<string, Record<string, any>[]>,
   warehouse_id: string | undefined,
   extraResult?: Record<string, unknown>,
+  autoLoosePallet = false,   // true (KHVC/SAP): nhặt lẻ = thùng lẻ < 1 pallet, auto theo cartons_per_pallet
 ): Promise<Response> {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
@@ -2053,7 +2075,7 @@ async function processVehicleGroups(
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatUnitsQ)[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -2061,7 +2083,7 @@ async function processVehicleGroups(
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
     }
-    const matMap = new Map<string, { id: string; is_non_stock?: boolean } & MatUnitsQ>(
+    const matMap = new Map<string, { id: string; is_non_stock?: boolean } & MatPalletUnits>(
       allMaterials.map(m => [String(m.material_code).trim(), m])
     )
     // Mã PHI HÀNG HÓA (chiết khấu/dịch vụ) — LOẠI khỏi chuyến (không sinh dòng cần quét); vẫn giữ ở raw erp_outbound_orders.
@@ -2254,7 +2276,7 @@ async function processVehicleGroups(
           pausedGDOMap.get(group_code)!,
           group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
-          byNpp, matMap
+          byNpp, matMap, autoLoosePallet
         )
         if (resolvedShipto) {
           await supabase.from('GroupDeliveryOrder')
@@ -2274,14 +2296,16 @@ async function processVehicleGroups(
           for (const row of mergeNppRows(nppRows)) {
             const mat_code      = String(row['Material'] ?? '').trim()
             const material_type = String(row['Material_type'] ?? '').trim() || null
+            const mu            = matMap.get(mat_code) ?? null
+            const orderedBase   = uploadRowQtyBase(row, mu)
             itemInserts.push({
               id: randomUUID(), do_id: doId,
-              material_id:       matMap.get(mat_code)?.id ?? null,
+              material_id:       mu?.id ?? null,
               material_code_raw: mat_code,
-              cartons_ordered:   uploadRowQtyBase(row, matMap.get(mat_code) ?? null),
+              cartons_ordered:   orderedBase,
               boxes_display:     parseDecimal(row['Hộp']),
               weight:            parseDecimal(row['Tải']),
-              loose_picking:     parseDecimal(row['Nhặt lẻ']),
+              loose_picking:     autoLoosePallet ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id) : parseDecimal(row['Nhặt lẻ']),
               pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
               material_type,
               export_type:    String(row['Loại xuất']     ?? '').trim() || null,
@@ -2559,7 +2583,7 @@ export async function uploadKhvc(req: Request, res: Response) {
           // cartons_ordered = qty_base: mã có entry → Thùng×hệ_số + Hộp; mã không entry → chỉ Thùng
           'Thùng':   hasEntry(mat) ? sp.entry : qtyBase,
           'Hộp':     hasEntry(mat) ? sp.base  : 0,
-          'Nhặt lẻ': hasEntry(mat) ? sp.base  : 0,   // loose = phần hộp lẻ (chốt Đợt 3)
+          'Nhặt lẻ': 0,   // loose TÍNH AUTO theo pallet ở processVehicleGroups (trên qty base ĐÃ GỘP, chống thổi khi 1 mã nhiều dòng)
           'Loại xuất': k.veh_type,
           'Ưu tiên': k.priority,
           'CS phụ trách': k.cs,
@@ -2587,7 +2611,7 @@ export async function uploadKhvc(req: Request, res: Response) {
 
     if (!byVehicle.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
 
-    return await processVehicleGroups(req, res, byVehicle, undefined)
+    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true)   // KHVC/SAP → nhặt lẻ auto theo pallet
   } catch (e) { return fail(res, String(e)) }
 }
 

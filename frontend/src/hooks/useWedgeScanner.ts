@@ -1,17 +1,19 @@
 // Súng quét PDA / máy quét Bluetooth (keyboard-wedge HID) — user 19/07: BỔ SUNG cạnh camera,
-// KHÔNG thay đổi flow quét camera. Nguyên lý: súng "gõ" chuỗi ký tự rất nhanh (~10–30ms/ký tự)
-// rồi kết thúc bằng Enter/Tab → gom buffer theo nhịp phím, chuỗi đủ dài + bắn nhanh = 1 lượt quét.
+// KHÔNG thay đổi flow quét camera. Nguyên lý: súng "gõ" chuỗi ký tự rất nhanh (~10–30ms/ký tự).
 //
-// Chống DOUBLE-READ (súng nhận diện đúp / bóp cò dính 2 phát): cùng một mã trong DEDUPE_MS
-// chỉ nhận 1 lượt — lượt sau bỏ qua im lặng. Mã KHÁC nhau thì nhận bình thường.
+// CHỐT LƯỢT theo 2 cách (dù DataWedge cấu hình kiểu nào cũng ăn):
+//   1) Enter/Tab là PHÍM THẬT → chốt ngay.
+//   2) IDLE — hết chuỗi bắn im lặng > IDLE_MS mà không có Enter thật → tự chốt.
+//      Cần vì Zebra TC27 có thể gửi Enter "as string"/IME (không phải keydown 'Enter') → cách 1 không bao giờ kích hoạt.
 //
+// Chống DOUBLE-READ (súng nhận diện đúp / cò dính 2 phát): cùng một mã trong DEDUPE_MS chỉ nhận 1 lượt.
 // Chống nhiễu gõ tay: ký tự cách nhau > GAP_MS coi là người gõ → reset buffer.
-// Bắn khi đang focus Ô NHẬP (vd ô Số thùng): chuỗi súng bị trình duyệt gõ thẳng vào ô →
-// hook TRẢ LẠI giá trị ô như trước lượt bắn (native setter + event input để React đồng bộ)
-// rồi vẫn xử lý lượt quét — số lượng không bao giờ bị chuỗi tem phá hỏng.
+// Bắn khi đang focus Ô NHẬP (vd ô Số thùng): chuỗi súng lọt vào ô → hook TRẢ LẠI giá trị ô như trước lượt bắn
+//   (native setter + event input để React đồng bộ) rồi vẫn xử lý lượt quét — số lượng không bị chuỗi tem phá hỏng.
 import { useEffect, useRef } from 'react'
 
-const GAP_MS    = 100   // nhịp giữa 2 ký tự của súng (người gõ nhanh nhất cũng ~150ms+)
+const GAP_MS    = 120   // nhịp giữa 2 ký tự của súng (người gõ nhanh nhất cũng ~150ms+)
+const IDLE_MS   = 90    // hết chuỗi bắn không có Enter thật > mốc này → tự chốt lượt
 const DEDUPE_MS = 1500  // double-read: cùng mã trong 1.5s chỉ tính 1
 const MIN_LEN   = 6     // tem pallet ngắn nhất cũng dài hơn mốc này
 
@@ -39,39 +41,66 @@ export function useWedgeScanner(onScan: (code: string) => void, enabled: boolean
     let lastCodeAt = 0
     // Ô nhập đang focus lúc BẮT ĐẦU lượt bắn + giá trị gốc của nó (để trả lại khi commit)
     let inputSnap: { el: HTMLInputElement | HTMLTextAreaElement; value: string } | null = null
+    let idleTimer = 0
+
+    function reset() {
+      buf = ''
+      inputSnap = null
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0 }
+    }
+
+    // Chốt 1 lượt bắn. target = phần tử của sự kiện Enter (nếu chốt qua phím thật); null = chốt qua idle.
+    function commit(target: EventTarget | null) {
+      const code = buf.replace(/[\r\n\t]+$/, '').trim()   // bỏ Enter/Tab thừa dính cuối
+      const snap = inputSnap
+      reset()
+      if (code.length < MIN_LEN) return
+      // Nếu chuỗi tem đã lọt vào ô nhập → trả ô về giá trị cũ (kể cả khi chốt qua idle, target = null)
+      if (snap && (!target || snap.el === target)) restoreInput(snap.el, snap.value)
+      const now = Date.now()
+      if (code === lastCode && now - lastCodeAt < DEDUPE_MS) return   // double-read → nuốt
+      lastCode = code
+      lastCodeAt = now
+      cb.current(code)
+    }
+
+    function scheduleIdle() {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = window.setTimeout(() => { idleTimer = 0; commit(null) }, IDLE_MS)
+    }
 
     function onKey(e: KeyboardEvent) {
       const now = Date.now()
       const typing = isEditable(e.target)
 
+      // Enter/Tab là PHÍM THẬT → chốt ngay (nhanh hơn idle)
       if (e.key === 'Enter' || e.key === 'Tab') {
         const isBurst = buf.length >= MIN_LEN && now - lastKeyAt <= GAP_MS
-        const code = buf
-        const snap = inputSnap
-        buf = ''
-        inputSnap = null
-        if (!isBurst) return
-        // Súng bắn khi đang focus ô nhập → dọn chuỗi tem đã lọt vào ô (trả về giá trị cũ)
-        if (typing) {
-          if (snap && snap.el === e.target) restoreInput(snap.el, snap.value)
-          else return   // burst trong ô khác nguồn theo dõi — không chắc chắn, bỏ qua cho an toàn
+        if (isBurst) {
+          // Súng bắn khi đang focus ô nhập → chặn Enter khỏi submit form + xử lý lượt quét
+          if (!typing || (inputSnap && inputSnap.el === e.target)) {
+            e.preventDefault()
+            e.stopPropagation()
+            commit(e.target)
+            return
+          }
         }
-        e.preventDefault()
-        e.stopPropagation()
-        if (code === lastCode && now - lastCodeAt < DEDUPE_MS) return   // double-read → nuốt
-        lastCode = code
-        lastCodeAt = now
-        cb.current(code)
+        reset()
         return
       }
-      if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return
-      if (now - lastKeyAt > GAP_MS) { buf = ''; inputSnap = null }   // nhịp chậm = người gõ → làm lại
+
+      if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return   // bỏ phím điều khiển / IME 'Unidentified'
+      if (now - lastKeyAt > GAP_MS) reset()                                  // nhịp chậm = người gõ → làm lại
       if (buf === '' && typing) inputSnap = { el: e.target as HTMLInputElement, value: (e.target as HTMLInputElement).value }
       buf += e.key
       lastKeyAt = now
+      scheduleIdle()   // chốt bằng idle nếu không có Enter thật (Zebra gửi Enter kiểu string/IME)
     }
 
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      if (idleTimer) clearTimeout(idleTimer)
+    }
   }, [enabled])
 }

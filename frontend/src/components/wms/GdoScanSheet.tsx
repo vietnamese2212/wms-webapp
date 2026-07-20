@@ -53,6 +53,9 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn khi mount
 }) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  // Súng quét: hễ có 1 phát bắn = chuyển hẳn sang chế độ súng (tắt camera) cả phiên.
+  // → sau khi Lưu KHÔNG bật lại camera nữa (QRScanner gỡ, resume() thành no-op). Súng listener độc lập camera nên vẫn bắn tiếp.
+  const [gunMode, setGunMode] = useState(pdaMode)
   const user = useAuthStore(s => s.user)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
@@ -114,6 +117,8 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   }
 
   function handleScan(qr_code: string, src: 'camera' | 'wedge' = 'camera') {
+    // Bắn bằng súng → khóa hẳn chế độ súng (tắt camera cả phiên, không tự bật lại sau khi Lưu)
+    if (src === 'wedge' && !gunMode) setGunMode(true)
     // Guard chung camera + súng quét: đang check/lưu/quét thùng → bỏ qua lượt mới
     // (camera tự pause sau scan nên trước đây không cần; có súng quét bắn bất kỳ lúc nào thì cần)
     if (checking || saving || cartonFor) return
@@ -298,7 +303,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           )}
 
           <div className="relative flex-1 min-h-0">
-            {pdaMode ? (
+            {gunMode ? (
               <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
                 <QrCode className="h-12 w-12 text-sky-400/70" />
                 <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>

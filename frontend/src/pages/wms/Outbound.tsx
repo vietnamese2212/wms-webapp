@@ -223,6 +223,7 @@ export default function Outbound() {
   const khvcRef  = useRef<HTMLInputElement>(null)
   const [vl06oOk,  setVl06oOk]  = useState<string | null>(null)
   const [vl06oErr, setVl06oErr] = useState<string | null>(null)
+  const [vl06oUnitErrs, setVl06oUnitErrs] = useState<{ material_code: string; material_name: string; kind: string; file_value: string; system_value: string }[] | null>(null)
   const [vcOk,     setVcOk]     = useState<string | null>(null)
   const [vcErr,    setVcErr]    = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
@@ -432,7 +433,7 @@ export default function Outbound() {
   function handleVl06oChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
-    setVl06oErr(null); setVl06oOk(null)
+    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null)
     uploadVl06o({ file }, {
       onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
         const parts = [`Lưu ${r.rows} dòng · ${r.deliveries} DO`]
@@ -442,8 +443,10 @@ export default function Outbound() {
         setVl06oOk(msg)
       },
       onError: (err) => {
-        const ax = err as AxiosError<{ error: { message: string } }>
-        setVl06oErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload VL06O'))
+        const ax = err as AxiosError<{ error: { message: string }; unit_errors?: { material_code: string; material_name: string; kind: string; file_value: string; system_value: string }[] }>
+        const data = ax?.response?.data
+        if (data?.unit_errors?.length) setVl06oUnitErrs(data.unit_errors)
+        setVl06oErr(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload VL06O'))
       },
     })
   }
@@ -636,7 +639,7 @@ export default function Outbound() {
             ...(can(perms, 'outbound', 'import') ? [{
               key: 'vcupload', icon: Upload, label: 'Up kế hoạch VC', tip: 'Up VL06O (SAP) + KH điều vận → tự sinh chuyến xuất',
               mobileHidden: true,
-              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVcErr(null); setVcOk(null); setShowVcUpload(true) },
+              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVcErr(null); setVcOk(null); setShowVcUpload(true) },
             } satisfies ActionItem] : []),
           ]} />
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
@@ -876,6 +879,32 @@ export default function Outbound() {
               {vl06oErr && (
                 <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oErr}</pre>
+                </div>
+              )}
+              {vl06oUnitErrs && vl06oUnitErrs.length > 0 && (
+                <div className="rounded-lg border border-red-200 overflow-x-auto">
+                  <table className="w-full text-[11px] whitespace-nowrap">
+                    <thead className="bg-red-50 text-red-700">
+                      <tr>
+                        <th className="px-2 py-1 text-left font-medium">Mã hàng</th>
+                        <th className="px-2 py-1 text-left font-medium">Tên</th>
+                        <th className="px-2 py-1 text-left font-medium">Lỗi</th>
+                        <th className="px-2 py-1 text-left font-medium">Trong file</th>
+                        <th className="px-2 py-1 text-left font-medium">Hệ thống</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vl06oUnitErrs.map((u, i) => (
+                        <tr key={i} className="border-t border-red-100">
+                          <td className="px-2 py-1 font-mono font-semibold">{u.material_code}</td>
+                          <td className="px-2 py-1 max-w-[180px] truncate" title={u.material_name}>{u.material_name || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-1">{u.kind}</td>
+                          <td className="px-2 py-1 text-red-600 font-semibold">{u.file_value}</td>
+                          <td className="px-2 py-1">{u.system_value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

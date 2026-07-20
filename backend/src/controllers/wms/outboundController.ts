@@ -2390,9 +2390,9 @@ export async function uploadVl06o(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
 
-    // Materials để cross-check base_unit + hệ số (chỉ CẢNH BÁO, không chặn)
+    // Materials để CHẶN đơn vị lệch (base/sales unit) + cross-check số lượng (cảnh báo)
     const mats = await fetchAllRowsParallel(() => supabase.from('Material')
-      .select('material_code, base_unit, units_per_carton')) as { material_code: string; base_unit: string | null; units_per_carton: number | null }[]
+      .select('material_code, base_unit, entry_unit, units_per_carton, short_name')) as { material_code: string; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; short_name: string | null }[]
     const matByCode = new Map(mats.map(m => [String(m.material_code).trim(), m]))
 
     const actor = req.user?.name || null
@@ -2400,6 +2400,9 @@ export async function uploadVl06o(req: Request, res: Response) {
     const records: Record<string, unknown>[] = []
     const seen = new Set<string>()
     const warnings: string[] = []
+    // CHẶN: đơn vị trong file không khớp Material master (base_unit / sales unit) — gom theo mã để hiện BẢNG
+    type UnitErr = { material_code: string; material_name: string; kind: string; file_value: string; system_value: string }
+    const unitErrs = new Map<string, UnitErr>()
     let skippedNoKey = 0
 
     for (const r of rows) {
@@ -2415,8 +2418,15 @@ export async function uploadVl06o(req: Request, res: Response) {
       const baseUnit = cellStr(r['Base Unit of Measure'])
       const salesUnit = cellStr(r['Sales Unit'])
       const mat = mc ? matByCode.get(mc) : null
+      // CHẶN 1 — Đơn vị GỐC file ≠ khai báo hệ thống (sửa base_unit ở Mã hàng rồi up lại)
       if (mat && baseUnit && mat.base_unit && baseUnit.toUpperCase() !== String(mat.base_unit).toUpperCase())
-        warnings.push(`DO ${od}/${item} mã ${mc}: Base Unit "${baseUnit}" ≠ khai báo "${mat.base_unit}"`)
+        unitErrs.set(`${mc}|base`, { material_code: mc!, material_name: mat.short_name ?? (cellStr(r['Item Description']) ?? ''), kind: 'Đơn vị gốc', file_value: baseUnit, system_value: String(mat.base_unit) })
+      // CHẶN 2 — Đơn vị BÁN (Sales Unit) không thuộc đơn vị hệ thống biết (thùng entry_unit HOẶC gốc base_unit)
+      if (mat && salesUnit) {
+        const allowed = [mat.entry_unit, mat.base_unit].filter(Boolean).map(x => String(x).toUpperCase())
+        if (allowed.length && !allowed.includes(salesUnit.toUpperCase()))
+          unitErrs.set(`${mc}|sales`, { material_code: mc!, material_name: mat.short_name ?? (cellStr(r['Item Description']) ?? ''), kind: 'Đơn vị bán', file_value: salesUnit, system_value: [mat.entry_unit, mat.base_unit].filter(Boolean).join(' / ') })
+      }
       // Kiểm chéo SL: Actual delivery qty phải khớp Delivery Quantity theo ĐÚNG Sales Unit —
       // bán theo GỐC (Sales Unit = Base Unit) → Actual == Delivery Qty; bán theo THÙNG → × hệ_số.
       // (Trước: luôn ×hệ_số → báo nhầm hàng loạt khi SAP bán thẳng đơn vị gốc HOP/EA.)
@@ -2446,6 +2456,15 @@ export async function uploadVl06o(req: Request, res: Response) {
       })
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
+
+    // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
+    if (unitErrs.size) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'UNIT_MISMATCH', message: `${unitErrs.size} mã có đơn vị không khớp hệ thống — sửa Đơn vị ở trang Mã hàng rồi up lại.` },
+        unit_errors: [...unitErrs.values()],
+      })
+    }
 
     // Upsert theo (od_number, od_item) — chunk 500 (KHÔNG ghi tuần tự)
     const CHUNK = 500

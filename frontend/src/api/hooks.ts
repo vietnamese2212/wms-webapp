@@ -1681,13 +1681,15 @@ export function useUploadVl06o() {
 }
 
 // ĐỢT 3: Up KHVC (join raw theo DO → sinh GDO/DO/Item) → refetch danh sách chuyến.
+// require_do: mặc định true = bắt buộc DO khớp VL06O (thiếu → chặn toàn bộ); false = bỏ qua DO thiếu.
 export function useUploadKhvc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file }: { file: File }) => {
+    mutationFn: ({ file, requireDo = true }: { file: File; requireDo?: boolean }) => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
+      form.append('require_do', requireDo ? 'true' : 'false')
       return apiClient.post('/wms/outbound/upload-khvc', form, {
         headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
       }).then(r => r.data.data)

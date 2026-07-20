@@ -2214,6 +2214,7 @@ async function processVehicleGroups(
 
       const dvvt     = resolveDvvt(String(groupRows[0]['DVVT'] ?? groupRows[0]['Đơn vị'] ?? '')).name
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
+      const priority = String(groupRows[0]['Ưu tiên'] ?? groupRows[0]['Uu tien'] ?? '').trim() || null   // ĐỢT 3: ưu tiên chuyến (KHVC)
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
@@ -2292,7 +2293,7 @@ async function processVehicleGroups(
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
@@ -2309,6 +2310,7 @@ async function processVehicleGroups(
         id: gdoId, group_code, planned_date, delivery_date,
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
         shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
+        priority,                       // ĐỢT 3: ưu tiên chuyến (null = không đặt)
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)
@@ -2457,7 +2459,11 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string }
+    // Switch "Bắt buộc DO khớp VL06O" (user chốt): mặc định BẮT BUỘC → thiếu DO = CHẶN TOÀN BỘ + bắt sửa.
+    // TẮT (require_do='false') → bỏ qua DO thiếu, chỉ sinh phần khớp (xuất hàng chưa có DO).
+    const requireDo = String((req.body as { require_do?: string })?.require_do ?? 'true') !== 'false'
+
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     for (const r of rows) {
@@ -2471,6 +2477,8 @@ export async function uploadKhvc(req: Request, res: Response) {
         export_date: r['Ngày xuất'],
         veh_type: String(r['Loại xe'] ?? '').trim(),
         dvvt: String(r['DVVT'] ?? '').trim(),
+        priority: String(r['Ưu tiên'] ?? r['Uu tien'] ?? '').trim(),
+        cs: String(r['CS phụ trách'] ?? r['CS phu trach'] ?? '').trim(),
       })
     }
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
@@ -2515,6 +2523,8 @@ export async function uploadKhvc(req: Request, res: Response) {
           'Hộp':     hasEntry(mat) ? sp.base  : 0,
           'Nhặt lẻ': hasEntry(mat) ? sp.base  : 0,   // loose = phần hộp lẻ (chốt Đợt 3)
           'Loại xuất': k.veh_type,
+          'Ưu tiên': k.priority,
+          'CS phụ trách': k.cs,
           'Shipto party': ln.ship_to_code ?? '',
           'HEADER TEXT': header,
           'Batch_Yêu cầu': ln.batch ?? '',
@@ -2525,6 +2535,15 @@ export async function uploadKhvc(req: Request, res: Response) {
     }
     // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
     for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
+
+    // Bắt buộc DO (mặc định): thiếu DO trong VL06O → CHẶN TOÀN BỘ, bắt sửa (thêm DO vào VL06O hoặc bỏ khỏi KHVC)
+    if (requireDo && missingDos.size) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_DO', message: `${missingDos.size} DO trong KHVC chưa có trong VL06O — hãy Up VL06O đầy đủ trước, hoặc tắt "Bắt buộc DO" để bỏ qua.` },
+        missing_dos: [...missingDos],
+      })
+    }
 
     if (!byVehicle.size) {
       return fail(res, missingDos.size

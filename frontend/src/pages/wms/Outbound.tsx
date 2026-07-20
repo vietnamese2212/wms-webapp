@@ -226,6 +226,7 @@ export default function Outbound() {
   const [vcOk,     setVcOk]     = useState<string | null>(null)
   const [vcWarn,   setVcWarn]   = useState<string | null>(null)
   const [vcErr,    setVcErr]    = useState<string | null>(null)
+  const [requireDo, setRequireDo] = useState(true)   // ĐỢT 3: bắt buộc DO khớp VL06O (mặc định BẬT)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -422,8 +423,8 @@ export default function Outbound() {
     const d = new Date(); d.setDate(d.getDate() + 1)
     const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
     const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
-    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT']
-    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA']
+    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách']
+    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A']
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
@@ -454,7 +455,7 @@ export default function Outbound() {
     e.target.value = ''
     setVcErr(null); setVcOk(null); setVcWarn(null)
     setPostUploadLoading(true)
-    uploadKhvc({ file }, {
+    uploadKhvc({ file, requireDo }, {
       onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }>; missing_do_count?: number }) => {
         const items = result.created ?? []
         const nCreated = items.filter(r => r.created && !r.merged).length
@@ -885,6 +886,10 @@ export default function Outbound() {
             {/* Bước 2 — KHVC (sinh chuyến) */}
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-600">Bước 2 — Up KH điều vận (sinh chuyến xuất)</div>
+              <label className="flex items-start gap-2 text-[11px] text-slate-600 cursor-pointer select-none">
+                <input type="checkbox" checked={requireDo} onChange={e => setRequireDo(e.target.checked)} className="mt-0.5 h-3.5 w-3.5 accent-blue-600" />
+                <span><span className="font-medium">Bắt buộc DO khớp VL06O</span> — bật (mặc định): DO trong KHVC mà VL06O chưa có → <span className="text-red-600">chặn toàn bộ</span>, bắt sửa. Tắt: bỏ qua DO thiếu, chỉ sinh phần khớp (xuất hàng chưa có DO).</span>
+              </label>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={downloadKhvcTemplate} className="h-8 text-xs gap-1">
                   <Download className="h-3.5 w-3.5" /> Tải mẫu KHVC

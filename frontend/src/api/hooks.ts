@@ -1707,6 +1707,8 @@ export interface DoSapRow {
   batch: string | null; batch_so: string | null; date_req: number | null; pct_date_req: number | null
   note_delivery: string | null; note_invoice: string | null; shipping_point: string | null; license_plate: string | null
   source: string | null; uploaded_by: string | null; created_at: string; updated_at: string
+  sync_status?: string | null; last_synced_at?: string | null
+  used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({

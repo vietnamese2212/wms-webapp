@@ -50,7 +50,37 @@ export async function listDoSap(req: Request, res: Response) {
 
     const { data, count, error } = await query
     if (error) throw new Error(error.message)
-    return ok(res, { items: data ?? [], total: count ?? 0, page, page_size: pageSize })
+    const items = (data ?? []) as Record<string, unknown>[]
+
+    // Enrich per-dòng của TRANG (bounded ≤ pageSize): (a) đã sinh chuyến chưa (used); (b) lệch đơn vị vs Material
+    const dos = [...new Set(items.map(i => String(i.od_number ?? '')).filter(Boolean))]
+    const usedSet = new Set<string>()
+    if (dos.length) {
+      const orExpr = dos.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
+      const { data: ods } = await supabase.from('OutboundDelivery').select('delivery_code').or(orExpr)
+      for (const o of (ods ?? []) as { delivery_code: string | null }[])
+        for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) if (tok.trim()) usedSet.add(tok.trim())
+    }
+    const mcs = [...new Set(items.map(i => String(i.material_code ?? '')).filter(Boolean))]
+    const matMap = new Map<string, { base_unit: string | null; entry_unit: string | null }>()
+    if (mcs.length) {
+      const { data: mats } = await supabase.from('Material').select('material_code, base_unit, entry_unit').in('material_code', mcs)
+      for (const m of (mats ?? []) as { material_code: string; base_unit: string | null; entry_unit: string | null }[])
+        matMap.set(String(m.material_code).trim(), m)
+    }
+    for (const i of items) {
+      i.used = usedSet.has(String(i.od_number ?? ''))
+      const m = i.material_code ? matMap.get(String(i.material_code).trim()) : undefined
+      let mm = false
+      if (m) {
+        const bu = String(i.base_unit ?? '').toUpperCase(), su = String(i.sales_unit ?? '').toUpperCase()
+        if (bu && m.base_unit && bu !== String(m.base_unit).toUpperCase()) mm = true
+        const allowed = [m.entry_unit, m.base_unit].filter(Boolean).map(x => String(x).toUpperCase())
+        if (su && allowed.length && !allowed.includes(su)) mm = true
+      }
+      i.unit_mismatch = mm
+    }
+    return ok(res, { items, total: count ?? 0, page, page_size: pageSize })
   } catch (e) { return fail(res, String(e)) }
 }
 

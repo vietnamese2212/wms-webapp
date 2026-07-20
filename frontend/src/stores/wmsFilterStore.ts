@@ -196,6 +196,18 @@ interface SlottingFilters {
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
 }
+interface DoSapFilters {
+  search: string
+  dateFrom: string   // Ngày nạp (created_at) — mặc định RỖNG (bắt buộc chọn mới tải)
+  dateTo: string
+  source: string
+  plant: string
+  shipto: string
+  material: string
+  od: string
+  page: number
+  pageSize: number
+}
 interface WmsFilterState {
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
@@ -220,6 +232,8 @@ interface WmsFilterState {
   attendanceTeam:    AttendanceTeamFilters
   attendanceMy:      AttendanceMyFilters
   leave:             LeaveFilters
+  doSap:             DoSapFilters
+  setDoSap:             (f: Partial<DoSapFilters>)             => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
@@ -303,6 +317,7 @@ function initialFilters() {
     attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', page: 1, pageSize: 50 },
   }
 }
 
@@ -333,6 +348,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAttendanceTeam:   (f) => set(s => ({ attendanceTeam:   { ...s.attendanceTeam,   ...f } })),
       setAttendanceMy:     (f) => set(s => ({ attendanceMy:     { ...s.attendanceMy,     ...f } })),
       setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
+      setDoSap:            (f) => set(s => ({ doSap:            { ...s.doSap,            ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {

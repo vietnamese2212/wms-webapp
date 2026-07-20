@@ -2,8 +2,9 @@
 // Tab "DO SAP" = bảng erp_outbound_orders (CRUD tay + multi-select + filter + search + phân trang server-side).
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, type ReactNode } from 'react'
-import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3 } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
 import type { AxiosError } from 'axios'
+import * as XLSX from 'xlsx'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -19,6 +20,8 @@ import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useDeleteDoSap, useBulkDeleteDoSap,
   type DoSapRow,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate } from '@/utils/formatters'
@@ -41,11 +44,13 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'storage',    label: 'Kho' },
   { id: 'batch',      label: 'Batch' },
   { id: 'pct',        label: '%Date', align: 'right' },
+  { id: 'status',     label: 'Tình trạng' },
+  { id: 'unit',       label: 'Lệch ĐV' },
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
   { id: 'action',     label: '' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 80, 110, 70]
+const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 80, 110, 70]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -58,6 +63,14 @@ function SourceBadge({ source }: { source: string | null }) {
     : v === 'MANUAL' ? 'bg-amber-100 text-amber-700'
     : 'bg-slate-100 text-slate-600'
   return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`}>{source ?? '—'}</span>
+}
+
+function StatusBadge({ used, syncStatus }: { used: boolean | undefined; syncStatus: string | null | undefined }) {
+  if (syncStatus === 'OBSOLETE')
+    return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700">SAP đã bỏ</span>
+  if (used)
+    return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">Đã dùng</span>
+  return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500">Chưa dùng</span>
 }
 
 function apiError(err: unknown, fallback: string) {
@@ -75,25 +88,19 @@ export default function ExternalData() {
 
   const [tab] = useState<TabKey>('dosap')
 
-  // Filter/search/page state cục bộ (chưa cần wmsFilterStore lần này)
-  const [search, setSearch]         = useState('')
-  const [dateFrom, setDateFrom]     = useState('')   // Ngày NẠP (created_at) — BẮT BUỘC chọn mới tải
-  const [dateTo, setDateTo]         = useState('')
-  const [fSource, setFSource]       = useState('')
-  const [fPlant, setFPlant]         = useState('')
-  const [fShipto, setFShipto]       = useState('')
-  const [fMaterial, setFMaterial]   = useState('')
-  const [fOd, setFOd]               = useState('')
-  const [page, setPage]             = useState(1)
-  const [pageSize, setPageSize]     = useState(50)
-  const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
+  // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
+  const { doSap: f, setDoSap } = useWmsFilterStore()
+  const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, page, pageSize } = f
 
+  const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
   const [formRow, setFormRow]       = useState<DoSapRow | 'new' | null>(null)
   const [deleteRow, setDeleteRow]   = useState<DoSapRow | null>(null)
   const [bulkOpen, setBulkOpen]     = useState(false)
+  const [exporting, setExporting]   = useState(false)
+  const [exportErr, setExportErr]   = useState('')
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v2', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -116,25 +123,25 @@ export default function ExternalData() {
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
-  // Đổi filter/search/pageSize → về trang 1
+  // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
   const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setPage(1) }, [filterKey])
+  useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
   const bulkDelete   = useBulkDeleteDoSap()
   const deleteOne    = useDeleteDoSap()
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
-      onChange: (from, to) => { setDateFrom(from); setDateTo(to) } },
+      onChange: (from, to) => setDoSap({ dateFrom: from, dateTo: to }) },
     { key: 'source', label: 'Nguồn', type: 'single', allLabel: 'Tất cả nguồn', value: fSource,
-      options: (facets?.sources ?? []).map(s => ({ value: s, label: s })), onChange: setFSource },
+      options: (facets?.sources ?? []).map(s => ({ value: s, label: s })), onChange: v => setDoSap({ source: v }) },
     { key: 'plant', label: 'Plant', type: 'single', allLabel: 'Tất cả plant', value: fPlant,
-      options: (facets?.plants ?? []).map(p => ({ value: p, label: p })), onChange: setFPlant },
+      options: (facets?.plants ?? []).map(p => ({ value: p, label: p })), onChange: v => setDoSap({ plant: v }) },
     { key: 'shipto', label: 'Ship-to', type: 'single', allLabel: 'Tất cả ship-to', value: fShipto,
-      options: (facets?.shiptos ?? []).map(s => ({ value: s.code, label: s.name ? `${s.code} — ${s.name}` : s.code })), onChange: setFShipto },
-    { key: 'material', label: 'Mã hàng', type: 'text', value: fMaterial, placeholder: 'Nhập mã hàng…', onChange: setFMaterial },
-    { key: 'od', label: 'DO', type: 'text', value: fOd, placeholder: 'Nhập số DO…', onChange: setFOd },
+      options: (facets?.shiptos ?? []).map(s => ({ value: s.code, label: s.name ? `${s.code} — ${s.name}` : s.code })), onChange: v => setDoSap({ shipto: v }) },
+    { key: 'material', label: 'Mã hàng', type: 'text', value: fMaterial, placeholder: 'Nhập mã hàng…', onChange: v => setDoSap({ material: v }) },
+    { key: 'od', label: 'DO', type: 'text', value: fOd, placeholder: 'Nhập số DO…', onChange: v => setDoSap({ od: v }) },
   ]
 
   // Selection theo trang hiện tại
@@ -172,6 +179,57 @@ export default function ExternalData() {
     })
   }
 
+  async function doExport() {
+    setExportErr('')
+    setExporting(true)
+    try {
+      const EXPORT_PAGE = 200
+      const CAP = 20000
+      const all: DoSapRow[] = []
+      let p = 1
+      let hitCap = false
+      for (;;) {
+        const qs = new URLSearchParams()
+        const q = { ...params, page: p, page_size: EXPORT_PAGE }
+        for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+        const r = await apiClient.get(`/external/do-sap?${qs.toString()}`)
+        const batch = (r.data?.data?.items ?? []) as DoSapRow[]
+        all.push(...batch)
+        if (batch.length < EXPORT_PAGE) break
+        if (all.length >= CAP) { hitCap = true; break }
+        p += 1
+      }
+      const rows = all.slice(0, CAP).map(x => ({
+        'DO': x.od_number,
+        'Item': x.od_item,
+        'Mã hàng': x.material_code ?? '',
+        'Tên hàng': x.material_name ?? '',
+        'SL bán': x.qty_sales ?? '',
+        'ĐV bán': x.sales_unit ?? '',
+        'SL gốc': x.qty_base ?? '',
+        'ĐV gốc': x.base_unit ?? '',
+        'Ship-to': x.ship_to_code ?? '',
+        'Tên ship-to': x.ship_to_name ?? '',
+        'Plant': x.plant ?? '',
+        'Kho': x.storage_location ?? '',
+        'Batch': x.batch ?? '',
+        '%Date': x.pct_date_req ?? '',
+        'Nguồn': x.source ?? '',
+        'Tình trạng': x.sync_status === 'OBSOLETE' ? 'SAP đã bỏ' : x.used ? 'Đã dùng' : 'Chưa dùng',
+        'Cập nhật': x.updated_at ? formatTimestampDate(x.updated_at, true) : '',
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'DO SAP')
+      XLSX.writeFile(wb, 'do-sap.xlsx')
+      if (hitCap) setExportErr(`Đã đạt giới hạn ${CAP.toLocaleString('vi-VN')} dòng — file chỉ chứa phần đầu. Thu hẹp khoảng ngày/bộ lọc để xuất đủ.`)
+    } catch (err) {
+      setExportErr(apiError(err, 'Không xuất được Excel. Vui lòng thử lại.'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
@@ -196,7 +254,7 @@ export default function ExternalData() {
           <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
             <Database className="h-4 w-4 text-slate-500" /> Dữ liệu bên ngoài
           </span>
-          <SearchInput value={search} onChange={setSearch}
+          <SearchInput value={search} onChange={v => setDoSap({ search: v })}
             placeholder="Tìm DO, mã hàng, ship-to…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button type="button" onClick={() => { localStorage.setItem('dosap_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
@@ -204,6 +262,11 @@ export default function ExternalData() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {hasDate && (
+            <Button variant="outline" size="sm" className="h-9 sm:h-7 shrink-0" onClick={doExport} disabled={exporting}>
+              <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
+            </Button>
+          )}
           {canCreate && (
             <Button size="sm" className="h-9 sm:h-7 bg-blue-600 hover:bg-blue-700 shrink-0" onClick={() => setFormRow('new')}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
@@ -211,6 +274,7 @@ export default function ExternalData() {
           )}
         </div>
         <FilterBar defs={filterDefs} />
+        {exportErr && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600">{exportErr}</div>}
       </div>
 
       <SummaryBand tiles={[
@@ -245,7 +309,7 @@ export default function ExternalData() {
             <p className="text-xs">Dữ liệu DO SAP chỉ hiển thị sau khi chọn ngày (tránh tải toàn bộ bảng).</p>
           </div>
         ) : isLoading ? (
-          <TableSkeleton cols={10} rows={12} />
+          <TableSkeleton cols={12} rows={12} />
         ) : isError ? (
           <div className="p-6 text-center text-sm text-red-500">{apiError(error, 'Lỗi tải dữ liệu DO SAP. Vui lòng thử lại.')}</div>
         ) : items.length === 0 ? (
@@ -299,6 +363,12 @@ export default function ExternalData() {
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.storage_location || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.batch || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums text-right whitespace-nowrap`}>{r.pct_date_req != null ? `${r.pct_date_req}%` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><StatusBadge used={r.used} syncStatus={r.sync_status} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
+                      {r.unit_mismatch
+                        ? <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700" title="Đơn vị base/sales lệch Material master">Lệch</span>
+                        : <span className="text-green-500">✓</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><SourceBadge source={r.source} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
                       <div className="leading-tight">
@@ -335,15 +405,15 @@ export default function ExternalData() {
         <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
         <label className="flex items-center gap-1 ml-2">
           <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}
+          <select value={pageSize} onChange={e => setDoSap({ pageSize: Number(e.target.value) })}
             className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
             {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-4 w-4" /></button>
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setDoSap({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
           <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-4 w-4" /></button>
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setDoSap({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
         </div>
       </div>
      </div>

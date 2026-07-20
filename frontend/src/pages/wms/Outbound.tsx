@@ -15,7 +15,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -217,6 +217,15 @@ export default function Outbound() {
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
   const [showUpload,  setShowUpload]  = useState(false)
+  // ĐỢT 3: "Up kế hoạch VC" — 2 bước (VL06O raw → KHVC sinh chuyến)
+  const [showVcUpload, setShowVcUpload] = useState(false)
+  const vl06oRef = useRef<HTMLInputElement>(null)
+  const khvcRef  = useRef<HTMLInputElement>(null)
+  const [vl06oOk,  setVl06oOk]  = useState<string | null>(null)
+  const [vl06oErr, setVl06oErr] = useState<string | null>(null)
+  const [vcOk,     setVcOk]     = useState<string | null>(null)
+  const [vcWarn,   setVcWarn]   = useState<string | null>(null)
+  const [vcErr,    setVcErr]    = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -265,6 +274,8 @@ export default function Outbound() {
   // giữ danh sách hiện nhanh. Chung cache key với useMaterials() trong form; user chỉ-xem không tải.
   useMaterials(undefined, !isLoading && (can(perms, 'outbound', 'create') || can(perms, 'outbound', 'edit')))
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
+  const { mutate: uploadVl06o, isPending: vl06oUploading } = useUploadVl06o()
+  const { mutate: uploadKhvc,  isPending: khvcUploading }  = useUploadKhvc()
   const { mutate: assignGDO } = useAssignGDO()
   // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó
   const { data: palletGdoIds = [] } = useOutboundPalletLookup(f.search)
@@ -393,6 +404,83 @@ export default function Outbound() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'XuatKho')
     XLSX.writeFile(wb, 'mau_xuat_kho.xlsx')
+  }
+
+  // ─── ĐỢT 3: mẫu VL06O (giữ NGUYÊN tên cột SAP, rút gọn còn cột cần) + mẫu KHVC (tự soạn, gọn) ───
+  function downloadVl06oTemplate() {
+    const headers = ['Delivery', 'Item', 'Ship-to Party', 'Material', 'Item Description',
+      'Delivery Quantity', 'Sales Unit', 'Actual delivery qty', 'Base Unit of Measure',
+      'Name ship-to party', 'Batch', 'Date (%)', 'Ghi chú giao hàng', 'Ghi chú hoá đơn']
+    const ex = ['3000384084', '10', '30000325', '510000306', 'BAVI SCA Có đường 100grx48',
+      40, 'CAR', 1920, 'HOP', 'NPPTRANGHOANG', '', '', '', '']
+    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Data')
+    XLSX.writeFile(wb, 'mau_vl06o.xlsx')
+  }
+  function downloadKhvcTemplate() {
+    const d = new Date(); d.setDate(d.getDate() + 1)
+    const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
+    const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
+    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT']
+    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA']
+    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
+    XLSX.writeFile(wb, 'mau_khvc.xlsx')
+  }
+
+  function handleVl06oChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    e.target.value = ''
+    setVl06oErr(null); setVl06oOk(null)
+    uploadVl06o({ file }, {
+      onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
+        const parts = [`Lưu ${r.rows} dòng · ${r.deliveries} DO`]
+        if (r.skipped_no_key) parts.push(`bỏ ${r.skipped_no_key} dòng thiếu Delivery/Item`)
+        let msg = parts.join(' · ')
+        if (r.warning_count) msg += `\n⚠ ${r.warning_count} cảnh báo:\n` + r.warnings.map(w => `  • ${w}`).join('\n')
+        setVl06oOk(msg)
+      },
+      onError: (err) => {
+        const ax = err as AxiosError<{ error: { message: string } }>
+        setVl06oErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload VL06O'))
+      },
+    })
+  }
+
+  function handleKhvcChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    e.target.value = ''
+    setVcErr(null); setVcOk(null); setVcWarn(null)
+    setPostUploadLoading(true)
+    uploadKhvc({ file }, {
+      onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }>; missing_do_count?: number }) => {
+        const items = result.created ?? []
+        const nCreated = items.filter(r => r.created && !r.merged).length
+        const nMerged  = items.filter(r => r.merged).length
+        const nSkipped = items.filter(r => r.skipped).length
+        setVcOk([
+          nCreated > 0 && `Tạo mới ${nCreated} chuyến`,
+          nMerged  > 0 && `Cập nhật ${nMerged} chuyến (PAUSED)`,
+          nSkipped > 0 && `Bỏ qua ${nSkipped} chuyến (đang xuất/đã HT)`,
+        ].filter(Boolean).join(' · ') || 'Không có chuyến mới')
+        if (result.missing_do_count) setVcWarn(`${result.missing_do_count} DO trong KHVC chưa có trong VL06O (đã bỏ qua) — hãy Up VL06O đầy đủ trước.`)
+      },
+      onError: (err) => {
+        setPostUploadLoading(false)
+        const ax = err as AxiosError<{ error: { message: string }; validation_errors?: { group_code: string; errors: string[] }[] }>
+        const data = ax?.response?.data
+        const ve = data?.validation_errors
+        if (ve?.length) {
+          const lines = [data!.error.message, '']
+          for (const { group_code, errors } of ve) { lines.push(`Số xe: ${group_code}`); for (const m of errors) lines.push(`  • ${m}`) }
+          setVcErr(lines.join('\n'))
+        } else {
+          setVcErr(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload KHVC'))
+        }
+      },
+    })
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -547,8 +635,15 @@ export default function Outbound() {
               mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ max-sm:hidden)
               onClick: () => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) },
             } satisfies ActionItem] : []),
+            ...(can(perms, 'outbound', 'import') ? [{
+              key: 'vcupload', icon: Upload, label: 'Up kế hoạch VC', tip: 'Up VL06O (SAP) + KH điều vận → tự sinh chuyến xuất',
+              mobileHidden: true,
+              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVcErr(null); setVcOk(null); setVcWarn(null); setShowVcUpload(true) },
+            } satisfies ActionItem] : []),
           ]} />
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
+          <input ref={vl06oRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleVl06oChange} />
+          <input ref={khvcRef}  type="file" accept=".xlsx,.xls" className="hidden" onChange={handleKhvcChange} />
         </div>
 
         {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}
@@ -753,6 +848,72 @@ export default function Outbound() {
                 <pre className="whitespace-pre-wrap font-sans">{uploadErr}</pre>
               </div>
             )}
+          </div>
+        </ModalOverlay>
+      )}
+      {showVcUpload && (
+        <ModalOverlay onClose={() => setShowVcUpload(false)} className="w-full max-w-lg max-h-[90vh]">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-700">Up kế hoạch VC (VL06O + KH điều vận)</h3>
+            <button onClick={() => setShowVcUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="p-4 space-y-4 overflow-auto">
+            {/* Bước 1 — VL06O (raw SAP) */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-600">Bước 1 — Up VL06O (dữ liệu SAP)</div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={downloadVl06oTemplate} className="h-8 text-xs gap-1">
+                  <Download className="h-3.5 w-3.5" /> Tải mẫu VL06O
+                </Button>
+                <Button size="sm" disabled={vl06oUploading} onClick={() => vl06oRef.current?.click()} className="h-8 text-xs gap-1">
+                  {vl06oUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  {vl06oUploading ? 'Đang xử lý…' : 'Chọn file VL06O'}
+                </Button>
+              </div>
+              {vl06oOk && (
+                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-start gap-2">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oOk}</pre>
+                </div>
+              )}
+              {vl06oErr && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oErr}</pre>
+                </div>
+              )}
+            </div>
+            <div className="border-t border-slate-100" />
+            {/* Bước 2 — KHVC (sinh chuyến) */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-600">Bước 2 — Up KH điều vận (sinh chuyến xuất)</div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={downloadKhvcTemplate} className="h-8 text-xs gap-1">
+                  <Download className="h-3.5 w-3.5" /> Tải mẫu KHVC
+                </Button>
+                <Button size="sm" disabled={khvcUploading} onClick={() => khvcRef.current?.click()} className="h-8 text-xs gap-1">
+                  {khvcUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  {khvcUploading ? 'Đang xử lý…' : 'Chọn file KHVC'}
+                </Button>
+              </div>
+              {vcOk && (
+                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />{vcOk}
+                </div>
+              )}
+              {vcWarn && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vcWarn}</pre>
+                </div>
+              )}
+              {vcErr && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vcErr}</pre>
+                </div>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              VL06O = bản sao dữ liệu SAP (giữ nguyên định dạng, lưu lại đầy đủ). KHVC = kế hoạch điều vận tự soạn (Số xe, DO, NPP…),
+              hệ thống ghép theo DO rồi tự tính Thùng + Hộp lẻ theo đơn vị gốc từng mã. Up VL06O trước, rồi Up KHVC.
+            </p>
           </div>
         </ModalOverlay>
       )}

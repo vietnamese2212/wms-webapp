@@ -12,10 +12,18 @@ import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
-import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
+import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 
 const now = () => new Date().toISOString()
+
+// Chuẩn hóa ô Excel: chuỗi trim (rỗng → null) · số (rỗng/NaN → null). Dùng cho parse VL06O raw.
+const cellStr = (v: any): string | null => { const s = String(v ?? '').trim(); return s || null }
+const cellNum = (v: any): number | null => {
+  if (v === '' || v == null) return null
+  const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''))
+  return Number.isFinite(n) ? n : null
+}
 
 // ─── Warehouse-scope cho route GHI (mirror guardGateScope/guardInboundScope) ────
 // NATIONAL → null (toàn quyền). Khác → danh sách kho được gán cho user.
@@ -2018,6 +2026,20 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
+    return await processVehicleGroups(req, res, byVehicle, warehouse_id)
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// Xử lý CHUNG cho mọi nguồn upload kế hoạch xuất — nhận map (Số xe → các dòng theo row-shape file gộp):
+//  - uploadExcel : file gộp 1 sheet (Số xe + mọi cột trong 1 hàng)
+//  - uploadKhvc  : join VL06O(raw) + KHVC → reshape về CÙNG row-shape rồi gọi hàm này
+// Tách ra để TÁI DÙNG nguyên vẹn logic re-upload (ghi đè PENDING / giữ đã-gán / merge PAUSED / bỏ ĐANG XUẤT).
+async function processVehicleGroups(
+  req: Request, res: Response,
+  byVehicle: Map<string, Record<string, any>[]>,
+  warehouse_id: string | undefined,
+  extraResult?: Record<string, unknown>,
+): Promise<Response> {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingGdos, allMaterials] = await Promise.all([
@@ -2341,7 +2363,178 @@ export async function uploadExcel(req: Request, res: Response) {
     if (doInserts.length)   await batchInsert('OutboundDelivery',   doInserts)
     if (itemInserts.length) await batchInsert('OutboundItem',       itemInserts)
 
-    return ok(res, { created }, 201)
+    return ok(res, { created, ...(extraResult ?? {}) }, 201)
+}
+
+// ─── ĐỢT 3 (BASE UNIT): "Up kế hoạch VC" — 2 tầng raw SAP → derived ──────────────
+// Tầng 1: uploadVl06o → BẢN SAO NGUYÊN VĂN dòng VL06O vào erp_outbound_orders (raw không mất).
+// Tầng 2: uploadKhvc  → JOIN raw theo DO → sinh GDO/DO/Item (số = BASE từ Actual delivery qty).
+
+type ErpRawLine = {
+  od_number: string; od_item: string; material_code: string | null; qty_base: number | null
+  ship_to_code: string | null; ship_to_name: string | null; batch: string | null
+  pct_date_req: number | null; note_delivery: string | null; note_invoice: string | null
+}
+
+// Upload VL06O (SAP) → tầng RAW. Giữ NGUYÊN tên cột SAP (map theo header) — endpoint SAP tương lai
+// dump ra là ingest được ngay; cột `raw` jsonb ôm TOÀN BỘ dòng gốc (an toàn cột thêm sau).
+export async function uploadVl06o(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 'Không có file upload', 400)
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
+    if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
+
+    // Materials để cross-check base_unit + hệ số (chỉ CẢNH BÁO, không chặn)
+    const mats = await fetchAllRowsParallel(() => supabase.from('Material')
+      .select('material_code, base_unit, units_per_carton')) as { material_code: string; base_unit: string | null; units_per_carton: number | null }[]
+    const matByCode = new Map(mats.map(m => [String(m.material_code).trim(), m]))
+
+    const actor = req.user?.name || null
+    const t = now()
+    const records: Record<string, unknown>[] = []
+    const seen = new Set<string>()
+    const warnings: string[] = []
+    let skippedNoKey = 0
+
+    for (const r of rows) {
+      const od = cellStr(r['Delivery']); const item = cellStr(r['Item'])
+      if (!od || !item) { skippedNoKey++; continue }
+      const key = `${od}__${item}`
+      if (seen.has(key)) continue      // trùng od+item trong cùng file → giữ dòng đầu
+      seen.add(key)
+
+      const mc = cellStr(r['Material'])
+      const qtyBase  = cellNum(r['Actual delivery qty'])
+      const qtySales = cellNum(r['Delivery Quantity'])
+      const baseUnit = cellStr(r['Base Unit of Measure'])
+      const mat = mc ? matByCode.get(mc) : null
+      if (mat && baseUnit && mat.base_unit && baseUnit.toUpperCase() !== String(mat.base_unit).toUpperCase())
+        warnings.push(`DO ${od}/${item} mã ${mc}: Base Unit "${baseUnit}" ≠ khai báo "${mat.base_unit}"`)
+      if (mat && Number(mat.units_per_carton) > 0 && qtySales != null && qtyBase != null
+          && Math.round(qtySales * Number(mat.units_per_carton)) !== Math.round(qtyBase))
+        warnings.push(`DO ${od}/${item} mã ${mc}: ${qtySales} × ${mat.units_per_carton} ≠ ${qtyBase} (Actual)`)
+
+      records.push({
+        id: randomUUID(), od_number: od, od_item: item,
+        material_code: mc, material_name: cellStr(r['Item Description']),
+        qty_sales: qtySales, sales_unit: cellStr(r['Sales Unit']),
+        qty_base: qtyBase, base_unit: baseUnit,
+        ship_to_code: cellStr(r['Ship-to Party']), ship_to_name: cellStr(r['Name ship-to party']),
+        plant: cellStr(r['Plant']), storage_location: cellStr(r['Storage Location']),
+        batch: cellStr(r['Batch']), batch_so: cellStr(r['Batch SO']),
+        date_req: cellNum(r['Date (Ngày)']), pct_date_req: cellNum(r['Date (%)']),
+        note_delivery: cellStr(r['Ghi chú giao hàng']), note_invoice: cellStr(r['Ghi chú hoá đơn']),
+        shipping_point: cellStr(r['Shipping Point/Receiving Pt']), license_plate: cellStr(r['Biển số xe']),
+        source: 'EXCEL', raw: r, uploaded_by: actor, updated_at: t,
+      })
+    }
+    if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
+
+    // Upsert theo (od_number, od_item) — chunk 500 (KHÔNG ghi tuần tự)
+    const CHUNK = 500
+    for (let i = 0; i < records.length; i += CHUNK) {
+      const { error } = await supabase.from('erp_outbound_orders')
+        .upsert(records.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
+      if (error) throw new Error(error.message)
+    }
+    const deliveries = new Set(records.map(r => r.od_number)).size
+    return ok(res, {
+      rows: records.length, deliveries, skipped_no_key: skippedNoKey,
+      warning_count: warnings.length, warnings: warnings.slice(0, 50),
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// Upload KHVC (kế hoạch điều vận, tự soạn) → JOIN raw VL06O theo DO → reshape về row-shape file gộp
+// → processVehicleGroups (tái dùng nguyên logic re-upload). Số lượng = BASE từ VL06O.Actual.
+export async function uploadKhvc(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 'Không có file upload', 400)
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
+    if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
+
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string }
+    const khvcRows: KRow[] = []
+    const allDos = new Set<string>()
+    for (const r of rows) {
+      const gc = String(r['Số xe'] ?? r['So xe'] ?? '').trim()
+      const doNo = String(r['DO'] ?? r['Delivery'] ?? '').trim()
+      if (!gc || !doNo) continue
+      allDos.add(doNo)
+      khvcRows.push({
+        group_code: gc, do_no: doNo,
+        npp: String(r['Tên NPP'] ?? '').trim(),
+        export_date: r['Ngày xuất'],
+        veh_type: String(r['Loại xe'] ?? '').trim(),
+        dvvt: String(r['DVVT'] ?? '').trim(),
+      })
+    }
+    if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
+
+    // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
+    const raws = await fetchAllByIdChunks([...allDos], chunk => supabase.from('erp_outbound_orders')
+      .select('od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, batch, pct_date_req, note_delivery, note_invoice')
+      .in('od_number', chunk).order('od_number')) as ErpRawLine[]
+    const rawByDo = new Map<string, ErpRawLine[]>()
+    for (const r of raws) { const l = rawByDo.get(r.od_number) ?? []; l.push(r); rawByDo.set(r.od_number, l) }
+
+    const allMats = await fetchAllRowsParallel(() => supabase.from('Material')
+      .select('id, material_code, category, base_unit, entry_unit, units_per_carton')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+    const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
+
+    // Reshape → byVehicle (row-shape file gộp): số BASE từ Actual, tách Thùng+Hộp qua qtySplit
+    const byVehicle = new Map<string, Record<string, any>[]>()
+    const missingDos = new Set<string>()
+    for (const k of khvcRows) {
+      const lines = rawByDo.get(k.do_no)
+      if (!lines || !lines.length) { missingDos.add(k.do_no); continue }
+      const list = byVehicle.get(k.group_code) ?? []
+      const whCode = k.group_code.split('_')[0]     // Mãkho = đoạn đầu Số xe (Mãkho_X_ddmmyy_stt)
+      for (const ln of lines) {
+        const mc = String(ln.material_code ?? '').trim()
+        if (!mc) continue                            // dòng raw không có mã → bỏ (không thể thành item)
+        const mat = mc ? matByCode.get(mc) : undefined
+        const qtyBase = Number(ln.qty_base ?? 0)
+        const sp = qtySplit(qtyBase, mat)            // base → thùng + hộp lẻ
+        const header = [ln.note_delivery, ln.note_invoice].map(x => String(x ?? '').trim()).filter(Boolean).join(' | ')
+        list.push({
+          'Số xe': k.group_code,
+          'Ngày xuất': k.export_date,
+          'Kho xuất': whCode,
+          'Loại kho': mat?.category ?? '',
+          'DVVT': k.dvvt,
+          'Delivery': k.do_no,
+          'Tên NPP': k.npp || ln.ship_to_name || ln.ship_to_code || '',
+          'Material': mc,
+          // cartons_ordered = qty_base: mã có entry → Thùng×hệ_số + Hộp; mã không entry → chỉ Thùng
+          'Thùng':   hasEntry(mat) ? sp.entry : qtyBase,
+          'Hộp':     hasEntry(mat) ? sp.base  : 0,
+          'Nhặt lẻ': hasEntry(mat) ? sp.base  : 0,   // loose = phần hộp lẻ (chốt Đợt 3)
+          'Loại xuất': k.veh_type,
+          'Shipto party': ln.ship_to_code ?? '',
+          'HEADER TEXT': header,
+          'Batch_Yêu cầu': ln.batch ?? '',
+          '%Date_Yêu cầu': ln.pct_date_req ?? '',
+        })
+      }
+      byVehicle.set(k.group_code, list)
+    }
+    // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
+    for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
+
+    if (!byVehicle.size) {
+      return fail(res, missingDos.size
+        ? `Không có DO nào khớp VL06O — hãy Up VL06O trước. DO thiếu: ${[...missingDos].slice(0, 20).join(', ')}${missingDos.size > 20 ? '…' : ''}`
+        : 'Không có dữ liệu hợp lệ trong KHVC', 400)
+    }
+
+    return await processVehicleGroups(req, res, byVehicle, undefined, missingDos.size
+      ? { missing_do_count: missingDos.size, missing_dos: [...missingDos].slice(0, 50) }
+      : undefined)
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -141,6 +141,8 @@ router.get('/loosepicking',                                   requirePerm('loose
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)
 router.post('/outbound',                                      requirePerm('outbound', 'create'), outbound.createGDO)
 router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadExcel)
+router.post('/outbound/upload-vl06o',                         requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadVl06o)   // ĐỢT 3: raw SAP → erp_outbound_orders
+router.post('/outbound/upload-khvc',                          requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadKhvc)    // ĐỢT 3: KHVC join raw → GDO/DO/Item
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)

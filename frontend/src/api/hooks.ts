@@ -1666,6 +1666,36 @@ export function useUploadGDOExcel() {
   })
 }
 
+// ĐỢT 3: Up VL06O (raw SAP → erp_outbound_orders). Không đụng GDO nên không invalidate.
+export function useUploadVl06o() {
+  return useMutation({
+    mutationFn: ({ file }: { file: File }) => {
+      guardUploadSize(file)
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post('/wms/outbound/upload-vl06o', form, {
+        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
+      }).then(r => r.data.data)
+    },
+  })
+}
+
+// ĐỢT 3: Up KHVC (join raw theo DO → sinh GDO/DO/Item) → refetch danh sách chuyến.
+export function useUploadKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file }: { file: File }) => {
+      guardUploadSize(file)
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post('/wms/outbound/upload-khvc', form, {
+        headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: () => qc.refetchQueries({ queryKey: ['gdos'] }),
+  })
+}
+
 export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
 
 export function useUploadMaterialsExcel() {

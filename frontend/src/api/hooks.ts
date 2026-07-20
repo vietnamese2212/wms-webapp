@@ -1697,6 +1697,65 @@ export function useUploadKhvc() {
   })
 }
 
+// ─── Dữ liệu bên ngoài → DO SAP (raw erp_outbound_orders) ─────────────────────
+export interface DoSapRow {
+  id: string; od_number: string; od_item: string
+  material_code: string | null; material_name: string | null
+  qty_sales: number | null; sales_unit: string | null; qty_base: number | null; base_unit: string | null
+  ship_to_code: string | null; ship_to_name: string | null
+  plant: string | null; storage_location: string | null
+  batch: string | null; batch_so: string | null; date_req: number | null; pct_date_req: number | null
+  note_delivery: string | null; note_invoice: string | null; shipping_point: string | null; license_plate: string | null
+  source: string | null; uploaded_by: string | null; created_at: string; updated_at: string
+}
+export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
+  return useQuery({
+    queryKey: ['do-sap', params],
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+      const r = await apiClient.get(`/external/do-sap?${qs.toString()}`)
+      return r.data.data as { items: DoSapRow[]; total: number; page: number; page_size: number }
+    },
+    enabled,   // bắt buộc chọn ngày mới fetch (không tự kéo cả bảng)
+    placeholderData: keepPreviousData,
+  })
+}
+export function useDoSapFacets() {
+  return useQuery({
+    queryKey: ['do-sap-facets'],
+    queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[] },
+  })
+}
+export function useCreateDoSap() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<DoSapRow>) => apiClient.post('/external/do-sap', body).then(r => r.data.data as DoSapRow),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['do-sap'] }); qc.invalidateQueries({ queryKey: ['do-sap-facets'] }) },
+  })
+}
+export function useUpdateDoSap() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<DoSapRow> & { id: string }) => apiClient.put(`/external/do-sap/${id}`, body).then(r => r.data.data as DoSapRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+  })
+}
+export function useDeleteDoSap() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/external/do-sap/${id}`).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+  })
+}
+export function useBulkDeleteDoSap() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) => apiClient.post('/external/do-sap/bulk-delete', { ids }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+  })
+}
+
 export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
 
 export function useUploadMaterialsExcel() {

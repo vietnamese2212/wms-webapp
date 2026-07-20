@@ -5,7 +5,7 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -70,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
       { to: '/wms/stocktake/summary', icon: BarChart2, label: 'Tổng hợp KK',  module: 'stocktake' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
+      { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', module: 'external_do_sap' },
     ],
   },
   {

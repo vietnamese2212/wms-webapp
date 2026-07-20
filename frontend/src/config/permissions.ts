@@ -280,6 +280,16 @@ export const MODULES = {
       report:   'Xem báo cáo [Bảng công]',
     },
   },
+  external_do_sap: {
+    page: 'Dữ liệu bên ngoài',
+    tab:  'DO SAP',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Thêm dòng (tay)',
+      edit:   'Sửa dòng',
+      delete: 'Xóa dòng (lẻ + hàng loạt)',
+    },
+  },
   work_assignment: {
     page: 'Phân công lịch làm việc',
     actions: {

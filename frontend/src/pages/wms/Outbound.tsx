@@ -1426,7 +1426,8 @@ function GDOFormBody({
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
   const { data: allMatsData = [] } = useMaterials()
-  const allMats = allMatsData as ({ id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits)[]
+  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng
+  const allMats = allMatsData.filter(m => !m.is_non_stock) as ({ id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits)[]
 
   // Loại xe = DANH MỤC độc lập (user chốt 04/07) — kho chưa có khung giờ vẫn tạo được đơn;
   // loại có khung giờ tại kho được ưu tiên lên đầu.

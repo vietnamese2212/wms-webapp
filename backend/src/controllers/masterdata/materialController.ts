@@ -68,7 +68,7 @@ export async function createMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
-      base_unit, entry_unit,
+      base_unit, entry_unit, is_non_stock,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
@@ -104,6 +104,7 @@ export async function createMaterial(req: Request, res: Response) {
         stack_on_top:     Boolean(stack_on_top),
         base_unit: base_unit ? String(base_unit).trim().toUpperCase() : null,
         entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
+        is_non_stock: Boolean(is_non_stock),
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
@@ -138,7 +139,7 @@ export async function updateMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
-      base_unit, entry_unit,
+      base_unit, entry_unit, is_non_stock,
     } = req.body
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
@@ -185,6 +186,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (stack_on_top     !== undefined) patch.stack_on_top     = Boolean(stack_on_top)
     if (base_unit !== undefined)  patch.base_unit  = base_unit ? String(base_unit).trim().toUpperCase() : null
     if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
+    if (is_non_stock !== undefined) patch.is_non_stock = Boolean(is_non_stock)
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null

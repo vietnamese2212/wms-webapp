@@ -2053,7 +2053,7 @@ async function processVehicleGroups(
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton')) as Promise<({ id: string; material_code: string } & MatUnitsQ)[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatUnitsQ)[]>,
     ])
 
     const warehouseByKey = new Map<string, string>()
@@ -2061,9 +2061,11 @@ async function processVehicleGroups(
       warehouseByKey.set(w.code.trim().toLowerCase(), w.id)
       warehouseByKey.set(w.name.trim().toLowerCase(), w.id)
     }
-    const matMap = new Map<string, { id: string } & MatUnitsQ>(
+    const matMap = new Map<string, { id: string; is_non_stock?: boolean } & MatUnitsQ>(
       allMaterials.map(m => [String(m.material_code).trim(), m])
     )
+    // Mã PHI HÀNG HÓA (chiết khấu/dịch vụ) — LOẠI khỏi chuyến (không sinh dòng cần quét); vẫn giữ ở raw erp_outbound_orders.
+    const isNonStock = (code: string) => matMap.get(String(code).trim())?.is_non_stock === true
     const validWhTypes = new Set<string>(
       (whTypesRes.data ?? []).map((t: any) => String(t.value).trim())
     )
@@ -2150,7 +2152,8 @@ async function processVehicleGroups(
         errs.push('Có dòng trống cột Material')
 
       // Loại xuất bắt buộc (Material_type KHÔNG bắt buộc — vd dòng Pallet Loscam để trống hợp lý)
-      const dataRows = groupRows.filter(r => String(r['Material'] ?? '').trim())
+      // Mã phi hàng hóa (chiết khấu/dịch vụ) LOẠI khỏi validate dòng (không bắt Loại xuất/số nguyên) — sẽ bỏ khỏi chuyến
+      const dataRows = groupRows.filter(r => { const c = String(r['Material'] ?? '').trim(); return c && !isNonStock(c) })
       const missExport = dataRows.filter(r => !String(r['Loại xuất'] ?? '').trim()).length
       if (missExport) errs.push(`Thiếu Loại xuất ở ${missExport} dòng`)
       // Loại xuất PHẢI khớp danh mục Loại xe TMS (Material_type thì không khóa)
@@ -2227,10 +2230,16 @@ async function processVehicleGroups(
       // DO/Delivery chỉ là THAM KHẢO từ SAP — lưu nối chuỗi vào delivery_code, không có vai trò khác.
       const byNpp = new Map<string, Record<string, any>[]>()
       for (const row of groupRows) {
+        if (isNonStock(String(row['Material'] ?? '').trim())) continue   // bỏ mã phi hàng hóa khỏi chuyến (giữ ở raw)
         const npp = String(row['Tên NPP'] ?? '').trim()
         const list = byNpp.get(npp) ?? []
         list.push(row)
         byNpp.set(npp, list)
+      }
+      // Cả chuyến chỉ toàn mã phi hàng hóa → không tạo chuyến rỗng
+      if (byNpp.size === 0) {
+        created.push({ group_code, skipped: true, reason: 'Chỉ có mã phi hàng hóa (chiết khấu/dịch vụ) — không tạo chuyến' })
+        continue
       }
 
       // Ship-to = giá trị GỐC từ cột "Shipto party" của file (verbatim) — KHÔNG suy từ Tên NPP,

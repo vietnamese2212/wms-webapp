@@ -358,8 +358,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
   }, [allLocs, subType, selectedZone, materialId])
 
-  const { data: materials    = [] } = useMaterials({ category: subType || undefined }, !!subType)
-  const { data: allMaterials = [] } = useMaterials(undefined, sourceType === 'NCC')
+  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập
+  const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined }, !!subType)
+  const { data: allMaterialsRaw = [] } = useMaterials(undefined, sourceType === 'NCC')
+  const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
+  const allMaterials = useMemo(() => allMaterialsRaw.filter(m => !m.is_non_stock), [allMaterialsRaw])
 
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
   type EmpItem = { id: string; name: string; employee_code: string }

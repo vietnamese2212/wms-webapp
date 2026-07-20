@@ -153,6 +153,7 @@ export default function Materials() {
   const [form,       setForm]       = useState(EMPTY_FORM)
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
+  const [nonStock,         setNonStock]         = useState(false)   // mã phi hàng hóa (chiết khấu/dịch vụ) — chỉ cần Mã+Tên, loại khỏi mọi tác vụ kho
   const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
@@ -262,6 +263,8 @@ export default function Materials() {
   function validate(): string | null {
     if (dialogMode === 'add' && !form.material_code.trim()) return 'Mã hàng là bắt buộc'
     if (!form.material_description.trim()) return 'Mô tả là bắt buộc'
+    // Mã phi hàng hóa (chiết khấu/dịch vụ): chỉ cần Mã + Tên
+    if (nonStock) return null
     if (!form.category) return 'Loại hàng là bắt buộc'
     if (!form.base_unit.trim()) return 'Base Unit là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
@@ -307,6 +310,7 @@ export default function Materials() {
     setSupplierOverrides([])
     setEditActive(true)
     setNoQr(false)
+    setNonStock(false)
     setStackOnTop(false)
     setFormError('')
     setDialogMode('add')
@@ -349,6 +353,7 @@ export default function Materials() {
     )
     setEditActive(mat.is_active)
     setNoQr(mat.no_qr_tracking ?? false)
+    setNonStock(mat.is_non_stock ?? false)
     setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
     setDialogMode('edit')
@@ -388,6 +393,7 @@ export default function Materials() {
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
         notes:                         form.notes.trim() || undefined,
         no_qr_tracking:                noQr,
+        is_non_stock:                  nonStock,
         warehouse_pallet_overrides:    palletOverrides,
         supplier_shelf_life_overrides: supplierHsdOverrides,
       }
@@ -650,7 +656,10 @@ export default function Materials() {
                         <RowCheck checked={selected.has(mat.id)} onClick={() => toggleSelect(mat.id)} />
                       </TableCell>
                     )}
-                    <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px] sticky left-0 z-10 bg-inherit">{mat.material_code}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap font-mono font-semibold text-[10px] sticky left-0 z-10 bg-inherit">
+                      {mat.material_code}
+                      {mat.is_non_stock && <span className="ml-1 text-[8px] font-sans font-medium px-1 py-0.5 rounded bg-amber-100 text-amber-700 align-middle">phi hàng hóa</span>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] max-w-[160px] truncate">
                       {mat.short_name ?? <span className="text-slate-300">—</span>}
                     </TableCell>
@@ -802,6 +811,9 @@ export default function Materials() {
                 <div>
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Phân loại</p>
                   <div className="space-y-0">
+                    {detailMat.is_non_stock && (
+                      <DRow label="Loại mã" value={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Phi hàng hóa (chiết khấu/dịch vụ)</span>} />
+                    )}
                     <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
                     <DRow label="Loại SP"    value={detailMat.product_type} />
                     <DRow label="Quản tồn"   value={detailMat.no_qr_tracking ? 'Không QR (theo số lượng)' : 'Theo QR từng pallet'} />
@@ -935,6 +947,15 @@ export default function Materials() {
         }
       >
           <div className="grid gap-3">
+            {/* Cờ MÃ PHI HÀNG HÓA — đặt ĐẦU form: tích thì chỉ cần Mã + Tên, loại khỏi mọi tác vụ kho */}
+            <label className="flex items-start gap-2 cursor-pointer rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2">
+              <input type="checkbox" checked={nonStock} onChange={e => setNonStock(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-amber-600 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-amber-800">Mã phi hàng hóa (chiết khấu / dịch vụ)</span>
+                <span className="block text-[11px] text-amber-700 leading-snug">Chỉ cần khai Mã + Tên. Mã này bị LOẠI khỏi Xuất / Nhập / Tồn và mọi thao tác kho (vd 910000060 chiết khấu).</span>
+              </span>
+            </label>
+
             {/* Mã hàng */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Mã hàng *</Label>
@@ -972,6 +993,8 @@ export default function Materials() {
               </div>
             </div>
 
+            {/* Các field vận hành kho — ẨN khi mã phi hàng hóa (chỉ cần Mã + Tên) */}
+            {!nonStock && (<>
             {/* Loại hàng — từ WMS Settings (SingleSelect chuẩn: có ô tìm) */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Loại hàng *</Label>
@@ -1173,6 +1196,7 @@ export default function Materials() {
                 )}
               </div>
             </div>
+            </>)}
 
             {/* Mã cũ */}
             <div className="grid grid-cols-3 items-center gap-2">

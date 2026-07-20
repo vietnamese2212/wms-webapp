@@ -1011,7 +1011,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                         <td className="px-1 py-0.5">
                           <MatCombobox
                             value={row.material_code}
-                            allMats={allMats as MatItem[]}
+                            allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                             onSelect={(code, id, name, unit) => selectPlanMat(i, code, id, name, unit)}
                             onPaste={e => handlePasteAt(i, e)}
                             filterCategory={form.warehouse_type || undefined}
@@ -3564,7 +3564,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   <div className="flex gap-1 items-center flex-wrap">
                     <MatCombobox
                       value={addCode}
-                      allMats={allMats as MatItem[]}
+                      allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                       onSelect={(code, id) => { setAddCode(code); setAddMatId(id); setAddError('') }}
                       inputClassName="h-7 w-36 shrink-0 rounded border border-slate-200 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                     />

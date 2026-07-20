@@ -219,7 +219,7 @@ async function fetchGDOFull(id: string) {
   // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,unit,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
         .in('do_id', chunk)
         .order('id'))
     : []
@@ -2847,6 +2847,39 @@ export async function getPrepareBoard(req: Request, res: Response) {
 
 // ─── Check scan validity (no save) ───────────────────────────
 
+// Pallet KHÔNG nằm trong tồn khả dụng của kho này → phân biệt 3 trường hợp cho THÔNG BÁO ĐÚNG:
+//  (a) sai định dạng tem đơn vị khác  (b) ĐÃ HẾT TỒN / ĐÃ XUẤT (+ truy vết chuyến + số xe đã chở)
+//  (c) thật sự chưa nhập kho. Trace pallet→chuyến theo từng bước (OutboundScanEntry→Item.do_id→Delivery.gdo_id→GDO),
+//  giống lookupPalletGdos (nested embed 3 bảng dễ vỡ) — chỉ 1 pallet nên vài query nhỏ là chấp nhận được.
+async function palletUnavailableFail(res: Response, qr: string, warehouseId: string | null | undefined) {
+  const hint = await wrongFormatHint(qr)
+  if (hint) return fail(res, hint, 404)
+  const { data: past } = await supabase.from('InventoryEntry')
+    .select('id, location:Location!location_id(warehouse_id)').eq('pallet_code', qr)
+  const rows = (past ?? []) as { location?: { warehouse_id?: string | null } | null }[]
+  const existed = warehouseId ? rows.some(r => r.location?.warehouse_id === warehouseId) : rows.length > 0
+  if (!existed) return fail(res, `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
+  // Truy vết chuyến đã xuất pallet này (lần xuất gần nhất)
+  let where = ''
+  const { data: sc } = await supabase.from('OutboundScanEntry')
+    .select('item_id').eq('pallet_code', qr).order('scanned_at', { ascending: false }).limit(1).maybeSingle()
+  const itemId = (sc as { item_id: string | null } | null)?.item_id
+  if (itemId) {
+    const { data: it } = await supabase.from('OutboundItem').select('do_id').eq('id', itemId).maybeSingle()
+    const doId = (it as { do_id: string | null } | null)?.do_id
+    if (doId) {
+      const { data: dv } = await supabase.from('OutboundDelivery').select('gdo_id').eq('id', doId).maybeSingle()
+      const gdoId2 = (dv as { gdo_id: string | null } | null)?.gdo_id
+      if (gdoId2) {
+        const { data: g } = await supabase.from('GroupDeliveryOrder').select('group_code, license_plate').eq('id', gdoId2).maybeSingle()
+        const gg = g as { group_code?: string | null; license_plate?: string | null } | null
+        if (gg?.group_code) where = ` — đã xuất ở chuyến ${gg.group_code}${gg.license_plate ? ` (xe ${gg.license_plate})` : ''}`
+      }
+    }
+  }
+  return fail(res, `Pallet "${qr}" đã hết tồn (đã xuất hết)${where}`, 400)
+}
+
 export async function checkScanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
@@ -2871,7 +2904,7 @@ export async function checkScanItem(req: Request, res: Response) {
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
-    if (!inv) return fail(res, (await wrongFormatHint(qr)) ?? `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
+    if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
@@ -2962,7 +2995,7 @@ export async function scanItem(req: Request, res: Response) {
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
-    if (!inv) return fail(res, (await wrongFormatHint(qr)) ?? `Pallet "${qr}" chưa được nhập kho — kiểm tra lại phiếu nhập inbound`, 404)
+    if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
     if (inv.qa_status_id && inv.qa_status?.code !== 'OK') {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }

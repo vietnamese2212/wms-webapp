@@ -2413,12 +2413,23 @@ export async function uploadVl06o(req: Request, res: Response) {
       const qtyBase  = cellNum(r['Actual delivery qty'])
       const qtySales = cellNum(r['Delivery Quantity'])
       const baseUnit = cellStr(r['Base Unit of Measure'])
+      const salesUnit = cellStr(r['Sales Unit'])
       const mat = mc ? matByCode.get(mc) : null
       if (mat && baseUnit && mat.base_unit && baseUnit.toUpperCase() !== String(mat.base_unit).toUpperCase())
         warnings.push(`DO ${od}/${item} mã ${mc}: Base Unit "${baseUnit}" ≠ khai báo "${mat.base_unit}"`)
-      if (mat && Number(mat.units_per_carton) > 0 && qtySales != null && qtyBase != null
-          && Math.round(qtySales * Number(mat.units_per_carton)) !== Math.round(qtyBase))
-        warnings.push(`DO ${od}/${item} mã ${mc}: ${qtySales} × ${mat.units_per_carton} ≠ ${qtyBase} (Actual)`)
+      // Kiểm chéo SL: Actual delivery qty phải khớp Delivery Quantity theo ĐÚNG Sales Unit —
+      // bán theo GỐC (Sales Unit = Base Unit) → Actual == Delivery Qty; bán theo THÙNG → × hệ_số.
+      // (Trước: luôn ×hệ_số → báo nhầm hàng loạt khi SAP bán thẳng đơn vị gốc HOP/EA.)
+      if (mat && qtySales != null && qtyBase != null && salesUnit && baseUnit) {
+        const su = salesUnit.toUpperCase(), bu = baseUnit.toUpperCase()
+        const upc = Number(mat.units_per_carton) || 0
+        if (su === bu) {
+          if (Math.round(qtySales) !== Math.round(qtyBase))
+            warnings.push(`DO ${od}/${item} mã ${mc}: bán theo ${salesUnit} nhưng Actual ${qtyBase} ≠ SL ${qtySales}`)
+        } else if (upc > 0 && Math.round(qtySales * upc) !== Math.round(qtyBase)) {
+          warnings.push(`DO ${od}/${item} mã ${mc}: ${qtySales} ${salesUnit} × ${upc} ≠ ${qtyBase} ${baseUnit} (Actual)`)
+        }
+      }
 
       records.push({
         id: randomUUID(), od_number: od, od_item: item,

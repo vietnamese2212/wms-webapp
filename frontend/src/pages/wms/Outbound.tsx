@@ -224,9 +224,7 @@ export default function Outbound() {
   const [vl06oOk,  setVl06oOk]  = useState<string | null>(null)
   const [vl06oErr, setVl06oErr] = useState<string | null>(null)
   const [vcOk,     setVcOk]     = useState<string | null>(null)
-  const [vcWarn,   setVcWarn]   = useState<string | null>(null)
   const [vcErr,    setVcErr]    = useState<string | null>(null)
-  const [requireDo, setRequireDo] = useState(true)   // ĐỢT 3: bắt buộc DO khớp VL06O (mặc định BẬT)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -453,10 +451,10 @@ export default function Outbound() {
   function handleKhvcChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
-    setVcErr(null); setVcOk(null); setVcWarn(null)
+    setVcErr(null); setVcOk(null)
     setPostUploadLoading(true)
-    uploadKhvc({ file, requireDo }, {
-      onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }>; missing_do_count?: number }) => {
+    uploadKhvc({ file }, {
+      onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }> }) => {
         const items = result.created ?? []
         const nCreated = items.filter(r => r.created && !r.merged).length
         const nMerged  = items.filter(r => r.merged).length
@@ -466,7 +464,6 @@ export default function Outbound() {
           nMerged  > 0 && `Cập nhật ${nMerged} chuyến (PAUSED)`,
           nSkipped > 0 && `Bỏ qua ${nSkipped} chuyến (đang xuất/đã HT)`,
         ].filter(Boolean).join(' · ') || 'Không có chuyến mới')
-        if (result.missing_do_count) setVcWarn(`${result.missing_do_count} DO trong KHVC chưa có trong VL06O (đã bỏ qua) — hãy Up VL06O đầy đủ trước.`)
       },
       onError: (err) => {
         setPostUploadLoading(false)
@@ -639,7 +636,7 @@ export default function Outbound() {
             ...(can(perms, 'outbound', 'import') ? [{
               key: 'vcupload', icon: Upload, label: 'Up kế hoạch VC', tip: 'Up VL06O (SAP) + KH điều vận → tự sinh chuyến xuất',
               mobileHidden: true,
-              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVcErr(null); setVcOk(null); setVcWarn(null); setShowVcUpload(true) },
+              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVcErr(null); setVcOk(null); setShowVcUpload(true) },
             } satisfies ActionItem] : []),
           ]} />
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
@@ -886,10 +883,6 @@ export default function Outbound() {
             {/* Bước 2 — KHVC (sinh chuyến) */}
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-600">Bước 2 — Up KH điều vận (sinh chuyến xuất)</div>
-              <label className="flex items-start gap-2 text-[11px] text-slate-600 cursor-pointer select-none">
-                <input type="checkbox" checked={requireDo} onChange={e => setRequireDo(e.target.checked)} className="mt-0.5 h-3.5 w-3.5 accent-blue-600" />
-                <span><span className="font-medium">Bắt buộc DO khớp VL06O</span> — bật (mặc định): DO trong KHVC mà VL06O chưa có → <span className="text-red-600">chặn toàn bộ</span>, bắt sửa. Tắt: bỏ qua DO thiếu, chỉ sinh phần khớp (xuất hàng chưa có DO).</span>
-              </label>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={downloadKhvcTemplate} className="h-8 text-xs gap-1">
                   <Download className="h-3.5 w-3.5" /> Tải mẫu KHVC
@@ -902,11 +895,6 @@ export default function Outbound() {
               {vcOk && (
                 <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />{vcOk}
-                </div>
-              )}
-              {vcWarn && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
-                  <Info className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vcWarn}</pre>
                 </div>
               )}
               {vcErr && (

@@ -2459,10 +2459,6 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    // Switch "Bắt buộc DO khớp VL06O" (user chốt): mặc định BẮT BUỘC → thiếu DO = CHẶN TOÀN BỘ + bắt sửa.
-    // TẮT (require_do='false') → bỏ qua DO thiếu, chỉ sinh phần khớp (xuất hàng chưa có DO).
-    const requireDo = String((req.body as { require_do?: string })?.require_do ?? 'true') !== 'false'
-
     type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
@@ -2536,24 +2532,19 @@ export async function uploadKhvc(req: Request, res: Response) {
     // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
     for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
 
-    // Bắt buộc DO (mặc định): thiếu DO trong VL06O → CHẶN TOÀN BỘ, bắt sửa (thêm DO vào VL06O hoặc bỏ khỏi KHVC)
-    if (requireDo && missingDos.size) {
+    // DO LUÔN bắt buộc: thiếu DO trong VL06O → CHẶN TOÀN BỘ, bắt sửa (thêm DO vào VL06O hoặc bỏ khỏi KHVC).
+    // Xuất tay/không DO: dùng nút "Tạo đơn" thủ công (user chốt — không làm switch bỏ qua DO).
+    if (missingDos.size) {
       return res.status(400).json({
         success: false,
-        error: { code: 'MISSING_DO', message: `${missingDos.size} DO trong KHVC chưa có trong VL06O — hãy Up VL06O đầy đủ trước, hoặc tắt "Bắt buộc DO" để bỏ qua.` },
+        error: { code: 'MISSING_DO', message: `${missingDos.size} DO trong KHVC chưa có trong VL06O — hãy Up VL06O đầy đủ trước (xuất tay không DO thì dùng "Tạo đơn").` },
         missing_dos: [...missingDos],
       })
     }
 
-    if (!byVehicle.size) {
-      return fail(res, missingDos.size
-        ? `Không có DO nào khớp VL06O — hãy Up VL06O trước. DO thiếu: ${[...missingDos].slice(0, 20).join(', ')}${missingDos.size > 20 ? '…' : ''}`
-        : 'Không có dữ liệu hợp lệ trong KHVC', 400)
-    }
+    if (!byVehicle.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
 
-    return await processVehicleGroups(req, res, byVehicle, undefined, missingDos.size
-      ? { missing_do_count: missingDos.size, missing_dos: [...missingDos].slice(0, 50) }
-      : undefined)
+    return await processVehicleGroups(req, res, byVehicle, undefined)
   } catch (e) { return fail(res, String(e)) }
 }
 

@@ -43,6 +43,11 @@ const LABEL_FORMAT_OPTS = [
   { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26' },
 ]
 
+const DEC_SEP_OPTS = [
+  { value: 'dot',   label: 'Dấu chấm ( . )',  sub: 'vd 1.5 kg · 0.00005' },
+  { value: 'comma', label: 'Dấu phẩy ( , )',  sub: 'vd 1,5 kg · 0,00005 (chuẩn VN, khớp file Excel)' },
+]
+
 // Cờ xác nhận giao hàng — quyết định xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào.
 const DC_ENABLED_OPTS = [
   { value: 'on',  label: 'Có xác nhận giao hàng',    sub: 'tạo booking Chuyển kho' },
@@ -73,32 +78,37 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
   const labelRow = settings.find(s => s.key === 'label_format')
   const dcRow    = settings.find(s => s.key === 'delivery_confirmation')
+  const decRow   = settings.find(s => s.key === 'decimal_separator')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
+  const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
   const [draftDc,    setDraftDc]    = useState<DeliveryConf>(srvDc)
-  const srvKey = JSON.stringify([srvLabel, srvDc])
+  const [draftDec,   setDraftDec]   = useState(srvDec)
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec])
   const [baseKey, setBaseKey] = useState(srvKey)
   useEffect(() => {
-    if (srvKey !== baseKey) { setDraftLabel(srvLabel); setDraftDc(srvDc); setBaseKey(srvKey) }
+    if (srvKey !== baseKey) { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setBaseKey(srvKey) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srvKey])
 
   const labelDirty = draftLabel !== srvLabel
   const dcDirty    = JSON.stringify(draftDc) !== JSON.stringify(srvDc)
-  const dirty      = labelDirty || dcDirty
+  const decDirty   = draftDec !== srvDec
+  const dirty      = labelDirty || dcDirty || decDirty
 
   async function applyChanges() {
     setErr('')
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
       if (dcDirty)    await save({ key: 'delivery_confirmation', value: draftDc })
+      if (decDirty)   await save({ key: 'decimal_separator', value: draftDec })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
-  const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setErr('') }
+  const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setErr('') }
   const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
@@ -143,6 +153,19 @@ function SystemTab({ canManage }: { canManage: boolean }) {
                   </p>
                 </>
               )}
+            </div>
+          </div>
+
+          {/* 3. Dấu thập phân — ô nhập số (KG/decimal) ở các form; app chặn dấu còn lại */}
+          <div className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">3. Dấu thập phân</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.</p>
+              {decRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {decRow.updated_by} · {formatDateTime(decRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 ${roClass}`}>
+              <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
+                onChange={setDraftDec} searchable={false} triggerClassName="w-56" />
             </div>
           </div>
         </div>

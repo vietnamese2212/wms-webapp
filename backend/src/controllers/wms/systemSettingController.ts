@@ -16,6 +16,9 @@ import { ok, fail } from '../../utils/response'
 //       shipto; không khớp DB = 'OTHER'). QR/QTY = luồng nhận-quét như cũ; NONE/OTHER = tài xế TỰ HOÀN THÀNH.
 //     Mặc định (khi chưa cấu hình) = { enabled:true, modes:['QR','QTY'] } → giữ nguyên hành vi đơn vị 1.
 
+// - decimal_separator: 'dot' | 'comma' — dấu thập phân cho ô nhập số (KG/decimal) ở form (vd Mã hàng).
+//     dot (mặc định): 1.5 · comma: 1,5. App CHẶN dấu còn lại khi nhập + parse theo cờ này.
+
 // - truck_models: Array<{ name, l, w, h }> — sổ DÒNG XE ghi nhớ lòng thùng (mm) cho sơ đồ xếp xe 3D.
 //     ĐỘC LẬP với Loại xe TMS (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế — dims không
 //     treo trên Loại xe). Ghi = wms_settings.manage_system (nút Lưu/Xóa trong dialog 3D gate quyền này).
@@ -43,6 +46,7 @@ function isTruckModels(v: unknown): boolean {
 
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
+  decimal_separator: { validate: v => v === 'dot' || v === 'comma', hint: "'dot' | 'comma'" },
   delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
 }

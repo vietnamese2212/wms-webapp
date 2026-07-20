@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
+import { getDecimalSep, sanitizeDecimalInput, parseDecimalInput, formatDecimalForInput } from '@/utils/decimalSep'
 import {
   useMaterials, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
@@ -123,6 +124,8 @@ export default function Materials() {
   // Cờ định dạng tem của ĐƠN VỊ — ĐV2 (tem `;`) mới cần Mã tắt (mã lô); ĐV1 ẩn ô này cho gọn.
   const { data: sysSettings = [] } = useSystemSettings()
   const isV2Format = (sysSettings.find(s => s.key === 'label_format')?.value as string) === 'semicolon'
+  const decSep = getDecimalSep(sysSettings)   // dấu thập phân cho ô số lẻ (cờ hệ thống decimal_separator)
+  const decHint = decSep === ',' ? '0,00005' : '0.00005'
 
   // Filters (persisted via wmsFilterStore)
   const { materials: mf, setMaterials } = useWmsFilterStore()
@@ -326,14 +329,14 @@ export default function Materials() {
       product_type:         mat.product_type ?? '',
       cartons_per_pallet:   mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '',
       units_per_carton:     mat.units_per_carton   != null ? String(mat.units_per_carton)   : '',
-      pallet_per_ea:        mat.pallet_per_ea      != null ? String(mat.pallet_per_ea)      : '',
+      pallet_per_ea:        formatDecimalForInput(mat.pallet_per_ea, decSep),
       base_unit:            mat.base_unit  ?? '',
       entry_unit:           mat.entry_unit ?? '',
-      weight_kg:            mat.weight_kg           != null ? String(mat.weight_kg)           : '',
+      weight_kg:            formatDecimalForInput(mat.weight_kg, decSep),
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
-      carton_length_mm:     mat.carton_length_mm    != null ? String(mat.carton_length_mm)    : '',
-      carton_width_mm:      mat.carton_width_mm     != null ? String(mat.carton_width_mm)     : '',
-      carton_height_mm:     mat.carton_height_mm    != null ? String(mat.carton_height_mm)    : '',
+      carton_length_mm:     formatDecimalForInput(mat.carton_length_mm, decSep),
+      carton_width_mm:      formatDecimalForInput(mat.carton_width_mm, decSep),
+      carton_height_mm:     formatDecimalForInput(mat.carton_height_mm, decSep),
       max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
@@ -379,14 +382,14 @@ export default function Materials() {
         product_type:                  form.product_type.trim() || undefined,
         cartons_per_pallet:            Number(form.cartons_per_pallet),
         units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
-        pallet_per_ea:                 form.pallet_per_ea ? Number(form.pallet_per_ea) : undefined,
+        pallet_per_ea:                 parseDecimalInput(form.pallet_per_ea, decSep) ?? undefined,
         base_unit:                     form.base_unit.trim().toUpperCase() || null,
         entry_unit:                    form.entry_unit.trim().toUpperCase() || null,
-        weight_kg:                     Number(form.weight_kg),
+        weight_kg:                     parseDecimalInput(form.weight_kg, decSep) ?? undefined,
         shelf_life_days:               form.shelf_life_days ? Number(form.shelf_life_days) : undefined,
-        carton_length_mm:              form.carton_length_mm ? Number(form.carton_length_mm) : null,
-        carton_width_mm:               form.carton_width_mm  ? Number(form.carton_width_mm)  : null,
-        carton_height_mm:              form.carton_height_mm ? Number(form.carton_height_mm) : null,
+        carton_length_mm:              parseDecimalInput(form.carton_length_mm, decSep),
+        carton_width_mm:               parseDecimalInput(form.carton_width_mm, decSep),
+        carton_height_mm:              parseDecimalInput(form.carton_height_mm, decSep),
         max_stack_layers:              form.max_stack_layers ? Number(form.max_stack_layers) : null,
         stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
@@ -1105,24 +1108,24 @@ export default function Materials() {
             {/* Pallet/EA — quy đổi tồn EA → pallet (bắt buộc theo cờ Loại kho) */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Pallet/EA{needsPalletPerEa(form.category, whTypeMeta) && ' *'}</Label>
-              <Input type="number" min={0} step="any" className="col-span-2 h-7 text-xs" value={form.pallet_per_ea} onChange={e => setField('pallet_per_ea', e.target.value)} placeholder="1 EA = ? pallet (vd 0.00005)" />
+              <Input inputMode="decimal" className="col-span-2 h-7 text-xs" value={form.pallet_per_ea} onChange={e => setField('pallet_per_ea', sanitizeDecimalInput(e.target.value, decSep))} placeholder={`1 EA = ? pallet (vd ${decHint})`} />
             </div>
 
             {/* KG */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">KG</Label>
-              <Input type="number" min={0} step="0.01" className="col-span-2 h-7 text-xs" value={form.weight_kg} onChange={e => setField('weight_kg', e.target.value)} placeholder="Khối lượng (kg/thùng)" />
+              <Input inputMode="decimal" className="col-span-2 h-7 text-xs" value={form.weight_kg} onChange={e => setField('weight_kg', sanitizeDecimalInput(e.target.value, decSep))} placeholder="Khối lượng (kg/thùng)" />
             </div>
 
             {/* Kích thước thùng carton (mm) — phục vụ sơ đồ xếp xe 3D */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Thùng D×R×C (mm)</Label>
               <div className="col-span-2 flex items-center gap-1.5">
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_length_mm} onChange={e => setField('carton_length_mm', e.target.value)} placeholder="Dài" />
+                <Input inputMode="decimal" className="h-7 text-xs" value={form.carton_length_mm} onChange={e => setField('carton_length_mm', sanitizeDecimalInput(e.target.value, decSep))} placeholder="Dài" />
                 <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_width_mm} onChange={e => setField('carton_width_mm', e.target.value)} placeholder="Rộng" />
+                <Input inputMode="decimal" className="h-7 text-xs" value={form.carton_width_mm} onChange={e => setField('carton_width_mm', sanitizeDecimalInput(e.target.value, decSep))} placeholder="Rộng" />
                 <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} step="0.1" className="h-7 text-xs" value={form.carton_height_mm} onChange={e => setField('carton_height_mm', e.target.value)} placeholder="Cao" />
+                <Input inputMode="decimal" className="h-7 text-xs" value={form.carton_height_mm} onChange={e => setField('carton_height_mm', sanitizeDecimalInput(e.target.value, decSep))} placeholder="Cao" />
               </div>
             </div>
 
@@ -1210,7 +1213,8 @@ export default function Materials() {
               <Input className="col-span-2 h-7 text-xs" value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Ghi chú thêm (tùy chọn)" />
             </div>
 
-            {/* Quản tồn — chọn cách theo dõi tồn (SingleSelect cho rõ) */}
+            {/* Quản tồn — chọn cách theo dõi tồn (SingleSelect cho rõ); ẩn với mã phi hàng hóa */}
+            {!nonStock && (
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Quản tồn</Label>
               <div className="col-span-2">
@@ -1226,6 +1230,7 @@ export default function Materials() {
                 />
               </div>
             </div>
+            )}
 
             {/* Trạng thái (edit only) */}
             {dialogMode === 'edit' && (

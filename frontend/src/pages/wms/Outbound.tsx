@@ -421,8 +421,8 @@ export default function Outbound() {
     const d = new Date(); d.setDate(d.getDate() + 1)
     const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
     const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
-    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách']
-    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A']
+    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
+    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')

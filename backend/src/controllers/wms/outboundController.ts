@@ -2215,6 +2215,7 @@ async function processVehicleGroups(
       const dvvt     = resolveDvvt(String(groupRows[0]['DVVT'] ?? groupRows[0]['Đơn vị'] ?? '')).name
       const kho_xuat = String(groupRows[0]['Kho xuất'] ?? groupRows[0]['Kho xuat'] ?? '').trim()
       const priority = String(groupRows[0]['Ưu tiên'] ?? groupRows[0]['Uu tien'] ?? '').trim() || null   // ĐỢT 3: ưu tiên chuyến (KHVC)
+      const transport_note = String(groupRows[0]['Note'] ?? groupRows[0]['Ghi chú'] ?? '').trim() || null // ĐỢT 3: ghi chú điều vận (KHVC, cấp chuyến)
       const loaiKhoSet = [...new Set(groupRows.map(r => String(r['Loại kho'] ?? r['Loai kho'] ?? '').trim()).filter(Boolean))]
       const loai_kho = loaiKhoSet.length ? loaiKhoSet.join('+') : null
 
@@ -2293,7 +2294,7 @@ async function processVehicleGroups(
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
@@ -2311,6 +2312,7 @@ async function processVehicleGroups(
         warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho,
         shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
         priority,                       // ĐỢT 3: ưu tiên chuyến (null = không đặt)
+        transport_note,                 // ĐỢT 3: ghi chú điều vận (null = không có)
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)
@@ -2459,7 +2461,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string }
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     for (const r of rows) {
@@ -2475,6 +2477,7 @@ export async function uploadKhvc(req: Request, res: Response) {
         dvvt: String(r['DVVT'] ?? '').trim(),
         priority: String(r['Ưu tiên'] ?? r['Uu tien'] ?? '').trim(),
         cs: String(r['CS phụ trách'] ?? r['CS phu trach'] ?? '').trim(),
+        note: String(r['Note'] ?? r['Ghi chú'] ?? '').trim(),
       })
     }
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
@@ -2521,6 +2524,7 @@ export async function uploadKhvc(req: Request, res: Response) {
           'Loại xuất': k.veh_type,
           'Ưu tiên': k.priority,
           'CS phụ trách': k.cs,
+          'Note': k.note,
           'Shipto party': ln.ship_to_code ?? '',
           'HEADER TEXT': header,
           'Batch_Yêu cầu': ln.batch ?? '',

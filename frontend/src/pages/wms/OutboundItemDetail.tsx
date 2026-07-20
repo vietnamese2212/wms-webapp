@@ -93,6 +93,8 @@ interface ScanDialogProps {
 
 function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  // Súng quét: bắn 1 phát = chuyển hẳn chế độ súng (tắt camera cả phiên) → sau khi Lưu KHÔNG bật lại camera.
+  const [gunMode, setGunMode] = useState(pdaMode)
   const user = useAuthStore(s => s.user)
   // Số lượt quét của MÃ này đang chờ mạng (hàng đợi offline)
   const queuedThisItem = useScanQueue(s =>
@@ -135,6 +137,8 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   }
 
   function handleScan(qr_code: string, src: 'camera' | 'wedge' = 'camera') {
+    // Bắn bằng súng → khóa hẳn chế độ súng (tắt camera cả phiên, không tự bật lại sau khi Lưu)
+    if (src === 'wedge' && !gunMode) setGunMode(true)
     // Guard chung camera + súng quét: đang check/lưu/quét thùng → bỏ qua lượt mới
     if (checking || saving || cartonFor) return
     if (checkResult) {
@@ -276,7 +280,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
           )}
 
           <div className="relative flex-1 min-h-0">
-            {pdaMode ? (
+            {gunMode ? (
               <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
                 <QrCode className="h-12 w-12 text-sky-400/70" />
                 <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>

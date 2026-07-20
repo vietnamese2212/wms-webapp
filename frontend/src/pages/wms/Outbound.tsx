@@ -28,7 +28,7 @@ import { omniMatch } from '@/utils/omniSearch'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtyFromEntryBase, hasEntry, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyFromEntryBase, hasEntry, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
 
@@ -1192,7 +1192,7 @@ function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, 
               key={m.id}
               className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
               onMouseDown={() => {
-                onSelect(m.material_code, m.short_name ?? '', m.category, m.unit ?? '', m)
+                onSelect(m.material_code, m.short_name ?? '', m.category, unitCodeOf(m), m)
                 setSearch(m.material_code)
                 setOpen(false)
               }}
@@ -1476,7 +1476,7 @@ function GDOFormBody({
         e.preventDefault()
         setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
           ...r, material_code: text.trim(),
-          mat_name: mat.short_name ?? '', unit: mat.unit ?? '', category: mat.category ?? null,
+          mat_name: mat.short_name ?? '', unit: unitCodeOf(mat), category: mat.category ?? null,
           mat_units: mat,
         }))
       }
@@ -1502,7 +1502,7 @@ function GDOFormBody({
           ...rows[startIdx + offset],
           material_code: code,
           mat_name:  mat?.short_name ?? rows[startIdx + offset].mat_name,
-          unit:      mat?.unit      ?? rows[startIdx + offset].unit,
+          unit:      unitCodeOf(mat) || rows[startIdx + offset].unit,
           category:  mat?.category  ?? rows[startIdx + offset].category,
           mat_units: mat ?? rows[startIdx + offset].mat_units,
           // BASE UNIT: cột Thùng = THÙNG NGUYÊN, cột Nhặt lẻ = SỐ LẺ (đơn vị gốc) → tổng base
@@ -2108,7 +2108,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         db_id: item.id,
         material_code: item.material_code_raw ?? '',
         mat_name: item.material?.short_name ?? '',
-        unit: item.material?.unit ?? '',
+        unit: unitCodeOf(item.material),
         category: item.material_type ?? null,
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,

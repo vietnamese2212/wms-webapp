@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
+import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -620,7 +620,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
         material_id: mid,
         material_code: m?.material_code ?? '',
         material_name: m?.short_name ?? m?.material_description ?? '',
-        unit: m?.unit ?? '',
+        unit: unitCodeOf(m),
         planned_boxes: 0, actual_boxes: 0,
       }
       return byMat[mid]
@@ -629,7 +629,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // 1) Kế hoạch từ inbound_plan_lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const planLines = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('inbound_plan_lines')
-      .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, unit, base_unit, entry_unit, units_per_carton)')
+      .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const l of planLines as any[]) {
@@ -640,7 +640,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
-      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, unit, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
+      .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
     const importToMat = new Map<string, string>()
@@ -700,7 +700,7 @@ export async function getInboundReport(req: Request, res: Response) {
           .select(`
             id, date, warehouse_id, ncc_id, material_id, po_number,
             planned_boxes, tms_order_id, status,
-            material:Material!material_id(material_code, short_name, unit, category, base_unit, entry_unit, units_per_carton),
+            material:Material!material_id(material_code, short_name, category, base_unit, entry_unit, units_per_carton),
             ncc:TransportCompany!ncc_id(code, name),
             warehouse:Warehouse!warehouse_id(code, name)
           `)
@@ -727,7 +727,7 @@ export async function getInboundReport(req: Request, res: Response) {
     const actualMap = new Map<string, number>() // key: `${tms_order_id}/${material_id}` → boxes
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let allImports: any[] = []
-    const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, unit, category, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(name)'
+    const IMPORT_SELECT = 'id, tms_order_id, material_id, planned_cartons, import_date, material:Material!material_id(material_code, short_name, category, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(name)'
 
     if (orderIds.length > 0) {
       // Chunk orderIds (URL 414 khi hàng trăm/nghìn lệnh) + phân trang mỗi lô (cap ~1000)
@@ -834,7 +834,7 @@ export async function getInboundReport(req: Request, res: Response) {
         ncc_name: (line.ncc?.name ?? '') as string,
         material_code: (line.material?.material_code ?? '') as string,
         material_name: (line.material?.short_name ?? '') as string,
-        unit: (line.material?.unit ?? '') as string,
+        unit: unitCodeOf(line.material as MatUnits | null),
         material_category: (line.material?.category ?? '') as string,
         planned_boxes: planned,
         actual_boxes,
@@ -863,7 +863,7 @@ export async function getInboundReport(req: Request, res: Response) {
         ncc_name: info.ncc_name,
         material_code: (imp.material?.material_code ?? '') as string,
         material_name: (imp.material?.short_name ?? '') as string,
-        unit: (imp.material?.unit ?? '') as string,
+        unit: unitCodeOf(imp.material as MatUnits | null),
         material_category: (imp.material?.category ?? '') as string,
         planned_boxes: planned_cartons,
         actual_boxes,
@@ -1224,7 +1224,7 @@ export async function getTransferGoods(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: planLines } = await supabase.from('inbound_plan_lines')
-      .select('material_id, planned_boxes, material:Material(id, material_code, short_name, unit, base_unit, entry_unit, units_per_carton)')
+      .select('material_id, planned_boxes, material:Material(id, material_code, short_name, base_unit, entry_unit, units_per_carton)')
       .eq('tms_order_id', id)
       .neq('status', 'CANCELLED')
 
@@ -1355,7 +1355,7 @@ export async function getTransferGoods(req: Request, res: Response) {
         material_id: l.material_id,
         material_code: l.material?.material_code ?? null,
         material_name: l.material?.short_name ?? null,
-        unit: l.material?.unit ?? null,
+        unit: unitCodeOf(l.material as MatUnits | null) || null,
         // BASE UNIT: planned_boxes/actual_boxes trả BASE (khớp luật API=base) + kèm units để FE quy đổi hiển thị
         units_per_carton: l.material?.units_per_carton ?? null,
         entry_unit: l.material?.entry_unit ?? null,

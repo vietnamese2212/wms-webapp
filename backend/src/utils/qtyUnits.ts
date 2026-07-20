@@ -48,6 +48,14 @@ export function qtyBaseLabel(m?: MatUnits | null): string {
 }
 
 /**
+ * MÃ CODE đơn vị chính của mã (Entry nếu có, ngược lại Base) — thay cho trường `unit` (ĐVT) đã bỏ.
+ * Trả CODE thô (CAR/HOP/KG/BT…), KHÔNG phải nhãn tiếng Việt. Nơi cần chữ dùng `unitLabel()`.
+ */
+export function unitCodeOf(m?: MatUnits | null): string {
+  return (m?.entry_unit || m?.base_unit || '').trim().toUpperCase()
+}
+
+/**
  * Tách số lượng BASE thành phần entry (thùng) + phần base lẻ (hộp) — divmod.
  * Mã không entry: { entry: 0, base: qty }.
  * Số âm: cả 2 phần mang dấu âm.

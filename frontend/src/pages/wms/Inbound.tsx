@@ -38,7 +38,7 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
-import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -406,7 +406,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const lookupNccRow = useCallback((code: string): NccMatRow => {
     const found = nccMatByCode.get(code.trim().toUpperCase())
     const valid = found && (!subType || found.category === subType) ? found : null
-    return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: valid?.unit ?? '', unit_input: valid?.unit ?? '', planned_qty: '', mat_units: matUnitsOf(valid) }
+    return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: unitCodeOf(valid), unit_input: unitCodeOf(valid), planned_qty: '', mat_units: matUnitsOf(valid) }
   }, [nccMatByCode, subType])
 
   const handleNccMatCodeChange = useCallback((idx: number, code: string) => {
@@ -415,7 +415,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: code,
       material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '',
-      mat_unit: valid?.unit ?? '', unit_input: valid ? (valid.unit ?? '') : r.unit_input,
+      mat_unit: unitCodeOf(valid), unit_input: valid ? unitCodeOf(valid) : r.unit_input,
       mat_units: matUnitsOf(valid),
     }))
   }, [nccMatByCode, subType])
@@ -437,7 +437,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const selectNccMatFromDropdown = useCallback((idx: number, m: any) => {
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
       ...r, material_code: m.material_code, material_id: m.id,
-      mat_name: m.short_name ?? '', mat_unit: m.unit ?? '', unit_input: m.unit ?? '',
+      mat_name: m.short_name ?? '', mat_unit: unitCodeOf(m), unit_input: unitCodeOf(m),
       mat_units: matUnitsOf(m),
     }))
     setNccDropdownIdx(null)
@@ -500,7 +500,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     }
     setNccRows([...merged.values()].map(({ line: m, qty }) => {
       const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
-      const unit = fullMat?.unit ?? m.material?.unit ?? ''
+      const unit = unitCodeOf(fullMat) || unitCodeOf(m.material)
       return {
         material_code: m.material?.material_code ?? '',
         material_id:   m.material_id ?? '',

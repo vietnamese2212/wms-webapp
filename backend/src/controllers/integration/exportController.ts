@@ -90,10 +90,11 @@ async function exportTable(
   res.json({ success: true, data: page, paging: { count: page.length, has_more: hasMore, next_cursor: nextCursor } })
 }
 
-// 1) Mã hàng
+// 1) Mã hàng — cột `unit` (ĐVT) đã bỏ khỏi DB; vẫn TRẢ field `unit` cho ERP (contract cũ) = suy Entry||Base.
 export function exportMaterials(req: Request, res: Response): Promise<void> {
   return exportTable(req, res, 'Material',
-    'id, material_code, material_description, short_name, category, product_type, unit, base_unit, entry_unit, cartons_per_pallet, units_per_carton, pallet_per_ea, weight_kg, shelf_life_days, batch_prefix, is_active, created_at, updated_at')
+    'id, material_code, material_description, short_name, category, product_type, base_unit, entry_unit, cartons_per_pallet, units_per_carton, pallet_per_ea, weight_kg, shelf_life_days, batch_prefix, is_active, created_at, updated_at',
+    (r: Row): Row => ({ ...r, unit: (r.entry_unit || r.base_unit || null) as string | null }))
 }
 // 2) Tồn kho (kèm mã lô batch + HSD — khóa đối chiếu kế toán)
 export function exportInventory(req: Request, res: Response): Promise<void> {

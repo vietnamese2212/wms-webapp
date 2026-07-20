@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText } from '@/utils/qtyUnits'
+import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -423,7 +423,7 @@ const EMPTY_PLAN_LINE = (): PlanLineRow => ({
 })
 
 // ── Material search combobox ──────────────────────────────────────────────────
-type MatItem = { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null }
+type MatItem = { id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits
 
 function getDuplicateCodes(rows: { material_code: string }[]): Set<string> {
   const seen = new Map<string, number>()
@@ -482,14 +482,14 @@ function MatCombobox({
               className="w-full text-left px-2 py-1 hover:bg-blue-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
               onMouseDown={e => e.preventDefault()}
               onClick={() => {
-                onSelect(m.material_code, m.id, m.short_name ?? '', m.unit ?? '')
+                onSelect(m.material_code, m.id, m.short_name ?? '', unitCodeOf(m))
                 setQ(m.material_code)
                 setOpen(false)
               }}
             >
               <span className="text-[10px] font-mono font-semibold text-slate-800 w-24 shrink-0 truncate">{m.material_code}</span>
               <span className="text-[9px] text-slate-500 flex-1 truncate">{m.short_name}</span>
-              <span className="text-[9px] text-slate-400 shrink-0">{m.unit}</span>
+              <span className="text-[9px] text-slate-400 shrink-0">{unitCodeOf(m)}</span>
             </button>
           ))}
         </div>
@@ -664,7 +664,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         if (mat) {
           rows[i].material_id   = mat.id
           rows[i].material_name = (mat as { short_name?: string }).short_name ?? ''
-          rows[i].unit          = (mat as { unit?: string }).unit ?? ''
+          rows[i].unit          = unitCodeOf(mat)
         } else {
           rows[i].material_id = ''; rows[i].material_name = ''; rows[i].unit = ''
         }
@@ -732,7 +732,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           material_code: code,
           material_id:   mat?.id ?? '',
           material_name: (mat as { short_name?: string } | undefined)?.short_name ?? '',
-          unit:          (mat as { unit?: string } | undefined)?.unit ?? '',
+          unit:          unitCodeOf(mat),
           planned_boxes: boxes,
           planned_pallets: pallets,
         }
@@ -3363,7 +3363,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
         line_id: line.id as string ?? null,
         material_code: code,
         material_name: mat?.short_name as string || '—',
-        unit: (matFull as { unit?: string })?.unit ?? '',
+        unit: unitCodeOf(matFull),
         // BASE UNIT: planned_boxes dòng plan = BASE → quy đổi thùng (actualMap từ plan-vs-actual đã là entry)
         planned_boxes: qtyEntryDecimal((line.planned_boxes as number) ?? 0, matFull ?? null),
         actual_boxes: actualMap.get(code) ?? 0,
@@ -3379,7 +3379,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
         line_id: null,
         material_code: code,
         material_name: row.material_name as string || '—',
-        unit: (matFull as { unit?: string })?.unit ?? '',
+        unit: unitCodeOf(matFull),
         planned_boxes: (row.planned_boxes as number) ?? 0,
         actual_boxes: (row.actual_boxes as number) ?? 0,
         status: null,

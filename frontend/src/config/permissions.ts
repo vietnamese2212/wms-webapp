@@ -123,6 +123,7 @@ export const MODULES = {
       view:             'Mở trang cài đặt',
       manage_warehouse: 'Quản lý Kho',
       manage_type:      'Quản lý Loại kho',
+      manage_unit:      'Quản lý Đơn vị tính (tab Đơn vị tính — Base/Entry Unit)',
       manage_zone:      'Quản lý Khu vực kho (kho được gán)',
       manage_shift:     'Quản lý Ca nhập',
       manage_qa:        'Quản lý Tình trạng QA',

@@ -132,6 +132,86 @@ export async function reorderLookup(req: Request, res: Response) {
   res.json({ success: true })
 }
 
+// ─── Đơn vị tính (unit_of_measure) — tab RIÊNG, quyền manage_unit ────────────────
+// type bị KHÓA CỨNG = 'unit_of_measure' để quyền manage_unit KHÔNG sửa được loại kho.
+// meta = { role: base|entry|both, label?: tên tiếng Việt }. Base selector (Mã hàng) lấy role∈{base,both};
+// Entry selector lấy role∈{entry,both}. Luật: 1 mã không cho Base = Entry (chặn ở materialController + FE).
+const UNIT_ROLES = ['base', 'entry', 'both'] as const
+type UnitRole = typeof UNIT_ROLES[number]
+function sanitizeUnitMeta(raw: unknown): { role: UnitRole; label?: string } {
+  const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+  const r = typeof o.role === 'string' && (UNIT_ROLES as readonly string[]).includes(o.role) ? o.role as UnitRole : 'both'
+  const label = typeof o.label === 'string' ? o.label.trim() : ''
+  return label ? { role: r, label } : { role: r }
+}
+
+export async function addUnit(req: Request, res: Response) {
+  const { value, meta } = req.body as { value?: string; meta?: unknown }
+  if (!value?.trim()) return fail(res, 'Mã ĐVT là bắt buộc')
+  const code = value.trim().toUpperCase()
+  const t = new Date().toISOString()
+  const { data: existing } = await supabase.from('LookupValue')
+    .select('sort_order').eq('type', 'unit_of_measure').order('sort_order', { ascending: false }).limit(1)
+  const nextSort = existing?.length ? Number((existing[0] as any).sort_order ?? 0) + 1 : 1
+  const actor = req.user?.name || null
+  const { data, error } = await supabase.from('LookupValue')
+    .insert({ id: randomUUID(), type: 'unit_of_measure', value: code, sort_order: nextSort, meta: sanitizeUnitMeta(meta), created_at: t, updated_at: t, created_by: actor, updated_by: actor })
+    .select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
+  if (error) {
+    if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
+    return fail(res, error.message, 500)
+  }
+  res.json({ success: true, data })
+}
+
+export async function updateUnit(req: Request, res: Response) {
+  const { id } = req.params
+  const { value, meta } = req.body as { value?: string; meta?: unknown }
+  if (!value?.trim()) return fail(res, 'Mã ĐVT là bắt buộc')
+  const { data: cur } = await supabase.from('LookupValue').select('type').eq('id', id).maybeSingle()
+  if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
+  const code = value.trim().toUpperCase()
+  const { data, error } = await supabase.from('LookupValue')
+    .update({ value: code, meta: sanitizeUnitMeta(meta), updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+    .eq('id', id).select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
+  if (error) {
+    if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
+    return fail(res, error.message, 500)
+  }
+  res.json({ success: true, data })
+}
+
+export async function deleteUnit(req: Request, res: Response) {
+  const { id } = req.params
+  const { data: cur } = await supabase.from('LookupValue').select('type, value').eq('id', id).maybeSingle()
+  if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
+  // Chặn xóa ĐVT đang được dùng làm base_unit / entry_unit của mã hàng → tránh mã mất đơn vị
+  const [b, e] = await Promise.all([
+    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', cur.value),
+    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', cur.value),
+  ])
+  const total = (b.count ?? 0) + (e.count ?? 0)
+  if (total > 0) return fail(res, `ĐVT "${cur.value}" đang được ${total} mã hàng dùng — không thể xóa`, 409)
+  const { error } = await supabase.from('LookupValue').delete().eq('id', id)
+  if (error) return fail(res, error.message, 500)
+  res.json({ success: true })
+}
+
+export async function reorderUnit(req: Request, res: Response) {
+  const { ids } = req.body as { ids?: string[] }
+  if (!Array.isArray(ids) || ids.length === 0) return fail(res, 'ids là bắt buộc')
+  const now = new Date().toISOString()
+  const actor = req.user?.name || null
+  const results = await Promise.all(
+    ids.map((id, i) => supabase.from('LookupValue')
+      .update({ sort_order: i + 1, updated_at: now, updated_by: actor })
+      .eq('id', id).eq('type', 'unit_of_measure')),
+  )
+  const err = results.find(r => r.error)?.error
+  if (err) return fail(res, err.message, 500)
+  res.json({ success: true })
+}
+
 export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
 

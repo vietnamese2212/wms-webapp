@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -23,7 +23,8 @@ import {
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting,
-  type WarehouseZone,
+  useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
+  type WarehouseZone, type UnitRow, type UnitRole,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -736,6 +737,144 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
   )
 }
 
+// ─── Đơn vị tính (unit_of_measure) ─────────────────────────────────────────────
+// Danh mục Base/Entry Unit — thay trường ĐVT cũ. role quyết định ĐVT hiện ở selector nào của Mã hàng.
+const UNIT_ROLE_OPTS = [
+  { value: 'base',  label: 'Base (đơn vị gốc)',        sub: 'Đơn vị nhỏ nhất để tính toán — hộp/chai/kg/cái' },
+  { value: 'entry', label: 'Entry (đơn vị nhập/thùng)', sub: 'Đơn vị đóng gói lớn — 1 Entry = N Base' },
+  { value: 'both',  label: 'Cả 2 (base hoặc entry)',    sub: 'Dùng được cho cả hai vai' },
+]
+const UNIT_ROLE_LABEL: Record<UnitRole, string> = { base: 'Base', entry: 'Entry', both: 'Cả 2' }
+const UNIT_ROLE_BADGE: Record<UnitRole, string> = {
+  base:  'border-emerald-400 text-emerald-700 bg-emerald-50',
+  entry: 'border-sky-400 text-sky-700 bg-sky-50',
+  both:  'border-violet-400 text-violet-700 bg-violet-50',
+}
+const unitRoleOf = (u: UnitRow): UnitRole => (u.meta?.role ?? 'both')
+
+function UnitDialog({ unit, open, onClose }: { unit: UnitRow | null; open: boolean; onClose: () => void }) {
+  const isEdit = !!unit
+  const [value, setValue] = useState(unit?.value ?? '')
+  const [label, setLabel] = useState(unit?.meta?.label ?? '')
+  const [role,  setRole]  = useState<UnitRole>(unit?.meta?.role ?? 'both')
+  const [err, setErr] = useState('')
+
+  const { mutate: add,    isPending: adding   } = useAddUnit()
+  const { mutate: update, isPending: updating } = useUpdateUnit()
+  const isPending = adding || updating
+
+  function handleSubmit() {
+    setErr('')
+    const code = value.trim().toUpperCase()
+    if (!code) { setErr('Mã ĐVT là bắt buộc (vd HOP, CAR, KG)'); return }
+    const meta = { role, label: label.trim() || undefined }
+    const opts = { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) }
+    if (isEdit) update({ id: unit.id, value: code, meta }, opts)
+    else        add({ value: code, meta }, opts)
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa đơn vị tính' : 'Thêm đơn vị tính'} widthClass="sm:max-w-lg" footer={<>
+          <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
+            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          </Button>
+        </>}>
+        <div className="space-y-3">
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          <div className="space-y-1">
+            <Label className="text-xs">Mã ĐVT *</Label>
+            <Input value={value} onChange={e => setValue(e.target.value.toUpperCase())} placeholder="HOP, CAR, KG, BT, BAG, EA…" disabled={isEdit}
+              onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }} />
+            <p className="text-[10px] text-slate-400">Mã dùng trong tính toán (Base/Entry Unit của mã hàng). {isEdit && 'Không đổi mã sau khi tạo (đang được mã hàng dùng).'}</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Tên đầy đủ</Label>
+            <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Hộp, Thùng, Kilogram… (tùy chọn)" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Loại ĐVT *</Label>
+            <SingleSelect options={UNIT_ROLE_OPTS} value={role} onChange={v => setRole(v as UnitRole)}
+              searchable={false} triggerClassName="w-full h-8 text-sm" />
+            <p className="text-[10px] text-slate-400">Base = hiện ở ô Base Unit; Entry = hiện ở ô Entry Unit; Cả 2 = cả hai. Một mã hàng KHÔNG được đặt Base trùng Entry.</p>
+          </div>
+        </div>
+    </FormSheet>
+  )
+}
+
+function UnitTab({ canManage }: { canManage: boolean }) {
+  const { data: units = [], isLoading } = useUnits()
+  const { mutate: del, isPending: deleting } = useDeleteUnit()
+  const [editing, setEditing] = useState<UnitRow | null>(null)
+  const [showDlg, setShowDlg] = useState(false)
+
+  function handleDelete(u: UnitRow) {
+    if (!confirm(`Xóa đơn vị tính "${u.value}"?`)) return
+    del(u.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được ĐVT', description: apiMsg(e) }) })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{units.length} đơn vị tính · Base/Entry Unit của mã hàng</p>
+        {canManage && (
+          <ActionCluster className="shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm ĐVT', tip: 'Thêm đơn vị tính mới',
+            primary: true, variant: 'default', onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+          units.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 space-y-2">
+              <Ruler className="h-10 w-10 mx-auto opacity-30" />
+              <p className="text-sm">Chưa có đơn vị tính nào</p>
+              {canManage && <p className="text-xs">Nhấn "Thêm ĐVT" để tạo (vd HOP=Base, CAR=Entry)</p>}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại</TableHead>
+                  {canManage && <TableHead className="px-2 py-1.5 w-16" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {units.map(u => (
+                  <TableRow key={u.id}>
+                    <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-700 whitespace-nowrap">{u.value}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{u.meta?.label || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <Badge variant="outline" className={`text-[10px] ${UNIT_ROLE_BADGE[unitRoleOf(u)]}`}>{UNIT_ROLE_LABEL[unitRoleOf(u)]}</Badge>
+                    </TableCell>
+                    {canManage && (
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                        <div className="flex items-center gap-0.5">
+                          <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" onClick={() => { setEditing(u); setShowDlg(true) }}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting} onClick={() => handleDelete(u)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )
+        }
+      </div>
+      {showDlg && <UnitDialog unit={editing} open={showDlg} onClose={() => setShowDlg(false)} />}
+    </>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -745,6 +884,7 @@ export default function WMSSettings() {
   // Mỗi tab = 1 quyền riêng (ẩn tab nếu không có quyền). Admin thấy hết.
   const canManageWarehouse = admin || can(perms, 'wms_settings', 'manage_warehouse')
   const canManageType      = admin || can(perms, 'wms_settings', 'manage_type')
+  const canManageUnit      = admin || can(perms, 'wms_settings', 'manage_unit')
   const canManageZone      = admin || can(perms, 'wms_settings', 'manage_zone')
   const canManageShift     = admin || can(perms, 'wms_settings', 'manage_shift')
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
@@ -752,6 +892,7 @@ export default function WMSSettings() {
   const visibleTabs = [
     canManageWarehouse && 'warehouses',
     canManageType      && 'types',
+    canManageUnit      && 'units',
     canManageZone      && 'zones',
     canManageShift     && 'shifts',
     canManageQA        && 'qa',
@@ -906,6 +1047,7 @@ export default function WMSSettings() {
           <TabsList className="h-8 max-w-full overflow-x-auto">
             {canManageWarehouse && <TabsTrigger value="warehouses" className="gap-1.5 text-xs"><Warehouse className="h-3.5 w-3.5" /> Kho</TabsTrigger>}
             {canManageType      && <TabsTrigger value="types"      className="gap-1.5 text-xs"><Tag      className="h-3.5 w-3.5" /> Loại kho</TabsTrigger>}
+            {canManageUnit      && <TabsTrigger value="units"      className="gap-1.5 text-xs"><Ruler    className="h-3.5 w-3.5" /> Đơn vị tính</TabsTrigger>}
             {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
             {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
             {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
@@ -1135,6 +1277,11 @@ export default function WMSSettings() {
             )}
           </div>
           <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{orderedTypes.length} / {orderedTypes.length} loại kho</div>
+        </TabsContent>
+
+        {/* ── Tab: Đơn vị tính ── */}
+        <TabsContent value="units" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <UnitTab canManage={canManageUnit} />
         </TabsContent>
 
         {/* ── Tab: Khu vực kho ── */}

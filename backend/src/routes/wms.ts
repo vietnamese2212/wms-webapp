@@ -66,6 +66,12 @@ router.put('/lookup/reorder', requirePerm('wms_settings', 'manage_type'), lookup
 router.put('/lookup/:id',    requirePerm('wms_settings', 'manage_type'), lookup.updateLookup)
 router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_type'), lookup.deleteLookup)
 
+// Đơn vị tính (unit_of_measure) — tab riêng, quyền manage_unit (type khóa cứng trong controller)
+router.post('/lookup-unit',        requirePerm('wms_settings', 'manage_unit'), lookup.addUnit)
+router.put('/lookup-unit/reorder', requirePerm('wms_settings', 'manage_unit'), lookup.reorderUnit)  // ĐẶT TRƯỚC /:id
+router.put('/lookup-unit/:id',     requirePerm('wms_settings', 'manage_unit'), lookup.updateUnit)
+router.delete('/lookup-unit/:id',  requirePerm('wms_settings', 'manage_unit'), lookup.deleteUnit)
+
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
 // list dùng cho tab Lịch sử in + Truy cứu + chọn tem In lại — anyOf theo tab

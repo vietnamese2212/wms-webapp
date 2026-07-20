@@ -10,6 +10,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -25,7 +26,7 @@ import { omniMatch } from '@/utils/omniSearch'
 import {
   useMaterials, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
-  useSystemSettings,
+  useSystemSettings, useUnits,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -82,7 +83,6 @@ const EMPTY_FORM = {
   custom_short_name: '',
   category: '',
   product_type: '',
-  unit: '',
   cartons_per_pallet: '',
   units_per_carton: '',
   pallet_per_ea: '',
@@ -106,7 +106,7 @@ const EMPTY_FORM = {
 function missingRequiredFields(m: Material, metaMap: WhTypeMetaMap): string[] {
   const miss: string[] = []
   if (!m.category) miss.push('Loại hàng')
-  if (!m.unit) miss.push('ĐVT')
+  if (!m.base_unit) miss.push('Base Unit')
   if (m.cartons_per_pallet == null || Number(m.cartons_per_pallet) <= 0) miss.push('Thùng/pallet')
   if (needsShelfLife(m.category, metaMap) && m.shelf_life_days == null) miss.push('HSD')
   if (needsPalletPerEa(m.category, metaMap) && m.pallet_per_ea == null) miss.push('Pallet/EA')
@@ -191,6 +191,15 @@ export default function Materials() {
     [warehouseTypes]
   )
 
+  // Danh mục Đơn vị tính (Cài đặt WMS → tab Đơn vị tính). Base selector = role base/both; Entry = role entry/both.
+  const { data: unitCatalog = [] } = useUnits()
+  const unitOpt = (u: { value: string; meta?: { label?: string } | null }) => ({ value: u.value, label: u.meta?.label ? `${u.value} — ${u.meta.label}` : u.value })
+  const baseUnitOpts  = useMemo(() => unitCatalog.filter(u => (u.meta?.role ?? 'both') !== 'entry').map(unitOpt), [unitCatalog])
+  const entryUnitOpts = useMemo(() => unitCatalog.filter(u => (u.meta?.role ?? 'both') !== 'base').map(unitOpt),  [unitCatalog])
+  // Giữ giá trị hiện tại của mã nếu mã đơn vị không (còn) trong danh mục — để SingleSelect vẫn hiển thị đúng
+  const withCurrent = (opts: { value: string; label: string }[], cur: string) =>
+    cur && !opts.some(o => o.value === cur) ? [{ value: cur, label: `${cur} (ngoài danh mục)` }, ...opts] : opts
+
   // Mutations
   const createMaterial = useCreateMaterial()
   const uploadMaterials = useUploadMaterialsExcel()
@@ -226,7 +235,7 @@ export default function Materials() {
         const okDup        = dqFilter.includes('dup')        && isDupName(m)
         if (!okIncomplete && !okDup) return false
       }
-      if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.unit], search)) return false
+      if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.base_unit, m.entry_unit], search)) return false
       return true
     })
   }, [raw, catFilter, search, statusFilter, qrFilter, dqFilter, dupNames, whTypeMeta])
@@ -254,14 +263,16 @@ export default function Materials() {
     if (dialogMode === 'add' && !form.material_code.trim()) return 'Mã hàng là bắt buộc'
     if (!form.material_description.trim()) return 'Mô tả là bắt buộc'
     if (!form.category) return 'Loại hàng là bắt buộc'
-    if (!form.unit) return 'ĐVT là bắt buộc'
+    if (!form.base_unit.trim()) return 'Base Unit là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
     if (needsShelfLife(form.category, whTypeMeta) && !form.shelf_life_days)
       return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉnh luật này trong Cài đặt WMS → Loại kho)`
     if (needsPalletPerEa(form.category, whTypeMeta) && !form.pallet_per_ea)
       return `Pallet/EA là bắt buộc cho loại "${form.category}" (để quy đổi tồn EA → pallet)`
     if (form.entry_unit.trim() && !(Number(form.units_per_carton) > 0))
-      return 'Có ĐV nhập liệu (entry) thì hệ số EA/thùng (1 Entry = N Base) phải > 0'
+      return 'Có Entry Unit thì hệ số EA/thùng (1 Entry = N Base) phải > 0'
+    if (form.entry_unit.trim() && form.entry_unit.trim().toUpperCase() === form.base_unit.trim().toUpperCase())
+      return 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP) — nếu bằng nhau, nhân EA/thùng sẽ sai'
     for (const ov of overrides) {
       if (!ov.warehouse_id || !ov.cartons_per_pallet) return 'Điền đủ kho và số thùng cho mọi ngoại lệ'
     }
@@ -271,15 +282,16 @@ export default function Materials() {
   // Mẫu Excel Mã hàng — cột KHỚP thứ tự M_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
   // ĐV tem `;` (isV2Format): mẫu tự thêm cột 13 batch_prefix (Mã tắt mã lô); ĐV tem `_` giữ 12 cột như cũ.
   function downloadMaterialTemplate() {
-    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', 'ĐVT *', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
+    // Cột 4 ('(bỏ trống)') = filler VỊ TRÍ của ĐVT cũ (đã bỏ) — giữ để file cũ không lệch cột. Đơn vị nay = Base/Entry Unit (2 cột cuối).
+    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
-    const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', 'CAR', 80, 48, '', 9.6, 180, 'UHT', '', '']
+    const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', '', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
     else { labels.push('(bỏ trống)'); keys.push('batch_prefix'); ex.push('') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
     labels.push('Thùng dài (mm)', 'Thùng rộng (mm)', 'Thùng cao (mm)', 'Số lớp tối đa', 'Xếp trên hàng khác (1/0)')
     keys.push('carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'max_stack_layers', 'stack_on_top')
     ex.push(380, 285, 240, 8, 0)
-    labels.push('ĐV gốc (base)', 'ĐV nhập liệu (entry)')
+    labels.push('Base Unit *', 'Entry Unit')
     keys.push('base_unit', 'entry_unit')
     ex.push('HOP', 'CAR')
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
@@ -308,7 +320,6 @@ export default function Materials() {
       custom_short_name:    mat.custom_short_name ?? '',
       category:             mat.category ?? '',
       product_type:         mat.product_type ?? '',
-      unit:                 mat.unit ?? '',
       cartons_per_pallet:   mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '',
       units_per_carton:     mat.units_per_carton   != null ? String(mat.units_per_carton)   : '',
       pallet_per_ea:        mat.pallet_per_ea      != null ? String(mat.pallet_per_ea)      : '',
@@ -361,7 +372,6 @@ export default function Materials() {
         custom_short_name:             form.custom_short_name.trim() || undefined,
         category:                      form.category || undefined,
         product_type:                  form.product_type.trim() || undefined,
-        unit:                          form.unit || undefined,
         cartons_per_pallet:            Number(form.cartons_per_pallet),
         units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
         pallet_per_ea:                 form.pallet_per_ea ? Number(form.pallet_per_ea) : undefined,
@@ -501,7 +511,7 @@ export default function Materials() {
       { id: 'short',   label: 'Tên rút gọn',  w: 160 },
       { id: 'desc',    label: 'Mô tả đầy đủ', w: 200 },
       { id: 'cat',     label: 'Loại',         w: 90 },
-      { id: 'unit',    label: 'ĐVT',          w: 60 },
+      { id: 'unit',    label: 'Đơn vị',       w: 74 },
       { id: 'pl',      label: 'PL',           w: 60, align: 'right' },
       { id: 'ea',      label: 'EA/T',         w: 64, align: 'right' },
       { id: 'kg',      label: 'KG',           w: 64, align: 'right' },
@@ -648,7 +658,11 @@ export default function Materials() {
                       {mat.material_description}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap"><CatBadge cat={mat.category} metaMap={whTypeMeta} /></TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px]">{mat.unit ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono">
+                      {mat.base_unit
+                        ? <>{mat.base_unit}{mat.entry_unit && <span className="text-slate-400">/{mat.entry_unit}</span>}</>
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
                       {mat.cartons_per_pallet ?? <span className="text-slate-300">—</span>}
                       {hasOverrides && <span className="text-[8px] text-blue-500 ml-0.5">*</span>}
@@ -789,7 +803,6 @@ export default function Materials() {
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Phân loại</p>
                   <div className="space-y-0">
                     <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
-                    <DRow label="ĐVT"        value={detailMat.unit} />
                   </div>
                 </div>
 
@@ -800,7 +813,10 @@ export default function Materials() {
                     <DRow label="Thùng/pallet (PL)" value={detailMat.cartons_per_pallet != null ? `${detailMat.cartons_per_pallet} thùng` : null} />
                     <DRow label="EA/thùng"           value={detailMat.units_per_carton  != null ? `${detailMat.units_per_carton} EA`     : null} />
                     <DRow label="Pallet/EA"          value={detailMat.pallet_per_ea     != null ? `${detailMat.pallet_per_ea}`          : null} />
-                    <DRow label="ĐV gốc / nhập liệu" value={detailMat.base_unit ? `${detailMat.base_unit}${detailMat.entry_unit ? ` / ${detailMat.entry_unit} (1 ${detailMat.entry_unit} = ${detailMat.units_per_carton ?? '?'} ${detailMat.base_unit})` : ''}` : null} />
+                    <DRow label="Base Unit"          value={detailMat.base_unit} />
+                    <DRow label="Entry Unit"         value={detailMat.entry_unit
+                      ? `${detailMat.entry_unit} (1 ${detailMat.entry_unit} = ${detailMat.units_per_carton ?? '?'} ${detailMat.base_unit ?? 'base'})`
+                      : <span className="text-slate-300">— (không có)</span>} />
                     <DRow label="Khối lượng"         value={detailMat.weight_kg         != null ? `${detailMat.weight_kg} kg`            : null} />
                     <DRow label="HSD"                value={detailMat.shelf_life_days   != null ? `${detailMat.shelf_life_days} ngày`     : null} />
                   </div>
@@ -967,21 +983,6 @@ export default function Materials() {
               <Input className="col-span-2 h-7 text-xs" value={form.product_type} onChange={e => setField('product_type', e.target.value)} placeholder="Vd: UHT, SCA, POSM (tùy chọn)" />
             </div>
 
-            {/* ĐVT */}
-            <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">ĐVT *</Label>
-              <Select value={form.unit || undefined} onValueChange={v => setField('unit', v)}>
-                <SelectTrigger className="col-span-2 h-7 text-xs">
-                  <SelectValue placeholder="Chọn ĐVT" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CAR" className="text-xs font-mono">CAR – Carton (thùng)</SelectItem>
-                  <SelectItem value="EA"  className="text-xs font-mono">EA – Each (cái)</SelectItem>
-                  <SelectItem value="KG"  className="text-xs font-mono">KG – Kilogram</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
             {/* Thùng/pallet mặc định */}
             <div className="grid grid-cols-3 items-center gap-2">
               <Label className="text-xs text-right">Thùng/pallet *</Label>
@@ -1020,20 +1021,53 @@ export default function Materials() {
               </div>
             </div>
 
-            {/* EA/thùng — kiêm hệ số 1 Entry = N Base (chiến dịch Base Unit) */}
+            {/* Base Unit — đơn vị GỐC lưu trữ/tính toán (bắt buộc). Danh mục: Cài đặt WMS → Đơn vị tính. */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">EA/thùng{form.entry_unit.trim() && ' *'}</Label>
-              <Input type="number" min={1} className="col-span-2 h-7 text-xs" value={form.units_per_carton} onChange={e => setField('units_per_carton', e.target.value)} placeholder="Số đơn vị/thùng (1 Entry = N Base)" />
-            </div>
-
-            {/* ĐVT base/entry — base = đơn vị GỐC lưu trữ/tính toán; entry = đơn vị nhập liệu (chỉ hiển thị) */}
-            <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">ĐV gốc / nhập liệu</Label>
-              <div className="col-span-2 flex items-center gap-1.5">
-                <Input className="h-7 text-xs" value={form.base_unit} onChange={e => setField('base_unit', e.target.value.toUpperCase())} placeholder="Base: HOP/BT/KG/EA…" />
-                <Input className="h-7 text-xs" value={form.entry_unit} onChange={e => setField('entry_unit', e.target.value.toUpperCase())} placeholder="Entry: CAR (trống = không)" />
+              <Label className="text-xs text-right">Base Unit *</Label>
+              <div className="col-span-2">
+                <SingleSelect
+                  options={withCurrent(baseUnitOpts, form.base_unit)}
+                  value={form.base_unit}
+                  onChange={v => setField('base_unit', v)}
+                  placeholder="Chọn Base Unit (HOP/BT/KG/EA…)"
+                  searchPlaceholder="Tìm đơn vị…"
+                  triggerClassName="h-7 w-full text-xs"
+                />
               </div>
             </div>
+
+            {/* Entry Unit — đơn vị nhập/thùng (tùy chọn). Phải KHÁC Base Unit. */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Entry Unit</Label>
+              <div className="col-span-2">
+                <SingleSelect
+                  options={[{ value: '', label: '— Không có (mã lẻ theo Base) —' }, ...withCurrent(entryUnitOpts, form.entry_unit)]}
+                  value={form.entry_unit}
+                  onChange={v => setField('entry_unit', v)}
+                  placeholder="— Không có —"
+                  searchPlaceholder="Tìm đơn vị…"
+                  triggerClassName="h-7 w-full text-xs"
+                />
+              </div>
+            </div>
+
+            {/* EA/thùng — hệ số 1 Entry = N Base (chỉ cần khi có Entry Unit) */}
+            {form.entry_unit.trim() && (
+              <div className="grid grid-cols-3 items-center gap-2">
+                <Label className="text-xs text-right">EA/thùng *</Label>
+                <Input type="number" min={1} className="col-span-2 h-7 text-xs" value={form.units_per_carton} onChange={e => setField('units_per_carton', e.target.value)} placeholder="Số Base trong 1 Entry" />
+              </div>
+            )}
+
+            {/* Dòng quy đổi — 1 Entry Unit = EA/thùng × Base Unit */}
+            {form.entry_unit.trim() && Number(form.units_per_carton) > 0 && form.base_unit.trim() && (
+              <div className="grid grid-cols-3 items-center gap-2">
+                <div />
+                <p className="col-span-2 text-[11px] text-slate-500">
+                  1 <b className="font-mono">{form.entry_unit.trim()}</b> = <b className="tabular-nums">{form.units_per_carton}</b> <b className="font-mono">{form.base_unit.trim()}</b>
+                </p>
+              </div>
+            )}
 
             {/* Pallet/EA — quy đổi tồn EA → pallet (bắt buộc theo cờ Loại kho) */}
             <div className="grid grid-cols-3 items-center gap-2">

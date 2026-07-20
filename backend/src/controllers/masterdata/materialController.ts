@@ -63,7 +63,7 @@ export async function createMaterial(req: Request, res: Response) {
   try {
     const {
       material_code, material_description, custom_short_name,
-      category, product_type, unit, manufacturer_id, notes, no_qr_tracking,
+      category, product_type, manufacturer_id, notes, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
@@ -75,6 +75,9 @@ export async function createMaterial(req: Request, res: Response) {
     // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
     if (entry_unit && !(Number(units_per_carton) > 0))
       return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
+    // Entry PHẢI KHÁC Base — nếu bằng nhau thì nhân EA/thùng sẽ sai (vd Base=HOP không được Entry=HOP)
+    if (entry_unit && base_unit && String(entry_unit).trim().toUpperCase() === String(base_unit).trim().toUpperCase())
+      return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
 
     const short_name = buildShortName(material_description, material_code, custom_short_name)
 
@@ -88,7 +91,6 @@ export async function createMaterial(req: Request, res: Response) {
         custom_short_name: custom_short_name ? String(custom_short_name).trim() : null,
         category: category ?? null,
         product_type: product_type ?? null,
-        unit: unit ?? null,
         weight_kg: weight_kg != null ? weight_kg : null,
         cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null,
         cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null,
@@ -130,7 +132,7 @@ export async function createMaterial(req: Request, res: Response) {
 export async function updateMaterial(req: Request, res: Response) {
   try {
     const {
-      material_description, custom_short_name, category, product_type, unit,
+      material_description, custom_short_name, category, product_type,
       manufacturer_id, notes, is_active, no_qr_tracking,
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
@@ -139,14 +141,17 @@ export async function updateMaterial(req: Request, res: Response) {
       base_unit, entry_unit,
     } = req.body
 
-    // Entry unit đòi hệ số 1 Entry = N Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch (gộp giá trị hiện tại)
-    if (entry_unit !== undefined || units_per_carton !== undefined) {
+    // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
+    if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
       const { data: cur } = await supabase.from('Material')
-        .select('entry_unit, units_per_carton').eq('id', req.params.id).maybeSingle()
-      const effEntry = entry_unit !== undefined ? (entry_unit ? String(entry_unit).trim() : null) : cur?.entry_unit ?? null
+        .select('entry_unit, units_per_carton, base_unit').eq('id', req.params.id).maybeSingle()
+      const effEntry = entry_unit !== undefined ? (entry_unit ? String(entry_unit).trim().toUpperCase() : null) : cur?.entry_unit ?? null
       const effUpc   = units_per_carton !== undefined ? (units_per_carton != null ? Number(units_per_carton) : null) : cur?.units_per_carton ?? null
+      const effBase  = base_unit !== undefined ? (base_unit ? String(base_unit).trim().toUpperCase() : null) : cur?.base_unit ?? null
       if (effEntry && !(Number(effUpc) > 0))
         return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô EA/thùng) phải > 0')
+      if (effEntry && effBase && effEntry === effBase)
+        return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
     }
 
     let short_name: string | undefined
@@ -167,7 +172,6 @@ export async function updateMaterial(req: Request, res: Response) {
     if (short_name !== undefined) patch.short_name = short_name
     if (category !== undefined) patch.category = category
     if (product_type !== undefined) patch.product_type = product_type
-    if (unit !== undefined) patch.unit = unit
     if (weight_kg !== undefined) patch.weight_kg = weight_kg
     if (cartons_per_pallet !== undefined) patch.cartons_per_pallet = cartons_per_pallet != null ? Number(cartons_per_pallet) : null
     if (cartons_per_pallet_mn !== undefined) patch.cartons_per_pallet_mn = cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null
@@ -239,6 +243,8 @@ export async function listCategories(_req: Request, res: Response) {
 // chỉ ô CÓ GIÁ TRỊ trong file (ô trống = giữ nguyên). short_name tự sinh khi đổi Tên hàng.
 // batch_prefix (ĐV2 tem `;`) THÊM Ở CUỐI để không xê dịch cột cũ. File ĐV1 KHÔNG có cột này (12 cột) →
 // r[12] undefined → giữ nguyên (không đụng). File ĐV2 thêm cột thứ 13 = mã tắt mã lô.
+// Cột index 3 ('unit' = ĐVT cũ) GIỮ LÀM FILLER VỊ TRÍ để file Excel cũ không lệch cột — KHÔNG còn persist
+// vào DB (cột Material.unit đã bỏ). Đơn vị mã hàng nay = base_unit + entry_unit (cuối mảng).
 const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
   'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix',
   'carton_length_mm', 'carton_width_mm', 'carton_height_mm',
@@ -273,12 +279,12 @@ export async function uploadExcel(req: Request, res: Response) {
     // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000
     type ExistingMat = {
       id: string; material_code: string; material_description: string | null; short_name: string | null
-      custom_short_name: string | null; category: string | null; product_type: string | null; unit: string | null
+      custom_short_name: string | null; category: string | null; product_type: string | null
       weight_kg: number | null; cartons_per_pallet: number | null; units_per_carton: number | null
       pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, unit, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -299,7 +305,6 @@ export async function uploadExcel(req: Request, res: Response) {
       const customShort  = mStr(row.custom_short_name)
       const category     = mStr(row.category)
       const product_type = mStr(row.product_type)
-      const unit         = mStr(row.unit)
       const weight_kg    = mNum(row.weight_kg)
       const cpp          = mInt(row.cartons_per_pallet)
       const upc          = mInt(row.units_per_carton)
@@ -323,7 +328,6 @@ export async function uploadExcel(req: Request, res: Response) {
         if (customShort  != null) base.custom_short_name = customShort
         if (category     != null) base.category = category
         if (product_type != null) base.product_type = product_type
-        if (unit         != null) base.unit = unit
         if (weight_kg    != null) base.weight_kg = weight_kg
         if (cpp          != null) base.cartons_per_pallet = cpp
         if (upc          != null) base.units_per_carton = upc
@@ -352,7 +356,7 @@ export async function uploadExcel(req: Request, res: Response) {
           id: dbRow!.id, material_code,
           material_description: dbRow!.material_description, short_name: dbRow!.short_name,
           custom_short_name: dbRow!.custom_short_name, category: dbRow!.category, product_type: dbRow!.product_type,
-          unit: dbRow!.unit, weight_kg: dbRow!.weight_kg, cartons_per_pallet: dbRow!.cartons_per_pallet,
+          weight_kg: dbRow!.weight_kg, cartons_per_pallet: dbRow!.cartons_per_pallet,
           units_per_carton: dbRow!.units_per_carton, pallet_per_ea: dbRow!.pallet_per_ea,
           shelf_life_days: dbRow!.shelf_life_days, notes: dbRow!.notes,
         }
@@ -363,7 +367,7 @@ export async function uploadExcel(req: Request, res: Response) {
         if (!description) { errors.push(`${material_code} — thiếu Tên hàng (mã mới)`); continue }
         insertByCode.set(material_code, {
           id: randomUUID(), material_code, material_description: description, short_name: shortOf(description),
-          custom_short_name: customShort, category, product_type, unit, weight_kg,
+          custom_short_name: customShort, category, product_type, weight_kg,
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
           shelf_life_days: sld, notes, batch_prefix: batchPrefix,
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,

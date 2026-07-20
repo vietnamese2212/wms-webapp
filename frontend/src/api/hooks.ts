@@ -765,6 +765,51 @@ export function useReorderWarehouseTypes() {
   })
 }
 
+// ─── Đơn vị tính (unit_of_measure) — danh mục Base/Entry Unit (tab Cài đặt WMS) ──
+export type UnitRole = 'base' | 'entry' | 'both'
+export type UnitRow = { id: string; value: string; sort_order: number; meta?: { role?: UnitRole; label?: string } | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+
+export function useUnits() {
+  return useQuery({
+    queryKey: ['lookup', 'unit_of_measure'],
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/lookup', { params: { type: 'unit_of_measure' } })
+      return data.data as UnitRow[]
+    },
+  })
+}
+export function useAddUnit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { value: string; meta?: { role: UnitRole; label?: string } }) =>
+      apiClient.post('/wms/lookup-unit', input).then(r => r.data.data as UnitRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
+  })
+}
+export function useUpdateUnit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, value, meta }: { id: string; value: string; meta?: { role: UnitRole; label?: string } }) =>
+      apiClient.put(`/wms/lookup-unit/${id}`, { value, meta }).then(r => r.data.data as UnitRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
+  })
+}
+export function useDeleteUnit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/lookup-unit/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
+  })
+}
+export function useReorderUnits() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) => apiClient.put('/wms/lookup-unit/reorder', { ids }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
+  })
+}
+
 export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; max_pallets?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {

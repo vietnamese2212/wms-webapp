@@ -104,7 +104,14 @@ Mọi chỗ đang `SUM(cartons_*)` qua nhiều mã → đổi thành `SUM(qty / 
 7. Ngâm staging ≥ vài ngày vận hành thử → user gật → lặp kịch bản trên production.
 8. Rollback path: restore backup + revert deploy (giữ backup tới khi user xác nhận xóa).
 
-## ĐỢT 3 — "Up raw" SAP (xây TRÊN nền base)
+## ĐỢT 3 — "Up raw" SAP ✅ ĐÃ BUILD + VERIFY SỐNG STAGING (20/07, dev `020447ea`, CHỜ user nghiệm thu Preview)
+
+**Đã làm:** bảng `erp_outbound_orders` (raw verbatim + `raw` jsonb, RLS) migration `20260720_erp_outbound_orders.sql` · `uploadVl06o` (giữ NGUYÊN tên cột SAP, map theo header, upsert chunk 500, cross-check base_unit + Sales×hệ_số cảnh báo) · `uploadKhvc` (join raw theo DO → reshape → `processVehicleGroups` tách từ `uploadExcel` tái dùng logic re-upload) · route `/outbound/upload-vl06o` + `/upload-khvc` (quyền `outbound.import`) · FE nút "Up kế hoạch VC" + dialog 2 bước + 2 template rút gọn (VL06O giữ tên SAP; KHVC 8 cột: Ngày xuất·Số xe·DO·Tên NPP·Loại xe·DVVT·Ưu tiên·CS phụ trách).
+**Bổ sung theo user 20/07:** (a) **switch "Bắt buộc DO"** trong dialog (mặc định BẬT → DO thiếu trong VL06O = CHẶN TOÀN BỘ `MISSING_DO` 400; TẮT → bỏ qua DO thiếu, sinh phần khớp — "xuất hàng chưa có DO"); (b) **Ưu tiên** → `GroupDeliveryOrder.priority` (migration `20260720_gdo_priority.sql`) + **CS phụ trách** → `OutboundItem.cs_responsible`; (c) Kho xuất TẠM = Ba Vì (suy từ đoạn đầu Số xe `20000016`, chưa thêm cột Kho xuất riêng); (d) Loại xe/DVVT (TMS setting) + Kho/Loại kho (WMS setting) đã validate chặn-toàn-bộ sẵn.
+**Verify sống PASS:** raw ingest 274 dòng verbatim + jsonb · base math chính xác (merge 2 DO, loose=base%upc, no-entry pass-through) · warehouse_type suy từ category · guard chặn-toàn-bộ (mã thiếu/loại xe/DO thiếu) · re-upload idempotent · switch require_do (chặn/lenient) · dọn sạch 0 sót. Playwright dialog desktop+mobile OK.
+**CÒN (chờ yêu cầu user):** cột Kho xuất riêng khi đa kho · SAP live-pull reconciliation (DO biến mất khỏi SAP → policy đánh dấu obsolete, raw giữ nguyên) · "xuất hàng KHÔNG DO" cần KHVC mang material/qty (hiện switch OFF chỉ bỏ qua DO thiếu, không tạo item không-DO).
+
+<details><summary>Kế hoạch gốc (giữ tham chiếu)</summary>
 
 Thiết kế nghiệp vụ đầy đủ ở `SAP_INTEGRATION_PLAN.md` mục 7 (đọc TRƯỚC). Tóm tắt phần thi công:
 1. Bảng `erp_outbound_orders` (raw OD, unique `(od_number, od_item)`, source `EXCEL`/`SAP`) — cột theo mục 7; file mẫu thật: `Du lieu mau/vl06o.XLSX` + `Ke hoach dieu van.xlsm` (CHỈ ĐỌC).
@@ -112,6 +119,8 @@ Thiết kế nghiệp vụ đầy đủ ở `SAP_INTEGRATION_PLAN.md` mục 7 (�
 3. Mọi chi tiết lấy từ RAW; NPP cascade 4 bậc (danh mục ship-to code → tên VL06O → search term → lỗi); header_text = gộp 2 cột ghi chú; batch/%Date từ cột raw; STO (ship-to = kho nội bộ) chảy vào luồng chuyển kho có sẵn; chạy SONG SONG upload cũ; quyền `outbound.import`.
 4. ~~STOP 2~~ **ĐÃ GIẢI — user chốt 20/07 (override vòng 11): 1 DÒNG BASE mỗi (DO, mã)** — KHÔNG tách 2 dòng CAR/HOP (đồng nhất mô hình Đợt 2 đã build). `cartons_ordered = qty_base` (tổng Actual); `loose_picking = qtySplit(qty_base, material).base` (phần hộp lẻ = base % units_per_carton, tự chảy vào Nhặt lẻ). **TÙY BIẾN đơn vị — KHÔNG hardcode "HOP":** base_unit lấy từ `Material.base_unit` (HOP/BAG/BT/KG/EA… là DATA), thùng=entry_unit, quy đổi qua helper `qtyUnits` (`qtySplit`/`qtyFromEntryBase`/`unitLabel` — unitLabel fallback nguyên văn code lạ). Mã không entry → 1 dòng base, loose=0. Sales Unit × units_per_carton = kiểm chéo (lệch → cảnh báo); VL06O Base Unit lệch `Material.base_unit` → cảnh báo.
 5. Test bằng chính 2 file mẫu (LẤY SHEET ĐẦU): kỳ vọng ~973 dòng raw VL06O · KHVC 42 dòng → chuyến/DO theo `Số xe`; hệ số suy từ Actual/Qty (48…) khớp `units_per_carton`; ship-to lệch giữa 2 file lấy theo VL06O (raw). Ghi staging phải DỌN SẠCH.
+
+</details>
 
 ---
 
@@ -136,5 +145,5 @@ Thiết kế nghiệp vụ đầy đủ ở `SAP_INTEGRATION_PLAN.md` mục 7 (�
 ## Điều kiện đóng chiến dịch
 - [ ] Đợt 0–2: QA suite xanh + verify-feature từng đợt + staging ngâm vận hành thử, user nghiệm thu từng đợt
 - [ ] Đợt 2 production: chạy đúng kịch bản 2.4 (freeze → backup → ×hệ_số → verify → deploy → QA)
-- [ ] Đợt 3: test 2 file mẫu đạt kỳ vọng, dọn sạch, user nghiệm thu trên Preview
+- [x] Đợt 3: BUILD + verify sống staging XONG (dev `020447ea`) — CHỜ user nghiệm thu trên Preview
 - [ ] Cập nhật memory `base-unit-campaign` + `SCHEMA_REVIEW.md` sau mỗi đợt

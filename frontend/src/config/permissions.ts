@@ -291,6 +291,16 @@ export const MODULES = {
       delete: 'Xóa dòng (lẻ + hàng loạt)',
     },
   },
+  external_khvc: {
+    page: 'Dữ liệu bên ngoài',
+    tab:  'Kế hoạch xuất',
+    actions: {
+      view:   'Xem danh sách',
+      create: 'Thêm dòng (tay)',
+      edit:   'Sửa dòng',
+      delete: 'Xóa dòng (lẻ + hàng loạt)',
+    },
+  },
   work_assignment: {
     page: 'Phân công lịch làm việc',
     actions: {

@@ -1881,7 +1881,9 @@ function mergeNppRows(rows: Record<string, any>[]): Record<string, any>[] {
   for (const row of rows) {
     const code = String(row['Material'] ?? '').trim()
     const cur = byMat.get(code)
-    if (!cur) { byMat.set(code, { ...row }); continue }
+    // clone __od_refs sang mảng MỚI để lần gộp sau không mutate mảng của dòng gốc (share-ref)
+    if (!cur) { byMat.set(code, { ...row, __od_refs: [...(Array.isArray(row['__od_refs']) ? row['__od_refs'] : [])] }); continue }
+    cur['__od_refs'] = [...(cur['__od_refs'] ?? []), ...(Array.isArray(row['__od_refs']) ? row['__od_refs'] : [])]
     for (const f of ['Thùng', 'Hộp', 'Tải', 'Nhặt lẻ']) cur[f] = parseDecimal(cur[f]) + parseDecimal(row[f])
     cur['Pallet'] = parseDecimal(String(cur['Pallet'] ?? '').replace(',', '.')) + parseDecimal(String(row['Pallet'] ?? '').replace(',', '.'))
     const pd = Math.max(parseDecimal(cur['%Date_Yêu cầu']), parseDecimal(row['%Date_Yêu cầu']))
@@ -2027,6 +2029,7 @@ async function mergePausedGDO(
         batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
         date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
         cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
+        od_refs:        Array.isArray(row['__od_refs']) ? row['__od_refs'] : [],   // recompute liên kết OD khi up lại (KHVC); file gộp trực tiếp → []
         updated_at: t,
       }
 
@@ -2360,6 +2363,7 @@ async function processVehicleGroups(
               batch_required: String(row['Batch_Yêu cầu'] ?? '').trim() || null,
               date_required:  parseDecimal(row['%Date_Yêu cầu']) || null,
               cs_responsible: String(row['CS phụ trách']  ?? '').trim() || null,
+              od_refs:        Array.isArray(row['__od_refs']) ? row['__od_refs'] : [],   // liên kết ngược dòng OD (KHVC); file gộp trực tiếp → []
               cartons_scanned: 0,
               status: 'PENDING',
               updated_at: now(),
@@ -2472,6 +2476,11 @@ export async function uploadVl06o(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File VL06O trống hoặc không đúng định dạng', 400)
 
+    // Guard HEADER (U5): phân biệt CỘT thiếu (chặn, báo rõ) vs Ô rỗng (bỏ dòng đó). sheet_to_json giữ mọi cột có trong sheet làm key.
+    const headerKeys = new Set(Object.keys(rows[0] ?? {}))
+    const missingCols = ['Delivery', 'Item'].filter(c => !headerKeys.has(c))
+    if (missingCols.length) return fail(res, `File thiếu cột bắt buộc: ${missingCols.join(', ')} — kiểm tra đúng file VL06O (sheet đầu tiên)`, 400)
+
     // Materials để CHẶN đơn vị lệch (base/sales unit) + cross-check số lượng (cảnh báo)
     const mats = await fetchAllRowsParallel(() => supabase.from('Material')
       .select('material_code, base_unit, entry_unit, units_per_carton, short_name')) as { material_code: string; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; short_name: string | null }[]
@@ -2524,7 +2533,7 @@ export async function uploadVl06o(req: Request, res: Response) {
       }
 
       records.push({
-        id: randomUUID(), od_number: od, od_item: item,
+        od_number: od, od_item: item,      // id gán ở bước classify (giữ id cũ nếu UPDATE — chống churn PK)
         material_code: mc, material_name: cellStr(r['Item Description']),
         qty_sales: qtySales, sales_unit: cellStr(r['Sales Unit']),
         qty_base: qtyBase, base_unit: baseUnit,
@@ -2534,7 +2543,7 @@ export async function uploadVl06o(req: Request, res: Response) {
         date_req: cellNum(r['Date (Ngày)']), pct_date_req: cellNum(r['Date (%)']),
         note_delivery: cellStr(r['Ghi chú giao hàng']), note_invoice: cellStr(r['Ghi chú hoá đơn']),
         shipping_point: cellStr(r['Shipping Point/Receiving Pt']), license_plate: cellStr(r['Biển số xe']),
-        source: 'EXCEL', raw: r, uploaded_by: actor, updated_at: t,
+        source: 'EXCEL', raw: r, uploaded_by: actor, sync_status: 'ACTIVE', last_synced_at: t, updated_at: t,
       })
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
@@ -2548,16 +2557,47 @@ export async function uploadVl06o(req: Request, res: Response) {
       })
     }
 
-    // Upsert theo (od_number, od_item) — chunk 500 (KHÔNG ghi tuần tự)
+    // ── Nạp CÓ SO SÁNH (ingest-with-comparison) — thay "upsert mù" ──
+    // (1) Vá churn PK: pre-fetch (od,item)→id, GIỮ id cũ khi UPDATE, randomUUID CHỈ khi INSERT.
+    // (2) Idempotent: dòng y hệt (hash cột nghiệp vụ đã chuẩn hóa) = NO-OP → không ghi, không đổi id/updated_at.
+    // (3) KHÔNG auto-OBSOLETE (v2.3): dòng vắng khỏi file để NGUYÊN — up tay chỉ cộng thêm/sửa.
+    const BIZ = ['material_code', 'material_name', 'qty_sales', 'sales_unit', 'qty_base', 'base_unit',
+      'ship_to_code', 'ship_to_name', 'plant', 'storage_location', 'batch', 'batch_so',
+      'date_req', 'pct_date_req', 'note_delivery', 'note_invoice', 'shipping_point', 'license_plate'] as const
+    const NUMF = new Set(['qty_sales', 'qty_base', 'date_req', 'pct_date_req'])
+    const bizHash = (r: Record<string, unknown>) => JSON.stringify(BIZ.map(f => {
+      const v = r[f]
+      if (v == null || v === '') return null
+      return NUMF.has(f) ? Number(v) : String(v)
+    }))
+
+    const odNumbers = [...new Set(records.map(r => String(r.od_number)))]
+    const priorRows = await fetchAllByIdChunks(odNumbers, chunk => supabase.from('erp_outbound_orders')
+      .select('id, od_number, od_item, ' + BIZ.join(', '))
+      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string })[]
+    const priorByKey = new Map<string, { id: string; hash: string }>()
+    for (const p of (priorRows ?? [])) priorByKey.set(`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p) })
+
+    let inserted = 0, updated = 0, noop = 0
+    const toWrite: Record<string, unknown>[] = []
+    for (const rec of records) {
+      const key = `${rec.od_number}__${rec.od_item}`
+      const prior = priorByKey.get(key)
+      if (!prior) { toWrite.push({ id: randomUUID(), ...rec }); inserted++; continue }
+      if (prior.hash === bizHash(rec)) { noop++; continue }   // NO-OP: giữ id/created_at/updated_at cũ (không ghi)
+      toWrite.push({ id: prior.id, ...rec }); updated++        // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload)
+    }
+
+    // Upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 (KHÔNG ghi tuần tự)
     const CHUNK = 500
-    for (let i = 0; i < records.length; i += CHUNK) {
+    for (let i = 0; i < toWrite.length; i += CHUNK) {
       const { error } = await supabase.from('erp_outbound_orders')
-        .upsert(records.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
+        .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
       if (error) throw new Error(error.message)
     }
     const deliveries = new Set(records.map(r => r.od_number)).size
     return ok(res, {
-      rows: records.length, deliveries, skipped_no_key: skippedNoKey,
+      rows: records.length, inserted, updated, noop, deliveries, skipped_no_key: skippedNoKey,
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
   } catch (e) { return fail(res, String(e)) }
@@ -2573,7 +2613,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string }
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; raw: Record<string, any> }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     for (const r of rows) {
@@ -2590,9 +2630,32 @@ export async function uploadKhvc(req: Request, res: Response) {
         priority: String(r['Ưu tiên'] ?? r['Uu tien'] ?? '').trim(),
         cs: String(r['CS phụ trách'] ?? r['CS phu trach'] ?? '').trim(),
         note: String(r['Note'] ?? r['Ghi chú'] ?? '').trim(),
+        raw: r,
       })
     }
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
+
+    // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
+    // Churn-safe: pre-fetch (group_code, do_no)→id, GIỮ id cũ khi up lại (không đổi PK). Upsert chunk 500.
+    const khActor = req.user?.name || null
+    const khGcs = [...new Set(khvcRows.map(k => k.group_code))]
+    const priorKh = await fetchAllByIdChunks(khGcs, chunk => supabase.from('khvc_lines')
+      .select('id, group_code, do_no').in('group_code', chunk).order('id')) as { id: string; group_code: string; do_no: string }[]
+    const khIdByKey = new Map((priorKh ?? []).map(k => [`${k.group_code}__${k.do_no}`, k.id]))
+    const khNow = now()
+    const khvcRecords = khvcRows.map(k => ({
+      id: khIdByKey.get(`${k.group_code}__${k.do_no}`) ?? randomUUID(),
+      group_code: k.group_code, do_no: k.do_no,
+      warehouse_code: k.group_code.split('_')[0] || null,
+      npp: k.npp || null, veh_type: k.veh_type || null, dvvt: k.dvvt || null,
+      priority: k.priority || null, cs: k.cs || null, note: k.note || null,
+      export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
+      raw: k.raw, uploaded_by: khActor, updated_at: khNow,
+    }))
+    for (let i = 0; i < khvcRecords.length; i += 500) {
+      const { error } = await supabase.from('khvc_lines').upsert(khvcRecords.slice(i, i + 500), { onConflict: 'group_code,do_no' })
+      if (error) throw new Error(error.message)
+    }
 
     // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
     const raws = await fetchAllByIdChunks([...allDos], chunk => supabase.from('erp_outbound_orders')
@@ -2641,6 +2704,8 @@ export async function uploadKhvc(req: Request, res: Response) {
           'HEADER TEXT': header,
           'Batch_Yêu cầu': ln.batch ?? '',
           '%Date_Yêu cầu': ln.pct_date_req ?? '',
+          // Liên kết ngược dòng OD (Đợt 1): mỗi dòng raw = 1 od_ref; mergeNppRows gộp thành mảng cho od_refs của item
+          __od_refs: [{ od_number: k.do_no, od_item: ln.od_item, qty_base: qtyBase }],
         })
       }
       byVehicle.set(k.group_code, list)

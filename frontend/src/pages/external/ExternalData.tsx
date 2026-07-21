@@ -18,17 +18,39 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useDeleteDoSap, useBulkDeleteDoSap,
-  type DoSapRow,
+  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useDeleteKhvc, useBulkDeleteKhvc,
+  type DoSapRow, type KhvcRow,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
-import { can, type ModulePermissions } from '@/config/permissions'
-import { formatTimestampDate } from '@/utils/formatters'
+import { can, type ModulePermissions, type ModuleKey } from '@/config/permissions'
+import { formatTimestampDate, formatDate } from '@/utils/formatters'
 
-// ─── Tabs (chỉ 1 tab hiện tại, cấu trúc mở rộng về sau) ───────────────────────
-type TabKey = 'dosap'
-const TABS: { key: TabKey; label: string }[] = [{ key: 'dosap', label: 'DO SAP' }]
+// ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
+type TabKey = 'dosap' | 'khvc'
+const TABS: { key: TabKey; label: string; module: ModuleKey }[] = [
+  { key: 'dosap', label: 'DO SAP', module: 'external_do_sap' },
+  { key: 'khvc',  label: 'Kế hoạch xuất', module: 'external_khvc' },
+]
+
+function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => void; perms: ModulePermissions | null }) {
+  const visible = TABS.filter(t => can(perms, t.module, 'view'))
+  return (
+    <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
+      <div className="flex items-center gap-1">
+        {visible.map(t => (
+          <button key={t.key} type="button" onClick={() => setTab(t.key)}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${
+              tab === t.key ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // ─── Cột bảng ─────────────────────────────────────────────────────────────────
 const COLS: { id: string; label: string; align?: 'right' }[] = [
@@ -79,14 +101,23 @@ function apiError(err: unknown, fallback: string) {
 
 const PAGE_SIZES = [50, 100, 200]
 
+// ─── Shell: chọn tab theo quyền, render tab tương ứng ─────────────────────────
 export default function ExternalData() {
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canDoSap = can(perms, 'external_do_sap', 'view')
+  const [tab, setTab] = useState<TabKey>(canDoSap ? 'dosap' : 'khvc')
+  const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
+  return tab === 'khvc' ? <KhvcTab tabBar={tabBar} /> : <DoSapTab tabBar={tabBar} />
+}
+
+// ─── Tab DO SAP (raw erp_outbound_orders) ─────────────────────────────────────
+function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canCreate = can(perms, 'external_do_sap', 'create')
   const canEdit   = can(perms, 'external_do_sap', 'edit')
   const canDelete = can(perms, 'external_do_sap', 'delete')
-
-  const [tab] = useState<TabKey>('dosap')
 
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
   const { doSap: f, setDoSap } = useWmsFilterStore()
@@ -234,19 +265,7 @@ export default function ExternalData() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
 
-      {/* Tab bar */}
-      <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
-        <div className="flex items-center gap-1">
-          {TABS.map(t => (
-            <button key={t.key} type="button"
-              className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${
-                tab === t.key ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {tabBar}
 
       {/* Toolbar (hàng 1) */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
@@ -566,6 +585,359 @@ function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void
           <Fld label="Ghi chú hóa đơn"><Input className="h-9" value={f.note_invoice} onChange={e => set('note_invoice')(e.target.value)} /></Fld>
           <Fld label="Shipping point"><Input className="h-9" value={f.shipping_point} onChange={e => set('shipping_point')(e.target.value)} /></Fld>
           <Fld label="Biển số"><Input className="h-9" value={f.license_plate} onChange={e => set('license_plate')(e.target.value)} /></Fld>
+        </Section>
+      </div>
+    </FormSheet>
+  )
+}
+
+// ─── Tab Kế hoạch xuất (raw khvc_lines) ───────────────────────────────────────
+const KH_COLS: { id: string; label: string }[] = [
+  { id: 'sel',       label: '' },
+  { id: 'group',     label: 'Số xe' },
+  { id: 'do_no',     label: 'DO' },
+  { id: 'warehouse', label: 'Kho' },
+  { id: 'npp',       label: 'NPP' },
+  { id: 'veh_type',  label: 'Loại xe' },
+  { id: 'dvvt',      label: 'ĐVVT' },
+  { id: 'priority',  label: 'Ưu tiên' },
+  { id: 'cs',        label: 'CS' },
+  { id: 'export',    label: 'Ngày xuất' },
+  { id: 'do_ready',  label: 'DO sẵn sàng' },
+  { id: 'status',    label: 'Chuyến' },
+  { id: 'source',    label: 'Nguồn' },
+  { id: 'updated',   label: 'Cập nhật' },
+  { id: 'action',    label: '' },
+]
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110, 60]
+
+function TripBadge({ materialized, gdoStatus }: { materialized?: boolean; gdoStatus?: string | null }) {
+  if (!materialized) return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500">Chưa sinh</span>
+  const st = (gdoStatus ?? '').toUpperCase()
+  const cls = st === 'COMPLETED' ? 'bg-green-100 text-green-700'
+    : st === 'IN_PROGRESS' ? 'bg-amber-100 text-amber-700'
+    : st === 'PAUSED' ? 'bg-red-100 text-red-700'
+    : 'bg-sky-100 text-sky-700'
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={gdoStatus ?? undefined}>Đã sinh</span>
+}
+
+function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canCreate = can(perms, 'external_khvc', 'create')
+  const canEdit   = can(perms, 'external_khvc', 'edit')
+  const canDelete = can(perms, 'external_khvc', 'delete')
+
+  const { khvc: f, setKhvc } = useWmsFilterStore()
+  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, page, pageSize } = f
+
+  const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
+  const [selected, setSelected]   = useState<Set<string>>(new Set())
+  const [formRow, setFormRow]     = useState<KhvcRow | 'new' | null>(null)
+  const [deleteRow, setDeleteRow] = useState<KhvcRow | null>(null)
+  const [bulkOpen, setBulkOpen]   = useState(false)
+
+  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths', KH_COL_DEFAULTS)
+  const { data: facets } = useKhvcFacets()
+  const hasDate = !!(dateFrom || dateTo)
+
+  const params = useMemo(() => ({
+    q:              search.trim() || undefined,
+    date_from:      dateFrom || undefined,
+    date_to:        dateTo || undefined,
+    warehouse_code: fWh || undefined,
+    veh_type:       fVeh || undefined,
+    source:         fSource || undefined,
+    group_code:     fGroup.trim() || undefined,
+    do_no:          fDo.trim() || undefined,
+    page,
+    page_size:      pageSize,
+  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, page, pageSize])
+
+  const { data, isLoading, isError, error } = useKhvcLines(params, hasDate)
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, pageSize })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
+
+  const bulkDelete = useBulkDeleteKhvc()
+  const deleteOne  = useDeleteKhvc()
+
+  const filterDefs: FilterDef[] = [
+    { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (from, to) => setKhvc({ dateFrom: from, dateTo: to }) },
+    { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho', value: fWh,
+      options: (facets?.warehouses ?? []).map(w => ({ value: w, label: w })), onChange: v => setKhvc({ warehouse: v }) },
+    { key: 'vehType', label: 'Loại xe', type: 'single', allLabel: 'Tất cả loại xe', value: fVeh,
+      options: (facets?.veh_types ?? []).map(v => ({ value: v, label: v })), onChange: v => setKhvc({ vehType: v }) },
+    { key: 'source', label: 'Nguồn', type: 'single', allLabel: 'Tất cả nguồn', value: fSource,
+      options: (facets?.sources ?? []).map(s => ({ value: s, label: s })), onChange: v => setKhvc({ source: v }) },
+    { key: 'group', label: 'Số xe', type: 'text', value: fGroup, placeholder: 'Nhập Số xe…', onChange: v => setKhvc({ group: v }) },
+    { key: 'doNo', label: 'DO', type: 'text', value: fDo, placeholder: 'Nhập số DO…', onChange: v => setKhvc({ doNo: v }) },
+  ]
+
+  const pageIds = items.map(i => i.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id))
+  function toggleAllPage() {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (allPageSelected) pageIds.forEach(id => next.delete(id)); else pageIds.forEach(id => next.add(id))
+      return next
+    })
+  }
+  function toggleOne(id: string) {
+    setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  }
+  function doBulkDelete() { bulkDelete.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setBulkOpen(false) } }) }
+  function doDeleteOne() {
+    if (!deleteRow) return
+    const id = deleteRow.id
+    deleteOne.mutate(id, { onSuccess: () => { setSelected(prev => { const n = new Set(prev); n.delete(id); return n }); setDeleteRow(null) } })
+  }
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+
+      {tabBar}
+
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
+            <Database className="h-4 w-4 text-slate-500" /> Dữ liệu bên ngoài
+          </span>
+          <SearchInput value={search} onChange={v => setKhvc({ search: v })}
+            placeholder="Tìm Số xe, DO, NPP…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <button type="button" onClick={() => { localStorage.setItem('khvc_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+          {canCreate && (
+            <Button size="sm" className="h-9 sm:h-7 bg-blue-600 hover:bg-blue-700 shrink-0" onClick={() => setFormRow('new')}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
+            </Button>
+          )}
+        </div>
+        <FilterBar defs={filterDefs} />
+      </div>
+
+      <SummaryBand tiles={[
+        { label: 'Tổng dòng', value: total.toLocaleString('vi-VN') },
+        { label: 'Đang chọn', value: selected.size, accent: selected.size > 0 },
+        { label: 'Trang', value: `${page}/${totalPages}` },
+      ]} />
+
+      {selected.size > 0 && (
+        <div className="shrink-0 flex items-center gap-2 bg-sky-50 border-b border-sky-200 px-3 py-1.5 text-xs">
+          <span className="font-semibold text-sky-800">Đã chọn {selected.size}</span>
+          {canDelete && (
+            <button type="button" onClick={() => setBulkOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+              <Trash2 className="h-3.5 w-3.5" /> Xóa {selected.size} dòng
+            </button>
+          )}
+          <button type="button" onClick={() => setSelected(new Set())}
+            className="ml-auto inline-flex items-center gap-1 text-slate-500 hover:text-slate-700">
+            <X className="h-3.5 w-3.5" /> Bỏ chọn
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {!hasDate ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
+            <Database className="h-10 w-10 opacity-30" />
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
+            <p className="text-xs">Kế hoạch xuất chỉ hiển thị sau khi chọn ngày (tránh tải toàn bộ bảng).</p>
+          </div>
+        ) : isLoading ? (
+          <TableSkeleton cols={12} rows={12} />
+        ) : isError ? (
+          <div className="p-6 text-center text-sm text-red-500">{apiError(error, 'Lỗi tải dữ liệu Kế hoạch xuất. Vui lòng thử lại.')}</div>
+        ) : items.length === 0 ? (
+          <EmptyState title="Chưa có dữ liệu Kế hoạch xuất" />
+        ) : (
+          <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+            <TableHeader>
+              <TableRow>
+                {KH_COLS.map((c, i) => (
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.id === 'sel' ? (
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle"
+                        checked={allPageSelected} onChange={toggleAllPage} title="Chọn tất cả trang này" />
+                    ) : c.label}
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map(r => {
+                const isSel = selected.has(r.id)
+                const cellPad = dense ? 'py-1' : 'py-2.5'
+                return (
+                  <TableRow key={r.id} className={isSel ? 'bg-sky-50' : ''}>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap sticky left-0 z-10 ${isSel ? 'bg-sky-50' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle" checked={isSel} onChange={() => toggleOne(r.id)} />
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap`}>{r.group_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.do_no || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.warehouse_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.npp ?? undefined}>{r.npp || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.cs || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.export_date ? formatDate(r.export_date) : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
+                      {r.do_ready
+                        ? <span className="text-green-500">✓</span>
+                        : <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700" title="DO chưa có trong VL06O (raw) — up VL06O trước">DO chưa có</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><TripBadge materialized={r.materialized} gdoStatus={r.gdo_status} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><SourceBadge source={r.source} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      <div className="leading-tight">
+                        <div className="text-[10px] text-slate-600">{r.uploaded_by ?? <span className="text-slate-300">—</span>}</div>
+                        <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`} onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center gap-0.5">
+                        {canEdit && (
+                          <button type="button" className="p-1 rounded text-sky-500 hover:text-sky-700 hover:bg-sky-50 !min-h-0 !min-w-0"
+                            title="Sửa dòng" onClick={() => setFormRow(r)}><Pencil className="h-3.5 w-3.5" /></button>
+                        )}
+                        {canDelete && (
+                          <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                            title="Xóa dòng" onClick={() => setDeleteRow(r)}><Trash2 className="h-3.5 w-3.5" /></button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
+        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
+        <label className="flex items-center gap-1 ml-2">
+          <span className="hidden sm:inline">Mỗi trang</span>
+          <select value={pageSize} onChange={e => setKhvc({ pageSize: Number(e.target.value) })}
+            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
+            {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+        <div className="ml-auto flex items-center gap-1">
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setKhvc({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
+          <span>{page}/{totalPages}</span>
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setKhvc({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
+        </div>
+      </div>
+     </div>
+
+      {formRow && <KhvcForm row={formRow === 'new' ? null : formRow} onClose={() => setFormRow(null)} />}
+
+      <Dialog open={!!deleteRow} onOpenChange={o => { if (!o) setDeleteRow(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle className="text-sm">Xóa dòng Kế hoạch xuất?</DialogTitle></DialogHeader>
+          <p className="text-xs text-slate-500">
+            Xóa dòng Số xe <span className="font-mono font-semibold">{deleteRow?.group_code}</span> / DO <span className="font-mono">{deleteRow?.do_no}</span>. Thao tác không thể hoàn tác.
+          </p>
+          {deleteOne.isError && <p className="text-xs text-red-500">{apiError(deleteOne.error, 'Không xóa được dòng.')}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteRow(null)} disabled={deleteOne.isPending}>Huỷ</Button>
+            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doDeleteOne} disabled={deleteOne.isPending}>
+              {deleteOne.isPending ? 'Đang xóa…' : 'Xóa'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle className="text-sm">Xóa {selected.size} dòng đã chọn?</DialogTitle></DialogHeader>
+          <p className="text-xs text-slate-500">Xóa {selected.size} dòng Kế hoạch xuất đã chọn. Thao tác không thể hoàn tác.</p>
+          {bulkDelete.isError && <p className="text-xs text-red-500">{apiError(bulkDelete.error, 'Không xóa được các dòng đã chọn.')}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkDelete.isPending}>Huỷ</Button>
+            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending}>
+              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${selected.size} dòng`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+interface KhvcFormState {
+  group_code: string; do_no: string; warehouse_code: string; npp: string; veh_type: string
+  dvvt: string; priority: string; cs: string; note: string; export_date: string; source: string
+}
+function KhvcForm({ row, onClose }: { row: KhvcRow | null; onClose: () => void }) {
+  const isEdit = !!row
+  const create = useCreateKhvc()
+  const update = useUpdateKhvc()
+  const [errMsg, setErrMsg] = useState('')
+
+  const [f, setF] = useState<KhvcFormState>(() => ({
+    group_code: s(row?.group_code), do_no: s(row?.do_no), warehouse_code: s(row?.warehouse_code),
+    npp: s(row?.npp), veh_type: s(row?.veh_type), dvvt: s(row?.dvvt), priority: s(row?.priority),
+    cs: s(row?.cs), note: s(row?.note), export_date: s(row?.export_date), source: row ? s(row.source) : 'MANUAL',
+  }))
+  const set = (k: keyof KhvcFormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }))
+  const saving = create.isPending || update.isPending
+
+  function save() {
+    setErrMsg('')
+    if (!isEdit && (f.group_code.trim() === '' || f.do_no.trim() === '')) { setErrMsg('Bắt buộc nhập Số xe và DO.'); return }
+    const payload: Partial<KhvcRow> = {
+      group_code: f.group_code.trim(), do_no: f.do_no.trim(),
+      warehouse_code: n(f.warehouse_code), npp: n(f.npp), veh_type: n(f.veh_type), dvvt: n(f.dvvt),
+      priority: n(f.priority), cs: n(f.cs), note: n(f.note), export_date: n(f.export_date), source: n(f.source),
+    }
+    const onError = (err: unknown) => setErrMsg(apiError(err, 'Không lưu được dòng Kế hoạch xuất.'))
+    if (isEdit && row) update.mutate({ id: row.id, ...payload }, { onSuccess: onClose, onError })
+    else create.mutate(payload, { onSuccess: onClose, onError })
+  }
+
+  return (
+    <FormSheet
+      open onClose={onClose}
+      title={isEdit ? 'Sửa dòng Kế hoạch xuất' : 'Thêm dòng Kế hoạch xuất'}
+      description={isEdit ? `${row?.group_code} / ${row?.do_no}` : 'Nhập tay 1 dòng kế hoạch xuất'}
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={save} disabled={saving}>{saving ? 'Đang lưu…' : 'Lưu'}</Button>
+      </>}
+    >
+      <div className="space-y-5">
+        {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
+        <Section title="Định danh">
+          <Fld label="Số xe"><Input className="h-9" value={f.group_code} onChange={e => set('group_code')(e.target.value)} disabled={isEdit} /></Fld>
+          <Fld label="DO"><Input className="h-9" value={f.do_no} onChange={e => set('do_no')(e.target.value)} disabled={isEdit} /></Fld>
+          <Fld label="Kho"><Input className="h-9" value={f.warehouse_code} onChange={e => set('warehouse_code')(e.target.value)} /></Fld>
+          <Fld label="Ngày xuất"><Input type="date" className="h-9" value={f.export_date} onChange={e => set('export_date')(e.target.value)} /></Fld>
+          <Fld label="Nguồn"><Input className="h-9" value={f.source} onChange={e => set('source')(e.target.value)} placeholder="EXCEL / SAP / MANUAL" /></Fld>
+        </Section>
+        <Section title="Điều vận">
+          <Fld label="Tên NPP"><Input className="h-9" value={f.npp} onChange={e => set('npp')(e.target.value)} /></Fld>
+          <Fld label="Loại xe"><Input className="h-9" value={f.veh_type} onChange={e => set('veh_type')(e.target.value)} /></Fld>
+          <Fld label="ĐVVT"><Input className="h-9" value={f.dvvt} onChange={e => set('dvvt')(e.target.value)} /></Fld>
+          <Fld label="Ưu tiên"><Input className="h-9" value={f.priority} onChange={e => set('priority')(e.target.value)} /></Fld>
+          <Fld label="CS phụ trách"><Input className="h-9" value={f.cs} onChange={e => set('cs')(e.target.value)} /></Fld>
+          <Fld label="Ghi chú"><Input className="h-9" value={f.note} onChange={e => set('note')(e.target.value)} /></Fld>
         </Section>
       </div>
     </FormSheet>

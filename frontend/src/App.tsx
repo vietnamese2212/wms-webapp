@@ -79,8 +79,8 @@ export default function App() {
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/weigh-tickets"                    element={<PermissionRoute module="weigh_station"><WeighTickets /></PermissionRoute>} />
         <Route path="/wms/control-tower"                    element={<PermissionRoute module="control_tower"><ControlTower /></PermissionRoute>} />
-        <Route path="/external/do-sap"                      element={<PermissionRoute module="external_do_sap"><ExternalData /></PermissionRoute>} />
-        <Route path="/external"                             element={<PermissionRoute module="external_do_sap"><ExternalData /></PermissionRoute>} />
+        <Route path="/external/do-sap"                      element={<PermissionRoute module={['external_do_sap', 'external_khvc']}><ExternalData /></PermissionRoute>} />
+        <Route path="/external"                             element={<PermissionRoute module={['external_do_sap', 'external_khvc']}><ExternalData /></PermissionRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
         <Route path="/wms/outbound/:gdoId/items/:itemId"    element={<PermissionRoute module="outbound"><OutboundItemDetail /></PermissionRoute>} />
 

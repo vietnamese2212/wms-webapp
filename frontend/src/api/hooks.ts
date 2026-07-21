@@ -1803,6 +1803,63 @@ export function useBulkDeleteDoSap() {
   })
 }
 
+// ─── Dữ liệu bên ngoài → Kế hoạch xuất (raw khvc_lines) ──────────────────────
+export interface KhvcRow {
+  id: string; group_code: string; do_no: string; warehouse_code: string | null
+  npp: string | null; veh_type: string | null; dvvt: string | null
+  priority: string | null; cs: string | null; note: string | null
+  export_date: string | null; source: string | null; sync_status: string | null
+  gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
+  materialized?: boolean; gdo_status?: string | null; do_ready?: boolean   // enrich từ BE list
+}
+export function useKhvcLines(params: Record<string, string | number | undefined>, enabled = true) {
+  return useQuery({
+    queryKey: ['khvc', params],
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+      const r = await apiClient.get(`/external/khvc?${qs.toString()}`)
+      return r.data.data as { items: KhvcRow[]; total: number; page: number; page_size: number }
+    },
+    enabled,   // bắt buộc chọn ngày mới fetch (không tự kéo cả bảng)
+    placeholderData: keepPreviousData,
+  })
+}
+export function useKhvcFacets() {
+  return useQuery({
+    queryKey: ['khvc-facets'],
+    queryFn: async () => (await apiClient.get('/external/khvc/facets')).data.data as { warehouses: string[]; veh_types: string[]; sources: string[]; npps: string[] },
+  })
+}
+export function useCreateKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<KhvcRow>) => apiClient.post('/external/khvc', body).then(r => r.data.data as KhvcRow),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['khvc-facets'] }) },
+  })
+}
+export function useUpdateKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<KhvcRow> & { id: string }) => apiClient.put(`/external/khvc/${id}`, body).then(r => r.data.data as KhvcRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+  })
+}
+export function useDeleteKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/external/khvc/${id}`).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+  })
+}
+export function useBulkDeleteKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) => apiClient.post('/external/khvc/bulk-delete', { ids }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+  })
+}
+
 export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
 
 export function useUploadMaterialsExcel() {

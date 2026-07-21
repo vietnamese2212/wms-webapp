@@ -70,7 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
       { to: '/wms/stocktake/summary', icon: BarChart2, label: 'Tổng hợp KK',  module: 'stocktake' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
-      { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', module: 'external_do_sap' },
+      { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'] },
     ],
   },
   {

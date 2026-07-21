@@ -27,4 +27,5 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   work_assignment:   ['view', 'create', 'edit', 'publish', 'delete', 'manage_layout', 'manage_shift_rules'],
   attendance:        ['view', 'self_log', 'edit', 'report'],
   external_do_sap:   ['view', 'create', 'edit', 'delete'],   // Dữ liệu bên ngoài → tab DO SAP (raw ERP/SAP)
+  external_khvc:     ['view', 'create', 'edit', 'delete'],   // Dữ liệu bên ngoài → tab Kế hoạch xuất (raw KHVC/điều vận)
 }

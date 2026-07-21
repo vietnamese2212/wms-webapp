@@ -208,6 +208,19 @@ interface DoSapFilters {
   page: number
   pageSize: number
 }
+interface KhvcFilters {
+  search: string
+  dateFrom: string   // Ngày nạp (created_at) — mặc định RỖNG (bắt buộc chọn mới tải)
+  dateTo: string
+  warehouse: string  // warehouse_code
+  vehType: string
+  source: string
+  syncStatus: string
+  group: string      // group_code (Số xe) — text
+  doNo: string       // DO — text
+  page: number
+  pageSize: number
+}
 interface WmsFilterState {
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
@@ -233,7 +246,9 @@ interface WmsFilterState {
   attendanceMy:      AttendanceMyFilters
   leave:             LeaveFilters
   doSap:             DoSapFilters
+  khvc:              KhvcFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
+  setKhvc:              (f: Partial<KhvcFilters>)              => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
@@ -318,6 +333,7 @@ function initialFilters() {
     attendanceMy: { from: today().slice(0, 8) + '01' },
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', page: 1, pageSize: 50 },
+    khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', page: 1, pageSize: 50 },
   }
 }
 
@@ -349,6 +365,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setAttendanceMy:     (f) => set(s => ({ attendanceMy:     { ...s.attendanceMy,     ...f } })),
       setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
       setDoSap:            (f) => set(s => ({ doSap:            { ...s.doSap,            ...f } })),
+      setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {

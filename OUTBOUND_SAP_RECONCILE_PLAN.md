@@ -312,3 +312,17 @@ Luồng preview: chọn dòng → kiểm từng dòng → hiện "N xóa đượ
 8. Bảng + tab "Cần xử lý" (realtime) + quyền `outbound.reconcile`; verify PC+mobile + realtime + tải đồng thời + 0 mất dữ liệu.
 
 **Bump rebuild-token · migration STAGING trước · không đụng upload cũ.**
+
+---
+
+# ✅ ĐỢT 1 XONG (dev, 21/07/2026) — verify sống staging 12/12 PASS
+
+**Đã làm (mục 4-5-6 của v2.6):**
+1. **3 migration** (ĐÃ apply STAGING qua pg, verify cột/bảng/publication): `20260721_khvc_lines.sql` (tầng 2 raw + 4 index + RLS + realtime) · `20260721_outbound_item_od_refs.sql` (`OutboundItem.od_refs jsonb NOT NULL DEFAULT '[]'`) · `20260721_outbound_delivery_code_nullable.sql` (DROP NOT NULL).
+2. **`uploadVl06o` nạp CÓ SO SÁNH** (thay upsert mù): pre-fetch `(od,item)→id` → phân loại INSERT (id mới) / UPDATE (GIỮ id cũ + created_at, chỉ khi hash cột nghiệp vụ đổi) / NO-OP (hash trùng → không ghi, không bump updated_at). **Vá churn PK** + idempotent. Guard HEADER (thiếu cột Delivery/Item → 400). **KHÔNG auto-OBSOLETE** (v2.3 — up tay chỉ cộng-thêm/sửa). Trả `inserted/updated/noop`.
+3. **od_refs derivation**: `uploadKhvc` reshape gắn `__od_refs:[{od_number,od_item,qty_base}]` mỗi dòng raw → `mergeNppRows` concat (clone tránh share-ref) → ghi cột `od_refs` ở CẢ `collectDOsAndItems` (insert) + `mergePausedGDO` (insert/update, recompute khi up lại). File gộp trực tiếp (uploadExcel) → `[]`.
+4. **Tầng raw "Kế hoạch xuất"**: `uploadKhvc` upsert song song vào `khvc_lines` (churn-safe id theo (group_code,do_no), giữ raw). Controller `khvcController.ts` (list phân trang + facets + CRUD + bulk-delete, enrich `materialized`/`gdo_status`/`do_ready`) + routes `/external/khvc/*` gate `external_khvc` + quyền 2 config (FE+BE). FE: tab "Kế hoạch xuất" (shell 2 tab theo quyền), hooks `useKhvc*`, filter slice `khvc`, route+nav gate `[external_do_sap, external_khvc]`.
+
+**Verify E2E sống (API thật staging, dọn sạch 0 sót):** A1 INSERT(2) · A2 NO-OP(2)+id giữ+không bump updated_at · A3 UPDATE(1) id+created_at giữ qty=250 · A4 header guard 400 · B od_refs mọi item đủ field + Σqty_base=cartons_ordered · B khvc_lines persist ACTIVE + re-upload id giữ · B list API materialized/do_ready. tsc BE+FE + FE build pass.
+
+**Chưa làm (để dành):** advisory lock upload (GĐ2 API cần hơn — upload tay ngày ít tranh chấp; honest note) · xóa-preview v2.2 (guard "đã dùng/đã quét không xóa cứng" — deleteDoSap/deleteKhvc hiện xóa thẳng như cũ, để Đợt 2 cùng engine). **ĐỢT 2** (engine `reconcileFromSap` + hàng chờ "Cần xử lý" + quyền `outbound.reconcile`) = bước sau, CHỜ user nghiệm thu Đợt 1 trên Preview.

@@ -132,8 +132,17 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const [formRow, setFormRow]       = useState<DoSapRow | 'new' | null>(null)
   const [deleteRow, setDeleteRow]   = useState<DoSapRow | null>(null)
   const [bulkOpen, setBulkOpen]     = useState(false)
+  const [bulkChk, setBulkChk]       = useState<{ deletable_count: number; blocked_count: number; blocked: { od_number: string; od_item: string; reason: string }[] } | null>(null)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
+
+  // v2.2: preview XÓA (mở dialog bulk → kiểm dòng nào xóa được / bị chặn vì đã dùng+đã quét)
+  useEffect(() => {
+    if (!bulkOpen) { setBulkChk(null); return }
+    apiClient.post('/external/do-sap/bulk-delete?check=1', { ids: [...selected] })
+      .then(r => setBulkChk(r.data.data)).catch(() => setBulkChk(null))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkOpen])
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v2', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
@@ -469,12 +478,24 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           <DialogHeader>
             <DialogTitle className="text-sm">Xóa {selected.size} dòng đã chọn?</DialogTitle>
           </DialogHeader>
-          <p className="text-xs text-slate-500">Xóa {selected.size} dòng DO SAP đã chọn. Thao tác không thể hoàn tác.</p>
+          {bulkChk ? (
+            <div className="text-xs text-slate-600 space-y-1.5">
+              <p><b className="text-red-600">{bulkChk.deletable_count}</b> dòng sẽ xóa.
+                {bulkChk.blocked_count > 0 && <> <b className="text-amber-700">{bulkChk.blocked_count}</b> dòng KHÔNG xóa được (đã dùng + đã quét) — được giữ lại.</>}</p>
+              {bulkChk.blocked_count > 0 && (
+                <div className="max-h-24 overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                  {bulkChk.blocked.slice(0, 20).map((b, i) => <div key={i}>• DO {b.od_number}/{b.od_item}</div>)}
+                  {bulkChk.blocked.length > 20 && <div>…và {bulkChk.blocked.length - 20} dòng nữa</div>}
+                </div>
+              )}
+              <p className="text-slate-400">Thao tác không thể hoàn tác.</p>
+            </div>
+          ) : <p className="text-xs text-slate-500">Đang kiểm tra dòng nào xóa được…</p>}
           {bulkDelete.isError && <p className="text-xs text-red-500">{apiError(bulkDelete.error, 'Không xóa được các dòng đã chọn.')}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkDelete.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending}>
-              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${selected.size} dòng`}
+            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending || !bulkChk || bulkChk.deletable_count === 0}>
+              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${bulkChk?.deletable_count ?? selected.size} dòng`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -640,6 +661,15 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [formRow, setFormRow]     = useState<KhvcRow | 'new' | null>(null)
   const [deleteRow, setDeleteRow] = useState<KhvcRow | null>(null)
   const [bulkOpen, setBulkOpen]   = useState(false)
+  const [bulkChk, setBulkChk]     = useState<{ deletable_count: number; blocked_count: number; blocked: { group_code: string; reason: string }[] } | null>(null)
+
+  // v2.2: preview XÓA (chặn dòng có chuyến đã quét)
+  useEffect(() => {
+    if (!bulkOpen) { setBulkChk(null); return }
+    apiClient.post('/external/khvc/bulk-delete?check=1', { ids: [...selected] })
+      .then(r => setBulkChk(r.data.data)).catch(() => setBulkChk(null))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkOpen])
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
@@ -871,12 +901,24 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
       <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="text-sm">Xóa {selected.size} dòng đã chọn?</DialogTitle></DialogHeader>
-          <p className="text-xs text-slate-500">Xóa {selected.size} dòng Kế hoạch xuất đã chọn. Thao tác không thể hoàn tác.</p>
+          {bulkChk ? (
+            <div className="text-xs text-slate-600 space-y-1.5">
+              <p><b className="text-red-600">{bulkChk.deletable_count}</b> dòng sẽ xóa.
+                {bulkChk.blocked_count > 0 && <> <b className="text-amber-700">{bulkChk.blocked_count}</b> dòng KHÔNG xóa được (chuyến đã quét) — được giữ lại.</>}</p>
+              {bulkChk.blocked_count > 0 && (
+                <div className="max-h-24 overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                  {bulkChk.blocked.slice(0, 20).map((b, i) => <div key={i}>• Số xe {b.group_code}</div>)}
+                  {bulkChk.blocked.length > 20 && <div>…và {bulkChk.blocked.length - 20} dòng nữa</div>}
+                </div>
+              )}
+              <p className="text-slate-400">Thao tác không thể hoàn tác.</p>
+            </div>
+          ) : <p className="text-xs text-slate-500">Đang kiểm tra dòng nào xóa được…</p>}
           {bulkDelete.isError && <p className="text-xs text-red-500">{apiError(bulkDelete.error, 'Không xóa được các dòng đã chọn.')}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkDelete.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending}>
-              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${selected.size} dòng`}
+            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending || !bulkChk || bulkChk.deletable_count === 0}>
+              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${bulkChk?.deletable_count ?? selected.size} dòng`}
             </Button>
           </DialogFooter>
         </DialogContent>

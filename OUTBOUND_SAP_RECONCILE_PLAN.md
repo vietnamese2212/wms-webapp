@@ -352,3 +352,12 @@ Luồng preview: chọn dòng → kiểm từng dòng → hiện "N xóa đượ
 - tsc BE+FE + FE build pass.
 
 **BẤT BIẾN đã chứng minh:** KHÔNG bao giờ tự sửa dòng đã quét; BLOCKED chặn giảm dưới mức đã quét (422); dữ liệu quét không mất. **Chưa làm (để dành):** ship-to change auto (→ REVIEW đủ) · auto-tạo item từ dòng OD mới (cần KHVC assignment — pool tới khi up KHVC) · advisory lock (GĐ2 API).
+
+---
+
+# ✅ v2.7 + v2.2 XONG (dev, 21/07/2026) — polish luồng tay, verify sống 11/11 PASS
+
+- **v2.7 — cảnh báo thứ tự upload**: preflight `?preflight=1` trên `uploadVl06o` (dos_on_trips + scanned_items, KHÔNG ghi) + `uploadKhvc` (trips breakdown + vl06o_last_synced + missing_dos). FE `Outbound.tsx`: chọn file → preflight → banner amber cảnh báo + [Tiếp tục]/[Huỷ] (ngày sạch → up thẳng; preflight lỗi → fallback up thẳng).
+- **v2.2 — guard xóa an toàn**: `deleteDoSap`/`bulkDeleteDoSap` (referenced+scanned → CHẶN 409/skip) + `deleteKhvc`/`bulkDeleteKhvc` (chuyến đã quét → chặn), hỗ trợ `?check=1` preview. FE: dialog bulk hiện "N xóa được, M không (lý do)".
+- **Verify sống staging 11/11**: VL06O preflight (dos_on_trips/scanned, không ghi, DO fresh=0) · KHVC preflight (trips/vl06o_last_synced/missing_dos) · DO SAP delete (chưa dùng→xóa, đã-quét→409 raw giữ, chưa-quét→xóa+reconcile, bulk check) · KHVC delete (no-trip→xóa, scanned→409). tsc BE+FE + build pass, dọn sạch 0 sót.
+- **KẾ HOẠCH TEST TOÀN DIỆN**: `RECONCILE_TEST_PLAN.md` (11 khu vực + ma trận 5 vùng × loại đổi + cross-module + cross-cutting + go-live). 58 checks đã auto-verify; phần ☐ Preview (UI eyeball + phân quyền 3 lớp + đồng thời + file thật + responsive 360) chờ user nghiệm thu.

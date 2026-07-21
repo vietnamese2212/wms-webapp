@@ -2549,6 +2549,36 @@ export async function uploadVl06o(req: Request, res: Response) {
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
 
+    // ── v2.7 PREFLIGHT: cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
+    if (req.query.preflight === '1') {
+      const dos = [...new Set(records.map(r => String(r.od_number)))]
+      const found: { gdo_id: string; delivery_code: string | null }[] = []
+      for (let i = 0; i < dos.length; i += 40) {
+        const orExpr = dos.slice(i, i + 40).map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
+        const { data } = await supabase.from('OutboundDelivery').select('gdo_id, delivery_code').or(orExpr)
+        for (const d of ((data ?? []) as { gdo_id: string; delivery_code: string | null }[])) found.push(d)
+      }
+      const dosSet = new Set(dos)
+      const dosOnTrips = new Set<string>()
+      const relevantGdos = new Set<string>()
+      for (const d of found) {
+        const toks = String(d.delivery_code ?? '').split(/,\s*/).map(x => x.trim()).filter(t => dosSet.has(t))
+        if (toks.length) { toks.forEach(t => dosOnTrips.add(t)); relevantGdos.add(d.gdo_id) }
+      }
+      let tripsInProgress = 0, scannedItems = 0
+      const gdoIds = [...relevantGdos]
+      if (gdoIds.length) {
+        const { data: gs } = await supabase.from('GroupDeliveryOrder').select('id, status').in('id', gdoIds)
+        tripsInProgress = ((gs ?? []) as { status: string }[]).filter(g => g.status === 'IN_PROGRESS' || g.status === 'PAUSED').length
+        const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id').in('gdo_id', c).order('id')) as { id: string }[]
+        const dvIds = (dvs ?? []).map(x => x.id)
+        const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
+        scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
+      }
+      return ok(res, { preflight: true, rows: records.length, deliveries: dos.length,
+        dos_on_trips: dosOnTrips.size, trips_relevant: gdoIds.length, trips_in_progress: tripsInProgress, scanned_items: scannedItems })
+    }
+
     // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
     if (unitErrs.size) {
       return res.status(400).json({
@@ -2664,6 +2694,28 @@ export async function uploadKhvc(req: Request, res: Response) {
       })
     }
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
+
+    // ── v2.7 PREFLIGHT: cảnh báo TRƯỚC khi sinh chuyến — ngày/Số xe này đã có chuyến? VL06O đã mới chưa? (KHÔNG ghi gì) ──
+    if (req.query.preflight === '1') {
+      const gcs = [...new Set(khvcRows.map(k => k.group_code))]
+      const existGdos = await fetchAllByIdChunks(gcs, chunk => supabase.from('GroupDeliveryOrder')
+        .select('status').in('group_code', chunk).order('id')) as { status: string }[]
+      const trips = { total: (existGdos ?? []).length, in_progress: 0, completed: 0, pending: 0, paused: 0 }
+      for (const g of (existGdos ?? [])) {
+        if (g.status === 'IN_PROGRESS') trips.in_progress++
+        else if (g.status === 'COMPLETED') trips.completed++
+        else if (g.status === 'PAUSED') trips.paused++
+        else trips.pending++
+      }
+      // VL06O freshness + DO thiếu (KHVC trỏ DO chưa có trong raw)
+      const rawDos = await fetchAllByIdChunks([...allDos], chunk => supabase.from('erp_outbound_orders')
+        .select('od_number, updated_at').in('od_number', chunk).order('od_number')) as { od_number: string; updated_at: string }[]
+      const presentDos = new Set((rawDos ?? []).map(r => r.od_number))
+      const missingDos = [...allDos].filter(d => !presentDos.has(d))
+      const lastSynced = (rawDos ?? []).reduce<string | null>((mx, r) => (!mx || r.updated_at > mx ? r.updated_at : mx), null)
+      return ok(res, { preflight: true, vehicles: gcs.length, dos_total: allDos.size,
+        trips, vl06o_last_synced: lastSynced, missing_dos: missingDos.length, missing_dos_sample: missingDos.slice(0, 10) })
+    }
 
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
     // Churn-safe: pre-fetch (group_code, do_no)→id, GIỮ id cũ khi up lại (không đổi PK). Upsert chunk 500.

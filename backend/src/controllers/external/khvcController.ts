@@ -6,8 +6,36 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
+import { fetchAllByIdChunks } from '../../utils/pagination'
 
 const now = () => new Date().toISOString()
+
+// v2.2 — luật XÓA an toàn: dòng Kế hoạch mà chuyến đã sinh CÓ HÀNG ĐÃ QUÉT → CHẶN xóa cứng.
+type KDelRow = { id: string; group_code: string }
+async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
+  const gcs = [...new Set(rows.map(r => r.group_code))]
+  const scannedGcs = new Set<string>()
+  for (let i = 0; i < gcs.length; i += 100) {
+    const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('id, group_code').in('group_code', gcs.slice(i, i + 100))
+    const gcByGdoId = new Map((gdos ?? []).map((g: { id: string; group_code: string }) => [g.id, g.group_code]))
+    const gdoIds = (gdos ?? []).map((g: { id: string }) => g.id)
+    if (!gdoIds.length) continue
+    const { data: dvs } = await supabase.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', gdoIds)
+    const gcByDo = new Map<string, string>()
+    for (const d of ((dvs ?? []) as { id: string; gdo_id: string }[])) { const gc = gcByGdoId.get(d.gdo_id); if (gc) gcByDo.set(d.id, gc) }
+    const doIds = (dvs ?? []).map((d: { id: string }) => d.id)
+    if (doIds.length) {
+      const its = await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem').select('do_id, cartons_scanned').in('do_id', c).order('id')) as { do_id: string; cartons_scanned: number }[]
+      for (const it of (its ?? [])) if (Number(it.cartons_scanned) > 0) { const gc = gcByDo.get(it.do_id); if (gc) scannedGcs.add(gc) }
+    }
+  }
+  const deletable: KDelRow[] = [], blocked: (KDelRow & { reason: string })[] = []
+  for (const r of rows) {
+    if (scannedGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
+    else deletable.push(r)
+  }
+  return { deletable, blocked }
+}
 
 const STR_FIELDS = [
   'group_code', 'do_no', 'warehouse_code', 'npp', 'veh_type', 'dvvt',
@@ -131,24 +159,39 @@ export async function updateKhvc(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// DELETE /external/khvc/:id — xóa 1 dòng
+// DELETE /external/khvc/:id (?check=1 = chỉ kiểm, không xóa)
 export async function deleteKhvc(req: Request, res: Response) {
   try {
+    const { data: row } = await supabase.from('khvc_lines').select('group_code').eq('id', req.params.id).maybeSingle()
+    if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    const dr: KDelRow = { id: req.params.id, group_code: String(row.group_code) }
+    const { deletable, blocked } = await classifyKhvcDelete([dr])
+    if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
+    if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
     const { error } = await supabase.from('khvc_lines').delete().eq('id', req.params.id)
     if (error) throw new Error(error.message)
-    return ok(res, { deleted: 1 })
+    return ok(res, { deleted: 1, blocked })
   } catch (e) { return fail(res, String(e)) }
 }
 
-// POST /external/khvc/bulk-delete — xóa nhiều (multi-select), chunk 300
+// POST /external/khvc/bulk-delete (?check=1 = chỉ kiểm) — xóa nhiều, guard từng dòng
 export async function bulkDeleteKhvc(req: Request, res: Response) {
   try {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
+    const rows: KDelRow[] = []
     for (let i = 0; i < ids.length; i += 300) {
-      const { error } = await supabase.from('khvc_lines').delete().in('id', ids.slice(i, i + 300))
+      const { data } = await supabase.from('khvc_lines').select('id, group_code').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as KDelRow[])) rows.push({ id: r.id, group_code: String(r.group_code) })
+    }
+    const { deletable, blocked } = await classifyKhvcDelete(rows)
+    const blockedOut = blocked.map(b => ({ group_code: b.group_code, reason: b.reason }))
+    if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })
+    const delIds = deletable.map(d => d.id)
+    for (let i = 0; i < delIds.length; i += 300) {
+      const { error } = await supabase.from('khvc_lines').delete().in('id', delIds.slice(i, i + 300))
       if (error) throw new Error(error.message)
     }
-    return ok(res, { deleted: ids.length })
+    return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut })
   } catch (e) { return fail(res, String(e)) }
 }

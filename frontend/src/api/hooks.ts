@@ -1714,11 +1714,11 @@ export function useUploadGDOExcel() {
 // ĐỢT 3: Up VL06O (raw SAP → erp_outbound_orders). Không đụng GDO nên không invalidate.
 export function useUploadVl06o() {
   return useMutation({
-    mutationFn: ({ file }: { file: File }) => {
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
-      return apiClient.post('/wms/outbound/upload-vl06o', form, {
+      return apiClient.post(`/wms/outbound/upload-vl06o${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
       }).then(r => r.data.data)
     },
@@ -1730,15 +1730,15 @@ export function useUploadVl06o() {
 export function useUploadKhvc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file }: { file: File }) => {
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }) => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
-      return apiClient.post('/wms/outbound/upload-khvc', form, {
+      return apiClient.post(`/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => qc.refetchQueries({ queryKey: ['gdos'] }),
+    onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
   })
 }
 

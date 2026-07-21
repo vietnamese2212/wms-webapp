@@ -149,39 +149,63 @@ export async function updateDoSap(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
-// DELETE /external/do-sap/:id — xóa 1 dòng
+// v2.2 — luật XÓA an toàn: dòng OD ĐÃ DÙNG + ĐÃ QUÉT (od_refs của item có cartons_scanned>0) → CHẶN xóa cứng
+// (giữ raw cho post-back + Cần xử lý). Dòng chưa dùng / đã dùng-chưa-quét → xóa được (reconcile tự giảm đơn).
+type DelRow = { id: string; od_number: string; od_item: string }
+async function classifyDoSapDelete(rows: DelRow[]): Promise<{ deletable: DelRow[]; blocked: (DelRow & { reason: string })[] }> {
+  const ods = [...new Set(rows.map(r => r.od_number))]
+  const scannedKeys = new Set<string>()
+  for (const od of ods) {
+    // item tham chiếu OD này (jsonb cs) + đã quét → khóa (od,item) của nó bị chặn
+    const { data } = await supabase.from('OutboundItem')
+      .select('cartons_scanned, od_refs').filter('od_refs', 'cs', JSON.stringify([{ od_number: od }]))
+    for (const it of ((data ?? []) as { cartons_scanned: number; od_refs: { od_number: string; od_item: string }[] | null }[]))
+      if (Number(it.cartons_scanned) > 0)
+        for (const r of (it.od_refs ?? [])) scannedKeys.add(`${r.od_number}__${r.od_item}`)
+  }
+  const deletable: DelRow[] = [], blocked: (DelRow & { reason: string })[] = []
+  for (const r of rows) {
+    if (scannedKeys.has(`${r.od_number}__${r.od_item}`)) blocked.push({ ...r, reason: 'Đã dùng + đã quét — không xóa cứng (xử ở Xuất kho / Cần xử lý)' })
+    else deletable.push(r)
+  }
+  return { deletable, blocked }
+}
+
+// DELETE /external/do-sap/:id (?check=1 = chỉ kiểm, không xóa)
 export async function deleteDoSap(req: Request, res: Response) {
   try {
-    // Lấy khóa TRƯỚC khi xóa (để đối chiếu sau khi raw biến mất → item xem dòng OD này là đã bỏ)
     const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item').eq('id', req.params.id).maybeSingle()
+    if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    const dr: DelRow = { id: req.params.id, od_number: String(row.od_number), od_item: String(row.od_item) }
+    const { deletable, blocked } = await classifyDoSapDelete([dr])
+    if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
+    if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
     const { error } = await supabase.from('erp_outbound_orders').delete().eq('id', req.params.id)
     if (error) throw new Error(error.message)
-    if (row) await reconcileQuiet([{ od_number: String(row.od_number), od_item: String(row.od_item) }], req.user?.name ?? null)
-    return ok(res, { deleted: 1 })
+    await reconcileQuiet([{ od_number: dr.od_number, od_item: dr.od_item }], req.user?.name ?? null)
+    return ok(res, { deleted: 1, blocked })
   } catch (e) { return fail(res, String(e)) }
 }
 
-// POST /external/do-sap/bulk-delete — xóa nhiều (multi-select), chunk 300
+// POST /external/do-sap/bulk-delete (?check=1 = chỉ kiểm) — xóa nhiều, guard từng dòng
 export async function bulkDeleteDoSap(req: Request, res: Response) {
   try {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
-    // Lấy khóa TRƯỚC khi xóa để đối chiếu sau
-    const keys = await fetchKeysByIds(ids)
+    const rows: DelRow[] = []
     for (let i = 0; i < ids.length; i += 300) {
-      const { error } = await supabase.from('erp_outbound_orders').delete().in('id', ids.slice(i, i + 300))
+      const { data } = await supabase.from('erp_outbound_orders').select('id, od_number, od_item').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as DelRow[])) rows.push({ id: r.id, od_number: String(r.od_number), od_item: String(r.od_item) })
+    }
+    const { deletable, blocked } = await classifyDoSapDelete(rows)
+    const blockedOut = blocked.map(b => ({ od_number: b.od_number, od_item: b.od_item, reason: b.reason }))
+    if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })
+    const delIds = deletable.map(d => d.id)
+    for (let i = 0; i < delIds.length; i += 300) {
+      const { error } = await supabase.from('erp_outbound_orders').delete().in('id', delIds.slice(i, i + 300))
       if (error) throw new Error(error.message)
     }
-    await reconcileQuiet(keys, req.user?.name ?? null)
-    return ok(res, { deleted: ids.length })
+    if (deletable.length) await reconcileQuiet(deletable.map(d => ({ od_number: d.od_number, od_item: d.od_item })), req.user?.name ?? null)
+    return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut })
   } catch (e) { return fail(res, String(e)) }
-}
-
-async function fetchKeysByIds(ids: string[]): Promise<OdKey[]> {
-  const out: OdKey[] = []
-  for (let i = 0; i < ids.length; i += 300) {
-    const { data } = await supabase.from('erp_outbound_orders').select('od_number, od_item').in('id', ids.slice(i, i + 300))
-    for (const r of ((data ?? []) as { od_number: string; od_item: string }[])) out.push({ od_number: String(r.od_number), od_item: String(r.od_item) })
-  }
-  return out
 }

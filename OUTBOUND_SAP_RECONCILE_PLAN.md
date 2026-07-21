@@ -328,4 +328,27 @@ Luồng preview: chọn dòng → kiểm từng dòng → hiện "N xóa đượ
 - API mở rộng (11): C gộp 2 DO cùng NPP+mã → 1 item + od_refs 2 phần tử + cartons_ordered=2400 (cộng 1 lần) + loose=2400 (trên tổng, KHÔNG thổi) + delivery_code gộp 2 DO · D CRUD tay create/dup409/update/delete + warehouse_code auto-split + facets.
 - **UI Playwright (desktop 1280 + mobile 390/360):** 2 tab render + switch, form Thêm dòng lưu → row hiện đủ cột (Kho auto, "DO chưa có", "Chưa sinh", audit Admin), FilterBar Ngày nạp, xóa dòng realtime (Tổng→0), DO SAP tab regression OK, 0 console error (2 lỗi 401 là pre-login). tsc BE+FE + FE build pass.
 
-**Chưa làm (để dành):** advisory lock upload (GĐ2 API cần hơn — upload tay ngày ít tranh chấp; honest note) · xóa-preview v2.2 (guard "đã dùng/đã quét không xóa cứng" — deleteDoSap/deleteKhvc hiện xóa thẳng như cũ, để Đợt 2 cùng engine). **ĐỢT 2** (engine `reconcileFromSap` + hàng chờ "Cần xử lý" + quyền `outbound.reconcile`) = bước sau, CHỜ user nghiệm thu Đợt 1 trên Preview.
+**Chưa làm (để dành):** advisory lock upload (GĐ2 API cần hơn — upload tay ngày ít tranh chấp; honest note) · xóa-preview v2.2 (guard "đã dùng/đã quét không xóa cứng").
+
+---
+
+# ✅ ĐỢT 2 XONG (dev, 21/07/2026) — engine đối chiếu + hàng chờ "Cần xử lý", verify sống 24/24 PASS
+
+**Đã làm (mục 7-8 của v2.6):**
+1. **Migration** `20260721_reconcile_tasks.sql` (audit+queue: item_id/gdo/od/change_type/zone/action/status/old-new-scanned/detail/resolution + RLS + realtime) — apply STAGING qua pg, verify.
+2. **Engine** `services/outboundReconcile.ts` `reconcileFromSap(changedKeys)`: tìm item ảnh hưởng qua `od_refs` (jsonb `cs` filter — supabase-js `.contains` array-of-object SAI → `.filter('od_refs','cs',JSON.stringify)`), recompute newOrdered = Σ raw ACTIVE hiện tại, phân **vùng theo cartons_scanned + GDO.scan_completed_at**:
+   - **Z1/Z2 (scanned=0)** → **TỰ ÁP** cartons_ordered + loose (`loosePalletRemainder` reuse) + batch/%date, refresh snapshot od_refs → AUTO_APPLIED/RESOLVED.
+   - **Z3 (scanned>0)** → KHÔNG tự áp (v2.1): giảm < đã quét = **BLOCKED**, còn lại = **NEEDS_REVIEW** (OPEN).
+   - **Z4 (scan_completed_at)** → **RECONCILE_ONLY** (chỉ ghi, xử bằng trả hàng + post-back).
+   - **ATTR (batch/%date)** → tự áp mọi vùng (không đụng số quét/tồn).
+   - **MATERIAL_CHANGED** → NEEDS_REVIEW (QR khác, không tự đổi).
+3. **Trigger**: `uploadVl06o` (updated keys + dòng-thiếu-trong-DO-có-mặt → OBSOLETE + reconcile, trả `reconcile`/`obsoleted` trong response) + `updateDoSap`/`deleteDoSap`/`bulkDelete` — **tất cả bọc try/catch** (reconcile là AUGMENT, lỗi engine KHÔNG làm hỏng upload/CRUD cốt lõi).
+4. **API + quyền**: `GET /wms/outbound/reconcile-tasks` (+`/count`) + `POST /wms/outbound/reconcile-tasks/:id/resolve` (apply — chỉ khi new≥scanned else 422; keep; manual_done) — quyền MỚI `outbound.reconcile` (5 nơi). Route đăng ký TRƯỚC `/outbound/:id`.
+5. **FE**: tab THỨ 3 **"Cần xử lý"** trong "Dữ liệu bên ngoài" (shell gate `outbound.reconcile`), hooks `useReconcileTasks/useReconcileOpenCount/useResolveReconcileTask`, filter slice `reconcile`, realtime `TABLE_QUERY_MAP['reconcile_tasks']`, nút Áp SAP/Giữ WMS/Đã xử lý tay + confirm dialog.
+
+**Verify sống staging 24/24 PASS (dọn sạch 0 sót):**
+- API engine (12): E Z1 AUTO tăng 1920→2400 · F Z3 REVIEW không tự áp + resolve APPLY→2400 · F Z3 BLOCKED giảm<quét giữ 2400 + resolve APPLY→**422** + manual_done→200 · G Z4 RECON giữ nguyên · I line-missing uploadVl06o → raw OBSOLETE + auto giảm 2400→1920 + LINE_REMOVED.
+- UI Playwright (desktop 1280 + mobile 390): 3 tab render, tab "Cần xử lý" hiện task đủ cột (tên hàng enrich, "SAP tăng SL", "ĐÃ QUÉT", 1920→2400, đã quét 500, chi tiết), bấm **Áp SAP → confirm → item=2400 + đã quét giữ 500 + task RESOLVED/apply/Admin**, hàng chờ về 0 realtime, 0 console error.
+- tsc BE+FE + FE build pass.
+
+**BẤT BIẾN đã chứng minh:** KHÔNG bao giờ tự sửa dòng đã quét; BLOCKED chặn giảm dưới mức đã quét (422); dữ liệu quét không mất. **Chưa làm (để dành):** ship-to change auto (→ REVIEW đủ) · auto-tạo item từ dòng OD mới (cần KHVC assignment — pool tới khi up KHVC) · advisory lock (GĐ2 API).

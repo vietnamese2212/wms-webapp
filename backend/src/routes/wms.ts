@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as inbound from '../controllers/wms/inboundController'
 import * as outbound from '../controllers/wms/outboundController'
+import * as reconcile from '../controllers/wms/reconcileController'
 import * as inventory from '../controllers/wms/inventoryController'
 import * as lookup from '../controllers/wms/lookupController'
 import * as zone from '../controllers/wms/zoneController'
@@ -174,6 +175,10 @@ router.patch('/weigh-tickets/:id/match',                      requirePerm('weigh
 router.get('/outbound/scan-log/facets',                       requirePerm('scanlog', 'view'), outbound.getScanLogFacets)
 router.get('/outbound/scan-log/search',                       requirePerm('scanlog', 'view'), outbound.searchScanLog)
 router.get('/outbound/scan-log',                              requirePerm('scanlog', 'view'), outbound.getScanLog)
+// Đối chiếu SAP — hàng chờ "Cần xử lý" (đăng ký TRƯỚC /outbound/:id để không bị :id nuốt)
+router.get('/outbound/reconcile-tasks/count',                 requirePerm('outbound', 'reconcile'), reconcile.reconcileOpenCount)
+router.get('/outbound/reconcile-tasks',                       requirePerm('outbound', 'reconcile'), reconcile.listReconcileTasks)
+router.post('/outbound/reconcile-tasks/:id/resolve',          requirePerm('outbound', 'reconcile'), reconcile.resolveReconcileTask)
 router.get('/outbound/prepare',                               requirePerm('outbound', 'prepare'), outbound.getPrepareBoard)
 router.get('/outbound/inventory-by-material',                 requirePerm('outbound', 'prepare'), outbound.getInventoryByMaterial)
 router.get('/outbound/pallet-lookup',                         requirePerm('outbound', 'view'), outbound.lookupPalletGdos)

@@ -221,6 +221,14 @@ interface KhvcFilters {
   page: number
   pageSize: number
 }
+interface ReconcileFilters {
+  search: string
+  status: string     // OPEN (mặc định) | RESOLVED
+  dateFrom: string
+  dateTo: string
+  page: number
+  pageSize: number
+}
 interface WmsFilterState {
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
@@ -247,8 +255,10 @@ interface WmsFilterState {
   leave:             LeaveFilters
   doSap:             DoSapFilters
   khvc:              KhvcFilters
+  reconcile:         ReconcileFilters
   setDoSap:             (f: Partial<DoSapFilters>)             => void
   setKhvc:              (f: Partial<KhvcFilters>)              => void
+  setReconcile:         (f: Partial<ReconcileFilters>)         => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
@@ -334,6 +344,7 @@ function initialFilters() {
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', page: 1, pageSize: 50 },
     khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', page: 1, pageSize: 50 },
+    reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
 }
 
@@ -366,6 +377,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setLeave:            (f) => set(s => ({ leave:            { ...s.leave,            ...f } })),
       setDoSap:            (f) => set(s => ({ doSap:            { ...s.doSap,            ...f } })),
       setKhvc:             (f) => set(s => ({ khvc:             { ...s.khvc,             ...f } })),
+      setReconcile:        (f) => set(s => ({ reconcile:        { ...s.reconcile,        ...f } })),
       reset:               ()  => set(() => initialFilters()),
     }),
     {

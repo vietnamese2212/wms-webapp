@@ -1860,6 +1860,48 @@ export function useBulkDeleteKhvc() {
   })
 }
 
+// ─── Đối chiếu SAP↔WMS → hàng chờ "Cần xử lý" (reconcile_tasks) ───────────────
+export interface ReconcileTask {
+  id: string; item_id: string | null; gdo_id: string | null; group_code: string | null
+  material_code: string | null; material_name: string | null; od_number: string | null; od_item: string | null
+  change_type: string; zone: string; action: string; status: string
+  old_ordered: number | null; new_ordered: number | null; scanned: number | null
+  detail: string | null; actor: string | null; resolution: string | null
+  resolved_by: string | null; resolved_at: string | null; created_at: string; updated_at: string
+}
+export function useReconcileTasks(params: Record<string, string | number | undefined>, enabled = true) {
+  return useQuery({
+    queryKey: ['reconcile-tasks', params],
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
+      const r = await apiClient.get(`/wms/outbound/reconcile-tasks?${qs.toString()}`)
+      return r.data.data as { items: ReconcileTask[]; total: number; page: number; page_size: number }
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+export function useReconcileOpenCount(enabled = true) {
+  return useQuery({
+    queryKey: ['reconcile-open-count'],
+    queryFn: async () => (await apiClient.get('/wms/outbound/reconcile-tasks/count')).data.data as { open: number },
+    enabled,
+  })
+}
+export function useResolveReconcileTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, resolution }: { id: string; resolution: 'apply' | 'keep' | 'manual_done' }) =>
+      apiClient.post(`/wms/outbound/reconcile-tasks/${id}/resolve`, { resolution }).then(r => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reconcile-tasks'] })
+      qc.invalidateQueries({ queryKey: ['reconcile-open-count'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })   // đơn xuất đổi số sau khi Áp SAP
+    },
+  })
+}
+
 export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
 
 export function useUploadMaterialsExcel() {

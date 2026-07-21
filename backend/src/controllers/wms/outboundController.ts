@@ -12,6 +12,7 @@ import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
+import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 
@@ -663,7 +664,7 @@ function uploadRowQtyBase(row: Record<string, any>, mu: MatUnitsQ | null | undef
 }
 
 // Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho).
-type MatPalletUnits = MatUnitsQ & {
+export type MatPalletUnits = MatUnitsQ & {
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
 }
@@ -673,7 +674,7 @@ type MatPalletUnits = MatUnitsQ & {
 // nên nhặt lẻ theo hộp-lẻ-dưới-thùng gần như không phát sinh → dùng ngưỡng PALLET. Tính trên qty base ĐÃ GỘP
 // (nhiều dòng cùng mã/NPP đã cộng lại) — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). Mã không entry /
 // thiếu cartons_per_pallet → 0 (không ép nhặt lẻ).
-function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | null | undefined, warehouseId: string | null | undefined): number {
+export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | null | undefined, warehouseId: string | null | undefined): number {
   if (!hasEntry(mu)) return 0
   const cpp = effCartonsPerPallet(mu, warehouseId ?? null)
   const palletBase = cpp > 0 ? cpp * Number(mu!.units_per_carton) : 0
@@ -2573,19 +2574,21 @@ export async function uploadVl06o(req: Request, res: Response) {
 
     const odNumbers = [...new Set(records.map(r => String(r.od_number)))]
     const priorRows = await fetchAllByIdChunks(odNumbers, chunk => supabase.from('erp_outbound_orders')
-      .select('id, od_number, od_item, ' + BIZ.join(', '))
-      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string })[]
+      .select('id, od_number, od_item, sync_status, ' + BIZ.join(', '))
+      .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string; sync_status: string | null })[]
     const priorByKey = new Map<string, { id: string; hash: string }>()
     for (const p of (priorRows ?? [])) priorByKey.set(`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p) })
 
     let inserted = 0, updated = 0, noop = 0
     const toWrite: Record<string, unknown>[] = []
+    const updatedKeys: OdKey[] = []   // dòng SỬA (đổi cột nghiệp vụ) → reconcile
     for (const rec of records) {
       const key = `${rec.od_number}__${rec.od_item}`
       const prior = priorByKey.get(key)
       if (!prior) { toWrite.push({ id: randomUUID(), ...rec }); inserted++; continue }
       if (prior.hash === bizHash(rec)) { noop++; continue }   // NO-OP: giữ id/created_at/updated_at cũ (không ghi)
       toWrite.push({ id: prior.id, ...rec }); updated++        // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload)
+      updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
 
     // Upsert theo (od_number, od_item) — CHỈ dòng INSERT/UPDATE; chunk 500 (KHÔNG ghi tuần tự)
@@ -2595,9 +2598,36 @@ export async function uploadVl06o(req: Request, res: Response) {
         .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
       if (error) throw new Error(error.message)
     }
+
+    // ── Phát hiện dòng THIẾU trong DO CÓ MẶT (v2.3: VL06O luôn xuất trọn dòng của DO) ──
+    // DO có trong file → dòng ACTIVE cũ của DO đó KHÔNG có trong file = SAP đã bỏ dòng → OBSOLETE (KHÔNG hard-delete,
+    // giữ raw cho post-back; derive/engine bỏ qua OBSOLETE). DO cả-DO-vắng = mơ hồ → ĐỂ NGUYÊN (post-back gác).
+    const fileKeys = new Set(records.map(r => `${r.od_number}__${r.od_item}`))
+    const fileDos = new Set(records.map(r => String(r.od_number)))
+    const removedKeys: OdKey[] = []
+    for (const p of (priorRows ?? [])) {
+      const k = `${p.od_number}__${p.od_item}`
+      if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
+        removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
+    }
+    if (removedKeys.length) {
+      await Promise.all(removedKeys.map(k => supabase.from('erp_outbound_orders')
+        .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
+    }
+
+    // ── Engine đối chiếu (AUGMENT — lỗi engine KHÔNG được làm hỏng upload cốt lõi) ──
+    let reconcile: Awaited<ReturnType<typeof reconcileFromSap>> | null = null
+    let reconcile_error: string | null = null
+    const changedKeys = [...updatedKeys, ...removedKeys]
+    if (changedKeys.length) {
+      try { reconcile = await reconcileFromSap(changedKeys, { actor: req.user?.name || 'SAP-UPLOAD' }) }
+      catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadVl06o:', e) }
+    }
+
     const deliveries = new Set(records.map(r => r.od_number)).size
     return ok(res, {
-      rows: records.length, inserted, updated, noop, deliveries, skipped_no_key: skippedNoKey,
+      rows: records.length, inserted, updated, noop, obsoleted: removedKeys.length, deliveries, skipped_no_key: skippedNoKey,
+      reconcile, reconcile_error,
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
   } catch (e) { return fail(res, String(e)) }

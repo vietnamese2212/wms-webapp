@@ -37,6 +37,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   OutboundDelivery:    [['gdo']],
   OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
   OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
+  reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],

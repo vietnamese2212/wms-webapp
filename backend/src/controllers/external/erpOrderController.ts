@@ -6,8 +6,16 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
+import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 
 const now = () => new Date().toISOString()
+
+// Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
+async function reconcileQuiet(keys: OdKey[], actor: string | null) {
+  if (!keys.length) return
+  try { await reconcileFromSap(keys, { actor: actor || 'DO-SAP-EDIT' }) }
+  catch (e) { console.error('[reconcileFromSap] DO SAP edit:', e) }
+}
 
 // Cột nghiệp vụ cho phép ghi tay (id/created_at do hệ thống; qty là numeric)
 const NUM_FIELDS = ['qty_sales', 'qty_base', 'date_req', 'pct_date_req'] as const
@@ -135,6 +143,8 @@ export async function updateDoSap(req: Request, res: Response) {
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
+    // Sửa raw tay → đối chiếu lại các đơn WMS dùng dòng OD này
+    await reconcileQuiet([{ od_number: String(data.od_number), od_item: String(data.od_item) }], req.user?.name ?? null)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }
@@ -142,8 +152,11 @@ export async function updateDoSap(req: Request, res: Response) {
 // DELETE /external/do-sap/:id — xóa 1 dòng
 export async function deleteDoSap(req: Request, res: Response) {
   try {
+    // Lấy khóa TRƯỚC khi xóa (để đối chiếu sau khi raw biến mất → item xem dòng OD này là đã bỏ)
+    const { data: row } = await supabase.from('erp_outbound_orders').select('od_number, od_item').eq('id', req.params.id).maybeSingle()
     const { error } = await supabase.from('erp_outbound_orders').delete().eq('id', req.params.id)
     if (error) throw new Error(error.message)
+    if (row) await reconcileQuiet([{ od_number: String(row.od_number), od_item: String(row.od_item) }], req.user?.name ?? null)
     return ok(res, { deleted: 1 })
   } catch (e) { return fail(res, String(e)) }
 }
@@ -153,10 +166,22 @@ export async function bulkDeleteDoSap(req: Request, res: Response) {
   try {
     const ids = (req.body as { ids?: string[] })?.ids ?? []
     if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
+    // Lấy khóa TRƯỚC khi xóa để đối chiếu sau
+    const keys = await fetchKeysByIds(ids)
     for (let i = 0; i < ids.length; i += 300) {
       const { error } = await supabase.from('erp_outbound_orders').delete().in('id', ids.slice(i, i + 300))
       if (error) throw new Error(error.message)
     }
+    await reconcileQuiet(keys, req.user?.name ?? null)
     return ok(res, { deleted: ids.length })
   } catch (e) { return fail(res, String(e)) }
+}
+
+async function fetchKeysByIds(ids: string[]): Promise<OdKey[]> {
+  const out: OdKey[] = []
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await supabase.from('erp_outbound_orders').select('od_number, od_item').in('id', ids.slice(i, i + 300))
+    for (const r of ((data ?? []) as { od_number: string; od_item: string }[])) out.push({ od_number: String(r.od_number), od_item: String(r.od_item) })
+  }
+  return out
 }

@@ -19,7 +19,8 @@ import { Button } from '@/components/ui/button'
 import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useDeleteDoSap, useBulkDeleteDoSap,
   useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useDeleteKhvc, useBulkDeleteKhvc,
-  type DoSapRow, type KhvcRow,
+  useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
+  type DoSapRow, type KhvcRow, type ReconcileTask,
 } from '@/api/hooks'
 import { apiClient } from '@/api/client'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -28,14 +29,15 @@ import { can, type ModulePermissions, type ModuleKey } from '@/config/permission
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
-type TabKey = 'dosap' | 'khvc'
-const TABS: { key: TabKey; label: string; module: ModuleKey }[] = [
-  { key: 'dosap', label: 'DO SAP', module: 'external_do_sap' },
-  { key: 'khvc',  label: 'Kế hoạch xuất', module: 'external_khvc' },
+type TabKey = 'dosap' | 'khvc' | 'reconcile'
+const TABS: { key: TabKey; label: string; module: ModuleKey; action?: string }[] = [
+  { key: 'dosap',     label: 'DO SAP', module: 'external_do_sap' },
+  { key: 'khvc',      label: 'Kế hoạch xuất', module: 'external_khvc' },
+  { key: 'reconcile', label: 'Cần xử lý', module: 'outbound', action: 'reconcile' },
 ]
 
 function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => void; perms: ModulePermissions | null }) {
-  const visible = TABS.filter(t => can(perms, t.module, 'view'))
+  const visible = TABS.filter(t => can(perms, t.module, t.action ?? 'view'))
   return (
     <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <div className="flex items-center gap-1">
@@ -105,10 +107,12 @@ const PAGE_SIZES = [50, 100, 200]
 export default function ExternalData() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canDoSap = can(perms, 'external_do_sap', 'view')
-  const [tab, setTab] = useState<TabKey>(canDoSap ? 'dosap' : 'khvc')
+  const firstTab = (TABS.find(t => can(perms, t.module, t.action ?? 'view'))?.key ?? 'dosap') as TabKey
+  const [tab, setTab] = useState<TabKey>(firstTab)
   const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
-  return tab === 'khvc' ? <KhvcTab tabBar={tabBar} /> : <DoSapTab tabBar={tabBar} />
+  if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
+  if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />
+  return <DoSapTab tabBar={tabBar} />
 }
 
 // ─── Tab DO SAP (raw erp_outbound_orders) ─────────────────────────────────────
@@ -941,6 +945,224 @@ function KhvcForm({ row, onClose }: { row: KhvcRow | null; onClose: () => void }
         </Section>
       </div>
     </FormSheet>
+  )
+}
+
+// ─── Tab "Cần xử lý" (reconcile_tasks — đối chiếu SAP↔WMS) ────────────────────
+const RC_COLS: { id: string; label: string }[] = [
+  { id: 'group',   label: 'Chuyến' },
+  { id: 'mat',     label: 'Mã hàng' },
+  { id: 'do',      label: 'DO / Item' },
+  { id: 'change',  label: 'Kiểu đổi' },
+  { id: 'zone',    label: 'Vùng' },
+  { id: 'qty',     label: 'SL cũ → mới' },
+  { id: 'scanned', label: 'Đã quét' },
+  { id: 'detail',  label: 'Chi tiết / Vì sao' },
+  { id: 'result',  label: 'Kết quả' },
+  { id: 'action',  label: 'Xử lý' },
+]
+const RC_COL_DEFAULTS = [150, 150, 110, 110, 130, 110, 80, 320, 110, 190]
+
+const CHANGE_LABEL: Record<string, { label: string; cls: string }> = {
+  QTY_INCREASE:     { label: 'SAP tăng SL',     cls: 'bg-amber-100 text-amber-700' },
+  QTY_DECREASE:     { label: 'SAP giảm SL',     cls: 'bg-amber-100 text-amber-700' },
+  LINE_REMOVED:     { label: 'SAP bỏ dòng',     cls: 'bg-red-100 text-red-700' },
+  MATERIAL_CHANGED: { label: 'SAP đổi mã',      cls: 'bg-red-100 text-red-700' },
+  ATTR_CHANGED:     { label: 'Đổi batch/%Date', cls: 'bg-slate-100 text-slate-600' },
+  SHIPTO_CHANGED:   { label: 'Đổi ship-to',     cls: 'bg-amber-100 text-amber-700' },
+}
+const ZONE_LABEL: Record<string, string> = { Z1: 'Chưa BĐ · chưa quét', Z2: 'Đang xuất · chưa quét', Z3: 'ĐÃ QUÉT', Z4: 'Đã đóng (GI)' }
+const ACTION_BADGE: Record<string, { label: string; cls: string }> = {
+  AUTO_APPLIED:    { label: 'Đã tự áp',     cls: 'bg-green-100 text-green-700' },
+  NEEDS_REVIEW:    { label: 'Cần duyệt',    cls: 'bg-amber-100 text-amber-700' },
+  BLOCKED:         { label: 'Chặn · trả hàng', cls: 'bg-red-100 text-red-700' },
+  RECONCILE_ONLY:  { label: 'Chỉ đối soát', cls: 'bg-slate-100 text-slate-600' },
+}
+const RC_PAGE_SIZES = [50, 100, 200]
+
+function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canResolve = can(perms, 'outbound', 'reconcile')
+
+  const { reconcile: f, setReconcile } = useWmsFilterStore()
+  const { search, status, dateFrom, dateTo, page, pageSize } = f
+  const [dense, setDense] = useState(() => localStorage.getItem('reconcile_density') !== 'comfortable')
+  const [resolveTarget, setResolveTarget] = useState<{ task: ReconcileTask; resolution: 'apply' | 'keep' | 'manual_done' } | null>(null)
+
+  const { widths: colW, startResize, totalWidth } = useColumnResize('reconcile_col_widths', RC_COL_DEFAULTS)
+  const { data: openCount } = useReconcileOpenCount()
+
+  const params = useMemo(() => ({
+    q: search.trim() || undefined, status: status || 'OPEN',
+    date_from: dateFrom || undefined, date_to: dateTo || undefined, page, page_size: pageSize,
+  }), [search, status, dateFrom, dateTo, page, pageSize])
+
+  const { data, isLoading, isError, error } = useReconcileTasks(params)
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const resolve = useResolveReconcileTask()
+
+  const filterKey = JSON.stringify({ search, status, dateFrom, dateTo, pageSize })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setReconcile({ page: 1 }) }, [filterKey])
+
+  const filterDefs: FilterDef[] = [
+    { key: 'status', label: 'Trạng thái', type: 'single', allLabel: 'Tất cả', value: status,
+      options: [{ value: 'OPEN', label: 'Cần xử lý' }, { value: 'RESOLVED', label: 'Đã xử lý' }],
+      onChange: v => setReconcile({ status: v === '__all__' ? '' : v }) },
+    { key: 'date', label: 'Ngày phát sinh', type: 'daterange', from: dateFrom, to: dateTo,
+      onChange: (from, to) => setReconcile({ dateFrom: from, dateTo: to }) },
+  ]
+
+  function doResolve() {
+    if (!resolveTarget) return
+    resolve.mutate({ id: resolveTarget.task.id, resolution: resolveTarget.resolution }, { onSuccess: () => setResolveTarget(null) })
+  }
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {tabBar}
+      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
+            <Database className="h-4 w-4 text-slate-500" /> Cần xử lý (đối chiếu SAP)
+          </span>
+          <SearchInput value={search} onChange={v => setReconcile({ search: v })}
+            placeholder="Tìm chuyến, mã hàng, DO…" className="flex-1 min-w-[140px]" />
+          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          <button type="button" onClick={() => { localStorage.setItem('reconcile_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        <FilterBar defs={filterDefs} />
+      </div>
+
+      <SummaryBand tiles={[
+        { label: 'Cần xử lý (tất cả)', value: (openCount?.open ?? 0).toLocaleString('vi-VN'), accent: (openCount?.open ?? 0) > 0 },
+        { label: 'Đang xem', value: total.toLocaleString('vi-VN') },
+        { label: 'Trang', value: `${page}/${totalPages}` },
+      ]} />
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
+          <TableSkeleton cols={10} rows={10} />
+        ) : isError ? (
+          <div className="p-6 text-center text-sm text-red-500">{apiError(error, 'Lỗi tải hàng chờ đối chiếu.')}</div>
+        ) : items.length === 0 ? (
+          <EmptyState title={status === 'RESOLVED' ? 'Chưa có việc đã xử lý' : 'Không có việc cần xử lý 🎉'} />
+        ) : (
+          <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden" style={{ width: totalWidth, minWidth: '100%' }}>
+            <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+            <TableHeader>
+              <TableRow>
+                {RC_COLS.map((c, i) => (
+                  <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    {c.label}
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map(r => {
+                const cellPad = dense ? 'py-1' : 'py-2.5'
+                const ch = CHANGE_LABEL[r.change_type] ?? { label: r.change_type, cls: 'bg-slate-100 text-slate-600' }
+                const ab = ACTION_BADGE[r.action] ?? { label: r.action, cls: 'bg-slate-100 text-slate-600' }
+                const isOpen = r.status === 'OPEN'
+                const canApply = isOpen && r.action === 'NEEDS_REVIEW' && Number(r.new_ordered) >= Number(r.scanned)
+                return (
+                  <TableRow key={r.id}>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap sticky left-0 z-10 bg-white`}>{r.group_code || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>
+                      <div className="leading-tight"><div className="font-mono">{r.material_code || '—'}</div>
+                      {r.material_name && <div className="text-[9px] text-slate-400 truncate" title={r.material_name}>{r.material_name}</div>}</div>
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.od_number ? `${r.od_number}${r.od_item ? '/' + r.od_item : ''}` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${ch.cls}`}>{ch.label}</span></TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap ${r.zone === 'Z3' ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>{ZONE_LABEL[r.zone] ?? r.zone}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums whitespace-nowrap`}>
+                      <span className="text-slate-400">{r.old_ordered ?? '—'}</span> → <span className="font-semibold">{r.new_ordered ?? '—'}</span>
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] tabular-nums font-semibold whitespace-nowrap ${Number(r.scanned) > 0 ? 'text-red-600' : 'text-slate-400'}`}>{r.scanned ?? 0}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.detail ?? undefined}>{r.detail || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      {isOpen
+                        ? <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${ab.cls}`}>{ab.label}</span>
+                        : <div className="leading-tight"><span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">Đã xử lý</span>
+                          {r.resolution && <div className="text-[9px] text-slate-400 mt-0.5">{r.resolution === 'apply' ? 'Áp SAP' : r.resolution === 'keep' ? 'Giữ WMS' : 'Tay'} · {r.resolved_by ?? ''}</div>}</div>}
+                    </TableCell>
+                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`}>
+                      {isOpen && canResolve ? (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {canApply && (
+                            <button type="button" onClick={() => setResolveTarget({ task: r, resolution: 'apply' })}
+                              className="text-[9px] px-1.5 py-1 rounded border border-green-300 text-green-700 hover:bg-green-50 font-semibold !min-h-0">Áp SAP</button>
+                          )}
+                          {(r.action === 'BLOCKED' || r.action === 'MATERIAL_CHANGED') && (
+                            <button type="button" onClick={() => setResolveTarget({ task: r, resolution: 'manual_done' })}
+                              className="text-[9px] px-1.5 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-50 font-semibold !min-h-0">Đã xử lý tay</button>
+                          )}
+                          <button type="button" onClick={() => setResolveTarget({ task: r, resolution: 'keep' })}
+                            className="text-[9px] px-1.5 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 !min-h-0">Giữ WMS</button>
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
+        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 việc'}</span>
+        <label className="flex items-center gap-1 ml-2">
+          <span className="hidden sm:inline">Mỗi trang</span>
+          <select value={pageSize} onChange={e => setReconcile({ pageSize: Number(e.target.value) })}
+            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
+            {RC_PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+        <div className="ml-auto flex items-center gap-1">
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setReconcile({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
+          <span>{page}/{totalPages}</span>
+          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setReconcile({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
+        </div>
+      </div>
+     </div>
+
+      {/* Confirm xử lý */}
+      <Dialog open={!!resolveTarget} onOpenChange={o => { if (!o) setResolveTarget(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">
+            {resolveTarget?.resolution === 'apply' ? 'Áp thay đổi SAP vào đơn?'
+              : resolveTarget?.resolution === 'manual_done' ? 'Đánh dấu đã xử lý tay?'
+              : 'Giữ nguyên WMS (báo SAP sửa lại)?'}
+          </DialogTitle></DialogHeader>
+          <div className="text-xs text-slate-600 space-y-1.5">
+            <p className="font-mono">{resolveTarget?.task.group_code} · {resolveTarget?.task.material_code}</p>
+            <p className="text-slate-500">{resolveTarget?.task.detail}</p>
+            {resolveTarget?.resolution === 'apply' && <p className="text-green-700">Sẽ đặt số lượng đơn = <b>{resolveTarget?.task.new_ordered}</b> (base) + tính lại nhặt lẻ.</p>}
+            {resolveTarget?.resolution === 'manual_done' && <p className="text-sky-700">Xác nhận bạn đã xử lý ở Xuất kho (trả hàng/sửa số). Việc này chỉ đánh dấu hoàn tất.</p>}
+            {resolveTarget?.resolution === 'keep' && <p>Đơn WMS GIỮ NGUYÊN; CS báo SAP điều chỉnh lại cho khớp.</p>}
+          </div>
+          {resolve.isError && <p className="text-xs text-red-500">{apiError(resolve.error, 'Không xử lý được.')}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setResolveTarget(null)} disabled={resolve.isPending}>Huỷ</Button>
+            <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={doResolve} disabled={resolve.isPending}>
+              {resolve.isPending ? 'Đang xử lý…' : 'Xác nhận'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 

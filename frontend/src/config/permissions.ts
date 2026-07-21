@@ -55,6 +55,7 @@ export const MODULES = {
       complete:   'Hoàn thành chuyến + xác nhận nhặt lẻ',
       uncomplete: 'Bỏ hoàn thành',
       cancel:     'Huỷ đơn',
+      reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
     },
   },
   scanlog: {

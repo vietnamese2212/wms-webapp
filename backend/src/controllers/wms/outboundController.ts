@@ -89,6 +89,35 @@ async function adjustInventoryAtomic(
   return false
 }
 
+// Trả tồn cho MỌI scan entry của tập ITEM trước khi XÓA item — FK OutboundScanEntry ON DELETE CASCADE
+// xóa mất scan entry, nếu không nhả TRƯỚC thì cartons_reserved/remaining KẸT vĩnh viễn (bug nhặt lẻ
+// pre-start khi xóa/ghi đè chuyến PENDING). 3 công thức KHỚP deleteScanEntry: loose chưa xác nhận → nhả
+// reserved; loose đã xác nhận → hoàn remaining + nhả reserved; thường → hoàn remaining.
+async function releaseScansForItems(itemIds: string[]): Promise<void> {
+  if (!itemIds.length) return
+  const scans = await fetchAllByIdChunks(itemIds, chunk => supabase.from('OutboundScanEntry')
+    .select('id, inventory_entry_id, cartons_scanned, is_loose_picking, loose_confirmed')
+    .in('item_id', chunk).order('id')) as {
+      id: string; inventory_entry_id: string | null; cartons_scanned: number
+      is_loose_picking: boolean | null; loose_confirmed: boolean | null
+    }[]
+  for (const s of (scans ?? [])) {
+    if (!s.inventory_entry_id) continue
+    const sc = Number(s.cartons_scanned)
+    if (s.is_loose_picking && !s.loose_confirmed)     await adjustInventoryAtomic(s.inventory_entry_id, 0, -sc)
+    else if (s.is_loose_picking && s.loose_confirmed) await adjustInventoryAtomic(s.inventory_entry_id, sc, -sc)
+    else                                              await adjustInventoryAtomic(s.inventory_entry_id, sc, 0)
+  }
+}
+
+// Trả tồn theo tập DO (resolve item → releaseScansForItems) — cho đường xóa theo do_id.
+async function releaseScansForDOs(doIds: string[]): Promise<void> {
+  if (!doIds.length) return
+  const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+    .select('id').in('do_id', chunk).order('id')) as { id: string }[]
+  await releaseScansForItems((items ?? []).map(i => i.id))
+}
+
 // XUẤT (trừ remaining) NGUYÊN TỬ: chỉ trừ ĐÚNG `amount` nếu tồn còn đủ, dưới optimistic-lock.
 // Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
@@ -1223,6 +1252,7 @@ export async function deleteGDO(req: Request, res: Response) {
       .select('id').eq('gdo_id', req.params.id)
     const doIds = (dos ?? []).map((d: any) => d.id as string)
     if (doIds.length) {
+      await releaseScansForDOs(doIds)   // nhả reserved/hoàn remaining trước khi CASCADE xóa scan (chống kẹt tồn)
       await supabase.from('OutboundItem').delete().in('do_id', doIds)
       await supabase.from('OutboundDelivery').delete().in('id', doIds)
     }
@@ -1840,17 +1870,25 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
 
 // ─── Merge upload for PAUSED GDO ─────────────────────────────
 
-// Gộp các dòng CÙNG MÃ HÀNG trong 1 NPP (file SAP tách theo DO): cộng dồn số lượng,
-// field chữ lấy giá trị đầu tiên không rỗng. Sau gộp: 1 mã hàng chỉ còn 1 dòng / NPP.
+// Gộp các dòng CÙNG MÃ HÀNG trong 1 NPP (file SAP tách theo DO): cộng dồn số lượng.
+// YÊU CẦU GIAO gộp theo mức NGHIÊM NHẤT, KHÔNG nuốt của dòng khác (bug cũ first-non-empty làm giao sai lô):
+//   %Date → MAX (hạn cao nhất) · Batch + HEADER TEXT → nối DISTINCT (' | '). Field xe (loại/CS) → đầu tiên.
+// (Xung đột batch-cụ-thể khác nhau trên cùng mã = nợ Đợt 2 với od_refs — hiện data batch rỗng, nối để không mất.)
 function mergeNppRows(rows: Record<string, any>[]): Record<string, any>[] {
   const byMat = new Map<string, Record<string, any>>()
+  const joinDistinct = (a: unknown, b: unknown): string =>
+    [...new Set([String(a ?? '').trim(), String(b ?? '').trim()].filter(Boolean))].join(' | ')
   for (const row of rows) {
     const code = String(row['Material'] ?? '').trim()
     const cur = byMat.get(code)
     if (!cur) { byMat.set(code, { ...row }); continue }
     for (const f of ['Thùng', 'Hộp', 'Tải', 'Nhặt lẻ']) cur[f] = parseDecimal(cur[f]) + parseDecimal(row[f])
     cur['Pallet'] = parseDecimal(String(cur['Pallet'] ?? '').replace(',', '.')) + parseDecimal(String(row['Pallet'] ?? '').replace(',', '.'))
-    for (const f of ['Material_type', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách'])
+    const pd = Math.max(parseDecimal(cur['%Date_Yêu cầu']), parseDecimal(row['%Date_Yêu cầu']))
+    cur['%Date_Yêu cầu'] = pd > 0 ? pd : (String(cur['%Date_Yêu cầu'] ?? '').trim() || row['%Date_Yêu cầu'])
+    cur['Batch_Yêu cầu'] = joinDistinct(cur['Batch_Yêu cầu'], row['Batch_Yêu cầu'])
+    cur['HEADER TEXT']   = joinDistinct(cur['HEADER TEXT'], row['HEADER TEXT'])
+    for (const f of ['Material_type', 'Loại xuất', 'CS phụ trách'])
       if (!String(cur[f] ?? '').trim()) cur[f] = row[f]
   }
   return [...byMat.values()]
@@ -2017,7 +2055,16 @@ async function mergePausedGDO(
     })
     .map((d: any) => d.id as string)
   if (staleDOIds.length) {
-    await supabase.from('OutboundDelivery').delete().in('id', staleDOIds)
+    // GIỮ DO thừa còn item scanned>0 (dữ liệu đã xuất — mất là hỏng; legacy hiếm) — chỉ xóa DO RỖNG.
+    const { data: staleItemsChk } = await supabase.from('OutboundItem')
+      .select('do_id, cartons_scanned').in('do_id', staleDOIds)
+    const doWithScanned = new Set(((staleItemsChk ?? []) as { do_id: string; cartons_scanned: number }[])
+      .filter(i => Number(i.cartons_scanned) > 0).map(i => i.do_id))
+    const safeToDelete = staleDOIds.filter(id => !doWithScanned.has(id))
+    if (safeToDelete.length) {
+      await releaseScansForDOs(safeToDelete)   // nhả tồn trước cascade (an toàn — DO rỗng thường no-op)
+      await supabase.from('OutboundDelivery').delete().in('id', safeToDelete)
+    }
   }
 
   return { group_code, id: gdoId, merged: true }
@@ -2364,6 +2411,7 @@ async function processVehicleGroups(
       const dosToDelete = await fetchAllByIdChunks(toReplaceIds, c => supabase.from('OutboundDelivery')
         .select('id').in('gdo_id', c).order('id'))
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
+      await releaseScansForDOs(doIdsToDelete)   // nhả tồn trước CASCADE (chống kẹt tồn nhặt lẻ pre-start)
       for (const c of idChunks(doIdsToDelete)) {
         await supabase.from('OutboundItem').delete().in('do_id', c)
         await supabase.from('OutboundDelivery').delete().in('id', c)
@@ -2378,6 +2426,7 @@ async function processVehicleGroups(
       const dosToDelete = await fetchAllByIdChunks(toPreserveIds, c => supabase.from('OutboundDelivery')
         .select('id').in('gdo_id', c).order('id'))
       const doIdsToDelete = (dosToDelete ?? []).map((d: any) => d.id as string)
+      await releaseScansForDOs(doIdsToDelete)   // nhả tồn trước CASCADE (chống kẹt tồn nhặt lẻ pre-start)
       for (const c of idChunks(doIdsToDelete)) {
         await supabase.from('OutboundItem').delete().in('do_id', c)
         await supabase.from('OutboundDelivery').delete().in('id', c)

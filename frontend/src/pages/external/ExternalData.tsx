@@ -300,7 +300,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={search} onChange={v => setDoSap({ search: v })}
-            placeholder="Tìm DO, mã hàng, ship-to…" className="flex-1 min-w-[140px]" />
+            placeholder="Tìm DO, số xe (KH), mã hàng, ship-to…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button type="button" onClick={() => { localStorage.setItem('dosap_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"

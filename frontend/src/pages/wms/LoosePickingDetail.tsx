@@ -234,6 +234,9 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   const nameMinW     = Math.min(400, Math.max(150, Math.ceil((maxNameLen / 3) * 5.4)))
   const maxHeaderLen = Math.max(0, ...allItems.map(i => (i.header_text ?? '').length))
   const headerMinW   = Math.min(420, Math.max(180, Math.ceil((maxHeaderLen / 3) * 5)))
+  // Cột Số DO ra CUỐI + hiện ĐỦ mọi DO trên 1 DÒNG (user 21/07, đồng bộ Xuất) — rộng theo chuỗi DO dài nhất, nowrap giữ chiều cao dòng, kéo giãn được
+  const maxDoLen     = Math.max(0, ...allItems.map(i => (i.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean).join(', ').length))
+  const doMinW       = Math.min(640, Math.max(110, Math.ceil(maxDoLen * 6.6) + 16))   // +16 padding cell; cap 640 (~9-10 DO), dài hơn thì kéo giãn/hover
 
   // Bộ cột ĐỘNG — chuẩn table-format (table-fixed + kéo giãn + sticky), đồng bộ Xuất
   const cols: RtColDef[] = [
@@ -245,10 +248,10 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
     { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
-    { id: 'do',   label: 'Số DO', w: 105 },
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
     ...(hasDateRequired ? [{ id: 'datereq', label: '%Date yêu cầu', w: 100 }] : []),
     ...(hasHeaderText ? [{ id: 'header', label: 'Header text', w: headerMinW }] : []),
+    { id: 'do',   label: 'Số DO', w: doMinW },
     { id: 'exp',  label: '', w: 30 },
   ]
   const colSig = cols.map(c => c.id).join('.')
@@ -386,14 +389,6 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       })()}
                     </TableCell>
                   )}
-                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
-                    {(() => {
-                      const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
-                      if (codes.length === 0) return <span className="text-[10px] text-slate-300">—</span>
-                      const disp = codes.length > 1 ? `${codes[0]} …` : codes[0]
-                      return <span className="text-[10px] text-slate-500 font-mono" title={codes.join(', ')}>{disp}</span>
-                    })()}
-                  </TableCell>
                   {hasBatchRequired && (
                     <TableCell className="px-2 py-1 align-top whitespace-nowrap">
                       {item.batch_required
@@ -415,6 +410,14 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                         : <span className="text-[10px] text-slate-300">—</span>}
                     </TableCell>
                   )}
+                  <TableCell className="px-2 py-1 align-top whitespace-nowrap">
+                    {/* Số DO — cột CUỐI, hiện ĐẦY ĐỦ mọi DO trên 1 dòng (nowrap giữ chiều cao dòng; kéo giãn được) */}
+                    {(() => {
+                      const codes = (item.delivery_code ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                      if (codes.length === 0) return <span className="text-[10px] text-slate-300">—</span>
+                      return <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap" title={codes.join(', ')}>{codes.join(', ')}</span>
+                    })()}
+                  </TableCell>
                   <TableCell className="px-1 py-1 align-top">
                     {looseScanEntries.length > 0 && (
                       <button

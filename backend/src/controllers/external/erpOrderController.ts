@@ -47,6 +47,17 @@ export async function listDoSap(req: Request, res: Response) {
     const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
     const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
 
+    // Search bắt: DO / mã hàng / tên hàng / ship-to / batch + **SỐ XE (KH)**: tra khvc_lines group_code ~ q
+    // → od_number các DO trên số xe đó (bounded — số xe cụ thể ~ vài DO; cap 300 chống URL dài). Ghép vào OR.
+    let searchOr = ''
+    if (s) {
+      const parts = [`od_number.ilike.%${s}%`, `material_code.ilike.%${s}%`, `material_name.ilike.%${s}%`, `ship_to_name.ilike.%${s}%`, `batch.ilike.%${s}%`]
+      const { data: klSearch } = await supabase.from('khvc_lines').select('do_no').ilike('group_code', `%${s}%`).limit(400)
+      const planDos = [...new Set((klSearch ?? []).map(r => String((r as { do_no: string }).do_no)).filter(d => /^[\w.-]+$/.test(d)))].slice(0, 300)
+      if (planDos.length) parts.push(`od_number.in.(${planDos.join(',')})`)
+      searchOr = parts.join(',')
+    }
+
     // ── Filter chéo "Trong kế hoạch" (in_plan: '1'=có / '0'=không) ──
     // Ngữ nghĩa: DO của cửa sổ đang xem CÓ/KHÔNG khớp khvc_lines.do_no (bất kể ngày nạp kế hoạch).
     // Scalable: chỉ lấy tập DO CỦA CỬA SỔ (đã date-gate) rồi hỏi khvc — KHÔNG kéo cả bảng khvc.
@@ -64,7 +75,7 @@ export async function listDoSap(req: Request, res: Response) {
         if (plant)         wq = wq.eq('plant', plant)
         if (source)        wq = wq.eq('source', source)
         if (batch)         wq = wq.ilike('batch', `%${safeFilterValue(batch)}%`)
-        if (s) wq = wq.or(`od_number.ilike.%${s}%,material_code.ilike.%${s}%,material_name.ilike.%${s}%,ship_to_name.ilike.%${s}%,batch.ilike.%${s}%`)
+        if (searchOr) wq = wq.or(searchOr)
         return wq.order('od_number')
       }) as { od_number: string }[]
       const windowDos = [...new Set(winRows.map(r => String(r.od_number ?? '')).filter(Boolean))]
@@ -91,7 +102,7 @@ export async function listDoSap(req: Request, res: Response) {
     if (plant)         query = query.eq('plant', plant)
     if (source)        query = query.eq('source', source)
     if (batch)         query = query.ilike('batch', `%${safeFilterValue(batch)}%`)
-    if (s) query = query.or(`od_number.ilike.%${s}%,material_code.ilike.%${s}%,material_name.ilike.%${s}%,ship_to_name.ilike.%${s}%,batch.ilike.%${s}%`)
+    if (searchOr) query = query.or(searchOr)
     if (restrictOds) query = query.in('od_number', restrictOds)
     query = query.order('od_number', { ascending: true }).order('od_item', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)

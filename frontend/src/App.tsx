@@ -52,6 +52,18 @@ function PermissionRoute({
   return <>{children}</>
 }
 
+// Trang "Dữ liệu bên ngoài" có 3 tab, tab "Cần xử lý" gate bằng outbound.reconcile —
+// route phải nhận CẢ quyền đó (user chỉ có reconcile vẫn vào xử hàng chờ được).
+function ExternalRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const allowed = isAdmin(user?.name)
+    || canAccessAny(perms, 'external_do_sap', 'external_khvc')
+    || can(perms, 'outbound', 'reconcile')
+  if (!allowed) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 
 export default function App() {
   return (
@@ -79,8 +91,8 @@ export default function App() {
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/weigh-tickets"                    element={<PermissionRoute module="weigh_station"><WeighTickets /></PermissionRoute>} />
         <Route path="/wms/control-tower"                    element={<PermissionRoute module="control_tower"><ControlTower /></PermissionRoute>} />
-        <Route path="/external/do-sap"                      element={<PermissionRoute module={['external_do_sap', 'external_khvc']}><ExternalData /></PermissionRoute>} />
-        <Route path="/external"                             element={<PermissionRoute module={['external_do_sap', 'external_khvc']}><ExternalData /></PermissionRoute>} />
+        <Route path="/external/do-sap"                      element={<ExternalRoute><ExternalData /></ExternalRoute>} />
+        <Route path="/external"                             element={<ExternalRoute><ExternalData /></ExternalRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
         <Route path="/wms/outbound/:gdoId/items/:itemId"    element={<PermissionRoute module="outbound"><OutboundItemDetail /></PermissionRoute>} />
 

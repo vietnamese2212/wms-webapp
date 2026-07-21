@@ -15,6 +15,7 @@ export interface NavItem {
   label: string
   module?: ModuleKey
   modules?: ModuleKey[]   // hiện nếu BẤT KỲ module nào trong list có view access
+  anyActions?: [ModuleKey, string][]   // HOẶC nếu có BẤT KỲ (module, action) nào trong list (cross-module, vd outbound.reconcile)
   adminOnly?: boolean
 }
 
@@ -70,7 +71,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
       { to: '/wms/stocktake/summary', icon: BarChart2, label: 'Tổng hợp KK',  module: 'stocktake' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
-      { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'] },
+      { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'], anyActions: [['outbound', 'reconcile']] },
     ],
   },
   {

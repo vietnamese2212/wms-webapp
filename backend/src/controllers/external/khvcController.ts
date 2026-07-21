@@ -56,7 +56,7 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/khvc — list phân trang + filter + search (+ in_do_sap)
 export async function listKhvc(req: Request, res: Response) {
   try {
-    const { q, group_code, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap } = req.query as Record<string, string>
+    const { q, group_code, group_code_eq, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
@@ -102,6 +102,7 @@ export async function listKhvc(req: Request, res: Response) {
     if (gteFrom) query = query.gte('created_at', gteFrom)
     if (lteTo)   query = query.lte('created_at', lteTo)
     if (group_code)     query = query.ilike('group_code', `%${safeFilterValue(group_code)}%`)
+    if (group_code_eq)  query = query.eq('group_code', group_code_eq)   // editor gom theo Số xe — khớp CHÍNH XÁC
     if (do_no)          query = query.ilike('do_no', `%${safeFilterValue(do_no)}%`)
     if (warehouse_code) query = query.eq('warehouse_code', warehouse_code)
     if (veh_type)       query = query.eq('veh_type', veh_type)

@@ -40,7 +40,7 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, in_plan, page, page_size)
 export async function listDoSap(req: Request, res: Response) {
   try {
-    const { q, od_number, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan } = req.query as Record<string, string>
+    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
@@ -97,6 +97,7 @@ export async function listDoSap(req: Request, res: Response) {
     if (gteFrom) query = query.gte('created_at', gteFrom)
     if (lteTo)   query = query.lte('created_at', lteTo)
     if (od_number)     query = query.ilike('od_number', `%${safeFilterValue(od_number)}%`)
+    if (od_number_eq)  query = query.eq('od_number', od_number_eq)   // editor gom theo DO — khớp CHÍNH XÁC (ilike substring làm DO khác chiếm chỗ trang 200)
     if (material_code) query = query.ilike('material_code', `%${safeFilterValue(material_code)}%`)
     if (ship_to_code)  query = query.eq('ship_to_code', ship_to_code)
     if (plant)         query = query.eq('plant', plant)
@@ -117,18 +118,30 @@ export async function listDoSap(req: Request, res: Response) {
     const usedSet = new Set<string>()
     const planByDo = new Map<string, { group_codes: string[]; export_date: string | null }>()
     if (dos.length) {
-      const orExpr = dos.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
-      const { data: ods } = await supabase.from('OutboundDelivery').select('delivery_code').or(orExpr)
-      for (const o of (ods ?? []) as { delivery_code: string | null }[])
-        for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) if (tok.trim()) usedSet.add(tok.trim())
-      const { data: kl } = await supabase.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', dos)
-      for (const k of (kl ?? []) as { do_no: string; group_code: string | null; export_date: string | null }[]) {
-        const key = String(k.do_no)
-        const e = planByDo.get(key) ?? { group_codes: [], export_date: null }
-        if (k.group_code && !e.group_codes.includes(k.group_code)) e.group_codes.push(k.group_code)
-        if (!e.export_date && k.export_date) e.export_date = k.export_date
-        planByDo.set(key, e)
-      }
+      // Chunk 40 DO/truy vấn (mẫu outboundController) — 1 .or() 200 vế + không limit dễ chạm cap-1000
+      // PostgREST → thiếu dòng ÂM THẦM → badge "Chưa dùng" SAI (user tin badge rồi xóa nhầm DO đang dùng).
+      const odChunks: string[][] = []
+      for (let i = 0; i < dos.length; i += 40) odChunks.push(dos.slice(i, i + 40))
+      const odResults = await Promise.all(odChunks.map(chunk =>
+        supabase.from('OutboundDelivery').select('delivery_code')
+          .or(chunk.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(','))
+      ))
+      for (const r of odResults)
+        for (const o of (r.data ?? []) as { delivery_code: string | null }[])
+          for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) if (tok.trim()) usedSet.add(tok.trim())
+      const klChunks: string[][] = []
+      for (let i = 0; i < dos.length; i += 100) klChunks.push(dos.slice(i, i + 100))
+      const klResults = await Promise.all(klChunks.map(chunk =>
+        supabase.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', chunk)
+      ))
+      for (const r of klResults)
+        for (const k of (r.data ?? []) as { do_no: string; group_code: string | null; export_date: string | null }[]) {
+          const key = String(k.do_no)
+          const e = planByDo.get(key) ?? { group_codes: [], export_date: null }
+          if (k.group_code && !e.group_codes.includes(k.group_code)) e.group_codes.push(k.group_code)
+          if (!e.export_date && k.export_date) e.export_date = k.export_date
+          planByDo.set(key, e)
+        }
     }
     const mcs = [...new Set(items.map(i => String(i.material_code ?? '')).filter(Boolean))]
     const matMap = new Map<string, { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }>()
@@ -223,13 +236,18 @@ type DelRow = { id: string; od_number: string; od_item: string }
 async function classifyDoSapDelete(rows: DelRow[]): Promise<{ deletable: DelRow[]; blocked: (DelRow & { reason: string })[] }> {
   const ods = [...new Set(rows.map(r => r.od_number))]
   const scannedKeys = new Set<string>()
-  for (const od of ods) {
-    // item tham chiếu OD này (jsonb cs) + đã quét → khóa (od,item) của nó bị chặn
-    const { data } = await supabase.from('OutboundItem')
-      .select('cartons_scanned, od_refs').filter('od_refs', 'cs', JSON.stringify([{ od_number: od }]))
-    for (const it of ((data ?? []) as { cartons_scanned: number; od_refs: { od_number: string; od_item: string }[] | null }[]))
-      if (Number(it.cartons_scanned) > 0)
-        for (const r of (it.od_refs ?? [])) scannedKeys.add(`${r.od_number}__${r.od_item}`)
+  // Song song theo lô 8 (KHÔNG tuần tự từng DO — chọn nhiều trang = hàng trăm DO → quá maxDuration 60s)
+  // + chỉ lấy item ĐÃ QUÉT (gt 0) — cần mỗi dòng đã quét để khóa, giảm hẳn payload. Index GIN od_refs: migration 20260722.
+  for (let i = 0; i < ods.length; i += 8) {
+    const results = await Promise.all(ods.slice(i, i + 8).map(od =>
+      supabase.from('OutboundItem')
+        .select('cartons_scanned, od_refs')
+        .filter('od_refs', 'cs', JSON.stringify([{ od_number: od }]))
+        .gt('cartons_scanned', 0)
+    ))
+    for (const r of results)
+      for (const it of ((r.data ?? []) as { cartons_scanned: number; od_refs: { od_number: string; od_item: string }[] | null }[]))
+        for (const ref of (it.od_refs ?? [])) scannedKeys.add(`${ref.od_number}__${ref.od_item}`)
   }
   const deletable: DelRow[] = [], blocked: (DelRow & { reason: string })[] = []
   for (const r of rows) {

@@ -1776,32 +1776,38 @@ export function useDoSapFacets() {
     queryFn: async () => (await apiClient.get('/external/do-sap/facets')).data.data as { plants: string[]; sources: string[]; shiptos: { code: string; name: string }[] },
   })
 }
+// DO SAP mutations invalidate CHÉO: ['khvc'] (cột "Trong DO SAP") + reconcile keys + ['gdos']
+// — vì sửa/xóa raw kích engine reconcileFromSap: có thể TỰ ÁP vào đơn Xuất (Z1/Z2) + sinh task "Cần xử lý".
+function invalidateDoSapRelated(qc: ReturnType<typeof useQueryClient>) {
+  for (const key of [['do-sap'], ['khvc'], ['reconcile-tasks'], ['reconcile-open-count'], ['gdos']])
+    qc.invalidateQueries({ queryKey: key })
+}
 export function useCreateDoSap() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Partial<DoSapRow>) => apiClient.post('/external/do-sap', body).then(r => r.data.data as DoSapRow),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['do-sap'] }); qc.invalidateQueries({ queryKey: ['do-sap-facets'] }) },
+    onSuccess: () => { invalidateDoSapRelated(qc); qc.invalidateQueries({ queryKey: ['do-sap-facets'] }) },
   })
 }
 export function useUpdateDoSap() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<DoSapRow> & { id: string }) => apiClient.put(`/external/do-sap/${id}`, body).then(r => r.data.data as DoSapRow),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+    onSuccess: () => invalidateDoSapRelated(qc),
   })
 }
 export function useDeleteDoSap() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/external/do-sap/${id}`).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+    onSuccess: () => invalidateDoSapRelated(qc),
   })
 }
 export function useBulkDeleteDoSap() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (ids: string[]) => apiClient.post('/external/do-sap/bulk-delete', { ids }).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['do-sap'] }),
+    onSuccess: () => invalidateDoSapRelated(qc),
   })
 }
 
@@ -1833,32 +1839,34 @@ export function useKhvcFacets() {
     queryFn: async () => (await apiClient.get('/external/khvc/facets')).data.data as { warehouses: string[]; veh_types: string[]; sources: string[]; npps: string[] },
   })
 }
+// KHVC mutations invalidate CHÉO cả ['do-sap'] — cột "Số xe (KH)"/"Ngày xuất (KH)" bên DO SAP
+// enrich từ khvc_lines (mirror TABLE_QUERY_MAP khvc_lines→[khvc, khvc-facets, do-sap]; realtime chỉ lo cross-user).
 export function useCreateKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Partial<KhvcRow>) => apiClient.post('/external/khvc', body).then(r => r.data.data as KhvcRow),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['khvc-facets'] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['khvc-facets'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useUpdateKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<KhvcRow> & { id: string }) => apiClient.put(`/external/khvc/${id}`, body).then(r => r.data.data as KhvcRow),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useDeleteKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/external/khvc/${id}`).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useBulkDeleteKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (ids: string[]) => apiClient.post('/external/khvc/bulk-delete', { ids }).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['khvc'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 

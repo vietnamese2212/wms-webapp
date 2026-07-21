@@ -3,7 +3,7 @@ import { Settings, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
+import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { NAV_GROUPS } from '@/config/navigation'
 
 export function MobileNav() {
@@ -32,6 +32,7 @@ export function MobileNav() {
         {NAV_GROUPS.map((group) => {
           const visibleItems = group.items.filter(item => {
             if (item.adminOnly) return admin
+            if (item.anyActions?.some(([m, a]) => can(modulePerms, m, a))) return true
             if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
             if (!item.module) return true
             return admin || canAccess(modulePerms, item.module)

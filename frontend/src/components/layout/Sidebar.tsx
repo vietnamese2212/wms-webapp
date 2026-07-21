@@ -8,7 +8,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
+import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { NAV_GROUPS, type NavItem } from '@/config/navigation'
 
 function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
@@ -96,6 +96,7 @@ export function Sidebar() {
             {NAV_GROUPS.map((group) => {
               const visibleItems = group.items.filter(item => {
                 if (item.adminOnly) return admin
+                if (item.anyActions?.some(([m, a]) => can(modulePerms, m, a))) return true
                 if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
                 if (!item.module) return true
                 return admin || canAccess(modulePerms, item.module)

@@ -1,7 +1,8 @@
 // Dữ liệu bên ngoài — dữ liệu raw ERP/SAP đổ vào WMS.
 // Tab "DO SAP" = bảng erp_outbound_orders (CRUD tay + multi-select + filter + search + phân trang server-side).
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
-import { useState, useMemo, useEffect, type ReactNode } from 'react'
+import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download, Lock } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
@@ -17,8 +18,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
-  useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useDeleteDoSap, useBulkDeleteDoSap,
-  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useDeleteKhvc, useBulkDeleteKhvc,
+  useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
+  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
   type DoSapRow, type KhvcRow, type ReconcileTask,
 } from '@/api/hooks'
@@ -85,9 +86,8 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'plan_date',  label: 'Ngày xuất (KH)' },
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
-  { id: 'action',     label: '' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 150, 95, 80, 110, 70]
+const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 150, 95, 80, 110]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -142,8 +142,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
-  const [formRow, setFormRow]       = useState<DoSapRow | 'new' | null>(null)
-  const [deleteRow, setDeleteRow]   = useState<DoSapRow | null>(null)
+  const [formRow, setFormRow]       = useState<DoSapRow | null>(null)   // sửa chi tiết 1 dòng (field raw lẻ) — mở từ editor gom
+  const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
   const [bulkOpen, setBulkOpen]     = useState(false)
   const [bulkChk, setBulkChk]       = useState<{ deletable_count: number; blocked_count: number; blocked: { od_number: string; od_item: string; reason: string }[] } | null>(null)
   const [exporting, setExporting]   = useState(false)
@@ -157,7 +157,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkOpen])
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v3', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -188,7 +188,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
   const bulkDelete   = useBulkDeleteDoSap()
-  const deleteOne    = useDeleteDoSap()
+  // Map id → od_number của mọi dòng ĐÃ render (selection chỉ tick được dòng đã thấy) — cho nút Sửa multi
+  const idToDo = useRef<Record<string, string>>({})
+  useEffect(() => { for (const r of items) idToDo.current[r.id] = r.od_number }, [items])
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
@@ -230,16 +232,11 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       onSuccess: () => { setSelected(new Set()); setBulkOpen(false) },
     })
   }
-  function doDeleteOne() {
-    if (!deleteRow) return
-    const id = deleteRow.id
-    deleteOne.mutate(id, {
-      onSuccess: () => {
-        setSelected(prev => { const n = new Set(prev); n.delete(id); return n })
-        setDeleteRow(null)
-      },
-    })
-  }
+  // Sửa các dòng đã tick → mở bảng gom theo DO (mọi mã cùng DO của các dòng đã chọn)
+  const selectedDos = useMemo(
+    () => [...new Set([...selected].map(id => idToDo.current[id]).filter(Boolean))],
+    [selected, items],   // items để map ref kịp cập nhật trước khi tính
+  )
 
   async function doExport() {
     setExportErr('')
@@ -314,11 +311,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
             </Button>
           )}
-          {canCreate && (
-            <Button size="sm" className="h-9 sm:h-7 bg-blue-600 hover:bg-blue-700 shrink-0" onClick={() => setFormRow('new')}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
-            </Button>
-          )}
+          {/* Thêm mới hoàn toàn = UPLOAD (VL06O), không thêm tay ngoài header — user chốt 21/07.
+              Thêm dòng vào DO đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor. */}
         </div>
         <FilterBar defs={filterDefs} />
         {exportErr && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600">{exportErr}</div>}
@@ -331,10 +325,17 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
 
-      {/* Thanh multi-select */}
+      {/* Thanh multi-select — tick dòng → Sửa (bảng gom theo DO) / Xóa hàng loạt */}
       {selected.size > 0 && (
         <div className="shrink-0 flex items-center gap-2 bg-sky-50 border-b border-sky-200 px-3 py-1.5 text-xs">
           <span className="font-semibold text-sky-800">Đã chọn {selected.size}</span>
+          {(canEdit || canCreate) && selectedDos.length > 0 && (
+            // canCreate-không-edit vẫn mở được editor (chỉ để THÊM dòng — ô sửa bị khóa bên trong)
+            <button type="button" onClick={() => setDoEditor(selectedDos)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-100 transition-colors">
+              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedDos.length > 1 ? `${selectedDos.length} DO` : `DO ${selectedDos[0]}`}
+            </button>
+          )}
           {canDelete && (
             <button type="button" onClick={() => setBulkOpen(true)}
               className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
@@ -433,22 +434,6 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                         <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
                       </div>
                     </TableCell>
-                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`} onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center gap-0.5">
-                        {canEdit && (
-                          <button type="button" className="p-1 rounded text-sky-500 hover:text-sky-700 hover:bg-sky-50 !min-h-0 !min-w-0"
-                            title="Sửa dòng" onClick={() => setFormRow(r)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                        {canDelete && (
-                          <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
-                            title="Xóa dòng" onClick={() => setDeleteRow(r)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -475,27 +460,20 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       </div>
      </div>
 
-      {/* FormSheet Thêm/Sửa */}
-      {formRow && <DoSapForm row={formRow === 'new' ? null : formRow} onClose={() => setFormRow(null)} />}
+      {/* FormSheet sửa chi tiết 1 dòng (field raw lẻ) — mở từ editor gom */}
+      {formRow && <DoSapForm row={formRow} onClose={() => setFormRow(null)} />}
 
-      {/* Xóa 1 dòng */}
-      <Dialog open={!!deleteRow} onOpenChange={o => { if (!o) setDeleteRow(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Xóa dòng DO SAP?</DialogTitle>
-          </DialogHeader>
-          <p className="text-xs text-slate-500">
-            Xóa dòng DO <span className="font-mono font-semibold">{deleteRow?.od_number}</span> / item <span className="font-mono">{deleteRow?.od_item}</span>. Thao tác không thể hoàn tác.
-          </p>
-          {deleteOne.isError && <p className="text-xs text-red-500">{apiError(deleteOne.error, 'Không xóa được dòng.')}</p>}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleteRow(null)} disabled={deleteOne.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doDeleteOne} disabled={deleteOne.isPending}>
-              {deleteOne.isPending ? 'Đang xóa…' : 'Xóa'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* FormSheet Sửa cả DO — bảng gom mọi mã cùng od_number (mô hình base gốc) */}
+      {doEditor && (
+        <DoSapDoEditor
+          odNumbers={doEditor}
+          canEdit={canEdit}
+          canCreate={canCreate}
+          canDelete={canDelete}
+          onClose={() => { setDoEditor(null); setSelected(new Set()) }}
+          onEditLine={r => { setDoEditor(null); setFormRow(r) }}
+        />
+      )}
 
       {/* Xóa hàng loạt */}
       <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
@@ -551,31 +529,25 @@ function numOrNull(v: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void }) {
-  const isEdit = !!row
-  const create = useCreateDoSap()
+function DoSapForm({ row, onClose }: { row: DoSapRow; onClose: () => void }) {
   const update = useUpdateDoSap()
   const [errMsg, setErrMsg] = useState('')
 
   const [f, setF] = useState<FormState>(() => ({
-    od_number: s(row?.od_number), od_item: s(row?.od_item),
-    material_code: s(row?.material_code), material_name: s(row?.material_name), source: row ? s(row.source) : 'MANUAL',
-    qty_sales: s(row?.qty_sales), sales_unit: s(row?.sales_unit), qty_base: s(row?.qty_base), base_unit: s(row?.base_unit),
-    ship_to_code: s(row?.ship_to_code), ship_to_name: s(row?.ship_to_name),
-    plant: s(row?.plant), storage_location: s(row?.storage_location), batch: s(row?.batch), batch_so: s(row?.batch_so),
-    note_delivery: s(row?.note_delivery), note_invoice: s(row?.note_invoice),
-    shipping_point: s(row?.shipping_point), license_plate: s(row?.license_plate),
+    od_number: s(row.od_number), od_item: s(row.od_item),
+    material_code: s(row.material_code), material_name: s(row.material_name), source: s(row.source),
+    qty_sales: s(row.qty_sales), sales_unit: s(row.sales_unit), qty_base: s(row.qty_base), base_unit: s(row.base_unit),
+    ship_to_code: s(row.ship_to_code), ship_to_name: s(row.ship_to_name),
+    plant: s(row.plant), storage_location: s(row.storage_location), batch: s(row.batch), batch_so: s(row.batch_so),
+    note_delivery: s(row.note_delivery), note_invoice: s(row.note_invoice),
+    shipping_point: s(row.shipping_point), license_plate: s(row.license_plate),
   }))
   const set = (k: keyof FormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }))
 
-  const saving = create.isPending || update.isPending
+  const saving = update.isPending
 
   function save() {
     setErrMsg('')
-    if (!isEdit && (f.od_number.trim() === '' || f.od_item.trim() === '')) {
-      setErrMsg('Bắt buộc nhập số DO và Item.')
-      return
-    }
     const payload: Partial<DoSapRow> = {
       od_number: f.od_number.trim(), od_item: f.od_item.trim(),
       material_code: n(f.material_code), material_name: n(f.material_name), source: n(f.source),
@@ -587,15 +559,14 @@ function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void
       shipping_point: n(f.shipping_point), license_plate: n(f.license_plate),
     }
     const onError = (err: unknown) => setErrMsg(apiError(err, 'Không lưu được dòng DO SAP.'))
-    if (isEdit && row) update.mutate({ id: row.id, ...payload }, { onSuccess: onClose, onError })
-    else create.mutate(payload, { onSuccess: onClose, onError })
+    update.mutate({ id: row.id, ...payload }, { onSuccess: onClose, onError })
   }
 
   return (
     <FormSheet
       open onClose={onClose}
-      title={isEdit ? 'Sửa dòng DO SAP' : 'Thêm dòng DO SAP'}
-      description={isEdit ? `${row?.od_number} / ${row?.od_item}` : 'Nhập tay 1 dòng dữ liệu DO SAP'}
+      title="Sửa dòng DO SAP"
+      description={`${row.od_number} / ${row.od_item}`}
       footer={<>
         <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
         <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={save} disabled={saving}>
@@ -607,55 +578,46 @@ function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void
         {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
 
         <Section title="Định danh">
-          <Fld label="Số DO"><Input className="h-9" value={f.od_number} onChange={e => set('od_number')(e.target.value)} disabled={isEdit} /></Fld>
-          <Fld label="Item"><Input className="h-9" value={f.od_item} onChange={e => set('od_item')(e.target.value)} disabled={isEdit} /></Fld>
+          <Fld label="Số DO"><Input className="h-9" value={f.od_number} onChange={e => set('od_number')(e.target.value)} disabled /></Fld>
+          <Fld label="Item"><Input className="h-9" value={f.od_item} onChange={e => set('od_item')(e.target.value)} disabled /></Fld>
           <Fld label="Mã hàng"><Input className="h-9" value={f.material_code} onChange={e => set('material_code')(e.target.value)} /></Fld>
           <Fld label="Tên hàng"><Input className="h-9" value={f.material_name} onChange={e => set('material_name')(e.target.value)} /></Fld>
           <Fld label="Nguồn"><Input className="h-9" value={f.source} onChange={e => set('source')(e.target.value)} placeholder="EXCEL / SAP / MANUAL" /></Fld>
         </Section>
 
-        {isEdit ? (
-          // Mô hình BASE UNIT (user chốt 21/07): Số gốc (base) = READ-ONLY, là số đi Xuất/mọi module.
-          // Muốn sửa → sửa 2 ô quy đổi (Thùng + Hộp lẻ, mã không entry = 1 ô base) → tự tính lại Số gốc.
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100 pb-1 mb-2">Số lượng</div>
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Số gốc (base) — số đi Xuất &amp; mọi module</span>
-                <span className="flex items-center gap-1 text-[10px] text-slate-400"><Lock className="h-3 w-3" /> chỉ đọc</span>
-              </div>
-              <div className="text-sm font-semibold tabular-nums text-slate-800">
-                {qtyLabel(Number(f.qty_base) || 0, row?.mat_units)}
-                {hasEntry(row?.mat_units) && <span className="text-slate-400 font-normal"> &nbsp;=&nbsp; {new Intl.NumberFormat('vi-VN').format(Number(f.qty_base) || 0)} {f.base_unit || 'base'}</span>}
-              </div>
+        {/* Mô hình BASE UNIT (user chốt 21/07): Số gốc (base) = READ-ONLY, là số đi Xuất/mọi module.
+            Muốn sửa → sửa 2 ô quy đổi (Thùng + Hộp lẻ, mã không entry = 1 ô base) → tự tính lại Số gốc. */}
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100 pb-1 mb-2">Số lượng</div>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-500">Số gốc (base) — số đi Xuất &amp; mọi module</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><Lock className="h-3 w-3" /> chỉ đọc</span>
             </div>
-            <Fld label={hasEntry(row?.mat_units) ? 'Sửa số lượng (Thùng + Hộp lẻ) — Số gốc tự tính lại' : 'Sửa số lượng (base) — Số gốc đổi theo'}>
-              <QtyInput value={Number(f.qty_base) || 0} mat={row?.mat_units} onChange={b => set('qty_base')(String(b))} />
-            </Fld>
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <Fld label="SAP báo — SL bán (tham khảo)">
-                <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500 tabular-nums">
-                  {f.qty_sales !== '' ? `${f.qty_sales} ${f.sales_unit}` : '—'}
-                </div>
-              </Fld>
-              <Fld label="ĐV gốc (SAP)">
-                <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500">{f.base_unit || '—'}</div>
-              </Fld>
+            <div className="text-sm font-semibold tabular-nums text-slate-800">
+              {qtyLabel(Number(f.qty_base) || 0, row.mat_units)}
+              {hasEntry(row.mat_units) && <span className="text-slate-400 font-normal"> &nbsp;=&nbsp; {new Intl.NumberFormat('vi-VN').format(Number(f.qty_base) || 0)} {f.base_unit || 'base'}</span>}
             </div>
-            {hasEntry(row?.mat_units) && f.qty_sales !== '' && Number(f.qty_sales) * Number(row!.mat_units!.units_per_carton) !== (Number(f.qty_base) || 0) && (
-              <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                ⚠ SAP báo {f.qty_sales} {f.sales_unit} (= {new Intl.NumberFormat('vi-VN').format(Number(f.qty_sales) * Number(row!.mat_units!.units_per_carton))} {f.base_unit}) ≠ Số gốc — app luôn dùng Số gốc.
-              </p>
-            )}
           </div>
-        ) : (
-          <Section title="Số lượng">
-            <Fld label="SL bán"><Input type="number" className="h-9" value={f.qty_sales} onChange={e => set('qty_sales')(e.target.value)} /></Fld>
-            <Fld label="ĐV bán"><Input className="h-9" value={f.sales_unit} onChange={e => set('sales_unit')(e.target.value)} /></Fld>
-            <Fld label="SL gốc"><Input type="number" className="h-9" value={f.qty_base} onChange={e => set('qty_base')(e.target.value)} /></Fld>
-            <Fld label="ĐV gốc"><Input className="h-9" value={f.base_unit} onChange={e => set('base_unit')(e.target.value)} /></Fld>
-          </Section>
-        )}
+          <Fld label={hasEntry(row.mat_units) ? 'Sửa số lượng (Thùng + Hộp lẻ) — Số gốc tự tính lại' : 'Sửa số lượng (base) — Số gốc đổi theo'}>
+            <QtyInput value={Number(f.qty_base) || 0} mat={row.mat_units} onChange={b => set('qty_base')(String(b))} />
+          </Fld>
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <Fld label="SAP báo — SL bán (tham khảo)">
+              <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500 tabular-nums">
+                {f.qty_sales !== '' ? `${f.qty_sales} ${f.sales_unit}` : '—'}
+              </div>
+            </Fld>
+            <Fld label="ĐV gốc (SAP)">
+              <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500">{f.base_unit || '—'}</div>
+            </Fld>
+          </div>
+          {hasEntry(row.mat_units) && f.qty_sales !== '' && Number(f.qty_sales) * Number(row.mat_units!.units_per_carton) !== (Number(f.qty_base) || 0) && (
+            <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              ⚠ SAP báo {f.qty_sales} {f.sales_unit} (= {new Intl.NumberFormat('vi-VN').format(Number(f.qty_sales) * Number(row.mat_units!.units_per_carton))} {f.base_unit}) ≠ Số gốc — app luôn dùng Số gốc.
+            </p>
+          )}
+        </div>
 
         <Section title="Khách & kho">
           <Fld label="Ship-to (mã)"><Input className="h-9" value={f.ship_to_code} onChange={e => set('ship_to_code')(e.target.value)} /></Fld>
@@ -677,6 +639,316 @@ function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void
   )
 }
 
+// ─── Sửa cả DO (bảng gom mọi mã cùng od_number) — mô hình BASE GỐC ────────────
+// Mở như 1 chứng từ DO trong SAP: mỗi dòng = 1 mã; sửa 2 ô Thùng+Hộp (QtyInput)
+// → cột "Số gốc (base)" read-only tự tính lại; SL bán SAP = tham khảo. Lưu = update
+// song song các dòng ĐỔI (mỗi dòng qua PUT /external/do-sap/:id → engine reconcile tự áp).
+// Nhận NHIỀU DO (tick multi → Sửa): mỗi DO fetch riêng (song song), bảng gom có cột DO + kẻ nhóm.
+const DO_EDITOR_CAP = 20
+type DoSapNewLine = {
+  key: string; od_number: string; od_item: string
+  material_code: string; material_name: string | null; base_unit: string | null
+  qty_base: number; mat: DoSapRow['mat_units']
+  lookup: 'idle' | 'looking' | 'ok' | 'notfound' | 'error'
+}
+function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEditLine }: {
+  odNumbers: string[]
+  canEdit: boolean
+  canCreate: boolean
+  canDelete: boolean
+  onClose: () => void
+  onEditLine: (r: DoSapRow) => void
+}) {
+  const dos = useMemo(() => [...new Set(odNumbers)].slice(0, DO_EDITOR_CAP), [odNumbers])
+  const truncated = new Set(odNumbers).size - dos.length
+  const multi = dos.length > 1
+  // Kéo mọi dòng của từng DO (không date-gate) — khớp CHÍNH XÁC (od_number_eq, không ilike).
+  // Nếu 1 DO > 200 dòng (trần page_size BE) → đánh dấu INCOMPLETE và CHẶN lưu — tuyệt đối
+  // không để "Xóa cả DO" chỉ xóa 200 dòng nhìn thấy. Query key prefix 'do-sap' → invalidate chung list.
+  const { data: fetched, isLoading } = useQuery({
+    queryKey: ['do-sap', 'do-editor', dos],
+    queryFn: async () => {
+      const results = await Promise.all(dos.map(od =>
+        apiClient.get(`/external/do-sap?od_number_eq=${encodeURIComponent(od)}&page_size=200`)
+          .then(r => {
+            const d = r.data.data as { items: DoSapRow[]; total: number }
+            return { items: d.items.filter(x => x.od_number === od), total: d.total }
+          })
+      ))
+      return { rows: results.flatMap(r => r.items), incomplete: results.some(r => r.total > r.items.length) }
+    },
+  })
+  const incomplete = fetched?.incomplete ?? false
+  const rows = useMemo(() => {
+    return [...(fetched?.rows ?? [])].sort((a, b) =>
+      a.od_number.localeCompare(b.od_number)
+      || (Number(a.od_item) || 0) - (Number(b.od_item) || 0)
+      || String(a.od_item).localeCompare(String(b.od_item)))
+  }, [fetched])
+
+  const update = useUpdateDoSap()
+  const create = useCreateDoSap()
+  const bulkDel = useBulkDeleteDoSap()
+  const [draft, setDraft] = useState<Record<string, number>>({})
+  const [removed, setRemoved] = useState<Set<string>>(new Set())
+  const [added, setAdded] = useState<DoSapNewLine[]>([])
+  const [saving, setSaving] = useState(false)
+  const [errMsg, setErrMsg] = useState('')
+  // Nạp giá trị gốc cho dòng CHƯA có trong draft (refetch không đè chỗ user đang sửa)
+  useEffect(() => {
+    setDraft(prev => {
+      const next = { ...prev }
+      for (const r of rows) if (!(r.id in next)) next[r.id] = Number(r.qty_base) || 0
+      return next
+    })
+  }, [rows])
+
+  const remaining = rows.filter(r => !removed.has(r.id))
+  const changed = remaining.filter(r => (draft[r.id] ?? 0) !== (Number(r.qty_base) || 0))
+  const validAdded = added.filter(l => l.material_code.trim() !== '' && l.od_item.trim() !== '')
+  // Xóa hết dòng + không thêm gì và lưu = XÓA CẢ DO (user chốt 21/07)
+  const wipesAll = rows.length > 0 && remaining.length === 0 && validAdded.length === 0
+  const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
+  const head = rows[0]
+
+  // Item mặc định cho dòng thêm mới = max item của DO + 10
+  function nextItem(od: string): string {
+    const nums = [...rows.filter(r => r.od_number === od), ...added.filter(l => l.od_number === od)]
+      .map(r => Number(r.od_item)).filter(v => Number.isFinite(v))
+    return String((nums.length ? Math.max(...nums) : 0) + 10)
+  }
+  function addLine() {
+    setAdded(prev => [...prev, {
+      key: crypto.randomUUID(), od_number: dos[0], od_item: nextItem(dos[0]),
+      material_code: '', material_name: null, base_unit: null, qty_base: 0, mat: null, lookup: 'idle',
+    }])
+  }
+  const patchLine = (key: string, p: Partial<DoSapNewLine>) =>
+    setAdded(prev => prev.map(l => l.key === key ? { ...l, ...p } : l))
+  // Tra mã hàng từ Material master (blur ô Mã hàng) → tên + quy cách để tách 2 ô Thùng+Hộp
+  async function lookupMat(key: string, code: string) {
+    const c = code.trim()
+    if (c.length < 4) return   // gõ dở 1-2 ký tự → đừng bắn search cả bảng Material
+    patchLine(key, { lookup: 'looking' })
+    try {
+      const { data } = await apiClient.get('/masterdata/materials', { params: { search: c } })
+      const list = (data.data ?? []) as { material_code: string; short_name?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null }[]
+      const m = list.find(x => x.material_code === c)
+      if (m) patchLine(key, { material_name: m.short_name ?? null, base_unit: m.base_unit ?? null, lookup: 'ok', mat: { base_unit: m.base_unit ?? null, entry_unit: m.entry_unit ?? null, units_per_carton: m.units_per_carton ?? null } })
+      else patchLine(key, { material_name: null, base_unit: null, mat: null, lookup: 'notfound' })
+    } catch { patchLine(key, { lookup: 'error' }) }   // 403/mất mạng → báo rõ, đừng câm (số lượng sẽ hiểu là BASE)
+  }
+
+  async function save() {
+    if (!hasOps) return onClose()
+    // Chặn trùng Item trong cùng DO — so với TOÀN BỘ dòng đang có (kể cả dòng đánh dấu xóa:
+    // xóa có thể BỊ CHẶN ở BE nếu đã dùng+đã quét → create sẽ 409 giữa chừng). Muốn thay dòng
+    // cùng Item: xóa + Lưu trước, rồi mở lại thêm.
+    const seen = new Set(rows.map(r => `${r.od_number}__${r.od_item}`))
+    for (const l of validAdded) {
+      const k = `${l.od_number}__${l.od_item.trim()}`
+      if (seen.has(k)) { setErrMsg(`Trùng Item ${l.od_item} trong DO ${l.od_number} — đổi số Item (muốn thay dòng cũ: xóa dòng + Lưu trước, rồi thêm lại).`); return }
+      seen.add(k)
+    }
+    setSaving(true); setErrMsg('')
+    let blockedNote = ''
+    try {
+      if (removed.size) {
+        const res = await bulkDel.mutateAsync([...removed]) as { deleted: number; blocked_count: number; blocked: { od_number: string; od_item: string; reason: string }[] }
+        if (res.blocked_count > 0)
+          blockedNote = `${res.blocked_count} dòng KHÔNG xóa được (đã dùng + đã quét): ${res.blocked.slice(0, 3).map(b => `${b.od_number}/${b.od_item}`).join(', ')}${res.blocked.length > 3 ? '…' : ''}`
+      }
+      // PUT tuần tự (KHÔNG Promise.all): mỗi PUT chạy reconcile đọc-tính-ghi trên OutboundItem;
+      // 2 dòng OD cùng đổ vào 1 item (od_refs) mà PUT song song → race mất cập nhật / task trùng.
+      for (const r of changed) await update.mutateAsync({ id: r.id, qty_base: draft[r.id] })
+      await Promise.all(validAdded.map(l => create.mutateAsync({
+        od_number: l.od_number, od_item: l.od_item.trim(),
+        material_code: l.material_code.trim(), material_name: l.material_name,
+        qty_base: l.qty_base, base_unit: l.base_unit, source: 'MANUAL',
+      })))
+      if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }   // giữ sheet mở để user thấy dòng bị chặn
+      else onClose()
+    } catch (err) {
+      // GIỮ blockedNote khi lỗi giữa chừng — đừng để 409 che mất lý do gốc
+      setErrMsg([blockedNote, apiError(err, 'Không lưu được — một phần thay đổi CÓ THỂ đã áp, kiểm tra lại danh sách.')].filter(Boolean).join(' · '))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <FormSheet
+      open onClose={onClose}
+      widthClass="sm:max-w-4xl"
+      title={multi ? <>Sửa {dos.length} DO</> : <>Sửa DO: <span className="font-mono">{dos[0]}</span></>}
+      description={isLoading
+        ? 'Đang tải các mã của DO…'
+        : <>{multi ? `${dos.length} DO` : (head?.ship_to_name ?? head?.ship_to_code ?? '—')} · {multi ? '' : `Plant ${head?.plant ?? '—'} · `}{rows.length} dòng — sửa Thùng/Hộp, Số gốc tự tính lại (số đi Xuất &amp; mọi module){truncated > 0 ? ` · ⚠ bỏ qua ${truncated} DO vượt giới hạn ${DO_EDITOR_CAP}` : ''}</>}
+      footer={<>
+        <span className={`text-[11px] sm:mr-auto self-center ${wipesAll ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
+          {incomplete ? '⚠ DO quá lớn — chỉ xem, không sửa được ở đây' :
+            wipesAll ? `⚠ Lưu sẽ XÓA CẢ ${multi ? `${dos.length} DO` : 'DO'} (đã xóa hết dòng)` :
+            hasOps ? `${changed.length} sửa · ${validAdded.length} thêm · ${removed.size} xóa` : 'Chưa có thay đổi'}
+        </span>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
+        <Button size="sm" className={`min-w-[90px] ${wipesAll ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`} onClick={save} disabled={saving || !hasOps || incomplete}>
+          {saving ? 'Đang lưu…' : wipesAll ? 'Xóa cả DO' : 'Lưu'}
+        </Button>
+      </>}
+    >
+      {errMsg && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
+      {incomplete && (
+        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ Có DO vượt {200} dòng — bảng dưới KHÔNG đủ dòng nên đã KHÓA lưu (tránh &quot;xóa cả DO&quot; mà chỉ xóa phần nhìn thấy). Sửa DO này bằng upload lại VL06O.
+        </div>
+      )}
+      {isLoading ? (
+        <TableSkeleton rows={6} />
+      ) : rows.length === 0 && added.length === 0 ? (
+        <p className="text-sm text-slate-400 italic">Không tìm thấy dòng nào của DO này.</p>
+      ) : (
+        // overflow-auto (cả 2 chiều) + max-h → sticky thead bám đúng scroll container này
+        <div className="rounded-lg border border-slate-200 overflow-auto max-h-[62vh]">
+          <table className="min-w-max w-full">
+            <thead>
+              <tr>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
+                {multi && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">DO</th>}
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-10">Item</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Mã hàng</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Số lượng (sửa)</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-36">Số gốc (base) · chỉ đọc</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">SAP báo</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Batch</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-1 py-1.5 w-14" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => {
+                const mat = r.mat_units
+                const orig = Number(r.qty_base) || 0
+                const cur = draft[r.id] ?? orig
+                const isRemoved = removed.has(r.id)
+                const isChanged = !isRemoved && cur !== orig
+                const upc = Number(mat?.units_per_carton)
+                const sapMismatch = hasEntry(mat) && r.qty_sales != null && Number(r.qty_sales) * upc !== cur
+                const groupStart = multi && idx > 0 && rows[idx - 1].od_number !== r.od_number
+                return (
+                  <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : ''}`}>
+                    <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
+                    {multi && <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.od_number}</td>}
+                    <td className={`px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.od_item}</td>
+                    <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.material_code ?? '—'}</td>
+                    <td className={`px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top ${isRemoved ? 'line-through text-red-400' : ''}`} title={r.material_name ?? undefined}>{r.material_name ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1">
+                      <QtyInput compact className="w-36" disabled={isRemoved || !canEdit || incomplete} value={cur} mat={mat} onChange={b => setDraft(prev => ({ ...prev, [r.id]: b }))} />
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">
+                      {isRemoved ? <span className="text-[10px] text-red-500 font-semibold">Sẽ xóa</span> : <>
+                        <div className={`text-[10px] font-semibold tabular-nums ${isChanged ? 'text-amber-700' : 'text-slate-700'}`}>{qtyLabel(cur, mat)}</div>
+                        {hasEntry(mat) && <div className="text-[9px] text-slate-400 tabular-nums">= {new Intl.NumberFormat('vi-VN').format(cur)} {r.base_unit || 'base'}{isChanged && <span className="text-amber-600"> (gốc {new Intl.NumberFormat('vi-VN').format(orig)})</span>}</div>}
+                        {!hasEntry(mat) && isChanged && <div className="text-[9px] text-amber-600 tabular-nums">gốc {new Intl.NumberFormat('vi-VN').format(orig)}</div>}
+                      </>}
+                    </td>
+                    <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
+                      {r.qty_sales != null ? <>{r.qty_sales} {r.sales_unit}{sapMismatch && !isRemoved && <span title={`SAP báo ${r.qty_sales} ${r.sales_unit} ≠ Số gốc — app luôn dùng Số gốc`} className="text-amber-600"> ⚠</span>}</> : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">{r.batch ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      {isRemoved ? (
+                        <button type="button" className="text-[10px] text-sky-600 hover:underline !min-h-0 !min-w-0"
+                          onClick={() => setRemoved(prev => { const n = new Set(prev); n.delete(r.id); return n })}>
+                          Hoàn tác
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-0.5">
+                          <button type="button" className="p-1 rounded text-slate-300 hover:text-sky-600 hover:bg-sky-50 !min-h-0 !min-w-0"
+                            title="Sửa chi tiết dòng (mọi field raw)"
+                            onClick={() => {
+                              // GÁC MẤT DRAFT: mở form chi tiết sẽ đóng editor này → thay đổi đang gõ sẽ MẤT
+                              if (hasOps) { setErrMsg('Đang có thay đổi CHƯA LƯU — bấm Lưu (hoặc Huỷ) trước khi mở chi tiết dòng.'); return }
+                              onEditLine(r)
+                            }}>
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          {canDelete && !incomplete && (
+                            <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                              title="Xóa dòng này (áp khi Lưu)" onClick={() => setRemoved(prev => new Set(prev).add(r.id))}>
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {/* Dòng THÊM MỚI (chỉ trong editor — thêm DO mới hoàn toàn phải qua UPLOAD) */}
+              {added.map((l, ai) => (
+                <tr key={l.key} className="border-t border-slate-100 bg-sky-50/60">
+                  <td className="px-2 py-1 text-[9px] text-sky-500 font-semibold">+{ai + 1}</td>
+                  {multi && (
+                    <td className="px-1 py-1">
+                      <select className="h-6 w-full rounded border border-slate-200 px-1 text-[10px] font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        value={l.od_number} onChange={e => patchLine(l.key, { od_number: e.target.value, od_item: '' })}
+                        onBlur={() => { if (!l.od_item.trim()) patchLine(l.key, { od_item: nextItem(l.od_number) }) }}>
+                        {dos.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  <td className="px-1 py-1">
+                    <input className="h-6 w-12 rounded border border-slate-200 px-1 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      value={l.od_item} onChange={e => patchLine(l.key, { od_item: e.target.value })} />
+                  </td>
+                  <td className="px-1 py-1">
+                    <input className="h-6 w-24 rounded border border-slate-200 px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      placeholder="Mã hàng…" value={l.material_code}
+                      onChange={e => patchLine(l.key, { material_code: e.target.value, lookup: 'idle' })}
+                      onBlur={e => lookupMat(l.key, e.target.value)} />
+                  </td>
+                  <td className="px-2 py-1 text-[10px] text-slate-600 whitespace-normal break-words leading-tight align-top">
+                    {l.lookup === 'looking' ? <span className="text-slate-400 italic">Đang tra…</span>
+                      : l.lookup === 'notfound' ? <span className="text-amber-600">Không có trong Mã hàng — vẫn lưu được (raw)</span>
+                      : l.lookup === 'error' ? <span className="text-red-600">Không tra được Mã hàng (mạng/quyền) — ô số lượng đang hiểu là SỐ BASE</span>
+                      : l.material_name ?? <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-2 py-1">
+                    <QtyInput compact className="w-36" value={l.qty_base} mat={l.mat} onChange={b => patchLine(l.key, { qty_base: b })} />
+                  </td>
+                  <td className="px-2 py-1 whitespace-nowrap">
+                    <div className="text-[10px] font-semibold tabular-nums text-sky-700">{qtyLabel(l.qty_base, l.mat)}</div>
+                    {hasEntry(l.mat) && <div className="text-[9px] text-slate-400 tabular-nums">= {new Intl.NumberFormat('vi-VN').format(l.qty_base)} {l.base_unit || 'base'}</div>}
+                  </td>
+                  <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">—</td>
+                  <td className="px-2 py-1 text-[10px] text-slate-300 whitespace-nowrap">—</td>
+                  <td className="px-1 py-1" onClick={e => e.stopPropagation()}>
+                    <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                      title="Bỏ dòng thêm mới" onClick={() => setAdded(prev => prev.filter(x => x.key !== l.key))}>
+                      <X className="h-3 w-3" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {canCreate && !isLoading && !incomplete && (
+        <>
+          <button type="button" onClick={addLine}
+            className="mt-2 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400">
+            <Plus className="h-3 w-3" /> Thêm dòng vào DO {multi ? '(chọn DO trong dòng)' : dos[0]}
+          </button>
+          {rows.some(r => r.used) && added.length > 0 && (
+            <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              ⚠ DO này ĐÃ SINH CHUYẾN — dòng thêm mới chỉ vào tầng raw, CHƯA tự vào chuyến (muốn vào chuyến: up lại KH điều vận).
+            </p>
+          )}
+        </>
+      )}
+    </FormSheet>
+  )
+}
+
 // ─── Tab Kế hoạch xuất (raw khvc_lines) ───────────────────────────────────────
 const KH_COLS: { id: string; label: string }[] = [
   { id: 'sel',       label: '' },
@@ -693,9 +965,8 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'status',    label: 'Chuyến' },
   { id: 'source',    label: 'Nguồn' },
   { id: 'updated',   label: 'Cập nhật' },
-  { id: 'action',    label: '' },
 ]
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110, 60]
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus }: { materialized?: boolean; gdoStatus?: string | null }) {
   if (!materialized) return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500">Chưa sinh</span>
@@ -719,8 +990,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
 
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
-  const [formRow, setFormRow]     = useState<KhvcRow | 'new' | null>(null)
-  const [deleteRow, setDeleteRow] = useState<KhvcRow | null>(null)
+  const [groupEditor, setGroupEditor] = useState<string[] | null>(null)   // sửa cả Số xe — danh sách group_code (bảng gom mọi DO cùng xe)
   const [bulkOpen, setBulkOpen]   = useState(false)
   const [bulkChk, setBulkChk]     = useState<{ deletable_count: number; blocked_count: number; blocked: { group_code: string; reason: string }[] } | null>(null)
 
@@ -732,7 +1002,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkOpen])
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths', KH_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
   const hasDate = !!(dateFrom || dateTo)
 
@@ -761,7 +1031,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
   const bulkDelete = useBulkDeleteKhvc()
-  const deleteOne  = useDeleteKhvc()
+  // Map id → group_code của mọi dòng ĐÃ render — cho nút Sửa multi (tick → Sửa cả Số xe)
+  const idToGroup = useRef<Record<string, string>>({})
+  useEffect(() => { for (const r of items) idToGroup.current[r.id] = r.group_code }, [items])
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
@@ -792,11 +1064,11 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
   function doBulkDelete() { bulkDelete.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setBulkOpen(false) } }) }
-  function doDeleteOne() {
-    if (!deleteRow) return
-    const id = deleteRow.id
-    deleteOne.mutate(id, { onSuccess: () => { setSelected(prev => { const n = new Set(prev); n.delete(id); return n }); setDeleteRow(null) } })
-  }
+  // Sửa các dòng đã tick → mở bảng gom theo Số xe
+  const selectedGroups = useMemo(
+    () => [...new Set([...selected].map(id => idToGroup.current[id]).filter(Boolean))],
+    [selected, items],
+  )
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -814,11 +1086,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {canCreate && (
-            <Button size="sm" className="h-9 sm:h-7 bg-blue-600 hover:bg-blue-700 shrink-0" onClick={() => setFormRow('new')}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Thêm dòng
-            </Button>
-          )}
+          {/* Thêm mới hoàn toàn = UPLOAD (KH điều vận), không thêm tay ngoài header — user chốt 21/07.
+              Thêm DO vào Số xe đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor. */}
         </div>
         <FilterBar defs={filterDefs} />
         {doSapWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{doSapWarn}</div>}
@@ -833,6 +1102,12 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
       {selected.size > 0 && (
         <div className="shrink-0 flex items-center gap-2 bg-sky-50 border-b border-sky-200 px-3 py-1.5 text-xs">
           <span className="font-semibold text-sky-800">Đã chọn {selected.size}</span>
+          {(canEdit || canCreate) && selectedGroups.length > 0 && (
+            <button type="button" onClick={() => setGroupEditor(selectedGroups)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-100 transition-colors">
+              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
+            </button>
+          )}
           {canDelete && (
             <button type="button" onClick={() => setBulkOpen(true)}
               className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
@@ -910,18 +1185,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                         <div className="text-[9px] text-slate-400">{r.updated_at ? formatTimestampDate(r.updated_at, true) : ''}</div>
                       </div>
                     </TableCell>
-                    <TableCell className={`px-1 ${cellPad} whitespace-nowrap`} onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center gap-0.5">
-                        {canEdit && (
-                          <button type="button" className="p-1 rounded text-sky-500 hover:text-sky-700 hover:bg-sky-50 !min-h-0 !min-w-0"
-                            title="Sửa dòng" onClick={() => setFormRow(r)}><Pencil className="h-3.5 w-3.5" /></button>
-                        )}
-                        {canDelete && (
-                          <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
-                            title="Xóa dòng" onClick={() => setDeleteRow(r)}><Trash2 className="h-3.5 w-3.5" /></button>
-                        )}
-                      </div>
-                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -947,23 +1210,16 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
       </div>
      </div>
 
-      {formRow && <KhvcForm row={formRow === 'new' ? null : formRow} onClose={() => setFormRow(null)} />}
-
-      <Dialog open={!!deleteRow} onOpenChange={o => { if (!o) setDeleteRow(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-sm">Xóa dòng Kế hoạch xuất?</DialogTitle></DialogHeader>
-          <p className="text-xs text-slate-500">
-            Xóa dòng Số xe <span className="font-mono font-semibold">{deleteRow?.group_code}</span> / DO <span className="font-mono">{deleteRow?.do_no}</span>. Thao tác không thể hoàn tác.
-          </p>
-          {deleteOne.isError && <p className="text-xs text-red-500">{apiError(deleteOne.error, 'Không xóa được dòng.')}</p>}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleteRow(null)} disabled={deleteOne.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doDeleteOne} disabled={deleteOne.isPending}>
-              {deleteOne.isPending ? 'Đang xóa…' : 'Xóa'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* FormSheet Sửa cả Số xe — bảng gom mọi DO cùng group_code */}
+      {groupEditor && (
+        <KhvcGroupEditor
+          groupCodes={groupEditor}
+          canEdit={canEdit}
+          canCreate={canCreate}
+          canDelete={canDelete}
+          onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
+        />
+      )}
 
       <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
         <DialogContent className="max-w-sm">
@@ -994,65 +1250,266 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   )
 }
 
-interface KhvcFormState {
-  group_code: string; do_no: string; warehouse_code: string; npp: string; veh_type: string
-  dvvt: string; priority: string; cs: string; note: string; export_date: string; source: string
-}
-function KhvcForm({ row, onClose }: { row: KhvcRow | null; onClose: () => void }) {
-  const isEdit = !!row
-  const create = useCreateKhvc()
+// ─── Sửa cả Số xe (bảng gom mọi DO cùng group_code) — mirror DoSapDoEditor ────
+// Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
+// thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
+const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note'] as const
+type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
+type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
+const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
+  warehouse_code: s(r.warehouse_code), npp: s(r.npp), veh_type: s(r.veh_type), dvvt: s(r.dvvt),
+  priority: s(r.priority), cs: s(r.cs), export_date: s(r.export_date), note: s(r.note),
+})
+function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }: {
+  groupCodes: string[]
+  canEdit: boolean
+  canCreate: boolean
+  canDelete: boolean
+  onClose: () => void
+}) {
+  const groups = useMemo(() => [...new Set(groupCodes)].slice(0, DO_EDITOR_CAP), [groupCodes])
+  const truncated = new Set(groupCodes).size - groups.length
+  const multi = groups.length > 1
+  // Khớp CHÍNH XÁC group_code + phát hiện nhóm >200 dòng (trần page_size) → KHÓA lưu (không xóa thiếu)
+  const { data: fetched, isLoading } = useQuery({
+    queryKey: ['khvc', 'group-editor', groups],
+    queryFn: async () => {
+      const results = await Promise.all(groups.map(g =>
+        apiClient.get(`/external/khvc?group_code_eq=${encodeURIComponent(g)}&page_size=200`)
+          .then(r => {
+            const d = r.data.data as { items: KhvcRow[]; total: number }
+            return { items: d.items.filter(x => x.group_code === g), total: d.total }
+          })
+      ))
+      return { rows: results.flatMap(r => r.items), incomplete: results.some(r => r.total > r.items.length) }
+    },
+  })
+  const incomplete = fetched?.incomplete ?? false
+  const rows = useMemo(() =>
+    [...(fetched?.rows ?? [])].sort((a, b) => a.group_code.localeCompare(b.group_code) || a.do_no.localeCompare(b.do_no)),
+  [fetched])
+
   const update = useUpdateKhvc()
+  const create = useCreateKhvc()
+  const bulkDel = useBulkDeleteKhvc()
+  const [draft, setDraft] = useState<Record<string, KhvcDraft>>({})
+  const [removed, setRemoved] = useState<Set<string>>(new Set())
+  const [added, setAdded] = useState<KhvcNewLine[]>([])
+  const [saving, setSaving] = useState(false)
   const [errMsg, setErrMsg] = useState('')
+  useEffect(() => {
+    setDraft(prev => {
+      const next = { ...prev }
+      for (const r of rows) if (!(r.id in next)) next[r.id] = khvcDraftOf(r)
+      return next
+    })
+  }, [rows])
 
-  const [f, setF] = useState<KhvcFormState>(() => ({
-    group_code: s(row?.group_code), do_no: s(row?.do_no), warehouse_code: s(row?.warehouse_code),
-    npp: s(row?.npp), veh_type: s(row?.veh_type), dvvt: s(row?.dvvt), priority: s(row?.priority),
-    cs: s(row?.cs), note: s(row?.note), export_date: s(row?.export_date), source: row ? s(row.source) : 'MANUAL',
-  }))
-  const set = (k: keyof KhvcFormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }))
-  const saving = create.isPending || update.isPending
+  const remaining = rows.filter(r => !removed.has(r.id))
+  const isRowChanged = (r: KhvcRow) => {
+    const d = draft[r.id]
+    if (!d) return false
+    const o = khvcDraftOf(r)
+    return KHVC_FIELDS.some(k => d[k] !== o[k])
+  }
+  const changed = remaining.filter(isRowChanged)
+  const validAdded = added.filter(l => l.do_no.trim() !== '')
+  const wipesAll = rows.length > 0 && remaining.length === 0 && validAdded.length === 0
+  const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
-  function save() {
-    setErrMsg('')
-    if (!isEdit && (f.group_code.trim() === '' || f.do_no.trim() === '')) { setErrMsg('Bắt buộc nhập Số xe và DO.'); return }
-    const payload: Partial<KhvcRow> = {
-      group_code: f.group_code.trim(), do_no: f.do_no.trim(),
-      warehouse_code: n(f.warehouse_code), npp: n(f.npp), veh_type: n(f.veh_type), dvvt: n(f.dvvt),
-      priority: n(f.priority), cs: n(f.cs), note: n(f.note), export_date: n(f.export_date), source: n(f.source),
+  function addLine() {
+    const g = groups[0]
+    const base = rows.find(r => r.group_code === g)
+    setAdded(prev => [...prev, {
+      key: crypto.randomUUID(), group_code: g, do_no: '',
+      warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
+      priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
+    }])
+  }
+  const patchLine = (key: string, p: Partial<KhvcNewLine>) =>
+    setAdded(prev => prev.map(l => l.key === key ? { ...l, ...p } : l))
+  const setCell = (id: string, k: (typeof KHVC_FIELDS)[number], v: string) =>
+    setDraft(prev => ({ ...prev, [id]: { ...prev[id], [k]: v } }))
+
+  async function save() {
+    if (!hasOps) return onClose()
+    // So trùng với TOÀN BỘ dòng (kể cả dòng đánh dấu xóa — xóa có thể bị BE chặn khi chuyến đã quét)
+    const seen = new Set(rows.map(r => `${r.group_code}__${r.do_no}`))
+    for (const l of validAdded) {
+      const k = `${l.group_code}__${l.do_no.trim()}`
+      if (seen.has(k)) { setErrMsg(`Trùng DO ${l.do_no} trong Số xe ${l.group_code} (muốn thay dòng cũ: xóa + Lưu trước, rồi thêm lại).`); return }
+      seen.add(k)
     }
-    const onError = (err: unknown) => setErrMsg(apiError(err, 'Không lưu được dòng Kế hoạch xuất.'))
-    if (isEdit && row) update.mutate({ id: row.id, ...payload }, { onSuccess: onClose, onError })
-    else create.mutate(payload, { onSuccess: onClose, onError })
+    setSaving(true); setErrMsg('')
+    let blockedNote = ''
+    try {
+      if (removed.size) {
+        const res = await bulkDel.mutateAsync([...removed]) as { deleted: number; blocked_count: number; blocked: { group_code: string; reason: string }[] }
+        if (res.blocked_count > 0)
+          blockedNote = `${res.blocked_count} dòng KHÔNG xóa được (chuyến đã quét): ${res.blocked.slice(0, 3).map(b => b.group_code).join(', ')}${res.blocked.length > 3 ? '…' : ''}`
+      }
+      await Promise.all([
+        ...changed.map(r => {
+          const d = draft[r.id]
+          return update.mutateAsync({
+            id: r.id,
+            group_code: r.group_code, do_no: r.do_no,
+            warehouse_code: n(d.warehouse_code), npp: n(d.npp), veh_type: n(d.veh_type), dvvt: n(d.dvvt),
+            priority: n(d.priority), cs: n(d.cs), export_date: n(d.export_date), note: n(d.note),
+          })
+        }),
+        ...validAdded.map(l => create.mutateAsync({
+          group_code: l.group_code, do_no: l.do_no.trim(),
+          warehouse_code: n(l.warehouse_code), npp: n(l.npp), veh_type: n(l.veh_type), dvvt: n(l.dvvt),
+          priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note), source: 'MANUAL',
+        })),
+      ])
+      if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }
+      else onClose()
+    } catch (err) {
+      setErrMsg([blockedNote, apiError(err, 'Không lưu được — một phần thay đổi CÓ THỂ đã áp, kiểm tra lại danh sách.')].filter(Boolean).join(' · '))
+    } finally { setSaving(false) }
   }
 
+  // Ô nhập inline trong bảng editor
+  const inputCls = 'h-6 w-full rounded border border-slate-200 px-1.5 text-[10px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400'
   return (
     <FormSheet
       open onClose={onClose}
-      title={isEdit ? 'Sửa dòng Kế hoạch xuất' : 'Thêm dòng Kế hoạch xuất'}
-      description={isEdit ? `${row?.group_code} / ${row?.do_no}` : 'Nhập tay 1 dòng kế hoạch xuất'}
+      widthClass="sm:max-w-5xl"
+      title={multi ? <>Sửa {groups.length} Số xe</> : <>Sửa Số xe: <span className="font-mono">{groups[0]}</span></>}
+      description={isLoading
+        ? 'Đang tải các DO của xe…'
+        : <>{rows.length} DO — sửa trực tiếp trong bảng; thêm/xóa DO của xe tại đây{truncated > 0 ? ` · ⚠ bỏ qua ${truncated} Số xe vượt giới hạn ${DO_EDITOR_CAP}` : ''}</>}
       footer={<>
+        <span className={`text-[11px] sm:mr-auto self-center ${wipesAll ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
+          {incomplete ? '⚠ Số xe quá lớn — chỉ xem, không sửa được ở đây' :
+            wipesAll ? `⚠ Lưu sẽ XÓA CẢ ${multi ? `${groups.length} Số xe` : 'Số xe'} (đã xóa hết dòng)` :
+            hasOps ? `${changed.length} sửa · ${validAdded.length} thêm · ${removed.size} xóa` : 'Chưa có thay đổi'}
+        </span>
         <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
-        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={save} disabled={saving}>{saving ? 'Đang lưu…' : 'Lưu'}</Button>
+        <Button size="sm" className={`min-w-[90px] ${wipesAll ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`} onClick={save} disabled={saving || !hasOps || incomplete}>
+          {saving ? 'Đang lưu…' : wipesAll ? 'Xóa cả Số xe' : 'Lưu'}
+        </Button>
       </>}
     >
-      <div className="space-y-5">
-        {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
-        <Section title="Định danh">
-          <Fld label="Số xe"><Input className="h-9" value={f.group_code} onChange={e => set('group_code')(e.target.value)} disabled={isEdit} /></Fld>
-          <Fld label="DO"><Input className="h-9" value={f.do_no} onChange={e => set('do_no')(e.target.value)} disabled={isEdit} /></Fld>
-          <Fld label="Kho"><Input className="h-9" value={f.warehouse_code} onChange={e => set('warehouse_code')(e.target.value)} /></Fld>
-          <Fld label="Ngày xuất"><Input type="date" className="h-9" value={f.export_date} onChange={e => set('export_date')(e.target.value)} /></Fld>
-          <Fld label="Nguồn"><Input className="h-9" value={f.source} onChange={e => set('source')(e.target.value)} placeholder="EXCEL / SAP / MANUAL" /></Fld>
-        </Section>
-        <Section title="Điều vận">
-          <Fld label="Tên NPP"><Input className="h-9" value={f.npp} onChange={e => set('npp')(e.target.value)} /></Fld>
-          <Fld label="Loại xe"><Input className="h-9" value={f.veh_type} onChange={e => set('veh_type')(e.target.value)} /></Fld>
-          <Fld label="ĐVVT"><Input className="h-9" value={f.dvvt} onChange={e => set('dvvt')(e.target.value)} /></Fld>
-          <Fld label="Ưu tiên"><Input className="h-9" value={f.priority} onChange={e => set('priority')(e.target.value)} /></Fld>
-          <Fld label="CS phụ trách"><Input className="h-9" value={f.cs} onChange={e => set('cs')(e.target.value)} /></Fld>
-          <Fld label="Ghi chú"><Input className="h-9" value={f.note} onChange={e => set('note')(e.target.value)} /></Fld>
-        </Section>
-      </div>
+      {errMsg && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
+      {incomplete && (
+        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ Có Số xe vượt 200 dòng — bảng dưới KHÔNG đủ dòng nên đã KHÓA lưu (tránh &quot;xóa cả Số xe&quot; mà chỉ xóa phần nhìn thấy). Sửa bằng upload lại KH điều vận.
+        </div>
+      )}
+      {wipesAll && rows.some(r => r.materialized) && (
+        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ Số xe này ĐÃ SINH CHUYẾN ở Xuất kho — xóa kế hoạch KHÔNG xóa chuyến; muốn hủy chuyến hãy xóa ở trang Xuất kho.
+        </div>
+      )}
+      {isLoading ? (
+        <TableSkeleton rows={6} />
+      ) : rows.length === 0 && added.length === 0 ? (
+        <p className="text-sm text-slate-400 italic">Không tìm thấy dòng nào của Số xe này.</p>
+      ) : (
+        <div className="rounded-lg border border-slate-200 overflow-auto max-h-[62vh]">
+          <table className="min-w-max w-full">
+            <thead>
+              <tr>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
+                {multi && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">Số xe</th>}
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">DO</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-20">Kho</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">NPP</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Loại xe</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">ĐVVT</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-16">Ưu tiên</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-16">CS</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Ngày xuất</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Ghi chú</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-1 py-1.5 w-10" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => {
+                const d = draft[r.id] ?? khvcDraftOf(r)
+                const isRemoved = removed.has(r.id)
+                const isChanged = !isRemoved && isRowChanged(r)
+                const groupStart = multi && idx > 0 && rows[idx - 1].group_code !== r.group_code
+                return (
+                  <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : ''}`}>
+                    <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
+                    {multi && <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>}
+                    <td className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : 'font-semibold'}`}>{r.do_no}</td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.warehouse_code} onChange={e => setCell(r.id, 'warehouse_code', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.npp} onChange={e => setCell(r.id, 'npp', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.veh_type} onChange={e => setCell(r.id, 'veh_type', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.dvvt} onChange={e => setCell(r.id, 'dvvt', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.priority} onChange={e => setCell(r.id, 'priority', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.cs} onChange={e => setCell(r.id, 'cs', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input type="date" className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.export_date} onChange={e => setCell(r.id, 'export_date', e.target.value)} /></td>
+                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.note} onChange={e => setCell(r.id, 'note', e.target.value)} /></td>
+                    <td className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      {isRemoved ? (
+                        <button type="button" className="text-[10px] text-sky-600 hover:underline !min-h-0 !min-w-0"
+                          onClick={() => setRemoved(prev => { const nn = new Set(prev); nn.delete(r.id); return nn })}>
+                          Hoàn tác
+                        </button>
+                      ) : canDelete && !incomplete && (
+                        <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                          title="Xóa DO khỏi xe (áp khi Lưu)" onClick={() => setRemoved(prev => new Set(prev).add(r.id))}>
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {added.map((l, ai) => (
+                <tr key={l.key} className="border-t border-slate-100 bg-sky-50/60">
+                  <td className="px-2 py-1 text-[9px] text-sky-500 font-semibold">+{ai + 1}</td>
+                  {multi && (
+                    <td className="px-1 py-1">
+                      <select className={`${inputCls} font-mono`} value={l.group_code}
+                        onChange={e => {
+                          // Đổi Số xe → NẠP LẠI prefill (kho/loại xe/ĐVVT/CS/ngày xuất) theo xe MỚI —
+                          // không thì dòng mới mang kho/ngày của xe cũ (sai lệch chéo xe)
+                          const g = e.target.value
+                          const base = rows.find(r => r.group_code === g)
+                          patchLine(l.key, {
+                            group_code: g,
+                            warehouse_code: s(base?.warehouse_code), veh_type: s(base?.veh_type),
+                            dvvt: s(base?.dvvt), cs: s(base?.cs), export_date: s(base?.export_date),
+                          })
+                        }}>
+                        {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  <td className="px-1 py-1"><input className={`${inputCls} font-mono`} placeholder="Số DO…" value={l.do_no} onChange={e => patchLine(l.key, { do_no: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.warehouse_code} onChange={e => patchLine(l.key, { warehouse_code: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.npp} onChange={e => patchLine(l.key, { npp: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.veh_type} onChange={e => patchLine(l.key, { veh_type: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.dvvt} onChange={e => patchLine(l.key, { dvvt: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.priority} onChange={e => patchLine(l.key, { priority: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.cs} onChange={e => patchLine(l.key, { cs: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input type="date" className={inputCls} value={l.export_date} onChange={e => patchLine(l.key, { export_date: e.target.value })} /></td>
+                  <td className="px-1 py-1"><input className={inputCls} value={l.note} onChange={e => patchLine(l.key, { note: e.target.value })} /></td>
+                  <td className="px-1 py-1" onClick={e => e.stopPropagation()}>
+                    <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                      title="Bỏ dòng thêm mới" onClick={() => setAdded(prev => prev.filter(x => x.key !== l.key))}>
+                      <X className="h-3 w-3" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {canCreate && !isLoading && !incomplete && (
+        <button type="button" onClick={addLine}
+          className="mt-2 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400">
+          <Plus className="h-3 w-3" /> Thêm DO vào xe {multi ? '(chọn Số xe trong dòng)' : groups[0]}
+        </button>
+      )}
     </FormSheet>
   )
 }

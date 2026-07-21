@@ -40,7 +40,8 @@ router.put('/manufacturers/:id',     requirePerm('materials', 'edit'),   manufac
 router.delete('/manufacturers/:id',  requirePerm('materials', 'delete'), manufacturer.deleteManufacturer)
 
 // Material
-router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listMaterials)
+// external_do_sap.create: editor "Sửa DO" tra quy cách mã khi thêm dòng (cross-module — thiếu thì lookup 403 câm)
+router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create'], ['external_do_sap', 'create']), material.listMaterials)
 router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listCategories)
 router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
 router.post('/materials/upload',    requirePerm('materials', 'import'), upload.single('file'), material.uploadExcel)

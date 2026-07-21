@@ -1798,9 +1798,8 @@ function GDOFormBody({
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Mã hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-14">DVT</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-36">Số lượng</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-36">Nhặt lẻ (lẻ)</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Số lượng</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Nhặt lẻ</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Batch</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-16">%Date</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">CS</th>
@@ -1835,9 +1834,8 @@ function GDOFormBody({
                       )}
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
-                    <td className="px-2 py-1 text-[10px] text-slate-500">{item.unit || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}>
-                      <QtyInput compact className={`w-32 ${cartonsInvalid ? '[&_input]:border-red-400' : ''}`}
+                      <QtyInput compact className={`w-36 ${cartonsInvalid ? '[&_input]:border-red-400' : ''}`}
                         value={item.cartons}
                         mat={item.mat_units}
                         onChange={b => updateItem(item.id, { cartons: b })}
@@ -1846,7 +1844,7 @@ function GDOFormBody({
                     </td>
                     <td className="px-2 py-1" onPaste={e => handlePasteLooseAt(idx, e)}>
                       {/* BASE UNIT "1 dòng 2 cột": nhặt lẻ nhập 2 ô Thùng+Hộp (như cột Số lượng) — value/onChange = BASE */}
-                      <QtyInput compact className="w-32"
+                      <QtyInput compact className="w-36"
                         value={item.loose_picking}
                         mat={item.mat_units}
                         onChange={b => updateItem(item.id, { loose_picking: b })}

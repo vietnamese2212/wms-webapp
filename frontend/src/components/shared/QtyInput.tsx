@@ -16,11 +16,13 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   compact?: boolean
 }) {
   const h = compact ? 'h-8 text-sm' : 'h-10 text-lg'
+  // Ô hẹp (compact): giảm padding ngang để số 3–4 chữ số không bị CẮT (mặc định Input là px-3 = 24px).
+  const pad = compact ? 'px-1' : ''
   if (!hasEntry(mat)) {
     return (
       <Input
         type="number" min={0} step="any" disabled={disabled} autoFocus={autoFocus}
-        className={`text-center font-semibold ${h} ${className ?? ''}`}
+        className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`}
         value={Number.isFinite(value) && value !== 0 ? value : (value === 0 ? 0 : '')}
         onChange={e => onChange(parseFloat(e.target.value) || 0)}
       />
@@ -34,7 +36,7 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
       <div className="flex-1 min-w-0">
         <Input
           type="number" min={0} step={1} disabled={disabled} autoFocus={autoFocus}
-          className={`text-center font-semibold ${h}`}
+          className={`text-center font-semibold ${h} ${pad}`}
           value={entry}
           onChange={e => onChange(qtyFromEntryBase(Math.max(0, parseInt(e.target.value) || 0), base, mat))}
         />
@@ -44,7 +46,7 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
       <div className="flex-1 min-w-0">
         <Input
           type="number" min={0} step={1} disabled={disabled}
-          className={`text-center font-semibold ${h}`}
+          className={`text-center font-semibold ${h} ${pad}`}
           value={base}
           onChange={e => onChange(qtyFromEntryBase(entry, Math.max(0, parseInt(e.target.value) || 0), mat))}
         />

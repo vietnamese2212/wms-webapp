@@ -2,7 +2,7 @@
 // Tab "DO SAP" = bảng erp_outbound_orders (CRUD tay + multi-select + filter + search + phân trang server-side).
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, type ReactNode } from 'react'
-import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download, Lock } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -27,6 +27,8 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions, type ModuleKey } from '@/config/permissions'
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
+import { QtyInput } from '@/components/shared/QtyInput'
+import { qtyLabel, hasEntry } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
 type TabKey = 'dosap' | 'khvc' | 'reconcile'
@@ -612,12 +614,48 @@ function DoSapForm({ row, onClose }: { row: DoSapRow | null; onClose: () => void
           <Fld label="Nguồn"><Input className="h-9" value={f.source} onChange={e => set('source')(e.target.value)} placeholder="EXCEL / SAP / MANUAL" /></Fld>
         </Section>
 
-        <Section title="Số lượng">
-          <Fld label="SL bán"><Input type="number" className="h-9" value={f.qty_sales} onChange={e => set('qty_sales')(e.target.value)} /></Fld>
-          <Fld label="ĐV bán"><Input className="h-9" value={f.sales_unit} onChange={e => set('sales_unit')(e.target.value)} /></Fld>
-          <Fld label="SL gốc"><Input type="number" className="h-9" value={f.qty_base} onChange={e => set('qty_base')(e.target.value)} /></Fld>
-          <Fld label="ĐV gốc"><Input className="h-9" value={f.base_unit} onChange={e => set('base_unit')(e.target.value)} /></Fld>
-        </Section>
+        {isEdit ? (
+          // Mô hình BASE UNIT (user chốt 21/07): Số gốc (base) = READ-ONLY, là số đi Xuất/mọi module.
+          // Muốn sửa → sửa 2 ô quy đổi (Thùng + Hộp lẻ, mã không entry = 1 ô base) → tự tính lại Số gốc.
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100 pb-1 mb-2">Số lượng</div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500">Số gốc (base) — số đi Xuất &amp; mọi module</span>
+                <span className="flex items-center gap-1 text-[10px] text-slate-400"><Lock className="h-3 w-3" /> chỉ đọc</span>
+              </div>
+              <div className="text-sm font-semibold tabular-nums text-slate-800">
+                {qtyLabel(Number(f.qty_base) || 0, row?.mat_units)}
+                {hasEntry(row?.mat_units) && <span className="text-slate-400 font-normal"> &nbsp;=&nbsp; {new Intl.NumberFormat('vi-VN').format(Number(f.qty_base) || 0)} {f.base_unit || 'base'}</span>}
+              </div>
+            </div>
+            <Fld label={hasEntry(row?.mat_units) ? 'Sửa số lượng (Thùng + Hộp lẻ) — Số gốc tự tính lại' : 'Sửa số lượng (base) — Số gốc đổi theo'}>
+              <QtyInput value={Number(f.qty_base) || 0} mat={row?.mat_units} onChange={b => set('qty_base')(String(b))} />
+            </Fld>
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <Fld label="SAP báo — SL bán (tham khảo)">
+                <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500 tabular-nums">
+                  {f.qty_sales !== '' ? `${f.qty_sales} ${f.sales_unit}` : '—'}
+                </div>
+              </Fld>
+              <Fld label="ĐV gốc (SAP)">
+                <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500">{f.base_unit || '—'}</div>
+              </Fld>
+            </div>
+            {hasEntry(row?.mat_units) && f.qty_sales !== '' && Number(f.qty_sales) * Number(row!.mat_units!.units_per_carton) !== (Number(f.qty_base) || 0) && (
+              <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                ⚠ SAP báo {f.qty_sales} {f.sales_unit} (= {new Intl.NumberFormat('vi-VN').format(Number(f.qty_sales) * Number(row!.mat_units!.units_per_carton))} {f.base_unit}) ≠ Số gốc — app luôn dùng Số gốc.
+              </p>
+            )}
+          </div>
+        ) : (
+          <Section title="Số lượng">
+            <Fld label="SL bán"><Input type="number" className="h-9" value={f.qty_sales} onChange={e => set('qty_sales')(e.target.value)} /></Fld>
+            <Fld label="ĐV bán"><Input className="h-9" value={f.sales_unit} onChange={e => set('sales_unit')(e.target.value)} /></Fld>
+            <Fld label="SL gốc"><Input type="number" className="h-9" value={f.qty_base} onChange={e => set('qty_base')(e.target.value)} /></Fld>
+            <Fld label="ĐV gốc"><Input className="h-9" value={f.base_unit} onChange={e => set('base_unit')(e.target.value)} /></Fld>
+          </Section>
+        )}
 
         <Section title="Khách & kho">
           <Fld label="Ship-to (mã)"><Input className="h-9" value={f.ship_to_code} onChange={e => set('ship_to_code')(e.target.value)} /></Fld>

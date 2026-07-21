@@ -131,10 +131,10 @@ export async function listDoSap(req: Request, res: Response) {
       }
     }
     const mcs = [...new Set(items.map(i => String(i.material_code ?? '')).filter(Boolean))]
-    const matMap = new Map<string, { base_unit: string | null; entry_unit: string | null }>()
+    const matMap = new Map<string, { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }>()
     if (mcs.length) {
-      const { data: mats } = await supabase.from('Material').select('material_code, base_unit, entry_unit').in('material_code', mcs)
-      for (const m of (mats ?? []) as { material_code: string; base_unit: string | null; entry_unit: string | null }[])
+      const { data: mats } = await supabase.from('Material').select('material_code, base_unit, entry_unit, units_per_carton').in('material_code', mcs)
+      for (const m of (mats ?? []) as { material_code: string; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }[])
         matMap.set(String(m.material_code).trim(), m)
     }
     for (const i of items) {
@@ -153,6 +153,8 @@ export async function listDoSap(req: Request, res: Response) {
         if (su && allowed.length && !allowed.includes(su)) mm = true
       }
       i.unit_mismatch = mm
+      // Quy cách mã (Material master) — FE dùng tách 2 ô Thùng+Hộp khi sửa qty_base
+      i.mat_units = m ?? null
     }
     return ok(res, { items, total: count ?? 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }

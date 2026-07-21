@@ -1755,6 +1755,7 @@ export interface DoSapRow {
   sync_status?: string | null; last_synced_at?: string | null
   used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
   in_plan?: boolean; plan_group_code?: string | null; plan_group_count?: number; plan_export_date?: string | null   // kế hoạch VC gắn với DO
+  mat_units?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null   // quy cách mã (Material master) — tách Thùng+Hộp khi sửa qty_base
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({

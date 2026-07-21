@@ -205,6 +205,7 @@ interface DoSapFilters {
   shipto: string
   material: string
   od: string
+  inPlan: string     // '' tất cả | '1' trong kế hoạch | '0' ngoài kế hoạch
   page: number
   pageSize: number
 }
@@ -218,6 +219,7 @@ interface KhvcFilters {
   syncStatus: string
   group: string      // group_code (Số xe) — text
   doNo: string       // DO — text
+  inDoSap: string    // '' tất cả | '1' trong DO SAP | '0' ngoài DO SAP
   page: number
   pageSize: number
 }
@@ -342,8 +344,8 @@ function initialFilters() {
     attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
     leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
-    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', page: 1, pageSize: 50 },
-    khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', page: 1, pageSize: 50 },
+    doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', page: 1, pageSize: 50 },
+    khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
 }

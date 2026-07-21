@@ -6,9 +6,13 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
-import { fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 
 const now = () => new Date().toISOString()
+
+// Cap an toàn cho filter chéo "Trong DO SAP" (đối xứng erpOrderController): tập DO của cửa sổ đưa vào .in()
+// không được quá lớn → vượt thì bỏ filter + trả cảnh báo (không cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
+const DOSAP_FILTER_CAP = 1500
 
 // v2.2 — luật XÓA an toàn: dòng Kế hoạch mà chuyến đã sinh CÓ HÀNG ĐÃ QUÉT → CHẶN xóa cứng.
 type KDelRow = { id: string; group_code: string }
@@ -49,27 +53,62 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
-// GET /external/khvc — list phân trang + filter + search
+// GET /external/khvc — list phân trang + filter + search (+ in_do_sap)
 export async function listKhvc(req: Request, res: Response) {
   try {
-    const { q, group_code, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to } = req.query as Record<string, string>
+    const { q, group_code, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
+    const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
+    const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
+    const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
+
+    // ── Filter chéo "Trong DO SAP" (in_do_sap: '1'=có / '0'=không) ──
+    // DO của cửa sổ đang xem CÓ/KHÔNG có trong erp_outbound_orders (raw VL06O, bất kể ngày nạp).
+    // Scalable: chỉ lấy tập DO CỦA CỬA SỔ (đã date-gate) rồi hỏi raw — KHÔNG kéo cả bảng raw.
+    let restrictDos: string[] | null = null
+    let doSapWarning: string | null = null
+    if (in_do_sap === '1' || in_do_sap === '0') {
+      const winRows = await fetchAllRowsParallel(() => {
+        // Bộ lọc inline (KHÔNG tách helper generic — builder supabase deep-instantiate → TS2589)
+        let wq = supabase.from('khvc_lines').select('do_no')
+        if (gteFrom) wq = wq.gte('created_at', gteFrom)
+        if (lteTo)   wq = wq.lte('created_at', lteTo)
+        if (group_code)     wq = wq.ilike('group_code', `%${safeFilterValue(group_code)}%`)
+        if (do_no)          wq = wq.ilike('do_no', `%${safeFilterValue(do_no)}%`)
+        if (warehouse_code) wq = wq.eq('warehouse_code', warehouse_code)
+        if (veh_type)       wq = wq.eq('veh_type', veh_type)
+        if (source)         wq = wq.eq('source', source)
+        if (sync_status)    wq = wq.eq('sync_status', sync_status)
+        if (s) wq = wq.or(`group_code.ilike.%${s}%,do_no.ilike.%${s}%,npp.ilike.%${s}%,note.ilike.%${s}%`)
+        return wq.order('do_no')
+      }) as { do_no: string }[]
+      const windowDos = [...new Set(winRows.map(r => String(r.do_no ?? '')).filter(Boolean))]
+      const present = new Set<string>()
+      for (let i = 0; i < windowDos.length; i += 300) {
+        const { data } = await supabase.from('erp_outbound_orders').select('od_number').in('od_number', windowDos.slice(i, i + 300))
+        for (const r of (data ?? []) as { od_number: string }[]) present.add(String(r.od_number))
+      }
+      restrictDos = in_do_sap === '1' ? windowDos.filter(d => present.has(d)) : windowDos.filter(d => !present.has(d))
+      if (restrictDos.length > DOSAP_FILTER_CAP) {
+        doSapWarning = `Khoảng ngày quá rộng để lọc theo DO SAP (${restrictDos.length} DO) — thu hẹp Ngày nạp rồi lọc lại.`
+        restrictDos = null
+      } else if (restrictDos.length === 0) {
+        return ok(res, { items: [], total: 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined })
+      }
+    }
 
     let query = supabase.from('khvc_lines').select('*', { count: 'exact' })
-    // Ngày NẠP dữ liệu (created_at) theo giờ VN — bắt buộc từ FE (không kéo cả bảng)
-    if (date_from) query = query.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
-    if (date_to)   query = query.lte('created_at', new Date(`${date_to}T23:59:59.999+07:00`).toISOString())
+    if (gteFrom) query = query.gte('created_at', gteFrom)
+    if (lteTo)   query = query.lte('created_at', lteTo)
     if (group_code)     query = query.ilike('group_code', `%${safeFilterValue(group_code)}%`)
     if (do_no)          query = query.ilike('do_no', `%${safeFilterValue(do_no)}%`)
     if (warehouse_code) query = query.eq('warehouse_code', warehouse_code)
     if (veh_type)       query = query.eq('veh_type', veh_type)
     if (source)         query = query.eq('source', source)
     if (sync_status)    query = query.eq('sync_status', sync_status)
-    if (q && q.trim()) {
-      const s = safeFilterValue(q.trim())
-      query = query.or(`group_code.ilike.%${s}%,do_no.ilike.%${s}%,npp.ilike.%${s}%,note.ilike.%${s}%`)
-    }
+    if (s) query = query.or(`group_code.ilike.%${s}%,do_no.ilike.%${s}%,npp.ilike.%${s}%,note.ilike.%${s}%`)
+    if (restrictDos) query = query.in('do_no', restrictDos)
     query = query.order('group_code', { ascending: true }).order('do_no', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)
 
@@ -99,7 +138,7 @@ export async function listKhvc(req: Request, res: Response) {
       i.gdo_status = gdoByGc.get(gc) ?? null
       i.do_ready = readyDos.has(String(i.do_no ?? ''))
     }
-    return ok(res, { items, total: count ?? 0, page, page_size: pageSize })
+    return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }
 }
 

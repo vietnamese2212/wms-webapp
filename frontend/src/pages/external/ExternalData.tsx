@@ -36,10 +36,16 @@ const TABS: { key: TabKey; label: string; module: ModuleKey; action?: string }[]
   { key: 'reconcile', label: 'Cần xử lý', module: 'outbound', action: 'reconcile' },
 ]
 
+// Header trang: tiêu đề "Dữ liệu bên ngoài" NẰM TRÊN, BAO các tab (DO SAP / Kế hoạch xuất / Cần xử lý).
 function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => void; perms: ModulePermissions | null }) {
   const visible = TABS.filter(t => can(perms, t.module, t.action ?? 'view'))
   return (
     <div className="border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Database className="h-4 w-4 text-slate-500 shrink-0" />
+        <span className="text-sm font-semibold text-slate-700">Dữ liệu bên ngoài</span>
+        <span className="hidden sm:inline text-[11px] text-slate-400">— dữ liệu raw ERP/SAP đổ vào WMS</span>
+      </div>
       <div className="flex items-center gap-1">
         {visible.map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)}
@@ -53,6 +59,9 @@ function TabBar({ tab, setTab, perms }: { tab: TabKey; setTab: (t: TabKey) => vo
     </div>
   )
 }
+
+// Ngày hôm nay theo giờ VN (YYYY-MM-DD) — cho nút "Xem hôm nay" ở màn trống (data vừa nạp có Ngày nạp = hôm nay)
+const TODAY_VN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // ─── Cột bảng ─────────────────────────────────────────────────────────────────
 const COLS: { id: string; label: string; align?: 'right' }[] = [
@@ -70,11 +79,13 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'pct',        label: '%Date', align: 'right' },
   { id: 'status',     label: 'Tình trạng' },
   { id: 'unit',       label: 'Lệch ĐV' },
+  { id: 'plan_veh',   label: 'Số xe (KH)' },
+  { id: 'plan_date',  label: 'Ngày xuất (KH)' },
   { id: 'source',     label: 'Nguồn' },
   { id: 'updated',    label: 'Cập nhật' },
   { id: 'action',     label: '' },
 ]
-const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 80, 110, 70]
+const COL_DEFAULTS = [40, 110, 55, 110, 160, 90, 90, 135, 70, 90, 100, 70, 90, 65, 150, 95, 80, 110, 70]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function num(v: number | null | undefined) {
@@ -125,7 +136,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
 
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
   const { doSap: f, setDoSap } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, page, pageSize } = f
+  const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, page, pageSize } = f
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
@@ -144,7 +155,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkOpen])
 
-  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v2', COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v3', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
 
   const hasDate = !!(dateFrom || dateTo)   // BẮT BUỘC chọn ngày mới hiện dữ liệu (không tự kéo cả bảng)
@@ -158,17 +169,19 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     ship_to_code:  fShipto || undefined,
     material_code: fMaterial.trim() || undefined,
     od_number:     fOd.trim() || undefined,
+    in_plan:       fInPlan || undefined,
     page,
     page_size:     pageSize,
-  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, page, pageSize])
+  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, page, pageSize])
 
   const { data, isLoading, isError, error } = useDoSapOrders(params, hasDate)
   const items = data?.items ?? []
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const planWarn = data?.plan_filter_warning
 
   // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
@@ -186,6 +199,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       options: (facets?.shiptos ?? []).map(s => ({ value: s.code, label: s.name ? `${s.code} — ${s.name}` : s.code })), onChange: v => setDoSap({ shipto: v }) },
     { key: 'material', label: 'Mã hàng', type: 'text', value: fMaterial, placeholder: 'Nhập mã hàng…', onChange: v => setDoSap({ material: v }) },
     { key: 'od', label: 'DO', type: 'text', value: fOd, placeholder: 'Nhập số DO…', onChange: v => setDoSap({ od: v }) },
+    { key: 'inPlan', label: 'Trong kế hoạch', type: 'single', allLabel: 'Tất cả', value: fInPlan,
+      options: [{ value: '1', label: 'Có trong kế hoạch' }, { value: '0', label: 'Ngoài kế hoạch' }],
+      onChange: v => setDoSap({ inPlan: v === '__all__' ? '' : v }) },
   ]
 
   // Selection theo trang hiện tại
@@ -283,9 +299,6 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       {/* Toolbar (hàng 1) */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
-            <Database className="h-4 w-4 text-slate-500" /> Dữ liệu bên ngoài
-          </span>
           <SearchInput value={search} onChange={v => setDoSap({ search: v })}
             placeholder="Tìm DO, mã hàng, ship-to…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
@@ -307,6 +320,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         </div>
         <FilterBar defs={filterDefs} />
         {exportErr && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600">{exportErr}</div>}
+        {planWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{planWarn}</div>}
       </div>
 
       <SummaryBand tiles={[
@@ -338,7 +352,10 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
             <Database className="h-10 w-10 opacity-30" />
             <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
-            <p className="text-xs">Dữ liệu DO SAP chỉ hiển thị sau khi chọn ngày (tránh tải toàn bộ bảng).</p>
+            <p className="text-xs">Dữ liệu vừa upload nằm ở <b>Ngày nạp = hôm nay</b> (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
+            <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setDoSap({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
+              Xem hôm nay
+            </Button>
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={12} rows={12} />
@@ -401,6 +418,12 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                         ? <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700" title="Đơn vị base/sales lệch Material master">Lệch</span>
                         : <span className="text-green-500">✓</span>}
                     </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap truncate`} title={r.plan_group_code ?? undefined}>
+                      {r.in_plan
+                        ? <>{r.plan_group_code}{(r.plan_group_count ?? 0) > 1 && <span className="text-slate-400"> +{(r.plan_group_count ?? 1) - 1}</span>}</>
+                        : <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700" title="DO chưa có trong Kế hoạch điều vận">Ngoài KH</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.plan_export_date ? formatDate(r.plan_export_date) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><SourceBadge source={r.source} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
                       <div className="leading-tight">
@@ -628,7 +651,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'priority',  label: 'Ưu tiên' },
   { id: 'cs',        label: 'CS' },
   { id: 'export',    label: 'Ngày xuất' },
-  { id: 'do_ready',  label: 'DO sẵn sàng' },
+  { id: 'do_ready',  label: 'Trong DO SAP' },
   { id: 'status',    label: 'Chuyến' },
   { id: 'source',    label: 'Nguồn' },
   { id: 'updated',   label: 'Cập nhật' },
@@ -654,7 +677,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const canDelete = can(perms, 'external_khvc', 'delete')
 
   const { khvc: f, setKhvc } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, page, pageSize } = f
+  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, page, pageSize } = f
 
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
@@ -684,16 +707,18 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     source:         fSource || undefined,
     group_code:     fGroup.trim() || undefined,
     do_no:          fDo.trim() || undefined,
+    in_do_sap:      fInDoSap || undefined,
     page,
     page_size:      pageSize,
-  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, page, pageSize])
+  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, page, pageSize])
 
   const { data, isLoading, isError, error } = useKhvcLines(params, hasDate)
   const items = data?.items ?? []
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const doSapWarn = data?.do_sap_filter_warning
 
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
@@ -711,6 +736,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
       options: (facets?.sources ?? []).map(s => ({ value: s, label: s })), onChange: v => setKhvc({ source: v }) },
     { key: 'group', label: 'Số xe', type: 'text', value: fGroup, placeholder: 'Nhập Số xe…', onChange: v => setKhvc({ group: v }) },
     { key: 'doNo', label: 'DO', type: 'text', value: fDo, placeholder: 'Nhập số DO…', onChange: v => setKhvc({ doNo: v }) },
+    { key: 'inDoSap', label: 'Trong DO SAP', type: 'single', allLabel: 'Tất cả', value: fInDoSap,
+      options: [{ value: '1', label: 'Có trong DO SAP' }, { value: '0', label: 'Chưa có trong DO SAP' }],
+      onChange: v => setKhvc({ inDoSap: v === '__all__' ? '' : v }) },
   ]
 
   const pageIds = items.map(i => i.id)
@@ -740,9 +768,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
 
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
-            <Database className="h-4 w-4 text-slate-500" /> Dữ liệu bên ngoài
-          </span>
           <SearchInput value={search} onChange={v => setKhvc({ search: v })}
             placeholder="Tìm Số xe, DO, NPP…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
@@ -758,6 +783,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           )}
         </div>
         <FilterBar defs={filterDefs} />
+        {doSapWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{doSapWarn}</div>}
       </div>
 
       <SummaryBand tiles={[
@@ -787,7 +813,10 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
             <Database className="h-10 w-10 opacity-30" />
             <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
-            <p className="text-xs">Kế hoạch xuất chỉ hiển thị sau khi chọn ngày (tránh tải toàn bộ bảng).</p>
+            <p className="text-xs">Kế hoạch vừa upload nằm ở <b>Ngày nạp = hôm nay</b> (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
+            <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
+              Xem hôm nay
+            </Button>
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={12} rows={12} />
@@ -1069,9 +1098,6 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
       {tabBar}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
-            <Database className="h-4 w-4 text-slate-500" /> Cần xử lý (đối chiếu SAP)
-          </span>
           <SearchInput value={search} onChange={v => setReconcile({ search: v })}
             placeholder="Tìm chuyến, mã hàng, DO…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />

@@ -1754,6 +1754,7 @@ export interface DoSapRow {
   source: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   sync_status?: string | null; last_synced_at?: string | null
   used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
+  in_plan?: boolean; plan_group_code?: string | null; plan_group_count?: number; plan_export_date?: string | null   // kế hoạch VC gắn với DO
 }
 export function useDoSapOrders(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({
@@ -1762,7 +1763,7 @@ export function useDoSapOrders(params: Record<string, string | number | undefine
       const qs = new URLSearchParams()
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
       const r = await apiClient.get(`/external/do-sap?${qs.toString()}`)
-      return r.data.data as { items: DoSapRow[]; total: number; page: number; page_size: number }
+      return r.data.data as { items: DoSapRow[]; total: number; page: number; page_size: number; plan_filter_warning?: string }
     },
     enabled,   // bắt buộc chọn ngày mới fetch (không tự kéo cả bảng)
     placeholderData: keepPreviousData,
@@ -1819,7 +1820,7 @@ export function useKhvcLines(params: Record<string, string | number | undefined>
       const qs = new URLSearchParams()
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
       const r = await apiClient.get(`/external/khvc?${qs.toString()}`)
-      return r.data.data as { items: KhvcRow[]; total: number; page: number; page_size: number }
+      return r.data.data as { items: KhvcRow[]; total: number; page: number; page_size: number; do_sap_filter_warning?: string }
     },
     enabled,   // bắt buộc chọn ngày mới fetch (không tự kéo cả bảng)
     placeholderData: keepPreviousData,

@@ -6,9 +6,14 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 
 const now = () => new Date().toISOString()
+
+// Cap an toàn cho filter chéo "Trong kế hoạch": số DO của cửa sổ đưa vào .in() không được quá lớn
+// (URL PostgREST) → vượt thì bỏ filter + trả cảnh báo (KHÔNG cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
+const PLAN_FILTER_CAP = 1500
 
 // Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
 async function reconcileQuiet(keys: OdKey[], actor: string | null) {
@@ -32,27 +37,62 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
-// GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, page, page_size)
+// GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, in_plan, page, page_size)
 export async function listDoSap(req: Request, res: Response) {
   try {
-    const { q, od_number, material_code, ship_to_code, plant, source, batch, date_from, date_to } = req.query as Record<string, string>
+    const { q, od_number, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
+    const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
+    const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
+    const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
+
+    // ── Filter chéo "Trong kế hoạch" (in_plan: '1'=có / '0'=không) ──
+    // Ngữ nghĩa: DO của cửa sổ đang xem CÓ/KHÔNG khớp khvc_lines.do_no (bất kể ngày nạp kế hoạch).
+    // Scalable: chỉ lấy tập DO CỦA CỬA SỔ (đã date-gate) rồi hỏi khvc — KHÔNG kéo cả bảng khvc.
+    let restrictOds: string[] | null = null
+    let planWarning: string | null = null
+    if (in_plan === '1' || in_plan === '0') {
+      const winRows = await fetchAllRowsParallel(() => {
+        // Bộ lọc inline (KHÔNG tách helper generic — builder supabase deep-instantiate → TS2589)
+        let wq = supabase.from('erp_outbound_orders').select('od_number')
+        if (gteFrom) wq = wq.gte('created_at', gteFrom)
+        if (lteTo)   wq = wq.lte('created_at', lteTo)
+        if (od_number)     wq = wq.ilike('od_number', `%${safeFilterValue(od_number)}%`)
+        if (material_code) wq = wq.ilike('material_code', `%${safeFilterValue(material_code)}%`)
+        if (ship_to_code)  wq = wq.eq('ship_to_code', ship_to_code)
+        if (plant)         wq = wq.eq('plant', plant)
+        if (source)        wq = wq.eq('source', source)
+        if (batch)         wq = wq.ilike('batch', `%${safeFilterValue(batch)}%`)
+        if (s) wq = wq.or(`od_number.ilike.%${s}%,material_code.ilike.%${s}%,material_name.ilike.%${s}%,ship_to_name.ilike.%${s}%,batch.ilike.%${s}%`)
+        return wq.order('od_number')
+      }) as { od_number: string }[]
+      const windowDos = [...new Set(winRows.map(r => String(r.od_number ?? '')).filter(Boolean))]
+      const planned = new Set<string>()
+      for (let i = 0; i < windowDos.length; i += 300) {
+        const { data } = await supabase.from('khvc_lines').select('do_no').in('do_no', windowDos.slice(i, i + 300))
+        for (const r of (data ?? []) as { do_no: string }[]) planned.add(String(r.do_no))
+      }
+      restrictOds = in_plan === '1' ? windowDos.filter(d => planned.has(d)) : windowDos.filter(d => !planned.has(d))
+      if (restrictOds.length > PLAN_FILTER_CAP) {
+        planWarning = `Khoảng ngày quá rộng để lọc theo kế hoạch (${restrictOds.length} DO) — thu hẹp Ngày nạp rồi lọc lại.`
+        restrictOds = null
+      } else if (restrictOds.length === 0) {
+        return ok(res, { items: [], total: 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
+      }
+    }
 
     let query = supabase.from('erp_outbound_orders').select('*', { count: 'exact' })
-    // Ngày NẠP dữ liệu (created_at) theo giờ VN — bắt buộc từ FE (không tự kéo cả bảng triệu dòng)
-    if (date_from) query = query.gte('created_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
-    if (date_to)   query = query.lte('created_at', new Date(`${date_to}T23:59:59.999+07:00`).toISOString())
+    if (gteFrom) query = query.gte('created_at', gteFrom)
+    if (lteTo)   query = query.lte('created_at', lteTo)
     if (od_number)     query = query.ilike('od_number', `%${safeFilterValue(od_number)}%`)
     if (material_code) query = query.ilike('material_code', `%${safeFilterValue(material_code)}%`)
     if (ship_to_code)  query = query.eq('ship_to_code', ship_to_code)
     if (plant)         query = query.eq('plant', plant)
     if (source)        query = query.eq('source', source)
     if (batch)         query = query.ilike('batch', `%${safeFilterValue(batch)}%`)
-    if (q && q.trim()) {
-      const s = safeFilterValue(q.trim())
-      query = query.or(`od_number.ilike.%${s}%,material_code.ilike.%${s}%,material_name.ilike.%${s}%,ship_to_name.ilike.%${s}%,batch.ilike.%${s}%`)
-    }
+    if (s) query = query.or(`od_number.ilike.%${s}%,material_code.ilike.%${s}%,material_name.ilike.%${s}%,ship_to_name.ilike.%${s}%,batch.ilike.%${s}%`)
+    if (restrictOds) query = query.in('od_number', restrictOds)
     query = query.order('od_number', { ascending: true }).order('od_item', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)
 
@@ -60,14 +100,24 @@ export async function listDoSap(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     const items = (data ?? []) as Record<string, unknown>[]
 
-    // Enrich per-dòng của TRANG (bounded ≤ pageSize): (a) đã sinh chuyến chưa (used); (b) lệch đơn vị vs Material
+    // Enrich per-dòng của TRANG (bounded ≤ pageSize): (a) đã sinh chuyến chưa (used); (b) lệch đơn vị vs Material;
+    // (c) kế hoạch VC gắn với DO (Số xe + Ngày xuất) — khớp khvc_lines.do_no = od_number
     const dos = [...new Set(items.map(i => String(i.od_number ?? '')).filter(Boolean))]
     const usedSet = new Set<string>()
+    const planByDo = new Map<string, { group_codes: string[]; export_date: string | null }>()
     if (dos.length) {
       const orExpr = dos.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(',')
       const { data: ods } = await supabase.from('OutboundDelivery').select('delivery_code').or(orExpr)
       for (const o of (ods ?? []) as { delivery_code: string | null }[])
         for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) if (tok.trim()) usedSet.add(tok.trim())
+      const { data: kl } = await supabase.from('khvc_lines').select('do_no, group_code, export_date').in('do_no', dos)
+      for (const k of (kl ?? []) as { do_no: string; group_code: string | null; export_date: string | null }[]) {
+        const key = String(k.do_no)
+        const e = planByDo.get(key) ?? { group_codes: [], export_date: null }
+        if (k.group_code && !e.group_codes.includes(k.group_code)) e.group_codes.push(k.group_code)
+        if (!e.export_date && k.export_date) e.export_date = k.export_date
+        planByDo.set(key, e)
+      }
     }
     const mcs = [...new Set(items.map(i => String(i.material_code ?? '')).filter(Boolean))]
     const matMap = new Map<string, { base_unit: string | null; entry_unit: string | null }>()
@@ -78,6 +128,11 @@ export async function listDoSap(req: Request, res: Response) {
     }
     for (const i of items) {
       i.used = usedSet.has(String(i.od_number ?? ''))
+      const pl = planByDo.get(String(i.od_number ?? ''))
+      i.in_plan = !!pl
+      i.plan_group_code = pl?.group_codes[0] ?? null
+      i.plan_group_count = pl?.group_codes.length ?? 0
+      i.plan_export_date = pl?.export_date ?? null
       const m = i.material_code ? matMap.get(String(i.material_code).trim()) : undefined
       let mm = false
       if (m) {
@@ -88,7 +143,7 @@ export async function listDoSap(req: Request, res: Response) {
       }
       i.unit_mismatch = mm
     }
-    return ok(res, { items, total: count ?? 0, page, page_size: pageSize })
+    return ok(res, { items, total: count ?? 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }
 }
 

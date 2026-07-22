@@ -70,3 +70,12 @@ docs/handover/pdf/__render_tmp.html
 # DB phan mem can (du lieu that + password) - KHONG commit
 TVTDB.mdb
 *.mdb
+
+# Tai lieu tham khao cuc bo (user de o goc cho Claude doc) - KHONG commit
+/Template upload.xlsx
+/Du lieu mau/
+/*.docx
+/*.xlsx
+/*.xlsm
+/*.pdf
+/pane-adjust.yml

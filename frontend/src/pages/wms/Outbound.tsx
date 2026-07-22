@@ -172,12 +172,13 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
 
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-lg bg-sky-600 text-white px-2 py-2.5 text-center">
-            <div className="text-xl font-bold leading-none tabular-nums">{cartons.toLocaleString('vi-VN')}</div>
+          {/* Số dài (thùng quy đổi 3 số lẻ) tràn tile w-56/2 → gọn 1 số lẻ + co cỡ chữ khi quá dài (user 22/07) */}
+          <div className="rounded-lg bg-sky-600 text-white px-1.5 py-2.5 text-center overflow-hidden">
+            <div className={`${cartons >= 100000 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</div>
             <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thùng</div>
           </div>
-          <div className="rounded-lg bg-sky-700 text-white px-2 py-2.5 text-center">
-            <div className="text-xl font-bold leading-none tabular-nums">{fmtPallets(gdo.total_pallets)}</div>
+          <div className="rounded-lg bg-sky-700 text-white px-1.5 py-2.5 text-center overflow-hidden">
+            <div className="text-xl font-bold leading-none tabular-nums">{fmtPallets(gdo.total_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</div>
             <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Pallet</div>
           </div>
         </div>
@@ -756,10 +757,10 @@ export default function Outbound() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
-        { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN') },
-        { label: 'Tổng (QR)', value: summary.cartonsQr.toLocaleString('vi-VN') },
-        { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN') },
-        { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN') },
+        { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
+        { label: 'Tổng (QR)', value: summary.cartonsQr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
+        { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
+        { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
         { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
       ]} />
 
@@ -1438,6 +1439,7 @@ type ItemRow = {
   min_cartons: number  // 0 for new items, cartons_scanned for existing (BASE)
   mat_units: MatUnitsX | null   // BASE UNIT: hệ số của mã (QtyInput 2 ô + quy đổi)
   // loose_picking ĐÃ BỎ khỏi form (user 22/07): nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — BE tự tính khi lưu
+  sap_linked: boolean  // item có od_refs (đơn UPLOAD từ SAP) → KHÓA sửa số lượng (sửa ở tab DO SAP); đơn tay = false
   batch_required: string
   date_required: number
   cs_responsible: string
@@ -1447,7 +1449,7 @@ type ItemRow = {
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, mat_units: null, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, mat_units: null, sap_linked: false, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
 
 // %Date chỉ nhận số nguyên 0–100 (cho phép đuôi "%"). Trả null nếu ô chứa chữ → dùng để CHẶN paste text.
 function parsePctCell(raw: string): number | null {
@@ -1583,6 +1585,7 @@ function GDOFormBody({
       const rows = [...prev]
       while (rows.length < startIdx + lines.length) rows.push(makeItem())
       lines.forEach((line, offset) => {
+        if (rows[startIdx + offset]?.sap_linked) return   // dòng gốc SAP: SL khóa — paste bỏ qua dòng này
         // Thứ tự cột khớp bảng form: Mã hàng | Thùng | Nhặt lẻ | Batch | %Date | CS | Header text
         const cols  = line.split('\t')
         const code  = (cols[0] ?? '').trim()
@@ -1623,6 +1626,7 @@ function GDOFormBody({
       while (rows.length < startIdx + values.length) rows.push(makeItem())
       values.forEach((val, offset) => {
         const row = rows[startIdx + offset]
+        if (row.sap_linked) return   // dòng gốc SAP: SL khóa — paste bỏ qua
         const u = row.mat_units ?? lookupMat(row.material_code)
         const thung = parseInt(val.trim().replace(/[^0-9]/g, '')) || 0
         rows[startIdx + offset] = { ...row, mat_units: row.mat_units ?? u, cartons: qtyFromEntryBase(thung, 0, u) }
@@ -1848,11 +1852,14 @@ function GDOFormBody({
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}>
+                      {/* Đơn UPLOAD từ SAP (od_refs) → KHÓA sửa SL (user 22/07) — sửa ở tab DO SAP để đơn ↔ raw cùng khớp */}
                       <QtyInput compact className={`w-36 ${cartonsInvalid ? '[&_input]:border-red-400' : ''}`}
                         value={item.cartons}
                         mat={item.mat_units}
+                        disabled={item.sap_linked}
                         onChange={b => updateItem(item.id, { cartons: b })}
                       />
+                      {item.sap_linked && <p className="text-[9px] text-slate-400 text-center">SL theo DO SAP — sửa ở Dữ liệu bên ngoài</p>}
                       {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {qtyLabel(item.min_cartons, item.mat_units)}</p>}
                     </td>
                     <td className="px-2 py-1 text-center">
@@ -2198,6 +2205,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,
         mat_units: item.material ?? null,
+        sap_linked: (item.od_refs?.length ?? 0) > 0,
         batch_required: item.batch_required ?? '',
         date_required: item.date_required ?? 0,
         cs_responsible: item.cs_responsible ?? '',

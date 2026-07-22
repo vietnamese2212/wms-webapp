@@ -365,7 +365,7 @@ export async function listGDOs(req: Request, res: Response) {
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton)')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides)')
       .in('do_id', chunk).order('id'))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
@@ -412,6 +412,14 @@ export async function listGDOs(req: Request, res: Response) {
       const breakdownMap = new Map<string, { material_code: string; material_name: string | null; distributor_name: string | null; cartons: number; cartons_scanned: number; pallets: number }>()
       // BASE UNIT: tổng/breakdown cross-mã = THÙNG QUY ĐỔI (base ÷ hệ_số per mã; mã không entry giữ số)
       const qEntry = (i: any, v: unknown) => qtyEntryDecimal(Number(v ?? 0), (i.material ?? null) as MatUnitsQ | null)
+      // Pallet: cột pallets_estimated chỉ có ở luồng cũ — đơn sinh từ KHVC/SAP lưu 0 → tile "Pallet 0" SAI
+      // (user 22/07). Fallback tính sống = thùng quy đổi ÷ Thùng/Pallet hiệu lực theo kho (chỉ hiển thị).
+      const palletsOf = (i: any) => {
+        const stored = Number(i.pallets_estimated ?? 0)
+        if (stored > 0) return stored
+        const cpp = effCartonsPerPallet((i.material ?? null) as MatPalletUnits | null, g.warehouse_id ?? null)
+        return cpp > 0 ? qEntry(i, i.cartons_ordered) / cpp : 0
+      }
       for (const i of gdoItems) {
         const material_code = i.material_code_raw ?? '(?)'
         const distributor_name = distributorByDo.get(i.do_id) ?? null
@@ -419,7 +427,7 @@ export async function listGDOs(req: Request, res: Response) {
         const cur = breakdownMap.get(key) ?? { material_code, material_name: i.material?.short_name ?? null, distributor_name, cartons: 0, cartons_scanned: 0, pallets: 0 }
         cur.cartons         += qEntry(i, i.cartons_ordered)
         cur.cartons_scanned += qEntry(i, i.cartons_scanned)
-        cur.pallets         += Number(i.pallets_estimated ?? 0)
+        cur.pallets         += palletsOf(i)
         breakdownMap.set(key, cur)
       }
 
@@ -432,7 +440,7 @@ export async function listGDOs(req: Request, res: Response) {
         // Tổng thùng = TẤT CẢ item (gồm hàng no_qr); thêm total_cartons_noqr = riêng hàng không QR.
         total_cartons:      gdoItems.reduce((s: number, i: any) => s + qEntry(i, i.cartons_ordered),   0),
         total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + qEntry(i, i.cartons_ordered),  0),
-        total_pallets:      gdoItems.reduce((s: number, i: any) => s + Number(i.pallets_estimated), 0),
+        total_pallets:      gdoItems.reduce((s: number, i: any) => s + palletsOf(i), 0),
         total_loose:        gdoItems.reduce((s: number, i: any) => s + qEntry(i, i.loose_picking), 0),
         item_breakdown:    [...breakdownMap.values()],
       }
@@ -1356,8 +1364,15 @@ export async function updateGDO(req: Request, res: Response) {
     const doIds = doList.map((d: any) => d.id as string)
     const { data: existingItems } = doIds.length
       ? await supabase.from('OutboundItem')
-          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
+          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
       : { data: [] }
+
+    // Đơn UPLOAD từ SAP (item có od_refs liên kết DO SAP) → KHÓA sửa số lượng ở form Xuất (user chốt 22/07):
+    // raw là nguồn sự thật — sửa ở đây sẽ lệch raw và bị engine đè lại khi SAP đổi. Sửa SL ở tab DO SAP.
+    // Đơn TAY (od_refs rỗng) sửa tự do như cũ. Các field khác (Batch/%Date/CS/ghi chú) vẫn sửa được.
+    const sapLinked = (ex: { od_refs?: unknown[] | null } | undefined | null) => ((ex?.od_refs as unknown[] | null)?.length ?? 0) > 0
+    const sapQtyLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
 
     if (isMultiDO) {
       // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
@@ -1373,12 +1388,15 @@ export async function updateGDO(req: Request, res: Response) {
         }
       }
 
-      // Kiểm tra số thùng < đã xuất
+      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
       for (const item of items) {
         if (!item.db_id) continue
         const ex = existingById.get(item.db_id)
         if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
           return fail(res, `Số lượng "${ex.material_code_raw}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+        }
+        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+          return fail(res, sapQtyLockError(ex), 422)
         }
       }
 
@@ -1470,11 +1488,14 @@ export async function updateGDO(req: Request, res: Response) {
         }
       }
 
-      // Kiểm tra số thùng < đã xuất
+      // Kiểm tra số thùng < đã xuất + KHÓA sửa SL đơn gốc SAP
       for (const item of items) {
         const ex = existingByCode.get(item.material_code)
         if (ex && item.cartons_ordered < Number(ex.cartons_scanned)) {
           return fail(res, `Số lượng "${item.material_code}" (${qtyLabel(Number(item.cartons_ordered), ex.material ?? null)}) nhỏ hơn đã xuất (${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)})`, 400)
+        }
+        if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
+          return fail(res, sapQtyLockError(ex), 422)
         }
       }
 

@@ -32,6 +32,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
 import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { saveWorkbook } from '@/utils/saveExcel'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -86,7 +87,7 @@ function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
   const ws = XLSX.utils.json_to_sheet(sanitizeRows(rows))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Tồn kho')
-  XLSX.writeFile(wb, `${baseName}.xlsx`)
+  saveWorkbook(wb, baseName)   // chọn vị trí + nhớ thư mục trước (fallback tải thẳng)
 }
 
 // Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (19 cột)
@@ -806,7 +807,7 @@ export default function Inventory() {
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
-    XLSX.writeFile(wb, 'mau_ton_kho.xlsx')
+    saveWorkbook(wb, 'mau_ton_kho.xlsx')
   }
 
   // Derive pallet context for action modals (from first checked entry on current page)

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { Save, Trash2, ChevronLeft, ChevronRight, Plus, CheckCircle2, Clock, Flag, Download, Rows3, AlignJustify } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameMonth } from 'date-fns'
@@ -436,7 +437,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Bảng công')
-    XLSX.writeFile(wb, `bang_cong_${from}_${to}.xlsx`)
+    saveWorkbook(wb, `bang_cong_${from}_${to}.xlsx`)
   }
 
   return (

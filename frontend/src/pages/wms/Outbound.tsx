@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -417,7 +418,7 @@ export default function Outbound() {
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'XuatKho')
-    XLSX.writeFile(wb, 'mau_xuat_kho.xlsx')
+    saveWorkbook(wb, 'mau_xuat_kho.xlsx')
   }
 
   // ─── ĐỢT 3: mẫu VL06O (giữ NGUYÊN tên cột SAP, rút gọn còn cột cần) + mẫu KHVC (tự soạn, gọn) ───
@@ -430,7 +431,7 @@ export default function Outbound() {
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Data')
-    XLSX.writeFile(wb, 'mau_vl06o.xlsx')
+    saveWorkbook(wb, 'mau_vl06o.xlsx')
   }
   function downloadKhvcTemplate() {
     const d = new Date(); d.setDate(d.getDate() + 1)
@@ -441,7 +442,7 @@ export default function Outbound() {
     const ws = XLSX.utils.aoa_to_sheet([headers, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
-    XLSX.writeFile(wb, 'mau_khvc.xlsx')
+    saveWorkbook(wb, 'mau_khvc.xlsx')
   }
 
   function handleVl06oChange(e: React.ChangeEvent<HTMLInputElement>) {

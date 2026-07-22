@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -305,7 +306,7 @@ export default function Materials() {
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
-    XLSX.writeFile(wb, 'mau_ma_hang.xlsx')
+    saveWorkbook(wb, 'mau_ma_hang.xlsx')
   }
 
   function openAdd() {

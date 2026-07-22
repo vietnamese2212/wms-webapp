@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
@@ -264,7 +265,7 @@ export default function Locations() {
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Vị trí kho')
-    XLSX.writeFile(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
+    saveWorkbook(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
   }
 
   return (

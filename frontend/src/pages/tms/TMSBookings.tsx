@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
@@ -1296,7 +1297,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Import')
-    XLSX.writeFile(wb, 'mau_ke_hoach_vc.xlsx')
+    saveWorkbook(wb, 'mau_ke_hoach_vc.xlsx')
   }
 
   const errorCount = rows.filter(r => !r.valid).length
@@ -1702,7 +1703,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(data))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'KH Nhập ngoài')
-    XLSX.writeFile(wb, 'template_ke_hoach_nhap.xlsx')
+    saveWorkbook(wb, 'template_ke_hoach_nhap.xlsx')
   }
 
   function handleClose() { setPreview(null); setFileName(''); setErr(''); onClose() }

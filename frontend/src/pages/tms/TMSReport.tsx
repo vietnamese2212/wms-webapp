@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { Download, Check, X, Rows3, AlignJustify } from 'lucide-react'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -149,7 +150,7 @@ export default function TMSReport() {
     }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'BC Nhập hàng')
-    XLSX.writeFile(wb, `bao_cao_nhap_${dateFrom}_${dateTo}.xlsx`)
+    saveWorkbook(wb, `bao_cao_nhap_${dateFrom}_${dateTo}.xlsx`)
   }
 
   return (

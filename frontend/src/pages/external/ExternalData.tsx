@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -266,7 +267,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       const ws = XLSX.utils.json_to_sheet(rows)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'DO SAP')
-      XLSX.writeFile(wb, 'do-sap.xlsx')
+      saveWorkbook(wb, 'do-sap.xlsx')
       if (hitCap) setExportErr(`Đã đạt giới hạn ${CAP.toLocaleString('vi-VN')} dòng — file chỉ chứa phần đầu. Thu hẹp khoảng ngày/bộ lọc để xuất đủ.`)
     } catch (err) {
       setExportErr(apiError(err, 'Không xuất được Excel. Vui lòng thử lại.'))

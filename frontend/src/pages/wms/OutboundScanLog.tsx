@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import {
   ClipboardList, ChevronLeft, ChevronRight, AlertTriangle, Download,
@@ -297,7 +298,7 @@ export default function OutboundScanLog() {
       const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
-      XLSX.writeFile(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)
+      saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)
     } catch (e) {
       const err = e as AxiosError<{ error?: { message?: string } }>
       setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')

@@ -9,6 +9,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -308,7 +309,7 @@ export default function StocktakeDashboard() {
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Tổng hợp KK')
-    XLSX.writeFile(wb, `tong_hop_kk_${todayVN}.xlsx`)
+    saveWorkbook(wb, `tong_hop_kk_${todayVN}.xlsx`)
   }
 
   return (

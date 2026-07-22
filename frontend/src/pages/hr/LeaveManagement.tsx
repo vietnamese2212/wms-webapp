@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -102,7 +103,7 @@ export function LeaveSection() {
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Nghỉ phép')
-    XLSX.writeFile(wb, `nghi_phep_${TODAY()}.xlsx`)
+    saveWorkbook(wb, `nghi_phep_${TODAY()}.xlsx`)
   }
 
   async function onDecide(id: string, s: 'APPROVED' | 'REJECTED') {

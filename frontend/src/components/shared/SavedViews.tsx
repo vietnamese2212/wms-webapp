@@ -50,7 +50,9 @@ export function SavedViews({ module, currentFilters, onApply, activeId }: {
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full right-0 mt-1 bg-white border rounded-md shadow-lg w-[220px] py-1 animate-in fade-in zoom-in-95 duration-100 origin-top-right"
+        // Mobile: trigger nằm SÁT MÉP TRÁI toolbar → neo TRÁI (right-0 sẽ trải panel 220px ra ngoài màn bên trái — lỗi iPhone 22/07).
+        // Desktop (sm+): trigger giữa/phải toolbar → giữ neo PHẢI như cũ. max-w chặn trần theo viewport cho màn cực hẹp.
+        <div className="absolute z-50 top-full left-0 origin-top-left sm:left-auto sm:right-0 sm:origin-top-right mt-1 bg-white border rounded-md shadow-lg w-[220px] max-w-[calc(100vw-24px)] py-1 animate-in fade-in zoom-in-95 duration-100"
           onMouseDown={e => e.stopPropagation()}>
           {views.length === 0 ? (
             <div className="px-3 py-2 text-[11px] text-slate-400 text-center">Chưa có view nào</div>

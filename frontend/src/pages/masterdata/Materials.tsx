@@ -157,6 +157,7 @@ export default function Materials() {
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
   const [nonStock,         setNonStock]         = useState(false)   // mã phi hàng hóa (chiết khấu/dịch vụ) — chỉ cần Mã+Tên, loại khỏi mọi tác vụ kho
+  const [palletCarrier,    setPalletCarrier]    = useState(false)   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
   const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
@@ -271,9 +272,10 @@ export default function Materials() {
     if (!form.category) return 'Loại hàng là bắt buộc'
     if (!form.base_unit.trim()) return 'Base Unit là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
-    if (needsShelfLife(form.category, whTypeMeta) && !form.shelf_life_days)
+    // Mã PALLET MANG HÀNG (Loscam): bản thân là cái pallet — HSD/Pallet-EA vô nghĩa, KHÔNG bắt buộc (user 22/07)
+    if (!palletCarrier && needsShelfLife(form.category, whTypeMeta) && !form.shelf_life_days)
       return `HSD (ngày) là bắt buộc cho loại "${form.category}" (chỉnh luật này trong Cài đặt WMS → Loại kho)`
-    if (needsPalletPerEa(form.category, whTypeMeta) && !form.pallet_per_ea)
+    if (!palletCarrier && needsPalletPerEa(form.category, whTypeMeta) && !form.pallet_per_ea)
       return `Pallet/EA là bắt buộc cho loại "${form.category}" (để quy đổi tồn EA → pallet)`
     if (form.entry_unit.trim() && !(Number(form.units_per_carton) > 0))
       return 'Có Entry Unit thì hệ số EA/thùng (1 Entry = N Base) phải > 0'
@@ -314,6 +316,7 @@ export default function Materials() {
     setEditActive(true)
     setNoQr(false)
     setNonStock(false)
+    setPalletCarrier(false)
     setStackOnTop(false)
     setFormError('')
     setDialogMode('add')
@@ -357,6 +360,7 @@ export default function Materials() {
     setEditActive(mat.is_active)
     setNoQr(mat.no_qr_tracking ?? false)
     setNonStock(mat.is_non_stock ?? false)
+    setPalletCarrier(mat.is_pallet_carrier ?? false)
     setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
     setDialogMode('edit')
@@ -397,6 +401,7 @@ export default function Materials() {
         notes:                         form.notes.trim() || undefined,
         no_qr_tracking:                noQr,
         is_non_stock:                  nonStock,
+        is_pallet_carrier:             palletCarrier,
         warehouse_pallet_overrides:    palletOverrides,
         supplier_shelf_life_overrides: supplierHsdOverrides,
       }
@@ -817,6 +822,9 @@ export default function Materials() {
                     {detailMat.is_non_stock && (
                       <DRow label="Loại mã" value={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Phi hàng hóa (chiết khấu/dịch vụ)</span>} />
                     )}
+                    {detailMat.is_pallet_carrier && (
+                      <DRow label="Loại mã" value={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">Pallet mang hàng — không đếm Pallet chuyến</span>} />
+                    )}
                     <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
                     <DRow label="Loại SP"    value={detailMat.product_type} />
                     <DRow label="Quản tồn"   value={detailMat.no_qr_tracking ? 'Không QR (theo số lượng)' : 'Theo QR từng pallet'} />
@@ -958,6 +966,18 @@ export default function Materials() {
                 <span className="block text-[11px] text-amber-700 leading-snug">Chỉ cần khai Mã + Tên. Mã này bị LOẠI khỏi Xuất / Nhập / Tồn và mọi thao tác kho (vd 910000060 chiết khấu).</span>
               </span>
             </label>
+
+            {/* Cờ PALLET MANG HÀNG (Loscam…) — user 22/07: dòng pallet trong đơn CHÍNH LÀ pallet chứa hàng
+                bên trên → không cộng vào đếm Pallet của chuyến (tránh double); vẫn tính ở Tổng (k QR). */}
+            {!nonStock && (
+            <label className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
+              <input type="checkbox" checked={palletCarrier} onChange={e => setPalletCarrier(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-sky-600 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-slate-700">Mã là PALLET mang hàng (Loscam…)</span>
+                <span className="block text-[11px] text-slate-500 leading-snug">Chính là pallet chứa hàng bên trên — KHÔNG cộng vào đếm Pallet của chuyến xuất (tránh double); vẫn tính ở Tổng (k QR).</span>
+              </span>
+            </label>
+            )}
 
             {/* Mã hàng */}
             <div className="grid grid-cols-3 items-center gap-2">

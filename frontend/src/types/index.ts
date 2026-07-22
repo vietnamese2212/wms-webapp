@@ -240,6 +240,7 @@ export interface Material {
   notes:                      string | null
   no_qr_tracking:             boolean
   is_non_stock?:              boolean
+  is_pallet_carrier?:         boolean   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
   is_active:                  boolean
   created_at?:                string
   updated_at?:                string | null

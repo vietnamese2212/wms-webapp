@@ -365,7 +365,7 @@ export async function listGDOs(req: Request, res: Response) {
     const doIds = (dos ?? []).map((d: any) => d.id)
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides)')
+      .select('id, do_id, cartons_ordered, cartons_scanned, pallets_estimated, loose_picking, material_type, export_type, material_code_raw, material_id, material:Material!material_id(no_qr_tracking, short_name, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_pallet_carrier)')
       .in('do_id', chunk).order('id'))
 
     // Kho QTY → ép no-QR hiệu lực cho item của các GDO QTY (do_id → gdo → inventory_mode)
@@ -415,6 +415,9 @@ export async function listGDOs(req: Request, res: Response) {
       // Pallet: cột pallets_estimated chỉ có ở luồng cũ — đơn sinh từ KHVC/SAP lưu 0 → tile "Pallet 0" SAI
       // (user 22/07). Fallback tính sống = thùng quy đổi ÷ Thùng/Pallet hiệu lực theo kho (chỉ hiển thị).
       const palletsOf = (i: any) => {
+        // Mã PALLET MANG HÀNG (Loscam, cờ is_pallet_carrier — user 22/07): chính là pallet chứa hàng
+        // bên trên → cộng vào đếm Pallet là DOUBLE. Loại khỏi đếm; vẫn nằm ở Tổng (k QR) để giao nhận đếm tấm.
+        if (i.material?.is_pallet_carrier) return 0
         const stored = Number(i.pallets_estimated ?? 0)
         if (stored > 0) return stored
         const cpp = effCartonsPerPallet((i.material ?? null) as MatPalletUnits | null, g.warehouse_id ?? null)

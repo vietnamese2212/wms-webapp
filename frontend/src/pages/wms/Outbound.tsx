@@ -1950,7 +1950,7 @@ function GDOFormBody({
                       </td>
                     )}
                     <td className="px-1 py-1">
-                      {item.min_cartons === 0 && (
+                      {item.min_cartons === 0 && !item.sap_linked && (
                         <button onClick={() => setItems(rows => rows.filter(r => r.id !== item.id))}
                           className="text-slate-300 hover:text-red-400" title="Xóa dòng">
                           <Trash2 className="h-3 w-3" />

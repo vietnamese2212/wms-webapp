@@ -1376,6 +1376,8 @@ export async function updateGDO(req: Request, res: Response) {
     const sapLinked = (ex: { od_refs?: unknown[] | null } | undefined | null) => ((ex?.od_refs as unknown[] | null)?.length ?? 0) > 0
     const sapQtyLockError = (ex: { material_code_raw?: string | null }) =>
       `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+    const sapDeleteLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không xóa dòng tại đây. Xóa dòng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
 
     if (isMultiDO) {
       // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
@@ -1384,10 +1386,13 @@ export async function updateGDO(req: Request, res: Response) {
       )
       const requestedDbIds = new Set(items.filter(i => i.db_id).map(i => i.db_id as string))
 
-      // Kiểm tra: không xóa item đã xuất
+      // Kiểm tra: không xóa item đã xuất + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
       for (const [id, ex] of existingById) {
         if (!requestedDbIds.has(id) && Number(ex.cartons_scanned) > 0) {
           return fail(res, `Không thể xóa mã hàng "${ex.material_code_raw}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+        }
+        if (!requestedDbIds.has(id) && sapLinked(ex)) {
+          return fail(res, sapDeleteLockError(ex), 422)
         }
       }
 
@@ -1484,10 +1489,13 @@ export async function updateGDO(req: Request, res: Response) {
       )
       const newCodes = new Set(items.map(i => i.material_code))
 
-      // Kiểm tra xóa item có scan
+      // Kiểm tra xóa item có scan + không xóa dòng đơn gốc SAP (xóa = sửa SL về 0)
       for (const [code, ex] of existingByCode) {
         if (!newCodes.has(code) && Number(ex.cartons_scanned) > 0) {
           return fail(res, `Không thể xóa mã hàng "${code}" đã xuất ${qtyLabel(Number(ex.cartons_scanned), ex.material ?? null)}`, 400)
+        }
+        if (!newCodes.has(code) && sapLinked(ex)) {
+          return fail(res, sapDeleteLockError(ex), 422)
         }
       }
 

@@ -733,7 +733,8 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-10">Item</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Mã hàng</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
-                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Số lượng (sửa)</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-20">Thùng (sửa)</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-20">Hộp (sửa)</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-36">Số gốc (base) · chỉ đọc</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">SAP báo</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Batch</th>
@@ -758,8 +759,12 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
                     <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.material_code ?? '—'}</td>
                     {/* 1 dòng KHÔNG wrap, KHÔNG cắt chữ (sheet đã nới rộng để khỏi scroll ngang) */}
                     <td className={`px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.material_name ?? <span className="text-slate-300">—</span>}</td>
-                    <td className="px-2 py-1" onPaste={e => handlePasteQtyAt(idx, e)}>
-                      <QtyInput compact className="w-36" disabled={isRemoved || !canEdit || incomplete} value={cur} mat={mat} onChange={b => setDraft(prev => ({ ...prev, [r.id]: b }))} />
+                    {/* Số lượng tách 2 cột Thùng | Hộp (nguyên lý y cũ — value/onChange = BASE) */}
+                    <td className="px-2 py-1 align-top" onPaste={e => handlePasteQtyAt(idx, e)}>
+                      <QtyInput compact part="entry" disabled={isRemoved || !canEdit || incomplete} value={cur} mat={mat} onChange={b => setDraft(prev => ({ ...prev, [r.id]: b }))} />
+                    </td>
+                    <td className="px-2 py-1 align-top">
+                      <QtyInput compact part="base" disabled={isRemoved || !canEdit || incomplete} value={cur} mat={mat} onChange={b => setDraft(prev => ({ ...prev, [r.id]: b }))} />
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       {isRemoved ? <span className="text-[10px] text-red-500 font-semibold">Sẽ xóa</span> : <>
@@ -818,8 +823,11 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
                       : l.lookup === 'error' ? <span className="text-red-600">Không tra được Mã hàng (mạng/quyền) — ô số lượng đang hiểu là SỐ BASE</span>
                       : l.material_name ?? <span className="text-slate-300">—</span>}
                   </td>
-                  <td className="px-2 py-1" onPaste={e => handlePasteQtyAddedAt(ai, e)}>
-                    <QtyInput compact className="w-36" value={l.qty_base} mat={l.mat} onChange={b => patchLine(l.key, { qty_base: b })} />
+                  <td className="px-2 py-1 align-top" onPaste={e => handlePasteQtyAddedAt(ai, e)}>
+                    <QtyInput compact part="entry" value={l.qty_base} mat={l.mat} onChange={b => patchLine(l.key, { qty_base: b })} />
+                  </td>
+                  <td className="px-2 py-1 align-top">
+                    <QtyInput compact part="base" value={l.qty_base} mat={l.mat} onChange={b => patchLine(l.key, { qty_base: b })} />
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap">
                     <div className="text-[10px] font-semibold tabular-nums text-sky-700">{qtyLabel(l.qty_base, l.mat)}</div>

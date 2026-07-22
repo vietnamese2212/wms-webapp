@@ -168,9 +168,13 @@ const NccRowItem = React.memo(function NccRowItem({
           {unitMismatch && <span className="absolute -top-4 left-0 text-[8px] text-amber-500 whitespace-nowrap">KH: {row.mat_unit}</span>}
         </div>
       </td>
-      <td className="px-1.5 py-1 min-w-[136px]" onPaste={e => onQtyPaste(idx, e)}>
-        {/* BASE UNIT: 2 khung Thùng + Hộp (mã có entry) → hiện/nhập "N thùng + M hộp"; mã không entry → 1 ô. value/onChange = BASE */}
-        <QtyInput compact value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
+      {/* BASE UNIT tách 2 cột Thùng | Hộp (mã có entry); mã không entry → cột Hộp là ô base thập phân. value/onChange = BASE */}
+      <td className="px-1.5 py-1 align-top" onPaste={e => onQtyPaste(idx, e)}>
+        <QtyInput compact part="entry" value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
+          onChange={b => onField(idx, 'planned_qty', String(b))} />
+      </td>
+      <td className="px-1.5 py-1 align-top">
+        <QtyInput compact part="base" value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
           onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
       <td className="px-1 py-1 text-center">
@@ -1027,7 +1031,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                         <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
                         <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-14">Vị trí</th>
                         <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-8">PL</th>
-                        <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">SL dự kiến</th>
+                        <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Thùng</th>
+                        <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Hộp</th>
                         <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Ghi chú</th>
                         <th className="w-6"></th>
                       </tr>
@@ -1046,10 +1051,16 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                           <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{row.matName || '—'}</td>
                           <td className="px-2 py-1 text-center font-mono text-slate-500">{row.locationCode || '—'}</td>
                           <td className="px-2 py-1 text-center tabular-nums font-semibold">{row.palletCount}</td>
-                          <td className="px-1.5 py-1">
+                          {/* BASE UNIT tách 2 cột Thùng | Hộp — value/onChange = BASE */}
+                          <td className="px-1.5 py-1 align-top">
                             {!row.toCancel && (
-                              /* BASE UNIT: 2 khung Thùng + Hộp — value/onChange = BASE (mã có entry hiện/nhập thùng+hộp) */
-                              <QtyInput compact value={Math.max(0, Number(row.planned_cartons) || 0)} mat={row.mat_units}
+                              <QtyInput compact part="entry" value={Math.max(0, Number(row.planned_cartons) || 0)} mat={row.mat_units}
+                                onChange={b => setEditRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, planned_cartons: b || null }))} />
+                            )}
+                          </td>
+                          <td className="px-1.5 py-1 align-top">
+                            {!row.toCancel && (
+                              <QtyInput compact part="base" value={Math.max(0, Number(row.planned_cartons) || 0)} mat={row.mat_units}
                                 onChange={b => setEditRows(prev => prev.map((r, i) => i !== idx ? r : { ...r, planned_cartons: b || null }))} />
                             )}
                           </td>
@@ -1098,7 +1109,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                       <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 w-32">Mã hàng</th>
                       <th className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500">Tên hàng</th>
                       <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">ĐVT</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] font-medium text-slate-500 w-20">SL dự kiến</th>
+                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Thùng</th>
+                      <th className="px-2 py-1.5 text-center text-[9px] font-medium text-slate-500 w-16">Hộp</th>
                       <th className="w-6"></th>
                     </tr>
                   </thead>

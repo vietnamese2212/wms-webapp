@@ -137,7 +137,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
 
   // Filter/search/page state — nhớ theo user qua wmsFilterStore (scopedPersist)
   const { doSap: f, setDoSap } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, page, pageSize } = f
+  const { search, dateFrom, dateTo, source: fSource, plant: fPlant, shipto: fShipto, material: fMaterial, od: fOd, inPlan: fInPlan, used: fUsed, page, pageSize } = f
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
@@ -160,9 +160,10 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     material_code: fMaterial.trim() || undefined,
     od_number:     fOd.trim() || undefined,
     in_plan:       fInPlan || undefined,
+    used:          fUsed || undefined,
     page,
     page_size:     pageSize,
-  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, page, pageSize])
+  }), [search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, page, pageSize])
 
   const { data, isLoading, isError, error } = useDoSapOrders(params, hasDate)
   const items = data?.items ?? []
@@ -171,7 +172,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const planWarn = data?.plan_filter_warning
 
   // Đổi filter/search/pageSize → về trang 1 (filterKey KHÔNG gồm page để tránh vòng lặp)
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fSource, fPlant, fShipto, fMaterial, fOd, fInPlan, fUsed, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
@@ -193,6 +194,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     { key: 'inPlan', label: 'Trong kế hoạch', type: 'single', allLabel: 'Tất cả', value: fInPlan,
       options: [{ value: '1', label: 'Có trong kế hoạch' }, { value: '0', label: 'Ngoài kế hoạch' }],
       onChange: v => setDoSap({ inPlan: v === '__all__' ? '' : v }) },
+    { key: 'used', label: 'Chuyến Xuất', type: 'single', allLabel: 'Tất cả', value: fUsed,
+      options: [{ value: '1', label: 'Còn trong chuyến' }, { value: '0', label: 'Không có chuyến' }],
+      onChange: v => setDoSap({ used: v === '__all__' ? '' : v }) },
   ]
 
   // Selection theo trang hiện tại
@@ -871,14 +875,28 @@ const KH_COLS: { id: string; label: string }[] = [
 ]
 const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110]
 
-function TripBadge({ materialized, gdoStatus }: { materialized?: boolean; gdoStatus?: string | null }) {
-  if (!materialized) return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500">Chưa sinh</span>
+function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
+  if (!materialized) {
+    return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700"
+      title="KH chưa sinh chuyến, hoặc chuyến đã bị xóa bên Xuất kho — lọc nhanh: Lệch với Xuất → Không còn chuyến">Không có chuyến</span>
+  }
   const st = (gdoStatus ?? '').toUpperCase()
   const cls = st === 'COMPLETED' ? 'bg-green-100 text-green-700'
     : st === 'IN_PROGRESS' ? 'bg-amber-100 text-amber-700'
     : st === 'PAUSED' ? 'bg-red-100 text-red-700'
     : 'bg-sky-100 text-sky-700'
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={gdoStatus ?? undefined}>Đã sinh</span>
+  const mismatch = !!(gdoDate && exportDate && gdoDate !== exportDate)
+  return (
+    <div className="leading-tight">
+      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${cls}`} title={gdoStatus ?? undefined}>Đã sinh</span>
+      {mismatch && (
+        <div className="text-[9px] text-red-600 font-semibold"
+          title="Ngày chuyến bên Xuất khác Ngày xuất KH (chuyến đã được chuyển ngày) — upload KH mới sẽ đè lại theo KH">
+          Xuất: {formatDate(gdoDate!)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
@@ -889,7 +907,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const canDelete = can(perms, 'external_khvc', 'delete')
 
   const { khvc: f, setKhvc } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, page, pageSize } = f
+  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, gdoIssue: fGdoIssue, page, pageSize } = f
 
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
@@ -909,17 +927,19 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     group_code:     fGroup.trim() || undefined,
     do_no:          fDo.trim() || undefined,
     in_do_sap:      fInDoSap || undefined,
+    gdo_issue:      fGdoIssue || undefined,
     page,
     page_size:      pageSize,
-  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, page, pageSize])
+  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, page, pageSize])
 
   const { data, isLoading, isError, error } = useKhvcLines(params, hasDate)
   const items = data?.items ?? []
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const doSapWarn = data?.do_sap_filter_warning
+  const gdoIssueWarn = data?.gdo_issue_warning
 
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
@@ -941,6 +961,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     { key: 'inDoSap', label: 'Trong DO SAP', type: 'single', allLabel: 'Tất cả', value: fInDoSap,
       options: [{ value: '1', label: 'Có trong DO SAP' }, { value: '0', label: 'Chưa có trong DO SAP' }],
       onChange: v => setKhvc({ inDoSap: v === '__all__' ? '' : v }) },
+    { key: 'gdoIssue', label: 'Lệch với Xuất', type: 'single', allLabel: 'Tất cả', value: fGdoIssue,
+      options: [{ value: 'missing', label: 'Không còn chuyến' }, { value: 'date_mismatch', label: 'Lệch ngày xuất' }],
+      onChange: v => setKhvc({ gdoIssue: v === '__all__' ? '' : v }) },
   ]
 
   const pageIds = items.map(i => i.id)
@@ -996,6 +1019,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
         </div>
         <FilterBar defs={filterDefs} />
         {doSapWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{doSapWarn}</div>}
+        {gdoIssueWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{gdoIssueWarn}</div>}
       </div>
 
       <SummaryBand tiles={[
@@ -1065,7 +1089,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                         ? <span className="text-green-500">✓</span>
                         : <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700" title="DO chưa có trong VL06O (raw) — up VL06O trước">DO chưa có</span>}
                     </TableCell>
-                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><TripBadge materialized={r.materialized} gdoStatus={r.gdo_status} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><TripBadge materialized={r.materialized} gdoStatus={r.gdo_status} gdoDate={r.gdo_date} exportDate={r.export_date} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><SourceBadge source={r.source} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
                       <div className="leading-tight">

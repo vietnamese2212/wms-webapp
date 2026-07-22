@@ -2,7 +2,7 @@ import { useRef, useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2 } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -15,7 +15,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -235,6 +235,13 @@ export default function Outbound() {
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Multi-select chuyến PENDING → chuyển ngày xuất hàng loạt (đơn rớt ngày — user 22/07)
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+  const [showMoveDate, setShowMoveDate] = useState(false)
+  const [moveDate, setMoveDate] = useState('')
+  const [movingDates, setMovingDates] = useState(false)
+  const [moveErrs, setMoveErrs] = useState<string[]>([])
+  const [moveOk, setMoveOk] = useState<string | null>(null)
   const isDesktop = useIsDesktop()
   const { widths: colW, startResize, totalWidth } = useColumnResize('outbound_col_widths', OUTBOUND_COL_DEFAULTS)
   function toggleDensity() {
@@ -283,6 +290,7 @@ export default function Outbound() {
   const { mutate: uploadVl06o, isPending: vl06oUploading } = useUploadVl06o()
   const { mutate: uploadKhvc,  isPending: khvcUploading }  = useUploadKhvc()
   const { mutate: assignGDO } = useAssignGDO()
+  const { mutateAsync: patchGDOAsync } = usePatchGDO()
   // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó
   const { data: palletGdoIds = [] } = useOutboundPalletLookup(f.search)
   const palletGdoSet = useMemo(() => new Set(palletGdoIds), [palletGdoIds])
@@ -621,6 +629,41 @@ export default function Outbound() {
       onChange: v => setOutbound({ filterStatuses: v }) },
   ]
 
+  // ─── Chuyển ngày xuất hàng loạt (multi-select chuyến PENDING — đơn rớt ngày, user 22/07) ───
+  const canEditGdo = can(perms, 'outbound', 'edit')
+  const pendingIdsOnScreen = useMemo(() => sorted.filter(g => g.status === 'PENDING').map(g => g.id), [sorted])
+  const allPendingChecked = pendingIdsOnScreen.length > 0 && pendingIdsOnScreen.every(id => checkedIds.has(id))
+  function toggleCheckAll() {
+    setCheckedIds(prev => {
+      const next = new Set(prev)
+      if (allPendingChecked) pendingIdsOnScreen.forEach(id => next.delete(id))
+      else pendingIdsOnScreen.forEach(id => next.add(id))
+      return next
+    })
+  }
+  function toggleCheck(id: string) {
+    setCheckedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  }
+  // Chỉ thao tác trên chuyến CÒN trên màn hình + còn PENDING (chuyến đổi trạng thái giữa chừng thì bỏ qua)
+  const moveTargets = useMemo(() => sorted.filter(g => checkedIds.has(g.id) && g.status === 'PENDING'), [sorted, checkedIds])
+  async function handleMoveDates() {
+    if (!moveDate || moveTargets.length === 0) return
+    setMovingDates(true); setMoveErrs([]); setMoveOk(null)
+    const results = await Promise.allSettled(moveTargets.map(g => patchGDOAsync({ id: g.id, delivery_date: moveDate })))
+    const errs: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        const msg = (r.reason as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+        errs.push(`${moveTargets[i].group_code}: ${msg}`)
+      }
+    })
+    setMovingDates(false)
+    const okCount = results.length - errs.length
+    setMoveErrs(errs)
+    setMoveOk(okCount > 0 ? `Đã chuyển ${okCount}/${results.length} chuyến sang ngày ${format(parseISO(moveDate), 'dd-MM-yyyy')}.` : null)
+    if (okCount > 0) setCheckedIds(new Set())   // giữ dialog mở để user thấy kết quả; chuyến đã chuyển rời khỏi filter ngày hiện tại
+  }
+
   const viewSnapshot = {
     search: f.search, dateFrom: f.dateFrom, dateTo: f.dateTo, warehouseId: f.warehouseId,
     filterWarehouseTypes, filterTypes, filterDvvts, filterNpps, filterMaterials, filterStatuses,
@@ -652,6 +695,20 @@ export default function Outbound() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {/* Action theo selection đặt trên toolbar (chuẩn 22/07 — không chèn bar hiện/ẩn làm bảng nhảy) */}
+          {canEditGdo && moveTargets.length > 0 && (
+            <button type="button" onClick={() => { setMoveDate(''); setMoveErrs([]); setMoveOk(null); setShowMoveDate(true) }}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0"
+              title="Chuyển ngày xuất các chuyến đã chọn (đơn rớt sang ngày khác)">
+              <CalendarDays className="h-3.5 w-3.5" /> Chuyển ngày ({moveTargets.length})
+            </button>
+          )}
+          {checkedIds.size > 0 && (
+            <button type="button" onClick={() => setCheckedIds(new Set())}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
+              <X className="h-3.5 w-3.5" /> Bỏ chọn ({checkedIds.size})
+            </button>
+          )}
           <ActionCluster className="shrink-0" items={[
             ...(can(perms, 'outbound', 'prepare') ? [{
               key: 'prepare', icon: PackageCheck, label: 'Chuẩn bị hàng', tip: 'Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)',
@@ -786,6 +843,11 @@ export default function Outbound() {
                   <TableHead key={c.id}
                     style={i <= 1 ? { left: i === 0 ? 0 : colW[0] } : undefined}
                     className={`text-[9px] font-medium text-slate-500 whitespace-nowrap px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${i <= 1 ? 'sticky z-20 bg-slate-50' : ''}`}>
+                    {c.id === 'date' && canEditGdo && pendingIdsOnScreen.length > 0 && (
+                      <input type="checkbox" className="h-3 w-3 accent-sky-600 cursor-pointer align-middle mr-1"
+                        checked={allPendingChecked} onChange={toggleCheckAll}
+                        title="Chọn tất cả chuyến Chờ xuất (chuyển ngày hàng loạt)" />
+                    )}
                     {c.label}
                     {i > 0 && (
                       <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
@@ -815,6 +877,9 @@ export default function Outbound() {
                     onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
                     onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                     onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
+                    checkable={canEditGdo && gdo.status === 'PENDING'}
+                    checked={checkedIds.has(gdo.id)}
+                    onToggleCheck={() => toggleCheck(gdo.id)}
                   />
                 )
                 if (spacerAfter) nodes.push(<tr key={`sp-a-${gdo.id}`} aria-hidden><td colSpan={OUTBOUND_COLS.length} className="p-0 border-0 bg-transparent"><div className="h-2.5" /></td></tr>)
@@ -834,6 +899,47 @@ export default function Outbound() {
         {sorted.length > 0 ? `1–${sorted.length} / ${sorted.length} chuyến xe` : '0 chuyến xe'}
       </div>
      </div>
+
+      {/* Modal chuyển ngày xuất hàng loạt (đơn rớt ngày) */}
+      {showMoveDate && (
+        <ModalOverlay onClose={() => !movingDates && setShowMoveDate(false)} className="w-full max-w-md">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-700">Chuyển ngày xuất — {moveTargets.length} chuyến</h3>
+            <button onClick={() => !movingDates && setShowMoveDate(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="p-4 space-y-3">
+            {moveTargets.length > 0 && (
+              <div className="max-h-32 overflow-auto rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-mono text-slate-600 space-y-0.5">
+                {moveTargets.map(g => <div key={g.id}>{g.group_code} <span className="font-sans text-slate-400">({format(parseISO(g.delivery_date), 'dd-MM')})</span></div>)}
+              </div>
+            )}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-600">Ngày xuất mới</label>
+              <Input type="date" min={TODAY} value={moveDate} onChange={e => setMoveDate(e.target.value)} className="h-9" />
+            </div>
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>Chuyến sinh từ upload SAP: <b>up Kế hoạch VC mới sẽ đè lại ngày theo kế hoạch</b>. Sau khi chuyển, tab Kế hoạch xuất (Dữ liệu bên ngoài) sẽ hiện <b>Lệch ngày xuất</b> để đối chiếu.</span>
+            </div>
+            {moveOk && (
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />{moveOk}
+              </div>
+            )}
+            {moveErrs.length > 0 && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 space-y-0.5">
+                {moveErrs.map((e, i) => <div key={i}>{e}</div>)}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" size="sm" className="h-8 text-xs" disabled={movingDates} onClick={() => setShowMoveDate(false)}>Đóng</Button>
+              <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" disabled={!moveDate || movingDates || moveTargets.length === 0} onClick={handleMoveDates}>
+                {movingDates ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> Đang chuyển…</> : `Chuyển ${moveTargets.length} chuyến`}
+              </Button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
 
       {/* Modals */}
       {showCreate && (
@@ -1016,7 +1122,7 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none' }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
@@ -1026,6 +1132,9 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   selected?: boolean
   whInfoByKey: Map<string, { code: string; mode: string }>
   bracketPos?: BracketPos
+  checkable?: boolean          // chuyến PENDING + user có outbound.edit → tick chọn để chuyển ngày hàng loạt
+  checked?: boolean
+  onToggleCheck?: () => void
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -1063,6 +1172,11 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
 
       <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${rowBg}`} style={{ left: pinW }}>
+        {checkable && (
+          <input type="checkbox" className="h-3 w-3 accent-sky-600 cursor-pointer align-middle mr-1"
+            checked={checked} onClick={e => e.stopPropagation()} onChange={onToggleCheck}
+            title="Chọn chuyến (chuyển ngày hàng loạt)" />
+        )}
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

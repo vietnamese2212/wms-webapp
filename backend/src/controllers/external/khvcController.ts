@@ -56,7 +56,7 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/khvc — list phân trang + filter + search (+ in_do_sap)
 export async function listKhvc(req: Request, res: Response) {
   try {
-    const { q, group_code, group_code_eq, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap } = req.query as Record<string, string>
+    const { q, group_code, group_code_eq, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap, gdo_issue } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
@@ -98,6 +98,46 @@ export async function listKhvc(req: Request, res: Response) {
       }
     }
 
+    // ── Filter "Lệch với Xuất" (gdo_issue: 'missing' = không còn chuyến / 'date_mismatch' = ngày chuyến ≠ Ngày xuất KH) ──
+    // Cùng pattern window+cap như in_do_sap: lấy tập Số xe CỦA CỬA SỔ rồi hỏi GroupDeliveryOrder — không kéo cả bảng.
+    // Restrict theo group_code (vấn đề là cấp CHUYẾN); lệch ngày so per-xe (mọi dòng cùng xe chung Ngày xuất).
+    let restrictGcs: string[] | null = null
+    let gdoIssueWarning: string | null = null
+    if (gdo_issue === 'missing' || gdo_issue === 'date_mismatch') {
+      const winRows = await fetchAllRowsParallel(() => {
+        let wq = supabase.from('khvc_lines').select('group_code, export_date')
+        if (gteFrom) wq = wq.gte('created_at', gteFrom)
+        if (lteTo)   wq = wq.lte('created_at', lteTo)
+        if (group_code)     wq = wq.ilike('group_code', `%${safeFilterValue(group_code)}%`)
+        if (do_no)          wq = wq.ilike('do_no', `%${safeFilterValue(do_no)}%`)
+        if (warehouse_code) wq = wq.eq('warehouse_code', warehouse_code)
+        if (veh_type)       wq = wq.eq('veh_type', veh_type)
+        if (source)         wq = wq.eq('source', source)
+        if (sync_status)    wq = wq.eq('sync_status', sync_status)
+        if (s) wq = wq.or(`group_code.ilike.%${s}%,do_no.ilike.%${s}%,npp.ilike.%${s}%,note.ilike.%${s}%`)
+        if (restrictDos) wq = wq.in('do_no', restrictDos)
+        return wq.order('group_code')
+      }) as { group_code: string | null; export_date: string | null }[]
+      const dateByGc = new Map<string, string | null>()
+      for (const r of winRows) { const gc = String(r.group_code ?? ''); if (gc && !dateByGc.has(gc)) dateByGc.set(gc, r.export_date ?? null) }
+      const winGcs = [...dateByGc.keys()]
+      const gdoDateByGc = new Map<string, string | null>()
+      for (let i = 0; i < winGcs.length; i += 300) {
+        const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('group_code, delivery_date').in('group_code', winGcs.slice(i, i + 300))
+        for (const g of (gdos ?? []) as { group_code: string; delivery_date: string | null }[])
+          if (!gdoDateByGc.has(g.group_code)) gdoDateByGc.set(g.group_code, g.delivery_date)
+      }
+      restrictGcs = winGcs.filter(gc => gdo_issue === 'missing'
+        ? !gdoDateByGc.has(gc)
+        : gdoDateByGc.has(gc) && String(gdoDateByGc.get(gc) ?? '') !== String(dateByGc.get(gc) ?? ''))
+      if (restrictGcs.length > DOSAP_FILTER_CAP) {
+        gdoIssueWarning = `Khoảng ngày quá rộng để lọc Lệch với Xuất (${restrictGcs.length} Số xe) — thu hẹp Ngày nạp rồi lọc lại.`
+        restrictGcs = null
+      } else if (restrictGcs.length === 0) {
+        return ok(res, { items: [], total: 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined, gdo_issue_warning: gdoIssueWarning ?? undefined })
+      }
+    }
+
     let query = supabase.from('khvc_lines').select('*', { count: 'exact' })
     if (gteFrom) query = query.gte('created_at', gteFrom)
     if (lteTo)   query = query.lte('created_at', lteTo)
@@ -110,6 +150,7 @@ export async function listKhvc(req: Request, res: Response) {
     if (sync_status)    query = query.eq('sync_status', sync_status)
     if (s) query = query.or(`group_code.ilike.%${s}%,do_no.ilike.%${s}%,npp.ilike.%${s}%,note.ilike.%${s}%`)
     if (restrictDos) query = query.in('do_no', restrictDos)
+    if (restrictGcs) query = query.in('group_code', restrictGcs)
     query = query.order('group_code', { ascending: true }).order('do_no', { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1)
 
@@ -120,11 +161,11 @@ export async function listKhvc(req: Request, res: Response) {
     // Enrich per-dòng của TRANG (bounded ≤ pageSize):
     // (a) chuyến đã sinh chưa (khớp group_code với GroupDeliveryOrder) + trạng thái chuyến
     const gcs = [...new Set(items.map(i => String(i.group_code ?? '')).filter(Boolean))]
-    const gdoByGc = new Map<string, string>()
+    const gdoByGc = new Map<string, { status: string; delivery_date: string | null }>()
     if (gcs.length) {
-      const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('group_code, status').in('group_code', gcs)
-      for (const g of (gdos ?? []) as { group_code: string; status: string }[])
-        if (!gdoByGc.has(g.group_code)) gdoByGc.set(g.group_code, g.status)
+      const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('group_code, status, delivery_date').in('group_code', gcs)
+      for (const g of (gdos ?? []) as { group_code: string; status: string; delivery_date: string | null }[])
+        if (!gdoByGc.has(g.group_code)) gdoByGc.set(g.group_code, { status: g.status, delivery_date: g.delivery_date })
     }
     // (b) DO đã sẵn sàng trong raw (VL06O) chưa — B4a: kế hoạch phụ thuộc DO
     const dos = [...new Set(items.map(i => String(i.do_no ?? '')).filter(Boolean))]
@@ -135,11 +176,13 @@ export async function listKhvc(req: Request, res: Response) {
     }
     for (const i of items) {
       const gc = String(i.group_code ?? '')
+      const g = gdoByGc.get(gc)
       i.materialized = gdoByGc.has(gc)
-      i.gdo_status = gdoByGc.get(gc) ?? null
+      i.gdo_status = g?.status ?? null
+      i.gdo_date = g?.delivery_date ?? null   // ngày chuyến bên Xuất — FE so với export_date để báo lệch
       i.do_ready = readyDos.has(String(i.do_no ?? ''))
     }
-    return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined })
+    return ok(res, { items, total: count ?? 0, page, page_size: pageSize, do_sap_filter_warning: doSapWarning ?? undefined, gdo_issue_warning: gdoIssueWarning ?? undefined })
   } catch (e) { return fail(res, String(e)) }
 }
 

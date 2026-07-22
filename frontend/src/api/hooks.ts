@@ -1821,6 +1821,7 @@ export interface KhvcRow {
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO
   materialized?: boolean; gdo_status?: string | null; do_ready?: boolean   // enrich từ BE list
+  gdo_date?: string | null   // ngày chuyến bên Xuất (enrich) — ≠ export_date ⇒ lệch ngày (chuyến bị chuyển ngày)
 }
 export function useKhvcLines(params: Record<string, string | number | undefined>, enabled = true) {
   return useQuery({
@@ -1829,7 +1830,7 @@ export function useKhvcLines(params: Record<string, string | number | undefined>
       const qs = new URLSearchParams()
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== '__all__') qs.set(k, String(v))
       const r = await apiClient.get(`/external/khvc?${qs.toString()}`)
-      return r.data.data as { items: KhvcRow[]; total: number; page: number; page_size: number; do_sap_filter_warning?: string }
+      return r.data.data as { items: KhvcRow[]; total: number; page: number; page_size: number; do_sap_filter_warning?: string; gdo_issue_warning?: string }
     },
     enabled,   // bắt buộc chọn ngày mới fetch (không tự kéo cả bảng)
     placeholderData: keepPreviousData,

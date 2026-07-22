@@ -40,7 +40,7 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/do-sap — list phân trang + filter + search (?q, od_number, material_code, ship_to_code, plant, source, batch, in_plan, page, page_size)
 export async function listDoSap(req: Request, res: Response) {
   try {
-    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan } = req.query as Record<string, string>
+    const { q, od_number, od_number_eq, material_code, ship_to_code, plant, source, batch, date_from, date_to, in_plan, used } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
@@ -90,6 +90,46 @@ export async function listDoSap(req: Request, res: Response) {
         restrictOds = null
       } else if (restrictOds.length === 0) {
         return ok(res, { items: [], total: 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
+      }
+    }
+
+    // ── Filter "Sử dụng" (used: '1'=DO còn trong chuyến Xuất / '0'=không — tìm DO có KH nhưng chuyến đã xóa) ──
+    // Cùng pattern window+cap: tập DO của cửa sổ → hỏi OutboundDelivery.delivery_code (ilike chunk 40, như enrich).
+    if (used === '1' || used === '0') {
+      let windowDos: string[]
+      if (restrictOds) {
+        windowDos = restrictOds
+      } else {
+        const winRows = await fetchAllRowsParallel(() => {
+          let wq = supabase.from('erp_outbound_orders').select('od_number')
+          if (gteFrom) wq = wq.gte('created_at', gteFrom)
+          if (lteTo)   wq = wq.lte('created_at', lteTo)
+          if (od_number)     wq = wq.ilike('od_number', `%${safeFilterValue(od_number)}%`)
+          if (material_code) wq = wq.ilike('material_code', `%${safeFilterValue(material_code)}%`)
+          if (ship_to_code)  wq = wq.eq('ship_to_code', ship_to_code)
+          if (plant)         wq = wq.eq('plant', plant)
+          if (source)        wq = wq.eq('source', source)
+          if (batch)         wq = wq.ilike('batch', `%${safeFilterValue(batch)}%`)
+          if (searchOr) wq = wq.or(searchOr)
+          return wq.order('od_number')
+        }) as { od_number: string }[]
+        windowDos = [...new Set(winRows.map(r => String(r.od_number ?? '')).filter(Boolean))]
+      }
+      if (windowDos.length > PLAN_FILTER_CAP) {
+        planWarning = `Khoảng ngày quá rộng để lọc Sử dụng (${windowDos.length} DO) — thu hẹp Ngày nạp rồi lọc lại.`
+      } else {
+        const usedWin = new Set<string>()
+        for (let i = 0; i < windowDos.length; i += 40) {
+          const chunk = windowDos.slice(i, i + 40)
+          const { data } = await supabase.from('OutboundDelivery').select('delivery_code')
+            .or(chunk.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(','))
+          for (const o of (data ?? []) as { delivery_code: string | null }[])
+            for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) if (tok.trim()) usedWin.add(tok.trim())
+        }
+        restrictOds = used === '1' ? windowDos.filter(d => usedWin.has(d)) : windowDos.filter(d => !usedWin.has(d))
+        if (restrictOds.length === 0) {
+          return ok(res, { items: [], total: 0, page, page_size: pageSize, plan_filter_warning: planWarning ?? undefined })
+        }
       }
     }
 

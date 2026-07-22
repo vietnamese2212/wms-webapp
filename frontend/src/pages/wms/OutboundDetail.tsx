@@ -1100,7 +1100,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                                   s.pct_date <= 30 ? 'text-red-600' : s.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
                                 }`}>{s.pct_date}%</span>
                               )}
-                              <span className="ml-1 text-slate-400 tabular-nums">{s.available}th</span>
+                              <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
                             </div>
                           ))}
                         </div>

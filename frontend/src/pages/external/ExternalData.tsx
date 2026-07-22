@@ -778,7 +778,7 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
                       </>}
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
-                      {r.qty_sales != null ? <>{r.qty_sales} {r.sales_unit}{sapMismatch && !isRemoved && <span title={`SAP báo ${r.qty_sales} ${r.sales_unit} ≠ Số gốc — app luôn dùng Số gốc`} className="text-amber-600"> ⚠</span>}</> : <span className="text-slate-300">—</span>}
+                      {r.qty_sales != null ? <>{num(r.qty_sales)} {r.sales_unit}{sapMismatch && !isRemoved && <span title={`SAP báo ${num(r.qty_sales)} ${r.sales_unit} ≠ Số gốc — app luôn dùng Số gốc`} className="text-amber-600"> ⚠</span>}</> : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">{r.batch ?? <span className="text-slate-300">—</span>}</td>
                     <td className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>

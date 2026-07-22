@@ -287,10 +287,10 @@ export default function TMSReport() {
                   <TableCell className={`${TD} truncate`} title={row.material_name}>{row.material_name}</TableCell>
                   <TableCell className={`${TD} text-slate-400`}>{row.unit || '—'}</TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
-                    {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString() : <span className="text-slate-300">—</span>}
+                    {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
-                    {row.actual_boxes > 0 ? row.actual_boxes.toLocaleString() : <span className="text-slate-300">0</span>}
+                    {row.actual_boxes > 0 ? row.actual_boxes.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : <span className="text-slate-300">0</span>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
                     {row.pct != null ? `${row.pct}%` : <span className="text-slate-300">—</span>}

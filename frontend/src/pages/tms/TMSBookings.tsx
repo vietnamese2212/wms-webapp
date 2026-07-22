@@ -2436,13 +2436,14 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
       {completeConfirm && (() => {
         const { impId, code, name, planned, actual } = completeConfirm
         const diff = actual - planned
+        const f1 = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })   // thùng quy đổi có thể thập phân → format vi-VN
         const statusEl = planned <= 0
           ? <span className="text-slate-400 text-xs">Không có kế hoạch số thùng</span>
           : diff === 0
             ? <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">Đúng kế hoạch</span>
             : diff < 0
-              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {Math.abs(diff)} thùng so với kế hoạch</span>
-              : <span className="text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded-full">Thừa {diff} thùng so với kế hoạch</span>
+              ? <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Thiếu {f1(Math.abs(diff))} thùng so với kế hoạch</span>
+              : <span className="text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded-full">Thừa {f1(diff)} thùng so với kế hoạch</span>
         return (
           <Dialog open onOpenChange={v => { if (!v) setCompleteConfirm(null) }}>
             <DialogContent className="sm:max-w-sm">
@@ -2451,8 +2452,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                 <p className="text-xs text-slate-500 mt-1 font-mono">{code} · {name}</p>
               </DialogHeader>
               <div className="py-2 space-y-2 text-sm">
-                <div className="flex justify-between text-slate-600"><span>Kế hoạch</span><span className="font-medium">{planned} thùng</span></div>
-                <div className="flex justify-between text-slate-600"><span>Thực nhận</span><span className="font-semibold">{actual} thùng</span></div>
+                <div className="flex justify-between text-slate-600"><span>Kế hoạch</span><span className="font-medium">{f1(planned)} thùng</span></div>
+                <div className="flex justify-between text-slate-600"><span>Thực nhận</span><span className="font-semibold">{f1(actual)} thùng</span></div>
                 <div className="pt-1">{statusEl}</div>
               </div>
               <DialogFooter className="gap-2">
@@ -3540,6 +3541,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                     ) : mergedRows.map(row => {
                       const diff = row.actual_boxes - row.planned_boxes
                       const isCancelled = row.status === 'CANCELLED'
+                      const f1 = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })   // thùng quy đổi (entry-decimal) → format vi-VN, hết "146.063" đọc nhầm
                       return (
                         <tr key={row.material_code}
                           className={`border-t border-slate-100 ${isCancelled ? 'opacity-50' : diff < 0 && row.actual_boxes > 0 ? 'bg-red-50' : diff > 0 ? 'bg-green-50' : ''}`}>
@@ -3547,11 +3549,11 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                           <td className="px-2 py-1 text-[10px] max-w-[220px] truncate whitespace-nowrap" title={row.material_name}>{row.material_name}</td>
                           <td className="px-2 py-1 text-[10px] text-slate-400 whitespace-nowrap">{row.unit || '—'}</td>
                           <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">
-                            {row.planned_boxes || <span className="text-slate-300">—</span>}
+                            {row.planned_boxes ? f1(row.planned_boxes) : <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? row.actual_boxes : <span className="text-slate-300">0</span>}</td>
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">{row.actual_boxes > 0 ? f1(row.actual_boxes) : <span className="text-slate-300">0</span>}</td>
                           <td className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 && row.actual_boxes > 0 ? 'text-red-600' : diff > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                            {row.actual_boxes > 0 ? (diff > 0 ? `+${diff}` : diff) : '—'}
+                            {row.actual_boxes > 0 ? (diff > 0 ? `+${f1(diff)}` : f1(diff)) : '—'}
                           </td>
                         </tr>
                       )

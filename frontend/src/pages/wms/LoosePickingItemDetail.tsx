@@ -9,7 +9,6 @@ import {
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Card }    from '@/components/ui/card'
-import { Input }   from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
@@ -21,7 +20,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
@@ -129,7 +128,9 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     setCheckResult(null)
     setFeedback(null)
     checkScan(
-      { gdoId, itemId: item.id, qr_code },
+      // loose_picking_mode: chặn trùng CHỈ so với các lượt NHẶT LẺ — pallet đã quét ở giao diện Xuất
+      // (hoặc ngược lại) vẫn quét được (user 22/07: 2 người 2 việc trên cùng 1 pallet là bình thường)
+      { gdoId, itemId: item.id, qr_code, loose_picking_mode: true },
       {
         onSuccess: (data) => {
           setCheckResult(data)
@@ -251,7 +252,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu
+                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), item.material)}
               </button>
             )}
             {saving && (
@@ -280,17 +281,22 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                   )}
                 </div>
               </div>
+              {/* BASE GỐC (user 22/07): nhập 2 ô Thùng + Hộp (mã có entry) — số base read-only TỰ TÍNH
+                  từ 2 ô, khỏi mất công quy đổi tay. Mã không entry = 1 ô base như cũ. Đồng bộ Xuất. */}
               <div className="flex items-center gap-3">
-                <label className="text-sm text-slate-600 shrink-0">Số {qtyBaseLabel(item.material)}:</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={pendingCartons}
-                  onChange={e => setPendingCartons(e.target.value)}
-                  className="h-9 text-center font-semibold text-base w-24"
+                <label className="text-sm font-medium text-slate-700 shrink-0">Số lượng lẻ:</label>
+                <QtyInput compact className="w-44"
+                  value={Math.max(0, parseInt(pendingCartons) || 0)}
+                  mat={item.material}
+                  onChange={b => setPendingCartons(String(b))}
                 />
-                <span className="text-sm text-slate-400">/ {remaining} cần chuẩn bị</span>
+                <span className="text-sm text-slate-400 whitespace-nowrap">/ còn {qtyEntryText(remaining, item.material)} {qtyUnitLabel(item.material)}</span>
               </div>
+              {hasEntry(item.material) && (
+                <p className="text-xs text-slate-500 tabular-nums">
+                  = <b>{new Intl.NumberFormat('vi-VN').format(Math.max(0, parseInt(pendingCartons) || 0))}</b> {qtyBaseLabel(item.material)} <span className="text-slate-400">(base — app tự tính)</span>
+                </p>
+              )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}

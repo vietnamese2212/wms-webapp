@@ -2144,10 +2144,11 @@ export function useConfirmLoosePickingItem() {
 
 export function useCheckOutboundScan() {
   return useMutation({
-    mutationFn: ({ gdoId, itemId, qr_code }: { gdoId: string; itemId: string; qr_code: string }) =>
+    mutationFn: ({ gdoId, itemId, qr_code, loose_picking_mode }: { gdoId: string; itemId: string; qr_code: string; loose_picking_mode?: boolean }) =>
       // timeout 12s (thay vì 30s mặc định): sóng kho chập chờn làm request treo —
       // fail sớm để flow quét chuyển sang hàng đợi offline, không bắt user đứng chờ
-      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/check-scan`, { qr_code }, { timeout: 12000 }).then(r => r.data.data as CheckOutboundScanResult),
+      // loose_picking_mode: chặn trùng CHỈ trong cùng chế độ (nhặt lẻ và Xuất quét được cùng pallet)
+      apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/check-scan`, { qr_code, loose_picking_mode }, { timeout: 12000 }).then(r => r.data.data as CheckOutboundScanResult),
   })
 }
 

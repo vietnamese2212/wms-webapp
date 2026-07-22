@@ -249,7 +249,7 @@ async function fetchGDOFull(id: string) {
   // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,warehouse_pallet_overrides,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,base_unit,entry_unit,units_per_carton)')
         .in('do_id', chunk)
         .order('id'))
     : []
@@ -682,6 +682,16 @@ export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | n
   return Number(orderedBase) % palletBase
 }
 
+// Form Tạo/Sửa bên Xuất KHÔNG sửa nhặt lẻ tay (user chốt 22/07): loose LUÔN TỰ TÍNH từ TỔNG
+// theo pallet-remainder (cùng luật với upload KHVC) — BE bỏ qua loose_picking client gửi.
+async function loosePalletMats(codes: string[]): Promise<Map<string, MatPalletUnits>> {
+  if (!codes.length) return new Map()
+  const { data } = await supabase.from('Material')
+    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides')
+    .in('material_code', codes)   // form tay ≤ vài chục mã/đơn — không cần chunk
+  return new Map(((data ?? []) as (MatPalletUnits & { material_code: string })[]).map(m => [String(m.material_code), m]))
+}
+
 export async function createGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
@@ -741,6 +751,7 @@ export async function createGDO(req: Request, res: Response) {
     })
     if (doErr) return fail(res, doErr.message)
 
+    const looseMats = await loosePalletMats(allCodes)
     const itemsToInsert = items.map(item => {
       const matInfo = matMap.get(item.material_code)
       const material_type = matInfo?.category ?? null
@@ -750,7 +761,7 @@ export async function createGDO(req: Request, res: Response) {
         material_code_raw: item.material_code,
         cartons_ordered: item.cartons_ordered,
         boxes_display: 0, weight: null, pallets_estimated: 0,
-        loose_picking: item.loose_picking ?? 0,
+        loose_picking: loosePalletRemainder(item.cartons_ordered, looseMats.get(item.material_code), warehouse_id ?? null),
         header_text: item.header_text?.trim() || null,
         batch_required: item.batch_required?.trim() || null,
         date_required: item.date_required || null,
@@ -868,13 +879,14 @@ export async function quickExportGDO(req: Request, res: Response) {
     })
     if (doErr) return fail(res, doErr.message)
 
+    const qxLooseMats = await loosePalletMats(allCodes)
     const itemRows = items.map(item => ({
       id: randomUUID(), do_id: doId,
       material_id: matMap.get(item.material_code)!.id,
       material_code_raw: item.material_code,
       cartons_ordered: item.cartons_ordered,
       boxes_display: 0, weight: null, pallets_estimated: 0,
-      loose_picking: item.loose_picking ?? 0,
+      loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id),
       header_text: item.header_text?.trim() || null,
       batch_required: item.batch_required?.trim() || null,
       date_required: item.date_required || null,
@@ -1282,7 +1294,7 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status, shipto_party').eq('id', req.params.id).single()
+      .select('status, shipto_party, warehouse_id').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
 
@@ -1333,6 +1345,12 @@ export async function updateGDO(req: Request, res: Response) {
       const bErr = invalidItemQtyBase(items as any[], uMap)
       if (bErr) return fail(res, bErr, 422)
     }
+
+    // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — bỏ qua loose_picking client gửi (user chốt 22/07)
+    const effWh = warehouse_id !== undefined ? (warehouse_id ?? null) : ((gdo as { warehouse_id?: string | null }).warehouse_id ?? null)
+    const looseMats = await loosePalletMats([...new Set(items.map(i => i.material_code).filter(Boolean))])
+    const looseOf = (i: { material_code: string; cartons_ordered: number }) =>
+      loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh)
 
     // Lấy tất cả items của GDO (across all DOs)
     const doIds = doList.map((d: any) => d.id as string)
@@ -1393,7 +1411,7 @@ export async function updateGDO(req: Request, res: Response) {
             const ex = existingById.get(item.db_id!)!
             const scanned = Number(ex.cartons_scanned)
             const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t }
+            const fields: Record<string, unknown> = { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t }
             if (scanned === 0 && ex.material_code_raw !== item.material_code) {
               const matInfo = changedMatMap.get(item.material_code)
               fields.material_code_raw = item.material_code
@@ -1423,7 +1441,7 @@ export async function updateGDO(req: Request, res: Response) {
             id: randomUUID(), do_id: doByNpp.get(String(item.npp ?? '').trim())!,
             material_id: matInfo?.id ?? null, material_code_raw: item.material_code,
             cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0,
-            loose_picking: item.loose_picking ?? 0,
+            loose_picking: looseOf(item),
             header_text: item.header_text?.trim() || null,
             batch_required: item.batch_required?.trim() || null,
             date_required: item.date_required || null,
@@ -1485,11 +1503,11 @@ export async function updateGDO(req: Request, res: Response) {
         if (ex) {
           const scanned = Number(ex.cartons_scanned)
           const newStatus = scanned >= item.cartons_ordered ? 'COMPLETED' : scanned > 0 ? 'IN_PROGRESS' : 'PENDING'
-          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
+          toUpdate.push({ id: ex.id, fields: { cartons_ordered: item.cartons_ordered, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, export_type: export_type ?? null, status: newStatus, updated_at: t } })
         } else {
           const matInfo = matMap.get(item.material_code)
           const material_type = matInfo?.category ?? null
-          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: item.loose_picking ?? 0, header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
+          toInsert.push({ id: randomUUID(), do_id: doId, material_id: matInfo?.id ?? null, material_code_raw: item.material_code, cartons_ordered: item.cartons_ordered, boxes_display: 0, weight: null, pallets_estimated: 0, loose_picking: looseOf(item), header_text: item.header_text?.trim() || null, batch_required: item.batch_required?.trim() || null, date_required: item.date_required || null, cs_responsible: item.cs_responsible?.trim() || null, material_type, export_type: export_type ?? null, cartons_scanned: 0, status: 'PENDING', updated_at: t })
         }
       }
       await Promise.all([
@@ -3110,10 +3128,20 @@ async function palletUnavailableFail(res: Response, qr: string, warehouseId: str
   return fail(res, `Pallet "${qr}" đã hết tồn (đã xuất hết)${where}`, 400)
 }
 
+// Chặn quét TRÙNG pallet CHỈ trong CÙNG chế độ (user chốt 22/07): người NHẶT LẺ và người XUẤT
+// được quét CÙNG 1 pallet trên cùng mã (2 người 2 việc — số lượng đã có tồn khả dụng + reserve gác,
+// không lấy quá được). Cùng chế độ vẫn chặn: chống quét đúp vô tình + offline replay dedup
+// (scanQueue DUP_RE dựa vào lỗi "đã được quét" để xác nhận bản ghi đã lên từ lần gửi trước).
+function dupScanQuery(itemId: string, qr: string, loose: boolean) {
+  let q = supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr)
+  q = loose ? q.eq('is_loose_picking', true) : q.or('is_loose_picking.eq.false,is_loose_picking.is.null')
+  return q.limit(1).maybeSingle()
+}
+
 export async function checkScanItem(req: Request, res: Response) {
   try {
     const { gdoId, itemId } = req.params
-    const { qr_code } = req.body as { qr_code: string }
+    const { qr_code, loose_picking_mode } = req.body as { qr_code: string; loose_picking_mode?: boolean }
     const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
@@ -3126,7 +3154,7 @@ export async function checkScanItem(req: Request, res: Response) {
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+      dupScanQuery(itemId, qr, !!loose_picking_mode),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
@@ -3214,7 +3242,7 @@ export async function scanItem(req: Request, res: Response) {
       supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      supabase.from('OutboundScanEntry').select('id').eq('item_id', itemId).eq('pallet_code', qr).maybeSingle(),
+      dupScanQuery(itemId, qr, !!loose_picking_mode),
       employee_id
         ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
         : Promise.resolve({ data: null }),

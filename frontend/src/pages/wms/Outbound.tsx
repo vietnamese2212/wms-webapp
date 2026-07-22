@@ -15,7 +15,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -29,6 +29,8 @@ import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { qtyLabel, qtyFromEntryBase, hasEntry, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { effCartonsPerPallet } from '@/utils/palletCalc'
+import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
 
@@ -1189,11 +1191,15 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
 
 // ─── Material picker ──────────────────────────────────────────
 
-type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null } & MatUnits
+type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null } & MatUnits & {
+  // Định mức pallet (+ ngoại lệ theo kho) — tính Nhặt lẻ TỰ ĐỘNG từ Tổng (pallet-remainder)
+  cartons_per_pallet?: number | null
+  warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
+}
 
 function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, onPaste }: {
   value: string
-  onSelect: (code: string, name: string, category: string | null, unit: string, mat?: MatUnits | null) => void
+  onSelect: (code: string, name: string, category: string | null, unit: string, mat?: MatOption | null) => void
   disabled?: boolean
   disabledNoType?: boolean
   filterCategory?: string
@@ -1414,6 +1420,13 @@ function PlateCombobox({ value, onChange, plates }: {
 
 // ─── Item row type ────────────────────────────────────────────
 
+// mat_units mang thêm id (badge Thiếu hàng) + định mức pallet (Nhặt lẻ tự tính) — assignable từ MatOption / item.material
+type MatUnitsX = MatUnits & {
+  id?: string
+  cartons_per_pallet?: number | null
+  warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
+}
+
 type ItemRow = {
   id: string
   db_id?: string       // actual OutboundItem.id in DB (for existing items)
@@ -1423,8 +1436,8 @@ type ItemRow = {
   category: string | null
   cartons: number
   min_cartons: number  // 0 for new items, cartons_scanned for existing (BASE)
-  mat_units: MatUnits | null   // BASE UNIT: hệ số của mã (QtyInput 2 ô + quy đổi)
-  loose_picking: number        // BASE UNIT: số HỘP (đơn vị gốc) cần nhặt lẻ
+  mat_units: MatUnitsX | null   // BASE UNIT: hệ số của mã (QtyInput 2 ô + quy đổi)
+  // loose_picking ĐÃ BỎ khỏi form (user 22/07): nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — BE tự tính khi lưu
   batch_required: string
   date_required: number
   cs_responsible: string
@@ -1434,7 +1447,7 @@ type ItemRow = {
 
 let _uid = 0
 const uid = () => String(++_uid)
-const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, mat_units: null, loose_picking: 0, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
+const makeItem = (): ItemRow => ({ id: uid(), material_code: '', mat_name: '', unit: '', category: null, cartons: 0, min_cartons: 0, mat_units: null, batch_required: '', date_required: 0, cs_responsible: '', header_text: '', npp: '' })
 
 // %Date chỉ nhận số nguyên 0–100 (cho phép đuôi "%"). Trả null nếu ô chứa chữ → dùng để CHẶN paste text.
 function parsePctCell(raw: string): number | null {
@@ -1520,6 +1533,19 @@ function GDOFormBody({
     setItems(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder, mirror BE loosePalletRemainder — user chốt 22/07:
+  // form Xuất KHÔNG cho sửa nhặt lẻ tay). Cột chỉ hiển thị; BE tự tính lại khi lưu (nguồn sự thật).
+  function looseAutoOf(i: ItemRow): number {
+    if (!hasEntry(i.mat_units)) return 0
+    const cpp = effCartonsPerPallet(i.mat_units, warehouseId || null)
+    const palletBase = cpp > 0 ? cpp * Number(i.mat_units!.units_per_carton) : 0
+    return palletBase > 0 ? i.cartons % palletBase : 0
+  }
+
+  // Badge "Thiếu/Chờ về" per mã theo (kho, ngày giao) — cùng nguồn RPC với trang chi tiết chuyến (user 22/07)
+  const { data: formShortages = [] } = useOutboundShortages(warehouseId || undefined, date || undefined)
+  const shortageByMat = useMemo(() => new Map(formShortages.map(s => [s.material_id, s])), [formShortages])
+
   // Trùng = cùng mã hàng TRONG CÙNG NPP (khác NPP thì 1 mã được phép xuất hiện lại)
   const dupKey = (i: ItemRow) => `${i.npp.trim()}||${i.material_code}`
   const duplicateCodes = useMemo(() => {
@@ -1575,8 +1601,8 @@ function GDOFormBody({
           category:  mat?.category  ?? rows[startIdx + offset].category,
           mat_units: mat ?? rows[startIdx + offset].mat_units,
           // BASE UNIT: cột Thùng = THÙNG NGUYÊN, cột Nhặt lẻ = SỐ LẺ (đơn vị gốc) → tổng base
+          // (loose_picking KHÔNG set tay nữa — tự tính từ Tổng khi lưu)
           ...(cart || loose ? { cartons: qtyFromEntryBase(cart, loose, mat) } : {}),
-          ...(loose !== 0 ? { loose_picking: loose }                 : {}),
           ...(batch ? { batch_required: batch }                      : {}),
           ...(dateR ? { date_required: dateR }                       : {}),
           ...(cs    ? { cs_responsible: cs }                         : {}),
@@ -1600,21 +1626,6 @@ function GDOFormBody({
         const u = row.mat_units ?? lookupMat(row.material_code)
         const thung = parseInt(val.trim().replace(/[^0-9]/g, '')) || 0
         rows[startIdx + offset] = { ...row, mat_units: row.mat_units ?? u, cartons: qtyFromEntryBase(thung, 0, u) }
-      })
-      return rows
-    })
-  }
-
-  function handlePasteLooseAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
-    const text = e.clipboardData.getData('text')
-    if (!text.includes('\n')) return
-    e.preventDefault()
-    const values = text.trim().split(/\r?\n/).filter(Boolean)
-    setItems(prev => {
-      const rows = [...prev]
-      while (rows.length < startIdx + values.length) rows.push(makeItem())
-      values.forEach((val, offset) => {
-        rows[startIdx + offset] = { ...rows[startIdx + offset], loose_picking: parseInt(val.trim().replace(/[^0-9]/g, '')) || 0 }
       })
       return rows
     })
@@ -1799,7 +1810,7 @@ function GDOFormBody({
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-40">Mã hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Số lượng</th>
-                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-40">Nhặt lẻ</th>
+                <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-center w-32">Nhặt lẻ (tự tính)</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-28">Batch</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right w-16">%Date</th>
                 <th className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">CS</th>
@@ -1832,6 +1843,8 @@ function GDOFormBody({
                           Đã xuất {qtyLabel(item.min_cartons, item.mat_units)}
                         </span>
                       )}
+                      {/* Thiếu tồn theo (kho, ngày) — cùng badge với trang chi tiết chuyến (user 22/07) */}
+                      <ShortageBadge s={item.mat_units?.id ? shortageByMat.get(item.mat_units.id) : undefined} mat={item.mat_units} />
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}>
@@ -1842,13 +1855,17 @@ function GDOFormBody({
                       />
                       {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {qtyLabel(item.min_cartons, item.mat_units)}</p>}
                     </td>
-                    <td className="px-2 py-1" onPaste={e => handlePasteLooseAt(idx, e)}>
-                      {/* BASE UNIT "1 dòng 2 cột": nhặt lẻ nhập 2 ô Thùng+Hộp (như cột Số lượng) — value/onChange = BASE */}
-                      <QtyInput compact className="w-36"
-                        value={item.loose_picking}
-                        mat={item.mat_units}
-                        onChange={b => updateItem(item.id, { loose_picking: b })}
-                      />
+                    <td className="px-2 py-1 text-center">
+                      {/* Nhặt lẻ READ-ONLY (user 22/07): TỰ TÍNH từ Tổng = phần dư không đủ 1 pallet nguyên */}
+                      {(() => {
+                        const la = looseAutoOf(item)
+                        return la > 0 ? (
+                          <div className="leading-tight">
+                            <div className="text-[10px] font-semibold tabular-nums text-slate-700">{qtyLabel(la, item.mat_units)}</div>
+                            <div className="text-[9px] text-slate-400">tự tính từ Tổng</div>
+                          </div>
+                        ) : <span className="text-[10px] text-slate-300">—</span>
+                      })()}
                     </td>
                     <td className="px-2 py-1">
                       <input
@@ -2054,7 +2071,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
       customer_name: customerName.trim(),
       delivery_code: deliveryCode.trim() || undefined,
       export_type: exportType,
-      items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined })),
+      // loose_picking KHÔNG gửi — BE tự tính từ Tổng (pallet-remainder)
+      items: filledItems.map(i => ({ material_code: i.material_code, cartons_ordered: i.cartons, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined })),
     }
     const handlers = {
       onSuccess: () => onClose(),
@@ -2180,7 +2198,6 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         cartons: item.cartons_ordered ?? 0,
         min_cartons: item.cartons_scanned ?? 0,
         mat_units: item.material ?? null,
-        loose_picking: item.loose_picking ?? 0,
         batch_required: item.batch_required ?? '',
         date_required: item.date_required ?? 0,
         cs_responsible: item.cs_responsible ?? '',
@@ -2220,7 +2237,8 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         delivery_code: deliveryCode.trim() || undefined,
         export_type: exportType,
         warehouse_type: warehouseType || undefined,
-        items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, loose_picking: i.loose_picking, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined, npp: i.npp || undefined })),
+        // loose_picking KHÔNG gửi — BE tự tính từ Tổng (pallet-remainder)
+        items: items.map(i => ({ db_id: i.db_id, material_code: i.material_code, cartons_ordered: i.cartons, header_text: i.header_text || undefined, batch_required: i.batch_required || undefined, date_required: i.date_required || undefined, cs_responsible: i.cs_responsible || undefined, npp: i.npp || undefined })),
       },
       {
         // Lưu & Xuất luôn: cập nhật đơn xong mới gọi xuất (đảm bảo xuất theo số VỪA SỬA)

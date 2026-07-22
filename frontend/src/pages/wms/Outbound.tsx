@@ -231,7 +231,7 @@ export default function Outbound() {
   const [vcErr,    setVcErr]    = useState<string | null>(null)
   // v2.7 — cảnh báo TRƯỚC khi ghi (preflight): giữ file chờ xác nhận + số liệu cảnh báo
   const [vl06oWarn, setVl06oWarn] = useState<{ file: File; dos_on_trips: number; trips_in_progress: number; scanned_items: number } | null>(null)
-  const [khvcWarn,  setKhvcWarn]  = useState<{ file: File; trips: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced: string | null; missing_dos: number; missing_dos_sample: string[] } | null>(null)
+  const [khvcWarn,  setKhvcWarn]  = useState<{ file: File; trips: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced: string | null; missing_dos: number; missing_dos_sample: string[]; cross_trip_dos: number; cross_trip_sample: string[] } | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -482,10 +482,10 @@ export default function Outbound() {
     setVcErr(null); setVcOk(null); setKhvcWarn(null)
     // v2.7: preflight — ngày này đã có chuyến / DO chưa sẵn sàng → cảnh báo trước. Lỗi preflight → up thẳng.
     uploadKhvc({ file, preflight: true }, {
-      onSuccess: (pf: { trips?: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced?: string | null; missing_dos?: number; missing_dos_sample?: string[] }) => {
+      onSuccess: (pf: { trips?: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced?: string | null; missing_dos?: number; missing_dos_sample?: string[]; cross_trip_dos?: number; cross_trip_sample?: string[] }) => {
         const trips = pf?.trips ?? { total: 0, in_progress: 0, completed: 0, paused: 0 }
-        if (trips.total > 0 || Number(pf?.missing_dos) > 0)
-          setKhvcWarn({ file, trips, vl06o_last_synced: pf?.vl06o_last_synced ?? null, missing_dos: Number(pf?.missing_dos ?? 0), missing_dos_sample: pf?.missing_dos_sample ?? [] })
+        if (trips.total > 0 || Number(pf?.missing_dos) > 0 || Number(pf?.cross_trip_dos) > 0)
+          setKhvcWarn({ file, trips, vl06o_last_synced: pf?.vl06o_last_synced ?? null, missing_dos: Number(pf?.missing_dos ?? 0), missing_dos_sample: pf?.missing_dos_sample ?? [], cross_trip_dos: Number(pf?.cross_trip_dos ?? 0), cross_trip_sample: pf?.cross_trip_sample ?? [] })
         else doKhvcUpload(file)
       },
       onError: () => doKhvcUpload(file),
@@ -1088,6 +1088,9 @@ export default function Outbound() {
                       )}
                       {khvcWarn.missing_dos > 0 && (
                         <div className="text-red-700">⚠ {khvcWarn.missing_dos} DO CHƯA có trong VL06O{khvcWarn.missing_dos_sample.length ? ` (${khvcWarn.missing_dos_sample.join(', ')}${khvcWarn.missing_dos > khvcWarn.missing_dos_sample.length ? '…' : ''})` : ''} → hãy Up VL06O mới nhất TRƯỚC (Bước 1).</div>
+                      )}
+                      {khvcWarn.cross_trip_dos > 0 && (
+                        <div className="text-red-700">⚠ {khvcWarn.cross_trip_dos} DO ĐÃ nằm trong chuyến khác Số xe còn sống{khvcWarn.cross_trip_sample.length ? ` (${khvcWarn.cross_trip_sample.join('; ')}${khvcWarn.cross_trip_dos > khvcWarn.cross_trip_sample.length ? '…' : ''})` : ''} — tiếp tục sẽ sinh chuyến TRÙNG DO (kế hoạch double). Đơn rớt ngày: dùng nút Chuyển ngày ở Xuất kho, đừng gửi lại KH dưới Số xe mới.</div>
                       )}
                       <div className="text-amber-700">VL06O cập nhật lần cuối: <b>{khvcWarn.vl06o_last_synced ? `${formatTimestampDate(khvcWarn.vl06o_last_synced, true)} ${formatTimestampTime(khvcWarn.vl06o_last_synced)}` : 'chưa có DO nào'}</b>. Đã Up VL06O mới nhất chưa?</div>
                     </div>

@@ -2772,8 +2772,34 @@ export async function uploadKhvc(req: Request, res: Response) {
       const presentDos = new Set((rawDos ?? []).map(r => r.od_number))
       const missingDos = [...allDos].filter(d => !presentDos.has(d))
       const lastSynced = (rawDos ?? []).reduce<string | null>((mx, r) => (!mx || r.updated_at > mx ? r.updated_at : mx), null)
+
+      // DO trong file đã nằm trong CHUYẾN SỐNG mang Số xe KHÁC (quy ước đơn rớt 22/07: kho chuyển ngày,
+      // KHÔNG gửi lại KH — gửi lại dưới Số xe MỚI sẽ sinh chuyến TRÙNG DO → kế hoạch double). Cảnh báo, chưa chặn.
+      const fileGcByDo = new Map<string, Set<string>>()
+      for (const k of khvcRows) { const s = fileGcByDo.get(k.do_no) ?? new Set<string>(); s.add(k.group_code); fileGcByDo.set(k.do_no, s) }
+      const dosArr = [...allDos]
+      const crossTrip = new Set<string>()
+      for (const [d, s] of fileGcByDo) if (s.size > 1) crossTrip.add(`${d} → ${s.size} Số xe ngay trong file`)
+      for (let i = 0; i < dosArr.length; i += 40) {
+        const chunk = dosArr.slice(i, i + 40)
+        const { data: dvs } = await supabase.from('OutboundDelivery')
+          .select('delivery_code, gdo:GroupDeliveryOrder!gdo_id(group_code, status)')
+          .or(chunk.map(d => `delivery_code.ilike.%${safeFilterValue(d)}%`).join(','))
+        for (const o of ((dvs ?? []) as unknown as { delivery_code: string | null; gdo: { group_code: string; status: string } | null }[])) {
+          const g = o.gdo
+          if (!g || g.status === 'COMPLETED') continue   // chuyến sống = PENDING / IN_PROGRESS / PAUSED
+          for (const tok of String(o.delivery_code ?? '').split(/,\s*/)) {
+            const d = tok.trim()
+            if (d && fileGcByDo.has(d) && !fileGcByDo.get(d)!.has(g.group_code))
+              crossTrip.add(`${d} → đang ở xe ${g.group_code}`)
+          }
+        }
+      }
+      const crossArr = [...crossTrip]
+
       return ok(res, { preflight: true, vehicles: gcs.length, dos_total: allDos.size,
-        trips, vl06o_last_synced: lastSynced, missing_dos: missingDos.length, missing_dos_sample: missingDos.slice(0, 10) })
+        trips, vl06o_last_synced: lastSynced, missing_dos: missingDos.length, missing_dos_sample: missingDos.slice(0, 10),
+        cross_trip_dos: crossArr.length, cross_trip_sample: crossArr.slice(0, 10) })
     }
 
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──

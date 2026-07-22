@@ -272,13 +272,15 @@ export default function Locations() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Toolbar */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <MapPin className="h-4 w-4 text-slate-500" /> Vị trí kho
           </span>
           <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="locations" currentFilters={viewSnapshot} activeId={activeViewId}
             onApply={(fl) => setLocationsFilter(fl as Partial<typeof viewSnapshot>)} />
           <button type="button" onClick={toggleDensity}
@@ -286,7 +288,7 @@ export default function Locations() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             {
               key: 'excel', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách vị trí đang lọc',
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
@@ -299,6 +301,7 @@ export default function Locations() {
               onClick: openAdd,
             } satisfies ActionItem] : []),
           ]} />
+          </div>
         </div>
 
         {/* Filter chip bar (desktop) */}

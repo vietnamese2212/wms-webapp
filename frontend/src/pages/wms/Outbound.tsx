@@ -685,6 +685,9 @@ export default function Outbound() {
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
           <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng chủ đích (hết cảnh mỗi nút 1 hàng rời rạc trên PDA);
+              desktop sm:contents → tan vào hàng toolbar như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="outbound"
             currentFilters={viewSnapshot}
@@ -710,7 +713,7 @@ export default function Outbound() {
               <X className="h-3.5 w-3.5" /> Bỏ chọn ({checkedIds.size})
             </button>
           )}
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             ...(can(perms, 'outbound', 'prepare') ? [{
               key: 'prepare', icon: PackageCheck, label: 'Chuẩn bị hàng', tip: 'Mở bảng Chuẩn bị hàng (soạn hàng theo kế hoạch)',
               onClick: () => navigate('/wms/outbound/prepare'),
@@ -730,6 +733,7 @@ export default function Outbound() {
               onClick: () => { setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVcErr(null); setVcOk(null); setShowVcUpload(true) },
             } satisfies ActionItem] : []),
           ]} />
+          </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
           <input ref={vl06oRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleVl06oChange} />
           <input ref={khvcRef}  type="file" accept=".xlsx,.xls" className="hidden" onChange={handleKhvcChange} />

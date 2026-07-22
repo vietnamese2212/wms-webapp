@@ -142,6 +142,8 @@ export function LeaveSection() {
           </label>
         )}
         <div className="flex-1" />
+        {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+        <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
         <SavedViews module="leave" currentFilters={viewSnapshot} activeId={activeViewId}
           onApply={(fl) => setLeave(fl as Partial<typeof f>)} />
         <button type="button" onClick={toggleDense}
@@ -150,7 +152,7 @@ export function LeaveSection() {
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
         <FilterSheetButton defs={defs} className="sm:hidden" />
-        <ActionCluster className="shrink-0" items={[
+        <ActionCluster className="shrink-0" mobileInline items={[
           {
             key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel danh sách đơn nghỉ phép',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
@@ -163,6 +165,7 @@ export function LeaveSection() {
             onClick: () => setOpenCreate(true),
           } satisfies ActionItem] : []),
         ]} />
+        </div>
       </div>
       <FilterBar defs={defs} className="hidden sm:flex shrink-0" />
 

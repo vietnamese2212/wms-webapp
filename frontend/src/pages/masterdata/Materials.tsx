@@ -575,13 +575,15 @@ export default function Materials() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* ── Toolbar ──────────────────────────────────────────── */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <Tag className="h-4 w-4 text-slate-500" /> Mã hàng
           </span>
           <SearchInput value={search} onChange={setSearch} placeholder="Tìm mã, tên…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="materials"
             currentFilters={viewSnapshot}
@@ -593,7 +595,7 @@ export default function Materials() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             ...(can(perms, 'materials', 'import') ? [{
               key: 'upload', icon: Upload, label: 'Upload Excel', tip: 'Upload mã hàng từ file Excel (mã mới thêm, mã đã có cập nhật)',
               mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
@@ -605,6 +607,7 @@ export default function Materials() {
               onClick: openAdd,
             } satisfies ActionItem] : []),
           ]} />
+          </div>
         </div>
 
         {/* Filter chip bar (desktop) */}

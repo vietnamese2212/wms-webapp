@@ -283,11 +283,13 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       {tabBar}
 
       {/* Toolbar (hàng 1) */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={search} onChange={v => setDoSap({ search: v })}
             placeholder="Tìm DO, số xe (KH), mã hàng, ship-to…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: các nút action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <button type="button" onClick={() => { localStorage.setItem('dosap_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
@@ -316,6 +318,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           {/* Thêm mới hoàn toàn = UPLOAD (VL06O), không thêm tay ngoài header — user chốt 21/07.
               Thêm dòng vào DO đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
               Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}
+          </div>
         </div>
         <FilterBar defs={filterDefs} />
         {exportErr && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600">{exportErr}</div>}
@@ -999,11 +1002,13 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
 
       {tabBar}
 
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={search} onChange={v => setKhvc({ search: v })}
             placeholder="Tìm Số xe, DO, NPP…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: các nút action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <button type="button" onClick={() => { localStorage.setItem('khvc_density', dense ? 'comfortable' : 'compact'); setDense(d => !d) }}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
@@ -1025,6 +1030,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           {/* Thêm mới hoàn toàn = UPLOAD (KH điều vận), không thêm tay ngoài header — user chốt 21/07.
               Thêm DO vào Số xe đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
               Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}
+          </div>
         </div>
         <FilterBar defs={filterDefs} />
         {doSapWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{doSapWarn}</div>}
@@ -1570,7 +1576,7 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {tabBar}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={search} onChange={v => setReconcile({ search: v })}
             placeholder="Tìm chuyến, mã hàng, DO…" className="flex-1 min-w-[140px]" />

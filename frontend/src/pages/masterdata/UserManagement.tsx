@@ -938,6 +938,8 @@ export default function UserManagement() {
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
+            {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <SavedViews module="user_admin" currentFilters={empViewSnapshot} activeId={empActiveViewId}
               onApply={(fl) => setUserAdmin(fl as Partial<typeof ua>)} />
             <button type="button" onClick={toggleDense}
@@ -945,13 +947,14 @@ export default function UserManagement() {
               title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
               {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
             </button>
-            <ActionCluster className="shrink-0" items={[
+            <ActionCluster className="shrink-0" mobileInline items={[
               ...(canCreateEmp ? [{
                 key: 'create', icon: Plus, label: 'Thêm nhân viên', tip: 'Tạo tài khoản nhân viên mới',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingEmp(null); setShowEmpDlg(true) },
               } satisfies ActionItem] : []),
             ]} />
+            </div>
           </div>
           <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
@@ -1233,7 +1236,8 @@ export default function UserManagement() {
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
             <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>
-            <ActionCluster className="shrink-0 justify-end" items={[
+            {/* Mobile: cluster chia sẻ hàng với nút Lọc (PDA) — mobileInline */}
+            <ActionCluster className="shrink-0 justify-end" mobileInline items={[
               ...(isAdminUser ? [{
                 key: 'create', icon: Plus, label: 'Thêm chức danh', tip: 'Tạo chức danh mới',
                 primary: true, variant: 'default',

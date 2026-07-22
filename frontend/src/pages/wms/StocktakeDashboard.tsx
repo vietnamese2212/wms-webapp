@@ -316,7 +316,7 @@ export default function StocktakeDashboard() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters — compact, ~70% kích thước cũ */}
-      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: title + filters (FilterBar chuẩn) */}
         <div className="flex gap-1.5 flex-wrap items-center">
           <div className="flex items-center gap-1 shrink-0">
@@ -332,6 +332,8 @@ export default function StocktakeDashboard() {
             </span>
           </label>
           <div className="flex-1" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="stocktake_summary" currentFilters={viewSnapshot} activeId={activeViewId}
             onApply={(fl) => setStocktakeSummary(fl as Partial<typeof viewSnapshot>)} />
           <button type="button" onClick={toggleDense}
@@ -340,12 +342,13 @@ export default function StocktakeDashboard() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* Cụm action toolbar (chuẩn ActionCluster) — Export chỉ dùng trên PC */}
-          <ActionCluster className="shrink-0" items={[{
+          <ActionCluster className="shrink-0" mobileInline items={[{
             key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
             mobileHidden: true, disabled: !entries.length,
             onClick: exportExcel,
           } satisfies ActionItem]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
+          </div>
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>
 

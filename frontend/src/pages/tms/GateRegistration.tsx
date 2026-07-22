@@ -1086,11 +1086,13 @@ export default function GateRegistration() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* ── Toolbar */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
           <div className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="gateRegistration"
             currentFilters={viewSnapshot}
@@ -1108,13 +1110,14 @@ export default function GateRegistration() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             ...(can(perms, 'gate_registration', 'create') ? [{
               key: 'create', icon: Plus, label: 'Đăng ký xe', tip: 'Đăng ký lượt xe mới vào cổng',
               primary: true, variant: 'default',
               onClick: openCreate,
             } satisfies ActionItem] : []),
           ]} />
+          </div>
         </div>
 
         {/* Filter chip bar (desktop) */}

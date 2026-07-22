@@ -3146,7 +3146,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     <div className="flex flex-col h-full">
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
       {/* ── Filter bar (gom 1 chỗ qua FilterBar — đồng bộ tab Kế hoạch) ── */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-white shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 sm:py-2 border-b bg-white shrink-0">
         <FilterBar defs={transferFilterDefs} />
         <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>
@@ -4016,7 +4016,7 @@ export default function TMSBookings() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 sm:py-2 sm:rounded-t-xl">
         {/* flex-wrap: mobile cụm ActionCluster (w-full) xuống dòng riêng thay vì tràn */}
         <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap mb-2">
           <div className="flex items-center gap-2">
@@ -4035,7 +4035,8 @@ export default function TMSBookings() {
               </div>
             )}
           </div>
-          <ActionCluster className="shrink-0" items={[
+          {/* Mobile: cluster chia sẻ hàng với title+tab (PDA) — mobileInline */}
+          <ActionCluster className="shrink-0" mobileInline items={[
             ...(warehouseId && canView ? [{
               key: 'slot-overview', icon: Eye, label: 'Xem booking', tip: 'Xem tình trạng khung giờ booking của kho',
               onClick: () => setSlotOverviewOpen(true),

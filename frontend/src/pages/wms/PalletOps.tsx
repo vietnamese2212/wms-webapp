@@ -235,7 +235,7 @@ export default function PalletOps() {
               </div>
             )}
             {/* Bộ lọc lịch sử — chuẩn Manhattan: Kho/Loại kho (scope, bắt buộc chọn Kho) + Search + FilterBar */}
-            <div className="px-3 py-2 border-b border-slate-200 space-y-1.5">
+            <div className="px-3 py-1.5 border-b border-slate-200 space-y-1 sm:py-2 sm:space-y-1.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="w-36"><WarehouseSingleSelect warehouses={whOptions} value={opWh} onChange={setOpWh} allLabel="Chọn kho *" triggerClassName="h-8" /></div>
                 <Select value={opCat || '__all__'} onValueChange={v => setOpCat(v === '__all__' ? '' : v)}>
@@ -246,11 +246,14 @@ export default function PalletOps() {
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                   <Input className="pl-7 h-8 text-sm w-full" placeholder="Tìm / quét mã pallet" value={hSearch} onChange={e => setHSearch(e.target.value)} />
                 </div>
-                <ActionCluster className="shrink-0" items={[{
+                {/* Mobile: action + nút Lọc GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+                <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+                <ActionCluster className="shrink-0" mobileInline items={[{
                   key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
                   onClick: () => setScanFor('history'),
                 } satisfies ActionItem]} />
                 <FilterSheetButton defs={histDefs} className="sm:hidden" />
+                </div>
               </div>
               <FilterBar defs={histDefs} className="hidden sm:flex" />
             </div>

@@ -797,7 +797,7 @@ export default function PalletLabels() {
 
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Toolbar */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
             <QrCode className="h-4 w-4 text-slate-500" /> In tem pallet
@@ -821,7 +821,7 @@ export default function PalletLabels() {
           {tabDefs && <FilterSheetButton defs={tabDefs} className="sm:hidden" />}
           {/* In tem = window.print → thuần PC (mobileHidden) — chuẩn ActionCluster */}
           {tab === 'generate' && canGenerate && (
-            <ActionCluster className="shrink-0" items={[{
+            <ActionCluster className="shrink-0" mobileInline items={[{
               key: 'print', icon: Printer,
               label: labels.length > 0 ? `In (${labels.length})` : 'In',
               tip: labels.length > 0 ? `In ${labels.length} tem vừa sinh (${sheets.length} trang A4)` : 'Nhập đủ thông tin ở panel trái để sinh tem trước khi in',
@@ -830,7 +830,7 @@ export default function PalletLabels() {
             } satisfies ActionItem]} />
           )}
           {tab === 'reprint' && canReprint && (
-            <ActionCluster className="shrink-0" items={[{
+            <ActionCluster className="shrink-0" mobileInline items={[{
               key: 'reprint', icon: Printer,
               label: labels.length > 0 ? `In lại (${labels.length})` : 'In lại',
               tip: labels.length > 0 ? `In lại ${labels.length} tem đã chọn từ tồn kho` : 'Chọn mã pallet ở panel trái trước khi in lại',

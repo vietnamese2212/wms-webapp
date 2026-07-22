@@ -103,7 +103,7 @@ export default function WeighTickets() {
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
             <Scale className="h-4 w-4 text-slate-500" /> Phiếu cân

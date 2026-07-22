@@ -934,7 +934,7 @@ export default function Inventory() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* ── Toolbar ── */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
@@ -947,6 +947,8 @@ export default function Inventory() {
             className="flex-1 min-w-[140px]"
           />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="inventory"
             currentFilters={viewSnapshot}
@@ -963,7 +965,7 @@ export default function Inventory() {
             title={aggregate ? 'Đang xem TỔNG HỢP theo mã — bấm để về chi tiết pallet' : 'Xem tổng hợp tồn kho theo mã hàng (không tới pallet)'}>
             <Sigma className="h-3.5 w-3.5" />Tổng hợp
           </button>
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             ...(can(user?.module_permissions, 'inventory', 'export') ? [{
               key: 'excel', icon: Download, label: 'Excel',
               tip: `Xuất Excel ${aggregate ? 'bảng tổng hợp' : 'chi tiết pallet'} theo bộ lọc hiện tại`,
@@ -977,6 +979,7 @@ export default function Inventory() {
               onClick: () => setShowUpload(true),
             } satisfies ActionItem] : []),
           ]} />
+          </div>
         </div>
         {exportError && (
           <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{exportError}</div>

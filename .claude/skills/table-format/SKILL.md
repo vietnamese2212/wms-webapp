@@ -30,6 +30,7 @@ description: BẮT BUỘC áp dụng khi tạo/sửa BẤT KỲ list page, table
 ## 2. Toolbar (1 hàng trên) + FilterBar (hàng 2)
 Thứ tự hàng 1: `Tiêu đề · SearchInput (flex-1) · [FilterSheetButton sm:hidden] · SavedViews · nút density (hidden sm:inline-flex) · [primary action]`.
 Hàng 2: `<FilterBar defs={...} />` bọc `hidden sm:flex`. Mobile: FilterBar tự gom thành nút "Lọc (n)" → sheet full-screen (không trải chip ngang); density ẩn.
+**Mobile/PDA 2 hàng CHỦ ĐÍCH (chuẩn 22/07 — màn nhỏ Zebra TC27, chống toolbar wrap rời rạc 3 hàng):** bọc từ `<SavedViews` đến hết `<ActionCluster/>` (kèm nút giữa; input file ẩn để NGOÀI) trong `<div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">` + ActionCluster thêm prop **`mobileInline`** (mobile `flex-1 basis-0 min-w-fit` — chia sẻ hàng với SavedViews, tự wrap NGUYÊN CỤM khi chật, ⋮ vẫn ghim mép phải, không tràn màn). Desktop `sm:contents` tan wrapper → 1 hàng như cũ. Header container siết mobile: `py-1.5 space-y-1 sm:py-2 sm:space-y-*`. `mobileInline` CHỈ cho toolbar list page — header trang detail giữ mặc định `w-full` (cụm 1 hàng riêng). Mẫu: `Outbound.tsx`/`Inbound.tsx`.
 
 ## 3. FilterBar (`@/components/shared/FilterBar`) — declarative
 - Khai báo `defs: FilterDef[]`, 4 loại: `multi` | `single` | `daterange` | `text`. **KHÔNG** tự code dropdown filter rời, không dùng `MultiSelectFilter`/Select rời cho filter list.

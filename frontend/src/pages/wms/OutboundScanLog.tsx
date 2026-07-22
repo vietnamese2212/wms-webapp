@@ -319,7 +319,7 @@ export default function OutboundScanLog() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-2 sm:rounded-t-xl">
         {/* Row 1: Title + actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
@@ -330,6 +330,8 @@ export default function OutboundScanLog() {
           <SearchInput value={filters.search} onChange={v => setScanLog({ search: v })}
             placeholder="Truy cứu QR pallet / tem thùng, NPP, tên hàng, mã hàng, DO, số xe…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="scanlog"
             currentFilters={viewSnapshot}
@@ -337,13 +339,14 @@ export default function OutboundScanLog() {
             activeId={activeViewId}
           />
           {/* Cụm action toolbar (chuẩn ActionCluster) — quét QR truy cứu dùng nút QR CÓ SẴN trong ô search (SearchInput) */}
-          <ActionCluster className="shrink-0" items={[
+          <ActionCluster className="shrink-0" mobileInline items={[
             {
               key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
               mobileHidden: true, disabled: !canFetch, busy: exporting,
               onClick: () => { void handleExport() },
             } satisfies ActionItem,
           ]} />
+          </div>
         </div>
 
         {/* Row 2: FilterBar (chip) */}

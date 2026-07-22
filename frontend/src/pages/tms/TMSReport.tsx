@@ -157,11 +157,13 @@ export default function TMSReport() {
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Toolbar */}
-      <div className="shrink-0 border-b bg-white px-3 py-2 space-y-1.5 sm:rounded-t-xl">
+      <div className="shrink-0 border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Báo cáo nhập hàng</span>
           <div className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="tms_report"
             currentFilters={viewSnapshot}
@@ -173,12 +175,13 @@ export default function TMSReport() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" items={[{
+          <ActionCluster className="shrink-0" mobileInline items={[{
             key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
             primary: true, disabled: filteredRows.length === 0,
             mobileHidden: true, // export Excel không dùng trên điện thoại
             onClick: exportExcel,
           } satisfies ActionItem]} />
+          </div>
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
           <FilterBar defs={filterDefs} />

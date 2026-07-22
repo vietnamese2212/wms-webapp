@@ -449,6 +449,8 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         </div>
         <Input value={q} onChange={e => setAtt({ q: e.target.value })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
+        {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+        <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
         <SavedViews module="attendance" currentFilters={viewSnapshot} activeId={activeViewId}
           onApply={(fl) => setAtt(fl as Partial<typeof f>)} />
         <button type="button" onClick={toggleDense}
@@ -456,13 +458,14 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
-        <ActionCluster className="shrink-0" items={[{
+        <ActionCluster className="shrink-0" mobileInline items={[{
           key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
           mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
           disabled: !filtered.length,
           onClick: exportExcel,
         } satisfies ActionItem]} />
         <FilterSheetButton defs={defs} className="sm:hidden" />
+        </div>
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
 

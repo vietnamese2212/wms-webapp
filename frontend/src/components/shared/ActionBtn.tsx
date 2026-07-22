@@ -81,7 +81,7 @@ export interface ActionItem {
   mobileHidden?: boolean
 }
 
-export function ActionCluster({ items, className }: { items: ActionItem[]; className?: string }) {
+export function ActionCluster({ items, className, mobileInline }: { items: ActionItem[]; className?: string; mobileInline?: boolean }) {
   const mobileItems = items.filter(i => !i.mobileHidden)
   const primaries = mobileItems.filter(i => i.primary)
   const secondaries = mobileItems.filter(i => !i.primary)
@@ -91,11 +91,14 @@ export function ActionCluster({ items, className }: { items: ActionItem[]; class
       <div className={cn('hidden sm:flex items-center gap-1 flex-wrap justify-end', className)}>
         {items.map(({ key, danger: _d, mobileHidden: _m, ...i }) => <ActionBtn key={key} {...i} />)}
       </div>
-      {/* Mobile: nút chính icon + CHỮ bên trái; menu ⋮ GHIM CỐ ĐỊNH mép phải (w-full + ml-auto)
+      {/* Mobile: nút chính icon + CHỮ bên trái; menu ⋮ GHIM CỐ ĐỊNH mép phải (ml-auto)
           — vị trí ⋮ không xê dịch theo số nút chính của từng công đoạn.
+          Mặc định w-full = cụm chiếm 1 hàng riêng (header detail…). mobileInline (toolbar list PDA):
+          flex-1 basis-0 + min-w-fit → CHIA SẺ hàng với SavedViews khi vừa, tự wrap nguyên cụm khi chật
+          (không bao giờ tràn ra ngoài màn) — tiết kiệm 1 hàng chrome trên màn nhỏ (Zebra TC27).
           Cụm toàn nút mobileHidden → không render (tránh div rỗng chiếm 1 dòng wrap) */}
       {mobileItems.length > 0 && (
-      <div className={cn('flex sm:hidden items-center gap-1.5 w-full', className)}>
+      <div className={cn('flex sm:hidden items-center gap-1.5', mobileInline ? 'flex-1 basis-0 min-w-fit' : 'w-full', className)}>
         {primaries.map(i => (
           <Button key={i.key} variant={i.variant ?? 'outline'} size="sm"
             disabled={i.disabled || i.busy} onClick={i.onClick}

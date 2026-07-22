@@ -200,7 +200,7 @@ export default function LoosePicking() {
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
 
       {/* ── Toolbar ── */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 sm:rounded-t-xl">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Nhặt lẻ</span>
           {totalPending > 0 && (
@@ -210,6 +210,8 @@ export default function LoosePicking() {
           )}
           <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="loosePicking"
             currentFilters={viewSnapshot}
@@ -221,6 +223,7 @@ export default function LoosePicking() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          </div>
         </div>
 
         {/* Filter chip bar (desktop) */}

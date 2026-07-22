@@ -210,10 +210,12 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={search} onChange={v => setAssignment({ search: v })} placeholder="Tìm kho, layout..." className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="assignment" currentFilters={viewSnapshot} activeId={activeViewId} onApply={f => setAssignment(f as Partial<typeof af>)} />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
@@ -221,12 +223,13 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {canCreate && (
-            <ActionCluster className="shrink-0" items={[{
+            <ActionCluster className="shrink-0" mobileInline items={[{
               key: 'create', icon: Plus, label: 'Tạo phiếu', tip: 'Tạo phiếu phân công mới (Kho → Layout → Ngày)',
               primary: true, variant: 'default',
               onClick: () => setOpenCreate(true),
             } satisfies ActionItem]} />
           )}
+          </div>
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap"><FilterBar defs={filterDefs} /></div>
       </div>

@@ -563,8 +563,10 @@ async function buildDvvtResolver() {
 // Sinh group_code kế tiếp theo prefix + insert GDO — retry+jitter khi đụng unique index group_code
 // (nhiều người tạo đơn cùng kho/ngày ĐỒNG THỜI sẽ tính ra cùng số thứ tự; thua race thì tính lại số mới,
 // không nhả 500 "duplicate key" cho user). Dùng chung createGDO + quickExportGDO.
-async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): Promise<{ group_code: string; error?: undefined } | { error: string; group_code?: undefined }> {
-  for (let attempt = 0; attempt < 8; attempt++) {
+async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): Promise<{ group_code: string; error?: undefined; conflict?: undefined } | { error: string; conflict?: boolean; group_code?: undefined }> {
+  // Sinh số chuyến tuần tự dưới tranh chấp: đọc max + insert; đụng unique → retry + jitter/backoff.
+  // Cạn retry (nhiều người tạo CÙNG kho+ngày cùng lúc) → conflict=true để caller trả 409 RETRYABLE (không 500 che message).
+  for (let attempt = 0; attempt < 16; attempt++) {
     const { data: existing } = await supabase.from('GroupDeliveryOrder')
       .select('group_code').ilike('group_code', `${prefix}%`)
     const maxNum = Math.max(0, ...((existing ?? []) as { group_code: string }[]).map(r => parseInt(r.group_code.split('_').at(-1) ?? '') || 0))
@@ -572,9 +574,9 @@ async function insertGdoNextCode(prefix: string, row: Record<string, unknown>): 
     const { error } = await supabase.from('GroupDeliveryOrder').insert({ ...row, group_code })
     if (!error) return { group_code }
     if (!/duplicate|unique/i.test(error.message)) return { error: error.message }
-    await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * (40 + attempt * 30))))
+    await new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + attempt * 40))))
   }
-  return { error: 'Không sinh được số chuyến (nhiều người tạo đơn cùng lúc) — thử lại' }
+  return { error: 'Số chuyến đang bị nhiều người tạo cùng lúc — vui lòng bấm Lưu lại.', conflict: true }
 }
 
 // ─── Kho phụ nội bộ (Warehouse.parent_warehouse_id) — luật quỹ đạo ───────────
@@ -752,7 +754,7 @@ export async function createGDO(req: Request, res: Response) {
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
       created_by: actor, updated_by: actor, updated_at: now(),
     })
-    if (ins.error) return fail(res, ins.error)
+    if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
 
     // Single DO for manual orders
     const doId = randomUUID()
@@ -880,7 +882,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       started_at: t, license_plate: license_plate?.trim() || null,
       created_by: actor, updated_by: actor, updated_at: t,
     })
-    if (ins.error) return fail(res, ins.error)
+    if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
     const group_code = ins.group_code
 
     const doId = randomUUID()
@@ -1386,6 +1388,8 @@ export async function updateGDO(req: Request, res: Response) {
       `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không sửa số lượng tại đây. Sửa Số lượng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
     const sapDeleteLockError = (ex: { material_code_raw?: string | null }) =>
       `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không xóa dòng tại đây. Xóa dòng ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
+    const sapMaterialLockError = (ex: { material_code_raw?: string | null }) =>
+      `Mã "${ex.material_code_raw}" thuộc đơn upload từ SAP — không đổi mã hàng tại đây. Sửa ở tab DO SAP (Dữ liệu bên ngoài) để đơn và dữ liệu SAP cùng khớp.`
 
     if (isMultiDO) {
       // Multi-DO: match bằng db_id, cho phép xóa item chưa xuất
@@ -1413,6 +1417,10 @@ export async function updateGDO(req: Request, res: Response) {
         }
         if (ex && sapLinked(ex) && Number(item.cartons_ordered) !== Number(ex.cartons_ordered)) {
           return fail(res, sapQtyLockError(ex), 422)
+        }
+        // Khóa ĐỔI MÃ HÀNG dòng gốc SAP (kể cả chưa quét) — giữ liên kết SAP↔WMS, tránh reconcile báo "đổi mã" oan
+        if (ex && sapLinked(ex) && ex.material_code_raw !== item.material_code) {
+          return fail(res, sapMaterialLockError(ex), 422)
         }
       }
 

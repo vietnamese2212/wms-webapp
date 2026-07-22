@@ -8,8 +8,21 @@ import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
+import { qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 
 const now = () => new Date().toISOString()
+
+// BASE UNIT: mã có entry_unit → qty_base phải SỐ NGUYÊN (hộp/chai/lon không có 0,5). Gác 422 khi thêm/sửa TAY
+// DO SAP. UI editor đã dùng QtyInput số nguyên + raw SAP luôn nguyên; đây là gác BE defense-in-depth cho mọi
+// client/paste, chặn số lẻ chảy vào reconcile.autoApply (cartons_ordered = Σ qty_base). Trả message vi nếu lỗi.
+async function qtyBaseIntError(materialCode: unknown, qtyBase: unknown): Promise<string | null> {
+  if (qtyBase == null || qtyBase === '') return null
+  const code = materialCode == null ? '' : String(materialCode).trim()
+  if (!code) return null
+  const { data: m } = await supabase.from('Material')
+    .select('base_unit, entry_unit, units_per_carton').eq('material_code', code).maybeSingle()
+  return m ? qtyIntegerError(Number(qtyBase), m as MatUnits) : null
+}
 
 // Cap an toàn cho filter chéo "Trong kế hoạch": số DO của cửa sổ đưa vào .in() không được quá lớn
 // (URL PostgREST) → vượt thì bỏ filter + trả cảnh báo (KHÔNG cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
@@ -235,6 +248,8 @@ export async function createDoSap(req: Request, res: Response) {
     const { data: dup } = await supabase.from('erp_outbound_orders').select('id')
       .eq('od_number', fields.od_number).eq('od_item', fields.od_item).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng DO ${fields.od_number} / Item ${fields.od_item}`, 409)
+    const qErr = await qtyBaseIntError(fields.material_code, fields.qty_base)
+    if (qErr) return fail(res, qErr, 422)
     const row = { id: randomUUID(), ...fields, source: fields.source ?? 'MANUAL', uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() }
     const { data, error } = await supabase.from('erp_outbound_orders').insert(row).select().single()
     if (error) throw new Error(error.message)
@@ -247,6 +262,12 @@ export async function updateDoSap(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
+    // BASE UNIT: sửa qty_base cho mã có entry → phải nguyên (lấy material_code từ body nếu đổi, ngược lại từ dòng hiện tại)
+    if ('qty_base' in fields) {
+      const { data: cur } = await supabase.from('erp_outbound_orders').select('material_code').eq('id', req.params.id).maybeSingle()
+      const qErr = await qtyBaseIntError(fields.material_code ?? cur?.material_code, fields.qty_base)
+      if (qErr) return fail(res, qErr, 422)
+    }
     // Đổi khóa (od_number, od_item) → chặn trùng dòng khác (unique index; báo 409 rõ thay vì 500 khó hiểu)
     if ('od_number' in fields || 'od_item' in fields) {
       const { data: cur } = await supabase.from('erp_outbound_orders')

@@ -1956,7 +1956,7 @@ function GDOFormBody({
                       <MatPicker
                         value={item.material_code}
                         onSelect={(code, name, category, unit, mat) => updateItem(item.id, { material_code: code, mat_name: name, category, unit, mat_units: mat ?? null })}
-                        disabled={item.min_cartons > 0}
+                        disabled={item.min_cartons > 0 || item.sap_linked}
                         disabledNoType={!warehouseType && item.min_cartons === 0}
                         filterCategory={undefined}
                         onPaste={item.min_cartons === 0 ? e => handlePasteRowAt(idx, e) : undefined}

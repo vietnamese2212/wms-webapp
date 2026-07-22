@@ -31,7 +31,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtySplit, qtyUnitLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -732,8 +732,9 @@ export default function Inventory() {
   async function handleExport() {
     setExportError('')
     const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-    // BASE UNIT: xuất 2 cột NGUYÊN Thùng + Hộp (chính xác tuyệt đối, round-trip với mẫu upload).
-    // Mã KG/EA (không entry) → cột thùng để trống, cả lượng nằm ở cột "hộp" (ĐVT cột kề làm rõ đơn vị).
+    // BASE UNIT: xuất 2 cột NGUYÊN Thùng + Hộp (round-trip với mẫu upload) + cột "Tồn (base)" = SỐ BASE THÔ
+    // (số quyết định tồn kho — chuẩn raw data). ĐVT = ĐƠN VỊ GỐC (Hộp/EA/KG) để cột hộp/base không bị hiểu nhầm là thùng.
+    // Mã KG/EA (không entry) → cột thùng để trống, cả lượng nằm ở cột "hộp".
     const qc = (base: number, mat: Parameters<typeof qtySplit>[1]) => {
       const s = qtySplit(Number(base) || 0, mat)
       return { t: hasEntry(mat) ? s.entry : '', h: s.base }
@@ -749,10 +750,11 @@ export default function Inventory() {
           return {
             'Kho': g.warehouse_name, 'Loại kho': g.category ?? '', 'Mã hàng': g.material_code ?? '',
             'Tên hàng': g.short_name ?? '', 'NCC': g.ncc_name ?? '', 'Ngày SX': g.production_date ? formatTimestampDate(g.production_date) : '',
-            '% Date': g.date_pct ?? '', 'ĐVT': qtyUnitLabel(g),
+            '% Date': g.date_pct ?? '', 'ĐVT': qtyBaseLabel(g),
             'Nhập (thùng)': nh.t, 'Nhập (hộp)': nh.h,
             'Xuất (thùng)': xu.t, 'Xuất (hộp)': xu.h,
             'Tồn (thùng)': to.t, 'Tồn (hộp)': to.h,
+            'Tồn (base)': Number(g.cartons_remaining) || 0,
             'Số pallet': g.pallet_count,
           }
         }), `ton_kho_tong_hop_${stamp}`)
@@ -774,10 +776,11 @@ export default function Inventory() {
             'Mã hàng': e.material?.material_code ?? '', 'Tên hàng': e.material?.short_name ?? '',
             'NCC': e.ncc?.name ?? '', 'Shelflife (ngày)': e.shelf_life_days ?? '',
             'Mã pallet': e.pallet_code, 'NMSX': e.nmsx ?? '', 'Vị trí': e.location?.location_code ?? '',
-            'ĐVT': qtyUnitLabel(e.material),
+            'ĐVT': qtyBaseLabel(e.material),
             'Nhập (thùng)': nh.t, 'Nhập (hộp)': nh.h,
             'Xuất (thùng)': xu.t, 'Xuất (hộp)': xu.h,
             'Tồn (thùng)': to.t, 'Tồn (hộp)': to.h,
+            'Tồn (base)': Number(remaining) || 0,
             'Nhặt lẻ (thùng)': re.t, 'Nhặt lẻ (hộp)': re.h,
             'Khả dụng (thùng)': kd.t, 'Khả dụng (hộp)': kd.h,
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',

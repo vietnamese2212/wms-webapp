@@ -1851,15 +1851,15 @@ function GDOFormBody({
                       <ShortageBadge s={item.mat_units?.id ? shortageByMat.get(item.mat_units.id) : undefined} mat={item.mat_units} />
                     </td>
                     <td className="px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top" title={item.mat_name || undefined}>{item.mat_name || <span className="text-slate-300">—</span>}</td>
-                    <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}>
-                      {/* Đơn UPLOAD từ SAP (od_refs) → KHÓA sửa SL (user 22/07) — sửa ở tab DO SAP để đơn ↔ raw cùng khớp */}
+                    <td className="px-2 py-1" onPaste={e => handlePasteCartonsAt(idx, e)}
+                      title={item.sap_linked ? 'SL theo DO SAP — sửa ở Dữ liệu bên ngoài' : undefined}>
+                      {/* Đơn UPLOAD từ SAP (od_refs) → KHÓA sửa SL (user 22/07) — lý do chỉ hiện tooltip, không chiếm chỗ */}
                       <QtyInput compact className={`w-36 ${cartonsInvalid ? '[&_input]:border-red-400' : ''}`}
                         value={item.cartons}
                         mat={item.mat_units}
                         disabled={item.sap_linked}
                         onChange={b => updateItem(item.id, { cartons: b })}
                       />
-                      {item.sap_linked && <p className="text-[9px] text-slate-400 text-center">SL theo DO SAP — sửa ở Dữ liệu bên ngoài</p>}
                       {cartonsInvalid && <p className="text-[9px] text-red-600 text-right">Min {qtyLabel(item.min_cartons, item.mat_units)}</p>}
                     </td>
                     <td className="px-2 py-1 text-center">

@@ -1265,9 +1265,17 @@ export async function deleteGDO(req: Request, res: Response) {
   try {
     if (!(await guardGdoScope(req, res, req.params.id))) return
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status').eq('id', req.params.id).single()
+      .select('status, group_code').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (gdo.status !== 'PENDING') return fail(res, 'Chỉ có thể xóa đơn ở trạng thái chờ (PENDING)', 400)
+
+    // Chuyến sinh từ upload SAP (Kế hoạch xuất còn raw) → không xóa tại đây (đồng bộ với khóa sửa SL/xóa dòng).
+    // Raw đã bị xóa ở tab Kế hoạch xuất → CHO xóa (đường dọn chuyến mồ côi — xóa KHVC không cascade).
+    const { count: khvcCount } = await supabase.from('khvc_lines')
+      .select('id', { count: 'exact', head: true }).eq('group_code', gdo.group_code)
+    if ((khvcCount ?? 0) > 0) {
+      return fail(res, `Chuyến "${gdo.group_code}" thuộc Kế hoạch xuất upload từ SAP — không xóa tại đây. Xóa Số xe ở tab Kế hoạch xuất (Dữ liệu bên ngoài) trước, rồi quay lại xóa chuyến.`, 422)
+    }
 
     // Đơn từng hoàn thành rồi gỡ → lệnh chuyển kho vẫn còn (giữ tracking) — xóa cả chuyến thì xóa lệnh theo
     await deleteTransferOrdersOf([req.params.id])

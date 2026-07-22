@@ -3,7 +3,7 @@
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download, Lock } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -15,7 +15,6 @@ import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
@@ -29,7 +28,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions, type ModuleKey } from '@/config/permissions'
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 import { QtyInput } from '@/components/shared/QtyInput'
-import { qtyLabel, hasEntry } from '@/utils/qtyUnits'
+import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
 type TabKey = 'dosap' | 'khvc' | 'reconcile'
@@ -142,20 +141,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
 
   const [dense, setDense]           = useState(() => localStorage.getItem('dosap_density') !== 'comfortable')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
-  const [formRow, setFormRow]       = useState<DoSapRow | null>(null)   // sửa chi tiết 1 dòng (field raw lẻ) — mở từ editor gom
   const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
-  const [bulkOpen, setBulkOpen]     = useState(false)
-  const [bulkChk, setBulkChk]       = useState<{ deletable_count: number; blocked_count: number; blocked: { od_number: string; od_item: string; reason: string }[] } | null>(null)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
-
-  // v2.2: preview XÓA (mở dialog bulk → kiểm dòng nào xóa được / bị chặn vì đã dùng+đã quét)
-  useEffect(() => {
-    if (!bulkOpen) { setBulkChk(null); return }
-    apiClient.post('/external/do-sap/bulk-delete?check=1', { ids: [...selected] })
-      .then(r => setBulkChk(r.data.data)).catch(() => setBulkChk(null))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bulkOpen])
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
@@ -187,7 +175,6 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDoSap({ page: 1 }) }, [filterKey])
 
-  const bulkDelete   = useBulkDeleteDoSap()
   // Map id → od_number của mọi dòng ĐÃ render (selection chỉ tick được dòng đã thấy) — cho nút Sửa multi
   const idToDo = useRef<Record<string, string>>({})
   useEffect(() => { for (const r of items) idToDo.current[r.id] = r.od_number }, [items])
@@ -227,11 +214,6 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
     })
   }
 
-  function doBulkDelete() {
-    bulkDelete.mutate([...selected], {
-      onSuccess: () => { setSelected(new Set()); setBulkOpen(false) },
-    })
-  }
   // Sửa các dòng đã tick → mở bảng gom theo DO (mọi mã cùng DO của các dòng đã chọn)
   const selectedDos = useMemo(
     () => [...new Set([...selected].map(id => idToDo.current[id]).filter(Boolean))],
@@ -311,8 +293,24 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
             </Button>
           )}
+          {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar giữa
+              SummaryBand và bảng nữa (bar hiện/ẩn làm bảng nhảy layout). Nút h-7 = không đổi chiều cao hàng. */}
+          {selected.size > 0 && (canEdit || canCreate) && selectedDos.length > 0 && (
+            // canCreate-không-edit vẫn mở được editor (chỉ để THÊM dòng — ô sửa bị khóa bên trong)
+            <button type="button" onClick={() => setDoEditor(selectedDos)}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
+              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedDos.length > 1 ? `${selectedDos.length} DO` : `DO ${selectedDos[0]}`}
+            </button>
+          )}
+          {selected.size > 0 && (
+            <button type="button" onClick={() => setSelected(new Set())}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
+              <X className="h-3.5 w-3.5" /> Bỏ chọn ({selected.size})
+            </button>
+          )}
           {/* Thêm mới hoàn toàn = UPLOAD (VL06O), không thêm tay ngoài header — user chốt 21/07.
-              Thêm dòng vào DO đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor. */}
+              Thêm dòng vào DO đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
+              Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}
         </div>
         <FilterBar defs={filterDefs} />
         {exportErr && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600">{exportErr}</div>}
@@ -324,30 +322,6 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         { label: 'Đang chọn', value: selected.size, accent: selected.size > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
-
-      {/* Thanh multi-select — tick dòng → Sửa (bảng gom theo DO) / Xóa hàng loạt */}
-      {selected.size > 0 && (
-        <div className="shrink-0 flex items-center gap-2 bg-sky-50 border-b border-sky-200 px-3 py-1.5 text-xs">
-          <span className="font-semibold text-sky-800">Đã chọn {selected.size}</span>
-          {(canEdit || canCreate) && selectedDos.length > 0 && (
-            // canCreate-không-edit vẫn mở được editor (chỉ để THÊM dòng — ô sửa bị khóa bên trong)
-            <button type="button" onClick={() => setDoEditor(selectedDos)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-100 transition-colors">
-              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedDos.length > 1 ? `${selectedDos.length} DO` : `DO ${selectedDos[0]}`}
-            </button>
-          )}
-          {canDelete && (
-            <button type="button" onClick={() => setBulkOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-              <Trash2 className="h-3.5 w-3.5" /> Xóa {selected.size} dòng
-            </button>
-          )}
-          <button type="button" onClick={() => setSelected(new Set())}
-            className="ml-auto inline-flex items-center gap-1 text-slate-500 hover:text-slate-700">
-            <X className="h-3.5 w-3.5" /> Bỏ chọn
-          </button>
-        </div>
-      )}
 
       {/* Bảng */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -393,7 +367,12 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
                       <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle"
                         checked={isSel} onChange={() => toggleOne(r.id)} />
                     </TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap`}>{r.od_number || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap`}>
+                      {r.od_number || <span className="text-slate-300">—</span>}
+                      {r.manual_edited_at && (
+                        <span className="ml-1 text-amber-600 font-sans" title={`Đã sửa tay ${formatTimestampDate(r.manual_edited_at, true)} — upload lại VL06O sẽ đè theo SAP`}>✎</span>
+                      )}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.od_item || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.material_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.material_name ?? undefined}>{r.material_name || <span className="text-slate-300">—</span>}</TableCell>
@@ -460,10 +439,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
       </div>
      </div>
 
-      {/* FormSheet sửa chi tiết 1 dòng (field raw lẻ) — mở từ editor gom */}
-      {formRow && <DoSapForm row={formRow} onClose={() => setFormRow(null)} />}
-
-      {/* FormSheet Sửa cả DO — bảng gom mọi mã cùng od_number (mô hình base gốc) */}
+      {/* FormSheet Sửa cả DO — bảng gom mọi mã cùng od_number (mô hình base gốc).
+          Xóa dòng: CHỈ trong editor này (bỏ Xóa bulk ngoài list — user 22/07). */}
       {doEditor && (
         <DoSapDoEditor
           odNumbers={doEditor}
@@ -471,172 +448,19 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           canCreate={canCreate}
           canDelete={canDelete}
           onClose={() => { setDoEditor(null); setSelected(new Set()) }}
-          onEditLine={r => { setDoEditor(null); setFormRow(r) }}
         />
       )}
-
-      {/* Xóa hàng loạt */}
-      <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Xóa {selected.size} dòng đã chọn?</DialogTitle>
-          </DialogHeader>
-          {bulkChk ? (
-            <div className="text-xs text-slate-600 space-y-1.5">
-              <p><b className="text-red-600">{bulkChk.deletable_count}</b> dòng sẽ xóa.
-                {bulkChk.blocked_count > 0 && <> <b className="text-amber-700">{bulkChk.blocked_count}</b> dòng KHÔNG xóa được (đã dùng + đã quét) — được giữ lại.</>}</p>
-              {bulkChk.blocked_count > 0 && (
-                <div className="max-h-24 overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-                  {bulkChk.blocked.slice(0, 20).map((b, i) => <div key={i}>• DO {b.od_number}/{b.od_item}</div>)}
-                  {bulkChk.blocked.length > 20 && <div>…và {bulkChk.blocked.length - 20} dòng nữa</div>}
-                </div>
-              )}
-              <p className="text-slate-400">Thao tác không thể hoàn tác.</p>
-            </div>
-          ) : <p className="text-xs text-slate-500">Đang kiểm tra dòng nào xóa được…</p>}
-          {bulkDelete.isError && <p className="text-xs text-red-500">{apiError(bulkDelete.error, 'Không xóa được các dòng đã chọn.')}</p>}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkDelete.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending || !bulkChk || bulkChk.deletable_count === 0}>
-              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${bulkChk?.deletable_count ?? selected.size} dòng`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
 
-// ─── Form Thêm / Sửa (FormSheet) ───────────────────────────────────────────────
-interface FormState {
-  od_number: string; od_item: string; material_code: string; material_name: string; source: string
-  qty_sales: string; sales_unit: string; qty_base: string; base_unit: string
-  ship_to_code: string; ship_to_name: string; plant: string; storage_location: string; batch: string; batch_so: string
-  note_delivery: string; note_invoice: string; shipping_point: string; license_plate: string
-}
-
+// ─── Helper chuỗi dùng chung cho editor (KHVC draft + payload) ─────────────────
 function s(v: string | number | null | undefined): string {
   return v == null ? '' : String(v)
 }
 function n(v: string): string | null {
   const t = v.trim()
   return t === '' ? null : t
-}
-function numOrNull(v: string): number | null {
-  const t = v.trim()
-  if (t === '') return null
-  const parsed = Number(t)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function DoSapForm({ row, onClose }: { row: DoSapRow; onClose: () => void }) {
-  const update = useUpdateDoSap()
-  const [errMsg, setErrMsg] = useState('')
-
-  const [f, setF] = useState<FormState>(() => ({
-    od_number: s(row.od_number), od_item: s(row.od_item),
-    material_code: s(row.material_code), material_name: s(row.material_name), source: s(row.source),
-    qty_sales: s(row.qty_sales), sales_unit: s(row.sales_unit), qty_base: s(row.qty_base), base_unit: s(row.base_unit),
-    ship_to_code: s(row.ship_to_code), ship_to_name: s(row.ship_to_name),
-    plant: s(row.plant), storage_location: s(row.storage_location), batch: s(row.batch), batch_so: s(row.batch_so),
-    note_delivery: s(row.note_delivery), note_invoice: s(row.note_invoice),
-    shipping_point: s(row.shipping_point), license_plate: s(row.license_plate),
-  }))
-  const set = (k: keyof FormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }))
-
-  const saving = update.isPending
-
-  function save() {
-    setErrMsg('')
-    const payload: Partial<DoSapRow> = {
-      od_number: f.od_number.trim(), od_item: f.od_item.trim(),
-      material_code: n(f.material_code), material_name: n(f.material_name), source: n(f.source),
-      qty_sales: numOrNull(f.qty_sales), sales_unit: n(f.sales_unit),
-      qty_base: numOrNull(f.qty_base), base_unit: n(f.base_unit),
-      ship_to_code: n(f.ship_to_code), ship_to_name: n(f.ship_to_name),
-      plant: n(f.plant), storage_location: n(f.storage_location), batch: n(f.batch), batch_so: n(f.batch_so),
-      note_delivery: n(f.note_delivery), note_invoice: n(f.note_invoice),
-      shipping_point: n(f.shipping_point), license_plate: n(f.license_plate),
-    }
-    const onError = (err: unknown) => setErrMsg(apiError(err, 'Không lưu được dòng DO SAP.'))
-    update.mutate({ id: row.id, ...payload }, { onSuccess: onClose, onError })
-  }
-
-  return (
-    <FormSheet
-      open onClose={onClose}
-      title="Sửa dòng DO SAP"
-      description={`${row.od_number} / ${row.od_item}`}
-      footer={<>
-        <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
-        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={save} disabled={saving}>
-          {saving ? 'Đang lưu…' : 'Lưu'}
-        </Button>
-      </>}
-    >
-      <div className="space-y-5">
-        {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
-
-        <Section title="Định danh">
-          <Fld label="Số DO"><Input className="h-9" value={f.od_number} onChange={e => set('od_number')(e.target.value)} disabled /></Fld>
-          <Fld label="Item"><Input className="h-9" value={f.od_item} onChange={e => set('od_item')(e.target.value)} disabled /></Fld>
-          <Fld label="Mã hàng"><Input className="h-9" value={f.material_code} onChange={e => set('material_code')(e.target.value)} /></Fld>
-          <Fld label="Tên hàng"><Input className="h-9" value={f.material_name} onChange={e => set('material_name')(e.target.value)} /></Fld>
-          <Fld label="Nguồn"><Input className="h-9" value={f.source} onChange={e => set('source')(e.target.value)} placeholder="EXCEL / SAP / MANUAL" /></Fld>
-        </Section>
-
-        {/* Mô hình BASE UNIT (user chốt 21/07): Số gốc (base) = READ-ONLY, là số đi Xuất/mọi module.
-            Muốn sửa → sửa 2 ô quy đổi (Thùng + Hộp lẻ, mã không entry = 1 ô base) → tự tính lại Số gốc. */}
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100 pb-1 mb-2">Số lượng</div>
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-slate-500">Số gốc (base) — số đi Xuất &amp; mọi module</span>
-              <span className="flex items-center gap-1 text-[10px] text-slate-400"><Lock className="h-3 w-3" /> chỉ đọc</span>
-            </div>
-            <div className="text-sm font-semibold tabular-nums text-slate-800">
-              {qtyLabel(Number(f.qty_base) || 0, row.mat_units)}
-              {hasEntry(row.mat_units) && <span className="text-slate-400 font-normal"> &nbsp;=&nbsp; {new Intl.NumberFormat('vi-VN').format(Number(f.qty_base) || 0)} {f.base_unit || 'base'}</span>}
-            </div>
-          </div>
-          <Fld label={hasEntry(row.mat_units) ? 'Sửa số lượng (Thùng + Hộp lẻ) — Số gốc tự tính lại' : 'Sửa số lượng (base) — Số gốc đổi theo'}>
-            <QtyInput value={Number(f.qty_base) || 0} mat={row.mat_units} onChange={b => set('qty_base')(String(b))} />
-          </Fld>
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <Fld label="SAP báo — SL bán (tham khảo)">
-              <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500 tabular-nums">
-                {f.qty_sales !== '' ? `${f.qty_sales} ${f.sales_unit}` : '—'}
-              </div>
-            </Fld>
-            <Fld label="ĐV gốc (SAP)">
-              <div className="h-9 px-3 flex items-center rounded-md border border-slate-100 bg-slate-50 text-sm text-slate-500">{f.base_unit || '—'}</div>
-            </Fld>
-          </div>
-          {hasEntry(row.mat_units) && f.qty_sales !== '' && Number(f.qty_sales) * Number(row.mat_units!.units_per_carton) !== (Number(f.qty_base) || 0) && (
-            <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-              ⚠ SAP báo {f.qty_sales} {f.sales_unit} (= {new Intl.NumberFormat('vi-VN').format(Number(f.qty_sales) * Number(row.mat_units!.units_per_carton))} {f.base_unit}) ≠ Số gốc — app luôn dùng Số gốc.
-            </p>
-          )}
-        </div>
-
-        <Section title="Khách & kho">
-          <Fld label="Ship-to (mã)"><Input className="h-9" value={f.ship_to_code} onChange={e => set('ship_to_code')(e.target.value)} /></Fld>
-          <Fld label="Ship-to (tên)"><Input className="h-9" value={f.ship_to_name} onChange={e => set('ship_to_name')(e.target.value)} /></Fld>
-          <Fld label="Plant"><Input className="h-9" value={f.plant} onChange={e => set('plant')(e.target.value)} /></Fld>
-          <Fld label="Kho (storage)"><Input className="h-9" value={f.storage_location} onChange={e => set('storage_location')(e.target.value)} /></Fld>
-          <Fld label="Batch"><Input className="h-9" value={f.batch} onChange={e => set('batch')(e.target.value)} /></Fld>
-          <Fld label="Batch SO"><Input className="h-9" value={f.batch_so} onChange={e => set('batch_so')(e.target.value)} /></Fld>
-        </Section>
-
-        <Section title="Khác">
-          <Fld label="Ghi chú giao"><Input className="h-9" value={f.note_delivery} onChange={e => set('note_delivery')(e.target.value)} /></Fld>
-          <Fld label="Ghi chú hóa đơn"><Input className="h-9" value={f.note_invoice} onChange={e => set('note_invoice')(e.target.value)} /></Fld>
-          <Fld label="Shipping point"><Input className="h-9" value={f.shipping_point} onChange={e => set('shipping_point')(e.target.value)} /></Fld>
-          <Fld label="Biển số"><Input className="h-9" value={f.license_plate} onChange={e => set('license_plate')(e.target.value)} /></Fld>
-        </Section>
-      </div>
-    </FormSheet>
-  )
 }
 
 // ─── Sửa cả DO (bảng gom mọi mã cùng od_number) — mô hình BASE GỐC ────────────
@@ -651,13 +475,12 @@ type DoSapNewLine = {
   qty_base: number; mat: DoSapRow['mat_units']
   lookup: 'idle' | 'looking' | 'ok' | 'notfound' | 'error'
 }
-function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEditLine }: {
+function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose }: {
   odNumbers: string[]
   canEdit: boolean
   canCreate: boolean
   canDelete: boolean
   onClose: () => void
-  onEditLine: (r: DoSapRow) => void
 }) {
   const dos = useMemo(() => [...new Set(odNumbers)].slice(0, DO_EDITOR_CAP), [odNumbers])
   const truncated = new Set(odNumbers).size - dos.length
@@ -725,18 +548,108 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
   }
   const patchLine = (key: string, p: Partial<DoSapNewLine>) =>
     setAdded(prev => prev.map(l => l.key === key ? { ...l, ...p } : l))
-  // Tra mã hàng từ Material master (blur ô Mã hàng) → tên + quy cách để tách 2 ô Thùng+Hộp
+  // Tra Material master theo mã CHÍNH XÁC → tên + quy cách (null = không có; 'error' = 403/mạng)
+  async function fetchMat(code: string): Promise<{ short_name: string | null; mat: DoSapRow['mat_units'] } | null | 'error'> {
+    try {
+      const { data } = await apiClient.get('/masterdata/materials', { params: { search: code } })
+      const list = (data.data ?? []) as { material_code: string; short_name?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null }[]
+      const m = list.find(x => x.material_code === code)
+      if (!m) return null
+      return { short_name: m.short_name ?? null, mat: { base_unit: m.base_unit ?? null, entry_unit: m.entry_unit ?? null, units_per_carton: m.units_per_carton ?? null } }
+    } catch { return 'error' }
+  }
+  // Blur ô Mã hàng → tra tên + quy cách để tách 2 ô Thùng+Hộp
   async function lookupMat(key: string, code: string) {
     const c = code.trim()
     if (c.length < 4) return   // gõ dở 1-2 ký tự → đừng bắn search cả bảng Material
     patchLine(key, { lookup: 'looking' })
-    try {
-      const { data } = await apiClient.get('/masterdata/materials', { params: { search: c } })
-      const list = (data.data ?? []) as { material_code: string; short_name?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null }[]
-      const m = list.find(x => x.material_code === c)
-      if (m) patchLine(key, { material_name: m.short_name ?? null, base_unit: m.base_unit ?? null, lookup: 'ok', mat: { base_unit: m.base_unit ?? null, entry_unit: m.entry_unit ?? null, units_per_carton: m.units_per_carton ?? null } })
-      else patchLine(key, { material_name: null, base_unit: null, mat: null, lookup: 'notfound' })
-    } catch { patchLine(key, { lookup: 'error' }) }   // 403/mất mạng → báo rõ, đừng câm (số lượng sẽ hiểu là BASE)
+    const r = await fetchMat(c)
+    if (r === 'error') patchLine(key, { lookup: 'error' })   // 403/mất mạng → báo rõ, đừng câm (số lượng sẽ hiểu là BASE)
+    else if (r) patchLine(key, { material_name: r.short_name, base_unit: r.mat?.base_unit ?? null, mat: r.mat, lookup: 'ok' })
+    else patchLine(key, { material_name: null, base_unit: null, mat: null, lookup: 'notfound' })
+  }
+
+  // ── Paste từ Excel (chuẩn app — mẫu form Xuất kho) ──
+  // Ô SỐ LƯỢNG dòng có sẵn: dán nhiều dòng, mỗi dòng 1–2 cột [Thùng] / [Thùng ⇥ Hộp]
+  // (mã KHÔNG entry: cột đầu = SỐ BASE thập phân) → điền lần lượt xuống theo thứ tự bảng.
+  function pasteQtyOf(cols: string[], mat: DoSapRow['mat_units']): number {
+    if (hasEntry(mat)) {
+      const thung = parseInt((cols[0] ?? '').replace(/[^0-9]/g, '')) || 0
+      const hop   = parseInt((cols[1] ?? '').replace(/[^0-9]/g, '')) || 0
+      return qtyFromEntryBase(thung, hop, mat)
+    }
+    return parseFloat((cols[0] ?? '').trim().replace(/\s/g, '').replace(',', '.')) || 0
+  }
+  function handlePasteQtyAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return   // dán 1 số đơn lẻ → để input tự xử
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    setDraft(prev => {
+      const next = { ...prev }
+      lines.forEach((line, off) => {
+        const r = rows[startIdx + off]
+        if (!r || removed.has(r.id)) return
+        next[r.id] = pasteQtyOf(line.split('\t'), r.mat_units)
+      })
+      return next
+    })
+  }
+  // Ô MÃ HÀNG dòng thêm mới: dán block [Mã hàng ⇥ Thùng ⇥ Hộp] nhiều dòng → điền dòng này
+  // + TỰ SINH thêm dòng cho phần dư, rồi tra Material từng mã (tên + quy cách + qty đúng).
+  async function handlePasteAddedAt(startKey: string, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    if (!lines.length) return
+    const startPos = added.findIndex(l => l.key === startKey)
+    if (startPos < 0) return
+    const od = added[startPos].od_number
+    // Item tự đánh tiếp từ max hiện có của DO (rows + added), +10 mỗi dòng
+    let itemBase = Math.max(0, ...[...rows.filter(r => r.od_number === od), ...added.filter(l => l.od_number === od)]
+      .map(r => Number(r.od_item)).filter(v => Number.isFinite(v)))
+    const work = [...added]
+    const affected: { key: string; code: string }[] = []
+    lines.forEach((line, off) => {
+      const cols = line.split('\t')
+      const code = (cols[0] ?? '').trim()
+      const thung = parseInt((cols[1] ?? '').replace(/[^0-9]/g, '')) || 0
+      const hop   = parseInt((cols[2] ?? '').replace(/[^0-9]/g, '')) || 0
+      let pos = startPos + off
+      if (pos >= work.length) {
+        itemBase += 10
+        work.push({ key: crypto.randomUUID(), od_number: od, od_item: String(itemBase),
+          material_code: '', material_name: null, base_unit: null, qty_base: 0, mat: null, lookup: 'idle' })
+        pos = work.length - 1
+      }
+      // qty tạm = thùng+hộp cộng thô — sẽ TÍNH LẠI bằng quy cách thật sau khi tra mã (dưới)
+      work[pos] = { ...work[pos], material_code: code, qty_base: thung + hop, mat: null, material_name: null, lookup: code ? 'looking' : 'idle' }
+      ;(work[pos] as DoSapNewLine & { _thung?: number; _hop?: number })._thung = thung
+      ;(work[pos] as DoSapNewLine & { _thung?: number; _hop?: number })._hop = hop
+      if (code) affected.push({ key: work[pos].key, code })
+    })
+    setAdded(work)
+    for (const a of affected) {
+      const r = await fetchMat(a.code)
+      const w = work.find(x => x.key === a.key) as (DoSapNewLine & { _thung?: number; _hop?: number }) | undefined
+      const thung = w?._thung ?? 0, hop = w?._hop ?? 0
+      if (r === 'error') patchLine(a.key, { lookup: 'error', qty_base: thung + hop })
+      else if (r) patchLine(a.key, { material_name: r.short_name, base_unit: r.mat?.base_unit ?? null, mat: r.mat, lookup: 'ok', qty_base: hasEntry(r.mat) ? qtyFromEntryBase(thung, hop, r.mat) : (thung + hop) })
+      else patchLine(a.key, { material_name: null, base_unit: null, mat: null, lookup: 'notfound', qty_base: thung + hop })
+    }
+  }
+  // Ô SỐ LƯỢNG dòng thêm mới: dán [Thùng ⇥ Hộp] nhiều dòng → điền xuống các dòng thêm
+  function handlePasteQtyAddedAt(startPos: number, e: React.ClipboardEvent<HTMLElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    setAdded(prev => prev.map((l, i) => {
+      const off = i - startPos
+      if (off < 0 || off >= lines.length) return l
+      return { ...l, qty_base: pasteQtyOf(lines[off].split('\t'), l.mat) }
+    }))
   }
 
   async function save() {
@@ -777,7 +690,7 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
   return (
     <FormSheet
       open onClose={onClose}
-      widthClass="sm:max-w-4xl"
+      widthClass="sm:w-[96vw] sm:max-w-[1280px]"
       title={multi ? <>Sửa {dos.length} DO</> : <>Sửa DO: <span className="font-mono">{dos[0]}</span></>}
       description={isLoading
         ? 'Đang tải các mã của DO…'
@@ -811,7 +724,8 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
             <thead>
               <tr>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
-                {multi && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">DO</th>}
+                {/* Cột DO LUÔN hiện (user 22/07: single/multi hiển thị giống nhau) */}
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">DO</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-10">Item</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">Mã hàng</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-44">Tên hàng</th>
@@ -835,11 +749,12 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
                 return (
                   <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : ''}`}>
                     <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
-                    {multi && <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.od_number}</td>}
+                    <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.od_number}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.od_item}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.material_code ?? '—'}</td>
-                    <td className={`px-2 py-1 text-[10px] text-slate-600 max-w-[176px] whitespace-normal break-words leading-tight align-top ${isRemoved ? 'line-through text-red-400' : ''}`} title={r.material_name ?? undefined}>{r.material_name ?? <span className="text-slate-300">—</span>}</td>
-                    <td className="px-2 py-1">
+                    {/* 1 dòng KHÔNG wrap, KHÔNG cắt chữ (sheet đã nới rộng để khỏi scroll ngang) */}
+                    <td className={`px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.material_name ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1" onPaste={e => handlePasteQtyAt(idx, e)}>
                       <QtyInput compact className="w-36" disabled={isRemoved || !canEdit || incomplete} value={cur} mat={mat} onChange={b => setDraft(prev => ({ ...prev, [r.id]: b }))} />
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
@@ -854,29 +769,17 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
                     </td>
                     <td className="px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">{r.batch ?? <span className="text-slate-300">—</span>}</td>
                     <td className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      {/* Nút sửa chi tiết dòng ĐÃ BỎ (user 22/07) — sửa trực tiếp trên bảng; field raw khác đi theo upload */}
                       {isRemoved ? (
                         <button type="button" className="text-[10px] text-sky-600 hover:underline !min-h-0 !min-w-0"
                           onClick={() => setRemoved(prev => { const n = new Set(prev); n.delete(r.id); return n })}>
                           Hoàn tác
                         </button>
-                      ) : (
-                        <span className="inline-flex items-center gap-0.5">
-                          <button type="button" className="p-1 rounded text-slate-300 hover:text-sky-600 hover:bg-sky-50 !min-h-0 !min-w-0"
-                            title="Sửa chi tiết dòng (mọi field raw)"
-                            onClick={() => {
-                              // GÁC MẤT DRAFT: mở form chi tiết sẽ đóng editor này → thay đổi đang gõ sẽ MẤT
-                              if (hasOps) { setErrMsg('Đang có thay đổi CHƯA LƯU — bấm Lưu (hoặc Huỷ) trước khi mở chi tiết dòng.'); return }
-                              onEditLine(r)
-                            }}>
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          {canDelete && !incomplete && (
-                            <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
-                              title="Xóa dòng này (áp khi Lưu)" onClick={() => setRemoved(prev => new Set(prev).add(r.id))}>
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          )}
-                        </span>
+                      ) : canDelete && !incomplete && (
+                        <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
+                          title="Xóa dòng này (áp khi Lưu)" onClick={() => setRemoved(prev => new Set(prev).add(r.id))}>
+                          <Trash2 className="h-3 w-3" />
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -886,32 +789,32 @@ function DoSapDoEditor({ odNumbers, canEdit, canCreate, canDelete, onClose, onEd
               {added.map((l, ai) => (
                 <tr key={l.key} className="border-t border-slate-100 bg-sky-50/60">
                   <td className="px-2 py-1 text-[9px] text-sky-500 font-semibold">+{ai + 1}</td>
-                  {multi && (
-                    <td className="px-1 py-1">
-                      <select className="h-6 w-full rounded border border-slate-200 px-1 text-[10px] font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        value={l.od_number} onChange={e => patchLine(l.key, { od_number: e.target.value, od_item: '' })}
-                        onBlur={() => { if (!l.od_item.trim()) patchLine(l.key, { od_item: nextItem(l.od_number) }) }}>
-                        {dos.map(d => <option key={d} value={d}>{d}</option>)}
-                      </select>
-                    </td>
-                  )}
+                  <td className="px-1 py-1">
+                    <select className="h-6 w-full rounded border border-slate-200 px-1 text-[10px] font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      value={l.od_number} onChange={e => patchLine(l.key, { od_number: e.target.value, od_item: '' })}
+                      onBlur={() => { if (!l.od_item.trim()) patchLine(l.key, { od_item: nextItem(l.od_number) }) }}>
+                      {dos.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </td>
                   <td className="px-1 py-1">
                     <input className="h-6 w-12 rounded border border-slate-200 px-1 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                       value={l.od_item} onChange={e => patchLine(l.key, { od_item: e.target.value })} />
                   </td>
                   <td className="px-1 py-1">
+                    {/* Dán block Excel [Mã hàng ⇥ Thùng ⇥ Hộp] nhiều dòng → tự sinh dòng + tra quy cách */}
                     <input className="h-6 w-24 rounded border border-slate-200 px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                       placeholder="Mã hàng…" value={l.material_code}
                       onChange={e => patchLine(l.key, { material_code: e.target.value, lookup: 'idle' })}
+                      onPaste={e => handlePasteAddedAt(l.key, e)}
                       onBlur={e => lookupMat(l.key, e.target.value)} />
                   </td>
-                  <td className="px-2 py-1 text-[10px] text-slate-600 whitespace-normal break-words leading-tight align-top">
+                  <td className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">
                     {l.lookup === 'looking' ? <span className="text-slate-400 italic">Đang tra…</span>
                       : l.lookup === 'notfound' ? <span className="text-amber-600">Không có trong Mã hàng — vẫn lưu được (raw)</span>
                       : l.lookup === 'error' ? <span className="text-red-600">Không tra được Mã hàng (mạng/quyền) — ô số lượng đang hiểu là SỐ BASE</span>
                       : l.material_name ?? <span className="text-slate-300">—</span>}
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-2 py-1" onPaste={e => handlePasteQtyAddedAt(ai, e)}>
                     <QtyInput compact className="w-36" value={l.qty_base} mat={l.mat} onChange={b => patchLine(l.key, { qty_base: b })} />
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap">
@@ -991,16 +894,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
   const [groupEditor, setGroupEditor] = useState<string[] | null>(null)   // sửa cả Số xe — danh sách group_code (bảng gom mọi DO cùng xe)
-  const [bulkOpen, setBulkOpen]   = useState(false)
-  const [bulkChk, setBulkChk]     = useState<{ deletable_count: number; blocked_count: number; blocked: { group_code: string; reason: string }[] } | null>(null)
-
-  // v2.2: preview XÓA (chặn dòng có chuyến đã quét)
-  useEffect(() => {
-    if (!bulkOpen) { setBulkChk(null); return }
-    apiClient.post('/external/khvc/bulk-delete?check=1', { ids: [...selected] })
-      .then(r => setBulkChk(r.data.data)).catch(() => setBulkChk(null))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bulkOpen])
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
@@ -1030,7 +923,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
-  const bulkDelete = useBulkDeleteKhvc()
   // Map id → group_code của mọi dòng ĐÃ render — cho nút Sửa multi (tick → Sửa cả Số xe)
   const idToGroup = useRef<Record<string, string>>({})
   useEffect(() => { for (const r of items) idToGroup.current[r.id] = r.group_code }, [items])
@@ -1063,7 +955,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   function toggleOne(id: string) {
     setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
-  function doBulkDelete() { bulkDelete.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setBulkOpen(false) } }) }
   // Sửa các dòng đã tick → mở bảng gom theo Số xe
   const selectedGroups = useMemo(
     () => [...new Set([...selected].map(id => idToGroup.current[id]).filter(Boolean))],
@@ -1086,8 +977,22 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar hiện/ẩn làm bảng nhảy layout */}
+          {selected.size > 0 && (canEdit || canCreate) && selectedGroups.length > 0 && (
+            <button type="button" onClick={() => setGroupEditor(selectedGroups)}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
+              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
+            </button>
+          )}
+          {selected.size > 0 && (
+            <button type="button" onClick={() => setSelected(new Set())}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors shrink-0">
+              <X className="h-3.5 w-3.5" /> Bỏ chọn ({selected.size})
+            </button>
+          )}
           {/* Thêm mới hoàn toàn = UPLOAD (KH điều vận), không thêm tay ngoài header — user chốt 21/07.
-              Thêm DO vào Số xe đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor. */}
+              Thêm DO vào Số xe đã có: tick dòng → Sửa → nút "+ Thêm dòng" trong editor.
+              Xóa dòng: CHỈ trong editor (user 22/07 bỏ Xóa bulk ngoài list). */}
         </div>
         <FilterBar defs={filterDefs} />
         {doSapWarn && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">{doSapWarn}</div>}
@@ -1098,28 +1003,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
         { label: 'Đang chọn', value: selected.size, accent: selected.size > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
-
-      {selected.size > 0 && (
-        <div className="shrink-0 flex items-center gap-2 bg-sky-50 border-b border-sky-200 px-3 py-1.5 text-xs">
-          <span className="font-semibold text-sky-800">Đã chọn {selected.size}</span>
-          {(canEdit || canCreate) && selectedGroups.length > 0 && (
-            <button type="button" onClick={() => setGroupEditor(selectedGroups)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-sky-300 text-sky-700 hover:bg-sky-100 transition-colors">
-              <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
-            </button>
-          )}
-          {canDelete && (
-            <button type="button" onClick={() => setBulkOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-              <Trash2 className="h-3.5 w-3.5" /> Xóa {selected.size} dòng
-            </button>
-          )}
-          <button type="button" onClick={() => setSelected(new Set())}
-            className="ml-auto inline-flex items-center gap-1 text-slate-500 hover:text-slate-700">
-            <X className="h-3.5 w-3.5" /> Bỏ chọn
-          </button>
-        </div>
-      )}
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!hasDate ? (
@@ -1164,7 +1047,12 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                       <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600 cursor-pointer align-middle" checked={isSel} onChange={() => toggleOne(r.id)} />
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] font-mono font-semibold whitespace-nowrap`}>{r.group_code || <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>{r.do_no || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] font-mono whitespace-nowrap`}>
+                      {r.do_no || <span className="text-slate-300">—</span>}
+                      {r.manual_edited_at && (
+                        <span className="ml-1 text-amber-600 font-sans" title={`Đã sửa tay ${formatTimestampDate(r.manual_edited_at, true)} — upload lại KH điều vận sẽ đè theo file`}>✎</span>
+                      )}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.warehouse_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.npp ?? undefined}>{r.npp || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
@@ -1210,7 +1098,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
       </div>
      </div>
 
-      {/* FormSheet Sửa cả Số xe — bảng gom mọi DO cùng group_code */}
+      {/* FormSheet Sửa cả Số xe — bảng gom mọi DO cùng group_code.
+          Xóa dòng: CHỈ trong editor này (bỏ Xóa bulk ngoài list — user 22/07). */}
       {groupEditor && (
         <KhvcGroupEditor
           groupCodes={groupEditor}
@@ -1220,32 +1109,6 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
         />
       )}
-
-      <Dialog open={bulkOpen} onOpenChange={o => { if (!o) setBulkOpen(false) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-sm">Xóa {selected.size} dòng đã chọn?</DialogTitle></DialogHeader>
-          {bulkChk ? (
-            <div className="text-xs text-slate-600 space-y-1.5">
-              <p><b className="text-red-600">{bulkChk.deletable_count}</b> dòng sẽ xóa.
-                {bulkChk.blocked_count > 0 && <> <b className="text-amber-700">{bulkChk.blocked_count}</b> dòng KHÔNG xóa được (chuyến đã quét) — được giữ lại.</>}</p>
-              {bulkChk.blocked_count > 0 && (
-                <div className="max-h-24 overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-                  {bulkChk.blocked.slice(0, 20).map((b, i) => <div key={i}>• Số xe {b.group_code}</div>)}
-                  {bulkChk.blocked.length > 20 && <div>…và {bulkChk.blocked.length - 20} dòng nữa</div>}
-                </div>
-              )}
-              <p className="text-slate-400">Thao tác không thể hoàn tác.</p>
-            </div>
-          ) : <p className="text-xs text-slate-500">Đang kiểm tra dòng nào xóa được…</p>}
-          {bulkDelete.isError && <p className="text-xs text-red-500">{apiError(bulkDelete.error, 'Không xóa được các dòng đã chọn.')}</p>}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkDelete.isPending}>Huỷ</Button>
-            <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={doBulkDelete} disabled={bulkDelete.isPending || !bulkChk || bulkChk.deletable_count === 0}>
-              {bulkDelete.isPending ? 'Đang xóa…' : `Xóa ${bulkChk?.deletable_count ?? selected.size} dòng`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
@@ -1331,6 +1194,85 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   const setCell = (id: string, k: (typeof KHVC_FIELDS)[number], v: string) =>
     setDraft(prev => ({ ...prev, [id]: { ...prev[id], [k]: v } }))
 
+  // ── Paste từ Excel (chuẩn app — mẫu form Xuất kho): dán block nhiều dòng × nhiều cột
+  // vào Ô BẤT KỲ → điền sang phải theo thứ tự cột bảng + xuống dưới theo thứ tự dòng ──
+  function pasteDate(v: string): string {
+    const t = v.trim()
+    const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/)   // Excel VN: dd/mm/yyyy
+    if (m) return `${m[3].length === 2 ? `20${m[3]}` : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+    return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : ''
+  }
+  const pasteVal = (f: (typeof KHVC_FIELDS)[number], v: string) => f === 'export_date' ? pasteDate(v) : v.trim()
+  function handlePasteAt(startIdx: number, fieldIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return   // dán 1 ô đơn lẻ → để input tự xử
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    setDraft(prev => {
+      const next = { ...prev }
+      lines.forEach((line, off) => {
+        const r = rows[startIdx + off]
+        if (!r || removed.has(r.id)) return
+        const cur = { ...(next[r.id] ?? khvcDraftOf(r)) }
+        line.split('\t').forEach((v, c) => {
+          const f = KHVC_FIELDS[fieldIdx + c]
+          if (f) cur[f] = pasteVal(f, v)
+        })
+        next[r.id] = cur
+      })
+      return next
+    })
+  }
+  // Dòng thêm mới: dán vào ô DO = block [DO ⇥ Kho ⇥ NPP ⇥ Loại xe ⇥ ĐVVT ⇥ Ưu tiên ⇥ CS ⇥ Ngày xuất ⇥ Ghi chú]
+  // → điền dòng này + TỰ SINH thêm dòng cho phần dư (prefill theo xe đang chọn)
+  function handlePasteAddedDoAt(startKey: string, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    setAdded(prev => {
+      const work = [...prev]
+      const startPos = work.findIndex(l => l.key === startKey)
+      if (startPos < 0) return prev
+      const g = work[startPos].group_code
+      const base = rows.find(r => r.group_code === g)
+      lines.forEach((line, off) => {
+        let pos = startPos + off
+        if (pos >= work.length) {
+          work.push({ key: crypto.randomUUID(), group_code: g, do_no: '',
+            warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
+            priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '' })
+          pos = work.length - 1
+        }
+        const cols = line.split('\t')
+        const p: Partial<KhvcNewLine> = { do_no: (cols[0] ?? '').trim() }
+        cols.slice(1).forEach((v, c) => {
+          const f = KHVC_FIELDS[c]
+          if (f && v.trim() !== '') p[f] = pasteVal(f, v)
+        })
+        work[pos] = { ...work[pos], ...p }
+      })
+      return work
+    })
+  }
+  // Dòng thêm mới: dán vào ô field bất kỳ → điền sang phải + xuống các dòng thêm bên dưới
+  function handlePasteAddedFieldAt(startPos: number, fieldIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return
+    e.preventDefault()
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '')
+    setAdded(prev => prev.map((l, i) => {
+      const off = i - startPos
+      if (off < 0 || off >= lines.length) return l
+      const p: Partial<KhvcNewLine> = {}
+      lines[off].split('\t').forEach((v, c) => {
+        const f = KHVC_FIELDS[fieldIdx + c]
+        if (f) p[f] = pasteVal(f, v)
+      })
+      return { ...l, ...p }
+    }))
+  }
+
   async function save() {
     if (!hasOps) return onClose()
     // So trùng với TOÀN BỘ dòng (kể cả dòng đánh dấu xóa — xóa có thể bị BE chặn khi chuyến đã quét)
@@ -1376,7 +1318,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   return (
     <FormSheet
       open onClose={onClose}
-      widthClass="sm:max-w-5xl"
+      widthClass="sm:w-[96vw] sm:max-w-[1280px]"
       title={multi ? <>Sửa {groups.length} Số xe</> : <>Sửa Số xe: <span className="font-mono">{groups[0]}</span></>}
       description={isLoading
         ? 'Đang tải các DO của xe…'
@@ -1414,7 +1356,8 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             <thead>
               <tr>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-7">#</th>
-                {multi && <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">Số xe</th>}
+                {/* Cột Số xe LUÔN hiện (user 22/07: single/multi hiển thị giống nhau) */}
+                <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">Số xe</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-24">DO</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-20">Kho</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-2 py-1.5 text-[9px] font-medium text-slate-500 text-left w-32">NPP</th>
@@ -1436,16 +1379,17 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                 return (
                   <tr key={r.id} className={`border-t ${groupStart ? 'border-slate-300' : 'border-slate-100'} ${isRemoved ? 'bg-red-50/70' : isChanged ? 'bg-amber-50/60' : ''}`}>
                     <td className="px-2 py-1 text-[9px] text-slate-400 tabular-nums">{idx + 1}</td>
-                    {multi && <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>}
+                    <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : 'font-semibold'}`}>{r.do_no}</td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.warehouse_code} onChange={e => setCell(r.id, 'warehouse_code', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.npp} onChange={e => setCell(r.id, 'npp', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.veh_type} onChange={e => setCell(r.id, 'veh_type', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.dvvt} onChange={e => setCell(r.id, 'dvvt', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.priority} onChange={e => setCell(r.id, 'priority', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.cs} onChange={e => setCell(r.id, 'cs', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input type="date" className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.export_date} onChange={e => setCell(r.id, 'export_date', e.target.value)} /></td>
-                    <td className="px-1 py-1"><input className={inputCls} disabled={isRemoved || !canEdit || incomplete} value={d.note} onChange={e => setCell(r.id, 'note', e.target.value)} /></td>
+                    {/* 8 field theo đúng thứ tự cột — dán block Excel vào ô bất kỳ điền sang phải + xuống dưới */}
+                    {KHVC_FIELDS.map((fld, fi) => (
+                      <td key={fld} className="px-1 py-1">
+                        <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
+                          disabled={isRemoved || !canEdit || incomplete}
+                          value={d[fld]} onChange={e => setCell(r.id, fld, e.target.value)}
+                          onPaste={e => handlePasteAt(idx, fi, e)} />
+                      </td>
+                    ))}
                     <td className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                       {isRemoved ? (
                         <button type="button" className="text-[10px] text-sky-600 hover:underline !min-h-0 !min-w-0"
@@ -1465,33 +1409,35 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
               {added.map((l, ai) => (
                 <tr key={l.key} className="border-t border-slate-100 bg-sky-50/60">
                   <td className="px-2 py-1 text-[9px] text-sky-500 font-semibold">+{ai + 1}</td>
-                  {multi && (
-                    <td className="px-1 py-1">
-                      <select className={`${inputCls} font-mono`} value={l.group_code}
-                        onChange={e => {
-                          // Đổi Số xe → NẠP LẠI prefill (kho/loại xe/ĐVVT/CS/ngày xuất) theo xe MỚI —
-                          // không thì dòng mới mang kho/ngày của xe cũ (sai lệch chéo xe)
-                          const g = e.target.value
-                          const base = rows.find(r => r.group_code === g)
-                          patchLine(l.key, {
-                            group_code: g,
-                            warehouse_code: s(base?.warehouse_code), veh_type: s(base?.veh_type),
-                            dvvt: s(base?.dvvt), cs: s(base?.cs), export_date: s(base?.export_date),
-                          })
-                        }}>
-                        {groups.map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
+                  <td className="px-1 py-1">
+                    <select className={`${inputCls} font-mono`} value={l.group_code}
+                      onChange={e => {
+                        // Đổi Số xe → NẠP LẠI prefill (kho/loại xe/ĐVVT/CS/ngày xuất) theo xe MỚI —
+                        // không thì dòng mới mang kho/ngày của xe cũ (sai lệch chéo xe)
+                        const g = e.target.value
+                        const base = rows.find(r => r.group_code === g)
+                        patchLine(l.key, {
+                          group_code: g,
+                          warehouse_code: s(base?.warehouse_code), veh_type: s(base?.veh_type),
+                          dvvt: s(base?.dvvt), cs: s(base?.cs), export_date: s(base?.export_date),
+                        })
+                      }}>
+                      {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-1 py-1">
+                    {/* Dán block Excel [DO ⇥ Kho ⇥ NPP ⇥ Loại xe ⇥ ĐVVT ⇥ Ưu tiên ⇥ CS ⇥ Ngày xuất ⇥ Ghi chú] → tự sinh dòng */}
+                    <input className={`${inputCls} font-mono`} placeholder="Số DO…" value={l.do_no}
+                      onChange={e => patchLine(l.key, { do_no: e.target.value })}
+                      onPaste={e => handlePasteAddedDoAt(l.key, e)} />
+                  </td>
+                  {KHVC_FIELDS.map((fld, fi) => (
+                    <td key={fld} className="px-1 py-1">
+                      <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
+                        value={l[fld]} onChange={e => patchLine(l.key, { [fld]: e.target.value })}
+                        onPaste={e => handlePasteAddedFieldAt(ai, fi, e)} />
                     </td>
-                  )}
-                  <td className="px-1 py-1"><input className={`${inputCls} font-mono`} placeholder="Số DO…" value={l.do_no} onChange={e => patchLine(l.key, { do_no: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.warehouse_code} onChange={e => patchLine(l.key, { warehouse_code: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.npp} onChange={e => patchLine(l.key, { npp: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.veh_type} onChange={e => patchLine(l.key, { veh_type: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.dvvt} onChange={e => patchLine(l.key, { dvvt: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.priority} onChange={e => patchLine(l.key, { priority: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.cs} onChange={e => patchLine(l.key, { cs: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input type="date" className={inputCls} value={l.export_date} onChange={e => patchLine(l.key, { export_date: e.target.value })} /></td>
-                  <td className="px-1 py-1"><input className={inputCls} value={l.note} onChange={e => patchLine(l.key, { note: e.target.value })} /></td>
+                  ))}
                   <td className="px-1 py-1" onClick={e => e.stopPropagation()}>
                     <button type="button" className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 !min-h-0 !min-w-0"
                       title="Bỏ dòng thêm mới" onClick={() => setAdded(prev => prev.filter(x => x.key !== l.key))}>

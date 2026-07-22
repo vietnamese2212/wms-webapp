@@ -1753,6 +1753,7 @@ export interface DoSapRow {
   note_delivery: string | null; note_invoice: string | null; shipping_point: string | null; license_plate: string | null
   source: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   sync_status?: string | null; last_synced_at?: string | null
+  manual_edited_at?: string | null   // dòng bị SỬA TAY (PUT/POST) — upload đè lại từ SAP/Excel sẽ gỡ; FE hiện ✎ sau số DO
   used?: boolean; unit_mismatch?: boolean   // enrich từ BE list (đã sinh chuyến? / lệch đơn vị vs Material)
   in_plan?: boolean; plan_group_code?: string | null; plan_group_count?: number; plan_export_date?: string | null   // kế hoạch VC gắn với DO
   mat_units?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null   // quy cách mã (Material master) — tách Thùng+Hộp khi sửa qty_base
@@ -1818,6 +1819,7 @@ export interface KhvcRow {
   priority: string | null; cs: string | null; note: string | null
   export_date: string | null; source: string | null; sync_status: string | null
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
+  manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO
   materialized?: boolean; gdo_status?: string | null; do_ready?: boolean   // enrich từ BE list
 }
 export function useKhvcLines(params: Record<string, string | number | undefined>, enabled = true) {

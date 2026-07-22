@@ -195,7 +195,7 @@ export async function createDoSap(req: Request, res: Response) {
     const { data: dup } = await supabase.from('erp_outbound_orders').select('id')
       .eq('od_number', fields.od_number).eq('od_item', fields.od_item).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng DO ${fields.od_number} / Item ${fields.od_item}`, 409)
-    const row = { id: randomUUID(), ...fields, source: fields.source ?? 'MANUAL', uploaded_by: req.user?.name ?? null, updated_at: now() }
+    const row = { id: randomUUID(), ...fields, source: fields.source ?? 'MANUAL', uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() }
     const { data, error } = await supabase.from('erp_outbound_orders').insert(row).select().single()
     if (error) throw new Error(error.message)
     return ok(res, data, 201)
@@ -220,7 +220,7 @@ export async function updateDoSap(req: Request, res: Response) {
       }
     }
     const { data, error } = await supabase.from('erp_outbound_orders')
-      .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now() })
+      .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)

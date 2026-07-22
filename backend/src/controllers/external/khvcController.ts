@@ -167,7 +167,7 @@ export async function createKhvc(req: Request, res: Response) {
       id: randomUUID(), ...fields,
       warehouse_code: fields.warehouse_code ?? String(fields.group_code).split('_')[0] ?? null,
       source: fields.source ?? 'MANUAL', sync_status: fields.sync_status ?? 'ACTIVE',
-      uploaded_by: req.user?.name ?? null, updated_at: now(),
+      uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now(),
     }
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
     if (error) throw new Error(error.message)
@@ -191,7 +191,7 @@ export async function updateKhvc(req: Request, res: Response) {
       }
     }
     const { data, error } = await supabase.from('khvc_lines')
-      .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now() })
+      .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)

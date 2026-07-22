@@ -2617,7 +2617,8 @@ export async function uploadVl06o(req: Request, res: Response) {
       const prior = priorByKey.get(key)
       if (!prior) { toWrite.push({ id: randomUUID(), ...rec }); inserted++; continue }
       if (prior.hash === bizHash(rec)) { noop++; continue }   // NO-OP: giữ id/created_at/updated_at cũ (không ghi)
-      toWrite.push({ id: prior.id, ...rec }); updated++        // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload)
+      // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload); SAP/Excel đè lại → gỡ cờ sửa tay
+      toWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); updated++
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
 
@@ -2732,7 +2733,7 @@ export async function uploadKhvc(req: Request, res: Response) {
       npp: k.npp || null, veh_type: k.veh_type || null, dvvt: k.dvvt || null,
       priority: k.priority || null, cs: k.cs || null, note: k.note || null,
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
-      raw: k.raw, uploaded_by: khActor, updated_at: khNow,
+      raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))
     for (let i = 0; i < khvcRecords.length; i += 500) {
       const { error } = await supabase.from('khvc_lines').upsert(khvcRecords.slice(i, i + 500), { onConflict: 'group_code,do_no' })

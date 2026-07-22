@@ -10,6 +10,21 @@
 --
 -- Quy ước quy đổi (mirror qtyEntryDecimal): mã CÓ entry_unit + units_per_carton>0 → chia hệ số;
 -- mã KHÔNG entry (KG/EA) → giữ nguyên (chia 1). Mỗi dòng bảng = 1 mã nên chia per-row rồi sum = đúng.
+--
+-- ⚠️ PHỤ THUỘC: cần cột Material.entry_unit + units_per_carton (base-unit). File này thuộc BỘ CUTOVER
+-- base-unit — PHẢI apply SAU 20260719_material_base_unit.sql (+ data flip run-flip.mjs). KHÔNG apply
+-- đứng một mình lên production CHƯA chuyển base-unit: (a) cột chưa tồn tại → lỗi; (b) production đang là
+-- THÙNG THẬP PHÂN nên RPC raw-sum CŨ mới ĐÚNG cho dữ liệu hiện tại — chỉ áp bản chia này CÙNG lúc flip data.
+-- Guard dưới đây BÁO LỖI RÕ (thay cho "42703 column does not exist") nếu chạy thiếu cột.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'Material' and column_name = 'entry_unit'
+  ) then
+    raise exception 'Migration 20260722 phu thuoc Material.entry_unit/units_per_carton — apply 20260719_material_base_unit.sql + data flip TRUOC, hoac BO QUA file nay neu production chua chuyen base-unit (RPC raw-sum cu van dung cho du lieu thung-thap-phan hien tai).';
+  end if;
+end $$;
 
 CREATE OR REPLACE FUNCTION public.dashboard_stats(p_warehouse_ids text[] DEFAULT NULL::text[], p_categories text[] DEFAULT NULL::text[], p_today date DEFAULT NULL::date)
  RETURNS jsonb

@@ -29,7 +29,7 @@ import { omniMatch } from '@/utils/omniSearch'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtyFromEntryBase, hasEntry, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -115,10 +115,10 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
   { id: 'plate',     label: 'Biển số xe',    w: 110 },
-  { id: 'cartons',   label: 'Tổng thùng',    w: 90,  align: 'right' },
-  { id: 'cartons_qr', label: 'Tổng (QR)',    w: 88,  align: 'right' },
-  { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 88, align: 'right' },
-  { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 92,  align: 'right' },
+  { id: 'cartons',   label: 'Tổng thùng',    w: 118, align: 'right' },
+  { id: 'cartons_qr', label: 'Tổng (QR)',    w: 118, align: 'right' },
+  { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 118, align: 'right' },
+  { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 118, align: 'right' },
   { id: 'pallets',   label: 'Pallet',        w: 72,  align: 'right' },
   { id: 'warehouse', label: 'Kho xuất',      w: 110 },
   { id: 'exptype',   label: 'Loại xe',       w: 100 },
@@ -150,6 +150,24 @@ function useIsDesktop() {
   return d
 }
 
+// Hiển thị TỔNG số lượng 1 chuyến theo ĐƠN VỊ KHAI BÁO (base-unit, user 22/07):
+// - Đơn MỌI mã CÙNG đơn vị (qty_unit != null) → "N thùng + M base" chính xác (vd 146 thùng + 4 chai).
+// - Nhiều mã khác đơn vị (chai+hộp+kg) → không cộng được → thùng QUY ĐỔI, format vi-VN (dấu phẩy thập phân
+//   để KHÔNG đọc nhầm "146.083" thành 146 nghìn) + tooltip.
+function GdoQty({ base, decimal, unit, zeroDash }: {
+  base?: number; decimal?: number; unit?: GDO['qty_unit']; zeroDash?: boolean
+}) {
+  const d = Number(decimal ?? 0)
+  if (zeroDash && !d) return <span className="text-slate-300">—</span>
+  if (unit) { const s = qtyLabel(Number(base ?? 0), unit); return <span className="text-[10px] font-semibold tabular-nums" title={s}>{s}</span> }
+  return (
+    <span title="Thùng quy đổi (đơn nhiều mã khác đơn vị)">
+      <span className="text-[10px] font-semibold tabular-nums">{d.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
+      <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+    </span>
+  )
+}
+
 // ─── Pane phải + Live Tiles (Manhattan Insight) — chuẩn list→detail như Inbound ───
 function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
   const navigate = useNavigate()
@@ -157,6 +175,17 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
   const npp = gdo.distributor_names?.join(', ') || '—'
   const cartons   = gdo.total_cartons ?? 0
   const noqr      = gdo.total_cartons_noqr ?? 0
+  const unit      = gdo.qty_unit
+  // Tile Thùng: đơn CÙNG đơn vị → số lớn = ĐVT chính (thùng nếu có entry, ngược lại base) + dòng nhỏ phần lẻ;
+  // nhiều mã khác đơn vị → thùng quy đổi (format vi-VN).
+  const tileSplit = unit ? qtySplit(gdo.total_cartons_base ?? 0, unit) : null
+  const tileBig   = tileSplit
+    ? (hasEntry(unit) ? tileSplit.entry : tileSplit.base).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+    : cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+  const tileLbl   = tileSplit
+    ? (hasEntry(unit) ? unitLabel(unit!.entry_unit) + (tileSplit.base ? ` +${tileSplit.base} ${unitLabel(unit!.base_unit)}` : '') : unitLabel(unit!.base_unit))
+    : 'Thùng quy đổi'
+  const noqrText  = unit ? qtyLabel(gdo.total_noqr_base ?? 0, unit) : `${noqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`
   const Row = ({ k, v }: { k: string; v: string }) => (
     <div className="flex justify-between gap-2 text-[11px]"><span className="text-slate-400 shrink-0">{k}</span><span className="text-slate-700 text-right truncate">{v}</span></div>
   )
@@ -175,8 +204,8 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
         <div className="grid grid-cols-2 gap-2">
           {/* Số dài (thùng quy đổi 3 số lẻ) tràn tile w-56/2 → gọn 1 số lẻ + co cỡ chữ khi quá dài (user 22/07) */}
           <div className="rounded-lg bg-sky-600 text-white px-1.5 py-2.5 text-center overflow-hidden">
-            <div className={`${cartons >= 100000 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</div>
-            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thùng</div>
+            <div className={`${tileBig.length >= 6 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{tileBig}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide truncate">{tileLbl}</div>
           </div>
           <div className="rounded-lg bg-sky-700 text-white px-1.5 py-2.5 text-center overflow-hidden">
             <div className="text-xl font-bold leading-none tabular-nums">{fmtPallets(gdo.total_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</div>
@@ -189,7 +218,7 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
           <Row k="Loại kho" v={gdo.warehouse_type ?? '—'} />
           <Row k="ĐVVT" v={gdo.dvvt ?? '—'} />
           <Row k="Loại xe" v={gdo.export_type ?? '—'} />
-          {noqr > 0 && <Row k="Tổng (k QR)" v={noqr.toLocaleString('vi-VN')} />}
+          {noqr > 0 && <Row k="Tổng (k QR)" v={noqrText} />}
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 space-y-1">
@@ -1210,35 +1239,20 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
           : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons ?? 0}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+        <GdoQty base={gdo.total_cartons_base} decimal={gdo.total_cartons} unit={gdo.qty_unit} />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        {((gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)) > 0 ? (
-          <>
-            <span className="text-[10px] font-semibold tabular-nums">{(gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)}</span>
-            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-          </>
-        ) : <span className="text-slate-300">—</span>}
+        <GdoQty base={(gdo.total_cartons_base ?? 0) - (gdo.total_noqr_base ?? 0)}
+                decimal={(gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)} unit={gdo.qty_unit} zeroDash />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        {gdo.total_cartons_noqr ? (
-          <>
-            <span className="text-[10px] font-semibold tabular-nums">{gdo.total_cartons_noqr}</span>
-            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-          </>
-        ) : <span className="text-slate-300">—</span>}
+        <GdoQty base={gdo.total_noqr_base} decimal={gdo.total_cartons_noqr} unit={gdo.qty_unit} zeroDash />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        {gdo.total_loose ? (
-          <>
-            <span className="text-[10px] font-semibold tabular-nums">{gdo.total_loose}</span>
-            <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
-          </>
-        ) : <span className="text-slate-300">—</span>}
+        <GdoQty base={gdo.total_loose_base} decimal={gdo.total_loose} unit={gdo.qty_unit} zeroDash />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{fmtPallets(gdo.total_pallets)}</span>
+        <span className="text-[10px] font-semibold tabular-nums">{fmtPallets(gdo.total_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}</span>
         <span className="text-[9px] text-slate-400 ml-0.5">pl</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

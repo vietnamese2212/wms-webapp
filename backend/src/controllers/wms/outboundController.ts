@@ -434,6 +434,20 @@ export async function listGDOs(req: Request, res: Response) {
         breakdownMap.set(key, cur)
       }
 
+      // BASE UNIT hiển thị (user 22/07): FE cần hiện "thùng + base" (vd 146 thùng + 4 chai) theo đơn vị
+      // KHAI BÁO, không chỉ decimal thùng ("146.083" bị đọc nhầm 146k ở VN). Nếu MỌI item cùng
+      // (base_unit,entry_unit,units_per_carton) → gửi tổng BASE thô + qty_unit để FE qtySplit ra thùng+base;
+      // nhiều mã khác đơn vị (chai+hộp+kg) → qty_unit=null, FE giữ decimal thùng quy đổi (format vi-VN).
+      const unitKeys = new Set(gdoItems.map((i: any) => {
+        const m = i.material
+        return m ? `${m.base_unit ?? ''}|${m.entry_unit ?? ''}|${m.units_per_carton ?? ''}` : 'null'
+      }))
+      const uniformMat = (unitKeys.size === 1 && !unitKeys.has('null'))
+        ? (gdoItems.find((i: any) => i.material)?.material ?? null) : null
+      const qty_unit = uniformMat
+        ? { base_unit: uniformMat.base_unit ?? null, entry_unit: uniformMat.entry_unit ?? null, units_per_carton: uniformMat.units_per_carton ?? null }
+        : null
+
       return {
         ...g,
         do_count:          gdoDOs.length,
@@ -445,6 +459,11 @@ export async function listGDOs(req: Request, res: Response) {
         total_cartons_noqr: noqrItems.reduce((s: number, i: any) => s + qEntry(i, i.cartons_ordered),  0),
         total_pallets:      gdoItems.reduce((s: number, i: any) => s + palletsOf(i), 0),
         total_loose:        gdoItems.reduce((s: number, i: any) => s + qEntry(i, i.loose_picking), 0),
+        // Tổng BASE thô (chỉ ý nghĩa khi qty_unit != null) → FE tách "thùng + base" theo đơn vị khai báo.
+        total_cartons_base: gdoItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered ?? 0), 0),
+        total_noqr_base:    noqrItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered ?? 0), 0),
+        total_loose_base:   gdoItems.reduce((s: number, i: any) => s + Number(i.loose_picking ?? 0), 0),
+        qty_unit,
         item_breakdown:    [...breakdownMap.values()],
       }
     }))

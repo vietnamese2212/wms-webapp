@@ -693,6 +693,11 @@ export interface GDO {
   total_cartons_noqr?: number
   total_loose?:     number
   total_pallets?:   number
+  // BASE UNIT: tổng base thô + đơn vị khai báo (chỉ khi mọi mã CÙNG đơn vị) → hiện "thùng + base"
+  total_cartons_base?: number
+  total_noqr_base?:    number
+  total_loose_base?:   number
+  qty_unit?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
   item_breakdown?:  GDOItemBreakdown[]
   // Workflow fields
   assigned_at?:        string | null

@@ -1,6 +1,6 @@
 ---
 name: check-app
-description: SKILL DUY NHẤT để "kiểm tra app / rà lỗi / test / tìm chỗ sai / cải tiến" ở phạm vi rộng — thay việc user ngồi test từng case. Bao TRỌN mọi lớp: (1) chức năng + đúng nghiệp vụ (tự tính lại độc lập làm chuẩn, cross-check output API/UI/DB), (2) UI/hiển thị (Playwright desktop+mobile, định dạng số/đơn vị, responsive, console), (3) phân quyền (per-role thật), (4) đồng thời/tải/toàn vẹn (SIM harness API thật, bất biến, phân loại vi phạm ảo/thật), (5) hiệu năng (đọc-dưới-tải-ghi, EXPLAIN, index/RPC), (6) edge-case + realtime 4-case, (7) PHÁN ĐOÁN nghiệp vụ & UX (đọc output phản biện theo luật domain, chỉ ra chỗ "trông sai/khó dùng"), (8) fix tối thiểu + đo lại trước/sau + (nếu cần) cutover production. KHÔNG đụng dữ liệu thật (tự seed SIM có tag, dọn 0 sót). Chọn phần theo quy mô yêu cầu: rà nhanh 1 màn → vài phần; "test kỹ toàn app" → chạy đủ.
+description: SKILL DUY NHẤT để "kiểm tra app / rà lỗi / test / tìm chỗ sai / cải tiến" ở phạm vi rộng — thay việc user ngồi test từng case. Bao TRỌN mọi lớp: (1) chức năng + đúng nghiệp vụ (tự tính lại độc lập làm chuẩn, cross-check output API/UI/DB), (2) UI/hiển thị (Playwright desktop+mobile, định dạng số/đơn vị, responsive, console), (3) phân quyền (per-role thật), (4) đồng thời/tải/toàn vẹn (SIM harness API thật, bất biến, phân loại vi phạm ảo/thật), (5) hiệu năng (đọc-dưới-tải-ghi, EXPLAIN, index/RPC), (6) edge-case + realtime 4-case, (7) PHÁN ĐOÁN nghiệp vụ & UX (đọc output phản biện theo luật domain, chỉ ra chỗ "trông sai/khó dùng"), (8) fix tối thiểu + đo lại trước/sau + (nếu cần) cutover production. KHÔNG đụng dữ liệu thật (tự seed SIM có tag, dọn 0 sót). Chọn phần theo quy mô yêu cầu: rà nhanh 1 màn → vài phần; "test kỹ toàn app" → chạy đủ. CHẠY TỰ CHỦ (AFK): user không ngồi click — KHÔNG hỏi/không bắt user click giữa chừng, tự làm mọi thao tác (kể cả Playwright), lựa chọn nhỏ chọn default + ghi lại, việc cần duyệt (production) dồn vào đề xuất; kết thúc = báo cáo + đề xuất ĐẦY ĐỦ, dứt điểm.
 ---
 
 # Check App — kiểm tra toàn diện, tìm lỗi, cải tiến (1 skill duy nhất)
@@ -17,6 +17,15 @@ description: SKILL DUY NHẤT để "kiểm tra app / rà lỗi / test / tìm ch
 2. **ORACLE = TỰ TÍNH LẠI ĐỘC LẬP.** Muốn biết "kết quả đúng chưa" mà không cần user: **tính lại giá trị kỳ vọng từ dữ liệu thô/luật domain rồi diff với cái app trả/hiện** (vd tự tính `qtySplit`, `%Date` theo `computePctDate`, thứ tự FEFO, tổng cross-mã chia hệ số, tồn=imported−Σscan). Lệch = lỗi. Đây là cách "test từng case" không cần người ngồi so.
 3. **PHÁN ĐOÁN chủ động, không chỉ pass/fail máy móc.** Đọc output bằng con mắt phản biện + luật trong CLAUDE.md/memory: "số này có vô lý không? đơn vị đúng không? luồng này có khó dùng không?". Nghi ngờ dù test "xanh" → đào tiếp. Đây là phần nghiệp vụ+UX.
 4. **Không lộ mật khẩu trong tool call** (đọc creds trong tiến trình). **Dọn 0 sót + verify độc lập.** Quy mô khớp yêu cầu; in-flight ~15–25, đừng bắn tải lớn lúc user thật đang dùng.
+
+## Chế độ TỰ CHỦ (AFK) — MẶC ĐỊNH khi user gọi test/check app
+User **AFK, không ngồi click**. Chạy TRỌN VẸN từ đầu tới cuối KHÔNG dừng hỏi, KHÔNG bắt user click:
+- **Tôi tự làm MỌI thao tác** (setup · seed SIM · click/điền/quét qua Playwright · gọi API · verify · dọn). Người dùng không phải chạm gì.
+- **KHÔNG dùng AskUserQuestion / không hỏi giữa chừng.** Gặp lựa chọn nhỏ (tham số/thứ tự/phạm vi) → chọn **default hợp lý + GHI vào báo cáo**, không chặn.
+- Gặp việc **KHÔNG được tự làm** (ghi production · thao tác phá hủy · ngoài phạm vi an toàn staging/SIM) → **KHÔNG làm âm thầm**; dồn thành **ĐỀ XUẤT** cuối báo cáo để user duyệt sau. (Chế độ tự chủ KHÔNG nới quyền production — vẫn "chỉ khi user nói RÕ".)
+- Chạy dài thì dùng background task/subagent, **tự chờ tự tiếp**, không nhờ user thúc.
+- **Chỉ dừng sớm** nếu: nguy cơ đụng data thật/production ngoài ý muốn, hoặc bế tắc kỹ thuật không tự qua — và nêu NGAY ĐẦU báo cáo lý do. (An toàn > tự chủ.)
+- **Kết thúc = BÁO CÁO ĐẦY ĐỦ + ĐỀ XUẤT** (bắt buộc, xem Phần 8), dứt điểm, không hỏi lại: đã kiểm gì (phần chạy/skip + quy mô + bằng chứng số/ảnh) · lỗi THẬT (phân loại ảo/thật + mức độ + cách tái hiện) · nghi ngờ nghiệp vụ/UX · đã fix + đo trước/sau + dọn 0 sót · **đề xuất**: fix chưa làm (ưu tiên), việc cần user duyệt (production/quyết định nghiệp vụ), follow-up.
 
 ## Công cụ
 pg trực tiếp (`scratchpad/node_modules/pg`) cho seed/cleanup/EXPLAIN/tính-lại; Postgres MCP đọc staging; **Vercel Preview dev** làm API tải; Playwright cho UI thật (login creds `frontend/.env`). `qty_semantics:'base'` trong BODY mọi write; prefix WMS `/api/wms`, TMS `/api/tms`.

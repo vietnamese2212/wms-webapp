@@ -561,25 +561,26 @@ export async function previewPlan(req: Request, res: Response) {
           : 'Dồn date ngắn vào vị trí chứa date dài (FIFO)'
         const priority = useDate ? 3 : 4
 
-        // Nhóm nguồn tiêu thụ từ XA đích nhất trước (si từ cuối lên — ĐÃ thử "nhóm liền kề trước"
-        // 18/07: kết quả TỆ hơn, dư 21 dòng vs 7 — đừng đổi lại). Trong nhóm bốc pallet có date
-        // GẦN đích nhất trước (FEFO/FIFO: date dài trước; LIFO: date ngắn trước) — bốc date xa trước
-        // làm ĐẢO tầng date (date ngắn leo lên neo dài, date dài kẹt lại → vòng sau phải xếp lại).
-        let ti = 0, si = anchors.length - 1
-        while (si > ti) {
-          const tgt = anchors[ti], src = anchors[si]
-          if (src.movable.length === 0) { si--; continue }   // nguồn chỉ còn pallet mỏ neo — bỏ qua
-          const free = freeByLoc.get(tgt.loc.id) ?? 0
-          if (free <= 0) { ti++; continue }
+        // GOM chỉ có ích khi GIẢI PHÓNG được vị trí NGUỒN (user 23/07: "đích 31, đến 33 rồi,
+        // dồn cũng chẳng giải quyết gì"). Đích = anchor còn nhận được hàng đầu tiên (bỏ khu
+        // "không đưa hàng vào" — không bao giờ làm đích). Mỗi NGUỒN chỉ dời khi:
+        //  (a) đích còn đủ chỗ nhận HẾT pallet bốc được của nguồn (dồn trọn, không nửa vời), VÀ
+        //  (b) bốc hết là vị trí nguồn TRỐNG HẲN (occ nguồn = số pallet bốc — không còn mã khác /
+        //      pallet giữ đơn / hàng kẹt nằm lại). Không thỏa → BỎ (không xáo giữa 2 rack đều gần đầy).
+        // "Không đưa hàng vào" KHÔNG bị luật này chặn kéo ra: P1 (chạy trước, mỗi lượt) đã kéo hàng
+        // khu tạm về kho chuẩn khi có chỗ — không đòi dọn sạch (user: "vẫn cần đưa hàng ra nếu cần").
+        const dest = anchors.find(a => !locById.get(a.loc.id)?.slot_no_in) ?? anchors[0]
+        for (const src of anchors) {
+          if (src.loc.id === dest.loc.id || src.movable.length === 0) continue
+          if ((freeByLoc.get(dest.loc.id) ?? 0) < src.movable.length) continue        // (a) đích không nhận hết
+          const srcOcc = src.loc.max_pallets - (freeByLoc.get(src.loc.id) ?? 0)
+          if (srcOcc !== src.movable.length) continue                                 // (b) bốc hết vẫn không trống → bỏ
           const ordered = [...src.movable].sort((a, b) => {
             const da = dateKeyOf(a, principle) ?? '0000', db2 = dateKeyOf(b, principle) ?? '0000'
             return principle === 'LIFO' ? (da < db2 ? -1 : da > db2 ? 1 : 0) : (da > db2 ? -1 : da < db2 ? 1 : 0)
           })
-          const take = ordered.slice(0, free)
-          addMoves(take, tgt.loc, reason, priority)
-          src.movable = src.movable.filter(e => !movedEntry.has(e.id))
-          if (src.movable.length === 0) si--
-          else ti++
+          addMoves(ordered, dest.loc, reason, priority)
+          src.movable = []
         }
       }
     }

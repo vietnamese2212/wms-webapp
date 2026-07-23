@@ -97,6 +97,10 @@ export async function listOrders(req: Request, res: Response) {
     // (mỗi đơn xuất hoàn thành = 1 lệnh), kéo ALL sẽ chết theo thời gian; FE Bookings mặc định ~30 ngày.
     if (source_type === 'TRANSFER') {
       const tCats = scopeCategoriesOf(req)
+      // Scope KHO cho lệnh chuyển kho: user ASSIGNED chỉ thấy lệnh dính kho mình (NGUỒN hoặc ĐÍCH)
+      // — mirror guardOrderScope (write). NATIONAL/ĐVVT → null (không giới hạn). Chưa gán kho → rỗng.
+      const tScope = scopeWhIds(req)
+      if (tScope !== null && tScope.length === 0) return ok(res, [])
       // Phân trang né cap-1000: lệnh chuyển kho tích lũy không giới hạn ngày → 1 response sẽ cắt mất lệnh
       const orders = await fetchAllPaged(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,6 +113,7 @@ export async function listOrders(req: Request, res: Response) {
         if (date_from) q = q.gte('date', date_from)
         if (date_to)   q = q.lte('date', date_to)
         if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
+        if (tScope) q = q.or(`warehouse_id.in.(${tScope.join(',')}),destination_warehouse_id.in.(${tScope.join(',')})`)
         return q
       })
       const orderIds = orders.map((o: any) => o.id as string)

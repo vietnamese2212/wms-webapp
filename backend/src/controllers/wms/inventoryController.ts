@@ -40,25 +40,32 @@ function scopeWhIds(req: Request): string[] | null {
 // KHÔNG tin riêng cột warehouse_id (đa số NULL với pallet QR).
 async function guardEntriesScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
   const scope = scopeWhIds(req)
-  if (scope === null) return true
+  const cats = scopeCategoriesOf(req)
+  if (scope === null && cats === null) return true
   // Chunk ids (cap ~1000 dòng/response + URL dài) — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu
   const data: unknown[] = []
   for (let i = 0; i < ids.length; i += 500) {
     const chunk = ids.slice(i, i + 500)
     const r = await supabase.from('InventoryEntry')
-      .select('id, warehouse_id, location:Location!location_id(warehouse_id)')
+      .select('id, warehouse_id, location:Location!location_id(warehouse_id), material:Material(category)')
       .in('id', chunk)
     if (r.error) { fail(res, 500, 'DB_ERROR', r.error.message); return false }
     data.push(...(r.data ?? []))
   }
   type LocWh = { warehouse_id: string | null }
-  const rows = data as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null }>
+  type MatCat = { category: string | null }
+  const rows = data as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null; material: MatCat | MatCat[] | null }>
   for (const e of rows) {
     const loc = Array.isArray(e.location) ? e.location[0] : e.location
     const wh = loc?.warehouse_id ?? e.warehouse_id ?? null
-    if (!wh || !scope.includes(wh)) {
+    if (scope !== null && (!wh || !scope.includes(wh))) {
       fail(res, 403, 'FORBIDDEN', 'Pallet không thuộc kho trong phạm vi của bạn')
       return false
+    }
+    // Mirror guardEntryRead: chặn ghi lên pallet LOẠI ngoài phạm vi (dù cùng kho) — chống IDOR-loại.
+    const mat = Array.isArray(e.material) ? e.material[0] : e.material
+    if (!categoryAllowed(req, mat?.category)) {
+      fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false
     }
   }
   return true

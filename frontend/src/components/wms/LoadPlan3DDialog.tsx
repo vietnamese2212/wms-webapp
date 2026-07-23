@@ -236,6 +236,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       mount.appendChild(renderer.domElement)
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
+      controls.zoomToCursor = true            // zoom TỰ DO về vị trí con trỏ (không chỉ zoom vào tâm)
+      controls.screenSpacePanning = true      // kéo pan theo mặt phẳng màn hình → soi mọi góc xe
       scene.add(new THREE.AmbientLight(0xffffff, 0.75))
       const dir = new THREE.DirectionalLight(0xffffff, 0.9)
       dir.position.set(1, 2, 1.2)

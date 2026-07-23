@@ -73,6 +73,16 @@ Không chỉ login admin. Với action write: **ẩn nút đúng khi thiếu `ca
 - Cleaner theo TAG **`LIKE '%TAG%'`** (tag có thể GIỮA chuỗi). Nhận diện SIM CHÍNH XÁC (GDO qua join delivery `delivery_code`/`distributor_name`; thu id vào JS trước khi xóa; order phụ qua `transfer_gdo_id`), xóa theo thứ tự FK. **verifyClean có điểm mù → quét phòng thủ orphan** + cửa sổ thời gian. Residue = 0 mọi bảng. Xóa script scratchpad (nhất là file chứa creds) + ảnh Playwright; `git status` sạch (đừng add `Template upload.xlsx`).
 - **Báo cáo TRUNG THỰC**: đã kiểm phần nào (bằng chứng số/ảnh), lỗi THẬT (kèm phân loại), fix + đo trước/sau, **nghi ngờ nghiệp vụ/UX** để user quyết, phần skip + lý do. Fail nói fail. Ghi memory `project` + `MEMORY.md`.
 
+## Kỹ thuật kế thừa từ công cụ chuẩn (áp bằng plain-node/SQL — KHÔNG cài dependency)
+Không thêm tool/framework vào repo (giữ luật "viết tối thiểu"); **học phương pháp** rồi tự làm ad-hoc trong `scratchpad`:
+- **Property-based (fast-check) → P1/P6:** với helper thuần (`qtyUnits`/`shelfLife`/`qrParser`/`loadPlan`), sinh **hàng nghìn input ngẫu nhiên** (kể cả biên 0/âm/cực lớn/thập phân/mã không-entry), assert **bất biến** đúng MỌI input (split round-trip `qtyFromEntryBase(qtySplit(x))==x`; mã entry→base nguyên; %Date đơn điệu theo NSX). Fail → **thu nhỏ về counterexample tối thiểu** + in seed để tái hiện. (Chính là "fuzz 115k case qtyUnits" đã làm.)
+- **Index giả định (HypoPG/index_advisor) → P5:** phát hiện thiếu index KHÔNG cần extension — (a) `pg_stat_user_tables`: `seq_scan` ≫ `idx_scan` trên bảng lớn; (b) thử index trong transaction rồi bỏ: `BEGIN; CREATE INDEX …; EXPLAIN (ANALYZE,BUFFERS) <query>; ROLLBACK;` → so cost trước/sau mà không giữ đĩa. Chọn index thắng mới `CREATE` thật + migration.
+- **API fuzz (EvoMaster) → P4:** bắn endpoint với input sinh/bậy (thiếu field, sai kiểu, âm/NaN, id lạ, vượt quyền) truy **500 / lệch shape / lọt quyền** — không chỉ happy-path.
+- **Record-replay golden (Keploy) → P1:** luồng ổn định → lưu response chuẩn làm "golden", chạy lại sau sửa → diff bắt hồi quy.
+- **Kỷ luật đo tải (k6) → P4/P5:** báo **p50/p95/p99 + ngưỡng pass/fail** (vd p95 đọc < 3s), tăng tải theo bậc (ramp), giữ arrival-rate ổn định — không chỉ đếm lỗi.
+- **UI bằng ngôn ngữ tự nhiên (Stagehand/Midscene) → P2:** dùng Playwright MCP sẵn có + assert mô tả bằng lời ("cột Tồn hiện thùng+hộp đúng"), bám selector đổi.
+> Muốn CHUẨN HOÁ chạy tự động/CI cho người khác thì mới cài tool thật (fast-check/`supabase/index_advisor`/k6) — việc RIÊNG, KHÔNG bắt buộc cho skill này.
+
 ## Ranh giới còn lại (nói thật với user)
 Skill này phủ hầu hết, nhưng vẫn còn: **yêu cầu MỚI chưa mô tả** (không có "đúng" để so) + **quyết định UX mang tính thẩm mỹ/thương mại** cuối cùng thuộc user. Máy tính lại được cái CÓ luật; cái chưa có luật thì skill nêu nghi ngờ để user chốt, không tự quyết thay.
 

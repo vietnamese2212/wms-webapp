@@ -686,8 +686,12 @@ export default function Inventory() {
       categoryDefaultApplied.current = true
       if (f.materialCategories.length === 0) {
         const dbCats = categories as string[]
-        // Restrict default to categories the user is allowed to see (if scope is set)
-        const defaultCats = userAllowedCats.length > 0
+        // Restrict default to categories the user is allowed to see (if scope is set).
+        // NATIONAL/superadmin = TOÀN BỘ (khớp useScopedWhTypes + BE isNational): nếu lọc theo
+        // allowed_categories, loại kho tùy biến ngoài 5 loại chuẩn (vd SCA) bị ẩn khỏi Tồn kho dù
+        // server không chặn → tổng Tồn kho lệch Dashboard.
+        const isNationalScope = user?.warehouse_scope === 'NATIONAL'
+        const defaultCats = (!isNationalScope && userAllowedCats.length > 0)
           ? dbCats.filter(c => userAllowedCats.includes(c))
           : dbCats
         setInventory({ materialCategories: [...new Set(defaultCats)], page: 1 })

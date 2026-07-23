@@ -76,6 +76,8 @@ Không chỉ login admin. Với action write: **ẩn nút đúng khi thiếu `ca
 ## Phần 7 — FIX tối thiểu + ĐO LẠI + (lên production)
 - Sửa đúng nguyên nhân gốc, phạm vi nhỏ ([[debug-systematic]]). Toàn vẹn: gộp ghi-nhiều-bước vào **1 RPC row-lock** + fallback. Perf: index/RPC. Mutation: [[mutation-realtime]] + migration `backend/migrations/*` + apply staging + `SCHEMA_REVIEW.md` + bump rebuild-token.
 - **ĐO LẠI cùng tham số → so trước/sau** (bằng chứng số). tsc/build xanh.
+- **CHỐNG HỒI QUY (sau MỌI fix):** chạy lại bộ regression chuẩn `node scripts/qa/run-all.mjs` (invariant/smoke sau sửa nhỏ; **FULL 4 gói XANH BẮT BUỘC trước khi merge `dev`→`main`** — luật CLAUDE.md + [[verify-feature]] Cổng 5b + memory `qa-regression-suite`). Regression là cổng LẶP LẠI, không do check-app sở hữu — check-app chỉ GỌI nó để chắc fix không làm vỡ luồng đang chạy.
+- **⚠️ Verify FE fix qua trình duyệt PHẢI dùng fresh context/incognito** — app là PWA, service worker precache trả bundle CŨ cho context đang mở → tưởng fix không ăn (đã bị lừa 1 lần 23/07).
 - **Lên production (chỉ khi user nói RÕ)**: KHÔNG merge ẩu. preflight read-only → migration additive trước (thứ tự phụ thuộc) → cutover/data cùng cửa sổ deploy (freeze+backup+transaction verify+rollback nếu đổi nghĩa dữ liệu) → DROP sau khi code live → **verify 4 tầng** (DB·RPC·code probe route 401/404·app-smoke live 200). Chi tiết: [[production-golive-2026-07-23]] + `BASE_UNIT_EXECUTION_PLAN.md` 2.4.
 
 ## Phần 8 — DỌN 0 SÓT + báo cáo + memory

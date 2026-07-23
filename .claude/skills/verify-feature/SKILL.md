@@ -49,6 +49,13 @@ Cách mô phỏng (mẫu: `scratchpad/sim_wms.mjs`, `sim_booking.mjs` — setup/
 
 **Bài học cốt tử:** optimistic-CAS / retry-on-conflict **PHẢI có jitter+backoff** (không thì thundering herd → nửa số request 409 oan). Capacity/counter dùng chung → đếm sống dưới row-lock (RPC) hoặc optimistic-CAS có jitter. Xem [[concurrency-hardening]] + [[tms-slot-booking-atomic]].
 
+## Cổng 5b — CHỐNG HỒI QUY (regression) — sau khi sửa
+Bắt lỗi cái ĐANG chạy bị vỡ bởi thay đổi mới (khác Cổng 1-5 vốn kiểm cái vừa làm). Chạy lại **bộ regression chuẩn** của dự án: `node scripts/qa/run-all.mjs` (4 gói invariant/smoke/race/scale, tag `QA-SUITE` tự dọn — memory `qa-regression-suite`).
+- **Sửa nhỏ trên dev** → tối thiểu gói `invariant` + `smoke` (nhanh), bắt hồi quy do chính thay đổi này.
+- **⭐ Trước khi merge `dev`→`main`** → **BẮT BUỘC full 4 gói XANH** (luật gốc ở CLAUDE.md). Đỏ = có hồi quy → sửa tới khi xanh, **KHÔNG merge** dù đã nghiệm thu Preview.
+- (Tùy chọn, luồng ổn định) lưu response chuẩn làm **golden**, chạy lại sau sửa → diff bắt hồi quy tinh vi.
+- Regression là CỔNG LẶP LẠI (chạy y hệt mỗi mốc), không phải audit khám phá — đừng lẫn với `check-app`.
+
 ## Cổng 6 — Báo cáo trung thực
 Liệt kê từng cổng: ✅ pass (bằng chứng: số liệu DB / screenshot) hoặc ❌ fail (output lỗi) hoặc ⊘ skip (lý do). Test fail thì NÓI fail kèm output, không che. Xong + verified mới nói "xong" dứt khoát.
 
@@ -59,4 +66,5 @@ Liệt kê từng cổng: ✅ pass (bằng chứng: số liệu DB / screenshot)
 - [ ] Realtime 4 case + invalidateQueries + TABLE_QUERY_MAP
 - [ ] Playwright: luồng UI thật, chụp CẢ desktop (1280) VÀ mobile (390 + 360) + phân quyền
 - [ ] **TẢI ĐỒNG THỜI vài trăm user** (tính năng ghi số liệu): API thật + dữ liệu bám DB + rải & tranh chấp + đa-module đồng thời → (1) refresh giữa tải KHÔNG văng + console sạch · (2) bất biến số liệu 0 lệch · dọn sạch
+- [ ] **Regression**: `node scripts/qa/run-all.mjs` xanh (FULL trước merge `dev`→`main`; `invariant`+`smoke` sau sửa nhỏ)
 - [ ] Báo cáo pass/fail/skip kèm bằng chứng

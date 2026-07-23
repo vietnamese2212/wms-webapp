@@ -242,6 +242,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 |---|---|
 | Bắt đầu việc lớn (module mới, đổi schema, refactor nhiều file, yêu cầu mơ hồ) | `brainstorm-plan` |
 | Rà soát / audit toàn bộ 1 module (chiến dịch review từng module) | `review-module` |
+| Check toàn app / nhiều module dưới TẢI THẬT · tìm lỗi ẩn · tìm chỗ chậm · cải tiến hiệu năng (user gọi "kiểm tra app / rà lỗi / test tải") | `stress-audit` |
 | Tạo/sửa list page · table · trang detail | `table-format` |
 | Làm/sửa tính năng quét QR | `qr-scan-flow` |
 | Thêm/sửa nút hay route gọi API write (tạo/sửa/xóa/quét/duyệt/phát hành…) | `add-permission` |

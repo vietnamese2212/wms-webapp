@@ -104,7 +104,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - **Luật số nguyên**: mã có entry → base phải **SỐ NGUYÊN** (hộp không có 0,5); nhập liệu = **2 ô Thùng+Hộp** (`components/shared/QtyInput`), quy đổi tại rìa bằng `qtyFromEntryBase`. Mã không entry (KG) → thập phân tự do. BE chặn 422 (`qtyIntegerError`) + upload lỗi theo dòng kèm gợi ý quy đổi.
 - **Tổng cross-mã (khác `units_per_carton`) PHẢI `qtyEntryDecimal` per-mã TRƯỚC khi cộng** → "thùng quy đổi" (cộng base thô rồi gắn nhãn "thùng" = SAI, thổi tổng). Mọi trường số lượng qua API = BASE (cờ `qty_semantics:'base'` chặn bundle cũ 409); FE quy đổi tại rìa.
 - **Quét nhặt lẻ HỘP = quét QR PALLET (đã có) + trừ số hộp khỏi tồn base** — KHÔNG cần QR tới hộp (QR nhỏ nhất = pallet/thùng). Thùng lẻ = quét; hộp lẻ = nhập tay/đếm.
-- **BẮT BUỘC CHÍNH XÁC + fix MỌI lỗi hiển thị/tính toán liên quan.** Rà kỹ mọi điểm đọc `cartons_*`/`loose_picking` (nhất là **tổng ở list/detail** + **Nhặt lẻ** — hay sót). **Luôn VERIFY SỐNG số hiển thị, đừng tin "đã kiểm OK".** Chi tiết + tiến độ: memory `base-unit-campaign` + `BASE_UNIT_EXECUTION_PLAN.md`.
+- **BẮT BUỘC CHÍNH XÁC + fix MỌI lỗi hiển thị/tính toán liên quan.** Rà kỹ mọi điểm đọc `cartons_*`/`loose_picking` (nhất là **tổng ở list/detail** + **Nhặt lẻ** — hay sót). **Luôn VERIFY SỐNG số hiển thị, đừng tin "đã kiểm OK".** Chi tiết + tiến độ: memory `base-unit-campaign` + `docs/plans/BASE_UNIT_EXECUTION_PLAN.md`.
 
 **Timezone — Asia/Ho_Chi_Minh (UTC+7):**
 - Business date (`import_date`…): lưu ngày VN `new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })`. System timestamp (`created_at`…): UTC `toISOString()`. Query khoảng ngày VN: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`.

@@ -1,4 +1,4 @@
-# Bộ QA regression (Tầng 0 — TEST_PLAN_GOLIVE.md)
+# Bộ QA regression (Tầng 0 — docs/plans/TEST_PLAN_GOLIVE.md)
 
 Chạy trên **Preview (dev) + DB STAGING**. Không dependency — chỉ cần Node 18+.
 **Luật: xanh toàn bộ mới được merge main.**

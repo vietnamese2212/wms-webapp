@@ -296,6 +296,37 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       const C = live.reduce((s, gi) => s + avail(gi), 0)
       if (C % L !== 0 && (L + 1) * maxH > truck.height) L = Math.max(1, L - 1)
       st.openCol = null; classCols = []; zones = []
+      // BẬC CUỐI PHẲNG KÍN SÀN (user 23/07: "để hở mà không dùng hết mặt sàn là không
+      // đúng logic" — ảnh khe góc sàn đuôi): phần cuối class không đủ 1 HÀNG NGANG đầy
+      // chiều cao L → hạ thấp ĐỀU thành 1 hàng phẳng phủ KÍN bề ngang (vd 24 thùng:
+      // 10 chân × 2 lớp kín hàng thay vì 3 chân × 8 + 7 ô sàn trống), lẻ còn lại nổi
+      // trên khối như cũ. Thân khối vẫn 1 chiều cao L — bậc cuối là 1 mức phụ duy nhất.
+      const flat: { L: number | null; cols: number; threshold: number; rowL: number } = { L: null, cols: 0, threshold: -1, rowL: 0 }
+      // CHỈ áp cho KHỐI SÀN CUỐI CÙNG (không còn class nào chờ sau): khi còn loại khác,
+      // đuôi so le để loại sau áp vào lấp (skyline) — hàng phẳng cuối sẽ CƯỚP SÀN của
+      // class sau trên xe chật (leftover tăng). Khối gửi standalone (rowKey ngoài
+      // floorRows) = thứ cuối cùng được xếp → cũng cho áp.
+      const flatOK = floorRows.indexOf(rowKey) === floorRows.length - 1 || floorRows.indexOf(rowKey) < 0
+      if (flatOK) {
+        // Tính TỪ ĐẦU: tổng chân = ceil(C/L); nếu KHÔNG chia hết số làn (hàng cuối hụt
+        // k chân) → khi còn đúng phần đuôi (rest thùng) chuyển sang hàng phẳng thấp.
+        // Chia hết → không kích hoạt (lưới tự khít, đừng phá).
+        const fz = zoneMixFor(groupsIn[live[0]])
+        const laneCount = fz.reduce((s, z) => {
+          const d = zoneDims(groupsIn[live[0]], z)
+          return s + Math.floor((z.yB - z.yA) / d.fw)
+        }, 0)
+        const nCols = Math.ceil(C / L)
+        const k = laneCount > 1 ? nCols % laneCount : 0
+        if (k > 0 && nCols > laneCount) {
+          const rest = C - (nCols - k) * L
+          if (rest >= laneCount) {
+            flat.threshold = rest
+            flat.rowL = Math.max(1, Math.floor(rest / laneCount))
+            flat.cols = laneCount
+          }
+        }
+      }
       for (let mi = 0; mi < live.length; mi++) {
         const gi = live[mi]
         const g = groupsIn[gi]
@@ -318,7 +349,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // TS không thấy newColumn (closure) gán st.openCol → narrow nhầm null; cast typed
           const oc = st.openCol as { col: Col; used: number; cap: number } | null
           if (oc) {
-            const effCap = Math.min(oc.cap, myCap)
+            const effCap = Math.min(oc.cap, myCap, flat.L ?? Infinity)
             const take = Math.min(remaining, Math.max(0, effCap - oc.used))
             if (take > 0) {
               step++
@@ -335,7 +366,20 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             st.openCol = null   // mã này không đổ thêm được vào chân dở (maxLayers) → chân mới
             continue
           }
-          const myL = Math.min(L, myCap)
+          // Kích hoạt bậc cuối phẳng khi còn đúng phần đuôi đã tính từ đầu
+          if (flat.L == null && flat.threshold > 0 && !st.openCol) {
+            const classRem = live.reduce((s, x) => s + avail(x), 0)
+            if (classRem <= flat.threshold) flat.L = flat.rowL
+          }
+          // Hết suất chân của hàng phẳng → phần lẻ nổi lên khối, không mở thêm chân
+          if (flat.L != null && flat.cols <= 0) {
+            const before = remaining
+            remaining = spillOnRoof(g, gi, remaining)
+            used[gi] += before - remaining
+            if (remaining > 0) { leftover.push({ group: gi, count: remaining }); used[gi] += remaining }
+            break
+          }
+          const myL = Math.min(flat.L ?? L, myCap)
           // 2) HÀNG THỪA cuối khối (mã cuối, không đủ 1 chân bằng mặt) → NỔI LÊN TRÊN
           // KHỐI (SOP: "cho hết lên trên khối, KHÔNG xếp dưới sàn — khối 100% vuông vắn,
           // hàng thừa lên trên"; 1 loại hàng TUYỆT ĐỐI không 2 chiều cao thân)
@@ -346,9 +390,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             if (remaining <= 0) break
             // nóc không đủ (maxLayers/trần) → đành đứng chân ngắn cuối khối
           }
-          // 3) Chân mới bằng mặt cao myL
+          // 3) Chân mới bằng mặt cao myL (bậc cuối phẳng: std = rowL để mã sau không đắp vượt)
           const take = Math.min(remaining, myL)
-          if (!newColumn(g, gi, take, L)) {
+          if (flat.L != null) flat.cols--
+          if (!newColumn(g, gi, take, flat.L ?? L)) {
             // SÀN HẾT CHỖ → tràn phần dư lên nóc rồi mới bỏ thừa
             const before = remaining
             remaining = spillOnRoof(g, gi, remaining)
@@ -799,6 +844,24 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // (không tràn nóc), rồi ÍT HỐ KÍN trên sàn nhất; tie-break maxX lớn hơn.
   // Sau lưới thô, nhị phân tinh chỉnh giữa nấc tốt nhất và nấc kế.
   const maxXOf = (placed: PlacedBox[]) => placed.length ? Math.max(...placed.map(b => b.x + b.l)) : 0
+  // SÀN TRỐNG SAU ĐUÔI LÀN (user 23/07: "để hở mà không dùng hết mặt sàn là không đúng
+  // logic"): mm chiều dài TB các làn HỤT so mặt tiền xa nhất (quét dải y 50mm). Trừ vào
+  // điểm → m-search tự chọn số lớp cho hàng cuối gần KÍN hàng ngang (đuôi phẳng, hết
+  // khe góc sàn); điểm = "chiều dài sàn dùng THẬT" thay vì làn dài nhất.
+  const tailNotch = (placed: PlacedBox[]): number => {
+    const floor = placed.filter(b => b.z === 0)
+    if (!floor.length) return 0
+    const mx = Math.max(...floor.map(b => b.x + b.l))
+    let area = 0, covered = 0
+    for (let y = 25; y < truck.width; y += 50) {
+      let front = -1
+      for (const b of floor) if (b.y <= y && y < b.y + b.w) front = Math.max(front, b.x + b.l)
+      if (front < 0) continue
+      covered += 50
+      area += (mx - front) * 50
+    }
+    return covered > 0 ? area / covered : 0
+  }
   // Đếm HỐ KÍN trên sàn: chân có khoảng trống ngang-y sau lưng BỊ hàng chặn phía đuôi
   // (khe mở thông ra đuôi xe = hợp lệ — "hở đẩy ra ngoài")
   const closedHoles = (placed: PlacedBox[]): number => {
@@ -828,6 +891,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // được ≥0.5m chiều dài thì trải; maxX xấp xỉ nhau thì phương án ít hố thắng)
   const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
   const score = (p: PackResult) => maxXOf(p.placed) - closedHoles(p.placed) * 500
+    - tailNotch(p.placed) * 1.2                               // sàn trống sau đuôi làn — đuôi phẳng thắng khi diện tích xấp xỉ
     - p.lightPatch * 100 - p.spanMiss * 0.5 - p.topMiss * 2   // phạt vùng gửi xấu (lõm đỉnh phạt nặng hơn)
   const better = (r: PackResult, cur: PackResult): boolean => {
     const rl = leftCnt(r), cl = leftCnt(cur)

@@ -764,9 +764,24 @@ export async function adjustInventory(req: Request, res: Response) {
   const now    = new Date().toISOString()
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const isValidUUID = (s?: string) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+  const updatedBy: string | null = isValidUUID(employee_id) && employee_id ? employee_id : null
 
-  // Đọc–tính–ghi NGUYÊN TỬ (optimistic-CAS + jitter): chặn 2 lượt chỉnh cùng pallet đồng thời
-  // ghi mù từ số đọc cũ → mất cập nhật tồn + adjustment_qty + log sai cartons_before/after.
+  // NGUYÊN TỬ: gộp cập-nhật-tồn + ghi-AdjustmentLog trong 1 transaction (RPC row-lock).
+  // Chống mất dòng log khi request bị 504 xen giữa 2 bước (test tải 23/07) + bỏ bão CAS-retry.
+  const { data: rpcResult, error: rpcErr } = await supabase.rpc('adjust_inventory_atomic', {
+    p_entry_id: id, p_delta: adjustment, p_note: note?.trim() || null,
+    p_actor_name: actor_name?.trim() || null, p_actor_id: updatedBy,
+    p_stocktake_by: stocktake_by || null, p_now: now, p_vn_date: vnDate, p_updated_by: updatedBy,
+  })
+  if (!rpcErr) {
+    if (rpcResult === 'NOT_FOUND') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
+    if (rpcResult === 'NEGATIVE') return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
+    const { data: entry } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', id).maybeSingle()
+    return ok(res, { entry })
+  }
+
+  // Fallback (RPC chưa deploy — vd production trước khi apply migration 20260723_adjust_inventory_atomic.sql):
+  // đọc–tính–ghi optimistic-CAS + jitter, log riêng như cũ (không nguyên tử nhưng đúng khi không có 504).
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: entry, error: fetchErr } = await supabase.from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported, adjustment_qty, status')

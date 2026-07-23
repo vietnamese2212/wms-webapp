@@ -286,9 +286,10 @@ export async function uploadExcel(req: Request, res: Response) {
       custom_short_name: string | null; category: string | null; product_type: string | null
       weight_kg: number | null; cartons_per_pallet: number | null; units_per_carton: number | null
       pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
+      base_unit: string | null; entry_unit: string | null
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -354,6 +355,22 @@ export async function uploadExcel(req: Request, res: Response) {
       // Scope Loại hàng: bỏ qua (báo lỗi) mã thuộc loại ngoài phạm vi user (mã mới chưa gán loại vẫn cho)
       const effCat = category ?? dbRow?.category ?? null
       if (!categoryAllowed(req, effCat)) { errors.push(`${material_code} — Loại hàng "${effCat ?? ''}" ngoài phạm vi của bạn`); continue }
+      // BASE UNIT: validate cặp đơn vị theo GIÁ TRỊ HIỆU LỰC sau merge (file đắp lên DB) — cùng luật
+      // với form tạo/sửa mã (createMaterial): entry đòi hệ số > 0, entry ≠ base. Thiếu guard này
+      // upload từng cho tạo mã khai entry mà không hệ số → app coi như không entry (phát hiện smoke 23/07).
+      {
+        // Mã lặp nhiều dòng trong file: dòng trước đã đắp giá trị → tính vào hiệu lực (acc trước dbRow)
+        const acc = (upsertByCode.get(material_code) ?? insertByCode.get(material_code)) as Record<string, unknown> | undefined
+        const effEntry = entryUnit ?? (acc?.entry_unit as string | null | undefined) ?? dbRow?.entry_unit ?? null
+        const effBase  = baseUnit ?? (acc?.base_unit as string | null | undefined) ?? dbRow?.base_unit ?? null
+        const effUpc   = upc ?? (acc?.units_per_carton as number | null | undefined) ?? dbRow?.units_per_carton ?? null
+        if (effEntry && !(Number(effUpc) > 0)) {
+          errors.push(`${material_code} — Entry unit "${effEntry}" cần hệ số quy đổi (cột Hộp/thùng) > 0`); continue
+        }
+        if (effEntry && effBase && effEntry === effBase) {
+          errors.push(`${material_code} — Entry unit phải KHÁC Base unit (đang cùng "${effEntry}")`); continue
+        }
+      }
       if (dbRow || upsertByCode.has(material_code)) {
         // Mã đã có (hoặc đã gặp ở dòng trước) → merge full record để UPSERT (giữ created_at/is_active vì không đưa vào payload)
         const base = upsertByCode.get(material_code) ?? {

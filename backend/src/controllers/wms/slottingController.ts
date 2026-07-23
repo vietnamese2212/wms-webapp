@@ -204,8 +204,11 @@ export async function previewPlan(req: Request, res: Response) {
     const { warehouse_id, level: rawLevel, principle: rawPrinciple, days: rawDays, max_moves, pull_wrong_zone, categories, pallet_kind } = req.body as {
       warehouse_id?: string; level?: string; principle?: string; days?: number; max_moves?: number; pull_wrong_zone?: boolean; categories?: string[]; pallet_kind?: string
     }
-    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): FULL = pallet còn NGUYÊN như nhập
-    // (tồn = nhập, chưa bốc lẻ) · PARTIAL = pallet đã bốc dở · ALL = cả hai. Pallet bị loại
+    // Hàng chẵn/lẻ (user 18/07 "hầu hết chỉ dồn hàng chẵn"): FULL = pallet ĐỦ TẢI 1 pallet đầy
+    // (tồn ≥ cartons_per_pallet × units_per_carton) · PARTIAL = pallet CHƯA đủ tải (nhập lẻ HOẶC
+    // đã bốc dở) · ALL = cả hai. Mã chưa khai cartons_per_pallet → fallback tồn ≥ nhập (logic cũ).
+    // KHÔNG dùng "tồn ≥ nhập" làm chuẩn đầy: pallet NHẬP LẺ (tồn = nhập nhưng ít hơn 1 pallet đầy,
+    // vd 7 hộp / 1440) là hàng lẻ nhưng bị lọt vào "chẵn" (user báo lỗi 23/07). Pallet bị loại
     // vẫn tính CHIẾM CHỖ ở vị trí (không làm nguồn/không bị xáo trộn).
     const palletKind: 'FULL' | 'PARTIAL' | 'ALL' = pallet_kind === 'PARTIAL' || pallet_kind === 'ALL' ? pallet_kind : pallet_kind === 'FULL' ? 'FULL' : 'ALL'
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
@@ -246,6 +249,16 @@ export async function previewPlan(req: Request, res: Response) {
 
     // Kéo toàn bộ tồn của kho (mọi mã trong scope) — engine gom cần nhìn đủ
     const matIds = stats.materials.map(m => m.material_id)
+    // "Nguyên pallet" (FULL) = tồn ĐỦ 1 pallet đầy (base) = cartons_per_pallet × units_per_carton.
+    // Mã chưa khai cartons_per_pallet → không có trong map → fallback tồn ≥ nhập ở vòng lọc dưới.
+    const fullBaseByMat = new Map<string, number>()
+    for (const ids of chunk(matIds, 300)) {
+      const { data } = await supabase.from('Material').select('id, cartons_per_pallet, units_per_carton').in('id', ids)
+      for (const m of (data ?? []) as { id: string; cartons_per_pallet: number | null; units_per_carton: number | null }[]) {
+        const cpp = Number(m.cartons_per_pallet ?? 0), upc = Number(m.units_per_carton ?? 0)
+        if (cpp > 0 && upc > 0) fullBaseByMat.set(m.id, cpp * upc)
+      }
+    }
     const entries: EntryRow[] = []
     // Ảnh chụp "đang chứa gì" per vị trí (trong phạm vi loại đã chọn) — gồm CẢ pallet reserved/kẹt
     // (không được chuyển nhưng vẫn CHIẾM chỗ): dùng cho phân tích kết quả kỳ vọng + cột "Đích đang chứa"
@@ -268,9 +281,12 @@ export async function previewPlan(req: Request, res: Response) {
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
         if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
-        const isFull = Number(r.cartons_remaining) >= Number(r.cartons_imported)
-        if (palletKind === 'FULL' && !isFull) continue     // chỉ dồn hàng chẵn — pallet lẻ để yên
-        if (palletKind === 'PARTIAL' && isFull) continue   // chỉ dồn hàng lẻ
+        const fullBase = fullBaseByMat.get(r.material_id)
+        const isFull = fullBase != null
+          ? Number(r.cartons_remaining) >= fullBase                    // đủ tải 1 pallet đầy
+          : Number(r.cartons_remaining) >= Number(r.cartons_imported)  // fallback: chưa bốc dở (mã chưa khai cartons_per_pallet)
+        if (palletKind === 'FULL' && !isFull) continue     // chỉ dồn pallet đủ tải — pallet lẻ để yên
+        if (palletKind === 'PARTIAL' && isFull) continue   // chỉ dồn pallet lẻ (chưa đủ tải)
         entries.push(r)
       }
     }

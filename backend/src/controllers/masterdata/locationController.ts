@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
 
@@ -18,10 +18,14 @@ function scopeWhIds(req: Request): string[] | null {
 // Chặn 403 nếu vị trí (theo id) không thuộc kho trong phạm vi user. NATIONAL bỏ qua.
 async function guardLocScope(req: Request, res: Response, locationId: string): Promise<boolean> {
   const scope = scopeWhIds(req)
-  if (scope === null) return true
-  const { data } = await supabase.from('Location').select('warehouse_id').eq('id', locationId).maybeSingle()
-  const wh = (data as { warehouse_id: string | null } | null)?.warehouse_id ?? null
-  if (!wh || !scope.includes(wh)) { fail(res, 403, 'FORBIDDEN', 'Vị trí không thuộc kho trong phạm vi của bạn'); return false }
+  const cats = scopeCategoriesOf(req)
+  if (scope === null && cats === null) return true
+  const { data } = await supabase.from('Location').select('warehouse_id, category').eq('id', locationId).maybeSingle()
+  const row = data as { warehouse_id: string | null; category: string | null } | null
+  const wh = row?.warehouse_id ?? null
+  if (scope !== null && (!wh || !scope.includes(wh))) { fail(res, 403, 'FORBIDDEN', 'Vị trí không thuộc kho trong phạm vi của bạn'); return false }
+  // Scope Loại: chặn thao tác vị trí có loại ngoài phạm vi (vị trí chưa gán loại → cho qua)
+  if (!categoryAllowed(req, row?.category)) { fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false }
   return true
 }
 
@@ -173,6 +177,7 @@ export async function createLocation(req: Request, res: Response) {
     )
 
     const { category } = req.body
+    if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
@@ -206,6 +211,7 @@ export async function updateLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return
     const { sub_name, sub_type, max_pallets, is_active, category, requires_stocktake } = req.body
+    if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type

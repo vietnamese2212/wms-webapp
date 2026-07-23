@@ -229,7 +229,8 @@ export async function listDoSap(req: Request, res: Response) {
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn
 export async function doSapFacets(_req: Request, res: Response) {
   try {
-    const { data } = await supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').limit(5000)
+    // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
+    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').order('id'))
     const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]

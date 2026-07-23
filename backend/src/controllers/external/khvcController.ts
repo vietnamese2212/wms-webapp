@@ -189,7 +189,8 @@ export async function listKhvc(req: Request, res: Response) {
 // GET /external/khvc/facets — giá trị lọc
 export async function khvcFacets(_req: Request, res: Response) {
   try {
-    const { data } = await supabase.from('khvc_lines').select('warehouse_code, veh_type, source, npp').limit(5000)
+    // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
+    const data = await fetchAllRowsParallel(() => supabase.from('khvc_lines').select('warehouse_code, veh_type, source, npp').order('id'))
     const warehouses = [...new Set((data ?? []).map(r => r.warehouse_code).filter(Boolean))].sort()
     const vehTypes = [...new Set((data ?? []).map(r => r.veh_type).filter(Boolean))].sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()

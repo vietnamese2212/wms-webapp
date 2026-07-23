@@ -45,6 +45,17 @@ async function writableJobTitleIds(req: Request): Promise<Set<string> | null> {
   return new Set(scope.filter(id => id !== jtId))    // chỉ giữ cấp dưới
 }
 
+// Nhân viên caller quản được (CHÍNH MÌNH + cấp dưới theo sơ đồ) — giới hạn xem/gán skill của
+// NHÂN VIÊN đích (khác writableJobTitleIds chỉ cấp-dưới cho sửa DANH MỤC skill). null = superadmin.
+async function manageableJobTitleIds(req: Request): Promise<Set<string> | null> {
+  const u = (req as { user?: { name?: string; is_superadmin?: boolean; sub?: string } }).user
+  if (u?.is_superadmin || u?.name === 'Admin') return null
+  const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
+  const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
+  if (!jtId) return new Set<string>()
+  return new Set(await scopeJobTitleIds(jtId))   // self + cấp dưới
+}
+
 const NO_PERM_MSG = 'Chỉ được sửa Danh mục Vị trí/Skill của chức danh cấp dưới bạn'
 
 // ─── Skill (Vị trí phân công / kỹ năng) — thuộc Chức danh ────────────────────
@@ -155,6 +166,9 @@ export async function getEmployeeSkills(req: Request, res: Response) {
     if (!emp) return fail(res, 'Không tìm thấy nhân viên', 404)
     const jtId = (emp as { job_title_id: string | null }).job_title_id
     if (!jtId) return ok(res, { job_title_id: null, skills: [] })
+    // Giới hạn ngang: chỉ xem skill nhân viên trong phạm vi quản lý (chính mình + cấp dưới)
+    const mgScope = await manageableJobTitleIds(req)
+    if (mgScope !== null && !mgScope.has(jtId)) return fail(res, 'Ngoài phạm vi quản lý — không xem được skill nhân viên này', 403)
 
     // scope = chức danh NV + chức danh cấp dưới (cấp trên được dùng skill cấp dưới)
     const scopeJts = await scopeJobTitleIds(jtId)
@@ -183,6 +197,9 @@ export async function setEmployeeSkills(req: Request, res: Response) {
     const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', id).maybeSingle()
     const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
     if (!jtId) return fail(res, 'Nhân viên chưa có chức danh', 400)
+    // Giới hạn ngang: chỉ gán skill cho nhân viên trong phạm vi quản lý (chính mình + cấp dưới)
+    const mgScope = await manageableJobTitleIds(req)
+    if (mgScope !== null && !mgScope.has(jtId)) return fail(res, 'Ngoài phạm vi quản lý — không gán được skill nhân viên này', 403)
 
     const scopeJts = await scopeJobTitleIds(jtId)
     const { data: scopeSkills } = await supabase.from('Skill').select('id').in('job_title_id', scopeJts)

@@ -8,8 +8,9 @@ import { safeSearch } from '../../utils/search'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return req.user?.name === 'Admin'
+  // Khớp middleware/authController: token set is_superadmin = (employee_code==='ADMIN' || name==='Admin').
+  // Trước chỉ xét name → superadmin-by-code bị chặn oan; nay gộp is_superadmin.
+  return req.user?.is_superadmin === true || req.user?.name === 'Admin'
 }
 
 // Chống leo thang: non-superadmin không được gán cho tài khoản/chức danh quyền mà CHÍNH

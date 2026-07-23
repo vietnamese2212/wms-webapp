@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch } from '../../utils/search'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -72,6 +72,8 @@ export async function createMaterial(req: Request, res: Response) {
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
+    // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
+    if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
     if (entry_unit && !(Number(units_per_carton) > 0))
       return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
@@ -142,6 +144,13 @@ export async function updateMaterial(req: Request, res: Response) {
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
       base_unit, entry_unit, is_non_stock, is_pallet_carrier,
     } = req.body
+
+    // Scope Loại hàng: chỉ sửa mã thuộc loại được phép + không đổi sang loại ngoài phạm vi (mã chưa gán loại → cho qua)
+    {
+      const { data: curCat } = await supabase.from('Material').select('category').eq('id', req.params.id).maybeSingle()
+      if (!categoryAllowed(req, (curCat as { category: string | null } | null)?.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+      if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    }
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {

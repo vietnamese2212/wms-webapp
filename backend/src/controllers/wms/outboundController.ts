@@ -39,12 +39,17 @@ function inScope(req: Request, whId: string | null | undefined): boolean {
 }
 // Chặn 403 nếu chuyến (GDO) không thuộc kho trong phạm vi user (fetch warehouse_id của GDO).
 async function guardGdoScope(req: Request, res: Response, gdoId: string): Promise<boolean> {
-  if (scopeWhIds(req) === null) return true
+  const scope = scopeWhIds(req)
+  const cats = scopeCategoriesOf(req)
+  if (scope === null && cats === null) return true
   const { data } = await supabase.from('GroupDeliveryOrder')
-    .select('warehouse_id').eq('id', gdoId).maybeSingle()
-  if (!inScope(req, (data as { warehouse_id: string | null } | null)?.warehouse_id)) {
+    .select('warehouse_id, warehouse_type').eq('id', gdoId).maybeSingle()
+  const row = data as { warehouse_id: string | null; warehouse_type: string | null } | null
+  if (scope !== null && !inScope(req, row?.warehouse_id)) {
     fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403); return false
   }
+  // Scope Loại: chặn thao tác chuyến có loại HIỆN TẠI ngoài phạm vi (chuyến chưa gán loại → cho qua)
+  if (!categoryAllowed(req, row?.warehouse_type)) { fail(res, CATEGORY_FORBIDDEN_MSG, 403); return false }
   return true
 }
 // Chặn 403 nếu tạo/chuyển dữ liệu sang kho ngoài phạm vi user.
@@ -4228,10 +4233,22 @@ export async function getScanLogFacets(req: Request, res: Response) {
     effectiveWarehouseIds = warehouse_ids ? String(warehouse_ids) : null
   }
 
-  const { data, error } = await supabase.rpc('get_scan_log_facets', {
+  // Scope Loại hàng (giống getScanLog): chọn loại ngoài phạm vi → rỗng; truyền allowed cho RPC (có fallback)
+  const scanCats = scopeCategoriesOf(req)
+  if (scanCats && material_category && !scanCats.includes(String(material_category))) {
+    return ok(res, { machines: [], cycles: [] })
+  }
+  const facetParams: Record<string, unknown> = {
     p_material_category: material_category ? String(material_category) : null,
     p_warehouse_ids:     effectiveWarehouseIds,
-  })
+  }
+  if (scanCats) facetParams.p_allowed_categories = scanCats.join(',')
+  let { data, error } = await supabase.rpc('get_scan_log_facets', facetParams)
+  // Fallback nếu RPC chưa có param p_allowed_categories (chưa apply migration) → giữ hành vi cũ (cắt kho)
+  if (error && scanCats && /p_allowed_categories|function|schema cache/i.test(error.message)) {
+    delete facetParams.p_allowed_categories
+    ;({ data, error } = await supabase.rpc('get_scan_log_facets', facetParams))
+  }
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   const row = (data as any[])?.[0] ?? {}
   return ok(res, { machines: row.machines ?? [], cycles: row.cycles ?? [] })

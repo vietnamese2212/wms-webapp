@@ -430,6 +430,9 @@ export async function updateGateRegistration(req: Request, res: Response) {
       return apiErr(res, 'FORBIDDEN', 'Không thể chuyển đăng ký sang kho ngoài phạm vi được giao', 403)
   }
   const uCats = scopeCategoriesOf(req)
+  // Loại HIỆN TẠI của bản ghi phải trong phạm vi (chống IDOR-loại: sửa đăng ký loại ngoài scope cùng kho)
+  if (uCats && before?.warehouse_type && before.warehouse_type !== 'Khác' && !uCats.includes(before.warehouse_type))
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể sửa đăng ký cổng loại kho này', 403)
   if (uCats && warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !uCats.includes(warehouse_type))
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể đổi sang loại kho này', 403)
 

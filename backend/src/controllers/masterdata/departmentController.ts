@@ -4,7 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 function isSuperadmin(req: Request): boolean {
-  return (req as { user?: { name?: string } }).user?.name === 'Admin'
+  // Khớp middleware/authController (is_superadmin = employee_code==='ADMIN' || name==='Admin')
+  const u = (req as { user?: { name?: string; is_superadmin?: boolean } }).user
+  return u?.is_superadmin === true || u?.name === 'Admin'
 }
 const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / chức danh & phân quyền'
 

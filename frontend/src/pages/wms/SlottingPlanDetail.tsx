@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Boxes, CheckCircle2, QrCode, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, QrCode, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
@@ -60,9 +60,30 @@ export default function SlottingPlanDetail() {
   const [actErr, setActErr] = useState('')
   const [search, setSearch] = useState('')
   const [lineFilter, setLineFilter] = useState<LineFilter>('')
+  const [impactOpen, setImpactOpen] = useState(false)   // "Kết quả kỳ vọng" — thu gọn mặc định, mở xem khi cần
 
   // Dòng nào làm xong TRỐNG được vị trí nguồn — tính trên TOÀN kế hoạch (không theo bộ lọc)
   const freesSet = useMemo(() => computeFreesSet(plan?.lines ?? []), [plan?.lines])
+
+  // Kết quả kỳ vọng nếu thực hiện ĐỦ kế hoạch — suy từ dòng đã lưu + freesSet (khớp nhãn →trống),
+  // KHÔNG cần lưu riêng: vị trí giải phóng = nguồn của các dòng "→trống"; phân loại việc theo `reason`.
+  const impact = useMemo(() => {
+    const ls = plan?.lines ?? []
+    if (ls.length === 0) return null
+    const freed = new Map<string, string>()   // from_location_id → code (dedup)
+    for (const l of ls) if (l.from_location_id && freesSet.has(l.id)) freed.set(l.from_location_id, l.from_location_code ?? '?')
+    const sumR = (re: RegExp) => ls.filter(l => re.test(l.reason ?? '')).reduce((s, l) => s + l.n_pallets, 0)
+    return {
+      lines: ls.length,
+      moved: ls.reduce((s, l) => s + l.n_pallets, 0),
+      freedLocs: [...freed.values()].sort(),
+      tempCleared: sumR(/tạm/i),           // P1 khu "không đưa hàng vào"
+      wrongZone: sumR(/sai loại khu/i),    // P0
+      abc: sumR(/gần cửa|khu xa|lệch khu/i), // P2 (Hard)
+      dateGroup: sumR(/Dồn date/i),        // P3
+      freeGroup: sumR(/Gom mã/i),          // P4
+    }
+  }, [plan?.lines, freesSet])
 
   const lines = useMemo(() => {
     let list = plan?.lines ?? []
@@ -195,6 +216,80 @@ export default function SlottingPlanDetail() {
         </div>
 
         <SummaryBand tiles={tiles} />
+
+        {/* Kết quả kỳ vọng nếu thực hiện đủ — thu gọn mặc định, mở bảng khi cần soi */}
+        {impact && impact.moved > 0 && (
+          <div className="border-b border-sky-200 bg-sky-50/60 shrink-0 print:hidden">
+            <button
+              className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-sky-800 hover:bg-sky-100/60 transition-colors"
+              onClick={() => setImpactOpen(o => !o)}>
+              {impactOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+              <span className="text-left">Kết quả kỳ vọng nếu thực hiện đủ {nf.format(impact.lines)} dòng ({nf.format(impact.moved)} pallet)</span>
+              {!impactOpen && impact.freedLocs.length > 0 && (
+                <span className="font-normal text-green-700 whitespace-nowrap">— giải phóng {impact.freedLocs.length} vị trí</span>
+              )}
+              <span className="ml-auto text-[10px] font-normal text-sky-500 whitespace-nowrap">{impactOpen ? 'Thu gọn' : 'Mở xem'}</span>
+            </button>
+            {impactOpen && (
+              <div className="px-3 pb-2.5 space-y-2">
+                <div className="overflow-x-auto rounded-lg border border-sky-200 bg-white">
+                  <table className="min-w-full text-[11px]">
+                    <tbody className="[&_td]:px-2.5 [&_td]:py-1.5 [&_td]:align-top [&_tr]:border-b [&_tr]:border-sky-100 [&_tr:last-child]:border-0">
+                      {impact.freedLocs.length > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Giải phóng hoàn toàn vị trí</td>
+                          <td className="text-right font-semibold tabular-nums text-green-700 whitespace-nowrap">{nf.format(impact.freedLocs.length)} vị trí</td>
+                          <td className="font-mono text-[10px] text-slate-600">{impact.freedLocs.join(', ')}</td>
+                        </tr>
+                      )}
+                      {impact.tempCleared > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Dọn khỏi vị trí "không đưa hàng vào"</td>
+                          <td className="text-right font-semibold tabular-nums whitespace-nowrap">{nf.format(impact.tempCleared)} pallet</td>
+                          <td className="text-[10px] text-slate-500">Kéo hàng khu tạm về kho chuẩn khi có chỗ (không đòi dọn sạch)</td>
+                        </tr>
+                      )}
+                      {impact.wrongZone > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Kéo về đúng loại khu</td>
+                          <td className="text-right font-semibold tabular-nums whitespace-nowrap">{nf.format(impact.wrongZone)} pallet</td>
+                          <td className="text-[10px] text-slate-500">Pallet nằm sai loại khu → khu đúng loại</td>
+                        </tr>
+                      )}
+                      {impact.abc > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Đảo khu theo hạng ABC</td>
+                          <td className="text-right font-semibold tabular-nums whitespace-nowrap">{nf.format(impact.abc)} pallet</td>
+                          <td className="text-[10px] text-slate-500">Mã nhặt nhiều về gần cửa, nhặt ít ra xa</td>
+                        </tr>
+                      )}
+                      {impact.dateGroup > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Gom theo date ({plan.principle ?? 'FEFO'})</td>
+                          <td className="text-right font-semibold tabular-nums whitespace-nowrap">{nf.format(impact.dateGroup)} pallet</td>
+                          <td className="text-[10px] text-slate-500">Sau gom, mỗi vị trí chứa cùng mã với dải date liền nhau, xuất đúng chiều {plan.principle ?? 'FEFO'}</td>
+                        </tr>
+                      )}
+                      {impact.freeGroup > 0 && (
+                        <tr>
+                          <td className="font-medium text-sky-800 whitespace-nowrap">Gom mã rải rác về ít vị trí</td>
+                          <td className="text-right font-semibold tabular-nums whitespace-nowrap">{nf.format(impact.freeGroup)} pallet</td>
+                          <td className="text-[10px] text-slate-500">Giải phóng chỗ</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-sky-700 leading-relaxed">
+                  <b>Cách soi từng dòng:</b> dòng có nhãn <span className="font-semibold text-green-700">→trống</span> (cột "PL nơi đi") = làm xong giải phóng được vị trí nguồn — nên làm trước. Đích hợp lý là vị trí trống hoặc đang chứa CÙNG MÃ, date đúng chiều {plan.principle === 'LIFO' ? 'LIFO (đích chứa date NGẮN hơn hàng chuyển đến)' : `${plan.principle ?? 'FEFO'} (đích chứa date DÀI hơn hàng chuyển đến)`}.
+                </p>
+                <p className="text-[10px] text-sky-700 leading-relaxed">
+                  Mỗi pallet chỉ chuyển 1 lần/kế hoạch — vài pallet dạng hoán đổi dây chuyền (chỗ này trống ra thì chỗ kia mới dồn được) sẽ hiện khi <b>Sinh gợi ý lần nữa SAU khi làm xong</b> đợt này; đợt 2 thường rất nhỏ (~1–3%) và đợt 3 = 0.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Lọc trạng thái dòng + tìm */}
         <div className="border-b bg-slate-50 px-3 py-1.5 shrink-0 flex items-center gap-1.5 flex-wrap print:hidden">

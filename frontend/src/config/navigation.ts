@@ -42,7 +42,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/loosepicking',  icon: Scissors,       label: 'Nhặt lẻ',           module: 'loosepicking' },
       { to: '/wms/pallet-ops',    icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' },
       { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
-      { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Check vị trí',      module: 'stocktake' },
+      { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
       { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
       { to: '/wms/multi-scan',    icon: ScanLine,       label: 'Quét loạt (test)',  adminOnly: true },
     ],
@@ -69,7 +69,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/wms/inventory',         icon: Package,   label: 'Tồn kho',      module: 'inventory' },
       { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
-      { to: '/wms/stocktake/summary', icon: BarChart2, label: 'Tổng hợp KK',  module: 'stocktake' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
       { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'], anyActions: [['outbound', 'reconcile']] },
     ],

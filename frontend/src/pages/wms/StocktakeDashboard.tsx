@@ -23,6 +23,7 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
+import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -314,6 +315,7 @@ export default function StocktakeDashboard() {
 
   return (
     <div className="flex flex-col h-full sm:p-3">
+     <StocktakeTabs />
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters — compact, ~70% kích thước cũ */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:space-y-1.5 sm:rounded-t-xl">

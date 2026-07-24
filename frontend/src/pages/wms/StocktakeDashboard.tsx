@@ -234,7 +234,7 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, view, dateFrom, dateTo } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, view } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
@@ -276,14 +276,13 @@ export default function StocktakeDashboard() {
     && locationIds.length === importantLocIds.length
     && importantLocIds.every(id => locationIds.includes(id))
 
+  // Tổng hợp KK = trạng thái HÔM NAY (tiến độ kiểm của current stock). Xem lại ngày quá khứ → tab "Lịch sử kiểm".
   const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const effFrom = dateFrom || todayVN
-  const effTo   = (dateTo && dateTo >= effFrom) ? dateTo : effFrom
-  const rangeStart = new Date(`${effFrom}T00:00:00.000+07:00`).toISOString()
-  const rangeEnd   = new Date(`${effTo}T23:59:59.999+07:00`).toISOString()
+  const rangeStart = new Date(`${todayVN}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${todayVN}T23:59:59.999+07:00`).toISOString()
 
   const { data, isFetching } = useStocktakeEntries(
-    { location_ids: locationIds.join(','), view, date_from: effFrom, date_to: effTo },
+    { location_ids: locationIds.join(','), view },   // không truyền ngày → BE mặc định HÔM NAY
     locationIds.length > 0,
   )
 
@@ -294,7 +293,6 @@ export default function StocktakeDashboard() {
   // KHÔNG cộng "Σ lệch" cross-mã (đơn vị base khác nhau → tổng vô nghĩa; đã có số PALLET lệch ở thẻ Chênh lệch).
   const coverage = stats.total   > 0 ? Math.round((stats.checked  / stats.total)   * 100) : 0
   const accuracy = stats.checked > 0 ? Math.round((stats.matched  / stats.checked) * 100) : 100
-  const isSingleDay = effFrom === effTo
 
   // Màu CHỮ theo trạng thái (không fill nền):
   // - chênh lệch=đỏ (cần xử lý) · đã quét trong ngày=xanh dương + GẠCH NGANG (xong, bỏ qua)
@@ -306,8 +304,6 @@ export default function StocktakeDashboard() {
   }
 
   const defs: FilterDef[] = [
-    { key: 'daterange', label: 'Ngày kiểm', type: 'daterange', pinned: true, from: dateFrom, to: dateTo,
-      onChange: (from, to) => setStocktakeSummary({ dateFrom: from, dateTo: to }) },
     { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
       onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [] }),
       options: (warehouses as { id: string; name: string }[]).filter(w => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
@@ -403,7 +399,7 @@ export default function StocktakeDashboard() {
             <span className="text-slate-300">·</span>
             <span>Chính xác <b className={accuracy >= 98 ? 'text-green-600' : accuracy >= 90 ? 'text-amber-600' : 'text-red-600'}>{accuracy}%</b> ({stats.matched}/{stats.checked} khớp)</span>
             <span className="text-slate-300">·</span>
-            <span>Đợt: <b className="text-slate-700">{isSingleDay ? effFrom : `${effFrom} → ${effTo}`}</b></span>
+            <span>Kiểm hôm nay <b className="text-slate-700">{todayVN}</b> — xem ngày khác ở <b className="text-blue-600">Lịch sử kiểm</b></span>
           </div>
         )}
       </div>

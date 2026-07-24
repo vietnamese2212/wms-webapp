@@ -109,8 +109,6 @@ interface StocktakeSummaryFilters {
   locationIds: string[]
   requiresOnly: boolean
   view: StocktakeView
-  dateFrom: string   // Ngày kiểm (đợt) — rỗng = hôm nay (BE tự mặc định)
-  dateTo: string
 }
 interface StocktakeHistoryFilters {
   warehouseId: string
@@ -342,7 +340,7 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
-    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'checked' as StocktakeView, dateFrom: today(), dateTo: today() },
+    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'checked' as StocktakeView },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], dateFrom: daysAgo(7), dateTo: today(), search: '' },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
     gateRegistration: {

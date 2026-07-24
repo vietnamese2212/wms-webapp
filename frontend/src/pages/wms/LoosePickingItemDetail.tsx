@@ -795,20 +795,22 @@ export default function LoosePickingItemDetail() {
           </div>
         )}
 
+        {/* Heading + tiến độ — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
+        <div className="border-b bg-white px-3 py-1.5 shrink-0 flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-slate-700 shrink-0 whitespace-nowrap">
+            Pallet đã quét (nhặt lẻ)
+            <span className="ml-1 text-xs font-normal text-slate-400">{scans.length} pallet</span>
+          </h2>
+          <div className="flex-1 min-w-0">
+            <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
+          </div>
+        </div>
+
         {/* ── Scan list ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <div className="p-3">
-            <div className="flex items-center gap-3 mb-2">
-              <h2 className="text-sm font-semibold text-slate-700 shrink-0 whitespace-nowrap">
-                Pallet đã quét (nhặt lẻ)
-                <span className="ml-1 text-xs font-normal text-slate-400">{scans.length} pallet</span>
-              </h2>
-              <div className="flex-1 min-w-0">
-                <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
-              </div>
-            </div>
-
-            <Card>
+            {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
+            <Card className="min-w-max">
               {scans.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                   <QrCode className="h-10 w-10 opacity-30" />

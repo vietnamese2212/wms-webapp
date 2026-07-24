@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 interface OutboundFilters {
   search: string
@@ -110,6 +111,14 @@ interface StocktakeSummaryFilters {
   view: StocktakeView
   dateFrom: string   // Ngày kiểm (đợt) — rỗng = hôm nay (BE tự mặc định)
   dateTo: string
+}
+interface StocktakeHistoryFilters {
+  warehouseId: string
+  category: string
+  locationIds: string[]
+  dateFrom: string   // Ngày kiểm (mặc định 7 ngày gần nhất)
+  dateTo: string
+  search: string
 }
 interface GateRegistrationFilters {
   fDate: string
@@ -249,6 +258,7 @@ interface WmsFilterState {
   slotting:          SlottingFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
+  stocktakeHistory:  StocktakeHistoryFilters
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   materials:         MaterialsFilters
@@ -281,6 +291,7 @@ interface WmsFilterState {
   setSlotting:          (f: Partial<SlottingFilters>)          => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
+  setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
@@ -332,6 +343,7 @@ function initialFilters() {
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'checked' as StocktakeView, dateFrom: today(), dateTo: today() },
+    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], dateFrom: daysAgo(7), dateTo: today(), search: '' },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
@@ -370,6 +382,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
+      setStocktakeHistory: (f) => set(s => ({ stocktakeHistory: { ...s.stocktakeHistory, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),

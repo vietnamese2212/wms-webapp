@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { ClipboardCheck, BarChart2 } from 'lucide-react'
+import { ClipboardCheck, BarChart2, History } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Thanh tab dùng chung cho công cụ Kiểm kê: Check vị trí + Tổng hợp KK.
@@ -20,6 +20,9 @@ export function StocktakeTabs() {
         </NavLink>
         <NavLink to="/wms/stocktake/summary" className={linkCls}>
           <BarChart2 className="h-3.5 w-3.5" /> Tổng hợp KK
+        </NavLink>
+        <NavLink to="/wms/stocktake/history" className={linkCls}>
+          <History className="h-3.5 w-3.5" /> Lịch sử kiểm
         </NavLink>
       </div>
     </div>

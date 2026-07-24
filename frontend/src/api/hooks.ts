@@ -1134,6 +1134,7 @@ export function useStocktakeEntry() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
+      qc.invalidateQueries({ queryKey: ['stocktake-log'] })
     },
   })
 }
@@ -1191,6 +1192,51 @@ export function useStocktakeEntries(
       if (params.date_to)      q.date_to      = params.date_to
       const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: q })
       return data.data as StocktakeEntriesResult
+    },
+    enabled,
+  })
+}
+
+export interface StocktakeLogRow {
+  id:               string
+  pallet_code:      string
+  location_code:    string | null
+  warehouse_id:     string | null
+  category:         string | null
+  material_code:    string | null
+  short_name:       string | null
+  base_unit:        string | null
+  entry_unit:       string | null
+  units_per_carton: number | null
+  app_qty:          number | null
+  physical_qty:     number | null
+  diff:             number | null
+  is_flagged:       boolean
+  note:             string | null
+  location_changed_to: string | null
+  counted_by_name:  string | null
+  counted_at:       string
+}
+
+export interface StocktakeLogResult {
+  rows: StocktakeLogRow[]
+  total: number
+  truncated?: boolean
+  date_from?: string
+  date_to?: string
+}
+
+export function useStocktakeLog(
+  params: { warehouse_id?: string; category?: string; location_ids?: string; date_from?: string; date_to?: string; search?: string },
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['stocktake-log', params],
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v) q[k] = v
+      const { data } = await apiClient.get('/wms/inventory/stocktake-log', { params: q })
+      return data.data as StocktakeLogResult
     },
     enabled,
   })

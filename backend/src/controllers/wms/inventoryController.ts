@@ -1019,7 +1019,9 @@ export async function stocktakeEntry(req: Request, res: Response) {
   }
 
   const { data: existing, error: fetchErr } = await supabase.from('InventoryEntry')
-    .select('id, location_id, cartons_remaining, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
+    .select(`id, pallet_code, location_id, cartons_remaining, material_id,
+      material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
+      location:Location!location_id(location_code, warehouse_id, category)`)
     .eq('id', id).maybeSingle()
 
   if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
@@ -1057,6 +1059,51 @@ export async function stocktakeEntry(req: Request, res: Response) {
 
   const { error } = await supabase.from('InventoryEntry').update(patch).eq('id', id)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
+
+  // Nhật ký kiểm kê (append-only): 1 dòng mỗi lần kiểm → xem lại quá khứ vô thời hạn.
+  // Snapshot đủ trường để độc lập dòng tồn sống. Lỗi ghi log KHÔNG làm hỏng lượt kiểm (đã lưu xong).
+  try {
+    const appCount = Number(existing.cartons_remaining ?? 0)
+    const phys = (physical_count !== undefined && physical_count !== null) ? Number(physical_count) : null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mat = (existing as any).material as { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
+    // Vị trí nơi ĐẾM: nếu đổi vị trí → lấy vị trí mới; ngược lại vị trí app hiện tại
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; category?: string } | null
+    let snapLocId = existing.location_id as string | null
+    if (new_location_id && new_location_id !== existing.location_id) {
+      const { data: nl } = await supabase.from('Location').select('location_code, warehouse_id, category').eq('id', new_location_id).maybeSingle()
+      if (nl) { snapLoc = nl as typeof snapLoc; snapLocId = new_location_id }
+    }
+    await supabase.from('StocktakeLog').insert({
+      id: randomUUID(),
+      entry_id: id,
+      pallet_code: existing.pallet_code,
+      location_id: snapLocId,
+      location_code: snapLoc?.location_code ?? null,
+      warehouse_id: snapLoc?.warehouse_id ?? null,
+      category: snapLoc?.category ?? null,
+      material_id: existing.material_id,
+      material_code: mat?.material_code ?? null,
+      short_name: mat?.short_name ?? null,
+      base_unit: mat?.base_unit ?? null,
+      entry_unit: mat?.entry_unit ?? null,
+      units_per_carton: mat?.units_per_carton ?? null,
+      app_qty: appCount,
+      physical_qty: phys,
+      diff: phys !== null ? phys - appCount : null,
+      is_flagged: patch.stocktake_flagged === true,
+      note: (patch.stocktake_flag_note as string | null) ?? null,
+      location_changed_to: (new_location_id && new_location_id !== existing.location_id) ? new_location_id : null,
+      counted_by: (patch.stocktake_by as string | undefined) ?? null,
+      counted_by_name: req.user?.name ?? null,
+      counted_at: now,
+      created_at: now,
+      updated_at: now,
+    })
+  } catch (e) {
+    console.error('StocktakeLog insert failed:', (e as Error).message)
+  }
   return ok(res, { ok: true })
 }
 
@@ -1213,6 +1260,51 @@ export async function stocktakeEntries(req: Request, res: Response) {
     entries,
     total_filtered: totalFiltered,
     truncated: totalFiltered > entries.length,
+    date_from: dfrom, date_to: dto,
+  })
+}
+
+// Lịch sử kiểm kê: đọc từ StocktakeLog (append-only) — xem lại kết quả kiểm mọi ngày/đợt,
+// kể cả pallet đã xuất / đã kiểm lại. Scope kho + loại (null-inclusive) như báo cáo tổng hợp.
+export async function stocktakeLog(req: Request, res: Response) {
+  const { warehouse_id, category, location_ids, date_from, date_to, search } = req.query as Record<string, string>
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
+  const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
+  const dto    = dtoRaw < dfrom ? dfrom : dtoRaw
+  const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
+
+  const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+  let whFilter: string[] | null = null
+  if (scope !== null) {
+    if (warehouse_id && !scope.includes(warehouse_id)) return ok(res, { rows: [], total: 0 })
+    whFilter = warehouse_id ? [warehouse_id] : scope
+    if (!whFilter.length) return ok(res, { rows: [], total: 0 })
+  } else if (warehouse_id) {
+    whFilter = [warehouse_id]
+  }
+  const stCats = scopeCategoriesOf(req)
+
+  const CAP = 2000
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let q: any = supabase.from('StocktakeLog').select('*', { count: 'exact' })
+    .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
+  if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter)
+  if (category) q = q.eq('category', category)
+  if (stCats)   q = q.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+  if (location_ids) {
+    const ids = String(location_ids).split(',').filter(Boolean)
+    if (ids.length) q = q.in('location_id', ids)
+  }
+  if (search) q = q.ilike('pallet_code', `%${safeFilterValue(String(search))}%`)
+
+  const { data, count, error } = await q.order('counted_at', { ascending: false }).range(0, CAP - 1)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, {
+    rows: data ?? [],
+    total: count ?? 0,
+    truncated: (count ?? 0) > (data?.length ?? 0),
     date_from: dfrom, date_to: dto,
   })
 }

@@ -13,7 +13,7 @@ const {
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower,
   Slotting, SlottingPlanDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
-  Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps, MultiScanTest,
+  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, IntegrationKeys, Materials, ExternalData, Settings,
@@ -107,6 +107,7 @@ export default function App() {
         {/* WMS — stocktake */}
         <Route path="/wms/stocktake"         element={<PermissionRoute module="stocktake"><Stocktake /></PermissionRoute>} />
         <Route path="/wms/stocktake/summary" element={<PermissionRoute module="stocktake"><StocktakeDashboard /></PermissionRoute>} />
+        <Route path="/wms/stocktake/history" element={<PermissionRoute module="stocktake"><StocktakeHistory /></PermissionRoute>} />
 
         {/* WMS — slotting (tối ưu vị trí) */}
         <Route path="/wms/slotting"           element={<PermissionRoute module="slotting"><Slotting /></PermissionRoute>} />

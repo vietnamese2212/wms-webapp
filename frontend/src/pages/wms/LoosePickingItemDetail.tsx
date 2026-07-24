@@ -560,6 +560,7 @@ export default function LoosePickingItemDetail() {
       <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
         <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2">
           <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin mã · {matCode}</DialogTitle></DialogHeader>
+          {doNpp && <p className="text-xs text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></p>}
           {refInfoJSX}
         </DialogContent>
       </Dialog>
@@ -633,8 +634,8 @@ export default function LoosePickingItemDetail() {
         {/* ── Header ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
 
-          {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
+          {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không chen — NPP xuống Row3b) */}
+          <div className="flex items-center gap-x-2 gap-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
                 onClick={() => navigate(`/wms/loosepicking/${gdoId}`)}
@@ -642,21 +643,15 @@ export default function LoosePickingItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm shrink-0">{matCode}</span>
+              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
               <Badge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
-                title="Thông tin mã hàng · DO"
+                title="Thông tin mã · NPP · DO"
               >
                 <Info className="h-4 w-4" />
               </button>
-              {/* NPP đưa lên đây (lấp chỗ trống dòng ⋮) — DO nằm trong nút Info */}
-              {doNpp && (
-                <span className="text-[11px] truncate min-w-0 text-slate-600">
-                  <span className="text-slate-400">NPP </span><span className="font-medium">{doNpp}</span>
-                </span>
-              )}
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
@@ -671,9 +666,10 @@ export default function LoosePickingItemDetail() {
           {/* Row 3: metadata THAM KHẢO — desktop inline; mobile xem qua popup Info (điều kiện đỏ vẫn hiện dưới) */}
           <div className="hidden sm:block">{refInfoJSX}</div>
 
-          {/* Row 3b: điều kiện xuất Batch/%Date highlight ĐỎ (NPP lên dòng 1, DO trong nút Info) */}
-          {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+          {/* Row 3b: NPP (dòng riêng, wrap an toàn — không chèn dòng 1 để khỏi bị che) + điều kiện xuất Batch/%Date ĐỎ. DO nằm trong nút Info */}
+          {(doNpp || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] min-w-0">
+              {doNpp && <span className="text-slate-600 truncate max-w-full"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
               {item.batch_required && (
                 <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
               )}

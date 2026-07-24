@@ -35,8 +35,9 @@ function parseDiff(note: string | null): { actual: number; app: number; diff: nu
   return { actual, app, diff: actual - app }
 }
 
-function isCheckedToday(e: StocktakeEntryRow, todayVN: string, todayStart: string): boolean {
-  return !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
+// "Đã kiểm" = CÓ stocktake_at TRONG khoảng ngày kiểm đang xem (mirror BE — BỎ luật "nhập hôm nay=đã kiểm").
+function isCheckedInRange(e: StocktakeEntryRow, rangeStart: string, rangeEnd: string): boolean {
+  return !!(e.stocktake_at && e.stocktake_at >= rangeStart && e.stocktake_at <= rangeEnd)
 }
 
 // ─── Stat Card ───────────────────────────────────────────────────
@@ -233,7 +234,7 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, requiresOnly, view, dateFrom, dateTo } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
@@ -262,28 +263,41 @@ export default function StocktakeDashboard() {
   const filteredLocations = requiresOnly
     ? (locations as any[]).filter((l: any) => l.requires_stocktake)
     : (locations as any[])
+  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn — dùng cho nút chọn nhanh
+  const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
+
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const effFrom = dateFrom || todayVN
+  const effTo   = (dateTo && dateTo >= effFrom) ? dateTo : effFrom
+  const rangeStart = new Date(`${effFrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${effTo}T23:59:59.999+07:00`).toISOString()
 
   const { data, isFetching } = useStocktakeEntries(
-    { location_ids: locationIds.join(','), view },
+    { location_ids: locationIds.join(','), view, date_from: effFrom, date_to: effTo },
     locationIds.length > 0,
   )
 
-  const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0 }
+  const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0, matched: 0 }
   const entries = data?.entries ?? []
 
-  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+  // Chỉ số kết quả kiểm (đếm chính xác từ BE): bao phủ = đã kiểm/tổng; chính xác = khớp/đã kiểm.
+  // KHÔNG cộng "Σ lệch" cross-mã (đơn vị base khác nhau → tổng vô nghĩa; đã có số PALLET lệch ở thẻ Chênh lệch).
+  const coverage = stats.total   > 0 ? Math.round((stats.checked  / stats.total)   * 100) : 0
+  const accuracy = stats.checked > 0 ? Math.round((stats.matched  / stats.checked) * 100) : 100
+  const isSingleDay = effFrom === effTo
 
   // Màu CHỮ theo trạng thái (không fill nền):
   // - chênh lệch=đỏ (cần xử lý) · đã quét trong ngày=xanh dương + GẠCH NGANG (xong, bỏ qua)
   // - chưa quét=xám đậm thường (cần tập trung tìm) → đẩy lên đầu (sort ở backend)
   function rowStatusKey(e: StocktakeEntryRow): RowStatusKey {
     if (e.stocktake_flagged) return 'paused'
-    if (isCheckedToday(e, todayVN, todayStart)) return 'completed'
+    if (isCheckedInRange(e, rangeStart, rangeEnd)) return 'completed'
     return 'pending'
   }
 
   const defs: FilterDef[] = [
+    { key: 'daterange', label: 'Ngày kiểm', type: 'daterange', pinned: true, from: dateFrom, to: dateTo,
+      onChange: (from, to) => setStocktakeSummary({ dateFrom: from, dateTo: to }) },
     { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
       onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [] }),
       options: (warehouses as { id: string; name: string }[]).filter(w => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
@@ -306,7 +320,7 @@ export default function StocktakeDashboard() {
         'Chênh lệch': diff ? qtyEntryDecimal(diff.diff, e.material) : '',
         'Người kiểm': e.stocktake_by_emp?.name ?? '',
         'TG kiểm': e.stocktake_at ? `${formatTimestampDate(e.stocktake_at, true)} ${formatTimestampTime(e.stocktake_at)}` : '',
-        'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
+        'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedInRange(e, rangeStart, rangeEnd) ? 'Đã kiểm' : 'Chưa kiểm'),
       }
     })
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
@@ -332,9 +346,20 @@ export default function StocktakeDashboard() {
               setStocktakeSummary({ requiresOnly: e.target.checked, locationIds: [] })
             }} className="h-3 w-3 cursor-pointer" />
             <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
-              <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
+              <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ VT quan trọng
             </span>
           </label>
+          {warehouseId && (
+            <button type="button"
+              onClick={() => setStocktakeSummary({ locationIds: importantLocIds })}
+              disabled={importantLocIds.length === 0}
+              title={importantLocIds.length === 0
+                ? 'Kho này chưa gắn vị trí quan trọng nào — gắn cờ "cần kiểm kê" ở trang Vị trí kho'
+                : `Chọn nhanh ${importantLocIds.length} vị trí quan trọng của kho này`}
+              className="inline-flex items-center gap-1 h-6 px-2 rounded-md border border-red-200 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
+              <Flag className="h-2.5 w-2.5" /> Chọn VT quan trọng{importantLocIds.length > 0 ? ` (${importantLocIds.length})` : ''}
+            </button>
+          )}
           <div className="flex-1" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -371,6 +396,17 @@ export default function StocktakeDashboard() {
             <StatCard label="Chênh lệch" value={stats.flagged}
               active={view === 'flagged'} color="bg-red-100 text-red-700 border-red-300"
               onClick={() => setStocktakeSummary({ view: 'flagged' })} />
+          </div>
+        )}
+
+        {/* Row 3: chỉ số kết quả kiểm — bao phủ + độ chính xác của ĐỢT kiểm đang xem */}
+        {locationIds.length > 0 && (
+          <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-slate-500">
+            <span>Bao phủ <b className={coverage >= 90 ? 'text-green-600' : coverage >= 50 ? 'text-amber-600' : 'text-slate-700'}>{coverage}%</b> ({stats.checked}/{stats.total})</span>
+            <span className="text-slate-300">·</span>
+            <span>Chính xác <b className={accuracy >= 98 ? 'text-green-600' : accuracy >= 90 ? 'text-amber-600' : 'text-red-600'}>{accuracy}%</b> ({stats.matched}/{stats.checked} khớp)</span>
+            <span className="text-slate-300">·</span>
+            <span>Đợt: <b className="text-slate-700">{isSingleDay ? effFrom : `${effFrom} → ${effTo}`}</b></span>
           </div>
         )}
       </div>
@@ -419,12 +455,16 @@ export default function StocktakeDashboard() {
                   ) : entries.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">
-                        {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
+                        {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
+                          : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
+                          : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
+                          : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
+                          : 'Không có dữ liệu'}
                       </TableCell>
                     </TableRow>
                   ) : entries.map(e => {
                     const diff    = parseDiff(e.stocktake_flag_note)
-                    const checked = isCheckedToday(e, todayVN, todayStart)
+                    const checked = isCheckedInRange(e, rangeStart, rangeEnd)
                     const sel     = selectedId === e.id
                     const stickyBg = sel ? 'bg-sky-50' : 'bg-white'
                     return (

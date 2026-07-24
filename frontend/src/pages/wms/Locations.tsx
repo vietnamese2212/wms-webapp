@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { FormSheet } from '@/components/shared/FormSheet'
 import {
   useLocationsReal, useWarehouses, useWarehouseZones,
-  useCreateLocation, useUpdateLocation, useDeleteLocation,
+  useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -108,6 +108,8 @@ export default function Locations() {
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
+  const [bulkOpen,      setBulkOpen]      = useState(false)   // dialog gắn/bỏ cờ cần-check hàng loạt
+  const [bulkErr,       setBulkErr]       = useState('')
 
   // Data
   const { data: whTypes = [] }          = useScopedWhTypes()
@@ -133,6 +135,17 @@ export default function Locations() {
   const createLocation  = useCreateLocation()
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
+  const bulkFlag        = useBulkFlagLocations()
+
+  async function applyBulkFlag(flag: boolean) {
+    setBulkErr('')
+    try {
+      await bulkFlag.mutateAsync({ ids: activeFiltered.map(l => l.id), requires_stocktake: flag })
+      setBulkOpen(false)
+    } catch (e: unknown) {
+      setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
+    }
+  }
 
   // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -295,6 +308,12 @@ export default function Locations() {
               disabled: !filtered.length,
               onClick: exportExcel,
             } satisfies ActionItem,
+            ...(can(perms, 'locations', 'edit') ? [{
+              key: 'bulkflag', icon: Flag, label: 'Cờ check',
+              tip: 'Gắn / bỏ cờ "cần kiểm kê" hàng loạt cho các vị trí đang lọc (vị trí quan trọng)',
+              disabled: !activeFiltered.length,
+              onClick: () => { setBulkErr(''); setBulkOpen(true) },
+            } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'create') ? [{
               key: 'add', icon: Plus, label: 'Thêm vị trí', tip: 'Thêm vị trí kho mới',
               primary: true, variant: 'default',
@@ -630,6 +649,34 @@ export default function Locations() {
             )}
           </div>
       </FormSheet>
+
+      {/* Gắn / bỏ cờ cần-kiểm hàng loạt */}
+      <Dialog open={bulkOpen} onOpenChange={open => !open && setBulkOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5">
+              <Flag className="h-4 w-4 text-red-500" /> Cờ cần kiểm kê hàng loạt
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            Áp cho <span className="font-semibold">{activeFiltered.length}</span> vị trí đang lọc
+            {' '}(đang gắn cờ: <span className="font-semibold">{activeFiltered.filter(l => l.requires_stocktake).length}</span>).
+            Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.
+          </p>
+          {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkOpen(false)} disabled={bulkFlag.isPending}>Hủy</Button>
+            <Button variant="outline" size="sm" className="border-slate-300"
+              onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? '…' : 'Bỏ cờ'}
+            </Button>
+            <Button size="sm" className="bg-red-600 hover:bg-red-700"
+              onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? 'Đang lưu…' : 'Gắn cờ cần check'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Location Confirmation */}
       <Dialog open={deleteTarget !== null} onOpenChange={open => !open && setDeleteTarget(null)}>

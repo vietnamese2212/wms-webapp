@@ -287,6 +287,16 @@ export function useDeleteLocation() {
   })
 }
 
+// Gắn/bỏ cờ "cần kiểm kê" hàng loạt cho nhiều vị trí (vị trí quan trọng)
+export function useBulkFlagLocations() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; requires_stocktake: boolean }) =>
+      apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number; requires_stocktake: boolean }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
+  })
+}
+
 export function useCreateMaterial() {
   const qc = useQueryClient()
   return useMutation({
@@ -1156,15 +1166,17 @@ export interface StocktakeEntryRow {
 }
 
 export interface StocktakeEntriesResult {
-  stats:   { total: number; checked: number; unchecked: number; flagged: number }
+  stats:   { total: number; checked: number; unchecked: number; flagged: number; matched: number }
   entries: StocktakeEntryRow[]
   // BE cap 2000 dòng/lần (chọn cả kho vài chục nghìn pallet) — truncated=true → FE hiện cảnh báo thu hẹp vị trí
   total_filtered?: number
   truncated?: boolean
+  date_from?: string
+  date_to?:   string
 }
 
 export function useStocktakeEntries(
-  params: { warehouse_id?: string; category?: string; location_ids?: string; view?: string },
+  params: { warehouse_id?: string; category?: string; location_ids?: string; view?: string; date_from?: string; date_to?: string },
   enabled = true,
 ) {
   return useQuery({
@@ -1175,6 +1187,8 @@ export function useStocktakeEntries(
       if (params.category)     q.category     = params.category
       if (params.location_ids) q.location_ids = params.location_ids
       if (params.view)         q.view         = params.view
+      if (params.date_from)    q.date_from    = params.date_from
+      if (params.date_to)      q.date_to      = params.date_to
       const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: q })
       return data.data as StocktakeEntriesResult
     },

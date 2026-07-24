@@ -1061,7 +1061,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, location_id, location_ids, view = 'problem' } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, location_ids, view = 'problem', date_from, date_to } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
 
   const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
@@ -1115,21 +1115,27 @@ export async function stocktakeEntries(req: Request, res: Response) {
     resolvedLocationIds = (locs as { id: string }[]).map(l => l.id)
   }
 
-  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // KHOẢNG NGÀY KIỂM (đợt kiểm) — mặc định hôm nay. "Đã kiểm" = CÓ stocktake_at TRONG khoảng.
+  // BỎ luật cũ "nhập hôm nay = đã kiểm": hàng mới nhập KHÔNG phải kết quả đếm thật, tính vào sẽ thổi
+  // phồng số đã-kiểm. Trang này là BÁO CÁO KẾT QUẢ KIỂM nên chỉ đếm pallet thực sự được kiểm trong đợt.
+  const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
+  const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
+  const dto    = dtoRaw < dfrom ? dfrom : dtoRaw
+  const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
 
-  // "Đã kiểm" = quét hôm nay HOẶC nhập hôm nay. Điều kiện dựng bằng .or() PostgREST để LỌC + ĐẾM
-  // trong DB — kho lớn (vài chục nghìn pallet, chọn cả kho) không kéo toàn bộ dòng về Node nữa.
-  const CHECKED_OR   = `stocktake_at.gte.${todayStart},import_date.eq.${todayVN}`
-  // Chưa kiểm = (chưa quét hôm nay) AND (không nhập hôm nay) — tách 2 nhánh vì or/and lồng nhau;
-  // import_date.neq bỏ sót NULL nên phải or(is.null, neq).
-  const UNCHECKED_OR = `and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.is.null),and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.lt.${todayStart})`
+  // Điều kiện LỌC + ĐẾM trong DB (kho lớn vài chục nghìn pallet không kéo toàn bộ về Node).
+  // toISOString() luôn ra chuỗi UTC 'Z' (không có '+') nên an toàn trong .or().
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const CHECKED_RANGE = (q: any): any => q.gte('stocktake_at', rangeStart).lte('stocktake_at', rangeEnd)
+  const UNCHECKED_OR = `stocktake_at.is.null,stocktake_at.lt.${rangeStart},stocktake_at.gt.${rangeEnd}`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applyView = (q: any): any => {
-    if (view === 'flagged')   return q.eq('stocktake_flagged', true)
+    if (view === 'flagged')   return CHECKED_RANGE(q.eq('stocktake_flagged', true))
     if (view === 'unchecked') return q.or(UNCHECKED_OR)
-    if (view === 'checked')   return q.or(CHECKED_OR)
-    if (view === 'problem')   return q.or(`stocktake_flagged.eq.true,${UNCHECKED_OR}`)
+    if (view === 'checked')   return CHECKED_RANGE(q)
+    if (view === 'problem')   return q.or(`and(stocktake_flagged.eq.true,stocktake_at.gte.${rangeStart},stocktake_at.lte.${rangeEnd}),${UNCHECKED_OR}`)
     return q
   }
 
@@ -1146,8 +1152,8 @@ export async function stocktakeEntries(req: Request, res: Response) {
     for (const chunk of locChunks) {
       const [t, c, f, v] = await Promise.all([
         baseCount(chunk),
-        baseCount(chunk).or(CHECKED_OR),
-        baseCount(chunk).eq('stocktake_flagged', true),
+        CHECKED_RANGE(baseCount(chunk)),
+        CHECKED_RANGE(baseCount(chunk).eq('stocktake_flagged', true)),
         applyView(baseCount(chunk)),
       ])
       for (const r of [t, c, f, v]) if (r.error) throw new Error(r.error.message)
@@ -1157,6 +1163,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
   const unchecked = total - checked
+  const matched   = Math.max(0, checked - flagged)   // đã kiểm KHỚP = đã kiểm − chênh lệch
 
   // Entries: lọc view TRONG SQL + CAP 2000 dòng (chọn cả kho vài chục nghìn pallet → payload/thời gian
   // bị chặn; FE hiện cảnh báo thu hẹp vị trí khi truncated). Chưa-quét-bao-giờ lên đầu (nullsFirst).
@@ -1192,7 +1199,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
   }
 
   type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
-  const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
+  const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= rangeStart && e.stocktake_at <= rangeEnd)
   // Sort chính xác trên tập đã cap (rẻ): CHƯA quét lên đầu; trong nhóm đã quét: lệch trước
   ;(entries as E[]).sort((a, b) => {
     const aOk = isChecked(a), bOk = isChecked(b)
@@ -1202,10 +1209,11 @@ export async function stocktakeEntries(req: Request, res: Response) {
   })
 
   return ok(res, {
-    stats: { total, checked, unchecked, flagged },
+    stats: { total, checked, unchecked, flagged, matched },
     entries,
     total_filtered: totalFiltered,
     truncated: totalFiltered > entries.length,
+    date_from: dfrom, date_to: dto,
   })
 }
 

@@ -228,6 +228,42 @@ export async function updateLocation(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// Gắn / bỏ cờ "cần kiểm kê" HÀNG LOẠT (vị trí quan trọng). Chỉ áp cho vị trí TRONG phạm vi kho + loại
+// của user (bỏ qua id ngoài scope, không báo lỗi cả lô). Chunk 300/lô né URL dài + cap ~1000.
+export async function bulkFlagLocations(req: Request, res: Response) {
+  try {
+    const { ids, requires_stocktake } = req.body as { ids?: unknown; requires_stocktake?: unknown }
+    const idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    if (!idList.length) return fail(res, 400, 'INVALID_INPUT', 'Thiếu danh sách vị trí')
+    const flag = Boolean(requires_stocktake)
+
+    const scope = scopeWhIds(req)
+    const cats  = scopeCategoriesOf(req)
+    const now   = new Date().toISOString()
+    const by    = req.user?.name || null
+
+    let updated = 0
+    for (let i = 0; i < idList.length; i += 300) {
+      const chunk = idList.slice(i, i + 300)
+      // Lọc id thuộc phạm vi (kho + loại) — KHÔNG tin id từ client
+      let q = supabase.from('Location').select('id, warehouse_id, category').in('id', chunk)
+      if (scope !== null) q = scope.length === 1 ? q.eq('warehouse_id', scope[0]) : q.in('warehouse_id', scope)
+      const { data, error } = await q
+      if (error) throw error
+      const allowed = ((data ?? []) as { id: string; category: string | null }[])
+        .filter(r => categoryAllowed(req, r.category))
+        .map(r => r.id)
+      if (!allowed.length) continue
+      const { error: upErr } = await supabase.from('Location')
+        .update({ requires_stocktake: flag, updated_at: now, updated_by: by })
+        .in('id', allowed)
+      if (upErr) throw upErr
+      updated += allowed.length
+    }
+    ok(res, { updated, requires_stocktake: flag })
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function deleteLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return

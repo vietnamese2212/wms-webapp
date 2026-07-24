@@ -14,6 +14,7 @@ import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
+import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
@@ -582,8 +583,16 @@ export default function LoosePickingDetail() {
       onClick: toggleExpandAll,
     })
 
+  // Dải tile tổng hợp (đồng bộ Xuất) — LUÔN hiện ngay trên bảng.
+  const bandTiles = [
+    { label: 'DO',       value: allDOs.length },
+    { label: 'Mã hàng',  value: allLooseItems.length },
+    { label: 'Đã nhặt',  value: `${totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalLooseDone > 0 },
+    { label: 'Cần nhặt', value: `${totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
+  ]
   // Khối thông tin đơn — desktop hiện inline; mobile mở POPUP (nút Info trên thanh mảnh).
   const orderInfoJSX = (
+    <div className="space-y-1">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
       <span className="flex items-center gap-1">
         <Truck className="h-3 w-3 text-slate-400 shrink-0" />
@@ -596,6 +605,8 @@ export default function LoosePickingDetail() {
         Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
         <span className="text-slate-400 ml-0.5">thùng</span>
       </span>
+    </div>
+    <ProgressBar scanned={totalLooseDone} target={totalLoose} />
     </div>
   )
 
@@ -650,9 +661,10 @@ export default function LoosePickingDetail() {
 
         {/* Row 2: GDO info — desktop inline; mobile xem qua popup Info */}
         <div className="hidden sm:block">{orderInfoJSX}</div>
-
-        <ProgressBar scanned={totalLooseDone} target={totalLoose} />
       </div>
+
+      {/* Dải tile tổng hợp (đồng bộ Xuất) — LUÔN hiện ngay trên bảng */}
+      <div className="shrink-0"><SummaryBand tiles={bandTiles} /></div>
 
       {/* ── Quick-switch bar ── */}
       {vehicles.length > 0 && (
@@ -682,6 +694,12 @@ export default function LoosePickingDetail() {
 
       {/* ── Items table ── */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {/* Băng HÀNG HÓA (đồng bộ Xuất) */}
+        <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
+          <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hàng hóa</h2>
+          <span className="text-[11px] font-normal text-slate-400">{allLooseItems.length} mã · {allDOs.length} DO</span>
+        </div>
         <ItemsTable doRecords={allDOs} gdoId={id!} expandedItemIds={expandedItemIds} toggleExpand={toggleExpand}
           warehouseId={gdo.warehouse_id} deliveryDate={gdo.delivery_date} />
       </div>

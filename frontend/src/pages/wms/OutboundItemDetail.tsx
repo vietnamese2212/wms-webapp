@@ -673,6 +673,9 @@ export default function OutboundItemDetail() {
       {item.material_type && (
         <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
       )}
+      {doCode && (
+        <span><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>
+      )}
     </div>
   )
 
@@ -850,25 +853,31 @@ export default function OutboundItemDetail() {
 
           {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
           <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
                 onClick={() => navigate(`/wms/outbound/${gdoId}`)}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate ${itemStatusText(item.status)}`}>{matCode}</span>
+              <span className={`font-mono font-semibold text-sm shrink-0 ${itemStatusText(item.status)}`}>{matCode}</span>
               <Badge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
-                title="Thông tin mã hàng"
+                title="Thông tin mã hàng · DO"
               >
                 <Info className="h-4 w-4" />
               </button>
+              {/* NPP đưa lên đây (lấp chỗ trống dòng ⋮) — DO nằm trong nút Info */}
+              {doNpp && (
+                <span className="text-[11px] truncate min-w-0 text-slate-600">
+                  <span className="text-slate-400">NPP </span><span className="font-medium">{doNpp}</span>
+                </span>
+              )}
             </div>
 
-            <div className="flex items-center gap-1.5 max-sm:w-full">
+            <div className="flex items-center gap-1.5 shrink-0">
               {!isNoQr && !isDone && !canScan && (
                 <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
               )}
@@ -877,20 +886,15 @@ export default function OutboundItemDetail() {
             </div>
           </div>
 
-          {/* Row 2: material name + progress — kế thừa màu trạng thái như dòng ở list */}
-          <div className="space-y-1">
-            <p className={`text-sm font-medium leading-tight ${itemStatusText(item.status)}`}>{matName}</p>
-            <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} mat={item.material} />
-          </div>
+          {/* Row 2: material name — tiến độ gộp xuống dòng heading "Pallet đã quét" */}
+          <p className={`text-sm font-medium leading-tight ${itemStatusText(item.status)}`}>{matName}</p>
 
           {/* Row 3: SL/meta THAM KHẢO — desktop inline; mobile xem qua popup Info (điều kiện đỏ vẫn hiện dưới) */}
           <div className="hidden sm:block">{refInfoJSX}</div>
 
-          {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ */}
-          {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+          {/* Row 3b: điều kiện xuất Batch/%Date highlight ĐỎ (NPP lên dòng 1, DO trong nút Info) */}
+          {(item.batch_required || (item.date_required != null && item.date_required > 0)) && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-              {doNpp && <span className="text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
-              {doCode && <span className="text-slate-500"><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>}
               {item.batch_required && (
                 <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
               )}
@@ -1036,11 +1040,14 @@ export default function OutboundItemDetail() {
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <div className="p-3">
 
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-700">
+          <div className="flex items-center gap-3 mb-2">
+            <h2 className="text-sm font-semibold text-slate-700 shrink-0 whitespace-nowrap">
               Pallet đã quét
-              <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
+              <span className="ml-1 text-xs font-normal text-slate-400">{scans.length} pallet</span>
             </h2>
+            <div className="flex-1 min-w-0">
+              <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} mat={item.material} />
+            </div>
           </div>
 
           <Card>

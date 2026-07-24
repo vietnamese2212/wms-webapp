@@ -20,7 +20,7 @@ export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; 
         // Màn nhỏ (PDA/phone) tự COMPACT để nhường chỗ cho bảng; desktop giữ cỡ đầy. compact=true ép nhỏ mọi cỡ.
         <div key={i} className={`flex-1 min-w-[84px] text-center ${compact ? 'px-3 py-0.5' : 'px-3 py-0.5 sm:py-1.5'}`}>
           <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 truncate">{t.label}</div>
-          <div className={`font-semibold leading-tight tabular-nums ${compact ? 'text-xs' : 'text-sm sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
+          <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>
         </div>

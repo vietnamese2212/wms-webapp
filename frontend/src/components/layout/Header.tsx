@@ -64,7 +64,7 @@ export function Header() {
     .toUpperCase() ?? 'U'
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-4 gap-4">
+    <header className="sticky top-0 z-40 flex h-12 lg:h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-3 lg:px-4 gap-2 lg:gap-4">
       {/* Mobile menu */}
       <Sheet>
         <SheetTrigger asChild>

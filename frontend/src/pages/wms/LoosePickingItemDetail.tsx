@@ -4,7 +4,7 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -336,6 +336,7 @@ export default function LoosePickingItemDetail() {
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const { mutateAsync: manualLooseAsync } = useManualLooseItem()
   const [showScan,          setShowScan]          = useState(false)
+  const [hdrOpen,           setHdrOpen]           = useState(false)   // mobile: popup thông tin tham khảo (Nhặt lẻ/Tổng)
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   const [showInventory,     setShowInventory]     = useState(false)
   const [confirmLooseOpen,  setConfirmLooseOpen]  = useState(false)
@@ -534,8 +535,31 @@ export default function LoosePickingItemDetail() {
     }
   }
 
+  // Thông tin THAM KHẢO (Nhặt lẻ/Tổng) — desktop inline; mobile mở popup Info.
+  // (Điều kiện quét sống còn: tên+tiến độ+Batch/%Date+ghi chú đỏ vẫn LUÔN hiện, không vào popup.)
+  const refInfoJSX = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+      <span className="flex items-center gap-1">
+        <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
+        Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(effectiveLoose, item.material)}</span>
+        {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {qtyEntryText(item.loose_picking, item.material)})</span>}
+      </span>
+      <span className="flex items-center gap-1">
+        <Package className="h-3 w-3 text-slate-400 shrink-0" />
+        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+      </span>
+    </div>
+  )
+
   return (
     <>
+      {/* Mobile: popup thông tin tham khảo mã hàng (desktop hiện inline) */}
+      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin mã · {matCode}</DialogTitle></DialogHeader>
+          {refInfoJSX}
+        </DialogContent>
+      </Dialog>
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
@@ -617,6 +641,13 @@ export default function LoosePickingItemDetail() {
               </button>
               <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
               <Badge status={item.status} />
+              <button
+                onClick={() => setHdrOpen(true)}
+                className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+                title="Thông tin mã hàng"
+              >
+                <Info className="h-4 w-4" />
+              </button>
             </div>
 
             <div className="flex items-center gap-1.5 max-sm:w-full">
@@ -631,18 +662,8 @@ export default function LoosePickingItemDetail() {
             <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
           </div>
 
-          {/* Row 3: metadata */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
-            <span className="flex items-center gap-1">
-              <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
-              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(effectiveLoose, item.material)}</span>
-              {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {qtyEntryText(item.loose_picking, item.material)})</span>}
-            </span>
-            <span className="flex items-center gap-1">
-              <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
-            </span>
-          </div>
+          {/* Row 3: metadata THAM KHẢO — desktop inline; mobile xem qua popup Info (điều kiện đỏ vẫn hiện dưới) */}
+          <div className="hidden sm:block">{refInfoJSX}</div>
 
           {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ (đồng bộ Xuất) */}
           {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (

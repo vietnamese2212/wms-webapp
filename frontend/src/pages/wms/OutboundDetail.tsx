@@ -1831,11 +1831,7 @@ export default function OutboundDetail() {
             </div>
           ) : (
             <>
-            <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
-              <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hàng hóa</h2>
-              <span className="text-[11px] font-normal text-slate-400">{allItems.length} mã · {allDOs.length} DO</span>
-            </div>
+            {/* Băng "Hàng hóa · N mã · N DO" BỎ — thông tin đã ở SummaryBand (tile DO + Mã hàng) phía trên, khỏi tốn 1 hàng */}
             <ItemsTable
               doRecords={allDOs}
               gdoId={id!}

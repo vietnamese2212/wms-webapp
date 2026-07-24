@@ -1693,7 +1693,6 @@ export default function OutboundDetail() {
         <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2 max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin đơn · {gdo.group_code}</DialogTitle></DialogHeader>
           {orderInfoJSX}
-          <div className="overflow-hidden rounded-md"><SummaryBand tiles={bandTiles} compact /></div>
         </DialogContent>
       </Dialog>
       {showStart && (
@@ -1820,8 +1819,8 @@ export default function OutboundDetail() {
           </div>
         )}
 
-        {/* Dải tile tổng hợp — desktop hiện inline; mobile xem trong popup info (để list nhiều dòng) */}
-        <div className="hidden sm:block shrink-0"><SummaryBand tiles={bandTiles} /></div>
+        {/* Dải tile tổng hợp — LUÔN hiện (cả mobile) ngay trên bảng; tự compact trên màn nhỏ */}
+        <div className="shrink-0"><SummaryBand tiles={bandTiles} /></div>
 
         {/* ── Items table: ~80% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

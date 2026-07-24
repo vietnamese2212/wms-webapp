@@ -234,13 +234,13 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, requiresOnly, view, dateFrom, dateTo } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, view, dateFrom, dateTo } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_summary_density', d ? '0' : '1'); return !d })
   const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_summary_col_widths', STK_COL_DEFAULTS)
-  const viewSnapshot = { warehouseId, category, locationIds, requiresOnly }
+  const viewSnapshot = { warehouseId, category, locationIds }
   const savedViews = useSavedViewsStore(s => s.views['stocktake_summary'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -260,11 +260,21 @@ export default function StocktakeDashboard() {
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )
 
-  const filteredLocations = requiresOnly
-    ? (locations as any[]).filter((l: any) => l.requires_stocktake)
-    : (locations as any[])
-  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn — dùng cho nút chọn nhanh
+  const filteredLocations = (locations as any[])
+  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn
   const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
+  // Báo cáo TỰ giới hạn vào vị trí quan trọng của kho: khi chưa chọn vị trí nào mà kho có vị trí quan trọng
+  // → tự chọn hết (mở là lên kết quả luôn). Xoá lọc Vị trí → tự quay lại nhóm quan trọng.
+  useEffect(() => {
+    if (warehouseId && locationIds.length === 0 && importantLocIds.length > 0) {
+      setStocktakeSummary({ locationIds: importantLocIds })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouseId, locationIds.length, importantLocIds.join(',')])
+  // Đang xem đúng bộ vị trí quan trọng? (để hiện nhãn phạm vi)
+  const isImportantScope = importantLocIds.length > 0
+    && locationIds.length === importantLocIds.length
+    && importantLocIds.every(id => locationIds.includes(id))
 
   const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const effFrom = dateFrom || todayVN
@@ -341,24 +351,11 @@ export default function StocktakeDashboard() {
             <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
             <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
           </div>
-          <label className="flex items-center gap-1 cursor-pointer select-none shrink-0">
-            <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setStocktakeSummary({ requiresOnly: e.target.checked, locationIds: [] })
-            }} className="h-3 w-3 cursor-pointer" />
-            <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
-              <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ VT quan trọng
+          {isImportantScope && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 shrink-0"
+              title='Báo cáo đang giới hạn ở các vị trí quan trọng của kho (gắn cờ "cần kiểm kê" ở trang Vị trí kho). Chọn vị trí khác ở bộ lọc "Vị trí"; xoá lọc để quay lại nhóm này.'>
+              <Flag className="h-2.5 w-2.5" /> {importantLocIds.length} vị trí quan trọng
             </span>
-          </label>
-          {warehouseId && (
-            <button type="button"
-              onClick={() => setStocktakeSummary({ locationIds: importantLocIds })}
-              disabled={importantLocIds.length === 0}
-              title={importantLocIds.length === 0
-                ? 'Kho này chưa gắn vị trí quan trọng nào — gắn cờ "cần kiểm kê" ở trang Vị trí kho'
-                : `Chọn nhanh ${importantLocIds.length} vị trí quan trọng của kho này`}
-              className="inline-flex items-center gap-1 h-6 px-2 rounded-md border border-red-200 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
-              <Flag className="h-2.5 w-2.5" /> Chọn VT quan trọng{importantLocIds.length > 0 ? ` (${importantLocIds.length})` : ''}
-            </button>
           )}
           <div className="flex-1" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
@@ -414,9 +411,12 @@ export default function StocktakeDashboard() {
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {locationIds.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-6 text-center">
             <MapPin className="h-8 w-8 mb-2 opacity-40" />
-            <p className="text-sm">Chọn vị trí để xem tổng hợp</p>
+            <p className="text-sm">Chọn vị trí ở thanh lọc để xem tổng hợp</p>
+            {warehouseId && importantLocIds.length === 0 && (
+              <p className="text-[11px] mt-1 max-w-xs">Mẹo: gắn cờ <span className="text-red-500 font-medium">"cần kiểm kê"</span> cho các vị trí trọng yếu ở trang <b>Vị trí kho</b> → báo cáo sẽ tự lên nhóm đó mỗi khi mở.</p>
+            )}
           </div>
         ) : (
           <>

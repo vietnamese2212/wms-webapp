@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { Button }              from '@/components/ui/button'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
@@ -164,12 +165,25 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
   const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
+  // Súng PDA: 1 phát bắn 'wedge' → khóa chế độ súng (tắt camera cả phiên, đỡ pin/nóng máy)
+  const [gunMode,          setGunMode]          = useState(false)
 
   const activeLoc = allLocations.find(l => l.id === activeLocationId)
 
-  function handleScan(raw: string) {
+  function handleScan(raw: string, src: 'camera' | 'wedge' = 'camera') {
+    // Bắn bằng súng → khóa chế độ súng (camera không tự bật lại sau khi Lưu)
+    if (src === 'wedge' && !gunMode) setGunMode(true)
+    // Đang xử lý / lưu → bỏ qua lượt bắn mới (camera tự pause; súng bắn bất kỳ lúc nào nên cần guard)
+    if (saving || serverChecking) return
     if (!activeLocationId) {
       setShowLocPicker(true)
+      return
+    }
+    // Đang chờ xác nhận Lưu: bắn LẠI đúng tem đó = bấm Lưu (giống Xuất; camera đứng yên KHÔNG tự lưu).
+    // Tem khác trong lúc đang chờ → bỏ qua (buộc "Quét tiếp"/Lưu trước).
+    if (pendingQR) {
+      const savable = serverCheckOk && !serverChecking && !nccMissing
+      if (src === 'wedge' && savable && normalizeQR(raw) === normalizeQR(pendingQR)) { playBeep(); handleSave() }
       return
     }
     playBeep()
@@ -288,6 +302,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
     setCartons(defaultCartons)
     scannerRef.current?.resume()
   }
+
+  // Súng PDA: chỉ bật khi đã vào giao diện vị trí/mã hàng (đã chọn vị trí) — như yêu cầu vận hành.
+  // handleScan tự chặn khi chưa chọn vị trí / đang lưu nên an toàn kể cả khi enabled đổi.
+  useWedgeScanner(code => handleScan(code, 'wedge'), !!activeLocationId)
 
   // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
   const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)
@@ -443,7 +461,15 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
 
           {/* Camera with floating buttons — flex-1 lấp đầy phần còn lại của sheet (không cuộn) */}
           <div className="relative flex-1 min-h-0">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            {gunMode ? (
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                <QrCode className="h-12 w-12 text-sky-400/70" />
+                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
+                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Lưu</p>
+              </div>
+            ) : (
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            )}
 
             {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu
                 (vd "Pallet đã được quét") — để quét pallet khác ngay, không phải Huỷ ra vào lại */}

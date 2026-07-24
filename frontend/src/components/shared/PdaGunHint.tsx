@@ -1,15 +1,15 @@
-import { ScanBarcode } from 'lucide-react'
+import { Smartphone } from 'lucide-react'
 
-// Chỉ báo "màn/chỗ này bắn được SÚNG PDA" — icon + tooltip (title), đặt ngay cạnh chỗ kích hoạt quét.
-// Icon-only cho gọn (PDA màn nhỏ); tooltip hiện khi rê chuột (PC) / mô tả cho a11y.
+// Symbol hình PDA đặt CẠNH nút quét → user nhìn ra "bóp súng PDA thì kích hoạt tại đây".
+// Chỉ là chỉ báo (icon + tooltip), không bấm được.
 export function PdaGunHint({ className = '' }: { className?: string }) {
   return (
     <span
-      title="Bắn súng PDA được ở đây"
-      aria-label="Bắn súng PDA được ở đây"
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-sky-200 bg-sky-50 text-sky-600 shrink-0 ${className}`}
+      title="Quét bằng súng PDA được ở đây"
+      aria-label="Quét bằng súng PDA được ở đây"
+      className={`inline-flex items-center justify-center text-sky-500 shrink-0 ${className}`}
     >
-      <ScanBarcode className="h-4 w-4" />
+      <Smartphone className="h-4 w-4" />
     </span>
   )
 }

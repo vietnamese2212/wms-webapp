@@ -872,10 +872,11 @@ export default function InboundDetail() {
               {selectedIds.size > 0 && (
                 <span className="ml-1 text-[11px] font-normal normal-case text-blue-600">· {selectedIds.size} đã chọn</span>
               )}
-              {gunArmed && <PdaGunHint className="ml-1" />}
             </h2>
             {/* Cụm action bảng pallet — ActionCluster chuẩn (Thêm pallet/Lưu thủ công = hành động tiến chính) */}
-            <ActionCluster items={[
+            <div className="flex items-center gap-1.5">
+              {gunArmed && <PdaGunHint />}
+              <ActionCluster items={[
               ...(isOpen && selectedIds.size > 0 ? [{
                 key: 'delete-selected', icon: Trash2, label: `Xóa (${selectedIds.size})`,
                 tip: `Xóa ${selectedIds.size} pallet đã chọn (không hoàn tác được)`,
@@ -907,6 +908,7 @@ export default function InboundDetail() {
                 onClick: () => { unlockAudio(); setShowScan(true) },
               } satisfies ActionItem] : []),
             ]} />
+            </div>
           </div>
 
           <Card>

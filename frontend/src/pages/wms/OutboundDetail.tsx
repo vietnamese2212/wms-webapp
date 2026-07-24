@@ -10,7 +10,7 @@ import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEnt
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -1597,8 +1597,105 @@ export default function OutboundDetail() {
       onClick: () => doUndo((id, opts) => unassignGDO(id, opts)),
     })
 
+  // Khối thông tin đơn — dùng CHUNG: desktop hiện inline; mobile mở trong POPUP (nút info trên thanh mảnh).
+  const bandTiles = [
+    { label: 'DO',       value: allDOs.length },
+    { label: 'Mã hàng',  value: allItems.length },
+    { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
+    { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
+  ]
+  const orderInfoJSX = (
+    <div className="space-y-1">
+      {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
+      <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
+        <span className="flex items-center gap-1">
+          <Truck className="h-3 w-3 text-slate-400 shrink-0" />
+          <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
+          {gdo.delivery_date !== gdo.planned_date && (
+            <span className="text-amber-600 ml-0.5">(KH {format(parseISO(gdo.planned_date), 'dd-MM')})</span>
+          )}
+        </span>
+        {gdo.dvvt && <span>{gdo.dvvt}</span>}
+        {npp && <span className="break-words">{npp}</span>}
+        {(gdo.delivery_codes?.length ?? 0) > 0 && (
+          <span className="flex items-center gap-1 min-w-0 max-w-full">
+            <span className="text-slate-400 shrink-0">DO</span>
+            <span className="font-mono font-semibold break-all" title={gdo.delivery_codes!.join(' · ')}>{gdo.delivery_codes!.join(' · ')}</span>
+          </span>
+        )}
+        <span className="flex items-center gap-1">
+          <Package className="h-3 w-3 text-slate-400 shrink-0" />
+          <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng
+        </span>
+      </div>
+
+      {gdo.started_at && (
+        <Card className="px-2 py-1 bg-blue-50 border-blue-200">
+          <div className="flex items-start justify-between gap-1">
+            <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
+              <span><strong>Biển số:</strong> {gdo.license_plate}</span>
+              {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
+              {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
+              {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
+              <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
+            </div>
+            {can(perms, 'outbound', 'edit') && gdo.status !== 'COMPLETED' && (
+              <button
+                onClick={() => setShowEditTransport(true)}
+                className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
+                title="Sửa thông tin xe"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Mốc thời gian + audit */}
+      <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px]">
+        {gdo.assigned_at && (
+          <span className="text-green-600 font-medium">
+            Giao đơn:{gdo.assigned_by ? <span className="font-normal"> {gdo.assigned_by} · </span> : ' '}
+            {formatDateTime(gdo.assigned_at)}
+          </span>
+        )}
+        {gdo.scan_completed_at && (
+          <span className="text-pink-600 font-medium">Quét xong: {formatDateTime(gdo.scan_completed_at)}</span>
+        )}
+        {gdo.completed_at && (
+          <span className="text-blue-600 font-medium">Kết thúc: {formatDateTime(gdo.completed_at)}</span>
+        )}
+        {gdo.created_by && (
+          <span className={statusText(gdoKey(gdo))}>Tạo bởi: <span className="font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
+        )}
+        {!gdo.created_by && gdo.created_at && (
+          <span className={statusText(gdoKey(gdo))}>Ngày tạo: {formatDateTime(gdo.created_at)}</span>
+        )}
+        {gdo.updated_by && (
+          <span className={statusText(gdoKey(gdo))}>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
+        )}
+      </div>
+
+      {headerTexts.length === 1 && (
+        <div className="rounded bg-red-50 border border-red-300 px-2 py-1">
+          <p className="text-[11px] font-semibold text-red-600 leading-snug">{headerTexts[0]}</p>
+        </div>
+      )}
+      <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />
+    </div>
+  )
+
   return (
     <>
+      {/* Mobile: popup thông tin đơn (bấm nút info trên thanh mảnh) — desktop hiện inline nên dialog chỉ mở ở mobile */}
+      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2 max-h-[85dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin đơn · {gdo.group_code}</DialogTitle></DialogHeader>
+          {orderInfoJSX}
+          <div className="overflow-hidden rounded-md"><SummaryBand tiles={bandTiles} compact /></div>
+        </DialogContent>
+      </Dialog>
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}
@@ -1679,97 +1776,20 @@ export default function OutboundDetail() {
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
               <button
-                onClick={() => setHdrOpen(o => !o)}
+                onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
-                title={hdrOpen ? 'Thu gọn thông tin' : 'Xem thông tin đơn'}
+                title="Xem thông tin đơn"
               >
-                <ChevronDown className={`h-4 w-4 transition-transform ${hdrOpen ? 'rotate-180' : ''}`} />
+                <Info className="h-4 w-4" />
               </button>
             </div>
             <ActionCluster items={actionItems} />
           </div>
 
-          <div className={`${hdrOpen ? '' : 'hidden'} sm:block space-y-1`}>
+          {/* Desktop: khối info hiện inline; mobile: rỗng (xem qua popup từ nút info). */}
+          <div className="hidden sm:block">{orderInfoJSX}</div>
 
-          {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
-          <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
-            <span className="flex items-center gap-1">
-              <Truck className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
-              {gdo.delivery_date !== gdo.planned_date && (
-                <span className="text-amber-600 ml-0.5">(KH {format(parseISO(gdo.planned_date), 'dd-MM')})</span>
-              )}
-            </span>
-            {gdo.dvvt && <span>{gdo.dvvt}</span>}
-            {npp && <span className="break-words">{npp}</span>}
-            {(gdo.delivery_codes?.length ?? 0) > 0 && (
-              <span className="flex items-center gap-1 min-w-0 max-w-full">
-                <span className="text-slate-400 shrink-0">DO</span>
-                <span className="font-mono font-semibold truncate max-w-[420px]" title={gdo.delivery_codes!.join(' · ')}>{gdo.delivery_codes!.join(' · ')}</span>
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng
-            </span>
-          </div>
-
-          {/* Start info */}
-          {gdo.started_at && (
-            <Card className="px-2 py-1 bg-blue-50 border-blue-200">
-              <div className="flex items-start justify-between gap-1">
-                <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
-                  <span><strong>Biển số:</strong> {gdo.license_plate}</span>
-                  {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
-                  {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
-                  {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}
-                  <span className="text-slate-400">{formatDateTime(gdo.started_at)}</span>
-                </div>
-                {can(perms, 'outbound', 'edit') && gdo.status !== 'COMPLETED' && (
-                  <button
-                    onClick={() => setShowEditTransport(true)}
-                    className="shrink-0 p-1 rounded hover:bg-blue-200 text-blue-600 transition-colors"
-                    title="Sửa thông tin xe"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            </Card>
-          )}
-
-          {/* Mốc thời gian + audit GỘP 1 hàng (header không scroll — nén gọn) */}
-          <div className="flex flex-wrap gap-x-4 gap-y-0 text-[10px]">
-            {gdo.assigned_at && (
-              <span className="text-green-600 font-medium">
-                Giao đơn:{gdo.assigned_by ? <span className="font-normal"> {gdo.assigned_by} · </span> : ' '}
-                {formatDateTime(gdo.assigned_at)}
-              </span>
-            )}
-            {gdo.scan_completed_at && (
-              <span className="text-pink-600 font-medium">Quét xong: {formatDateTime(gdo.scan_completed_at)}</span>
-            )}
-            {gdo.completed_at && (
-              <span className="text-blue-600 font-medium">Kết thúc: {formatDateTime(gdo.completed_at)}</span>
-            )}
-            {gdo.created_by && (
-              <span className={statusText(gdoKey(gdo))}>Tạo bởi: <span className="font-medium">{gdo.created_by}</span>{gdo.created_at ? <span className="ml-1">{formatDateTime(gdo.created_at)}</span> : null}</span>
-            )}
-            {!gdo.created_by && gdo.created_at && (
-              <span className={statusText(gdoKey(gdo))}>Ngày tạo: {formatDateTime(gdo.created_at)}</span>
-            )}
-            {gdo.updated_by && (
-              <span className={statusText(gdoKey(gdo))}>Sửa bởi: <span className="font-medium">{gdo.updated_by}</span>{gdo.updated_at ? <span className="ml-1">{formatDateTime(gdo.updated_at)}</span> : null}</span>
-            )}
-          </div>
-
-          {/* CHUNG 1 ghi chú cho cả chuyến → hiện ở header (đỏ). Mỗi dòng có ghi chú RIÊNG → để trong bảng. */}
-          {headerTexts.length === 1 && (
-            <div className="rounded bg-red-50 border border-red-300 px-2 py-1">
-              <p className="text-[11px] font-semibold text-red-600 leading-snug">{headerTexts[0]}</p>
-            </div>
-          )}
-
+          {/* Banner lỗi LUÔN hiện (cả mobile) — không nằm trong popup info */}
           {undoErr && (
             <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-xs text-red-700 flex items-center gap-1">
               <span>{undoErr}</span>
@@ -1782,8 +1802,6 @@ export default function OutboundDetail() {
               <button className="ml-auto" onClick={() => setBulkErr(null)}><X className="h-3 w-3" /></button>
             </div>
           )}
-          <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />
-          </div>
         </div>
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
@@ -1802,15 +1820,8 @@ export default function OutboundDetail() {
           </div>
         )}
 
-        {/* Dải tile tổng hợp (đồng bộ với list) — mobile ẩn khi header thu gọn để list nhiều dòng */}
-        <div className={`${hdrOpen ? '' : 'hidden'} sm:block shrink-0`}>
-        <SummaryBand tiles={[
-          { label: 'DO',       value: allDOs.length },
-          { label: 'Mã hàng',  value: allItems.length },
-          { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
-          { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
-        ]} />
-        </div>
+        {/* Dải tile tổng hợp — desktop hiện inline; mobile xem trong popup info (để list nhiều dòng) */}
+        <div className="hidden sm:block shrink-0"><SummaryBand tiles={bandTiles} /></div>
 
         {/* ── Items table: ~80% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

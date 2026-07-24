@@ -60,7 +60,7 @@ const statusLabel: Record<OutboundStatus, string> = {
 function Badge({ status }: { status: string }) {
   const s = status as OutboundStatus
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
+    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
       {statusLabel[s] ?? status}
     </span>
   )
@@ -1756,13 +1756,13 @@ export default function OutboundDetail() {
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1">
 
           {/* Row 1: back + code + status + buttons — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-x-2 gap-y-1.5">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button onClick={() => navigate('/wms/outbound')}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
+              <span className={`font-mono font-semibold text-sm truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
               <Badge status={gdo.status} />
               <button
                 onClick={() => pinned
@@ -1782,10 +1782,19 @@ export default function OutboundDetail() {
                 <Info className="h-4 w-4" />
               </button>
             </div>
-            <ActionCluster items={actionItems} />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <ActionCluster items={actionItems} />
+            </div>
           </div>
 
-          {/* Desktop: khối info hiện inline; mobile: rỗng (xem qua popup từ nút info). */}
+          {/* Mobile: 1 dòng meta chủ chốt (ĐVVT · NPP) — phần còn lại xem qua popup ⓘ. Desktop: khối info đầy đủ inline. */}
+          {(gdo.dvvt || npp) && (
+            <div className={`sm:hidden flex items-center gap-x-1.5 text-[11px] min-w-0 ${statusText(gdoKey(gdo))}`}>
+              {gdo.dvvt && <span className="truncate">{gdo.dvvt}</span>}
+              {gdo.dvvt && npp && <span className="text-slate-400 shrink-0">·</span>}
+              {npp && <span className="truncate">{npp}</span>}
+            </div>
+          )}
           <div className="hidden sm:block">{orderInfoJSX}</div>
 
           {/* Banner lỗi LUÔN hiện (cả mobile) — không nằm trong popup info */}

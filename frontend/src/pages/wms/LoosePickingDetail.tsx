@@ -37,7 +37,7 @@ const statusLabel: Record<OutboundStatus, string> = {
 function Badge({ status }: { status: string }) {
   const s = status as OutboundStatus
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
+    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
       {statusLabel[s] ?? status}
     </span>
   )
@@ -628,15 +628,15 @@ export default function LoosePickingDetail() {
       {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
 
-        {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
-        <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
-          <div className="flex items-center gap-1.5 min-w-0">
+        {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không wrap — cụm action bọc shrink-0) */}
+        <div className="flex items-center gap-x-2 gap-y-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
             <button onClick={() => navigate('/wms/loosepicking')}
               className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </button>
             <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <span className="font-mono font-semibold text-sm">{gdo.group_code}</span>
+            <span className="font-mono font-semibold text-sm truncate min-w-0">{gdo.group_code}</span>
             <Badge status={gdo.status} />
             <button
               onClick={() => pinned
@@ -656,9 +656,19 @@ export default function LoosePickingDetail() {
               <Info className="h-4 w-4" />
             </button>
           </div>
-          {actionItems.length > 0 && <ActionCluster items={actionItems} />}
+          {actionItems.length > 0 && (
+            <div className="flex items-center gap-1.5 shrink-0"><ActionCluster items={actionItems} /></div>
+          )}
         </div>
 
+        {/* Mobile: 1 dòng meta chủ chốt (ĐVVT · NPP) — phần còn lại xem qua popup ⓘ. Desktop: khối info đầy đủ inline. */}
+        {(gdo.dvvt || npp) && (
+          <div className="sm:hidden flex items-center gap-x-1.5 text-[11px] min-w-0 text-slate-500">
+            {gdo.dvvt && <span className="truncate">{gdo.dvvt}</span>}
+            {gdo.dvvt && npp && <span className="text-slate-400 shrink-0">·</span>}
+            {npp && <span className="truncate">{npp}</span>}
+          </div>
+        )}
         {/* Row 2: GDO info — desktop inline; mobile xem qua popup Info */}
         <div className="hidden sm:block">{orderInfoJSX}</div>
       </div>

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
-  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark,
+  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark, Info,
 } from 'lucide-react'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -51,7 +51,7 @@ function ProgressBar({ scanned, target, compact = false }: { scanned: number; ta
         <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${pct >= 100 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {scanned}/{target}
+        {scanned.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{target.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}
       </span>
     </div>
   )
@@ -314,10 +314,10 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                     </div>
                   </TableCell>
                   <TableCell className="px-2 py-1 align-top">
-                    {/* Gọn (user 19/07, đồng bộ Xuất): bỏ progress bar từng dòng; cột nới đủ rộng để tên ≤3 dòng KHÔNG cắt */}
-                    <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
+                    {/* Mobile: tên 1 DÒNG (cắt …) — bấm dòng mở chi tiết. Desktop: xuống dòng bình thường. */}
+                    <div className={`text-[10px] font-medium leading-tight truncate sm:whitespace-normal ${textCls}`}>{matName}</div>
                     {looseScanEntries.length > 0 && (
-                      <div className="text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
+                      <div className="hidden sm:block text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
                     )}
                   </TableCell>
                   {/* BASE UNIT: Tổng thùng (kế hoạch) — mã KG giữ số base */}
@@ -507,6 +507,7 @@ export default function LoosePickingDetail() {
   const { data: gdo, isLoading } = useGDO(id)
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [showOrderScan,   setShowOrderScan]   = useState(false)   // quét QR cấp ĐƠN — tự nhận mã hàng từ tem
+  const [hdrOpen,         setHdrOpen]         = useState(false)   // mobile: popup thông tin đơn (thanh mảnh + nút Info)
   const [pdaScan,         setPdaScan]         = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
 
   function toggleExpand(itemId: string) {
@@ -581,12 +582,37 @@ export default function LoosePickingDetail() {
       onClick: toggleExpandAll,
     })
 
+  // Khối thông tin đơn — desktop hiện inline; mobile mở POPUP (nút Info trên thanh mảnh).
+  const orderInfoJSX = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
+      <span className="flex items-center gap-1">
+        <Truck className="h-3 w-3 text-slate-400 shrink-0" />
+        <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
+      </span>
+      {gdo.dvvt && <span className="text-slate-500">{gdo.dvvt}</span>}
+      {npp && <span className="text-slate-500 break-words">{npp}</span>}
+      <span className="flex items-center gap-1">
+        <Package className="h-3 w-3 text-slate-400 shrink-0" />
+        Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
+        <span className="text-slate-400 ml-0.5">thùng</span>
+      </span>
+    </div>
+  )
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
       )}
+
+      {/* Mobile: popup thông tin đơn (desktop hiện inline) */}
+      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin đơn · {gdo.group_code}</DialogTitle></DialogHeader>
+          {orderInfoJSX}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Header: KHÔNG scroll nội bộ (user 19/07) — nội dung gọn, cao theo thực tế ── */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5">
@@ -611,24 +637,19 @@ export default function LoosePickingDetail() {
             >
               <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
             </button>
+            <button
+              onClick={() => setHdrOpen(true)}
+              className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+              title="Xem thông tin đơn"
+            >
+              <Info className="h-4 w-4" />
+            </button>
           </div>
           {actionItems.length > 0 && <ActionCluster items={actionItems} />}
         </div>
 
-        {/* Row 2: GDO info */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-600">
-          <span className="flex items-center gap-1">
-            <Truck className="h-3 w-3 text-slate-400 shrink-0" />
-            <span className="font-medium">{format(parseISO(gdo.delivery_date), 'dd-MM-yy', { locale: vi })}</span>
-          </span>
-          {gdo.dvvt && <span className="text-slate-500">{gdo.dvvt}</span>}
-          {npp && <span className="text-slate-500 break-words">{npp}</span>}
-          <span className="flex items-center gap-1">
-            <Package className="h-3 w-3 text-slate-400 shrink-0" />
-            Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
-            <span className="text-slate-400 ml-0.5">thùng</span>
-          </span>
-        </div>
+        {/* Row 2: GDO info — desktop inline; mobile xem qua popup Info */}
+        <div className="hidden sm:block">{orderInfoJSX}</div>
 
         <ProgressBar scanned={totalLooseDone} target={totalLoose} />
       </div>

@@ -134,23 +134,28 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
             disabled={disabled}
             onClick={() => onSelect(slot)}
             className={[
-              'w-full text-left px-3 py-2 rounded border text-xs flex items-center justify-between transition-colors',
+              'w-full text-left px-3 py-2 rounded border transition-colors',
               selected ? 'border-blue-500 bg-blue-50'
                 : disabled ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
                 : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer',
             ].join(' ')}
           >
-            <span className="flex items-center gap-2">
-              <span className="font-mono font-semibold">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
-              <span className="text-slate-500">{slot.cargo_type === 'ALL' ? 'Tất cả' : slot.cargo_type}</span>
+            {/* Dòng 1: giờ + số xe — thông tin quyết định, cỡ lớn dễ đọc/bấm */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono font-semibold text-sm">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
+              <span className={`text-sm font-semibold tabular-nums shrink-0 ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
+                {slot.booked_count}/{slot.max_vehicles} xe
+              </span>
+            </div>
+            {/* Dòng 2: loại hàng + loại xe + trạng thái — không nhồi chung dòng 1 (chật trên mobile) */}
+            <div className="flex items-center flex-wrap gap-1.5 mt-1 text-[11px] text-slate-500">
+              <span>{slot.cargo_type === 'ALL' ? 'Tất cả loại hàng' : slot.cargo_type}</span>
               {slot.vehicle_type?.name && (
-                <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded">{slot.vehicle_type.name}</span>
+                <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{slot.vehicle_type.name}</span>
               )}
-              {past && !selected && <span className="text-[9px] text-slate-400">đã qua</span>}
-            </span>
-            <span className={`font-semibold tabular-nums ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
-              {slot.booked_count}/{slot.max_vehicles} xe
-            </span>
+              {full && !selected && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Đầy</span>}
+              {past && !selected && <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Đã qua</span>}
+            </div>
           </button>
         )
       })}

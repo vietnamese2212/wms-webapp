@@ -34,6 +34,7 @@ import { inboundKey, inboundGroupKey } from './Inbound'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
+import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -222,6 +223,7 @@ export default function InboundDetail() {
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
 
   const [showScan,          setShowScan]          = useState(false)
+  const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng cấp trang
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
   const [manualCartons,     setManualCartons]     = useState('')
@@ -285,6 +287,18 @@ export default function InboundDetail() {
   const headerLocTitle = headerLocMismatch ? `⚠ Pallet đang ở vị trí khác: ${offLocCodes.join(', ')}` : undefined
   const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
+
+  // Cò súng cấp trang (user chốt: Nhập thì bóp cò NGAY tại trang phiếu) → tự mở màn quét chế độ SÚNG + xử lý tem.
+  // Gate = đúng điều kiện nút "Thêm pallet": phiếu OPEN + có vị trí + quyền scan + không NCC-đủ + hàng có tem (không phải no-QR);
+  // đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
+  useWedgeScanner(code => {
+    if (!order || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
+    if (!isOpen || isNccFull || isManualEntry || !order.location_id) return
+    if (!can(perms, 'inbound', 'scan')) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowScan(true)
+  }, true)
 
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
@@ -370,9 +384,11 @@ export default function InboundDetail() {
       {showScan && (
         <InboundScanSheet
           order={order}
-          onClose={() => setShowScan(false)}
+          onClose={() => { setShowScan(false); setPdaScan(null) }}
           employeeId={user?.id}
           allLocations={allLocations as any}
+          pdaMode={!!pdaScan}
+          initialScan={pdaScan ?? undefined}
         />
       )}
 

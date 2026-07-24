@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
 import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
@@ -115,9 +115,11 @@ interface InboundScanSheetProps {
   onClose: () => void
   employeeId?: string
   allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; category?: string | null }[]
+  pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
+  initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
 }
 
-export function InboundScanSheet({ order, onClose, employeeId, allLocations }: InboundScanSheetProps) {
+export function InboundScanSheet({ order, onClose, employeeId, allLocations, pdaMode = false, initialScan }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
@@ -165,8 +167,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
   const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
-  // Súng PDA: 1 phát bắn 'wedge' → khóa chế độ súng (tắt camera cả phiên, đỡ pin/nóng máy)
-  const [gunMode,          setGunMode]          = useState(false)
+  // Súng PDA: 1 phát bắn 'wedge' → khóa chế độ súng (tắt camera cả phiên, đỡ pin/nóng máy).
+  // pdaMode = mở bằng cò súng cấp trang → vào thẳng chế độ súng ngay.
+  const [gunMode,          setGunMode]          = useState(pdaMode)
 
   const activeLoc = allLocations.find(l => l.id === activeLocationId)
 
@@ -306,6 +309,12 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   // Súng PDA: chỉ bật khi đã vào giao diện vị trí/mã hàng (đã chọn vị trí) — như yêu cầu vận hành.
   // handleScan tự chặn khi chưa chọn vị trí / đang lưu nên an toàn kể cả khi enabled đổi.
   useWedgeScanner(code => handleScan(code, 'wedge'), !!activeLocationId)
+
+  // Cò súng cấp trang: mở sheet kèm tem đầu → xử lý NGAY 1 lần (activeLocationId đã có vì trang gate theo vị trí).
+  const initialDone = useRef(false)
+  useEffect(() => {
+    if (initialScan && !initialDone.current) { initialDone.current = true; handleScan(initialScan, 'wedge') }
+  }, [initialScan]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
   const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)

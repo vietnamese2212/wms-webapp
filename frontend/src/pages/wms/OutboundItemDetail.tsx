@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { Card }    from '@/components/ui/card'
 import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -833,6 +834,7 @@ export default function OutboundItemDetail() {
               {!isNoQr && !isDone && !canScan && (
                 <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
               )}
+              {!isNoQr && !isDone && canScan && <PdaGunHint />}
               <ActionCluster items={actionItems} />
             </div>
           </div>

@@ -18,6 +18,7 @@ import { qtyEntryText, qtyUnitLabel, qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 
 interface StocktakeEntryData {
   id:                string
@@ -265,6 +266,7 @@ export default function Stocktake() {
                 >
                   <QrCode className="h-4 w-4" />
                 </Button>
+                <PdaGunHint className="h-9 w-9" />
               </div>
             </form>
 

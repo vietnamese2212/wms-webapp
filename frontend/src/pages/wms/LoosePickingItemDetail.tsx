@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { Card }    from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -619,6 +620,7 @@ export default function LoosePickingItemDetail() {
             </div>
 
             <div className="flex items-center gap-1.5 max-sm:w-full">
+              {can(perms, 'loosepicking', 'scan') && !isNoQr && !isDone && <PdaGunHint />}
               <ActionCluster items={actionItems} />
             </div>
           </div>

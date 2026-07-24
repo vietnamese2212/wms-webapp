@@ -35,6 +35,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
+import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
@@ -288,13 +289,14 @@ export default function InboundDetail() {
   const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
+  // Súng "sẵn sàng" ở trang phiếu = đúng điều kiện nút "Thêm pallet": phiếu OPEN + có vị trí + quyền scan
+  // + chưa đủ kế hoạch NCC + hàng CÓ tem (không phải no-QR). Dùng cho cả cò súng + chỉ báo icon PdaGunHint.
+  const gunArmed = !!order && isOpen && !isNccFull && !isManualEntry && !!order.location_id && can(perms, 'inbound', 'scan')
+
   // Cò súng cấp trang (user chốt: Nhập thì bóp cò NGAY tại trang phiếu) → tự mở màn quét chế độ SÚNG + xử lý tem.
-  // Gate = đúng điều kiện nút "Thêm pallet": phiếu OPEN + có vị trí + quyền scan + không NCC-đủ + hàng có tem (không phải no-QR);
-  // đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
+  // Đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
   useWedgeScanner(code => {
-    if (!order || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
-    if (!isOpen || isNccFull || isManualEntry || !order.location_id) return
-    if (!can(perms, 'inbound', 'scan')) return
+    if (!gunArmed || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
@@ -870,6 +872,7 @@ export default function InboundDetail() {
               {selectedIds.size > 0 && (
                 <span className="ml-1 text-[11px] font-normal normal-case text-blue-600">· {selectedIds.size} đã chọn</span>
               )}
+              {gunArmed && <PdaGunHint className="ml-1" />}
             </h2>
             {/* Cụm action bảng pallet — ActionCluster chuẩn (Thêm pallet/Lưu thủ công = hành động tiến chính) */}
             <ActionCluster items={[

@@ -861,10 +861,8 @@ export default function InboundDetail() {
           ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
         ]} />
 
-        {/* ── Pallet table (~80%) ── */}
-        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
-
-          <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+        {/* Heading + action — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
+        <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
               Pallet đã quét
@@ -911,7 +909,10 @@ export default function InboundDetail() {
             </div>
           </div>
 
-          <Card>
+        {/* ── Pallet table (~80%) ── */}
+        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
+          {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
+          <Card className="min-w-max">
             {isPlaceholderData ? (
               <TableSkeleton rows={5} cols={7} />
             ) : entries.length === 0 ? (
@@ -995,7 +996,7 @@ export default function InboundDetail() {
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                           {qtyEntryText(entry.cartons_imported, order.material)}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600">
+                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600 whitespace-nowrap">
                           {entry.location?.location_code ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
@@ -1007,13 +1008,13 @@ export default function InboundDetail() {
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
                           {formatTimestampTime(entry.created_at)}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.manufacturer?.code ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.cycle ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.machine_code ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums text-slate-500">

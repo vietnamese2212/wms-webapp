@@ -27,9 +27,11 @@ import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
-  const m = note.match(/Thực tế:\s*(\d+)\s*\/\s*App:\s*(\d+)/)
+  // Mã KG (base_unit thập phân) kiểm lệch → note có số lẻ ("Thực tế: 12.5 / App: 10.5") — nhận cả thập phân.
+  const m = note.match(/Thực tế:\s*([\d.]+)\s*\/\s*App:\s*([\d.]+)/)
   if (!m) return null
-  const actual = parseInt(m[1]), app = parseInt(m[2])
+  const actual = parseFloat(m[1]), app = parseFloat(m[2])
+  if (!Number.isFinite(actual) || !Number.isFinite(app)) return null
   return { actual, app, diff: actual - app }
 }
 

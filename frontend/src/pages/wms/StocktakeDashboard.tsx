@@ -97,7 +97,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 w-full lg:static lg:inset-auto lg:z-auto lg:w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-xl lg:shadow-none">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1" title={entry?.pallet_code ?? ''}>

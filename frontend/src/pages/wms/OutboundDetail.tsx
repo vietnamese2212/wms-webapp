@@ -86,7 +86,7 @@ function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }
         )}
       </div>
       <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {scanned}/{ordered}
+        {scanned.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{ordered.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}
       </span>
     </div>
   )

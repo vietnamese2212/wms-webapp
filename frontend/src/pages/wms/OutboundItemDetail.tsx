@@ -956,7 +956,7 @@ export default function OutboundItemDetail() {
                           className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
                           onClick={() => toggleInv(row.key)}
                         >
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
                                 <span className={`text-xs font-bold tabular-nums ${
@@ -968,10 +968,10 @@ export default function OutboundItemDetail() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                             <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, item.material)}</span>
                             <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(item.material)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
@@ -1074,7 +1074,7 @@ export default function OutboundItemDetail() {
                     const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
                     return (
                       <TableRow key={se.id} className={se.is_loose_picking && !se.loose_confirmed ? 'bg-purple-50' : ''}>
-                        <TableCell className="px-2 py-1.5">
+                        <TableCell className="px-2 py-1">
                           <div className="flex items-center gap-1.5">
                             <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                               {se.pallet_code}
@@ -1104,29 +1104,29 @@ export default function OutboundItemDetail() {
                             )
                           })()}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
+                        <TableCell className="px-2 py-1 text-right tabular-nums text-[10px] font-semibold">
                           {qtyEntryText(se.cartons_scanned, item.material)}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {se.is_loose_picking ? (
                             se.loose_confirmed
                               ? <span className="text-[9px] font-medium text-green-700 bg-green-100 rounded px-1.5 py-0.5">✓ Lẻ</span>
                               : <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">Lẻ</span>
                           ) : null}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {se.pct_date !== null ? (
                             <span className={`text-[10px] font-bold tabular-nums ${
                               se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
                             }`}>{se.pct_date}%</span>
                           ) : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className="text-[10px] font-mono tabular-nums text-slate-600">
                             {se.production_date ? format(parseISO(se.production_date), 'dd-MM-yyyy') : '—'}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {se.best_available_date ? (
                             <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
                               {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
@@ -1135,14 +1135,14 @@ export default function OutboundItemDetail() {
                             <span className="text-[10px] text-slate-300">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5">
+                        <TableCell className="px-2 py-1">
                           <span className="text-[10px] text-slate-500">{se.scanned_by_emp?.name ?? se.scanned_by ?? '—'}</span>
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
-                          <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
-                          <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
+                        <TableCell className="px-2 py-1 whitespace-nowrap tabular-nums">
+                          <div className="text-[10px] leading-tight text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
+                          <div className="text-[9px] leading-tight text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
                         </TableCell>
-                        <TableCell className="px-1 py-2">
+                        <TableCell className="px-1 py-1">
                           {can(perms, 'outbound', 'scan') && (
                             <button
                               className={`p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}

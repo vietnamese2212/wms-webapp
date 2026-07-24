@@ -1025,10 +1025,10 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   </div>
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top`}>
-                  {/* Gọn (user 19/07): bỏ progress bar từng dòng; cột đã nới đủ rộng để tên ≤3 dòng KHÔNG cắt */}
-                  <div className={`text-[10px] font-medium leading-tight ${textCls}`}>{matName}</div>
+                  {/* Mobile: tên 1 DÒNG (cắt …) để list nhiều dòng như AppSheet — bấm dòng để mở chi tiết đầy đủ. Desktop: xuống dòng bình thường. */}
+                  <div className={`text-[10px] font-medium leading-tight truncate sm:whitespace-normal ${textCls}`}>{matName}</div>
                   {(item.scan_entries?.length ?? 0) > 0 && (
-                    <div className="text-[9px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet{looseUnconfirmed > 0 ? ` · ${looseUnconfirmed} lẻ chưa check` : ''}</div>
+                    <div className="hidden sm:block text-[9px] text-slate-400 mt-0.5">{item.scan_entries.length} pallet{looseUnconfirmed > 0 ? ` · ${looseUnconfirmed} lẻ chưa check` : ''}</div>
                   )}
                 </TableCell>
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
@@ -1319,6 +1319,8 @@ export default function OutboundDetail() {
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng NGAY TẠI TRANG → mở màn quét chế độ súng (không camera)
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
+  // Mobile: thu gọn phần header chi tiết (info/audit/tổng) để list nhiều dòng như AppSheet; chevron bung ra. Desktop luôn hiện.
+  const [hdrOpen, setHdrOpen] = useState(false)
   const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -1676,9 +1678,18 @@ export default function OutboundDetail() {
               >
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
+              <button
+                onClick={() => setHdrOpen(o => !o)}
+                className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+                title={hdrOpen ? 'Thu gọn thông tin' : 'Xem thông tin đơn'}
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${hdrOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
             <ActionCluster items={actionItems} />
           </div>
+
+          <div className={`${hdrOpen ? '' : 'hidden'} sm:block space-y-1`}>
 
           {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
           <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
@@ -1772,6 +1783,7 @@ export default function OutboundDetail() {
             </div>
           )}
           <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />
+          </div>
         </div>
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
@@ -1790,13 +1802,15 @@ export default function OutboundDetail() {
           </div>
         )}
 
-        {/* Dải tile tổng hợp (đồng bộ với list) */}
+        {/* Dải tile tổng hợp (đồng bộ với list) — mobile ẩn khi header thu gọn để list nhiều dòng */}
+        <div className={`${hdrOpen ? '' : 'hidden'} sm:block shrink-0`}>
         <SummaryBand tiles={[
           { label: 'DO',       value: allDOs.length },
           { label: 'Mã hàng',  value: allItems.length },
           { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
           { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
         ]} />
+        </div>
 
         {/* ── Items table: ~80% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">

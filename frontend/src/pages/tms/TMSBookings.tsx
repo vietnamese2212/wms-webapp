@@ -1162,6 +1162,27 @@ function parseExcelDate(val: unknown): string | null {
   return null
 }
 
+// Chip lọc bảng preview upload: Tất cả / Hợp lệ / Lỗi — dùng chung 3 dialog upload (user 25/07)
+type RowFilterVal = 'all' | 'ok' | 'err'
+function RowFilterChips({ total, okCount, errCount, value, onChange }: {
+  total: number; okCount: number; errCount: number; value: RowFilterVal; onChange: (v: RowFilterVal) => void
+}) {
+  const chip = (v: RowFilterVal, label: string, idleCls: string, activeCls: string) => (
+    <button key={v} type="button" onClick={() => onChange(v)}
+      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${value === v ? activeCls : `bg-white border-slate-200 hover:bg-slate-50 ${idleCls}`}`}>
+      {label}
+    </button>
+  )
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {chip('all', `Tất cả (${total})`, 'text-slate-600', 'bg-slate-800 text-white border-slate-800')}
+      {chip('ok',  `✓ Hợp lệ (${okCount})`, 'text-green-600', 'bg-green-600 text-white border-green-600')}
+      {chip('err', `Lỗi (${errCount})`, 'text-red-500', 'bg-red-600 text-white border-red-600')}
+    </div>
+  )
+}
+const rowFilterPass = (v: RowFilterVal, valid: boolean) => v === 'all' || (v === 'ok' ? valid : !valid)
+
 function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleTypes, transportCompanies }: {
   open: boolean; onClose: () => void
   warehouses: { id: string; name: string }[]
@@ -1175,6 +1196,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<{ inserted: number } | null>(null)
   const [err, setErr] = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
 
   const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
@@ -1184,7 +1206,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
     ...((c.alias_codes ?? []).map(a => [String(a).toLowerCase().trim(), c.id] as [string, string])),
   ]))
 
-  const reset = () => { setRows([]); setResult(null); setErr('') }
+  const reset = () => { setRows([]); setResult(null); setErr(''); setRowFilter('all') }
   useEffect(() => { if (open) reset() }, [open])
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1251,6 +1273,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           }
         })
         setRows(parsed); setErr('')
+        setRowFilter(parsed.some(r => !r.valid) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi cho dễ soát
       } catch { setErr('Không đọc được file. Vui lòng dùng định dạng .xlsx hoặc .xls') }
     }
     reader.readAsArrayBuffer(file)
@@ -1328,12 +1351,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                 </Button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
                 {rows.length > 0 && (
-                  <span className="text-xs text-slate-500">
-                    {rows.length} dòng
-                    {errorCount > 0
-                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi</span> · chỉ hiện dòng lỗi bên dưới</>
-                      : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>}
-                  </span>
+                  <RowFilterChips total={rows.length} okCount={rows.length - errorCount} errCount={errorCount}
+                    value={rowFilter} onChange={setRowFilter} />
                 )}
               </div>
               {rows.length > 0 && (
@@ -1347,7 +1366,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => ({ r, i })).filter(x => errorCount === 0 || !x.r.valid).map(({ r, i }) => (
+                      {rows.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, x.r.valid)).map(({ r, i }) => (
                         <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
                           <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
                           <td className="px-2 py-0.5 font-mono">{r.order_code || '—'}</td>
@@ -1598,6 +1617,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
   const [preview, setPreview] = useState<PlanBulkRow[] | null>(null)
   const [fileName, setFileName] = useState('')
   const [err, setErr]           = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Nhận CẢ mã lẫn tên (normalize trim + uppercase)
@@ -1670,6 +1690,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
           }
         }).filter(r => r.date || r.ncc_code || r.material_code)
         setPreview(parsed)
+        setRowFilter(parsed.some(r => !r._valid) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi
         setErr('')
       } catch { setErr('Không đọc được file Excel') }
     }
@@ -1711,12 +1732,15 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     saveWorkbook(wb, 'template_ke_hoach_nhap.xlsx')
   }
 
-  function handleClose() { setPreview(null); setFileName(''); setErr(''); onClose() }
+  function handleClose() { setPreview(null); setFileName(''); setErr(''); setRowFilter('all'); onClose() }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) handleClose() }}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
+      {/* Có preview → 80% màn hình (user 25/07) để soát bảng nghìn dòng; chưa có file → gọn */}
+      <DialogContent className={preview
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-3xl'}>
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <FileSpreadsheet className="h-4 w-4" /> Upload kế hoạch nhập
           </DialogTitle>
@@ -1748,14 +1772,15 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
             {err && <p className="text-red-500">{err}</p>}
           </div>
         ) : (
-          <div className="space-y-2 py-1 text-xs">
-            <div className="flex items-center justify-between">
-              <p className="text-slate-500">{preview.filter(r => r._valid).length}/{preview.length} dòng hợp lệ</p>
-              <Button variant="ghost" size="sm" onClick={() => { setPreview(null); setFileName('') }}>
+          <div className="flex flex-col flex-1 min-h-0 space-y-2 py-1 text-xs">
+            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+              <RowFilterChips total={preview.length} okCount={preview.filter(r => r._valid).length}
+                errCount={preview.filter(r => !r._valid).length} value={rowFilter} onChange={setRowFilter} />
+              <Button variant="ghost" size="sm" onClick={() => { setPreview(null); setFileName(''); setRowFilter('all') }}>
                 <X className="h-3.5 w-3.5 mr-1" /> Chọn lại
               </Button>
             </div>
-            <div className="max-h-64 overflow-auto border rounded-md">
+            <div className="flex-1 min-h-0 overflow-auto border rounded-md">
               <table className="min-w-full text-[10px]">
                 <thead className="sticky top-0 bg-slate-50 border-b">
                   <tr>
@@ -1765,7 +1790,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.map((r, i) => (
+                  {preview.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, x.r._valid)).map(({ r, i }) => (
                     <tr key={i} className={r._valid ? 'hover:bg-slate-50' : 'bg-red-50'}>
                       <td className="px-2 py-1 whitespace-nowrap">{r.date ? formatDate(r.date) : '—'}</td>
                       <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{r.kho_code || '(mặc định)'}</td>
@@ -1813,6 +1838,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
   const [rows, setRows] = useState<{ material_code: string; material_id?: string; planned_boxes: number; planned_pallets?: number; err?: string }[]>([])
   const [saving, setSaving] = useState(false)
   const [apiError, setApiError] = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
   const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
   const { data: materials = [] } = useMaterials()
 
@@ -1858,6 +1884,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
       // Trùng mã (trong file / với KH đã có) KHÔNG block nữa — BE upsert theo key (lệnh + mã):
       // trùng trong file tự GỘP SL, mã đã có KH thì CẬP NHẬT số lượng (user chốt 25/07).
       setRows(parsed)
+      setRowFilter(parsed.some(r => r.err) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi
     }
     reader.readAsBinaryString(f)
   }
@@ -1905,10 +1932,8 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
           {rows.length > 0 && (
             <>
-              <div className="flex gap-3 text-[10px]">
-                <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>
-                {errCount > 0 && <span className="text-red-500">{errCount} dòng lỗi</span>}
-              </div>
+              <RowFilterChips total={rows.length} okCount={validCount} errCount={errCount}
+                value={rowFilter} onChange={setRowFilter} />
               <div className="rounded border overflow-auto max-h-52">
                 <table className="min-w-full">
                   <thead className="bg-slate-50 sticky top-0">
@@ -1919,7 +1944,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r, i) => (
+                    {rows.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, !x.r.err)).map(({ r, i }) => (
                       <tr key={i} className={`border-t border-slate-100 ${r.err ? 'bg-red-50' : ''}`}>
                         <td className="px-2 py-1 font-mono font-semibold text-[10px]">{r.material_code}</td>
                         <td className="px-2 py-1 text-[10px] tabular-nums">{r.planned_boxes}</td>

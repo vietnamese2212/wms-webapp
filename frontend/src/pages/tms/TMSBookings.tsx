@@ -1876,9 +1876,15 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
     setSaving(true)
     setApiError('')
     try {
+      // BASE UNIT: file nhập "SL thùng" (entry) → convert BASE per mã trước khi POST
+      // (inbound_plan_lines.planned_boxes = BASE — cùng convention với upload KH nhập /inbound-plan/bulk)
       await bulkCreate({
         tms_order_id: orderId,
-        lines: valid.map(r => ({ material_id: r.material_id!, planned_boxes: r.planned_boxes, ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}) })),
+        lines: valid.map(r => ({
+          material_id: r.material_id!,
+          planned_boxes: qtyFromEntryBase(r.planned_boxes, 0, (materials as import('@/types').Material[]).find(m => m.id === r.material_id) ?? null),
+          ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}),
+        })),
       })
       onClose()
     } catch (e: unknown) {

@@ -6,6 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch } from '../../utils/search'
+import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -254,15 +255,31 @@ export async function listCategories(_req: Request, res: Response) {
 // ─── Upload Excel: UPSERT Material theo material_code ────────────────────────
 // Mirror scripts/import_materials.js: mã MỚI → thêm (Tên hàng bắt buộc); mã ĐÃ CÓ → cập nhật
 // chỉ ô CÓ GIÁ TRỊ trong file (ô trống = giữ nguyên). short_name tự sinh khi đổi Tên hàng.
-// batch_prefix (ĐV2 tem `;`) THÊM Ở CUỐI để không xê dịch cột cũ. File ĐV1 KHÔNG có cột này (12 cột) →
-// r[12] undefined → giữ nguyên (không đụng). File ĐV2 thêm cột thứ 13 = mã tắt mã lô.
-// Cột index 3 ('unit' = ĐVT cũ) GIỮ LÀM FILLER VỊ TRÍ để file Excel cũ không lệch cột — KHÔNG còn persist
-// vào DB (cột Material.unit đã bỏ). Đơn vị mã hàng nay = base_unit + entry_unit (cuối mảng).
-const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
-  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix',
-  'carton_length_mm', 'carton_width_mm', 'carton_height_mm',
-  'max_stack_layers', 'stack_on_top',
-  'base_unit', 'entry_unit'] as const   // ĐVT base/entry (chiến dịch Base Unit) THÊM Ở CUỐI — file cũ ngắn hơn → giữ nguyên
+// Map theo TÊN CỘT (đồng bộ VL06O/KHVC) — chịu ĐẢO cột + đổi tên nhãn; alias = {key + nhãn VN}.
+// 'unit' (ĐVT cũ, cột Material.unit đã bỏ) giữ để đọc file cũ nhưng KHÔNG persist. batch_prefix (ĐV2 tem `;`),
+// base_unit/entry_unit (Base Unit) — file ĐV1 không có các cột này thì bỏ trống (không bắt buộc).
+const M_FIELDS: FieldDef[] = [
+  { key: 'material_code',        label: 'Mã hàng',            aliases: ['ma hang'], required: true },
+  { key: 'material_description', label: 'Tên hàng',           aliases: ['ten hang'] },
+  { key: 'category',             label: 'Loại hàng',          aliases: ['loai hang'] },
+  { key: 'unit',                 label: 'ĐVT (bỏ)',           aliases: [] },
+  { key: 'cartons_per_pallet',   label: 'Thùng/Pallet',       aliases: ['thung pallet'] },
+  { key: 'units_per_carton',     label: 'Đv/Thùng',           aliases: ['dv thung'] },
+  { key: 'pallet_per_ea',        label: 'Pallet/EA',          aliases: ['pallet ea'] },
+  { key: 'weight_kg',            label: 'KL (kg)',            aliases: ['kl kg', 'kl', 'weight'] },
+  { key: 'shelf_life_days',      label: 'HSD (ngày)',         aliases: ['hsd ngay', 'hsd'] },
+  { key: 'product_type',         label: 'Loại SP',            aliases: ['loai sp'] },
+  { key: 'custom_short_name',    label: 'Tên rút gọn',        aliases: ['ten rut gon'] },
+  { key: 'notes',                label: 'Ghi chú',            aliases: ['ghi chu'] },
+  { key: 'batch_prefix',         label: 'Mã tắt (mã lô)',     aliases: ['ma tat ma lo', 'ma tat'] },
+  { key: 'carton_length_mm',     label: 'Thùng dài (mm)',     aliases: ['thung dai mm', 'thung dai'] },
+  { key: 'carton_width_mm',      label: 'Thùng rộng (mm)',    aliases: ['thung rong mm', 'thung rong'] },
+  { key: 'carton_height_mm',     label: 'Thùng cao (mm)',     aliases: ['thung cao mm', 'thung cao'] },
+  { key: 'max_stack_layers',     label: 'Số lớp tối đa',      aliases: ['so lop toi da'] },
+  { key: 'stack_on_top',         label: 'Xếp trên hàng khác', aliases: ['xep tren hang khac 1 0', 'xep tren hang khac'] },
+  { key: 'base_unit',            label: 'Base Unit',          aliases: ['base unit'] },
+  { key: 'entry_unit',           label: 'Entry Unit',         aliases: ['entry unit'] },
+]
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
@@ -274,19 +291,8 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
     const ws = wb.Sheets[wb.SheetNames[0]]
-    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
-    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
-
-    // Map theo VỊ TRÍ cột (đúng thứ tự M_KEYS) — chịu được khi mất dòng key/nhãn.
-    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    // Dòng key nhận diện qua 2 ô đầu cố định (KHÔNG so đủ mọi cột) → file ĐV1 12 cột vẫn khớp
-    // khi M_KEYS thêm batch_prefix ở cuối; tránh hiểu nhầm dòng key thành dữ liệu.
-    const isKeyRow = (r: unknown[]) => norm(r)[0] === 'material_code' && norm(r)[1] === 'material_description'
-    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1   // có dòng key → data từ dòng 3; không → bỏ dòng nhãn
-    const rows = raw.slice(start)
-      .map(r => Object.fromEntries(M_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
-      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
-
+    const { rows, missingRequired } = parseSheetByHeader(ws, M_FIELDS)   // map theo TÊN cột (chịu đảo cột)
+    if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
     // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000

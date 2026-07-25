@@ -288,11 +288,11 @@ export default function Materials() {
     return null
   }
 
-  // Mẫu Excel Mã hàng — cột KHỚP thứ tự M_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  // Mẫu Excel Mã hàng — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
   // ĐV tem `;` (isV2Format): mẫu tự thêm cột 13 batch_prefix (Mã tắt mã lô); ĐV tem `_` giữ 12 cột như cũ.
   function downloadMaterialTemplate() {
     // Cột 4 ('(bỏ trống)') = filler VỊ TRÍ của ĐVT cũ (đã bỏ) — giữ để file cũ không lệch cột. Đơn vị nay = Base/Entry Unit (2 cột cuối).
-    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
+    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg)', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', '', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }

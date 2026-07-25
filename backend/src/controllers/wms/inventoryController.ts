@@ -12,6 +12,7 @@ import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -1362,9 +1363,20 @@ export async function getInventoryEntry(req: Request, res: Response) {
 // Mirror scripts/import_inventory.js: kiểm TOÀN BỘ file trước — có BẤT KỲ lỗi nào thì KHÔNG nhập gì
 // (trả về danh sách lỗi để sửa & up lại). File sạch 100% → nhập theo lô. status=IN_STOCK, origin=IMPORT.
 // NMSX = đoạn 6 mã pallet (QR), thiếu → nmsx_code của kho. Trùng pallet (trong file / đã có) = lỗi.
-// BASE UNIT (đợt 2): thêm cột CUỐI 'boxes_base' (Hộp — đơn vị gốc, mã có entry). File cũ 9 cột vẫn đọc được.
-const INV_KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base'] as const
-const INV_LEGACY_LEN = 9
+// BASE UNIT (đợt 2): cột 'boxes_base' (Hộp — đơn vị gốc, mã có entry). File cũ không có cột này thì bỏ trống.
+// Map theo TÊN CỘT (đồng bộ VL06O/KHVC) — chịu ĐẢO cột + đổi tên nhãn; alias = {key + nhãn VN}.
+const INV_FIELDS: FieldDef[] = [
+  { key: 'pallet_code',     label: 'Mã pallet',   aliases: ['ma pallet'], required: true },
+  { key: 'material_code',   label: 'Mã hàng',     aliases: ['ma hang'], required: true },
+  { key: 'warehouse',       label: 'Kho (mã)',    aliases: ['kho ma', 'kho'], required: true },
+  { key: 'location_code',   label: 'Mã vị trí',   aliases: ['ma vi tri', 'vi tri'], required: true },
+  { key: 'cartons',         label: 'Số thùng',    aliases: ['so thung', 'so thung so nguyen'], required: true },
+  { key: 'production_date', label: 'Ngày SX',     aliases: ['ngay sx', 'ngay san xuat', 'ngay sx yyyy mm dd'], required: true },
+  { key: 'ncc',             label: 'NCC',         aliases: ['ncc ma ten tuy'] },
+  { key: 'qa_status',       label: 'QA',          aliases: ['qa', 'qa mac dinh ok'] },
+  { key: 'shelf_life_days', label: 'HSD (ngày)',  aliases: ['hsd', 'hsd ngay', 'hsd ngay tuy'] },
+  { key: 'boxes_base',      label: 'Hộp (lẻ)',    aliases: ['hop', 'hop phan le', 'hop phan le tuy'] },
+]
 
 const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
 const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
@@ -1417,15 +1429,8 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
     const ws = wb.Sheets[wb.SheetNames[0]]
-    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
-    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
-
-    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    const isKeyRow = (r: unknown[]) => INV_KEYS.every((k, i) => norm(r)[i] === k || (i >= INV_LEGACY_LEN && !norm(r)[i]))
-    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1
-    const rows = raw.slice(start)
-      .map(r => Object.fromEntries(INV_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
-      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
+    const { rows, missingRequired } = parseSheetByHeader(ws, INV_FIELDS)   // map theo TÊN cột (chịu đảo cột)
+    if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Tồn kho`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
     const [mats, whs, locs, cos, qas] = await Promise.all([

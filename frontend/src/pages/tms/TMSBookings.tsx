@@ -1822,13 +1822,18 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
     reader.onload = (ev) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
       const ws = wb.Sheets[wb.SheetNames[0]]
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-      const parsed = (raw.slice(1) as unknown[][])
-        .filter(r => r[0])
-        .map(r => {
-          const material_code = String(r[0] ?? '').trim()
-          const planned_boxes = Number(r[1] ?? 0)
-          const planned_pallets = r[2] != null && r[2] !== '' ? Number(r[2]) : undefined
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+      // Map theo TÊN cột (đồng bộ VL06O/KHVC): chuẩn hóa trim/lower/bỏ dấu → chịu ĐẢO thứ tự cột.
+      const nk = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, ' ').trim()
+      const pick = (nm: Record<string, unknown>, keys: string[]) => { for (const k of keys) { const v = nm[k]; if (v != null && String(v).trim() !== '') return v } return '' }
+      const parsed = rows
+        .map(row => {
+          const nm: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(row)) nm[nk(k)] = v
+          const material_code = String(pick(nm, ['ma hang', 'material code']) ?? '').trim()
+          const planned_boxes = Number(pick(nm, ['sl thung', 'so thung', 'planned boxes']) || 0)
+          const rawPallet = pick(nm, ['sl pallet', 'so pallet', 'planned pallets'])
+          const planned_pallets = rawPallet !== '' ? Number(rawPallet) : undefined
           const mat = (materials as import('@/types').Material[]).find(m =>
             m.material_code === material_code &&
             (!warehouseType || m.category === warehouseType)
@@ -1848,6 +1853,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
                   : undefined,
           }
         })
+        .filter(r => r.material_code)   // bỏ dòng trống (không có mã hàng)
       // Detect duplicates within file
       const codeCount = new Map<string, number>()
       for (const r of parsed) { codeCount.set(r.material_code, (codeCount.get(r.material_code) ?? 0) + 1) }
@@ -1894,7 +1900,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
         </DialogHeader>
         <div className="space-y-3 text-xs">
           <p className="text-slate-500">
-            File Excel: cột A = <span className="font-mono">Mã hàng</span> · cột B = <span className="font-mono">SL thùng</span> · cột C = <span className="font-mono">SL pallet</span> (tùy chọn). Hàng đầu là tiêu đề, bỏ qua.
+            File Excel có tiêu đề: <span className="font-mono">Mã hàng</span> · <span className="font-mono">SL thùng</span> · <span className="font-mono">SL pallet</span> (tùy chọn). Nhận diện theo TÊN cột — thứ tự cột tùy ý.
             {warehouseType && <> · Chỉ nhận hàng loại <span className="font-medium text-slate-700">{warehouseType}</span>.</>}
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />

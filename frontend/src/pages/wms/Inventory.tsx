@@ -802,7 +802,7 @@ export default function Inventory() {
     }
   }
 
-  // Mẫu Excel Tồn kho đầu kỳ — cột KHỚP thứ tự INV_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  // Mẫu Excel Tồn kho đầu kỳ — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
   function downloadInventoryTemplate() {
     // BASE UNIT: mã có Hộp/thùng → "Số thùng" SỐ NGUYÊN + phần lẻ ghi cột "Hộp" (đơn vị gốc)
     const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)']

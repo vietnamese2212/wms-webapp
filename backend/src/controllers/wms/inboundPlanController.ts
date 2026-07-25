@@ -278,7 +278,11 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       groupMap.set(key, orderId)
     }
 
-    // Insert tất cả lines
+    // UPSERT theo KEY = (Ngày + Kho + NCC + Mã hàng) — user chốt 25/07: trùng key → UPDATE số lượng,
+    // key mới → INSERT. Chống double khi upload lại cùng file. Key KHÔNG gồm PO/Loại xe:
+    // trùng key trong file → tự GỘP SL (như "Nạp từ KH" gộp per mã); PO gộp các giá trị khác nhau.
+    const poOf = (v: unknown) => String(v ?? '').trim()
+    const dOf  = (v: unknown) => String(v ?? '').slice(0, 10)   // date chuẩn hóa YYYY-MM-DD
     const rows = lines.map(line => {
       const key = makeKey(
         String(line.date ?? ''), String(line.warehouse_id ?? ''),
@@ -294,7 +298,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
         vehicle_type:    (line.vehicle_type    as string | null) ?? null,
         ncc_id:          (line.ncc_id          as string | null) ?? null,
         material_id:     (line.material_id     as string | null) ?? null,
-        po_number:       (line.po_number       as string | null) ?? null,
+        po_number:       poOf(line.po_number) || null,
         planned_boxes:   (line.planned_boxes   as number | null) ?? null,
         planned_pallets: (line.planned_pallets as number | null) ?? null,
         tms_order_id:    groupMap.get(key) ?? null,
@@ -303,17 +307,79 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       }
     })
 
-    // Ghi theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase.from('inbound_plan_lines').insert(rows.slice(i, i + 500))
+    const ukeyOf = (r: { date: string; warehouse_id: string; ncc_id: string | null; material_id: string | null }) =>
+      `${dOf(r.date)}||${r.warehouse_id}||${r.ncc_id ?? ''}||${r.material_id ?? ''}`
+    const warnings: string[] = []
+
+    // 1) Gộp trùng key NGAY TRONG FILE (cộng SL; PO nối các giá trị khác nhau)
+    const mergedMap = new Map<string, typeof rows[number]>()
+    const noKey: typeof rows = []   // dòng thiếu mã → giữ nguyên (không upsert được)
+    for (const r of rows) {
+      if (!r.material_id) { noKey.push(r); continue }
+      const k = ukeyOf(r)
+      const prev = mergedMap.get(k)
+      if (!prev) { mergedMap.set(k, r); continue }
+      prev.planned_boxes   = (prev.planned_boxes   ?? 0) + (r.planned_boxes   ?? 0) || null
+      prev.planned_pallets = (prev.planned_pallets ?? 0) + (r.planned_pallets ?? 0) || null
+      if (r.po_number && r.po_number !== prev.po_number)
+        prev.po_number = prev.po_number ? `${prev.po_number}, ${r.po_number}` : r.po_number
+      warnings.push(`Gộp dòng trùng key trong file (Ngày ${dOf(r.date)} · mã ${r.material_id})`)
+    }
+    const merged = [...mergedMap.values(), ...noKey]
+
+    // 2) Nạp dòng KH ĐANG CÓ khớp (Ngày, Kho) trong file → so key đủ 4 thành phần ở JS
+    //    (khớp CROSS-lệnh: key không gồm Loại xe nên dòng cũ nằm ở lệnh khác loại xe vẫn được update)
+    type ExLine = { id: string; tms_order_id: string | null; date: string; warehouse_id: string; ncc_id: string | null; material_id: string | null; created_at: string }
+    const fDates = [...new Set(merged.map(r => dOf(r.date)))]
+    const fWhs   = [...new Set(merged.map(r => r.warehouse_id))]
+    const existing: ExLine[] = []
+    for (let i = 0; i < fDates.length; i += 100) {
+      const { data } = await supabase.from('inbound_plan_lines')
+        .select('id, tms_order_id, date, warehouse_id, ncc_id, material_id, created_at')
+        .in('date', fDates.slice(i, i + 100)).in('warehouse_id', fWhs).neq('status', 'CANCELLED')
+      existing.push(...((data ?? []) as ExLine[]))
+    }
+    const exByKey = new Map<string, ExLine[]>()
+    for (const e of existing) {
+      if (!e.material_id) continue
+      const arr = exByKey.get(ukeyOf(e)) ?? []
+      arr.push(e); exByKey.set(ukeyOf(e), arr)
+    }
+
+    // 3) Chia UPDATE (key trùng → dòng CŨ NHẤT; sẵn nhiều dòng trùng = double cũ → cảnh báo dọn) / INSERT
+    const toInsert: typeof rows = []
+    const toUpdate: { id: string; order_id: string | null; planned_boxes: number | null; planned_pallets: number | null; po_number: string | null }[] = []
+    for (const r of merged) {
+      const matches = r.material_id ? (exByKey.get(ukeyOf(r)) ?? []).sort((a, b) => a.created_at < b.created_at ? -1 : 1) : []
+      if (matches.length) {
+        toUpdate.push({ id: matches[0].id, order_id: matches[0].tms_order_id, planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, po_number: r.po_number })
+        if (matches.length > 1) warnings.push(`Key (Ngày ${dOf(r.date)} · mã ${r.material_id}) đang có ${matches.length} dòng KH trùng sẵn — chỉ cập nhật dòng cũ nhất, nên dọn dòng thừa`)
+      } else toInsert.push(r)
+    }
+
+    // UPDATE song song theo lô 50 (mỗi dòng giá trị khác nhau — không bulk update chung được)
+    for (let i = 0; i < toUpdate.length; i += 50) {
+      const results = await Promise.all(toUpdate.slice(i, i + 50).map(u =>
+        supabase.from('inbound_plan_lines')
+          .update({ planned_boxes: u.planned_boxes, planned_pallets: u.planned_pallets, ...(u.po_number ? { po_number: u.po_number } : {}), updated_by: user?.name || null, updated_at: now })
+          .eq('id', u.id)))
+      const errU = results.find(x => x.error)?.error
+      if (errU) return fail(res, errU.message)
+    }
+    // INSERT theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless
+    for (let i = 0; i < toInsert.length; i += 500) {
+      const { error } = await supabase.from('inbound_plan_lines').insert(toInsert.slice(i, i + 500))
       if (error) return fail(res, error.message)
     }
 
-    // Recalc tất cả TmsOrders bị ảnh hưởng
-    const affectedOrderIds = [...new Set(rows.map(r => r.tms_order_id).filter(Boolean))] as string[]
+    // Recalc tất cả TmsOrders bị ảnh hưởng: lệnh nhóm (kể cả lệnh mới tạo mà mọi dòng thành UPDATE
+    // ở lệnh cũ → 0 dòng → recalc tự hủy PENDING rỗng) + lệnh chứa dòng được update
+    const affectedOrderIds = [...new Set([
+      ...groupMap.values(), ...toInsert.map(r => r.tms_order_id), ...toUpdate.map(u => u.order_id),
+    ].filter(Boolean))] as string[]
     await Promise.all(affectedOrderIds.map(recalcTmsOrder))
 
-    return ok(res, { inserted: rows.length }, 201)
+    return ok(res, { inserted: toInsert.length, updated: toUpdate.length, warnings }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -521,34 +587,73 @@ export async function bulkCreateForOrder(req: Request, res: Response) {
     const user = req.user
     const now = new Date().toISOString()
 
-    const lineRows = lines
-      .filter(l => l.material_id && (l.planned_boxes ?? 0) > 0)
-      .map(l => ({
-        id: randomUUID(),
-        tms_order_id,
-        date: tmsOrder.date,
-        warehouse_id: tmsOrder.warehouse_id,
-        warehouse_type: tmsOrder.warehouse_type ?? null,
-        vehicle_type: tmsOrder.vehicle_type ?? null,
-        ncc_id: tmsOrder.ncc_id ?? null,
-        material_id: l.material_id,
-        planned_boxes: l.planned_boxes,
-        planned_pallets: l.planned_pallets ?? null,
-        status: 'ACTIVE',
-        created_by: user?.name ?? null,
-        updated_by: user?.name ?? null,
-        created_at: now,
-        updated_at: now,
-      }))
+    // UPSERT theo KEY = Mã hàng trong lệnh (Ngày/Kho/NCC nằm trên lệnh — khớp key Ngày+Kho+NCC+Mã
+    // user chốt 25/07): trùng mã trong file → GỘP SL; mã đã có dòng KH → UPDATE dòng cũ nhất; mới → INSERT.
+    const mergedByMat = new Map<string, { material_id: string; planned_boxes: number; planned_pallets: number | null }>()
+    const warnings: string[] = []
+    for (const l of lines) {
+      if (!l.material_id || !((l.planned_boxes ?? 0) > 0)) continue
+      const prev = mergedByMat.get(l.material_id)
+      if (!prev) { mergedByMat.set(l.material_id, { material_id: l.material_id, planned_boxes: l.planned_boxes, planned_pallets: l.planned_pallets ?? null }); continue }
+      prev.planned_boxes += l.planned_boxes
+      if (l.planned_pallets != null) prev.planned_pallets = (prev.planned_pallets ?? 0) + l.planned_pallets
+      warnings.push(`Gộp dòng trùng mã trong file (mã hàng id ${l.material_id})`)
+    }
+    if (!mergedByMat.size) return fail(res, 'Không có dòng hợp lệ (material_id + planned_boxes > 0)', 400)
 
-    if (!lineRows.length) return fail(res, 'Không có dòng hợp lệ (material_id + planned_boxes > 0)', 400)
+    // Dòng KH đang có của lệnh → map theo mã (sẵn nhiều dòng trùng mã = double cũ → cập nhật dòng cũ nhất)
+    type ExLine = { id: string; material_id: string | null; created_at: string }
+    const { data: exLines } = await supabase.from('inbound_plan_lines')
+      .select('id, material_id, created_at')
+      .eq('tms_order_id', tms_order_id).neq('status', 'CANCELLED')
+    const exByMat = new Map<string, ExLine[]>()
+    for (const e of (exLines ?? []) as ExLine[]) {
+      if (!e.material_id) continue
+      const arr = exByMat.get(e.material_id) ?? []
+      arr.push(e); exByMat.set(e.material_id, arr)
+    }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: insErr } = await supabase.from('inbound_plan_lines').insert(lineRows)
-    if (insErr) return fail(res, insErr.message)
+    const toInsert: Record<string, unknown>[] = []
+    const toUpdate: { id: string; planned_boxes: number; planned_pallets: number | null }[] = []
+    for (const m of mergedByMat.values()) {
+      const matches = (exByMat.get(m.material_id) ?? []).sort((a, b) => a.created_at < b.created_at ? -1 : 1)
+      if (matches.length) {
+        toUpdate.push({ id: matches[0].id, planned_boxes: m.planned_boxes, planned_pallets: m.planned_pallets })
+        if (matches.length > 1) warnings.push(`Mã hàng id ${m.material_id} đang có ${matches.length} dòng KH trong lệnh — chỉ cập nhật dòng cũ nhất, nên dọn dòng thừa`)
+      } else {
+        toInsert.push({
+          id: randomUUID(),
+          tms_order_id,
+          date: tmsOrder.date,
+          warehouse_id: tmsOrder.warehouse_id,
+          warehouse_type: tmsOrder.warehouse_type ?? null,
+          vehicle_type: tmsOrder.vehicle_type ?? null,
+          ncc_id: tmsOrder.ncc_id ?? null,
+          material_id: m.material_id,
+          planned_boxes: m.planned_boxes,
+          planned_pallets: m.planned_pallets,
+          status: 'ACTIVE',
+          created_by: user?.name ?? null,
+          updated_by: user?.name ?? null,
+          created_at: now,
+          updated_at: now,
+        })
+      }
+    }
+
+    for (const u of toUpdate) {
+      const { error: updErr } = await supabase.from('inbound_plan_lines')
+        .update({ planned_boxes: u.planned_boxes, planned_pallets: u.planned_pallets, updated_by: user?.name ?? null, updated_at: now })
+        .eq('id', u.id)
+      if (updErr) return fail(res, updErr.message)
+    }
+    if (toInsert.length) {
+      const { error: insErr } = await supabase.from('inbound_plan_lines').insert(toInsert)
+      if (insErr) return fail(res, insErr.message)
+    }
 
     await recalcTmsOrder(tms_order_id)
 
-    return ok(res, { inserted: lineRows.length }, 201)
+    return ok(res, { inserted: toInsert.length, updated: toUpdate.length, warnings }, 201)
   } catch (e) { return fail(res, String(e)) }
 }

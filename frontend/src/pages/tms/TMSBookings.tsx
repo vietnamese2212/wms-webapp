@@ -1729,6 +1729,10 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
               Tuỳ chọn: Mã kho (mã hoặc tên; trống = kho đang chọn), Loại xe, Số PO, Số pallet.
               Loại kho tự suy từ Mã hàng.
             </p>
+            <p className="text-slate-500">
+              Upload lại: dòng trùng key <strong>Ngày + Kho + NCC + Mã hàng</strong> sẽ được <strong>cập nhật</strong> số lượng
+              (không nhân đôi kế hoạch); key mới thì thêm dòng. Trùng key ngay trong file → tự gộp số lượng.
+            </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
                 <FileSpreadsheet className="h-3.5 w-3.5 mr-1" /> Tải template
@@ -1801,14 +1805,12 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
 
 // ── Upload Plan Lines Dialog (cho INBOUND booking) ───────────────────────────
 
-function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose }: {
+function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
   orderId: string
   warehouseType?: string
-  existingCodes?: Set<string>
   onClose: () => void
 }) {
   const [rows, setRows] = useState<{ material_code: string; material_id?: string; planned_boxes: number; planned_pallets?: number; err?: string }[]>([])
-  const [dupError, setDupError] = useState('')
   const [saving, setSaving] = useState(false)
   const [apiError, setApiError] = useState('')
   const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
@@ -1817,7 +1819,6 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
-    setDupError('')
     const reader = new FileReader()
     reader.onload = (ev) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
@@ -1854,23 +1855,14 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
           }
         })
         .filter(r => r.material_code)   // bỏ dòng trống (không có mã hàng)
-      // Detect duplicates within file
-      const codeCount = new Map<string, number>()
-      for (const r of parsed) { codeCount.set(r.material_code, (codeCount.get(r.material_code) ?? 0) + 1) }
-      const dupInFile = [...codeCount.entries()].filter(([, n]) => n > 1).map(([c]) => c)
-      // Detect duplicates vs existing plan lines
-      const dupVsExisting = existingCodes ? parsed.map(r => r.material_code).filter(c => existingCodes.has(c)) : []
-      const allDups = [...new Set([...dupInFile, ...dupVsExisting])]
-      if (allDups.length > 0) {
-        setDupError(`File bị block — mã hàng trùng: ${allDups.join(', ')}`)
-      }
+      // Trùng mã (trong file / với KH đã có) KHÔNG block nữa — BE upsert theo key (lệnh + mã):
+      // trùng trong file tự GỘP SL, mã đã có KH thì CẬP NHẬT số lượng (user chốt 25/07).
       setRows(parsed)
     }
     reader.readAsBinaryString(f)
   }
 
   async function handleSave() {
-    if (dupError) return
     const valid = rows.filter(r => !r.err && r.material_id)
     if (!valid.length) return
     setSaving(true)
@@ -1895,7 +1887,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
     }
   }
 
-  const validCount = dupError ? 0 : rows.filter(r => !r.err).length
+  const validCount = rows.filter(r => !r.err).length
   const errCount   = rows.filter(r => r.err).length
 
   return (
@@ -1908,13 +1900,13 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
           <p className="text-slate-500">
             File Excel có tiêu đề: <span className="font-mono">Mã hàng</span> · <span className="font-mono">SL thùng</span> · <span className="font-mono">SL pallet</span> (tùy chọn). Nhận diện theo TÊN cột — thứ tự cột tùy ý.
             {warehouseType && <> · Chỉ nhận hàng loại <span className="font-medium text-slate-700">{warehouseType}</span>.</>}
+            {' '}Mã đã có kế hoạch trong lệnh → <span className="font-medium text-slate-700">cập nhật</span> số lượng; trùng mã trong file → tự gộp.
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
-          {dupError && <p className="text-red-600 text-[11px] bg-red-50 border border-red-200 px-3 py-2 rounded">{dupError}</p>}
           {rows.length > 0 && (
             <>
               <div className="flex gap-3 text-[10px]">
-                {!dupError && <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>}
+                <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>
                 {errCount > 0 && <span className="text-red-500">{errCount} dòng lỗi</span>}
               </div>
               <div className="rounded border overflow-auto max-h-52">
@@ -1946,7 +1938,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0 || !!dupError}>
+          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0}>
             {saving && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
             {saving ? 'Đang lưu...' : `Lưu ${validCount} dòng`}
           </Button>
@@ -3465,7 +3457,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
     {showUpload && <UploadPlanLinesDialog
       orderId={order.id}
       warehouseType={order.warehouse_type ?? undefined}
-      existingCodes={existingPlanCodes}
       onClose={() => setShowUpload(false)}
     />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>

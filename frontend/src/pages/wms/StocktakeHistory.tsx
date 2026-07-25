@@ -66,6 +66,11 @@ export default function StocktakeHistory() {
   const { data: locations  = [] } = useLocationsReal(
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )
+  // Vị trí "quan trọng" (cần kiểm) của kho — mở nhanh nhóm này
+  const importantLocIds = (locations as { id: string; requires_stocktake?: boolean }[]).filter(l => l.requires_stocktake).map(l => l.id)
+  const isImportantScope = importantLocIds.length > 0
+    && locationIds.length === importantLocIds.length
+    && importantLocIds.every(id => locationIds.includes(id))
 
   const { data, isFetching } = useStocktakeLog({
     warehouse_id: warehouseId || undefined,
@@ -124,6 +129,15 @@ export default function StocktakeHistory() {
             <History className="h-3.5 w-3.5 text-blue-600" />
             <span className="text-xs font-semibold text-slate-700">Lịch sử kiểm</span>
           </div>
+          {importantLocIds.length > 0 && (
+            <button type="button"
+              onClick={() => setF({ locationIds: importantLocIds })}
+              title={`Mở nhanh ${importantLocIds.length} vị trí quan trọng đã đánh dấu (gắn cờ ở trang Vị trí kho)`}
+              className={`inline-flex items-center gap-1 h-6 px-2 rounded-md border text-[11px] font-medium shrink-0 transition-colors ${
+                isImportantScope ? 'border-red-300 bg-red-50 text-red-700' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
+              <Flag className="h-2.5 w-2.5" /> VT quan trọng ({importantLocIds.length})
+            </button>
+          )}
           <SearchInput value={search} onChange={v => setF({ search: v })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
           <FilterSheetButton defs={defs} className="sm:hidden" />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">

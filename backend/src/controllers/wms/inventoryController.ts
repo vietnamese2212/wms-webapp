@@ -1001,6 +1001,7 @@ export async function stocktakeCheck(req: Request, res: Response) {
     .select(ENTRY_SELECT)
     .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .gt('cartons_remaining', 0)   // bỏ pallet đã HẾT TỒN (remaining 0 = đã xuất hết, không kiểm)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -1194,6 +1195,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     .select('id', { count: 'exact', head: true })
     .in('location_id', chunk)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .gt('cartons_remaining', 0)   // CHỈ pallet còn tồn — bỏ remaining 0 (đã xuất hết) khỏi tổng hợp KK
   let total = 0, checked = 0, flagged = 0, totalFiltered = 0
   try {
     for (const chunk of locChunks) {
@@ -1231,6 +1233,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
           `)
           .in('location_id', chunk)
           .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+          .gt('cartons_remaining', 0)   // bỏ pallet hết tồn khỏi danh sách kiểm
           .order('stocktake_at', { ascending: true, nullsFirst: true })
           .order('id', { ascending: true }))
           .range(p * 1000, p * 1000 + 999)

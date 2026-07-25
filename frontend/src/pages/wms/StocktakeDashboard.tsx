@@ -347,11 +347,14 @@ export default function StocktakeDashboard() {
             <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
             <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
           </div>
-          {isImportantScope && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 shrink-0"
-              title='Báo cáo đang giới hạn ở các vị trí quan trọng của kho (gắn cờ "cần kiểm kê" ở trang Vị trí kho). Chọn vị trí khác ở bộ lọc "Vị trí"; xoá lọc để quay lại nhóm này.'>
-              <Flag className="h-2.5 w-2.5" /> {importantLocIds.length} vị trí quan trọng
-            </span>
+          {importantLocIds.length > 0 && (
+            <button type="button"
+              onClick={() => setStocktakeSummary({ locationIds: importantLocIds })}
+              title={`Chọn nhanh ${importantLocIds.length} vị trí quan trọng đã đánh dấu (gắn cờ ở trang Vị trí kho)`}
+              className={`inline-flex items-center gap-1 h-6 px-2 rounded-md border text-[11px] font-medium shrink-0 transition-colors ${
+                isImportantScope ? 'border-red-300 bg-red-50 text-red-700' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
+              <Flag className="h-2.5 w-2.5" /> VT quan trọng ({importantLocIds.length})
+            </button>
           )}
           <div className="flex-1" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}

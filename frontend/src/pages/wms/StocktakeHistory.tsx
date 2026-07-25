@@ -43,12 +43,12 @@ export default function StocktakeHistory() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, dateFrom, dateTo, search } = useWmsFilterStore(s => s.stocktakeHistory)
+  const { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search } = useWmsFilterStore(s => s.stocktakeHistory)
   const setF = useWmsFilterStore(s => s.setStocktakeHistory)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_history_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_history_density', d ? '0' : '1'); return !d })
   const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_history_col_widths', LOG_COL_DEFAULTS)
-  const viewSnapshot = { warehouseId, category, locationIds, dateFrom, dateTo, search }
+  const viewSnapshot = { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search }
   const savedViews = useSavedViewsStore(s => s.views['stocktake_history'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -130,13 +130,16 @@ export default function StocktakeHistory() {
             <span className="text-xs font-semibold text-slate-700">Lịch sử kiểm</span>
           </div>
           {importantLocIds.length > 0 && (
-            <button type="button"
-              onClick={() => setF({ locationIds: importantLocIds })}
-              title={`Mở nhanh ${importantLocIds.length} vị trí quan trọng đã đánh dấu (gắn cờ ở trang Vị trí kho)`}
-              className={`inline-flex items-center gap-1 h-6 px-2 rounded-md border text-[11px] font-medium shrink-0 transition-colors ${
-                isImportantScope ? 'border-red-300 bg-red-50 text-red-700' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
-              <Flag className="h-2.5 w-2.5" /> VT quan trọng ({importantLocIds.length})
-            </button>
+            <label className="flex items-center gap-1 cursor-pointer select-none shrink-0"
+              title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê". Bỏ tick để xem tất cả.`}>
+              <input type="checkbox" checked={isImportantScope} onChange={e => {
+                const on = e.target.checked
+                setF(on ? { requiresOnly: true, locationIds: importantLocIds } : { requiresOnly: false, locationIds: [] })
+              }} className="h-3 w-3 cursor-pointer" />
+              <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
+                <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
+              </span>
+            </label>
           )}
           <SearchInput value={search} onChange={v => setF({ search: v })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
           <FilterSheetButton defs={defs} className="sm:hidden" />

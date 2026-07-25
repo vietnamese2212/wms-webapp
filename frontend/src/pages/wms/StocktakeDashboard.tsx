@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useWarehouses, useLocationsReal,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry,
@@ -234,7 +234,7 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
@@ -263,15 +263,17 @@ export default function StocktakeDashboard() {
   const filteredLocations = (locations as any[])
   // Vị trí "quan trọng" (cần kiểm) của kho đang chọn
   const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
-  // Báo cáo TỰ giới hạn vào vị trí quan trọng của kho: khi chưa chọn vị trí nào mà kho có vị trí quan trọng
-  // → tự chọn hết (mở là lên kết quả luôn). Xoá lọc Vị trí → tự quay lại nhóm quan trọng.
+  // "Chỉ vị trí cần check" bật (mặc định) → tự chọn hết vị trí quan trọng khi MỞ (1 lần/kho).
+  // Bỏ tick sẽ xoá chọn (requiresOnly=false) nên effect không tự điền lại.
+  const initedWh = useRef<string | null>(null)
   useEffect(() => {
-    if (warehouseId && locationIds.length === 0 && importantLocIds.length > 0) {
+    if (requiresOnly && initedWh.current !== warehouseId && locationIds.length === 0 && importantLocIds.length > 0) {
+      initedWh.current = warehouseId
       setStocktakeSummary({ locationIds: importantLocIds })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warehouseId, locationIds.length, importantLocIds.join(',')])
-  // Đang xem đúng bộ vị trí quan trọng? (để hiện nhãn phạm vi)
+  }, [warehouseId, requiresOnly, locationIds.length, importantLocIds.join(',')])
+  // Checkbox phản ánh THỰC TẾ: đang giới hạn đúng bộ vị trí quan trọng?
   const isImportantScope = importantLocIds.length > 0
     && locationIds.length === importantLocIds.length
     && importantLocIds.every(id => locationIds.includes(id))
@@ -348,13 +350,16 @@ export default function StocktakeDashboard() {
             <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
           </div>
           {importantLocIds.length > 0 && (
-            <button type="button"
-              onClick={() => setStocktakeSummary({ locationIds: importantLocIds })}
-              title={`Chọn nhanh ${importantLocIds.length} vị trí quan trọng đã đánh dấu (gắn cờ ở trang Vị trí kho)`}
-              className={`inline-flex items-center gap-1 h-6 px-2 rounded-md border text-[11px] font-medium shrink-0 transition-colors ${
-                isImportantScope ? 'border-red-300 bg-red-50 text-red-700' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
-              <Flag className="h-2.5 w-2.5" /> VT quan trọng ({importantLocIds.length})
-            </button>
+            <label className="flex items-center gap-1 cursor-pointer select-none shrink-0"
+              title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê" (ở trang Vị trí kho). Bỏ tick để chọn vị trí khác.`}>
+              <input type="checkbox" checked={isImportantScope} onChange={e => {
+                const on = e.target.checked
+                setStocktakeSummary(on ? { requiresOnly: true, locationIds: importantLocIds } : { requiresOnly: false, locationIds: [] })
+              }} className="h-3 w-3 cursor-pointer" />
+              <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
+                <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
+              </span>
+            </label>
           )}
           <div className="flex-1" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}

@@ -114,6 +114,7 @@ interface StocktakeHistoryFilters {
   warehouseId: string
   category: string
   locationIds: string[]
+  requiresOnly: boolean   // "Chỉ vị trí cần check" — giới hạn vào vị trí đã gắn cờ
   dateFrom: string   // Ngày kiểm (mặc định 7 ngày gần nhất)
   dateTo: string
   search: string
@@ -340,8 +341,8 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
-    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'checked' as StocktakeView },
-    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], dateFrom: daysAgo(7), dateTo: today(), search: '' },
+    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView },
+    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '' },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',

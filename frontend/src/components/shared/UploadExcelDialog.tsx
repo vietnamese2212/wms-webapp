@@ -47,10 +47,12 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
       ].filter(Boolean).join(' · ')
     : ''
   const hasErrors = (result?.errors?.length ?? 0) > 0
+  // Danh sách lỗi dài (file lớn) → phóng dialog ~80% màn hình cho dễ đọc (chuẩn upload-download mục D)
+  const big = (result?.errors?.length ?? 0) > 12
 
   return (
     <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className={big ? 'w-[95vw] max-w-[95vw] sm:w-[80vw] sm:max-w-[80vw]' : 'max-w-lg'}>
         <DialogHeader><DialogTitle className="text-sm">{title}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-1">
           <div className="flex items-center gap-2">
@@ -83,7 +85,7 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
                   ? `${result!.errors.length} dòng lỗi — CHƯA NHẬP GÌ, sửa rồi upload lại:`
                   : `${result!.errors.length} dòng lỗi (đã nhập các dòng hợp lệ):`}
               </div>
-              <pre className="whitespace-pre-wrap font-sans max-h-60 overflow-auto">
+              <pre className={`whitespace-pre-wrap font-sans overflow-auto ${big ? 'max-h-[65vh]' : 'max-h-60'}`}>
                 {result!.errors.map(e => `• ${e}`).join('\n')}
               </pre>
             </div>

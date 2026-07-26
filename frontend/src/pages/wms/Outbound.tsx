@@ -983,7 +983,9 @@ export default function Outbound() {
         />
       )}
       {showUpload && (
-        <ModalOverlay onClose={() => setShowUpload(false)} className="w-full max-w-lg max-h-[90vh]">
+        // Kết quả/lỗi dài (file nhiều xe bị bỏ qua) → nới dialog ~80% màn hình cho dễ đọc (chuẩn upload-download)
+        <ModalOverlay onClose={() => setShowUpload(false)}
+          className={`w-full max-h-[90vh] ${((uploadWarn?.length ?? 0) > 600 || (uploadErr?.length ?? 0) > 600) ? 'max-w-[95vw] sm:max-w-[80vw]' : 'max-w-lg'}`}>
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-700">Upload kế hoạch xuất từ Excel</h3>
             <button onClick={() => setShowUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
@@ -1023,7 +1025,9 @@ export default function Outbound() {
         </ModalOverlay>
       )}
       {showVcUpload && (
-        <ModalOverlay onClose={() => setShowVcUpload(false)} className="w-full max-w-lg max-h-[90vh]">
+        // Bảng lỗi đơn vị / lỗi validate dài → nới dialog ~80% màn hình (chuẩn upload-download)
+        <ModalOverlay onClose={() => setShowVcUpload(false)}
+          className={`w-full max-h-[90vh] ${((vl06oUnitErrs?.length ?? 0) > 5 || (vl06oErr?.length ?? 0) > 600 || (vcErr?.length ?? 0) > 600 || (vl06oOk?.length ?? 0) > 600) ? 'max-w-[95vw] sm:max-w-[80vw]' : 'max-w-lg'}`}>
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-700">Up kế hoạch VC (VL06O + KH điều vận)</h3>
             <button onClick={() => setShowVcUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>

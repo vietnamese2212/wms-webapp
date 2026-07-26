@@ -2536,13 +2536,25 @@ async function processVehicleGroups(
     async function batchInsert(table: string, rows: any[]) {
       for (let i = 0; i < rows.length; i += CHUNK) {
         const { error } = await supabase.from(table).insert(rows.slice(i, i + CHUNK))
-        if (error) throw new Error(`${table}: ${error.message}`)
+        if (error) {
+          const err = new Error(`${table}: ${error.message}`) as Error & { pgCode?: string }
+          err.pgCode = error.code
+          throw err
+        }
       }
     }
 
-    if (gdoInserts.length)  await batchInsert('GroupDeliveryOrder', gdoInserts)
-    if (doInserts.length)   await batchInsert('OutboundDelivery',   doInserts)
-    if (itemInserts.length) await batchInsert('OutboundItem',       itemInserts)
+    try {
+      if (gdoInserts.length)  await batchInsert('GroupDeliveryOrder', gdoInserts)
+      if (doInserts.length)   await batchInsert('OutboundDelivery',   doInserts)
+      if (itemInserts.length) await batchInsert('OutboundItem',       itemInserts)
+    } catch (e) {
+      // Thua đua với upload khác cùng group_code (unique GroupDeliveryOrder_group_code_key) —
+      // chuyến của người kia đã ghi xong; upload lại là idempotent (thấy PENDING → ghi đè chuẩn).
+      if ((e as { pgCode?: string }).pgCode === '23505')
+        return fail(res, 'Có người khác vừa upload trùng chuyến đúng cùng lúc — dữ liệu của họ đã được ghi. Bấm Upload lại file để ghi đè/kiểm tra.', 409)
+      throw e
+    }
 
     return ok(res, { created, ...(extraResult ?? {}) }, 201)
 }

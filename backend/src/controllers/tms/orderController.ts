@@ -342,21 +342,27 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     // Check trùng order_code trong DB → 409 (upload là TẠO MỚI, không cập nhật đơn đã có)
     // Chunk 300 code/lượt: file vài nghìn dòng mà .in() một phát → URL quá dài, PostgREST từ chối.
     const incomingCodes = inputList.map(o => o.order_code).filter(Boolean) as string[]
-    if (incomingCodes.length) {
+    // Chỉ rõ đơn trùng đang nằm Ở ĐÂU (kho + ngày) — tab Kế hoạch lọc theo 1 kho + khoảng ngày,
+    // không ghi vị trí thì user không tìm thấy để xóa (đã dính thật: file 2 kho, xóa 1 kho vẫn sót kho kia).
+    // Dùng cả ở pre-check LẪN khi thua đua 23505 (2 người cùng upload — người sau nhận đúng thông báo này).
+    const findDupMessage = async (): Promise<string | null> => {
+      if (!incomingCodes.length) return null
       const codeChunks: string[][] = []
       for (let i = 0; i < incomingCodes.length; i += 300) codeChunks.push(incomingCodes.slice(i, i + 300))
+      // Embed PHẢI chỉ rõ FK: TmsOrder có 2 FK tới Warehouse (warehouse_id + destination_warehouse_id từ
+      // tính năng chuyển kho) → 'Warehouse(name)' trần bị PGRST201 (ambiguous), data=null ÂM THẦM
+      // → pre-check trùng mã từng chết không ai biết (phát hiện qua test đua 26/07).
       const dupResults = await Promise.all(codeChunks.map(chunk =>
-        supabase.from('TmsOrder').select('order_code, date, warehouse:Warehouse(name)').in('order_code', chunk)
+        supabase.from('TmsOrder').select('order_code, date, warehouse:Warehouse!warehouse_id(name)').in('order_code', chunk)
       ))
       const existing = dupResults.flatMap(r => (r.data ?? []) as unknown as { order_code: string; date: string; warehouse: { name: string } | null }[])
-      if (existing.length) {
-        // Chỉ rõ đơn trùng đang nằm Ở ĐÂU (kho + ngày) — tab Kế hoạch lọc theo 1 kho + khoảng ngày,
-        // không ghi vị trí thì user không tìm thấy để xóa (đã dính thật: file 2 kho, xóa 1 kho vẫn sót kho kia).
-        const fmtD = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y}` }
-        const dupes = existing.map(r => `${r.order_code} (${r.warehouse?.name ?? 'kho ?'} — ngày ${fmtD(r.date)})`).join(', ')
-        return fail(res, `Mã đơn đã tồn tại: ${dupes}. Mở đúng kho + ngày ghi trong ngoặc để tìm và xóa đơn cũ, rồi upload lại.`, 409)
-      }
+      if (!existing.length) return null
+      const fmtD = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y}` }
+      const dupes = existing.map(r => `${r.order_code} (${r.warehouse?.name ?? 'kho ?'} — ngày ${fmtD(r.date)})`).join(', ')
+      return `Mã đơn đã tồn tại: ${dupes}. Mở đúng kho + ngày ghi trong ngoặc để tìm và xóa đơn cũ, rồi upload lại.`
     }
+    const preDup = await findDupMessage()
+    if (preDup) return fail(res, preDup, 409)
 
     const orderRows = inputList
       .filter(o => o.date && o.warehouse_id && o.order_code)
@@ -386,7 +392,13 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insErr } = await supabase.from('TmsOrder').insert(orderRows)
     if (insErr) {
-      if (insErr.code === '23505') return fail(res, 'Mã đơn bị trùng, vui lòng kiểm tra lại file')
+      if (insErr.code === '23505') {
+        // Thua đua với upload khác (pre-check qua nhưng người kia ghi trước) — jitter rồi tra lại
+        // để trả đúng thông báo chi tiết (mã nào, kho nào, ngày nào) thay vì lỗi thô.
+        await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 300)))
+        const raceDup = await findDupMessage()
+        return fail(res, raceDup ?? 'Mã đơn bị trùng do có người khác vừa upload cùng lúc — kiểm tra rồi upload lại.', 409)
+      }
       return fail(res, insErr.message)
     }
 

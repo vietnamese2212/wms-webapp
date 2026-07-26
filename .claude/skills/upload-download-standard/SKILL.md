@@ -30,7 +30,8 @@
 4. Giới hạn hạ tầng: payload > 4.5MB → Vercel 413 text thô (FE phải catch báo "tách file"); response phải xong < 60s (đã lô hóa thì 8.6k dòng ≈ 12s, 12 upload đồng thời ≈ 3s).
 
 ## D. FE upload dialog
-- Preview bảng + **chip lọc `Tất cả / ✓ Hợp lệ / Lỗi`** (`RowFilterChips` — TMSBookings); file có lỗi → mở sẵn tab Lỗi. Preview lớn → dialog 80% màn hình (`w-[80vw] h-[80vh]`, mobile 95vw/90dvh, bảng `flex-1 min-h-0 overflow-auto`).
+- Dialog CÓ preview bảng → **chip lọc `Tất cả / ✓ Hợp lệ / Lỗi`** (`components/shared/RowFilterChips.tsx` — component dùng chung, mẫu TMSBookings); file có lỗi → mở sẵn tab Lỗi. Preview lớn → dialog 80% màn hình (`w-[80vw] h-[80vh]`, mobile 95vw/90dvh, bảng `flex-1 min-h-0 overflow-auto`).
+- Dialog upload-THẲNG (không preview — validate ở server, vd Mã hàng/Tồn kho/KH xuất/VL06O): kết quả phải PHÂN VÙNG rõ (banner xanh OK · vàng cảnh báo nhóm theo lý do · đỏ lỗi) + **tự nới dialog ~80% màn hình khi danh sách dài** (mẫu `UploadExcelDialog` big + 2 modal Outbound), KHÔNG bắt user đọc list trăm dòng trong khung max-w-lg.
 - Nút Lưu `disabled={saving}` + spinner; lỗi API = banner đỏ inline; ghi rõ hành vi upsert trong hint ("dòng trùng key … sẽ được cập nhật").
 - Resolver danh mục nhận **cả MÃ lẫn TÊN** (kho, NCC — normalize trim+lower/upper).
 

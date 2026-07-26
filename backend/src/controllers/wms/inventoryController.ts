@@ -1596,7 +1596,13 @@ export async function uploadExcel(req: Request, res: Response) {
     // ── PHA 2: file sạch → ghi theo lô 500 (validate đã chặn hết lỗi dữ liệu). ──
     for (let i = 0; i < records.length; i += 500) {
       const { error } = await supabase.from('InventoryEntry').insert(records.slice(i, i + 500))
-      if (error) return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
+      if (error) {
+        // Thua đua: pallet vừa được người khác upload cùng lúc (unique pallet/kho) — upload lại là
+        // idempotent (pallet đã tồn tại → đi nhánh cập nhật), không double.
+        if (error.code === '23505')
+          return fail(res, `Có người khác vừa upload trùng pallet đúng cùng lúc (đã nhập ${i} pallet trước đó) — bấm Upload lại file để cập nhật phần còn lại.`, 409)
+        return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
+      }
     }
     // Cập nhật pallet đã có: merge full record (đắp field file lên record cũ) → upsert theo id
     for (let i = 0; i < updates.length; i += 500) {

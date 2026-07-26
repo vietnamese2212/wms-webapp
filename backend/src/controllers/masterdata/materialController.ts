@@ -425,8 +425,18 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!error) { inserted += chunk.length; continue }
       for (const rec of chunk) {
         const { error: e1 } = await supabase.from('Material').insert(rec)
-        if (e1) errors.push(`${rec.material_code} — lỗi thêm: ${e1.message}`)
-        else inserted++
+        if (!e1) { inserted++; continue }
+        if (e1.code === '23505') {
+          // Thua đua: mã vừa được người khác tạo cùng lúc → chuyển thành UPDATE đè lên bản người thắng (last-write-wins)
+          const { data: winner } = await supabase.from('Material').select('id').eq('material_code', rec.material_code).maybeSingle()
+          if (winner?.id) {
+            const { error: e2 } = await supabase.from('Material').upsert({ ...(rec as Record<string, unknown>), id: winner.id }, { onConflict: 'id' })
+            if (!e2) { updated++; continue }
+          }
+          errors.push(`${rec.material_code} — mã vừa được người khác tạo cùng lúc, upload lại để cập nhật`)
+          continue
+        }
+        errors.push(`${rec.material_code} — lỗi thêm: ${e1.message}`)
       }
     }
 

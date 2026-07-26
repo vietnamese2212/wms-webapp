@@ -4,7 +4,7 @@ import { qtyEntryDecimal, qtyIntegerError, type MatUnits } from '../../utils/qty
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 // ─── Scope kho+loại (mirror TMS orderController) — KH nhập chuyển kho gắn 1 kho đích ──
@@ -245,8 +245,9 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
     type GroupKey = string
     const groupMap = new Map<GroupKey, string>() // key → tmsOrderId
 
+    const dOf = (v: unknown) => String(v ?? '').slice(0, 10)   // date chuẩn hóa YYYY-MM-DD
     const makeKey = (date: string, wh: string, whType: string | null, vt: string | null, ncc: string | null) =>
-      `${date}||${wh}||${whType ?? ''}||${vt ?? ''}||${ncc ?? ''}`
+      `${dOf(date)}||${wh}||${whType ?? ''}||${vt ?? ''}||${ncc ?? ''}`
 
     // Xác định TmsOrder cho từng nhóm trước
     const uniqueGroups = new Map<GroupKey, { date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; ncc_id: string | null }>()
@@ -273,16 +274,67 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       if (!guardPlanWrite(req, res, g.warehouse_id, g.warehouse_type)) return
     }
 
-    for (const [key, group] of uniqueGroups) {
-      const orderId = await findOrCreateTmsOrder(group, user)
-      groupMap.set(key, orderId)
+    // BATCH tìm/tạo lệnh — file thật 8.6k dòng có ~3.7k nhóm (Ngày×Kho×NCC×Loại xe); gọi
+    // findOrCreateTmsOrder TUẦN TỰ từng nhóm = ~7.400 roundtrip nối tiếp → quá maxDuration 60s
+    // Vercel (user dính 25/07: "hết timeout mà dữ liệu chưa đẩy vào xong"). Thay bằng:
+    // fetch lệnh INBOUND theo (date, warehouse) 1 lượt → khớp key trong JS → INSERT LÔ nhóm thiếu.
+    {
+      const gList  = [...uniqueGroups.values()]
+      const gDates = [...new Set(gList.map(g => dOf(g.date)))]
+      const gWhs   = [...new Set(gList.map(g => g.warehouse_id))]
+      type ExOrder = { id: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; ncc_id: string | null }
+      const exOrders: ExOrder[] = []
+      for (let i = 0; i < gDates.length; i += 100) {
+        exOrders.push(...(await fetchAllRowsParallel(() => supabase.from('TmsOrder')
+          .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id')
+          .eq('direction', 'INBOUND')
+          .in('date', gDates.slice(i, i + 100)).in('warehouse_id', gWhs)
+          .order('id'))) as ExOrder[])
+      }
+      // .in('date', ...) chỉ khớp timestamp ĐÚNG nửa đêm của ngày lọc (mirror .eq cũ) → slice(0,10) an toàn
+      for (const o of exOrders) {
+        const k = makeKey(o.date, o.warehouse_id, o.warehouse_type ?? null, o.vehicle_type ?? null, o.ncc_id ?? null)
+        if (!groupMap.has(k)) groupMap.set(k, o.id)   // nhiều lệnh cùng key → lấy lệnh id nhỏ nhất (ổn định)
+      }
+      const missing = [...uniqueGroups.entries()].filter(([k]) => !groupMap.has(k))
+      const nccIds = [...new Set(missing.map(([, g]) => g.ncc_id).filter(Boolean))] as string[]
+      const nccCodeById = new Map<string, string>()
+      for (let i = 0; i < nccIds.length; i += 300) {
+        const { data } = await supabase.from('TransportCompany').select('id, code').in('id', nccIds.slice(i, i + 300))
+        for (const c of (data ?? []) as { id: string; code: string | null }[])
+          nccCodeById.set(c.id, String(c.code ?? 'NCC').slice(0, 6).toUpperCase())
+      }
+      const newOrders: Record<string, unknown>[] = []
+      const newSlots:  Record<string, unknown>[] = []
+      for (const [k, g] of missing) {
+        const orderId  = randomUUID()
+        const datePart = dOf(g.date).replace(/-/g, '').slice(2)   // YYMMDD
+        const vtPart   = g.vehicle_type ? `_${g.vehicle_type.slice(0, 3)}` : ''
+        const orderCode = `INB${datePart}_${g.ncc_id ? (nccCodeById.get(g.ncc_id) ?? 'NCC') : 'NCC'}${vtPart}_${randomUUID().slice(0, 4)}`
+        newOrders.push({
+          id: orderId, order_code: orderCode,
+          date: g.date, warehouse_id: g.warehouse_id, direction: 'INBOUND',
+          warehouse_type: g.warehouse_type || null, vehicle_type: g.vehicle_type || null, ncc_id: g.ncc_id || null,
+          planned_boxes: 0, planned_pallets: 0, status: 'PENDING',
+          created_by: user?.name || null, updated_by: user?.name || null, created_at: now, updated_at: now,
+        })
+        newSlots.push({ id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: now, updated_at: now })
+        groupMap.set(k, orderId)
+      }
+      for (let i = 0; i < newOrders.length; i += 500) {
+        const { error } = await supabase.from('TmsOrder').insert(newOrders.slice(i, i + 500))
+        if (error) return fail(res, error.message)
+      }
+      for (let i = 0; i < newSlots.length; i += 500) {
+        const { error } = await supabase.from('TmsVehicleSlot').insert(newSlots.slice(i, i + 500))
+        if (error) return fail(res, error.message)
+      }
     }
 
     // UPSERT theo KEY = (Ngày + Kho + NCC + Mã hàng) — user chốt 25/07: trùng key → UPDATE số lượng,
     // key mới → INSERT. Chống double khi upload lại cùng file. Key KHÔNG gồm PO/Loại xe:
     // trùng key trong file → tự GỘP SL (như "Nạp từ KH" gộp per mã); PO gộp các giá trị khác nhau.
     const poOf = (v: unknown) => String(v ?? '').trim()
-    const dOf  = (v: unknown) => String(v ?? '').slice(0, 10)   // date chuẩn hóa YYYY-MM-DD
     const rows = lines.map(line => {
       const key = makeKey(
         String(line.date ?? ''), String(line.warehouse_id ?? ''),
@@ -329,15 +381,18 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
 
     // 2) Nạp dòng KH ĐANG CÓ khớp (Ngày, Kho) trong file → so key đủ 4 thành phần ở JS
     //    (khớp CROSS-lệnh: key không gồm Loại xe nên dòng cũ nằm ở lệnh khác loại xe vẫn được update)
-    type ExLine = { id: string; tms_order_id: string | null; date: string; warehouse_id: string; ncc_id: string | null; material_id: string | null; created_at: string }
+    //    PHÂN TRANG bắt buộc — 1 ngày×kho có thể >1000 dòng KH, cắt cụt = dedup hỏng → double.
+    //    select('*') để UPDATE bằng upsert FULL RECORD (merge JS — upsert thiếu cột NOT NULL sẽ 23502:
+    //    Postgres kiểm NOT NULL trên tuple insert TRƯỚC khi xét conflict).
+    type ExLine = { id: string; tms_order_id: string | null; date: string; warehouse_id: string; ncc_id: string | null; material_id: string | null; created_at: string } & Record<string, unknown>
     const fDates = [...new Set(merged.map(r => dOf(r.date)))]
     const fWhs   = [...new Set(merged.map(r => r.warehouse_id))]
     const existing: ExLine[] = []
     for (let i = 0; i < fDates.length; i += 100) {
-      const { data } = await supabase.from('inbound_plan_lines')
-        .select('id, tms_order_id, date, warehouse_id, ncc_id, material_id, created_at')
+      existing.push(...(await fetchAllRowsParallel(() => supabase.from('inbound_plan_lines')
+        .select('*')
         .in('date', fDates.slice(i, i + 100)).in('warehouse_id', fWhs).neq('status', 'CANCELLED')
-      existing.push(...((data ?? []) as ExLine[]))
+        .order('id'))) as ExLine[])
     }
     const exByKey = new Map<string, ExLine[]>()
     for (const e of existing) {
@@ -348,23 +403,26 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
 
     // 3) Chia UPDATE (key trùng → dòng CŨ NHẤT; sẵn nhiều dòng trùng = double cũ → cảnh báo dọn) / INSERT
     const toInsert: typeof rows = []
-    const toUpdate: { id: string; order_id: string | null; planned_boxes: number | null; planned_pallets: number | null; po_number: string | null }[] = []
+    const toUpdate: { row: ExLine; planned_boxes: number | null; planned_pallets: number | null; po_number: string | null }[] = []
     for (const r of merged) {
       const matches = r.material_id ? (exByKey.get(ukeyOf(r)) ?? []).sort((a, b) => a.created_at < b.created_at ? -1 : 1) : []
       if (matches.length) {
-        toUpdate.push({ id: matches[0].id, order_id: matches[0].tms_order_id, planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, po_number: r.po_number })
+        toUpdate.push({ row: matches[0], planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, po_number: r.po_number })
         if (matches.length > 1) warnings.push(`Key (Ngày ${dOf(r.date)} · mã ${r.material_id}) đang có ${matches.length} dòng KH trùng sẵn — chỉ cập nhật dòng cũ nhất, nên dọn dòng thừa`)
       } else toInsert.push(r)
     }
 
-    // UPDATE song song theo lô 50 (mỗi dòng giá trị khác nhau — không bulk update chung được)
-    for (let i = 0; i < toUpdate.length; i += 50) {
-      const results = await Promise.all(toUpdate.slice(i, i + 50).map(u =>
-        supabase.from('inbound_plan_lines')
-          .update({ planned_boxes: u.planned_boxes, planned_pallets: u.planned_pallets, ...(u.po_number ? { po_number: u.po_number } : {}), updated_by: user?.name || null, updated_at: now })
-          .eq('id', u.id)))
-      const errU = results.find(x => x.error)?.error
-      if (errU) return fail(res, errU.message)
+    // UPDATE theo LÔ upsert(onConflict id) 500 FULL RECORD (đắp field mới lên row cũ trong JS —
+    // mẫu materialController; re-upload 8.6k dòng mà update lẻ từng dòng = hàng nghìn roundtrip)
+    for (let i = 0; i < toUpdate.length; i += 500) {
+      const payload = toUpdate.slice(i, i + 500).map(u => ({
+        ...u.row,
+        planned_boxes: u.planned_boxes, planned_pallets: u.planned_pallets,
+        ...(u.po_number ? { po_number: u.po_number } : {}),
+        updated_by: user?.name || null, updated_at: now,
+      }))
+      const { error } = await supabase.from('inbound_plan_lines').upsert(payload, { onConflict: 'id' })
+      if (error) return fail(res, error.message)
     }
     // INSERT theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless
     for (let i = 0; i < toInsert.length; i += 500) {
@@ -372,12 +430,39 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       if (error) return fail(res, error.message)
     }
 
-    // Recalc tất cả TmsOrders bị ảnh hưởng: lệnh nhóm (kể cả lệnh mới tạo mà mọi dòng thành UPDATE
-    // ở lệnh cũ → 0 dòng → recalc tự hủy PENDING rỗng) + lệnh chứa dòng được update
+    // Recalc theo LÔ (thay recalcTmsOrder per-order: 3.7k lệnh × 2-4 roundtrip vừa chậm vừa dội DB):
+    // fetch dòng ACTIVE của mọi lệnh ảnh hưởng → tính tổng trong JS → upsert lô cache lệnh.
+    // Lệnh 0 dòng ACTIVE (vd lệnh mới tạo mà mọi dòng thành update ở lệnh cũ) → hủy nếu PENDING.
     const affectedOrderIds = [...new Set([
-      ...groupMap.values(), ...toInsert.map(r => r.tms_order_id), ...toUpdate.map(u => u.order_id),
+      ...groupMap.values(), ...toInsert.map(r => r.tms_order_id), ...toUpdate.map(u => u.row.tms_order_id),
     ].filter(Boolean))] as string[]
-    await Promise.all(affectedOrderIds.map(recalcTmsOrder))
+    type RLine = { tms_order_id: string; planned_boxes: number | null; planned_pallets: number | null; material?: MatUnits | null }
+    const rLines = await fetchAllByIdChunks(affectedOrderIds, chunk => supabase.from('inbound_plan_lines')
+      .select('tms_order_id, planned_boxes, planned_pallets, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
+      .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id')) as RLine[]
+    const sums = new Map<string, { boxes: number; pallets: number }>()
+    for (const l of rLines) {
+      const s = sums.get(l.tms_order_id) ?? { boxes: 0, pallets: 0 }
+      s.boxes   += qtyEntryDecimal(l.planned_boxes ?? 0, l.material ?? null)   // thùng quy đổi per-mã
+      s.pallets += l.planned_pallets ?? 0
+      sums.set(l.tms_order_id, s)
+    }
+    // Upsert cache lệnh = FULL RECORD (đắp tổng mới lên row cũ — upsert thiếu cột NOT NULL sẽ 23502)
+    const fullOrders = await fetchAllByIdChunks(affectedOrderIds, chunk => supabase.from('TmsOrder')
+      .select('*').in('id', chunk).order('id')) as ({ id: string } & Record<string, unknown>)[]
+    const orderPatch = fullOrders.map(o => {
+      const s = sums.get(o.id)
+      return { ...o, planned_boxes: s?.boxes || null, planned_pallets: s?.pallets || null, updated_at: now }
+    })
+    for (let i = 0; i < orderPatch.length; i += 500) {
+      const { error } = await supabase.from('TmsOrder').upsert(orderPatch.slice(i, i + 500), { onConflict: 'id' })
+      if (error) return fail(res, error.message)
+    }
+    const emptyIds = affectedOrderIds.filter(id => !sums.has(id))
+    for (let i = 0; i < emptyIds.length; i += 300) {
+      await supabase.from('TmsOrder').update({ status: 'CANCELLED', updated_at: now })
+        .in('id', emptyIds.slice(i, i + 300)).eq('status', 'PENDING')
+    }
 
     return ok(res, { inserted: toInsert.length, updated: toUpdate.length, warnings }, 201)
   } catch (e) { return fail(res, String(e)) }

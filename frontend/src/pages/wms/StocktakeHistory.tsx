@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useWarehouses, useLocationsReal, useStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useState } from 'react'
@@ -38,6 +39,7 @@ const mu = (r: StocktakeLogRow): MatUnits => ({ base_unit: r.base_unit, entry_un
 
 export default function StocktakeHistory() {
   const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
 
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
@@ -151,10 +153,13 @@ export default function StocktakeHistory() {
               title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
               {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
             </button>
-            <ActionCluster className="shrink-0" mobileInline items={[{
-              key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel lịch sử kiểm đang hiển thị',
-              mobileHidden: true, disabled: !rows.length, onClick: exportExcel,
-            } satisfies ActionItem]} />
+            <ActionCluster className="shrink-0" mobileInline items={[
+              // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
+              ...(can(perms, 'stocktake', 'export') ? [{
+                key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel lịch sử kiểm đang hiển thị',
+                mobileHidden: true, disabled: !rows.length, onClick: exportExcel,
+              } satisfies ActionItem] : []),
+            ]} />
           </div>
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>

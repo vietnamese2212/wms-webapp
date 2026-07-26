@@ -458,12 +458,16 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
-        <ActionCluster className="shrink-0" mobileInline items={[{
-          key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
-          mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
-          disabled: !filtered.length,
-          onClick: exportExcel,
-        } satisfies ActionItem]} />
+        <ActionCluster className="shrink-0" mobileInline items={[
+          // Xuất bảng công = dữ liệu nhân sự → dùng quyền attendance.report (đã có sẵn, đúng nghĩa "báo cáo"),
+          // KHÔNG để ai xem được là xuất được (attendance.self_log có ở 10/19 chức danh).
+          ...(can(perms, 'attendance', 'report') ? [{
+            key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
+            mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
+            disabled: !filtered.length,
+            onClick: exportExcel,
+          } satisfies ActionItem] : []),
+        ]} />
         <FilterSheetButton defs={defs} className="sm:hidden" />
         </div>
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>

@@ -153,12 +153,13 @@ export function LeaveSection() {
         </button>
         <FilterSheetButton defs={defs} className="sm:hidden" />
         <ActionCluster className="shrink-0" mobileInline items={[
-          {
+          // Xuất file chứa LÝ DO nghỉ (dữ liệu cá nhân) → quyền RIÊNG leave.export, không đi ké 'view'
+          ...(can(perms, 'leave', 'export') ? [{
             key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel danh sách đơn nghỉ phép',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
             disabled: !leaves.length,
             onClick: exportExcel,
-          } satisfies ActionItem,
+          } satisfies ActionItem] : []),
           ...(canRequest ? [{
             key: 'create', icon: Plus, label: 'Gửi đơn nghỉ', tip: 'Tạo đơn xin nghỉ phép mới',
             primary: true, variant: 'default',

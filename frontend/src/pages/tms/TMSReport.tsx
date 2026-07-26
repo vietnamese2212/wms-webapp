@@ -175,12 +175,15 @@ export default function TMSReport() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" mobileInline items={[{
-            key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
-            primary: true, disabled: filteredRows.length === 0,
-            mobileHidden: true, // export Excel không dùng trên điện thoại
-            onClick: exportExcel,
-          } satisfies ActionItem]} />
+          <ActionCluster className="shrink-0" mobileInline items={[
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG tms_plan.export
+            ...(can(perms, 'tms_plan', 'export') ? [{
+              key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
+              primary: true, disabled: filteredRows.length === 0,
+              mobileHidden: true, // export Excel không dùng trên điện thoại
+              onClick: exportExcel,
+            } satisfies ActionItem] : []),
+          ]} />
           </div>
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">

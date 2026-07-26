@@ -27,6 +27,7 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const PAGE_SIZE = 500
@@ -136,6 +137,7 @@ export default function OutboundScanLog() {
   const { widths: colW, startResize, totalWidth } = useColumnResize('scanlog_col_widths', SCANLOG_COL_DEFAULTS)
 
   const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const filters    = useWmsFilterStore(s => s.scanLog)
   const setScanLog = useWmsFilterStore(s => s.setScanLog)
 
@@ -340,11 +342,12 @@ export default function OutboundScanLog() {
           />
           {/* Cụm action toolbar (chuẩn ActionCluster) — quét QR truy cứu dùng nút QR CÓ SẴN trong ô search (SearchInput) */}
           <ActionCluster className="shrink-0" mobileInline items={[
-            {
+            // Xuất file = mang dữ liệu ra ngoài → cần quyền RIÊNG scanlog.export (không đi ké 'view')
+            ...(can(perms, 'scanlog', 'export') ? [{
               key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
               mobileHidden: true, disabled: !canFetch, busy: exporting,
               onClick: () => { void handleExport() },
-            } satisfies ActionItem,
+            } satisfies ActionItem] : []),
           ]} />
           </div>
         </div>

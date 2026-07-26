@@ -2651,6 +2651,38 @@ export async function uploadVl06o(req: Request, res: Response) {
     }
     if (!records.length) return fail(res, 'Không có dòng hợp lệ (thiếu Delivery/Item)', 400)
 
+    // ── SCOPE KHO cho file SAP (user chốt 26/07: "siết theo kho") ──
+    // Dòng VL06O mang mã SAP `plant` + `storage_location` (KHÔNG phải Warehouse.code) → map qua 2 cột
+    // khai per kho `Warehouse.sap_plant` / `sap_storage_locations` (migration 20260726_warehouse_sap_mapping).
+    // Khớp (plant, sloc) trước, không thấy thì khớp theo plant. Dòng map ĐƯỢC mà kho ngoài phạm vi → CHẶN
+    // (all-or-nothing: chưa ghi gì). Dòng KHÔNG map được kho nào → cho qua + đếm cảnh báo (fail-open có
+    // chủ đích: fail-closed sẽ chặn upload tới khi khai đủ map = chặn vận hành).
+    let sapUnmapped = 0
+    {
+      const scope = scopeWhIds(req)
+      if (scope !== null) {
+        const { data: whMapRows } = await supabase.from('Warehouse')
+          .select('id, code, name, sap_plant, sap_storage_locations').not('sap_plant', 'is', null)
+        const whMap = (whMapRows ?? []) as { id: string; code: string; name: string; sap_plant: string | null; sap_storage_locations: string[] | null }[]
+        const norm = (v: unknown) => String(v ?? '').trim().toUpperCase()
+        const resolveWh = (plant: unknown, sloc: unknown) => {
+          const p = norm(plant), s = norm(sloc)
+          if (!p) return null
+          const byPair = whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).some(x => norm(x) === s))
+          if (byPair) return byPair
+          return whMap.find(w => norm(w.sap_plant) === p && (w.sap_storage_locations ?? []).length === 0) ?? null
+        }
+        const outside = new Map<string, string>()   // kho ngoài phạm vi → nhãn
+        for (const r of records) {
+          const wh = resolveWh(r.plant, r.storage_location)
+          if (!wh) { sapUnmapped++; continue }
+          if (!scope.includes(wh.id)) outside.set(wh.id, `${wh.name} (plant ${norm(r.plant)}${norm(r.storage_location) ? `/${norm(r.storage_location)}` : ''})`)
+        }
+        if (outside.size) return fail(res,
+          `Ngoài phạm vi kho — file VL06O chứa dòng của: ${[...outside.values()].join(', ')}. Chỉ upload file của kho được giao.`, 403)
+      }
+    }
+
     // ── v2.7 PREFLIGHT: cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
     if (req.query.preflight === '1') {
       const dos = [...new Set(records.map(r => String(r.od_number)))]
@@ -2758,8 +2790,12 @@ export async function uploadVl06o(req: Request, res: Response) {
     }
 
     const deliveries = new Set(records.map(r => r.od_number)).size
+    // Nhắc khai map SAP→kho: còn dòng chưa map được thì phần đó CHƯA được siết theo kho
+    if (sapUnmapped > 0) warnings.push(
+      `${sapUnmapped} dòng không xác định được kho từ Plant/Storage Location SAP — khai "Plant SAP" + "Storage Location" cho kho ở Cài đặt WMS → tab Kho để chặn được file của kho khác.`)
     return ok(res, {
       rows: records.length, inserted, updated, noop, obsoleted: removedKeys.length, deliveries, skipped_no_key: skippedNoKey,
+      sap_unmapped: sapUnmapped,
       reconcile, reconcile_error,
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })

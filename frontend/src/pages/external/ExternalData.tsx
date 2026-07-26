@@ -295,7 +295,8 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {hasDate && (
+          {/* Xuất file = mang dữ liệu SAP ra ngoài → quyền RIÊNG external_do_sap.export */}
+          {hasDate && can(perms, 'external_do_sap', 'export') && (
             <Button variant="outline" size="sm" className="h-9 sm:h-7 shrink-0" onClick={doExport} disabled={exporting}>
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
             </Button>

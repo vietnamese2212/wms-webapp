@@ -191,7 +191,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -218,6 +218,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
+  const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
+  const [sapSlocs,      setSapSlocs]      = useState((wh?.sap_storage_locations ?? []).join(', '))
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -250,12 +252,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -323,6 +325,22 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <Label className="text-xs">Mã NMSX (kho tổng)</Label>
             <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
             <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
+          </div>
+          {/* Map SAP → kho: để CHẶN upload VL06O của kho khác (user chốt 26/07). File VL06O mang mã SAP
+              Plant/Storage Location, không phải mã kho app → phải khai ở đây mới siết được theo kho. */}
+          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Mã SAP của kho (để chặn upload VL06O của kho khác)</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-slate-500">Plant SAP</Label>
+                <Input value={sapPlant} onChange={e => setSapPlant(e.target.value.toUpperCase())} placeholder="vd: 1102" maxLength={12} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-slate-500">Storage Location</Label>
+                <Input value={sapSlocs} onChange={e => setSapSlocs(e.target.value.toUpperCase())} placeholder="vd: FG01, FG02" className="h-8 text-sm" />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400">Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</p>
           </div>
           <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">

@@ -302,12 +302,13 @@ export default function Locations() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <ActionCluster className="shrink-0" mobileInline items={[
-            {
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG locations.export (không đi ké 'view')
+            ...(can(perms, 'locations', 'export') ? [{
               key: 'excel', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách vị trí đang lọc',
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
               disabled: !filtered.length,
               onClick: exportExcel,
-            } satisfies ActionItem,
+            } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'edit') ? [{
               key: 'bulkflag', icon: Flag, label: 'Cờ check',
               tip: 'Gắn / bỏ cờ "cần kiểm kê" hàng loạt cho các vị trí đang lọc (vị trí quan trọng)',

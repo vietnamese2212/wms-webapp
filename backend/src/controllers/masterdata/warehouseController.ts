@@ -57,6 +57,18 @@ function normNmsx(input: unknown): string | null {
   return v || null
 }
 
+// Map SAP → kho (dùng để CHẶN upload VL06O của kho ngoài phạm vi — user chốt 26/07).
+// `sap_plant` = mã nhà máy SAP (cột Plant trong VL06O); `sap_storage_locations` = các Storage Location
+// thuộc kho (FG01/FG02/PM01…), rỗng = mọi sloc của plant đó thuộc kho này.
+function normSapPlant(input: unknown): string | null {
+  const v = String(input ?? '').toUpperCase().trim()
+  return v || null
+}
+function normSapSlocs(input: unknown): string[] {
+  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
+  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+}
+
 // Danh sách Loại kho phải quét thùng tại kho (multi) — null khi rỗng/không phải mảng
 function normCartonCats(input: unknown): string[] | null {
   if (!Array.isArray(input)) return null
@@ -123,7 +135,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -146,6 +158,8 @@ export async function createWarehouse(req: Request, res: Response) {
     if (carton_scan_override !== undefined) row.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) row.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) row.carton_scan_require_full = Boolean(carton_scan_require_full)
+    if (sap_plant !== undefined)             row.sap_plant = normSapPlant(sap_plant)
+    if (sap_storage_locations !== undefined) row.sap_storage_locations = normSapSlocs(sap_storage_locations)
     let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
     // Cột carton_scan_* chưa apply migration → bỏ các cột đó rồi thử lại (không chặn tạo kho)
     if (error && /carton_scan/i.test(error.message)) {
@@ -162,8 +176,10 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
+    if (sap_plant !== undefined)             patch.sap_plant = normSapPlant(sap_plant)
+    if (sap_storage_locations !== undefined) patch.sap_storage_locations = normSapSlocs(sap_storage_locations)
     if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) patch.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) patch.carton_scan_require_full = Boolean(carton_scan_require_full)

@@ -196,10 +196,10 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `inventory` | Tồn kho | Tồn kho | view, adjust, move_location, recode, qa_update, **update_ncc**=Sửa NCC hàng loạt (gán NCC cho pallet → áp HSD ngoại lệ theo NCC), update_prod_date, export |
 | `inbound` | Nhập kho | Nhập kho | view, create, edit, scan, edit_pallet, force_edit_pallet, delete_pallet, force_delete_pallet, cancel, complete, uncomplete |
 | `outbound` | Xuất kho | Xuất kho | view, **prepare**=Chuẩn bị hàng (board soạn hàng, read-only — tách khỏi view, không phải ai xem Xuất kho cũng vào được), create, **quick_export**=Tạo & Xuất luôn (đơn tạo tay TOÀN hàng không tem — mã no-QR/kho QTY: 1 request tạo+Bắt đầu(biển số bắt buộc)+ghi nhận SL+Hoàn thành+trừ tồn; `POST /outbound/quick-export`), **import**=Upload Excel KH xuất, **edit**=sửa đơn/xe/đổi ngày/tạm dừng-tiếp tục, assign, unassign, start (kho QTY/NONE không cần assign trước — BE tự gán người bấm Bắt đầu), unstart, **scan**=quét QR + Lưu thủ công no-QR (+ nút "Lưu tất cả theo KH" bulk trên trang chuyến), **complete**=Hoàn thành chuyến (patchGDO status=COMPLETED, controller kiểm riêng — KHÔNG đi ké edit) + xác nhận nhặt lẻ, uncomplete, cancel |
-| `scanlog` | Lịch sử quét | Lịch sử quét | view |
+| `scanlog` | Lịch sử quét | Lịch sử quét | view, **export**=nút Xuất Excel |
 | `loosepicking` | Nhặt lẻ | Nhặt lẻ | view, scan, complete (create/start/cancel ĐÃ BỎ 27/06 — nhặt lẻ tạo/bắt đầu/hủy đều qua Outbound, không route riêng) |
-| `stocktake` | Kiểm kho | Kiểm kho | view, create, scan, complete |
-| `locations` | Vị trí kho | Vị trí kho | view, create, edit, delete |
+| `stocktake` | Kiểm kho | Kiểm kho | view, create, scan, complete, **export**=Xuất Excel (cả tab Kiểm kê + Lịch sử kiểm) |
+| `locations` | Vị trí kho | Vị trí kho | view, create, edit, delete, **export**=Xuất Excel danh sách |
 | `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, delete |
 | `pallet_print` | In tem pallet | In tem pallet | view, **mỗi tab 1 quyền (02/07)**: generate=tab Sinh tem mới, reprint=tab In lại từ tồn kho + nút In lại trong Lịch sử, history=tab Lịch sử in, audit=tab Truy cứu |
 | `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split |
@@ -209,9 +209,9 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `work_skill` | Vị trí & Skill | trong Quản lý người dùng (gán skill) | view, manage, assign |
 | `schedule` | Lịch làm việc | Lịch làm việc | view, create, approve |
 | `work_assignment` | Phân công lịch làm việc | Phân công | view, create, edit, publish, delete, **manage_layout**=tab Layout, **manage_shift_rules**=tab Quy tắc ca (3 tab = 3 quyền: Phân công/view · Layout/manage_layout · Quy tắc ca/manage_shift_rules) |
-| `attendance` | Chấm công | Chấm công | view, self_log, edit, report |
-| `leave` | Nghỉ phép | Chấm công (tab Nghỉ phép) | view, request, approve, delete |
-| `tms_plan` | Vận chuyển: Đặt lịch & Chuyển kho | TMS Bookings (tab Đặt lịch + Chuyển kho) | view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành) |
+| `attendance` | Chấm công | Chấm công | view, self_log, edit, **report**=xem báo cáo **+ nút Xuất Excel bảng công** (không để `self_log`/`view` xuất được) |
+| `leave` | Nghỉ phép | Chấm công (tab Nghỉ phép) | view, request, approve, delete, **export**=Xuất Excel đơn nghỉ (có LÝ DO — dữ liệu cá nhân) |
+| `tms_plan` | Vận chuyển: Đặt lịch & Chuyển kho | TMS Bookings (tab Đặt lịch + Chuyển kho) | view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upload_outbound, upload_inbound, **confirm_receipt**=nhận hàng chuyển kho (xác nhận/quét/hoàn thành), **export**=Xuất Excel Báo cáo nhập (menu Báo cáo TMS) |
 | `tms_vehicle_types` | TMS — Loại xe | Cài đặt TMS | view, create, edit, delete (sửa chỉ đổi Tên + trạng thái; Mã khóa cố định) |
 | `tms_slots` | TMS — Khung giờ | Cài đặt TMS | view, create (gồm "Sửa cả cụm" — endpoint batch), edit (sửa lẻ 1 dòng), delete (xóa lẻ + cả cụm) |
 | `tms_companies` | TMS — ĐVVT / NCC | Cài đặt TMS | view, manage |
@@ -233,6 +233,8 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 3. Gate nút FE: `can(perms, module, action)`.
 4. Gate route BE: `requirePerm` / `requireAnyPerm`.
 5. Cập nhật bảng bản đồ ở trên. Nếu nút nằm khác module với quyền nó cần → dùng `requireAnyPerm` + nhãn rõ.
+
+**NÚT XUẤT EXCEL / EXPORT = phải có quyền `export` RIÊNG (chốt 26/07)** — mang dữ liệu ra khỏi app là hành vi riêng, KHÔNG đi ké `view`. Đã gate: `inventory.export` · `scanlog.export` · `locations.export` · `stocktake.export` (2 tab) · `leave.export` (file có LÝ DO nghỉ) · `attendance.report` (bảng công) · `tms_plan.export` (Báo cáo nhập) · `external_do_sap.export`. Export dựng client-side (không có route BE riêng) thì gate ở NÚT; điểm chặn dữ liệu thật vẫn là **list API phải cắt scope kho + loại** — đã siết cho `/hr/attendance` + `/hr/leaves` ngày 26/07 (trước đó rò toàn công ty).
 
 ---
 ## Công cụ (skill · MCP · hook)

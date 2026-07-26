@@ -372,11 +372,14 @@ export default function StocktakeDashboard() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* Cụm action toolbar (chuẩn ActionCluster) — Export chỉ dùng trên PC */}
-          <ActionCluster className="shrink-0" mobileInline items={[{
-            key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
-            mobileHidden: true, disabled: !entries.length,
-            onClick: exportExcel,
-          } satisfies ActionItem]} />
+          <ActionCluster className="shrink-0" mobileInline items={[
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
+            ...(can(perms, 'stocktake', 'export') ? [{
+              key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
+              mobileHidden: true, disabled: !entries.length,
+              onClick: exportExcel,
+            } satisfies ActionItem] : []),
+          ]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
           </div>
           <FilterBar defs={defs} className="hidden sm:flex" />

@@ -61,7 +61,8 @@ export const MODULES = {
   scanlog: {
     page: 'Lịch sử quét',
     actions: {
-      view: 'Xem lịch sử quét',
+      view:   'Xem lịch sử quét',
+      export: 'Xuất Excel lịch sử quét',
     },
   },
   loosepicking: {
@@ -78,6 +79,7 @@ export const MODULES = {
       view:     'Xem danh sách',
       scan:     'Quét QR',
       complete: 'Bỏ cờ chênh lệch',
+      export:   'Xuất Excel (Kiểm kê + Lịch sử kiểm)',
     },
   },
   locations: {
@@ -87,6 +89,7 @@ export const MODULES = {
       create: 'Thêm vị trí',
       edit:   'Sửa vị trí',
       delete: 'Xóa vị trí',
+      export: 'Xuất Excel danh sách vị trí',
     },
   },
   employees: {
@@ -147,6 +150,7 @@ export const MODULES = {
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload + thêm/sửa/xóa dòng kế hoạch nhập',
       confirm_receipt: 'Nhận hàng chuyển kho: xác nhận / hủy nhận / quét / hoàn thành [Chuyển kho]',
+      export:          'Xuất Excel Báo cáo nhập (menu Báo cáo TMS)',
     },
   },
   inbound_plan: {
@@ -270,6 +274,7 @@ export const MODULES = {
       request: 'Gửi đơn nghỉ',
       approve: 'Duyệt / Từ chối',
       delete:  'Xóa đơn',
+      export:  'Xuất Excel đơn nghỉ (có lý do)',
     },
   },
   attendance: {
@@ -290,6 +295,7 @@ export const MODULES = {
       create: 'Thêm dòng (tay)',
       edit:   'Sửa dòng',
       delete: 'Xóa dòng (lẻ + hàng loạt)',
+      export: 'Xuất Excel DO SAP',
     },
   },
   external_khvc: {
@@ -300,6 +306,7 @@ export const MODULES = {
       create: 'Thêm dòng (tay)',
       edit:   'Sửa dòng',
       delete: 'Xóa dòng (lẻ + hàng loạt)',
+      export: 'Xuất Excel DO SAP',
     },
   },
   work_assignment: {

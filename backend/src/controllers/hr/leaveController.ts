@@ -2,9 +2,9 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 
-type ReqUser = { sub?: string; name?: string }
+type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 
 const LEAVE_SELECT = 'id, employee_id, warehouse_id, date_from, date_to, leave_type, reason, status, approved_by, approved_at, created_at, updated_at'
@@ -158,6 +158,20 @@ async function guardLeaveScope(req: Request, res: Response, leaveId: string): Pr
 export async function listLeaves(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
+    // SCOPE KHO (RULE user): chỉ thấy đơn của NV thuộc kho được giao + đơn của chính mình.
+    // Thiếu lớp này thì ai có `leave.view` (10/19 chức danh) đọc được đơn nghỉ + LÝ DO của toàn công ty
+    // (verify runtime 26/07 đã rò thật). Superadmin / NATIONAL → không giới hạn.
+    const uL = userOf(req)
+    let scopeEmpIds: string[] | null = null
+    if (uL.name !== 'Admin' && uL.warehouse_scope !== 'NATIONAL') {
+      const myWhs = (uL.warehouse_ids ?? []) as string[]
+      if (warehouse_id && !myWhs.includes(warehouse_id)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
+      const whIds = warehouse_id ? [warehouse_id] : myWhs
+      const access = whIds.length
+        ? await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess').select('employee_id').in('warehouse_id', whIds).order('id'))
+        : []
+      scopeEmpIds = [...new Set([...((access ?? []) as { employee_id: string }[]).map(a => a.employee_id), ...(uL.sub ? [uL.sub] : [])])]
+    }
     const buildQuery = () => {
       let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
@@ -179,6 +193,10 @@ export async function listLeaves(req: Request, res: Response) {
     }
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
+    if (scopeEmpIds !== null) {
+      const allow = new Set(scopeEmpIds)
+      rows = rows.filter(r => allow.has(r.employee_id))
+    }
     let withEmp = await attachEmployees(rows)
     if (department_id) {
       withEmp = withEmp.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)

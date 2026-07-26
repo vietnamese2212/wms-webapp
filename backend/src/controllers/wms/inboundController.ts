@@ -251,11 +251,22 @@ export async function listOrders(req: Request, res: Response) {
         supabase.from('InventoryEntry').select('import_order_id')
           .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
       ])
-      const matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
+      let matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
       const orderIds = [...new Set(
         ((palletRes.data ?? []) as { import_order_id: string | null }[])
           .map(p => p.import_order_id).filter((v): v is string => !!v)
       )]
+      // Term ngắn/phổ biến ("51", "-", "_") khớp hàng trăm mã → `material_id.in.(…)` phình >13KB
+      // → PostgREST từ chối → 500 trắng trang (đo 26/07). Thu hẹp về mã CÓ phiếu nhập (RPC DISTINCT,
+      // migration 20260726_omni_search_narrow.sql); vẫn quá nhiều → báo 400 rõ, KHÔNG cắt âm thầm.
+      if (matIds.length > 60) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: nar, error: narErr } = await (supabase.rpc('omni_narrow_import_material_ids', { p_ids: matIds }) as any)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!narErr) matIds = ((nar ?? []) as any[]).map(r => String(r.id))
+      }
+      if (matIds.length + orderIds.length > 300)
+        return fail(res, `Từ khóa "${search}" quá chung (khớp ${matIds.length} mã hàng · ${orderIds.length} pallet). Gõ thêm ký tự để thu hẹp.`, 400)
       const filters = [`import_code.ilike.%${safeSearch(search)}%`]
       if (matIds.length > 0)   filters.push(`material_id.in.(${matIds.join(',')})`)
       if (orderIds.length > 0) filters.push(`id.in.(${orderIds.join(',')})`)

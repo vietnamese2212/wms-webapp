@@ -5,6 +5,7 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { isUuid } from '../../utils/ids'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 // ─── Scope kho+loại (mirror TMS orderController) — KH nhập chuyển kho gắn 1 kho đích ──
@@ -72,19 +73,34 @@ async function findOrCreateTmsOrder(
   const suffix   = randomUUID().slice(0, 4)
   const orderCode = `INB${datePart}_${nccCode}${vtPart}_${suffix}`
 
+  // plan_group_key: khóa chống đua RIÊNG của luồng gộp KH nhập (khớp makeKey ở bulkCreatePlanLines).
+  // Đua tạo cùng nhóm → 23505 trên uq_tms_order_plan_group → tìm lại lệnh người thắng (dưới).
+  const groupKey = `${group.date.slice(0, 10)}||${group.warehouse_id}||${group.warehouse_type ?? ''}||${group.vehicle_type ?? ''}||${group.ncc_id ?? ''}`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await supabase.from('TmsOrder').insert({
+  const { error: insErr } = await supabase.from('TmsOrder').insert({
     id: orderId, order_code: orderCode,
     date: group.date, warehouse_id: group.warehouse_id,
     direction: 'INBOUND',
     warehouse_type: group.warehouse_type || null,
     vehicle_type:   group.vehicle_type   || null,
     ncc_id:         group.ncc_id         || null,
+    plan_group_key: groupKey,
     planned_boxes: 0, planned_pallets: 0,
     status: 'PENDING',
     created_by: user?.name || null, updated_by: user?.name || null,
     created_at: now, updated_at: now,
   })
+  if (insErr) {
+    if (insErr.code !== '23505') throw new Error(insErr.message)
+    // Thua đua: người khác vừa tạo lệnh cho đúng nhóm này → dùng lệnh của họ (gộp như thiết kế)
+    await new Promise(r => setTimeout(r, 100 + Math.random() * 300))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: winner } = await supabase.from('TmsOrder')
+      .select('id').eq('plan_group_key', groupKey).neq('status', 'CANCELLED').order('created_at').limit(1)
+    const winnerId = (winner as { id: string }[] | null)?.[0]?.id
+    if (!winnerId) throw new Error('Đụng độ khi tạo lệnh nhập — vui lòng thử lại')
+    return winnerId
+  }
 
   // Tạo 1 TmsVehicleSlot mặc định
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,6 +154,8 @@ export async function listPlanLines(req: Request, res: Response) {
     const from = date_from ?? date
     const to   = date_to   ?? date
     if (!tms_order_id && (!from || !warehouse_id)) return fail(res, 'date_from và warehouse_id là bắt buộc', 400)
+    // tms_order_id là cột uuid: giá trị rác → Postgres lỗi cast 22P02 → 500 thô (fuzz 26/07)
+    if (tms_order_id && !isUuid(tms_order_id)) return fail(res, 'tms_order_id không hợp lệ', 400)
     // Scope: kho truyền vào ngoài phạm vi user → trả rỗng (không lộ kế hoạch kho khác)
     if (warehouse_id && !whInScope(req, warehouse_id)) return ok(res, [])
 
@@ -308,8 +326,10 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
           nccCodeById.set(c.id, String(c.code ?? 'NCC').slice(0, 6).toUpperCase())
       }
 
-      // INSERT LÔ nhóm thiếu — đua đa-user: unique index uq_tms_order_inbound_group bắn 23505 khi
-      // 2 người cùng tạo 1 nhóm → jitter + re-fetch nhặt lệnh người kia, thử lại (chuẩn concurrency-hardening)
+      // INSERT LÔ nhóm thiếu — đua đa-user: unique index uq_tms_order_plan_group (trên cột plan_group_key,
+      // CHỈ luồng upload KH nhập set) bắn 23505 khi 2 người cùng tạo 1 nhóm → jitter + re-fetch nhặt lệnh
+      // người kia, thử lại (chuẩn concurrency-hardening). Lệnh tạo TAY / KH vận chuyển để key NULL nên
+      // KHÔNG bị chặn oan — 1 NCC giao 2 xe cùng ngày/loại xe là hợp lệ (hồi quy đã sửa 26/07).
       const slotsToInsert: Record<string, unknown>[] = []
       for (let attempt = 0; attempt < 3; attempt++) {
         const missing = [...uniqueGroups.entries()].filter(([k]) => !groupMap.has(k))
@@ -326,6 +346,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
               id: orderId, order_code: orderCode,
               date: g.date, warehouse_id: g.warehouse_id, direction: 'INBOUND',
               warehouse_type: g.warehouse_type || null, vehicle_type: g.vehicle_type || null, ncc_id: g.ncc_id || null,
+              plan_group_key: k,   // khóa chống đua CHỈ của luồng gộp KH nhập (unique khi status≠CANCELLED)
               planned_boxes: 0, planned_pallets: 0, status: 'PENDING',
               created_by: user?.name || null, updated_by: user?.name || null, created_at: now, updated_at: now,
             },

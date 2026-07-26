@@ -33,7 +33,10 @@ export function parseSheetByHeader(ws: XLSX.WorkSheet, fields: FieldDef[]): Pars
   const aliasToKey = new Map<string, string>()
   const ambiguous = new Set<string>()
   for (const f of fields) {
-    for (const a of [f.key, ...f.aliases]) {
+    // NHÃN cũng là alias: nếu ai sửa nhãn mẫu tải về về đúng `label` khai trong code mà label không
+    // nằm trong aliases thì cột đó mất âm thầm (vd INV_FIELDS.boxes_base label 'Hộp (lẻ)' → 'hop le'
+    // không khớp alias nào ⇒ mất phần HỘP LẺ của BASE UNIT). Phát hiện qua fuzz 26/07.
+    for (const a of [f.key, f.label, ...f.aliases]) {
       const n = normHeader(a)
       if (!n) continue
       const owner = aliasToKey.get(n)
@@ -43,8 +46,12 @@ export function parseSheetByHeader(ws: XLSX.WorkSheet, fields: FieldDef[]): Pars
   }
   for (const n of ambiguous) aliasToKey.delete(n)
 
-  // Dò dòng tiêu đề: trong vài dòng đầu, chọn dòng khớp NHIỀU field nhất. Hòa → dòng SAU
-  // (dòng "key" nằm dưới dòng "nhãn" trong template → ưu tiên dòng key làm chuẩn).
+  // Dò dòng tiêu đề: trong vài dòng đầu, chọn dòng khớp NHIỀU field nhất. HÒA → giữ dòng ĐẦU TIÊN.
+  // (Trước dùng `>=` = ưu tiên dòng SAU cho template 2 dòng nhãn+key; nhưng nếu tiêu đề LẶP LẠI trong
+  // 8 dòng đầu — hoặc 1 dòng dữ liệu trùng tên cột — thì headerIdx nhảy xuống và MẤT ÂM THẦM các dòng
+  // phía trên: `[H, dòng1, H, dòng2]` → chỉ còn dòng2, không báo lỗi gì. Fuzz 26/07 bắt được.
+  // Template 2 dòng vẫn đúng: dòng "key" ở dưới bị `isHeaderLike` bỏ qua, và nếu dòng key khớp NHIỀU
+  // field hơn dòng nhãn thì score cao hơn nên vẫn được chọn.)
   let headerIdx = -1
   let headerCols = new Map<number, string>()
   let bestScore = 0
@@ -57,7 +64,7 @@ export function parseSheetByHeader(ws: XLSX.WorkSheet, fields: FieldDef[]): Pars
       const key = aliasToKey.get(normHeader(row[c]))
       if (key && !taken.has(key)) { cols.set(c, key); taken.add(key) }  // cột ĐẦU khớp field thì giữ
     }
-    if (cols.size > 0 && cols.size >= bestScore) { bestScore = cols.size; headerIdx = i; headerCols = cols }
+    if (cols.size > 0 && cols.size > bestScore) { bestScore = cols.size; headerIdx = i; headerCols = cols }
   }
 
   if (headerIdx < 0) return { rows: [], missingRequired: fields.filter(f => f.required).map(f => f.label) }

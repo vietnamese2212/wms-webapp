@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeSearch } from '../../utils/search'
+import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -17,6 +17,8 @@ function buildShortName(description: string, code: string, custom?: string | nul
 export async function listMaterials(req: Request, res: Response) {
   try {
     const { active, search, manufacturer_id, storage_category, category } = req.query
+    // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
     const scopeCats = scopeCategoriesOf(req)
 

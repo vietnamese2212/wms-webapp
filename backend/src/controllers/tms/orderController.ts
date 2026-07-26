@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
+import { uuidList } from '../../utils/ids'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -388,6 +389,10 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     const scope = scopeWhIds(req)
     if (scope !== null && orderRows.some(r => !scope.includes(r.warehouse_id as string)))
       return fail(res, 'Ngoài phạm vi kho — file chứa lệnh của kho ngoài phạm vi được giao', 403)
+    // Guard LOẠI HÀNG — thiếu thì user chỉ được ['Thành phẩm'] vẫn upload được lệnh 'Raw'/'POSM'
+    // (verify 26/07: ghi thành công). updateOrder đã guard; upload phải khớp.
+    const badCat = orderRows.find(r => !categoryAllowed(req, r.warehouse_type as string | null))
+    if (badCat) return fail(res, `${CATEGORY_FORBIDDEN_MSG} (loại "${badCat.warehouse_type}" trong file)`, 403)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insErr } = await supabase.from('TmsOrder').insert(orderRows)
@@ -487,9 +492,10 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     // Scope-write: mọi lệnh trong lô phải thuộc kho trong phạm vi (ASSIGNED). NATIONAL/ĐVVT → bỏ qua.
     const scope = scopeWhIds(req)
     if (scope !== null) {
-      // Chunk ids (500/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm scope
+      // Chunk ids (300/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm
+      // scope; chunk 500 uuid vẫn cho URL ~18KB → PostgREST từ chối → 500 (verify 26/07 với 1.100 lệnh).
       const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
-        .select('warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 500)
+        .select('warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 300)
       const bad = (ords ?? []).some((o: { warehouse_id: string | null; destination_warehouse_id: string | null }) =>
         !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
       if (bad) return fail(res, 'Ngoài phạm vi kho — có lệnh thuộc kho ngoài phạm vi được giao', 403)
@@ -499,18 +505,24 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     const user = req.user
     const now = new Date().toISOString()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count)
-    const { data, error } = await supabase.from('TmsOrder')
-      .update({ date, updated_by: user?.name || null, updated_at: now })
-      .in('id', ids)
-      .eq('status', 'PENDING')
-      .select('id')
-    if (error) return fail(res, error.message)
+    // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count).
+    // CHUNK 300: nhồi cả nghìn id vào `.in()` làm URL >40KB → PostgREST từ chối → 500, KHÔNG lệnh nào
+    // được đổi (verify 26/07: 1.100 lệnh → 500, đổi 0/1100). Đồng thời `.select('id')` bị cap 1000 dòng
+    // ⇒ updatedIds thiếu ⇒ dòng KH của lệnh thứ 1001+ không đổi ngày theo.
+    const updatedIds: string[] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await supabase.from('TmsOrder')
+        .update({ date, updated_by: user?.name || null, updated_at: now })
+        .in('id', ids.slice(i, i + 300))
+        .eq('status', 'PENDING')
+        .select('id')
+      if (error) return fail(res, error.message)
+      updatedIds.push(...((data ?? []) as { id: string }[]).map(o => o.id))
+    }
 
     // Đơn NHẬP: dòng KH (inbound_plan_lines) mang date riêng — đổi theo, không thì lệch ngày đơn vs dòng
     // (báo cáo nhập theo ngày + khóa gộp upload đều bám date của dòng). Đơn xuất không có lines → no-op.
-    const updatedIds = (data ?? []).map((o: { id: string }) => o.id)
     for (let i = 0; i < updatedIds.length; i += 300) {
       const { error: lineErr } = await supabase.from('inbound_plan_lines')
         .update({ date, updated_by: user?.name || null, updated_at: now })
@@ -626,6 +638,22 @@ export async function getMaterialSummary(req: Request, res: Response) {
   try {
     const { order_ids } = req.body as { order_ids?: string[] }
     if (!Array.isArray(order_ids) || order_ids.length === 0) return ok(res, [])
+    // Lọc id không phải UUID trước khi query cột uuid: id rác ("abc"/số/null) → Postgres lỗi cast
+    // 22P02 → controller nuốt thành 500 thô (fuzz API 26/07). Lọc xong rỗng → trả [] (không khớp gì).
+    const rawIds = uuidList(order_ids)
+    if (rawIds.length === 0) return ok(res, [])
+    // SCOPE KHO: order_ids do CLIENT truyền → phải cắt về lệnh thuộc kho được giao, không thì user kho A
+    // đọc được tổng hợp KH/thực nhận của kho B (IDOR — verify 26/07). Chunk 300 (né URL dài + cap-1000).
+    let validIds = rawIds
+    const msScope = scopeWhIds(req)
+    if (msScope !== null) {
+      const ords = await fetchAllByIdChunks(rawIds, chunk => supabase.from('TmsOrder')
+        .select('id, warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 300) as
+        { id: string; warehouse_id: string | null; destination_warehouse_id: string | null }[]
+      const allow = new Set((ords ?? []).filter(o => whInScope(msScope, o.warehouse_id, o.destination_warehouse_id)).map(o => o.id))
+      validIds = rawIds.filter(id => allow.has(id))
+      if (validIds.length === 0) return ok(res, [])
+    }
 
     type Row = { material_id: string; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number }
     const byMat: Record<string, Row> = {}
@@ -645,7 +673,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 1) Kế hoạch từ inbound_plan_lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const planLines = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('inbound_plan_lines')
+    const planLines = await fetchAllByIdChunks(validIds, (chunk) => supabase.from('inbound_plan_lines')
       .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -656,7 +684,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
+    const imports = await fetchAllByIdChunks(validIds, (chunk) => supabase.from('ProductionImport')
       .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
@@ -697,6 +725,9 @@ export async function getInboundReport(req: Request, res: Response) {
   try {
     const { date_from, date_to, warehouse_id } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from và date_to là bắt buộc', 400)
+    // Ngày sai định dạng ("not-a-date", "2026-13-45") → Postgres lỗi cast date → 500 thô (fuzz 26/07)
+    const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(`${s}T00:00:00Z`).getTime())
+    if (!isDate(date_from) || !isDate(date_to)) return fail(res, 'date_from/date_to phải theo định dạng YYYY-MM-DD', 400)
 
     // Scope kho + loại hàng (RULE user): chọn "Tất cả" vẫn CHỈ thấy kho/loại được gán —
     // trước đây không cắt gì → non-admin bỏ trống filter là xem được toàn bộ báo cáo nhập.

@@ -2846,6 +2846,22 @@ export async function uploadKhvc(req: Request, res: Response) {
         cross_trip_dos: crossArr.length, cross_trip_sample: crossArr.slice(0, 10) })
     }
 
+    // ── SCOPE KHO phải gác TRƯỚC khi ghi tầng raw ──
+    // Guard kho/loại vốn nằm trong processVehicleGroups (gọi ở CUỐI hàm) nhưng khvc_lines đã upsert
+    // NGAY dưới đây ⇒ verify 26/07: user kho A up file mang Số xe của kho B → chuyến bị 400 nhưng
+    // kế hoạch raw kho B ĐÃ bị đè + mất cờ manual_edited_at. Chặn ngay từ đầu (all-or-nothing).
+    {
+      const scope = scopeWhIds(req)
+      if (scope !== null) {
+        const whCodes = [...new Set(khvcRows.map(k => k.group_code.split('_')[0]).filter(Boolean))]
+        const { data: whRows } = await supabase.from('Warehouse').select('id, code').in('code', whCodes)
+        const idByCode = new Map(((whRows ?? []) as { id: string; code: string }[]).map(w => [w.code, w.id]))
+        const outside = whCodes.filter(c => { const id = idByCode.get(c); return id && !scope.includes(id) })
+        if (outside.length)
+          return fail(res, `Ngoài phạm vi kho — file chứa Số xe của kho: ${outside.join(', ')}`, 403)
+      }
+    }
+
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
     // Churn-safe: pre-fetch (group_code, do_no)→id, GIỮ id cũ khi up lại (không đổi PK). Upsert chunk 500.
     const khActor = req.user?.name || null

@@ -16,3 +16,20 @@ export function safeSearch(input: unknown): string {
 export function safeFilterValue(input: unknown): string {
   return String(input ?? '').replace(/[,(){}"\\]/g, '').trim()
 }
+
+// Từ khóa trông như SQL-injection bị WAF trước Supabase CHẶN Ở TẦNG HẠ TẦNG: nó trả trang HTML
+// (không phải JSON), supabase-js coi là lỗi lạ → controller nuốt thành 500 "Lỗi hệ thống"
+// (fuzz 26/07: search=`' OR 1=1--` → 500 ở Tồn kho + Mã hàng).
+// App tự nhận diện trước → trả 400 có thông báo, không sinh lỗi 500 nhiễu log.
+// CỐ Ý hẹp: chỉ mẫu tiêm rõ rệt; dấu nháy/gạch đơn lẻ trong tên hàng vẫn tìm được bình thường.
+const INJECTION_RE = [
+  /(\bor\b|\band\b)\s+['"]?\d+['"]?\s*=\s*['"]?\d+/i,   // ' OR 1=1
+  /\bunion\s+(all\s+)?select\b/i,
+  /;\s*(drop|delete|update|insert|alter|truncate)\b/i,
+  /\/\*.*\*\//,                                          // comment chèn /*…*/
+]
+export function searchLooksLikeInjection(input: unknown): boolean {
+  const s = String(input ?? '')
+  return INJECTION_RE.some(re => re.test(s))
+}
+export const SEARCH_INVALID_MSG = 'Từ khóa tìm kiếm không hợp lệ (chứa mẫu ký tự bị hệ thống bảo mật chặn). Hãy gõ mã hàng / mã pallet / tên hàng.'

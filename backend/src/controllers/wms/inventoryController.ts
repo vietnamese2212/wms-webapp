@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeSearch, safeFilterValue } from '../../utils/search'
+import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
@@ -118,6 +118,26 @@ interface FilterParams {
 // không escape thì '_' thành wildcard "1 ký tự bất kỳ" → search sai + omni khớp phình (URL fail).
 // PostgreSQL dùng '\' làm ESCAPE mặc định nên '\_' = literal '_'. Áp cả term truyền vào RPC omni.
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m)
+
+// Trần an toàn cho số id nhét vào filter `col.in.(…)`: mỗi id ~37 ký tự → 350 id ≈ 13KB URL là mức
+// PostgREST bắt đầu từ chối (đo 26/07: term khớp 350 id còn OK, 371 id → API 500). Giữ dưới mức đó.
+const OMNI_ID_CAP = 300
+
+// Thu hẹp id omni-search về id THỰC SỰ có dữ liệu trong bảng tồn (RPC DISTINCT trong DB — migration
+// 20260726_omni_search_narrow.sql). KHÔNG mất dòng (id không có trong bảng thì không khớp dòng nào),
+// chỉ để URL filter không phình: term "-" 453 mã → 38, "_" 194 vị trí → 171.
+// RPC chưa apply → trả nguyên (giữ hành vi cũ) rồi bị chặn bởi trần trên với thông báo rõ.
+async function narrowOmniIds(matIds?: string[], locIds?: string[]): Promise<[string[] | undefined, string[] | undefined]> {
+  const call = async (fn: string, ids?: string[]): Promise<string[] | undefined> => {
+    if (!ids || ids.length <= 60) return ids   // ít id → khỏi thêm roundtrip
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc(fn, { p_ids: ids }) as any)
+    if (error) return ids
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((data ?? []) as any[]).map(r => String(r.id))
+  }
+  return [await call('omni_narrow_material_ids', matIds), await call('omni_narrow_location_ids', locIds)]
+}
 
 function applyInventoryFilters(q: any, p: FilterParams): any {
   // Mặc định "Còn tồn" = status active VÀ tồn > 0 (user 18/07: upload cho phép tồn=0 → 31k dòng
@@ -294,6 +314,7 @@ async function fetchAllPaged(makeQuery: () => any, pageSize = 1000): Promise<any
 interface ResolvedFilter {
   empty?: boolean
   error?: string
+  tooBroad?: string   // từ khóa khớp quá nhiều mã/vị trí → 400 kèm thông báo, KHÔNG để thành 500
   params: FilterParams
   datePctIds: string[] | null
   pageNum: number
@@ -395,6 +416,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   // (ilike Postgres KHÔNG bỏ dấu — bỏ dấu server-side cần extension unaccent, xem ghi chú.)
   let searchMatIds: string[] | undefined
   let searchLocIds: string[] | undefined
+  if (search && searchLooksLikeInjection(search)) return { ...base, tooBroad: SEARCH_INVALID_MSG }
   if (search) {
     const term = escapeLike(search.replace(/[,()]/g, ' ').trim())   // escape '_'/'%' → literal (mã đầy '_')
     if (term) {
@@ -421,6 +443,14 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
         searchMatIds = ((fmat as any).data ?? []).map((m: any) => m.id as string)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         searchLocIds = ((floc as any).data ?? []).map((l: any) => l.id as string)
+      }
+      // Term NGẮN/PHỔ BIẾN khớp hàng trăm mã ("51" → 371 mã, "-" → 453, "_" → 374, "a" → 500) làm
+      // filter `material_id.in.(…)` phình >13KB → PostgREST từ chối → API 500, trang trắng (đo 26/07).
+      // B1: thu hẹp về id thực có dữ liệu. B2: vẫn quá nhiều → 400 báo rõ (KHÔNG cắt id âm thầm = mất dòng).
+      ;[searchMatIds, searchLocIds] = await narrowOmniIds(searchMatIds, searchLocIds)
+      if ((searchMatIds?.length ?? 0) + (searchLocIds?.length ?? 0) > OMNI_ID_CAP) return {
+        ...base,
+        tooBroad: `Từ khóa "${search}" quá chung (khớp ${searchMatIds?.length ?? 0} mã hàng · ${searchLocIds?.length ?? 0} vị trí). Gõ thêm ký tự để thu hẹp.`,
       }
     }
   }
@@ -468,6 +498,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 
 export async function listInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0, total_pallets_in_stock: 0 })
 
@@ -563,6 +594,7 @@ export async function listInventory(req: Request, res: Response) {
 // Vì %date suy ra từ ngày SX + hạn dùng nên mỗi nhóm có 1 giá trị %date duy nhất.
 export async function summaryInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0 })
 
@@ -647,6 +679,7 @@ export async function summaryInventory(req: Request, res: Response) {
 // Cùng resolveInventoryFilter → khớp tuyệt đối view pallet. (Summary export dùng dữ liệu /summary sẵn có ở FE.)
 export async function exportInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [] })
 
@@ -1436,13 +1469,13 @@ export async function uploadExcel(req: Request, res: Response) {
     const [mats, whs, locs, cos, qas] = await Promise.all([
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, category, base_unit, entry_unit, units_per_carton')),
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
-      fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
+      fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code, warehouse_id')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
       fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
     ]) as [
       ({ id: string; material_code: string; category: string | null } & MatUnits)[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
-      { id: string; location_code: string }[],
+      { id: string; location_code: string; warehouse_id: string | null }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
       { id: string; name: string }[],
     ]
@@ -1454,6 +1487,10 @@ export async function uploadExcel(req: Request, res: Response) {
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
     const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
+    // Vị trí thuộc kho nào — kiểm chéo với cột "Kho" của dòng: mã vị trí trùng nhau giữa các kho là
+    // chuyện thường, thiếu kiểm này thì pallet khai kho A nhưng nằm ở vị trí kho B (list/summary/export
+    // cắt scope theo Location.warehouse_id → pallet BIẾN khỏi kho A, hiện ở kho B; verify 26/07 ghi được 1 entry lệch).
+    const locWhMap = new Map(locs.map(l => [l.id, l.warehouse_id]))
     const resolveNcc = makeNccResolver(cos.filter(c => c.type === 'NCC'))
     const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
     const qaNames = qas.map(q => q.name).join(' / ')
@@ -1532,6 +1569,14 @@ export async function uploadExcel(req: Request, res: Response) {
       if (seenInFile.has(fileKey)) { errors.push(`${at} — trùng mã pallet trong file (cùng kho ${whRaw})`); continue }
       const locId = locMap.get(locRaw!.toLowerCase())
       if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
+      // Vị trí phải THUỘC ĐÚNG kho của dòng — lệch thì pallet biến khỏi kho khai báo (list/export cắt
+      // theo Location.warehouse_id) và vượt biên scope kho. Verify 26/07: từng ghi được, không báo lỗi.
+      {
+        const locWh = locWhMap.get(locId)
+        if (locWh && locWh !== wh.id) {
+          errors.push(`${at} — vị trí "${locRaw}" không thuộc kho "${whRaw}" (vị trí này thuộc kho khác)`); continue
+        }
+      }
       const nccRaw = invStr(r.ncc)
       let nccId: string | null = null
       if (nccRaw) { const resu = resolveNcc(nccRaw); if (!resu.id) { errors.push(`${at} — NCC ${resu.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = resu.id }

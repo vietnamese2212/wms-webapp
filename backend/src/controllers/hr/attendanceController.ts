@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 
-type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]> }
+type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -12,12 +12,32 @@ const hasAttEdit = (u: ReqUser) => u.name === 'Admin' || !!u.module_permissions?
 const SEL = 'id, employee_id, warehouse_id, work_date, kind, ot_hours, early_leave_hours, note, created_at, updated_at'
 const KINDS = ['CA1', 'CA2', 'CA3', 'HC', 'LEAVE']
 
-// NV thuộc 1 kho (qua quyền truy cập kho) — dùng để lọc Bảng công/Báo cáo theo kho
-async function employeeIdsOfWarehouse(warehouse_id: string): Promise<string[]> {
+// NV thuộc 1 hoặc nhiều kho (qua quyền truy cập kho) — dùng để lọc Bảng công/Báo cáo theo kho
+async function employeeIdsOfWarehouse(warehouse_id: string | string[]): Promise<string[]> {
+  const whIds = Array.isArray(warehouse_id) ? warehouse_id : [warehouse_id]
+  if (!whIds.length) return []
   // Phân trang né cap ~1000 dòng/response của PostgREST
   const data = await fetchAllRowsParallel(() =>
-    supabase.from('UserWarehouseAccess').select('employee_id').eq('warehouse_id', warehouse_id).order('id'))
-  return (data ?? []).map((r: { employee_id: string }) => r.employee_id)
+    supabase.from('UserWarehouseAccess').select('employee_id').in('warehouse_id', whIds).order('id'))
+  return [...new Set((data ?? []).map((r: { employee_id: string }) => r.employee_id))]
+}
+
+// SCOPE KHO cho dữ liệu nhân sự (RULE user: "phân quyền kho nào thì CHỈ thấy dữ liệu kho đó").
+// Trả về: null = không giới hạn (superadmin / NATIONAL) · string[] = danh sách employee_id được xem.
+// Thiếu lớp này thì user chỉ có `attendance.self_log`/`leave.view` (10/19 chức danh) đọc được BẢNG CÔNG
+// và ĐƠN NGHỈ PHÉP (kèm lý do) của TOÀN CÔNG TY — verify runtime 26/07 đã rò thật.
+async function scopedEmployeeIds(req: Request, warehouse_id?: string): Promise<{ empIds: string[] | null; forbidden?: string }> {
+  const u = userOf(req)
+  const national = u.name === 'Admin' || u.warehouse_scope === 'NATIONAL'
+  if (national) return { empIds: warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null }
+
+  const myWhs = u.warehouse_ids ?? []
+  if (warehouse_id && !myWhs.includes(warehouse_id))
+    return { empIds: [], forbidden: 'Ngoài phạm vi kho được giao' }
+  const whIds = warehouse_id ? [warehouse_id] : myWhs
+  const ids = whIds.length ? await employeeIdsOfWarehouse(whIds) : []
+  if (u.sub) ids.push(u.sub)   // luôn thấy dữ liệu của chính mình (kể cả chưa gán kho)
+  return { empIds: [...new Set(ids)] }
 }
 
 async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
@@ -39,7 +59,10 @@ async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
 export async function listAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, employee_id, date_from, date_to } = req.query as Record<string, string>
-    const warehouseEmpIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
+    // Cắt theo scope kho của user (bỏ trống filter Kho ≠ được xem cả công ty)
+    const sc = await scopedEmployeeIds(req, warehouse_id)
+    if (sc.forbidden) return fail(res, sc.forbidden, 403)
+    const warehouseEmpIds = sc.empIds
     // Phân trang vượt cap ~1000; kho nhiều NV → CHUNK empIds 300/lô (nhồi 1 .in() = URL quá dài)
     const makeBase = () => {
       let q = supabase.from('Attendance').select(SEL)
@@ -128,7 +151,10 @@ export async function reportAttendance(req: Request, res: Response) {
   try {
     const { warehouse_id, department_id, date_from, date_to } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from, date_to là bắt buộc', 400)
-    const empIds = warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null
+    // Cắt theo scope kho của user (giống listAttendance — báo cáo cũng là dữ liệu nhân sự)
+    const scRep = await scopedEmployeeIds(req, warehouse_id)
+    if (scRep.forbidden) return fail(res, scRep.forbidden, 403)
+    const empIds = scRep.empIds
     // Phân trang né cap ~1000; kho nhiều NV → chunk empIds 300/lô (né URL dài). Tổng hợp không cần thứ tự.
     const makeQ = () => supabase.from('Attendance').select('employee_id, warehouse_id, kind, ot_hours, early_leave_hours')
       .gte('work_date', date_from).lte('work_date', date_to).order('id')

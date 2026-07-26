@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -1978,10 +1978,21 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
     if (!s) return rows
     return rows.filter(r => r.material_code.toLowerCase().includes(s) || r.material_name.toLowerCase().includes(s))
   }, [rows, q])
-  const totals = useMemo(() => filtered.reduce(
-    (a, r) => ({ planned: a.planned + r.planned_boxes, actual: a.actual + r.actual_boxes, diff: a.diff + r.diff }),
-    { planned: 0, actual: 0, diff: 0 }), [filtered])
+  // Tổng phải TÁCH THEO ĐVT — cộng chung mã "thùng" (CAR) với mã KG/EA rồi gắn nhãn "thùng" là SAI
+  // đơn vị + thổi tổng (luật BASE UNIT trong CLAUDE.md). Thực tế phát hiện 26/07: KH nhập NVL đếm
+  // theo cái/kg tới hàng triệu → header từng hiện "73.324.718 thùng".
+  const totalsByUnit = useMemo(() => {
+    const m = new Map<string, { planned: number; actual: number; diff: number }>()
+    for (const r of filtered) {
+      const k = (r.unit || '').trim().toUpperCase()
+      const cur = m.get(k) ?? { planned: 0, actual: 0, diff: 0 }
+      m.set(k, { planned: cur.planned + r.planned_boxes, actual: cur.actual + r.actual_boxes, diff: cur.diff + r.diff })
+    }
+    return [...m.entries()].sort((a, b) => b[1].planned - a[1].planned)
+  }, [filtered])
   const fmtDiff = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('vi-VN')}`
+  const unitSummary = (u: string, t: { planned: number; actual: number; diff: number }) =>
+    `${unitLabel(u)}: KH ${t.planned.toLocaleString('vi-VN')} · TT ${t.actual.toLocaleString('vi-VN')} · CL ${fmtDiff(t.diff)}`
 
   if (orderIds.length === 0) return null
   return (
@@ -1989,7 +2000,11 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
       <button type="button" onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left">
         <Boxes className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-        <span>Tổng hợp mã hàng ({rows.length} mã) · KH {totals.planned.toLocaleString('vi-VN')} · thực tế {totals.actual.toLocaleString('vi-VN')} · chênh lệch {fmtDiff(totals.diff)} thùng</span>
+        <span className="truncate" title={totalsByUnit.map(([u, t]) => unitSummary(u, t)).join('\n')}>
+          Tổng hợp mã hàng ({rows.length} mã)
+          {totalsByUnit.slice(0, 2).map(([u, t]) => ` · ${unitSummary(u, t)}`).join('')}
+          {totalsByUnit.length > 2 ? ` · +${totalsByUnit.length - 2} ĐVT khác` : ''}
+        </span>
         {q.trim() && <span className="text-blue-600">· lọc “{q.trim()}”</span>}
         {isLoading && <span className="text-slate-400">· đang tải…</span>}
         <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -3172,8 +3187,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
       {!isLoading && filtered.length > 0 && (
         <SummaryBand compact tiles={[
           { label: 'Lệnh',       value: summary.count.toLocaleString('vi-VN') },
-          { label: 'Thùng KH',   value: summary.plannedBoxes.toLocaleString('vi-VN') },
-          { label: 'Thực nhận',  value: summary.actualBoxes.toLocaleString('vi-VN') },
+          // Nhãn "SL (quy đổi)" chứ KHÔNG phải "Thùng": tổng gộp mọi mã, trong đó mã không có entry_unit
+          // (NVL đếm cái/kg) góp số base thô → gọi là "thùng" là SAI đơn vị và thổi số (phát hiện 26/07:
+          // 12,5 triệu "thùng" thực chất là cái/kg). Tổng CHÍNH XÁC theo từng ĐVT xem ở band Tổng hợp mã hàng.
+          { label: 'SL KH (quy đổi)', value: summary.plannedBoxes.toLocaleString('vi-VN') },
+          { label: 'Thực nhận (quy đổi)', value: summary.actualBoxes.toLocaleString('vi-VN') },
           { label: 'Chênh lệch', value: summary.diff > 0 ? `+${summary.diff.toLocaleString('vi-VN')}` : summary.diff.toLocaleString('vi-VN'), accent: summary.diff !== 0 },
           { label: 'Đã giao',    value: `${summary.delivered}/${summary.count}`, accent: summary.delivered > 0 },
         ]} />
@@ -4133,7 +4151,8 @@ export default function TMSBookings() {
         <SummaryBand compact tiles={[
           { label: 'Đơn',        value: mainSummary.orders.toLocaleString('vi-VN') },
           { label: 'Xe',         value: mainSummary.vehicles.toLocaleString('vi-VN') },
-          { label: 'Thùng',      value: mainSummary.boxes.toLocaleString('vi-VN') },
+          // "SL (quy đổi)" — gộp mọi mã kể cả mã không entry (cái/kg) nên KHÔNG được gọi là "Thùng"
+          { label: 'SL (quy đổi)', value: mainSummary.boxes.toLocaleString('vi-VN') },
           { label: 'Pallet',     value: mainSummary.pallets.toLocaleString('vi-VN') },
           { label: 'Tấn',        value: mainSummary.tons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
           { label: 'Hoàn thành', value: `${mainSummary.done}/${mainSummary.orders}`, accent: mainSummary.done > 0 },

@@ -246,6 +246,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | Kiểm tra app toàn diện · tìm lỗi · cải tiến (user gọi "kiểm tra app / rà lỗi / test / tìm chỗ sai"). 1 skill bao trọn: chức năng+nghiệp vụ · UI/hiển thị · phân quyền · đồng thời/tải · hiệu năng · edge/realtime · phán đoán nghiệp vụ+UX | `check-app` |
 | Tạo/sửa list page · table · trang detail | `table-format` |
 | Làm/sửa tính năng quét QR | `qr-scan-flow` |
+| Thêm/sửa upload file (Excel/bulk) hoặc download/export dữ liệu | `upload-download-standard` |
 | Thêm/sửa nút hay route gọi API write (tạo/sửa/xóa/quét/duyệt/phát hành…) | `add-permission` |
 | Thêm/sửa INSERT/UPDATE · mutation số liệu · đổi DB schema | `mutation-realtime` |
 | Trước khi báo “đã xong” bất kỳ tính năng/sửa lỗi nào | `verify-feature` |

@@ -283,50 +283,71 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       const gDates = [...new Set(gList.map(g => dOf(g.date)))]
       const gWhs   = [...new Set(gList.map(g => g.warehouse_id))]
       type ExOrder = { id: string; date: string; warehouse_id: string; warehouse_type: string | null; vehicle_type: string | null; ncc_id: string | null }
-      const exOrders: ExOrder[] = []
-      for (let i = 0; i < gDates.length; i += 100) {
-        exOrders.push(...(await fetchAllRowsParallel(() => supabase.from('TmsOrder')
-          .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id')
-          .eq('direction', 'INBOUND')
-          .in('date', gDates.slice(i, i + 100)).in('warehouse_id', gWhs)
-          .order('id'))) as ExOrder[])
+      const fetchGroupOrders = async () => {
+        const exOrders: ExOrder[] = []
+        for (let i = 0; i < gDates.length; i += 100) {
+          exOrders.push(...(await fetchAllRowsParallel(() => supabase.from('TmsOrder')
+            .select('id, date, warehouse_id, warehouse_type, vehicle_type, ncc_id')
+            .eq('direction', 'INBOUND').neq('status', 'CANCELLED')   // khớp phạm vi unique index; không gắn KH vào lệnh đã hủy
+            .in('date', gDates.slice(i, i + 100)).in('warehouse_id', gWhs)
+            .order('id'))) as ExOrder[])
+        }
+        for (const o of exOrders) {
+          const k = makeKey(o.date, o.warehouse_id, o.warehouse_type ?? null, o.vehicle_type ?? null, o.ncc_id ?? null)
+          if (!groupMap.has(k)) groupMap.set(k, o.id)
+        }
       }
-      // .in('date', ...) chỉ khớp timestamp ĐÚNG nửa đêm của ngày lọc (mirror .eq cũ) → slice(0,10) an toàn
-      for (const o of exOrders) {
-        const k = makeKey(o.date, o.warehouse_id, o.warehouse_type ?? null, o.vehicle_type ?? null, o.ncc_id ?? null)
-        if (!groupMap.has(k)) groupMap.set(k, o.id)   // nhiều lệnh cùng key → lấy lệnh id nhỏ nhất (ổn định)
-      }
-      const missing = [...uniqueGroups.entries()].filter(([k]) => !groupMap.has(k))
-      const nccIds = [...new Set(missing.map(([, g]) => g.ncc_id).filter(Boolean))] as string[]
+      await fetchGroupOrders()
+
+      // Mã NCC cho order_code — nạp 1 lượt cho MỌI nhóm (dùng lại được qua các vòng retry)
+      const nccIds = [...new Set(gList.map(g => g.ncc_id).filter(Boolean))] as string[]
       const nccCodeById = new Map<string, string>()
       for (let i = 0; i < nccIds.length; i += 300) {
         const { data } = await supabase.from('TransportCompany').select('id, code').in('id', nccIds.slice(i, i + 300))
         for (const c of (data ?? []) as { id: string; code: string | null }[])
           nccCodeById.set(c.id, String(c.code ?? 'NCC').slice(0, 6).toUpperCase())
       }
-      const newOrders: Record<string, unknown>[] = []
-      const newSlots:  Record<string, unknown>[] = []
-      for (const [k, g] of missing) {
-        const orderId  = randomUUID()
-        const datePart = dOf(g.date).replace(/-/g, '').slice(2)   // YYMMDD
-        const vtPart   = g.vehicle_type ? `_${g.vehicle_type.slice(0, 3)}` : ''
-        const orderCode = `INB${datePart}_${g.ncc_id ? (nccCodeById.get(g.ncc_id) ?? 'NCC') : 'NCC'}${vtPart}_${randomUUID().slice(0, 4)}`
-        newOrders.push({
-          id: orderId, order_code: orderCode,
-          date: g.date, warehouse_id: g.warehouse_id, direction: 'INBOUND',
-          warehouse_type: g.warehouse_type || null, vehicle_type: g.vehicle_type || null, ncc_id: g.ncc_id || null,
-          planned_boxes: 0, planned_pallets: 0, status: 'PENDING',
-          created_by: user?.name || null, updated_by: user?.name || null, created_at: now, updated_at: now,
+
+      // INSERT LÔ nhóm thiếu — đua đa-user: unique index uq_tms_order_inbound_group bắn 23505 khi
+      // 2 người cùng tạo 1 nhóm → jitter + re-fetch nhặt lệnh người kia, thử lại (chuẩn concurrency-hardening)
+      const slotsToInsert: Record<string, unknown>[] = []
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const missing = [...uniqueGroups.entries()].filter(([k]) => !groupMap.has(k))
+        if (!missing.length) break
+        if (attempt > 0) await new Promise(r => setTimeout(r, 100 + Math.random() * 300))
+        const pending: { key: string; order: Record<string, unknown>; slot: Record<string, unknown> }[] = missing.map(([k, g]) => {
+          const orderId  = randomUUID()
+          const datePart = dOf(g.date).replace(/-/g, '').slice(2)   // YYMMDD
+          const vtPart   = g.vehicle_type ? `_${g.vehicle_type.slice(0, 3)}` : ''
+          const orderCode = `INB${datePart}_${g.ncc_id ? (nccCodeById.get(g.ncc_id) ?? 'NCC') : 'NCC'}${vtPart}_${randomUUID().slice(0, 4)}`
+          return {
+            key: k,
+            order: {
+              id: orderId, order_code: orderCode,
+              date: g.date, warehouse_id: g.warehouse_id, direction: 'INBOUND',
+              warehouse_type: g.warehouse_type || null, vehicle_type: g.vehicle_type || null, ncc_id: g.ncc_id || null,
+              planned_boxes: 0, planned_pallets: 0, status: 'PENDING',
+              created_by: user?.name || null, updated_by: user?.name || null, created_at: now, updated_at: now,
+            },
+            slot: { id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: now, updated_at: now },
+          }
         })
-        newSlots.push({ id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: now, updated_at: now })
-        groupMap.set(k, orderId)
+        let hadConflict = false
+        for (let i = 0; i < pending.length; i += 500) {
+          const chunk = pending.slice(i, i + 500)
+          const { error } = await supabase.from('TmsOrder').insert(chunk.map(p => p.order))
+          if (!error) {
+            for (const p of chunk) { groupMap.set(p.key, String(p.order.id)); slotsToInsert.push(p.slot) }
+          } else if (error.code === '23505') {
+            hadConflict = true   // nhóm trong chunk này để vòng sau re-fetch/tạo lại
+          } else return fail(res, error.message)
+        }
+        if (hadConflict) await fetchGroupOrders()
       }
-      for (let i = 0; i < newOrders.length; i += 500) {
-        const { error } = await supabase.from('TmsOrder').insert(newOrders.slice(i, i + 500))
-        if (error) return fail(res, error.message)
-      }
-      for (let i = 0; i < newSlots.length; i += 500) {
-        const { error } = await supabase.from('TmsVehicleSlot').insert(newSlots.slice(i, i + 500))
+      const unresolved = [...uniqueGroups.keys()].filter(k => !groupMap.has(k))
+      if (unresolved.length) return fail(res, 'Đụng độ khi tạo lệnh (nhiều người cùng upload) — vui lòng bấm upload lại', 409)
+      for (let i = 0; i < slotsToInsert.length; i += 500) {
+        const { error } = await supabase.from('TmsVehicleSlot').insert(slotsToInsert.slice(i, i + 500))
         if (error) return fail(res, error.message)
       }
     }
@@ -424,10 +445,31 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
       const { error } = await supabase.from('inbound_plan_lines').upsert(payload, { onConflict: 'id' })
       if (error) return fail(res, error.message)
     }
-    // INSERT theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless
+    // INSERT theo LÔ 500 — file KH vài nghìn dòng insert 1 phát dễ quá payload/timeout serverless.
+    // Đua đa-user: unique index uq_inbound_plan_line_active_key bắn 23505 khi người khác vừa chèn
+    // cùng key → fallback từng dòng: dòng đụng thì UPDATE đè lên dòng thắng cuộc (last-write-wins).
+    let raceUpdated = 0
     for (let i = 0; i < toInsert.length; i += 500) {
-      const { error } = await supabase.from('inbound_plan_lines').insert(toInsert.slice(i, i + 500))
-      if (error) return fail(res, error.message)
+      const chunk = toInsert.slice(i, i + 500)
+      const { error } = await supabase.from('inbound_plan_lines').insert(chunk)
+      if (!error) continue
+      if (error.code !== '23505') return fail(res, error.message)
+      for (const r of chunk) {
+        const { error: e1 } = await supabase.from('inbound_plan_lines').insert(r)
+        if (!e1) continue
+        if (e1.code !== '23505') return fail(res, e1.message)
+        let wq = supabase.from('inbound_plan_lines').select('id')
+          .eq('date', dOf(r.date)).eq('warehouse_id', r.warehouse_id)
+          .eq('material_id', r.material_id as string).neq('status', 'CANCELLED')
+        wq = r.ncc_id ? wq.eq('ncc_id', r.ncc_id) : wq.is('ncc_id', null)
+        const { data: winner } = await wq.limit(1).maybeSingle()
+        if (!winner) return fail(res, 'Đụng độ khi ghi kế hoạch — vui lòng bấm upload lại', 409)
+        const { error: e2 } = await supabase.from('inbound_plan_lines')
+          .update({ planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, ...(r.po_number ? { po_number: r.po_number } : {}), updated_by: user?.name || null, updated_at: now })
+          .eq('id', winner.id)
+        if (e2) return fail(res, e2.message)
+        raceUpdated++
+      }
     }
 
     // Recalc theo LÔ (thay recalcTmsOrder per-order: 3.7k lệnh × 2-4 roundtrip vừa chậm vừa dội DB):
@@ -464,7 +506,7 @@ export async function bulkCreatePlanLines(req: Request, res: Response) {
         .in('id', emptyIds.slice(i, i + 300)).eq('status', 'PENDING')
     }
 
-    return ok(res, { inserted: toInsert.length, updated: toUpdate.length, warnings }, 201)
+    return ok(res, { inserted: toInsert.length - raceUpdated, updated: toUpdate.length + raceUpdated, warnings }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -734,7 +776,25 @@ export async function bulkCreateForOrder(req: Request, res: Response) {
     }
     if (toInsert.length) {
       const { error: insErr } = await supabase.from('inbound_plan_lines').insert(toInsert)
-      if (insErr) return fail(res, insErr.message)
+      if (insErr && insErr.code !== '23505') return fail(res, insErr.message)
+      if (insErr) {
+        // Đua: người khác vừa chèn cùng key (unique index) → từng dòng, đụng thì UPDATE đè
+        for (const r of toInsert as { date: string; warehouse_id: string; ncc_id: string | null; material_id: string; planned_boxes: number; planned_pallets: number | null }[]) {
+          const { error: e1 } = await supabase.from('inbound_plan_lines').insert(r)
+          if (!e1) continue
+          if (e1.code !== '23505') return fail(res, e1.message)
+          let wq = supabase.from('inbound_plan_lines').select('id')
+            .eq('date', r.date).eq('warehouse_id', r.warehouse_id)
+            .eq('material_id', r.material_id).neq('status', 'CANCELLED')
+          wq = r.ncc_id ? wq.eq('ncc_id', r.ncc_id) : wq.is('ncc_id', null)
+          const { data: winner } = await wq.limit(1).maybeSingle()
+          if (!winner) return fail(res, 'Đụng độ khi ghi kế hoạch — vui lòng thử lại', 409)
+          const { error: e2 } = await supabase.from('inbound_plan_lines')
+            .update({ planned_boxes: r.planned_boxes, planned_pallets: r.planned_pallets, updated_by: user?.name ?? null, updated_at: now })
+            .eq('id', winner.id)
+          if (e2) return fail(res, e2.message)
+        }
+      }
     }
 
     await recalcTmsOrder(tms_order_id)

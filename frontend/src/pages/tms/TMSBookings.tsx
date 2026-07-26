@@ -1969,7 +1969,9 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
 function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
-  const { data: rows = [], isFetching } = useMaterialSummary(orderIds, orderIds.length > 0)
+  // isLoading (lần tải ĐẦU của key) thay isFetching: band đăng ký realtime 4 bảng nóng (InventoryEntry…)
+  // → refetch nền vài giây/lần, dùng isFetching làm chữ "đang tải" nhấp nháy liên tục. Refetch nền chạy im lặng.
+  const { data: rows = [], isLoading } = useMaterialSummary(orderIds, orderIds.length > 0)
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -1989,7 +1991,7 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
         <Boxes className="h-3.5 w-3.5 text-slate-400 shrink-0" />
         <span>Tổng hợp mã hàng ({rows.length} mã) · KH {totals.planned.toLocaleString('vi-VN')} · thực tế {totals.actual.toLocaleString('vi-VN')} · chênh lệch {fmtDiff(totals.diff)} thùng</span>
         {q.trim() && <span className="text-blue-600">· lọc “{q.trim()}”</span>}
-        {isFetching && <span className="text-slate-400">· đang tải…</span>}
+        {isLoading && <span className="text-slate-400">· đang tải…</span>}
         <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
@@ -1999,7 +2001,7 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
               className="w-full max-w-xs h-7 px-2 text-xs border border-slate-200 rounded outline-none focus:border-blue-400" />
           </div>
           {rows.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-400">{isFetching ? 'Đang tải…' : 'Không có dòng hàng nào'}</div>
+            <div className="py-6 text-center text-xs text-slate-400">{isLoading ? 'Đang tải…' : 'Không có dòng hàng nào'}</div>
           ) : (
             <table className="w-full [&_td]:border-t [&_td]:border-slate-100">
               <thead className="sticky top-[42px] z-10 bg-slate-50">

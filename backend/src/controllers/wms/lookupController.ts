@@ -215,16 +215,44 @@ export async function reorderUnit(req: Request, res: Response) {
 export async function deleteLookup(req: Request, res: Response) {
   const { id } = req.params
 
-  // Chặn xóa loại kho đang được dùng làm category ở Location/Material/WarehouseZone → tránh category mồ côi
+  // Chặn xóa loại kho đang được dùng — phải soi ĐỦ MỌI chỗ một Loại kho có thể nằm.
+  // Trước 27/07 chỉ soi Location/Material/WarehouseZone → xóa được trong khi Nhân sự (phạm vi
+  // loại hàng), Khung giờ, Slot ngày, lệnh TMS… vẫn trỏ vào loại đã mất: dữ liệu mồ côi ÂM THẦM
+  // (vd "Thùng": guard báo 2, thực tế còn 39 nhân sự + 174 khung giờ + 90 slot).
   const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
   if (lk?.type === 'warehouse_type' && lk.value) {
-    const [loc, mat, zone] = await Promise.all([
-      supabase.from('Location').select('id', { count: 'exact', head: true }).eq('category', lk.value),
-      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('category', lk.value),
-      supabase.from('WarehouseZone').select('id', { count: 'exact', head: true }).eq('category', lk.value),
-    ])
-    const total = (loc.count ?? 0) + (mat.count ?? 0) + (zone.count ?? 0)
-    if (total > 0) return fail(res, `Loại kho "${lk.value}" đang được dùng (${total} bản ghi) — không thể xóa`, 409)
+    const v = lk.value as string
+    const one = (table: string, col: string) =>
+      supabase.from(table).select('id', { count: 'exact', head: true }).eq(col, v)
+    // Cột MẢNG: dùng contains (cs) thay vì eq
+    const arr = (table: string, col: string) =>
+      supabase.from(table).select('id', { count: 'exact', head: true }).contains(col, [v])
+
+    const CHECKS: [string, () => PromiseLike<{ count: number | null }>][] = [
+      ['mã hàng',              () => one('Material', 'category')],
+      ['vị trí kho',           () => one('Location', 'category')],
+      ['khu vực kho',          () => one('WarehouseZone', 'category')],
+      ['nhân sự (phạm vi loại hàng)', () => arr('Employee', 'allowed_categories')],
+      ['kho (quét tem thùng)', () => arr('Warehouse', 'carton_scan_categories')],
+      ['khung giờ mẫu',        () => one('SlotTemplate', 'cargo_type')],
+      ['slot ngày',            () => one('DeliverySlot', 'cargo_type')],
+      ['lệnh vận chuyển',      () => one('TmsOrder', 'warehouse_type')],
+      ['chuyến xuất',          () => one('GroupDeliveryOrder', 'warehouse_type')],
+      ['phiếu nhập',           () => one('ProductionImport', 'warehouse_type')],
+      ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
+      ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],
+      ['lịch sử in tem',       () => one('PalletLabelPrint', 'category')],
+      ['nhật ký kiểm kê',      () => one('StocktakeLog', 'category')],
+    ]
+    const counts = await Promise.all(CHECKS.map(([, run]) => run()))
+    const used = CHECKS
+      .map(([label], i) => ({ label, n: counts[i].count ?? 0 }))
+      .filter(x => x.n > 0)
+    if (used.length) {
+      const chi_tiet = used.map(x => `${x.label}: ${x.n}`).join(' · ')
+      const tong = used.reduce((s, x) => s + x.n, 0)
+      return fail(res, `Loại kho "${v}" đang được dùng ở ${tong} bản ghi — không thể xóa. Chi tiết: ${chi_tiet}`, 409)
+    }
   }
 
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)

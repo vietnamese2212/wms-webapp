@@ -23,6 +23,7 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
@@ -191,8 +192,9 @@ function MatPicker({ value, label, category, onPick }: {
   const [open, setOpen] = useState(false)
   // Tìm TRÊN SERVER, tối đa 50 dòng — trước đây chọn Loại hàng là kéo cả danh mục mã của loại đó
   // về trình duyệt. Vẫn giữ hành vi cũ: bấm vào ô (chưa gõ) mà đã chọn Loại hàng thì hiện 50 mã đầu.
-  const enabled = open && (q.length > 1 || !!category)
-  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined, category: category || undefined, limit: 50 }, enabled)
+  const qDeb = useDebouncedValue(q, 250)
+  const enabled = open && (qDeb.length > 1 || !!category)
+  const { data: mats = [] } = useMaterials({ search: qDeb.length > 1 ? qDeb : undefined, category: category || undefined, limit: 50 }, enabled)
   const showList = open && enabled && mats.length > 0
   return (
     <div className="relative">

@@ -26,6 +26,7 @@ import {
   useSystemSettings,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -428,7 +429,8 @@ function MaterialPanel({ ids, category, onClose }: {
   const [confirming, setConfirming] = useState(false)
   const { mutate, isPending }   = useBulkTransferMaterial()
   // Tìm trên server, 50 mã đầu — trước đây bỏ trống ô tìm là kéo cả danh mục mã hàng về máy
-  const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined, limit: 50 })
+  const searchDeb = useDebouncedValue(search, 250)
+  const { data: materials = [] } = useMaterials({ search: searchDeb || undefined, category: category || undefined, limit: 50 })
 
   const selectedMat = useMemo(() =>
     (materials as any[]).find((m: any) => m.id === matId), [materials, matId]

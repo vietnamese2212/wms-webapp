@@ -1,5 +1,6 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -1350,9 +1351,9 @@ function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, 
   const [open, setOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
-  // Chỉ gọi API KHI đã gõ ≥2 ký tự, và chỉ lấy 50 dòng đầu — trước đây gõ chưa đủ ký tự
-  // vẫn kéo TOÀN BỘ danh mục mã hàng về trình duyệt (2.740 mã hôm nay, chục nghìn về sau).
-  const matTerm = !disabled && !disabledNoType && search.length > 1 ? search : ''
+  // Chỉ gọi API KHI đã gõ ≥2 ký tự, chỉ lấy 50 dòng đầu, và HOÃN 250ms — trước đây gõ chưa đủ
+  // ký tự vẫn kéo TOÀN BỘ danh mục mã hàng về trình duyệt (2.740 mã hôm nay, chục nghìn về sau).
+  const matTerm = useDebouncedValue(!disabled && !disabledNoType && search.length > 1 ? search : '', 250)
   const { data: mats = [] } = useMaterials(
     { search: matTerm, category: filterCategory || undefined, limit: 50 },
     !!matTerm,

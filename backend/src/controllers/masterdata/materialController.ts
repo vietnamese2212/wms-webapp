@@ -290,6 +290,12 @@ const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); 
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
 const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return (!Number.isFinite(n) || n < 0) ? null : n }
 const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return (!Number.isFinite(n) || n < 0) ? null : n }
+// Trường "N đơn vị TRONG 1 đơn vị khác" (Đv/Thùng, Thùng/Pallet, Pallet/EA): 0 là VÔ NGHĨA
+// (hệ số quy đổi / sức chứa không thể bằng 0) → coi như ô TRỐNG. File thật 27/07 điền 0 cho
+// 2.292 mã, ghi thẳng vào DB thành số rác. KHÁC với HSD=0 ("không hạn") và KL=0 — 0 ở đó CÓ nghĩa.
+// Giữ đúng kiểu cột: Đv/Thùng + Thùng/Pallet là integer, Pallet/EA là numeric.
+const mQtyInt = (v: unknown): number | null => { const n = mInt(v); return n != null && n > 0 ? n : null }
+const mQtyNum = (v: unknown): number | null => { const n = mNum(v); return n != null && n > 0 ? n : null }
 // Cờ 1/x/có/yes → true; 0/không/no → false; ô TRỐNG → null = giữ nguyên giá trị cũ
 const mBool = (v: unknown): boolean | null => {
   const s = mStr(v)?.toLowerCase() ?? null
@@ -346,9 +352,9 @@ export async function uploadExcel(req: Request, res: Response) {
       const category     = mStr(row.category)
       const product_type = mStr(row.product_type)
       const weight_kg    = mNum(row.weight_kg)
-      const cpp          = mInt(row.cartons_per_pallet)
-      const upc          = mInt(row.units_per_carton)
-      const ppe          = mNum(row.pallet_per_ea)
+      const cpp          = mQtyInt(row.cartons_per_pallet)   // 0 = ô trống (xem mQtyInt)
+      const upc          = mQtyInt(row.units_per_carton)
+      const ppe          = mQtyNum(row.pallet_per_ea)
       const sld          = mInt(row.shelf_life_days)
       const notes        = mStr(row.notes)
       const batchPrefix  = (() => { const s = mStr(row.batch_prefix); return s ? s.toUpperCase() : null })()  // ĐV2: mã tắt mã lô

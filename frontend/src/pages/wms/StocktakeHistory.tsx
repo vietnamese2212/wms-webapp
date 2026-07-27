@@ -20,7 +20,7 @@ import { History, Download, Flag, Rows3, AlignJustify } from 'lucide-react'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyEntryText, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
 import { rowText } from '@/lib/rowStatus'
-import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
+import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
 
 const LOG_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'at',     label: 'Thời gian kiểm', w: 140 },
@@ -74,14 +74,18 @@ export default function StocktakeHistory() {
     && locationIds.length === importantLocIds.length
     && importantLocIds.every(id => locationIds.includes(id))
 
+  // Đúng bộ "cần check" → gửi CỜ requires_only, BE tự resolve vị trí. Nhồi cả nghìn id vào query
+  // string là 414 (kho 1.517 vị trí = URL 55KB; ngưỡng Vercel ~800 id / 32KB — đo 27/07).
+  const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
   const { data, isFetching } = useStocktakeLog({
     warehouse_id: warehouseId || undefined,
     category: category || undefined,
-    location_ids: locationIds.length ? locationIds.join(',') : undefined,
+    location_ids: (!isImportantScope && locationIds.length && !tooManyLocs) ? locationIds.join(',') : undefined,
+    requires_only: isImportantScope ? '1' : undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
     search: search || undefined,
-  })
+  }, !tooManyLocs)
 
   const rows  = data?.rows ?? []
   const total = data?.total ?? 0
@@ -174,6 +178,12 @@ export default function StocktakeHistory() {
 
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {tooManyLocs && (
+          <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+            Đang chọn {locationIds.length.toLocaleString('vi-VN')} vị trí — quá nhiều để lọc (tối đa {LOC_ID_CAP}).
+            Bỏ bớt vị trí, hoặc bỏ chọn hết để xem cả kho / dùng “Chỉ vị trí cần check”.
+          </div>
+        )}
         {data?.truncated && (
           <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
             Đang hiển thị {rows.length.toLocaleString('vi-VN')} / {total.toLocaleString('vi-VN')} lượt — thu hẹp khoảng ngày hoặc vị trí để xem đủ.

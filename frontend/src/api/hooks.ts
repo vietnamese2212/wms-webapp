@@ -1177,8 +1177,11 @@ export interface StocktakeEntriesResult {
   date_to?:   string
 }
 
+// requires_only='1': lọc "chỉ vị trí cần check" bằng CỜ, để BE tự resolve vị trí — KHÔNG nhồi
+// hàng nghìn id vào query string (kho 1.517 vị trí = URL 55KB → Vercel 414, trang trắng; đo 27/07:
+// ngưỡng ~800 id / 32KB). Xem [[cap-1000-campaign]] họ lỗi "danh sách id trong URL".
 export function useStocktakeEntries(
-  params: { warehouse_id?: string; category?: string; location_ids?: string; view?: string; date_from?: string; date_to?: string },
+  params: { warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string; view?: string; date_from?: string; date_to?: string },
   enabled = true,
 ) {
   return useQuery({
@@ -1188,6 +1191,7 @@ export function useStocktakeEntries(
       if (params.warehouse_id) q.warehouse_id = params.warehouse_id
       if (params.category)     q.category     = params.category
       if (params.location_ids) q.location_ids = params.location_ids
+      if (params.requires_only) q.requires_only = params.requires_only
       if (params.view)         q.view         = params.view
       if (params.date_from)    q.date_from    = params.date_from
       if (params.date_to)      q.date_to      = params.date_to
@@ -1228,7 +1232,7 @@ export interface StocktakeLogResult {
 }
 
 export function useStocktakeLog(
-  params: { warehouse_id?: string; category?: string; location_ids?: string; date_from?: string; date_to?: string; search?: string },
+  params: { warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string; date_from?: string; date_to?: string; search?: string },
   enabled = true,
 ) {
   return useQuery({

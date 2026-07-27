@@ -2,6 +2,11 @@ import { NavLink } from 'react-router-dom'
 import { ClipboardCheck, BarChart2, History } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+// Trần số id vị trí nhét được vào query string của API (đo 27/07: 800 id ≈ 32KB → Vercel 414
+// TRƯỚC khi request tới BE). Vượt trần → KHÔNG gọi API, hiện hướng dẫn thu hẹp (không cắt âm thầm).
+// Chọn đúng bộ "cần check" thì gửi cờ `requires_only=1` — BE tự resolve, không cần id nào.
+export const LOC_ID_CAP = 500
+
 // Thanh tab dùng chung cho công cụ Kiểm kê: Check vị trí + Tổng hợp KK.
 // Điều hướng route (giữ 2 trang/2 route riêng — deep-link cũ vẫn chạy).
 // Trông giống TabsTrigger (shadcn) để đồng bộ với các trang có tab khác.

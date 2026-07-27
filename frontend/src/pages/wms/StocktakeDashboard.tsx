@@ -23,7 +23,7 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
+import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
@@ -283,9 +283,18 @@ export default function StocktakeDashboard() {
   const rangeStart = new Date(`${todayVN}T00:00:00.000+07:00`).toISOString()
   const rangeEnd   = new Date(`${todayVN}T23:59:59.999+07:00`).toISOString()
 
+  // Đúng bộ "cần check" → gửi CỜ requires_only (BE tự resolve vị trí). Nhồi cả nghìn id vào query
+  // string là 414 trước khi tới BE (kho 1.517 vị trí = URL 55KB; ngưỡng ~800 id/32KB — đo 27/07).
+  const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
   const { data, isFetching } = useStocktakeEntries(
-    { location_ids: locationIds.join(','), view },   // không truyền ngày → BE mặc định HÔM NAY
-    locationIds.length > 0,
+    {                                                // không truyền ngày → BE mặc định HÔM NAY
+      warehouse_id: isImportantScope ? (warehouseId || undefined) : undefined,
+      category: isImportantScope ? (category || undefined) : undefined,
+      requires_only: isImportantScope ? '1' : undefined,
+      location_ids: isImportantScope ? undefined : locationIds.join(','),
+      view,
+    },
+    locationIds.length > 0 && !tooManyLocs,
   )
 
   const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0, matched: 0 }
@@ -417,7 +426,13 @@ export default function StocktakeDashboard() {
 
       {/* Content */}
       <div className="flex flex-1 min-h-0">
-        {locationIds.length === 0 ? (
+        {tooManyLocs ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 px-6 text-center">
+            <MapPin className="h-8 w-8 mb-2 opacity-40" />
+            <p className="text-sm">Đang chọn {locationIds.length.toLocaleString('vi-VN')} vị trí — quá nhiều để lọc (tối đa {LOC_ID_CAP})</p>
+            <p className="text-[11px] mt-1 max-w-sm">Bỏ bớt vị trí, hoặc bật <b>“Chỉ vị trí cần check”</b> để xem trọn nhóm trọng yếu của kho.</p>
+          </div>
+        ) : locationIds.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-6 text-center">
             <MapPin className="h-8 w-8 mb-2 opacity-40" />
             <p className="text-sm">Chọn vị trí ở thanh lọc để xem tổng hợp</p>

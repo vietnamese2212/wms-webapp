@@ -1162,8 +1162,12 @@ export async function stocktakeEntry(req: Request, res: Response) {
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, location_id, location_ids, view = 'problem', date_from, date_to } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, location_ids, requires_only, view = 'problem', date_from, date_to } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
+  // requires_only='1': lọc "chỉ vị trí cần check" bằng CỜ — BE tự resolve vị trí từ kho. FE KHÔNG
+  // được nhồi hàng nghìn id vào query string (kho 1.517 vị trí = URL 55KB → Vercel 414 trước khi
+  // request tới được BE; đo 27/07 ngưỡng ~800 id / 32KB).
+  const reqOnly = String(requires_only ?? '') === '1'
 
   const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
     ? (req.user?.warehouse_ids ?? [])
@@ -1198,6 +1202,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     try {
       locs = await fetchAllRowsParallel(() => {
         let locQuery = supabase.from('Location').select('id').eq('is_active', true).order('id')
+        if (reqOnly) locQuery = locQuery.eq('requires_stocktake', true)
 
         if (scopeWhIds.length > 0) {
           const effective = warehouse_id
@@ -1328,7 +1333,8 @@ export async function stocktakeEntries(req: Request, res: Response) {
 // Lịch sử kiểm kê: đọc từ StocktakeLog (append-only) — xem lại kết quả kiểm mọi ngày/đợt,
 // kể cả pallet đã xuất / đã kiểm lại. Scope kho + loại (null-inclusive) như báo cáo tổng hợp.
 export async function stocktakeLog(req: Request, res: Response) {
-  const { warehouse_id, category, location_ids, date_from, date_to, search } = req.query as Record<string, string>
+  const { warehouse_id, category, location_ids, requires_only, date_from, date_to, search } = req.query as Record<string, string>
+  const reqOnly = String(requires_only ?? '') === '1'   // cờ thay cho danh sách id (xem stocktakeEntries)
   const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
   const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
@@ -1350,7 +1356,23 @@ export async function stocktakeLog(req: Request, res: Response) {
   const CAP = 2000
   // Chọn nhiều vị trí → chunk 300 rồi gộp (filter `.in()` >300 id là vỡ URL). 1 lô = 1 query
   // song song; gộp xong sort lại theo counted_at desc rồi cắt CAP để giữ đúng ngữ nghĩa trang.
-  const locIdList = location_ids ? String(location_ids).split(',').filter(Boolean) : []
+  let locIdList = location_ids ? String(location_ids).split(',').filter(Boolean) : []
+  // Cờ "chỉ vị trí cần check": BE tự resolve id (phân trang) → client không phải gửi nghìn id
+  if (reqOnly && !locIdList.length) {
+    try {
+      const impLocs = await fetchAllRowsParallel(() => {
+        let lq = supabase.from('Location').select('id').eq('is_active', true).eq('requires_stocktake', true).order('id')
+        if (whFilter) lq = whFilter.length === 1 ? lq.eq('warehouse_id', whFilter[0]) : lq.in('warehouse_id', whFilter)
+        if (category) lq = lq.or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+        if (stCats)   lq = lq.or(categoriesOrScopeFilter('categories', stCats))
+        return lq
+      })
+      locIdList = (impLocs as { id: string }[]).map(l => l.id)
+      if (!locIdList.length) return ok(res, { rows: [], total: 0, date_from: dfrom, date_to: dto })
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
+    }
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const buildQ = (locChunk: string[] | null): any => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

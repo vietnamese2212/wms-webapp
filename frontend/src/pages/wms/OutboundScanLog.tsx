@@ -147,8 +147,11 @@ export default function OutboundScanLog() {
   const categories  = (whTypesData ?? []).map(t => t.value)
 
   const { data: facets } = useOutboundScanLogFacets(filters.material_category || undefined)
-  const { data: materialsData } = useMaterials(
-    { category: filters.material_category },
+  // Filter Mã hàng: TÌM TRÊN SERVER (50 dòng) — trước đây chọn Loại kho là kéo về toàn bộ
+  // mã hàng của loại đó chỉ để dựng options.
+  const [matTerm, setMatTerm] = useState('')
+  const { data: materialsData, isFetching: matFetching } = useMaterials(
+    { category: filters.material_category, search: matTerm || undefined, limit: 50 },
     !!filters.material_category,
   )
   const materials = materialsData ?? []
@@ -201,6 +204,7 @@ export default function OutboundScanLog() {
     { key: 'category',     label: 'Loại hàng',   type: 'single', options: categoryOpts, value: filters.material_category, allLabel: 'Tất cả loại',
       onChange: v => setScanLog({ material_category: v, materials: [], machines: [], cycles: [] }) },
     { key: 'material',     label: 'Mã / Tên hàng', type: 'multi', options: materialOpts, selected: filters.materials, searchable: true,
+      serverSearch: true, onSearchChange: setMatTerm, loading: matFetching,
       onChange: v => setScanLog({ materials: v }) },
     { key: 'machine',      label: 'Máy',         type: 'multi', options: machineOpts, selected: filters.machines, searchable: machineOpts.length > 6,
       onChange: v => setScanLog({ machines: v }) },

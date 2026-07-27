@@ -219,8 +219,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const isDriverRole     = selectedDeptName === 'Đơn vị vận tải' && selectedJtName === 'Lái xe'
   const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
 
+  // Chỉ gọi khi thực sự cần gán xe cho tài khoản Lái xe — trước đây các trường hợp còn lại
+  // truyền params `undefined` nên vẫn tải TOÀN BỘ đội xe (953 xe ≈ 439KB) mà không dùng đến.
   const { data: allVehicles = [] } = useTmsVehicles(
-    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined
+    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined,
+    !!(isDriverRole && nccId && !isEdit),
   )
   const selectedVehicle = isDriverRole && !isEdit ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
 

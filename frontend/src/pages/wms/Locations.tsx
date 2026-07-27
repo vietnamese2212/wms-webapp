@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { FormSheet } from '@/components/shared/FormSheet'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
-  useLocationsReal, useWarehouses, useWarehouseZones,
+  useLocationsFull, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
   useUploadLocationsExcel,
 } from '@/api/hooks'
@@ -120,7 +120,7 @@ export default function Locations() {
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
   // Chỉ nạp vị trí khi đã chọn kho (tránh kéo toàn bộ dữ liệu).
-  const { data: raw = [], isLoading }   = useLocationsReal(
+  const { data: raw = [], isLoading }   = useLocationsFull(
     warehouseId ? { warehouse_id: warehouseId } : undefined,
     !!warehouseId,
   )

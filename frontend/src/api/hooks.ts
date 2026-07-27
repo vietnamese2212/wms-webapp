@@ -27,9 +27,28 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-export function useLocationsReal(params?: { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string }, enabled = true) {
+type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; search?: string; limit?: number }
+
+/**
+ * Vị trí kho — MẶC ĐỊNH bản GỌN (`view=lite`): bỏ audit + join Kho + đếm tồn tổng.
+ * Đo 27/07: 1 kho 1.517 vị trí = 938KB. Trang Vị trí kho (list + form Sửa) dùng
+ * `useLocationsFull()`; ô chọn vị trí dùng `search` + `limit` (tìm trên server).
+ */
+export function useLocationsReal(params?: LocationListParams, enabled = true) {
   return useQuery({
-    queryKey: ['locations-real', params],
+    queryKey: ['locations-real', 'lite', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations', { params: { ...params, view: 'lite' } })
+      return data.data as any[]
+    },
+  })
+}
+
+/** Bản ĐỦ CỘT (kèm Kho + audit) — trang Vị trí kho. */
+export function useLocationsFull(params?: LocationListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['locations-real', 'full', params],
     enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/locations', { params })

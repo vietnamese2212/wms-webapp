@@ -2194,12 +2194,14 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (khớp tên ĐVVT → công ty → lọc xe theo ncc_id)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
   const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
-  const { data: allVehicles = [] } = useTmsVehicles(showQuick ? { is_active: 'true' } : undefined, showQuick)
+  // Lọc xe theo ĐVVT NGAY TRÊN SERVER — trước đây tải TOÀN BỘ xe đang hoạt động (953 xe
+  // ≈ 439KB hôm nay) rồi mới lọc ở trình duyệt.
+  const { data: allVehicles = [] } = useTmsVehicles(
+    dvvtCompanyId ? { ncc_id: dvvtCompanyId, is_active: 'true' } : undefined,
+    showQuick && !!dvvtCompanyId)
   const platesForDvvt = useMemo(
-    () => dvvtCompanyId
-      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
-      : [],
-    [allVehicles, dvvtCompanyId],
+    () => [...new Set((allVehicles as { license_plate: string }[]).map(v => v.license_plate))],
+    [allVehicles],
   )
 
   function handleSubmit(quick = false) {
@@ -2321,12 +2323,14 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
   const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
-  const { data: allVehicles = [] } = useTmsVehicles(showQuickEdit ? { is_active: 'true' } : undefined, showQuickEdit)
+  // Lọc xe theo ĐVVT NGAY TRÊN SERVER — trước đây tải TOÀN BỘ xe đang hoạt động (953 xe
+  // ≈ 439KB hôm nay) rồi mới lọc ở trình duyệt.
+  const { data: allVehicles = [] } = useTmsVehicles(
+    dvvtCompanyId ? { ncc_id: dvvtCompanyId, is_active: 'true' } : undefined,
+    showQuickEdit && !!dvvtCompanyId)
   const platesForDvvt = useMemo(
-    () => dvvtCompanyId
-      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
-      : [],
-    [allVehicles, dvvtCompanyId],
+    () => [...new Set((allVehicles as { license_plate: string }[]).map(v => v.license_plate))],
+    [allVehicles],
   )
 
   // Pre-fill once GDO loads (wait for vehicle types to normalize correctly)

@@ -32,7 +32,8 @@ import {
   useDeliverySlots, useGenerateSlots,
   useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
-  usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
+  usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials, useMaterialsByCodes,
+  fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
@@ -42,6 +43,7 @@ import {
 } from '@/api/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
@@ -231,8 +233,10 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
   const user = useAuthStore(s => s.user)
   const isDriver = user?.job_title_name === 'Lái xe'
 
+  // Không có ĐVVT thì KHÔNG gọi — params undefined trước đây kéo cả đội xe về vô ích
   const { data: nccVehicles = [] } = useTmsVehicles(
-    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true', pool_branches: 'true' } : undefined
+    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true', pool_branches: 'true' } : undefined,
+    !!(!isDriver && order?.ncc_id),
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -441,11 +445,10 @@ function getDuplicateCodes(rows: { material_code: string }[]): Set<string> {
 }
 
 function MatCombobox({
-  value, onSelect, allMats, onPaste, inputClassName, filterCategory, disabled: disabledProp,
+  value, onSelect, onPaste, inputClassName, filterCategory, disabled: disabledProp,
 }: {
   value: string
   onSelect: (code: string, id: string, name: string, unit: string) => void
-  allMats: MatItem[]
   onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
   inputClassName?: string
   filterCategory?: string
@@ -456,17 +459,13 @@ function MatCombobox({
 
   React.useEffect(() => { setQ(value) }, [value])
 
-  const matches = React.useMemo(() => {
-    if (!q) return []
-    const lower = q.toLowerCase()
-    const sourceMats = filterCategory ? allMats.filter(m => m.category === filterCategory) : allMats
-    return sourceMats
-      .filter(m =>
-        m.material_code.toLowerCase().includes(lower) ||
-        (m.short_name ?? '').toLowerCase().includes(lower)
-      )
-      .slice(0, 10)
-  }, [q, allMats, filterCategory])
+  // TỰ tìm trên server theo từ khóa (10 gợi ý) — trước đây form cha phải nạp CẢ danh mục
+  // mã hàng rồi truyền xuống qua prop `allMats`.
+  const term = useDebouncedValue(q, 250)
+  const { data: found = [] } = useMaterials(
+    { search: term, category: filterCategory || undefined, limit: 50 }, term.trim().length > 1)
+  const matches = React.useMemo(
+    () => found.filter(m => !m.is_non_stock).slice(0, 10) as MatItem[], [found])
 
   return (
     <div className="relative">
@@ -628,7 +627,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
-  const { data: allMats = [] }             = useMaterials()
   const { mutateAsync: addPlanLines }      = useBulkCreatePlanLinesForOrder()
   const { mutateAsync: deletePlanLine }    = useDeletePlanLine()
   const { mutateAsync: updatePlanLine }    = useUpdatePlanLine()
@@ -637,7 +635,27 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: existingPlanLines = [] }   = usePlanLinesByOrder(isEdit ? (order?.id ?? null) : null)
 
   const [form, setForm]         = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const qc = useQueryClient()
   const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
+  // Chỉ tra ĐÚNG mã đang có trên các dòng kế hoạch (trước đây nạp cả danh mục mã hàng).
+  // Lúc LƯU sẽ tra lại đồng bộ (fetchMaterialsByCodes) vì SL quy đổi theo hệ số thùng/hộp của mã.
+  const planCodes = React.useMemo(() => planRows.map(r => r.material_code).filter(Boolean), [planRows])
+  const { data: allMats = [] }             = useMaterialsByCodes(planCodes)
+  // Mã gõ tay/dán được tra bất đồng bộ → có kết quả thì điền tên + ĐVT vào dòng
+  React.useEffect(() => {
+    if (allMats.length === 0) return
+    setPlanRows(prev => {
+      let changed = false
+      const next = prev.map(r => {
+        if (!r.material_code || r.material_id) return r
+        const mat = allMats.find(m => m.material_code === r.material_code.trim())
+        if (!mat) return r
+        changed = true
+        return { ...r, material_id: mat.id, material_name: mat.short_name ?? '', unit: unitCodeOf(mat) }
+      })
+      return changed ? next : prev
+    })
+  }, [allMats])
   const [planSaving, setPlanSaving] = useState(false)
   const [err, setErr] = useState('')
   const [createdCode, setCreatedCode] = useState<string | null>(null)
@@ -667,7 +685,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       const rows = [...prev]
       rows[i] = { ...rows[i], [field]: value }
       if (field === 'material_code') {
-        const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === value.trim())
+        const mat = allMats.find(m => m.material_code === value.trim())
         if (mat) {
           rows[i].material_id   = mat.id
           rows[i].material_name = (mat as { short_name?: string }).short_name ?? ''
@@ -732,7 +750,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         const code    = (cols[0] ?? '').trim()
         const boxes   = (cols[1] ?? '').trim().replace(/[^0-9]/g, '')
         const pallets = (cols[2] ?? '').trim().replace(/[^0-9]/g, '')
-        const mat = (allMats as import('@/types').Material[]).find(m =>
+        const mat = allMats.find(m =>
           m.material_code === code && (!form.warehouse_type || m.category === form.warehouse_type)
         )
         rows[startIdx + offset] = {
@@ -812,6 +830,11 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       gdo_refs: form.gdo_refs || null, notes: form.notes || null,
       priority: form.priority,
     }
+    // Quy đổi SL theo hệ số thùng/hộp của mã → phải có dữ liệu mã TRƯỚC khi lưu (không đợi query nền)
+    const saveMats = form.direction === 'INBOUND'
+      ? await fetchMaterialsByCodes(qc, planRows.map(r => r.material_code).filter(Boolean))
+      : new Map<string, MaterialLite>()
+    const saveMatById = new Map([...saveMats.values()].map(m => [m.id, m]))
     try {
       if (isEdit && order) {
         await updateOrder.mutateAsync({ id: order.id, ...payload })
@@ -824,14 +847,14 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           setPlanSaving(true)
           await Promise.all([
             ...toDelete.map((l: any) => deletePlanLine(l.id)),
-            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
+            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
           ])
           if (toAdd.length > 0) {
             await addPlanLines({
               tms_order_id: order.id,
               lines: toAdd.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -848,7 +871,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               tms_order_id: (created as import('@/types').TmsOrder).id,
               lines: validLines.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -1018,7 +1041,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                         <td className="px-1 py-0.5">
                           <MatCombobox
                             value={row.material_code}
-                            allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                             onSelect={(code, id, name, unit) => selectPlanMat(i, code, id, name, unit)}
                             onPaste={e => handlePasteAt(i, e)}
                             filterCategory={form.warehouse_type || undefined}
@@ -1590,8 +1612,8 @@ type PlanBulkRow = {
 function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
   open: boolean; warehouseId: string; onClose: () => void
 }) {
+  const qc = useQueryClient()
   const { data: transportCompanies = [] } = useTransportCompanies(true)
-  const { data: materials = [] }          = useMaterials()
   const { data: warehouses = [] }         = useWarehouses(true)
   const { data: vehicleTypes = [] }       = useVehicleTypes(true)
   const bulkCreate = useBulkCreatePlanLines()
@@ -1620,20 +1642,18 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     ;(w.shipto_codes ?? []).forEach(s => { const k = String(s).trim().toUpperCase(); if (k) whByCode.set(k, w.id) })
   })
   const vtNameSet = new Set((vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => String(vt.name)))
-  const matByCode = new Map(
-    (materials as import('@/types').Material[]).map(m => [
-      String(m.material_code).trim(),
-      { id: m.id, category: m.category ?? '' },
-    ])
-  )
 
   function parseFile(file: File) {
     const reader = new FileReader()
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const wb = XLSX.read(e.target?.result, { type: 'binary' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        // Tra ĐÚNG mã hàng có trong file (chunk 300/lượt) thay vì nạp cả danh mục để đối chiếu
+        const fileCodes = rows.map(r => String(r['Mã hàng'] ?? r['material_code'] ?? '').trim()).filter(Boolean)
+        const matLite = await fetchMaterialsByCodes(qc, fileCodes)
+        const matByCode = new Map([...matLite.values()].map(m => [String(m.material_code).trim(), { id: m.id, category: m.category ?? '' }]))
         const parsed: PlanBulkRow[] = rows.map((row, i) => {
           const rowDate  = parseExcelDate(row['Ngày'] ?? row['Ngay'] ?? row['date'] ?? '')
           const khoCode  = String(row['Mã kho']    ?? row['Kho']        ?? row['kho_code']   ?? '').trim().toUpperCase()
@@ -1685,6 +1705,9 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
     try {
       // BASE UNIT: cột "Số thùng" trong file = THÙNG NGUYÊN → quy đổi base theo hệ số mã
+      // (tra lại theo mã ngay trước khi ghi — cache 5' nên thường không tốn thêm request)
+      const matLite = await fetchMaterialsByCodes(qc, valid.map(r => r.material_code))
+      const matById = new Map([...matLite.values()].map(m => [m.id, m]))
       const lines = valid.map(r => ({
         date:            r.date,
         warehouse_id:    r.kho_id   || warehouseId,
@@ -1693,7 +1716,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
         ncc_id:          r.ncc_id          || null,
         material_id:     r.material_id     || null,
         po_number:       r.po_number       || null,
-        planned_boxes:   r.planned_boxes != null ? qtyFromEntryBase(Number(r.planned_boxes), 0, (materials as import('@/types').Material[]).find(m => m.id === r.material_id) ?? null) : null,
+        planned_boxes:   r.planned_boxes != null ? qtyFromEntryBase(Number(r.planned_boxes), 0, matById.get(r.material_id) ?? null) : null,
         planned_pallets: r.planned_pallets,
       }))
       await bulkCreate.mutateAsync(lines)
@@ -1822,19 +1845,27 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
   const [apiError, setApiError] = useState('')
   const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
   const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
-  const { data: materials = [] } = useMaterials()
+  const qc = useQueryClient()
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
     const reader = new FileReader()
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
       // Map theo TÊN cột (đồng bộ VL06O/KHVC): chuẩn hóa trim/lower/bỏ dấu → chịu ĐẢO thứ tự cột.
       const nk = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, ' ').trim()
       const pick = (nm: Record<string, unknown>, keys: string[]) => { for (const k of keys) { const v = nm[k]; if (v != null && String(v).trim() !== '') return v } return '' }
+      // Tra ĐÚNG mã hàng trong file thay vì nạp cả danh mục để đối chiếu
+      const codesInFile = rows.map(row => {
+        const nm2: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(row)) nm2[nk(k)] = v
+        return String(pick(nm2, ['ma hang', 'material code']) ?? '').trim()
+      }).filter(Boolean)
+      const matLite = await fetchMaterialsByCodes(qc, codesInFile)
+      const materials = [...matLite.values()]
       const parsed = rows
         .map(row => {
           const nm: Record<string, unknown> = {}
@@ -1843,11 +1874,11 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
           const planned_boxes = Number(pick(nm, ['sl thung', 'so thung', 'planned boxes']) || 0)
           const rawPallet = pick(nm, ['sl pallet', 'so pallet', 'planned pallets'])
           const planned_pallets = rawPallet !== '' ? Number(rawPallet) : undefined
-          const mat = (materials as import('@/types').Material[]).find(m =>
+          const mat = materials.find(m =>
             m.material_code === material_code &&
             (!warehouseType || m.category === warehouseType)
           )
-          const notFound = !(materials as import('@/types').Material[]).find(m => m.material_code === material_code)
+          const notFound = !materials.find(m => m.material_code === material_code)
           return {
             material_code,
             material_id: mat?.id,
@@ -1879,11 +1910,12 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
     try {
       // BASE UNIT: file nhập "SL thùng" (entry) → convert BASE per mã trước khi POST
       // (inbound_plan_lines.planned_boxes = BASE — cùng convention với upload KH nhập /inbound-plan/bulk)
+      const matById = new Map([...(await fetchMaterialsByCodes(qc, valid.map(r => r.material_code))).values()].map(m => [m.id, m]))
       await bulkCreate({
         tms_order_id: orderId,
         lines: valid.map(r => ({
           material_id: r.material_id!,
-          planned_boxes: qtyFromEntryBase(r.planned_boxes, 0, (materials as import('@/types').Material[]).find(m => m.id === r.material_id) ?? null),
+          planned_boxes: qtyFromEntryBase(r.planned_boxes, 0, matById.get(r.material_id!) ?? null),
           ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}),
         })),
       })
@@ -2065,7 +2097,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const dvvtName = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? ''
   const resolvedNccId = order?.ncc?.id ?? allCompanies.find(c => c.name === dvvtName)?.id ?? null
-  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true', pool_branches: 'true' } : undefined)
+  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true', pool_branches: 'true' } : undefined, !!resolvedNccId)
 
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')
@@ -3372,7 +3404,13 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const [addMatId, setAddMatId]     = useState('')
   const { data: planLines = [] }    = usePlanLinesByOrder(order?.id ?? null)
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
-  const { data: allMats = [] }      = useMaterials()
+  // Chỉ tra mã đang hiện trên bảng KH (+ mã đang gõ ở ô Thêm dòng) — không nạp cả danh mục
+  const shownCodes = useMemo(() => [...new Set([
+    ...(planLines as Record<string, unknown>[]).map(l => (l.material as Record<string, unknown>)?.material_code as string),
+    ...(planVsActual as Record<string, unknown>[]).map(r => r.material_code as string),
+    addCode.trim(),
+  ].filter(Boolean))], [planLines, planVsActual, addCode])
+  const { data: allMats = [] }      = useMaterialsByCodes(shownCodes)
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
   const { mutate: deleteLine }      = useDeletePlanLine()
 
@@ -3396,7 +3434,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       const code = mat?.material_code as string
       if (!code || seen.has(code)) continue
       seen.add(code)
-      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      const matFull = allMats.find(m => m.material_code === code)
       rows.push({
         line_id: line.id as string ?? null,
         material_code: code,
@@ -3412,7 +3450,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       const code = row.material_code as string
       if (seen.has(code)) continue
       seen.add(code)
-      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      const matFull = allMats.find(m => m.material_code === code)
       rows.push({
         line_id: null,
         material_code: code,
@@ -3427,7 +3465,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   }, [planLines, planVsActual, allMats])
 
   async function handleAddLine() {
-    const matId = addMatId || (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())?.id
+    const matId = addMatId || allMats.find(m => m.material_code === addCode.trim())?.id
     if (!matId) { setAddError('Không tìm thấy mã hàng'); return }
     const boxes = Number(addBoxes)
     if (!boxes || boxes <= 0) { setAddError('SL thùng phải > 0'); return }
@@ -3602,7 +3640,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   <div className="flex gap-1 items-center flex-wrap">
                     <MatCombobox
                       value={addCode}
-                      allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                       onSelect={(code, id) => { setAddCode(code); setAddMatId(id); setAddError('') }}
                       inputClassName="h-7 w-36 shrink-0 rounded border border-slate-200 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                     />

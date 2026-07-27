@@ -114,7 +114,7 @@ interface InboundScanSheetProps {
   order: InboundOrder
   onClose: () => void
   employeeId?: string
-  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; category?: string | null }[]
+  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null }[]
   pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
   initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
 }

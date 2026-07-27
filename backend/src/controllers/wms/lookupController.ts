@@ -230,8 +230,9 @@ export async function deleteLookup(req: Request, res: Response) {
 
     const CHECKS: [string, () => PromiseLike<{ count: number | null }>][] = [
       ['mã hàng',              () => one('Material', 'category')],
-      ['vị trí kho',           () => one('Location', 'category')],
-      ['khu vực kho',          () => one('WarehouseZone', 'category')],
+      // Vị trí/Khu vực/Nhật ký kiểm kê: cột MẢNG từ 27/07 (khu multi-loại)
+      ['vị trí kho',           () => arr('Location', 'categories')],
+      ['khu vực kho',          () => arr('WarehouseZone', 'categories')],
       ['nhân sự (phạm vi loại hàng)', () => arr('Employee', 'allowed_categories')],
       ['kho (quét tem thùng)', () => arr('Warehouse', 'carton_scan_categories')],
       ['khung giờ mẫu',        () => one('SlotTemplate', 'cargo_type')],
@@ -242,7 +243,7 @@ export async function deleteLookup(req: Request, res: Response) {
       ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
       ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],
       ['lịch sử in tem',       () => one('PalletLabelPrint', 'category')],
-      ['nhật ký kiểm kê',      () => one('StocktakeLog', 'category')],
+      ['nhật ký kiểm kê',      () => arr('StocktakeLog', 'categories')],
     ]
     const counts = await Promise.all(CHECKS.map(([, run]) => run()))
     const used = CHECKS

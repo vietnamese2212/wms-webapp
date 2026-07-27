@@ -43,7 +43,7 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
   const [zones, locations, warehouses, ppeMats] = await Promise.all([
     fetchAllRowsParallel(() => {
       let q = supabase.from('WarehouseZone')
-        .select('id, warehouse_id, code, name, category, sort_order, max_pallets')
+        .select('id, warehouse_id, code, name, categories, sort_order, max_pallets')
         .eq('is_active', true).order('id')
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
@@ -114,12 +114,14 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
   }
 
   const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
-  return (zones as { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number | null; max_pallets: number | null }[])
-    .filter(z => !cats || !z.category || cats.includes(z.category)) // null-inclusive theo scope Loại hàng
+  return (zones as { id: string; warehouse_id: string; code: string; name: string; categories: string[] | null; sort_order: number | null; max_pallets: number | null }[])
+    .filter(z => !cats || !z.categories?.length || z.categories.some(c => cats.includes(c))) // giao ≥1 loại; null-inclusive
     .map(z => ({
       zone_id: z.id, warehouse_id: z.warehouse_id,
       warehouse_name: whName.get(z.warehouse_id) ?? z.warehouse_id,
-      code: z.code, name: z.name, category: z.category,
+      code: z.code, name: z.name,
+      // FE Dashboard hiển thị chuỗi — giữ key `category` (join) để không đổi payload
+      category: z.categories?.length ? z.categories.join(', ') : null,
       capacity: z.max_pallets ?? 0,
       used: Math.round((usedByZoneKey.get(`${z.warehouse_id}|${z.code}`) ?? 0) * 10) / 10,
       sort_order: z.sort_order,

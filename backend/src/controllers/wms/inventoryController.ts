@@ -5,7 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { computePctDate } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
-import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoryAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
@@ -1056,7 +1056,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
   const { data: existing, error: fetchErr } = await supabase.from('InventoryEntry')
     .select(`id, pallet_code, location_id, cartons_remaining, material_id,
       material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
-      location:Location!location_id(location_code, warehouse_id, category)`)
+      location:Location!location_id(location_code, warehouse_id, categories)`)
     .eq('id', id).maybeSingle()
 
   if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
@@ -1104,10 +1104,10 @@ export async function stocktakeEntry(req: Request, res: Response) {
     const mat = (existing as any).material as { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
     // Vị trí nơi ĐẾM: nếu đổi vị trí → lấy vị trí mới; ngược lại vị trí app hiện tại
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; category?: string } | null
+    let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; categories?: string[] | null } | null
     let snapLocId = existing.location_id as string | null
     if (new_location_id && new_location_id !== existing.location_id) {
-      const { data: nl } = await supabase.from('Location').select('location_code, warehouse_id, category').eq('id', new_location_id).maybeSingle()
+      const { data: nl } = await supabase.from('Location').select('location_code, warehouse_id, categories').eq('id', new_location_id).maybeSingle()
       if (nl) { snapLoc = nl as typeof snapLoc; snapLocId = new_location_id }
     }
     await supabase.from('StocktakeLog').insert({
@@ -1117,7 +1117,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
       location_id: snapLocId,
       location_code: snapLoc?.location_code ?? null,
       warehouse_id: snapLoc?.warehouse_id ?? null,
-      category: snapLoc?.category ?? null,
+      categories: snapLoc?.categories ?? null,
       material_id: existing.material_id,
       material_code: mat?.material_code ?? null,
       short_name: mat?.short_name ?? null,
@@ -1160,7 +1160,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user
     let vQ = supabase.from('Location').select('id').in('id', explicitIds)
     if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
-    if (stCats) vQ = vQ.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+    if (stCats) vQ = vQ.or(categoriesOrScopeFilter('categories', stCats))
     const { data: valid, error: vErr } = await vQ
     if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
     resolvedLocationIds = ((valid ?? []) as { id: string }[]).map(l => l.id)
@@ -1186,8 +1186,8 @@ export async function stocktakeEntries(req: Request, res: Response) {
           if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
         }
 
-        if (category)     locQuery = locQuery.or(`category.eq.${safeFilterValue(category)},category.is.null`)
-        if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+        if (category)     locQuery = locQuery.or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+        if (stCats)       locQuery = locQuery.or(categoriesOrScopeFilter('categories', stCats))
         return locQuery
       })
     } catch (e) {
@@ -1328,8 +1328,8 @@ export async function stocktakeLog(req: Request, res: Response) {
   let q: any = supabase.from('StocktakeLog').select('*', { count: 'exact' })
     .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
   if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter)
-  if (category) q = q.eq('category', category)
-  if (stCats)   q = q.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+  if (category) q = q.contains('categories', [category])
+  if (stCats)   q = q.or(categoriesOrScopeFilter('categories', stCats))
   if (location_ids) {
     const ids = String(location_ids).split(',').filter(Boolean)
     if (ids.length) q = q.in('location_id', ids)

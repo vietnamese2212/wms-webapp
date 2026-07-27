@@ -50,7 +50,7 @@ interface LocationWithCapacity {
   location_code: string
   sub_code: string
   sub_type: string | null
-  category: string | null
+  categories: string[] | null
   max_pallets: number
   used_slots: number
   has_same_material?: boolean
@@ -355,7 +355,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     materialId !== '' && !!l.has_same_material && !(l.max_pallets > 0 && l.used_slots >= l.max_pallets)
   const filteredLocs = useMemo(() => {
     const base = subType
-      ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
+      ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
       : allLocs
     if (!materialId) return base
     // sort ổn định: vị trí khuyến nghị lên đầu, phần còn lại giữ nguyên thứ tự gốc

@@ -41,7 +41,7 @@ interface RealLocation {
   sub_code:     string
   sub_name:     string | null
   sub_type:     string | null
-  category:     string | null
+  categories:   string[] | null
   row:          string
   shelf:        string
   max_pallets:        number
@@ -64,7 +64,7 @@ interface WhWithCount {
   _count:     { locations: number }
 }
 
-const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'wh',      label: 'Kho',             w: 160 },
@@ -154,8 +154,8 @@ export default function Locations() {
   // ── Table filter ─────────────────────────────────────────────
   const filtered = useMemo(() => {
     return locations.filter(l => {
-      if (catFilter && l.category !== catFilter) return false
-      if (!omniMatch([l.location_code, l.sub_code, l.sub_name, l.sub_type, l.category, l.row, l.shelf, l.warehouse?.code, l.warehouse?.name], search)) return false
+      if (catFilter && !(l.categories ?? []).includes(catFilter)) return false
+      if (!omniMatch([l.location_code, l.sub_code, l.sub_name, l.sub_type, (l.categories ?? []).join(' '), l.row, l.shelf, l.warehouse?.code, l.warehouse?.name], search)) return false
       if (flagFilter && !l.requires_stocktake) return false
       return true
     })
@@ -167,7 +167,6 @@ export default function Locations() {
   const fullCount  = activeFiltered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
 
   // ── Form cascaded options ────────────────────────────────────
-  const formCatOpts = categoryOptions
   const filteredZones = useMemo(() =>
     formZones.filter(z => z.is_active),
     [formZones]
@@ -187,7 +186,7 @@ export default function Locations() {
 
   function openAdd() {
     setEditing(null)
-    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
+    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId })
     setEditIsActive(true)
     setFormError('')
     setDialogMode('add')
@@ -197,7 +196,6 @@ export default function Locations() {
     setEditing(loc)
     setForm({
       warehouse_id: loc.warehouse.id,
-      category:     loc.category ?? '',
       sub_code:     loc.sub_code,
       sub_name:     loc.sub_name ?? '',
       row:          loc.row,
@@ -226,7 +224,6 @@ export default function Locations() {
           warehouse_id: form.warehouse_id,
           sub_code:     form.sub_code.trim().toUpperCase(),
           sub_name:     form.sub_name.trim() || undefined,
-          category:     form.category || undefined,
           row:          form.row.trim(),
           shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
@@ -235,7 +232,6 @@ export default function Locations() {
         await updateLocation.mutateAsync({
           id:                 editing.id,
           sub_name:           form.sub_name.trim() || undefined,
-          category:           form.category || undefined,
           max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
@@ -275,7 +271,7 @@ export default function Locations() {
   function exportExcel() {
     // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
     const sheet = filtered.map(l => ({
-      'Kho': l.warehouse?.name ?? '', 'Loại': l.category ?? '',
+      'Kho': l.warehouse?.name ?? '', 'Loại': (l.categories ?? []).join(', '),
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
@@ -406,8 +402,8 @@ export default function Locations() {
                       <TableCell className={`px-2 py-1 text-[10px] sticky left-0 z-10 ${stickyBg}`}>
                         <span className="block truncate" title={loc.warehouse?.name ?? ''}>{loc.warehouse?.name ?? '—'}</span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {loc.category ?? <span className="text-slate-400">—</span>}
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        {loc.categories?.length ? loc.categories.join(', ') : <span className="text-slate-400">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
                         <span className="font-semibold">{loc.sub_code}</span>
@@ -481,7 +477,7 @@ export default function Locations() {
             </div>
             <div className="px-3 py-3 space-y-2 text-xs">
               <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{selectedLoc.warehouse?.name ?? '—'}</span></div>
-              <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.category ?? '—'}</span></div>
+              <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.categories?.length ? selectedLoc.categories.join(', ') : '—'}</span></div>
               <div><span className="text-slate-400">Khu vực:</span> <span className="font-medium">{selectedLoc.sub_code}{selectedLoc.sub_name && selectedLoc.sub_name !== selectedLoc.sub_code ? ` — ${selectedLoc.sub_name}` : ''}</span></div>
               <div><span className="text-slate-400">Loại vị trí:</span> <span className="font-medium">{selectedLoc.sub_type ?? '—'}</span></div>
               <div><span className="text-slate-400">Hàng / Tầng:</span> <span className="font-mono font-semibold">{selectedLoc.row}{selectedLoc.shelf ? ` / ${selectedLoc.shelf}` : ''}</span></div>
@@ -538,37 +534,14 @@ export default function Locations() {
                 <WarehouseSingleSelect
                   warehouses={warehouses}
                   value={form.warehouse_id}
-                  onChange={v => { setField('warehouse_id', v); setField('category', ''); setField('sub_code', '') }}
+                  onChange={v => { setField('warehouse_id', v); setField('sub_code', '') }}
                   placeholder="Chọn kho"
                   triggerClassName="h-8 mt-1"
                 />
               </div>
             )}
 
-            {/* ── Loại kho ── */}
-            <div>
-              <Label className="text-xs">Loại kho</Label>
-              <Select value={form.category || '__none__'}
-                onValueChange={v => {
-                  setField('category', v === '__none__' ? '' : v)
-                  if (dialogMode === 'add') setField('sub_code', '')
-                }}>
-                <SelectTrigger className="h-8 text-sm mt-1">
-                  <SelectValue placeholder="Chưa phân loại" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Chưa phân loại</SelectItem>
-                  {formCatOpts.map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {dialogMode === 'add' && (
-                <p className="text-[10px] text-slate-400 mt-0.5">Quản lý loại kho tại Cài đặt WMS → Loại kho</p>
-              )}
-            </div>
-
-            {/* ── Khu vực kho (chỉ add) ── */}
+            {/* ── Khu vực kho (chỉ add) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
             {dialogMode === 'add' && (
               <div>
                 <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
@@ -579,7 +552,6 @@ export default function Locations() {
                       const z = filteredZones.find(z => z.code === v)
                       setField('sub_code', v)
                       setField('sub_name', z?.name ?? '')
-                      if (z?.category) setField('category', z.category)
                     }
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">
@@ -588,13 +560,27 @@ export default function Locations() {
                   <SelectContent>
                     <SelectItem value="__none__">Chọn khu vực</SelectItem>
                     {filteredZones.map(z => (
-                      <SelectItem key={z.code} value={z.code}>{z.code} — {z.name}</SelectItem>
+                      <SelectItem key={z.code} value={z.code}>{z.code} — {z.name}{z.categories?.length ? ` (${z.categories.join(', ')})` : ''}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {form.sub_code && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Loại kho (theo khu): <span className="font-medium">{filteredZones.find(z => z.code === form.sub_code)?.categories?.join(', ') ?? '—'}</span>
+                  </p>
+                )}
                 {form.warehouse_id && filteredZones.length === 0 && (
                   <p className="text-[10px] text-amber-600 mt-0.5">Kho này chưa có khu vực. Tạo tại Cài đặt WMS → Khu vực kho.</p>
                 )}
+              </div>
+            )}
+
+            {/* ── Loại kho (edit) — read-only, kế thừa từ khu ── */}
+            {dialogMode === 'edit' && editing && (
+              <div>
+                <Label className="text-xs">Loại kho <span className="text-slate-400">(kế thừa từ Khu vực)</span></Label>
+                <p className="text-sm font-medium text-slate-700 mt-1">{editing.categories?.length ? editing.categories.join(', ') : '—'}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Muốn đổi loại → sửa Khu vực ở Cài đặt WMS (tự áp cho mọi vị trí trong khu)</p>
               </div>
             )}
 

@@ -26,4 +26,20 @@ export function categoryAllowed(req: Request, warehouseType: string | null | und
   return scope.includes(warehouseType)
 }
 
+/**
+ * Bản ghi mang MẢNG loại (Khu vực / Vị trí multi-loại, 27/07) — guard WRITE:
+ * MỌI loại của bản ghi phải trong scope (thao tác lên khu [RM01,PK01] ảnh hưởng cả 2 loại).
+ * null/rỗng (di sản) → không chặn, khớp categoryAllowed.
+ */
+export function categoriesAllAllowed(req: Request, cats: string[] | null | undefined): boolean {
+  const scope = scopeCategoriesOf(req)
+  if (scope === null || !cats || cats.length === 0) return true
+  return cats.every(c => scope.includes(c))
+}
+
+/** Điều kiện .or() PostgREST cắt LIST theo scope trên cột MẢNG (null-inclusive, giao ≥1 loại là thấy). */
+export function categoriesOrScopeFilter(col: string, scope: string[]): string {
+  return `${col}.is.null,${col}.ov.{${scope.map(c => `"${c}"`).join(',')}}`
+}
+
 export const CATEGORY_FORBIDDEN_MSG = 'Ngoài phạm vi Loại hàng được phép — không thể thao tác loại kho này'

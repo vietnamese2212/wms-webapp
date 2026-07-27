@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
@@ -22,12 +22,12 @@ async function guardLocScope(req: Request, res: Response, locationId: string): P
   const scope = scopeWhIds(req)
   const cats = scopeCategoriesOf(req)
   if (scope === null && cats === null) return true
-  const { data } = await supabase.from('Location').select('warehouse_id, category').eq('id', locationId).maybeSingle()
-  const row = data as { warehouse_id: string | null; category: string | null } | null
+  const { data } = await supabase.from('Location').select('warehouse_id, categories').eq('id', locationId).maybeSingle()
+  const row = data as { warehouse_id: string | null; categories: string[] | null } | null
   const wh = row?.warehouse_id ?? null
   if (scope !== null && (!wh || !scope.includes(wh))) { fail(res, 403, 'FORBIDDEN', 'Vị trí không thuộc kho trong phạm vi của bạn'); return false }
-  // Scope Loại: chặn thao tác vị trí có loại ngoài phạm vi (vị trí chưa gán loại → cho qua)
-  if (!categoryAllowed(req, row?.category)) { fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false }
+  // Scope Loại: MỌI loại của vị trí phải trong phạm vi (vị trí chưa gán loại → cho qua)
+  if (!categoriesAllAllowed(req, row?.categories)) { fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false }
   return true
 }
 
@@ -58,10 +58,10 @@ export async function listLocations(req: Request, res: Response) {
       }
       if (sub_code) query = query.eq('sub_code', String(sub_code))
       if (active === 'true') query = query.eq('is_active', true)
-      // category filter: match exact OR null (uncategorized locations accept all)
-      if (category) query = (query as any).or(`category.eq.${safeFilterValue(category)},category.is.null`)
-      // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (vị trí chưa gán loại vẫn hiện)
-      if (scopeCats) query = (query as any).or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      // category filter: vị trí NHẬN loại này (mảng chứa) OR null (vị trí chưa gán loại = dùng chung)
+      if (category) query = (query as any).or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+      // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (giao ≥1 loại; null vẫn hiện)
+      if (scopeCats) query = (query as any).or(categoriesOrScopeFilter('categories', scopeCats))
       return query
     })
 
@@ -178,8 +178,14 @@ export async function createLocation(req: Request, res: Response) {
       String(shelf ?? '').trim()
     )
 
-    const { category } = req.body
-    if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    // KHU LÀ CHUẨN (27/07): Loại của vị trí KẾ THỪA từ WarehouseZone — không nhận từ body.
+    // Khu chưa khai → chặn (khớp luật upload), tránh vị trí mồ côi loại.
+    const subUpper = String(sub_code).trim().toUpperCase()
+    const { data: zone } = await supabase.from('WarehouseZone')
+      .select('name, categories').eq('warehouse_id', warehouse_id).eq('code', subUpper).maybeSingle()
+    if (!zone) return fail(res, 400, 'VALIDATION_ERROR', `Khu "${subUpper}" chưa có trong Khu vực của kho — tạo khu ở Cài đặt WMS → Khu vực trước`)
+    const zoneCats = (zone as { categories: string[] | null }).categories ?? null
+    if (!categoriesAllAllowed(req, zoneCats)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
@@ -187,10 +193,10 @@ export async function createLocation(req: Request, res: Response) {
       .insert({
         id:          randomUUID(),
         warehouse_id,
-        sub_code: String(sub_code).trim().toUpperCase(),
-        sub_name: sub_name ? String(sub_name).trim() : null,
+        sub_code: subUpper,
+        sub_name: sub_name ? String(sub_name).trim() : ((zone as { name: string | null }).name ?? null),
         sub_type: sub_type ?? null,
-        category: category ?? null,
+        categories: zoneCats,
         location_code,
         row: String(row).trim(),
         shelf: String(shelf ?? '').trim(),
@@ -212,12 +218,11 @@ export async function createLocation(req: Request, res: Response) {
 export async function updateLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return
-    const { sub_name, sub_type, max_pallets, is_active, category, requires_stocktake } = req.body
-    if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    // Loại của vị trí KHÔNG sửa lẻ ở đây — kế thừa từ Khu (sửa loại = sửa ở Khu vực, tự cascade)
+    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
-    if (category !== undefined)          patch.category          = category || null
     if (max_pallets !== undefined)       patch.max_pallets       = Number(max_pallets)
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
@@ -248,12 +253,12 @@ export async function bulkFlagLocations(req: Request, res: Response) {
     for (let i = 0; i < idList.length; i += 300) {
       const chunk = idList.slice(i, i + 300)
       // Lọc id thuộc phạm vi (kho + loại) — KHÔNG tin id từ client
-      let q = supabase.from('Location').select('id, warehouse_id, category').in('id', chunk)
+      let q = supabase.from('Location').select('id, warehouse_id, categories').in('id', chunk)
       if (scope !== null) q = scope.length === 1 ? q.eq('warehouse_id', scope[0]) : q.in('warehouse_id', scope)
       const { data, error } = await q
       if (error) throw error
-      const allowed = ((data ?? []) as { id: string; category: string | null }[])
-        .filter(r => categoryAllowed(req, r.category))
+      const allowed = ((data ?? []) as { id: string; categories: string[] | null }[])
+        .filter(r => categoriesAllAllowed(req, r.categories))
         .map(r => r.id)
       if (!allowed.length) continue
       const { error: upErr } = await supabase.from('Location')
@@ -308,13 +313,13 @@ export async function uploadExcel(req: Request, res: Response) {
     const whByCode = new Map(whs.map(w => [lcStr(w.code).toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [lcStr(w.name).toLowerCase(), w]))
     const zones = await fetchAllRowsParallel(() => supabase.from('WarehouseZone')
-      .select('warehouse_id, code, name, category').order('id')) as { warehouse_id: string; code: string; name: string | null; category: string | null }[]
+      .select('warehouse_id, code, name, categories').order('id')) as { warehouse_id: string; code: string; name: string | null; categories: string[] | null }[]
     const zoneMap = new Map(zones.map(z => [`${z.warehouse_id}|${lcStr(z.code).toLowerCase()}`, z]))
 
     // ── PHA 1: validate TOÀN BỘ (all-or-nothing) ─────────────────────────────
     const errors: string[] = []
     type Parsed = { code: string; wh_id: string; sub_code: string; sub_name: string | null
-                    category: string | null; row: string; shelf: string; max_pallets: number; sub_type: string | null }
+                    categories: string[] | null; row: string; shelf: string; max_pallets: number; sub_type: string | null }
     const parsed: Parsed[] = []
     const seenCode = new Map<string, number>()
     const scope = scopeWhIds(req)
@@ -350,8 +355,8 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!zone) {
         errors.push(`${at} — khu "${sub}" chưa có trong Khu vực của kho "${wh.name}" — tạo khu ở Cài đặt WMS → Khu vực trước`); continue
       }
-      if (!categoryAllowed(req, zone.category)) {
-        errors.push(`${at} — khu "${sub}" thuộc loại hàng "${zone.category ?? ''}" ngoài phạm vi của bạn`); continue
+      if (!categoriesAllAllowed(req, zone.categories)) {
+        errors.push(`${at} — khu "${sub}" thuộc loại hàng "${(zone.categories ?? []).join(', ')}" ngoài phạm vi của bạn`); continue
       }
 
       const maxRaw = lcStr(r.max_pallets)
@@ -365,7 +370,7 @@ export async function uploadExcel(req: Request, res: Response) {
       seenCode.set(code.toLowerCase(), lineNo)
 
       parsed.push({
-        code, wh_id: wh.id, sub_code: sub, sub_name: zone.name ?? null, category: zone.category ?? null,
+        code, wh_id: wh.id, sub_code: sub, sub_name: zone.name ?? null, categories: zone.categories ?? null,
         row: rowRaw, shelf, max_pallets: max_pallets ?? 1, sub_type: lcStr(r.sub_type) || null,
       })
     }
@@ -386,7 +391,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const actor = req.user?.name || null
     const buildNew = (p: Parsed) => ({
       id: randomUUID(), location_code: p.code, warehouse_id: p.wh_id,
-      sub_code: p.sub_code, sub_name: p.sub_name, sub_type: p.sub_type, category: p.category,
+      sub_code: p.sub_code, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
       row: p.row, shelf: p.shelf, max_pallets: p.max_pallets,
       is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     })
@@ -397,7 +402,7 @@ export async function uploadExcel(req: Request, res: Response) {
       if (ex) {
         // Vị trí đã có → cập nhật sức chứa/kiểu + đồng bộ lại Tên khu & Loại theo ZONE.
         // KHÔNG đụng is_active/requires_stocktake/slot_no_in/slot_no_out (quản ở nơi khác).
-        updates.push({ ...ex, sub_name: p.sub_name, sub_type: p.sub_type, category: p.category,
+        updates.push({ ...ex, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
                        max_pallets: p.max_pallets, updated_at: now, updated_by: actor })
       } else inserts.push(buildNew(p))
     }
@@ -418,7 +423,7 @@ export async function uploadExcel(req: Request, res: Response) {
       for (const rec of chunk) {
         const w = winMap.get(String(rec.location_code).toLowerCase())
         if (!w) { retryIns.push(rec); continue }
-        updates.push({ ...w, sub_name: rec.sub_name, sub_type: rec.sub_type, category: rec.category,
+        updates.push({ ...w, sub_name: rec.sub_name, sub_type: rec.sub_type, categories: rec.categories,
                        max_pallets: rec.max_pallets, updated_at: now, updated_by: actor })
       }
       if (retryIns.length) {

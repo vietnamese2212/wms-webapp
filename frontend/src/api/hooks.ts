@@ -257,7 +257,8 @@ export function useDeleteWarehouse() {
 export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; category?: string; row: string; shelf?: string; max_pallets?: number }) =>
+    // Loại của vị trí KẾ THỪA từ Khu vực (không gửi category — BE tự lấy từ zone)
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -269,7 +270,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; category?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
   })
@@ -820,7 +821,7 @@ export function useReorderUnits() {
   })
 }
 
-export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; category: string | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; max_pallets?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+export type WarehouseZone = { id: string; warehouse_id: string; code: string; name: string; categories: string[] | null; sort_order: number; pick_rank?: number | null; flow_type?: string | null; max_pallets?: number | null; is_active: boolean; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 export function useWarehouseZones(warehouseId?: string) {
   return useQuery({
@@ -838,7 +839,7 @@ export function useWarehouseZones(warehouseId?: string) {
 export function useCreateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; name: string; category?: string; code?: string; max_pallets?: number | null }) =>
+    mutationFn: (body: { warehouse_id: string; name: string; categories: string[]; code?: string; max_pallets?: number | null }) =>
       apiClient.post('/wms/zones', body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -847,7 +848,7 @@ export function useCreateWarehouseZone() {
 export function useUpdateWarehouseZone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; category?: string | null; is_active?: boolean; max_pallets?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; categories?: string[]; is_active?: boolean; max_pallets?: number | null }) =>
       apiClient.put(`/wms/zones/${id}`, body).then(r => r.data.data as WarehouseZone),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse-zones'] }),
   })
@@ -2686,7 +2687,7 @@ export function useControlTower(warehouseIds: string[], categories: string[] = [
 export type SlottingLevel = 'EASY' | 'NORMAL' | 'HARD'
 export type SlottingPrinciple = 'FIFO' | 'FEFO' | 'LIFO'
 export interface SlottingZone {
-  id: string; code: string; name: string; category: string | null
+  id: string; code: string; name: string; categories: string[] | null
   pick_rank: number | null; flow_type: string | null
   capacity: number; used_slots: number; band: 'A' | 'B' | 'C' | null
 }

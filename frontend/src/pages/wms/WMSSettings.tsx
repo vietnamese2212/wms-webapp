@@ -390,7 +390,8 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
   const [code,     setCode]     = useState(zone?.code ?? '')
   const [name,     setName]     = useState(zone?.name ?? '')
-  const [category, setCategory] = useState(zone?.category ?? '')
+  // Multi loại kho (27/07): khu chứa được NHIỀU loại, BẮT BUỘC chọn ≥1
+  const [categories, setCategories] = useState<string[]>(zone?.categories ?? [])
   const [maxPallets, setMaxPallets] = useState(zone?.max_pallets != null ? String(zone.max_pallets) : '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
   const [err, setErr] = useState('')
@@ -399,21 +400,26 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const { mutate: update, isPending: updating } = useUpdateWarehouseZone()
   const isPending = creating || updating
 
+  function toggleCategory(v: string) {
+    setCategories(prev => prev.includes(v) ? prev.filter(c => c !== v) : [...prev, v])
+  }
+
   function handleSubmit() {
     setErr('')
     if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
     if (!name.trim()) { setErr('Tên khu vực là bắt buộc'); return }
+    if (categories.length === 0) { setErr('Chọn ít nhất 1 Loại kho cho khu vực'); return }
     const mpRaw = maxPallets.trim()
     if (mpRaw && (!Number.isFinite(Number(mpRaw)) || Number(mpRaw) < 0)) { setErr('Pallet tối đa phải là số ≥ 0'); return }
     const mp = mpRaw ? Math.round(Number(mpRaw)) : null
     if (isEdit) {
       update(
-        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive, max_pallets: mp },
+        { id: zone.id, name: name.trim(), categories, is_active: isActive, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined, code: code.trim() || undefined, max_pallets: mp },
+        { warehouse_id: selectedWhId, name: name.trim(), categories, code: code.trim() || undefined, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -454,20 +460,21 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </div>
           )}
 
-          {/* Loại kho */}
+          {/* Loại kho — chọn NHIỀU, bắt buộc ≥1 (khu chứa cả RM01 + PK01…) */}
           <div className="space-y-1">
-            <Label className="text-xs">Loại kho</Label>
-            <Select value={category || '__none__'} onValueChange={v => setCategory(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder="Chưa gắn loại kho" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chưa gắn loại kho</SelectItem>
-                {warehouseTypes.map(t => (
-                  <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-xs">Loại kho <span className="text-red-500">*</span> <span className="text-slate-400 font-normal">(chọn được nhiều)</span></Label>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 rounded border border-slate-200 px-2.5 py-2">
+              {warehouseTypes.map(t => (
+                <label key={t.id} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                  <input type="checkbox" className="h-4 w-4 rounded accent-blue-600"
+                    checked={categories.includes(t.value)}
+                    onChange={() => toggleCategory(t.value)} />
+                  {t.value}
+                </label>
+              ))}
+              {warehouseTypes.length === 0 && <span className="text-xs text-slate-400">Chưa có Loại kho — khai ở tab Loại kho trước</span>}
+            </div>
+            <p className="text-[10px] text-slate-400">Khu chỉ nhận hàng đúng các loại đã chọn; vị trí trong khu tự kế thừa</p>
           </div>
 
           {/* Mã khu vực */}
@@ -1048,7 +1055,7 @@ export default function WMSSettings() {
   const [zoneCat,    setZoneCat]    = useState('')
   const [zoneStatus, setZoneStatus] = useState('')
   const filteredZones = (zones as WarehouseZone[]).filter(z => {
-    if (zoneCat && (z.category ?? '') !== zoneCat) return false
+    if (zoneCat && !(z.categories ?? []).includes(zoneCat)) return false
     if (zoneStatus && (zoneStatus === 'active') !== z.is_active) return false
     const q = zoneSearch.trim().toLowerCase()
     if (q && !`${z.code} ${z.name}`.toLowerCase().includes(q)) return false
@@ -1384,7 +1391,7 @@ export default function WMSSettings() {
                           onClick={() => setDetailZone(prev => prev?.id === z.id ? null : z)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{z.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{z.name}</TableCell>
-                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{z.max_pallets != null ? z.max_pallets.toLocaleString('vi-VN') : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
@@ -1418,7 +1425,7 @@ export default function WMSSettings() {
                   <span className="font-semibold text-slate-700">{detailZone.code} — {detailZone.name}</span>
                   <button onClick={() => setDetailZone(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-                <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.category ?? '—'}</span></div>
+                <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.categories?.length ? detailZone.categories.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Pallet tối đa:</span> <span className="font-medium tabular-nums">{detailZone.max_pallets != null ? detailZone.max_pallets.toLocaleString('vi-VN') : 'Chưa khai'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailZone.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

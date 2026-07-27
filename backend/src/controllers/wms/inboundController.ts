@@ -664,15 +664,17 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể đổi vị trí')
 
     const { data: location } = await supabase
-      .from('Location').select('id, location_code, is_active, category, warehouse_id').eq('id', location_id).maybeSingle()
+      .from('Location').select('id, location_code, is_active, categories, warehouse_id').eq('id', location_id).maybeSingle()
     if (!location) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
     if ((order as any).warehouse_id && location.warehouse_id !== (order as any).warehouse_id)
       return fail(res, 400, 'WRONG_WAREHOUSE', 'Vị trí không thuộc kho của phiếu')
+    // Multi-loại (27/07): vị trí nhận hàng nếu loại phiếu ∈ mảng loại của vị trí (null = dùng chung)
     const orderCategory = (order as any).warehouse_type as string | null
-    if (location.category && orderCategory && location.category !== orderCategory)
+    const locCats = (location as { categories?: string[] | null }).categories ?? null
+    if (locCats?.length && orderCategory && !locCats.includes(orderCategory))
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
-        `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
+        `Vị trí ${location.location_code} thuộc loại "${locCats.join(', ')}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
     const changed = location_id !== (order as any).location_id
     const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
     if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
@@ -890,7 +892,7 @@ export async function checkScanQR(req: Request, res: Response) {
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
       supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      supabase.from('Location').select('id, location_code, max_pallets, is_active, category').eq('id', location_id).maybeSingle(),
+      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories').eq('id', location_id).maybeSingle(),
       isTransfer
         ? supabase.from('OutboundScanEntry').select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -936,11 +938,12 @@ export async function checkScanQR(req: Request, res: Response) {
     if (!location)      return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 
-    // Chốt loại hàng ↔ loại vị trí (vị trí category null = dùng chung mọi loại)
+    // Chốt loại hàng ↔ loại vị trí (multi-loại: loại phiếu phải ∈ mảng; null = dùng chung mọi loại)
     const orderCategory = (order as any).warehouse_type as string | null
-    if ((location as any).category && orderCategory && (location as any).category !== orderCategory) {
+    const locCats = ((location as any).categories ?? null) as string[] | null
+    if (locCats?.length && orderCategory && !locCats.includes(orderCategory)) {
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
-        `Vị trí ${location.location_code} thuộc loại "${(location as any).category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
+        `Vị trí ${location.location_code} thuộc loại "${locCats.join(', ')}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
     const stackLayerNum = Number(stack_layer)
@@ -1121,11 +1124,12 @@ export async function scanQR(req: Request, res: Response) {
     if (!location.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
 
     // Chốt loại hàng ↔ loại vị trí (defense-in-depth — FE đã lọc dropdown theo category).
-    // Vị trí chưa gán loại (category null) = dùng chung mọi loại.
+    // Multi-loại (27/07): loại phiếu phải ∈ mảng; vị trí chưa gán loại (null) = dùng chung mọi loại.
     const orderCategory = (order as any).warehouse_type as string | null
-    if (location.category && orderCategory && location.category !== orderCategory) {
+    const locCats2 = ((location as any).categories ?? null) as string[] | null
+    if (locCats2?.length && orderCategory && !locCats2.includes(orderCategory)) {
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
-        `Vị trí ${location.location_code} thuộc loại "${location.category}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
+        `Vị trí ${location.location_code} thuộc loại "${locCats2.join(', ')}" — không khớp loại hàng "${orderCategory}" của phiếu. Chọn vị trí đúng loại.`)
     }
 
     // Fire manufacturer lookup now so it runs in parallel with the location capacity check below.

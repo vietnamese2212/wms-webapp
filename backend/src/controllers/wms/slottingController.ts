@@ -45,7 +45,7 @@ const LEVELS: Level[] = ['EASY', 'NORMAL', 'HARD']
 const PRINCIPLES: Principle[] = ['FIFO', 'FEFO', 'LIFO']
 
 // ─── Kiểu dữ liệu từ RPC ─────────────────────────────────────────────────────
-interface StatsZone { id: string; code: string; name: string; category: string | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
+interface StatsZone { id: string; code: string; name: string; categories: string[] | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
 interface StatsMaterial { material_id: string; code: string; name: string | null; category: string | null; picks: number; cartons_out: number; pallets_touched: number; stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number }
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
 // slot_no_in = vị trí KHÔNG đưa hàng vào (kho tạm — không làm đích, hàng ở đó luôn kéo đi)
@@ -66,11 +66,17 @@ async function fetchStats(warehouseId: string, categories: string[] | null, days
   return { stats: data as Stats }
 }
 
-// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3) ─────────────
-// Khu có Loại → CHỈ nhận mã đúng Loại (khu SCA chỉ nhận mã loại SCA; mã chưa khai loại KHÔNG vào được).
-// Khu chưa gắn Loại → nhận mọi mã (khu đa dụng).
+// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3; multi-loại 27/07) ────
+// Khu có Loại → CHỈ nhận mã có loại ∈ MẢNG loại của khu (mã chưa khai loại KHÔNG vào được).
+// Khu chưa gắn Loại (di sản null/rỗng) → nhận mọi mã (khu đa dụng).
 function zoneAccepts(zone: StatsZone, mat: { category: string | null }): boolean {
-  return zone.category == null || zone.category === mat.category
+  if (!zone.categories?.length) return true
+  return mat.category != null && zone.categories.includes(mat.category)
+}
+// 2 khu "cùng nhóm loại" nếu giao nhau ≥1 loại (dùng để xếp band A/B/C trong nhóm khu tương đương)
+function zonesOverlap(a: string[] | null, b: string[] | null): boolean {
+  if (!a?.length || !b?.length) return (!a?.length && !b?.length)
+  return a.some(x => b.includes(x))
 }
 
 // ─── Banding khu theo hạng nhặt (chỉ dùng mức HARD) ─────────────────────────
@@ -126,9 +132,9 @@ function categoryWarnings(stats: Stats): CategoryWarning[] {
     if (!p.sub_code) continue
     const zone = zoneByCode.get(p.sub_code)
     const mat = matById.get(p.material_id)
-    if (!zone || !mat || zone.category == null) continue
-    if (zone.category !== mat.category)
-      out.push({ type: 'WRONG_CATEGORY', material_code: mat.code, material_name: mat.name, material_category: mat.category, zone_code: zone.code, zone_category: zone.category, pallets: p.pallets })
+    if (!zone || !mat || !zone.categories?.length) continue
+    if (!zoneAccepts(zone, mat))
+      out.push({ type: 'WRONG_CATEGORY', material_code: mat.code, material_name: mat.name, material_category: mat.category, zone_code: zone.code, zone_category: zone.categories.join(', '), pallets: p.pallets })
   }
   return out.sort((a, b) => b.pallets - a.pallets)
 }
@@ -161,8 +167,10 @@ export async function getSlotting(req: Request, res: Response) {
     const materials = enrichMaterials(stats)
     const hasRanked = stats.zones.some(z => z.pick_rank != null)
     const zones = stats.zones.map(z => {
-      // band hiển thị = band trong nhóm khu cùng Loại với chính khu đó
-      const ranked = eligibleRankedZones(stats.zones, { category: z.category })
+      // band hiển thị = band trong nhóm khu cùng nhóm Loại (giao ≥1 loại) với chính khu đó
+      const ranked = stats.zones
+        .filter(zz => zz.pick_rank != null && zonesOverlap(zz.categories, z.categories))
+        .sort((a, b) => (a.pick_rank! - b.pick_rank!) || a.code.localeCompare(b.code))
       const idx = ranked.findIndex(r => r.code === z.code)
       return { ...z, band: z.pick_rank != null && idx >= 0 ? bandOfIndex(idx, ranked.length) : null }
     })
@@ -410,7 +418,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const e of entries) {
       const z = zoneOfLoc(e.location_id)
       const mat = matById.get(e.material_id)
-      if (z?.category != null && mat && z.category !== mat.category) frozen.add(e.id)
+      if (z?.categories?.length && mat && !zoneAccepts(z, mat)) frozen.add(e.id)
     }
 
     const homeZonesOf = (mat: StatsMaterial) => stats!.zones
@@ -913,7 +921,7 @@ export async function updateZoneConfig(req: Request, res: Response) {
       patch.flow_type = flow_type
     }
     const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
-      .select('id, code, name, category, pick_rank, flow_type').single()
+      .select('id, code, name, categories, pick_rank, flow_type').single()
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

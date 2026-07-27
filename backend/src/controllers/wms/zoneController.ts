@@ -1,10 +1,36 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 function fail(res: Response, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { message } })
+}
+
+const ZONE_COLS = 'id, warehouse_id, code, name, categories, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by'
+
+// Loại kho của khu = MẢNG, BẮT BUỘC ≥1 (user chốt 27/07: "cho chọn multi, KHÔNG cho để trống").
+// Trả về mảng đã trim/dedupe, hoặc lỗi chuỗi. Validate tồn tại trong danh mục Loại kho ở caller.
+function parseCategories(v: unknown): { ok: true; value: string[] } | { ok: false; msg: string } {
+  const raw = Array.isArray(v) ? v : []
+  const out = [...new Set(raw.map(x => String(x ?? '').trim()).filter(Boolean))]
+  if (out.length === 0) return { ok: false, msg: 'Khu vực phải chọn ít nhất 1 Loại kho' }
+  return { ok: true, value: out }
+}
+
+async function unknownCategories(cats: string[]): Promise<string[]> {
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+  const known = new Set(((data ?? []) as { value: string }[]).map(r => String(r.value)))
+  return cats.filter(c => !known.has(c))
+}
+
+// Khu là CHUẨN loại của vị trí → đổi loại khu phải cascade xuống mọi vị trí (kho, sub_code) của khu.
+// (Trước 27/07 sửa loại khu KHÔNG cascade — vị trí giữ loại cũ âm thầm.)
+async function cascadeCategoriesToLocations(warehouseId: string, zoneCode: string, categories: string[], actor: string | null) {
+  const { error } = await supabase.from('Location')
+    .update({ categories, updated_at: new Date().toISOString(), updated_by: actor })
+    .eq('warehouse_id', warehouseId).eq('sub_code', zoneCode)
+  if (error) console.error('[zone cascade categories]', error.message)
 }
 
 export async function listZones(req: Request, res: Response) {
@@ -12,18 +38,18 @@ export async function listZones(req: Request, res: Response) {
 
   let query = supabase
     .from('WarehouseZone')
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
+    .select(ZONE_COLS)
     .order('sort_order')
     .order('created_at')
 
-  // Cắt theo scope Kho + Loại kho của user (null-inclusive: khu vực chưa gắn loại vẫn hiện)
+  // Cắt theo scope Kho + Loại kho của user (giao ≥1 loại là thấy; null-inclusive cho di sản)
   if (req.user?.warehouse_scope === 'ASSIGNED') {
     const allowedWh: string[] = req.user.warehouse_ids ?? []
     if (warehouse_id && !allowedWh.includes(warehouse_id)) return res.json({ success: true, data: [] })
     if (!warehouse_id && allowedWh.length > 0) query = query.in('warehouse_id', allowedWh)
   }
   const scopeCats = scopeCategoriesOf(req)
-  if (scopeCats) query = query.or(`category.is.null,category.in.("${scopeCats.join('","')}")`)
+  if (scopeCats) query = query.or(categoriesOrScopeFilter('categories', scopeCats))
 
   if (warehouse_id) query = query.eq('warehouse_id', warehouse_id)
 
@@ -41,17 +67,21 @@ function parseMaxPallets(v: unknown): { ok: true; value: number | null } | { ok:
 }
 
 export async function createZone(req: Request, res: Response) {
-  const { warehouse_id, name, category, code, max_pallets } = req.body as { warehouse_id?: string; name?: string; category?: string; code?: string; max_pallets?: number | string | null }
+  const { warehouse_id, name, categories, code, max_pallets } = req.body as { warehouse_id?: string; name?: string; categories?: unknown; code?: string; max_pallets?: number | string | null }
   if (!warehouse_id || !name?.trim()) return fail(res, 'warehouse_id và name là bắt buộc')
   const mp = parseMaxPallets(max_pallets)
   if (!mp.ok) return fail(res, 'Pallet tối đa phải là số ≥ 0')
+  const pc = parseCategories(categories)
+  if (!pc.ok) return fail(res, pc.msg)
+  const unknown = await unknownCategories(pc.value)
+  if (unknown.length) return fail(res, `Loại kho không có trong danh mục: ${unknown.join(', ')}`)
 
   const reqUser = req.user
   if (reqUser?.warehouse_scope === 'ASSIGNED') {
     const allowed: string[] = reqUser.warehouse_ids ?? []
     if (!allowed.includes(warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
   }
-  if (!categoryAllowed(req, category?.trim() || null)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+  if (!categoriesAllAllowed(req, pc.value)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
   const t = new Date().toISOString()
 
@@ -91,14 +121,14 @@ export async function createZone(req: Request, res: Response) {
       warehouse_id,
       code:         finalCode,
       name:         name.trim(),
-      category:     category?.trim() || null,
+      categories:   pc.value,
       sort_order:   nextSort,
       max_pallets:  mp.value,
       created_by:   actorName,
       updated_by:   actorName,
       updated_at:   t,
     })
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
+    .select(ZONE_COLS)
     .single()
 
   if (error) {
@@ -112,25 +142,31 @@ export async function updateZone(req: Request, res: Response) {
   const { id } = req.params
   // pick_rank/flow_type KHÔNG sửa ở đây — cấu hình slotting đi route riêng
   // PATCH /wms/slotting/zone-config/:id (quyền slotting.configure), tab Cài đặt trang Tối ưu vị trí
-  const { name, category, is_active, max_pallets } = req.body as { name?: string; category?: string | null; is_active?: boolean; max_pallets?: number | string | null }
+  const { name, categories, is_active, max_pallets } = req.body as { name?: string; categories?: unknown; is_active?: boolean; max_pallets?: number | string | null }
 
   const actor = req.user
-  const scopeCats = scopeCategoriesOf(req)
-  if (actor?.warehouse_scope === 'ASSIGNED' || scopeCats) {
-    const { data: target } = await supabase.from('WarehouseZone').select('warehouse_id, category').eq('id', id).single()
-    if (!target) return fail(res, 'Không tìm thấy khu vực', 404)
-    if (actor?.warehouse_scope === 'ASSIGNED') {
-      const allowed: string[] = actor.warehouse_ids ?? []
-      if (!allowed.includes((target as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
-    }
-    // Khu vực đang gắn loại ngoài scope → không được sửa; đổi sang loại ngoài scope cũng chặn
-    if (!categoryAllowed(req, (target as any).category)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+  const { data: targetRaw } = await supabase.from('WarehouseZone').select('warehouse_id, code, categories').eq('id', id).single()
+  if (!targetRaw) return fail(res, 'Không tìm thấy khu vực', 404)
+  const target = targetRaw as { warehouse_id: string; code: string; categories: string[] | null }
+  if (actor?.warehouse_scope === 'ASSIGNED') {
+    const allowed: string[] = actor.warehouse_ids ?? []
+    if (!allowed.includes(target.warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
   }
-  if (category !== undefined && !categoryAllowed(req, category?.trim() || null)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+  // Khu đang gắn loại ngoài scope → không được sửa (thao tác chạm cả loại không được cấp)
+  if (!categoriesAllAllowed(req, target.categories)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor?.name || null }
   if (name !== undefined) updates.name = name.trim()
-  if (category !== undefined) updates.category = category?.trim() || null
+  let newCategories: string[] | null = null
+  if (categories !== undefined) {
+    const pc = parseCategories(categories)
+    if (!pc.ok) return fail(res, pc.msg)
+    const unknown = await unknownCategories(pc.value)
+    if (unknown.length) return fail(res, `Loại kho không có trong danh mục: ${unknown.join(', ')}`)
+    if (!categoriesAllAllowed(req, pc.value)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    updates.categories = pc.value
+    newCategories = pc.value
+  }
   if (is_active !== undefined) updates.is_active = is_active
   if (max_pallets !== undefined) {
     const mp = parseMaxPallets(max_pallets)
@@ -142,10 +178,15 @@ export async function updateZone(req: Request, res: Response) {
     .from('WarehouseZone')
     .update(updates)
     .eq('id', id)
-    .select('id, warehouse_id, code, name, category, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by')
+    .select(ZONE_COLS)
     .single()
 
   if (error) return fail(res, error.message, 500)
+
+  // Đổi loại khu → cascade xuống vị trí của khu (khu là chuẩn)
+  if (newCategories && JSON.stringify(newCategories) !== JSON.stringify(target.categories ?? [])) {
+    await cascadeCategoriesToLocations(target.warehouse_id, target.code, newCategories, actor?.name || null)
+  }
   res.json({ success: true, data })
 }
 
@@ -154,7 +195,7 @@ export async function deleteZone(req: Request, res: Response) {
 
   const { data: zone } = await supabase
     .from('WarehouseZone')
-    .select('code, warehouse_id, category')
+    .select('code, warehouse_id, categories')
     .eq('id', id)
     .single()
 
@@ -164,7 +205,7 @@ export async function deleteZone(req: Request, res: Response) {
       const allowed: string[] = deleteActor.warehouse_ids ?? []
       if (!allowed.includes((zone as any).warehouse_id)) return fail(res, 'Không có quyền thao tác trên kho này', 403)
     }
-    if (!categoryAllowed(req, (zone as any).category)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
+    if (!categoriesAllAllowed(req, (zone as any).categories)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { count } = await supabase
       .from('Location')

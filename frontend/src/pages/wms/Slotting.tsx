@@ -242,7 +242,7 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
       <div className="border-b bg-slate-50 px-3 py-1 shrink-0 flex items-center gap-1.5 flex-nowrap overflow-x-auto">
         <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu:</span>
         {(data?.zones ?? []).map(z => (
-          <span key={z.id} title={`${z.name} — loại ${z.category ?? 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
+          <span key={z.id} title={`${z.name} — loại ${z.categories?.length ? z.categories.join(', ') : 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
             className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
             {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}
           </span>
@@ -589,7 +589,7 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
               <TableRow key={z.id}>
                 <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{z.code}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{z.name}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">— đa dụng</span>}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">— đa dụng</span>}</TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <Input type="number" min={1} max={999} disabled={isPending}
                     className="h-7 w-20 text-xs !min-h-0"
@@ -630,7 +630,7 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
-  type LocRow = { id: string; location_code: string; category?: string | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
+  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
   const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
 
   // Nạp trạng thái hiện tại từ TOÀN BỘ vị trí của kho (không theo filter Loại kho) —
@@ -648,8 +648,8 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   const optionsFor = (selectedIds: string[]) => {
     const sel = new Set(selectedIds)
     return locs
-      .filter(l => categories.length === 0 || !l.category || categories.includes(l.category) || sel.has(l.id))
-      .map(l => ({ value: l.id, label: l.category ? `${l.location_code} · ${l.category}` : l.location_code }))
+      .filter(l => categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c)) || sel.has(l.id))
+      .map(l => ({ value: l.id, label: l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code }))
   }
 
   function handleSave() {

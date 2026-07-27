@@ -15,7 +15,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, useUndoPalletOp, useMaterials, useWarehouses, useLocationsReal, type PalletOpRow,
+  usePalletOps, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, type PalletOpRow, type MaterialLite,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { materialCodeOf } from '@/utils/qr'
@@ -140,8 +140,14 @@ export default function PalletOps() {
     { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: hFrom, to: hTo, onChange: (f, t) => { setHFrom(f); setHTo(t) } },
   ]
   // In tem từ Lịch sử (tách rồi chưa in được ngay → vào đây in)
-  const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
-  const matByCode = useMemo(() => { const m = new Map<string, Material>(); for (const x of allMats as Material[]) m.set(x.material_code, x); return m }, [allMats])
+  // Chỉ tra ĐÚNG các mã xuất hiện trong lịch sử đang xem (trước đây nạp cả danh mục mã hàng
+  // về trình duyệt chỉ để lấy tên + hệ số thùng/hộp cho vài chục dòng).
+  const histCodes = useMemo(() => [...new Set(
+    opsRaw.flatMap(o => [...(o.target_codes ?? []), ...(o.source_codes ?? [])].map(c => materialCodeOf(c)))
+      .filter((c): c is string => !!c)
+  )], [opsRaw])
+  const { data: allMats = [] } = useMaterialsByCodes(histCodes, tab === 'history')
+  const matByCode = useMemo(() => { const m = new Map<string, MaterialLite>(); for (const x of allMats) m.set(x.material_code, x); return m }, [allMats])
   // Lọc thêm theo Loại kho (client-side, suy từ mã hàng của pallet)
   const ops = useMemo(() => {
     if (!opCat) return opsRaw

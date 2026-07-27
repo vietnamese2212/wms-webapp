@@ -26,7 +26,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import { getDecimalSep, sanitizeDecimalInput, parseDecimalInput, formatDecimalForInput } from '@/utils/decimalSep'
 import {
-  useMaterials, useWarehouses, useTransportCompanies,
+  useMaterialsFull, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
   useSystemSettings, useUnits,
 } from '@/api/hooks'
@@ -180,7 +180,7 @@ export default function Materials() {
   const [bulkPack, setBulkPack] = useState({ l: '', w: '', h: '', layers: '', onTop: '' })   // onTop: ''=giữ nguyên · '1' · '0'
 
   // Data
-  const { data: raw = [], isLoading }    = useMaterials(undefined)
+  const { data: raw = [], isLoading }    = useMaterialsFull(undefined)
   const { data: warehouseTypes = [] }    = useScopedWhTypes()
   const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (HSD/Pallet-EA bắt buộc, màu badge)
   const { data: warehousesRaw = [] }     = useWarehouses(true)

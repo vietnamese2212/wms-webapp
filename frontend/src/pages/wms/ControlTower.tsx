@@ -317,7 +317,11 @@ export default function ControlTower() {
   const setF    = useWmsFilterStore(s => s.setControlTower)
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: whTypes = [] } = useScopedWhTypes()
-  const { data: allMaterials = [] } = useMaterials()   // danh mục mã (cache 5') — options filter Mã hàng
+  // Filter Mã hàng: TÌM TRÊN SERVER (50 dòng/lượt) — trước đây mở dashboard là kéo cả danh mục
+  // mã hàng (~2,5MB) chỉ để dựng options; màn TV bật cả ngày thì tải lại mỗi 5 phút.
+  const [matTerm, setMatTerm] = useState('')
+  const { data: allMaterials = [], isFetching: matFetching } =
+    useMaterials({ search: matTerm || undefined, limit: 50 }, !!matTerm)
   const { data, isLoading, isError, error } = useControlTower(filters.warehouse_ids, filters.categories, filters.material_codes)
 
   const [now, setNow] = useState(() => new Date())
@@ -352,6 +356,7 @@ export default function ControlTower() {
       onChange: v => setF({ categories: v }) },
     // Soi đích danh mã (kể cả mã ngoài top 30) — chỉ ảnh hưởng 2 khối hàng-theo-mã
     { key: 'material', label: 'Mã hàng', type: 'multi', searchable: true,
+      serverSearch: true, onSearchChange: setMatTerm, loading: matFetching,
       options: allMaterials.map(m => ({ value: m.material_code, label: `${m.material_code} — ${m.short_name ?? ''}` })),
       selected: filters.material_codes,
       onChange: v => setF({ material_codes: v }) },

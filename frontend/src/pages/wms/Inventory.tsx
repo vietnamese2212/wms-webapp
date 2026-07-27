@@ -427,7 +427,8 @@ function MaterialPanel({ ids, category, onClose }: {
   const [error, setError]       = useState('')
   const [confirming, setConfirming] = useState(false)
   const { mutate, isPending }   = useBulkTransferMaterial()
-  const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined })
+  // Tìm trên server, 50 mã đầu — trước đây bỏ trống ô tìm là kéo cả danh mục mã hàng về máy
+  const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined, limit: 50 })
 
   const selectedMat = useMemo(() =>
     (materials as any[]).find((m: any) => m.id === matId), [materials, matId]

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -26,7 +27,9 @@ export async function listVehicles(req: Request, res: Response) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { ncc_id, is_active, unassigned, pool_branches } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned, pool_branches, search, limit } = req.query as Record<string, string>
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
 
     // Gom CHI NHÁNH: 1 NCC/ĐVVT có thể có nhiều mã (cùng tên, khác mã) → lấy xe của TẤT CẢ
     // công ty cùng (type, tên chuẩn hoá) để booking/đăng ký không bị thiếu xe. (Resolve trước
@@ -52,11 +55,19 @@ export async function listVehicles(req: Request, res: Response) {
       else if (branchIds)          q = q.in('ncc_id', branchIds)
       else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
       if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
+      if (search)                  q = q.ilike('license_plate', `%${safeSearch(search)}%`)
       return q
     }
     let vehicles: Record<string, unknown>[]
     try {
-      vehicles = await fetchAllRowsParallel(buildQ) as Record<string, unknown>[]
+      // limit=N (ô gõ biển số): 1 round-trip N dòng — đội xe nghìn chiếc không dội hết về trình duyệt
+      if (cap > 0) {
+        const { data, error } = await buildQ().limit(cap)
+        if (error) throw error
+        vehicles = (data ?? []) as unknown as Record<string, unknown>[]
+      } else {
+        vehicles = await fetchAllRowsParallel(buildQ) as Record<string, unknown>[]
+      }
     } catch (e) {
       return fail(res, (e as Error).message)
     }

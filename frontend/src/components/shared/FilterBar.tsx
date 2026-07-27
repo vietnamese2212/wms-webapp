@@ -13,7 +13,9 @@ export interface FBOpt { value: string; label: string }
 
 // pinned: chip LUÔN hiện trên bar kể cả khi trống (không rơi vào menu "+ Thêm lọc" khi xóa giá trị)
 export type FilterDef = (
-  | { key: string; label: string; type: 'multi';     options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean }
+  // serverSearch: danh mục LỚN (mã hàng…) — `options` do server trả theo từ khóa, KHÔNG lọc lại
+  // ở client và KHÔNG có dòng "Tất cả" (chọn tất cả của 50 dòng đang thấy là hiểu nhầm tai hại).
+  | { key: string; label: string; type: 'multi';     options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean; serverSearch?: boolean; onSearchChange?: (term: string) => void; loading?: boolean }
   | { key: string; label: string; type: 'single';    options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string }
   | { key: string; label: string; type: 'date';      value: string; onChange: (v: string) => void }
   | { key: string; label: string; type: 'daterange'; from: string; to: string; onChange: (from: string, to: string) => void }
@@ -379,7 +381,15 @@ function SingleList({ def, onClose, fullWidth = false }: { def: Extract<FilterDe
 function MultiList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef, { type: 'multi' }>; onClose: () => void; fullWidth?: boolean }) {
   const [search, setSearch] = useState('')
   const searchable = def.searchable ?? true
-  const visible = searchable && search
+  const server = def.serverSearch ?? false
+  // Danh mục lớn: báo từ khóa lên cha sau 250ms để cha gọi API (không bắn mỗi phím 1 request)
+  const onSearchChange = def.onSearchChange
+  useEffect(() => {
+    if (!server || !onSearchChange) return
+    const t = setTimeout(() => onSearchChange(search), 250)
+    return () => clearTimeout(t)
+  }, [search, server, onSearchChange])
+  const visible = searchable && search && !server
     ? def.options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
     : def.options
   const allSelected  = visible.length > 0 && visible.every(o => def.selected.includes(o.value))
@@ -407,12 +417,16 @@ function MultiList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef
         </div>
       )}
       <div className="overflow-y-auto flex-1">
-        <label onClick={toggleAll} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
-          <Cbx checked={allSelected} indeterminate={someSelected} />
-          <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>Tất cả</span>
-        </label>
-        {visible.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+        {!server && (
+          <label onClick={toggleAll} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 ${row}`}>
+            <Cbx checked={allSelected} indeterminate={someSelected} />
+            <span className={`text-slate-500 font-medium ${fullWidth ? 'text-sm' : 'text-[11px]'}`}>Tất cả</span>
+          </label>
+        )}
+        {def.loading ? (
+          <div className="px-3 py-2 text-xs text-slate-400 text-center">Đang tìm…</div>
+        ) : visible.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-slate-400 text-center">{server && !search ? 'Gõ để tìm…' : 'Không tìm thấy'}</div>
         ) : visible.map(o => (
           <label key={o.value} onClick={() => toggle(o.value)} className={`flex items-center gap-2 px-3 hover:bg-slate-50 cursor-pointer ${row}`}>
             <Cbx checked={def.selected.includes(o.value)} />

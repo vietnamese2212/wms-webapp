@@ -19,13 +19,14 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
-  useWarehouses, useMaterials, useLocationsReal, useImportShifts,
+  useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useImportShifts,
   useEmployeeRecords, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
 import { usePrefetchInboundOrders } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -362,11 +363,13 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
   }, [allLocs, subType, selectedZone, materialId])
 
-  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập
-  const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined }, !!subType)
-  const { data: allMaterialsRaw = [] } = useMaterials(undefined, sourceType === 'NCC')
+  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập.
+  // Tìm TRÊN SERVER + 50 dòng: loại kho nhiều nghìn mã thì không dội hết về trình duyệt.
+  // `pickedMat` giữ mã đã chọn để nó không "biến mất" khi từ khóa đổi (server trả danh sách khác).
+  const [matTerm, setMatTerm] = useState('')
+  const [pickedMat, setPickedMat] = useState<MatItem | null>(null)
+  const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined, search: matTerm || undefined, limit: 50 }, !!subType)
   const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
-  const allMaterials = useMemo(() => allMaterialsRaw.filter(m => !m.is_non_stock), [allMaterialsRaw])
 
   const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
   type EmpItem = { id: string; name: string; employee_code: string }
@@ -387,15 +390,32 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
   const [editRows, setEditRows] = useState<EditRow[]>([])
 
-  // NCC helpers
-  const nccMatByCode = useMemo(() =>
-    new Map((allMaterials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
-    [allMaterials]
+  // NCC helpers — KHÔNG nạp cả danh mục mã hàng nữa (2.740 mã ≈ 2,5MB, chục nghìn mã về sau):
+  //  (a) dropdown chọn mã của DÒNG đang mở = tìm trên server, tối đa 50 dòng;
+  //  (b) map code→mã hàng chỉ tra ĐÚNG những mã đang có trên form (dán Excel / gõ tay / nạp từ KH).
+  const nccCodesOnForm = useMemo(() => [
+    ...nccRows.map(r => r.material_code),
+    ...editRows.map(r => r.materialCode),
+  ].map(c => (c ?? '').trim().toUpperCase()).filter(Boolean), [nccRows, editRows])
+  const { data: nccCodeMats = [] } = useMaterialsByCodes(nccCodesOnForm, sourceType === 'NCC')
+
+  const nccDropTerm = useDebouncedValue(
+    nccDropdownIdx !== null ? (nccRows[nccDropdownIdx]?.material_code ?? '') : '', 250)
+  const { data: nccDropMats = [] } = useMaterials(
+    { category: subType || undefined, search: nccDropTerm || undefined, limit: 50 },
+    sourceType === 'NCC' && nccDropdownIdx !== null,
   )
 
+  const nccMatByCode = useMemo(() =>
+    new Map([...nccCodeMats, ...nccDropMats].filter(m => !m.is_non_stock)
+      .map(m => [String(m.material_code).trim().toUpperCase(), m] as const)),
+    [nccCodeMats, nccDropMats]
+  )
+
+  // Server đã lọc theo từ khóa + loại kho; chỉ còn bỏ mã phi hàng hóa
   const filteredNccMats = useMemo(() =>
-    (allMaterials as any[]).filter(m => !subType || m.category === subType),
-    [allMaterials, subType]
+    nccDropMats.filter(m => !m.is_non_stock && (!subType || m.category === subType)),
+    [nccDropMats, subType]
   )
 
   const nccDuplicateCodes = useMemo(() => {
@@ -450,21 +470,34 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     setNccDropdownIdx(null)
   }, [])
 
+  // Danh sách gợi ý đã do SERVER lọc theo từ khóa của dòng đang mở → không lọc lại ở client
   const getNccDropdownMatches = useCallback((code: string) => {
-    const list = filteredNccMats
-    let filtered: any[]
-    if (!code) {
-      filtered = list.slice(0, 12)
-    } else {
-      const q = code.toUpperCase()
-      filtered = list.filter(m =>
-        String(m.material_code).toUpperCase().includes(q) ||
-        String(m.short_name ?? '').toUpperCase().includes(q)
-      ).slice(0, 10)
-    }
+    const filtered = filteredNccMats.slice(0, code ? 10 : 12)
     if (planMatIds.size === 0) return filtered
     return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
   }, [filteredNccMats, planMatIds])
+
+  // Mã vừa dán/gõ được tra BẤT ĐỒNG BỘ → có kết quả thì điền tên + ĐVT + hệ số vào dòng.
+  // (Trước đây map có sẵn vì cả danh mục nằm trong trình duyệt.)
+  useEffect(() => {
+    if (sourceType !== 'NCC' || nccMatByCode.size === 0) return
+    setNccRows(prev => {
+      let changed = false
+      const next = prev.map(r => {
+        if (!r.material_code || (r.material_id && r.mat_units)) return r
+        const found = nccMatByCode.get(r.material_code.trim().toUpperCase())
+        const valid = found && (!subType || found.category === subType) ? found : null
+        if (!valid) return r
+        changed = true
+        return {
+          ...r, material_id: valid.id, mat_name: valid.short_name ?? '',
+          mat_unit: unitCodeOf(valid), unit_input: r.unit_input || unitCodeOf(valid),
+          mat_units: matUnitsOf(valid),
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [nccMatByCode, subType, sourceType])
 
   // Paste cột SL dự kiến từ Excel: điền lần lượt xuống các dòng bắt đầu từ dòng đang dán
   // (mirror handleNccMatCodePaste — dán cột mã trước, dán cột SL sau)
@@ -506,7 +539,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       else merged.set(m.material_id, { line: m, qty })
     }
     setNccRows([...merged.values()].map(({ line: m, qty }) => {
-      const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
+      const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase()) ?? m.material
       const unit = unitCodeOf(fullMat) || unitCodeOf(m.material)
       return {
         material_code: m.material?.material_code ?? '',
@@ -613,9 +646,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   }
 
   const selectedMat   = (materials as MatItem[]).find(m => m.id === materialId)
+    ?? (pickedMat?.id === materialId ? pickedMat : undefined)
   // Nhập SX cho phép cả mã no-QR (POSM/Loscam, nhập tồn đầu). No-QR hiệu lực = mã no_qr_tracking HOẶC kho QTY
   // → backend tự bỏ vị trí + nhập số lượng thủ công ở trang chi tiết, nên form không bắt buộc chọn Vị trí.
-  const factoryNoQr   = ((materials as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
+  const factoryNoQr   = (([...materials, ...(pickedMat ? [pickedMat] : [])] as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
     || isQtyLike((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode)
 
   function handleFactorySubmit() {
@@ -711,8 +745,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Material <span className="text-red-500">*</span></Label>
                 <SingleSelect
                   value={materialId}
-                  onChange={v => { setMaterialId(v); setLocationId('') }}
+                  onChange={v => {
+                    setMaterialId(v)
+                    setLocationId('')
+                    setPickedMat((materials as MatItem[]).find(m => m.id === v) ?? null)
+                  }}
                   disabled={!subType}
+                  serverSearch
+                  onSearchChange={setMatTerm}
+                  selectedLabel={selectedMat ? `${selectedMat.material_code} ${selectedMat.short_name ?? ''}` : undefined}
                   searchPlaceholder={`Tìm hàng ${subType || ''}…`}
                   triggerClassName="h-8 mt-0.5"
                   placeholder={!subType ? 'Chọn loại kho trước' : 'Chọn mã hàng'}

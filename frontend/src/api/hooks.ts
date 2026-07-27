@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query'
 import {
   mockInventory, mockTransactions, mockVehicles,
   mockEmployees,
@@ -134,11 +134,87 @@ export function useManufacturers() {
   })
 }
 
-export function useMaterials(params?: { search?: string; manufacturer_id?: string; category?: string }, enabled = true) {
+/**
+ * Danh mục mã hàng — MẶC ĐỊNH bản GỌN (`view=lite`): đủ cột cho dropdown/tra cứu/tính số lượng,
+ * bỏ cột chỉ trang Danh mục dùng (dims, khối lượng, ảnh, ghi chú, old_code, audit, NSX).
+ * Đo 27/07: 2.740 mã = 2.566KB (full) → xem `MaterialLite` bên dưới. Trang Danh mục Mã hàng
+ * gọi `useMaterialsFull()` để có đủ cột cho form Sửa.
+ * `limit` = ô gõ tìm mã (typeahead) — chỉ lấy N dòng đầu, KHÔNG kéo cả danh mục.
+ */
+export type MaterialLite = Pick<import('@/types').Material,
+  'id' | 'material_code' | 'material_description' | 'short_name' | 'product_type' | 'category'
+  | 'is_active' | 'cartons_per_pallet' | 'pallet_per_ea' | 'units_per_carton' | 'base_unit'
+  | 'entry_unit' | 'shelf_life_days' | 'no_qr_tracking' | 'is_non_stock' | 'is_pallet_carrier'
+  | 'batch_prefix' | 'warehouse_pallet_overrides' | 'supplier_shelf_life_overrides'>
+
+type MaterialListParams = { search?: string; manufacturer_id?: string; category?: string; limit?: number }
+
+export function useMaterials(params?: MaterialListParams, enabled = true) {
   return useQuery({
-    queryKey: ['materials', params],
+    queryKey: ['materials', 'lite', params],
     enabled,
-    // Danh mục mã hàng đổi ít → cache 5' để form Thêm/Sửa (dùng full list) mở lại tức thì, không tải lại ~1800 dòng mỗi lần.
+    // Danh mục mã hàng đổi ít → cache 5' để form Thêm/Sửa mở lại tức thì, không tải lại mỗi lần.
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials', { params: { ...params, view: 'lite' } })
+      return data.data as MaterialLite[]
+    },
+  })
+}
+
+/**
+ * Tra mã hàng theo DANH SÁCH MÃ đang có trên màn (dán Excel / gõ tay) — thay cho việc nạp cả
+ * danh mục để dựng map code→mã. Chunk 300 mã/lượt đúng trần URL của PostgREST.
+ */
+export function useMaterialsByCodes(codes: string[], enabled = true) {
+  const key = [...new Set(codes.map(c => c.trim().toUpperCase()).filter(Boolean))].sort()
+  return useQuery({
+    queryKey: ['materials', 'by-codes', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const out: MaterialLite[] = []
+      for (let i = 0; i < key.length; i += 300) {
+        const { data } = await apiClient.get('/masterdata/materials', {
+          params: { codes: key.slice(i, i + 300).join(','), view: 'lite' },
+        })
+        out.push(...(data.data as MaterialLite[]))
+      }
+      return out
+    },
+  })
+}
+
+/**
+ * Tra mã hàng theo mã, gọi TRỰC TIẾP trong handler (dán Excel): phải có kết quả TRƯỚC khi
+ * điền dòng vì số lượng được quy đổi theo hệ số của mã (`qtyFromEntryBase`) — vá sau là ra số sai.
+ * Dùng chung cache với `useMaterialsByCodes`.
+ */
+export async function fetchMaterialsByCodes(qc: QueryClient, codes: string[]): Promise<Map<string, MaterialLite>> {
+  const key = [...new Set(codes.map(c => c.trim().toUpperCase()).filter(Boolean))].sort()
+  if (key.length === 0) return new Map()
+  const rows = await qc.fetchQuery({
+    queryKey: ['materials', 'by-codes', key],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const out: MaterialLite[] = []
+      for (let i = 0; i < key.length; i += 300) {
+        const { data } = await apiClient.get('/masterdata/materials', {
+          params: { codes: key.slice(i, i + 300).join(','), view: 'lite' },
+        })
+        out.push(...(data.data as MaterialLite[]))
+      }
+      return out
+    },
+  })
+  return new Map(rows.map(m => [String(m.material_code).trim().toUpperCase(), m]))
+}
+
+/** Bản ĐỦ CỘT — chỉ trang Danh mục Mã hàng (list + form Sửa) cần. */
+export function useMaterialsFull(params?: MaterialListParams, enabled = true) {
+  return useQuery({
+    queryKey: ['materials', 'full', params],
+    enabled,
     staleTime: 5 * 60_000,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/materials', { params })

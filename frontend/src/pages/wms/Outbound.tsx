@@ -1,4 +1,5 @@
-import { useRef, useState, useMemo, useEffect } from 'react'
+import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -16,7 +17,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -312,10 +313,8 @@ export default function Outbound() {
   })
   // Prefetch chi tiết chuyến ĐANG CHẠY khi có mạng → offline quét được cả chuyến chưa bấm vào
   usePrefetchGdos(gdos)
-  // Prefetch danh mục mã hàng (nền) cho user có quyền tạo/sửa → mở form Thêm/Sửa lần đầu đã sẵn.
-  // CHỈ chạy SAU khi danh sách chuyến tải xong (!isLoading) để 1.37MB mã hàng KHÔNG cạnh tranh,
-  // giữ danh sách hiện nhanh. Chung cache key với useMaterials() trong form; user chỉ-xem không tải.
-  useMaterials(undefined, !isLoading && (can(perms, 'outbound', 'create') || can(perms, 'outbound', 'edit')))
+  // (BỎ prefetch cả danh mục mã hàng — ô chọn mã trong form nay TÌM TRÊN SERVER theo từ khóa,
+  //  không cần danh mục nằm sẵn trong trình duyệt. Trước đây mở trang Xuất kho là tải ~2,5MB.)
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
   const { mutate: uploadVl06o, isPending: vl06oUploading } = useUploadVl06o()
   const { mutate: uploadKhvc,  isPending: khvcUploading }  = useUploadKhvc()
@@ -1332,7 +1331,8 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
 
 // ─── Material picker ──────────────────────────────────────────
 
-type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null } & MatUnits & {
+// `unit` để optional: Material KHÔNG có cột này trong DB (ĐVT lấy qua unitCodeOf/base_unit)
+type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit?: string | null } & MatUnits & {
   // Định mức pallet (+ ngoại lệ theo kho) — tính Nhặt lẻ TỰ ĐỘNG từ Tổng (pallet-remainder)
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
@@ -1350,10 +1350,13 @@ function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, 
   const [open, setOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
-  const { data: mats = [] } = useMaterials({
-    search: !disabled && !disabledNoType && search.length > 1 ? search : undefined,
-    category: filterCategory || undefined,
-  })
+  // Chỉ gọi API KHI đã gõ ≥2 ký tự, và chỉ lấy 50 dòng đầu — trước đây gõ chưa đủ ký tự
+  // vẫn kéo TOÀN BỘ danh mục mã hàng về trình duyệt (2.740 mã hôm nay, chục nghìn về sau).
+  const matTerm = !disabled && !disabledNoType && search.length > 1 ? search : ''
+  const { data: mats = [] } = useMaterials(
+    { search: matTerm, category: filterCategory || undefined, limit: 50 },
+    !!matTerm,
+  )
 
   useEffect(() => { setSearch(value) }, [value])
 
@@ -1648,9 +1651,14 @@ function GDOFormBody({
   const { data: whTypesInForm = [] } = useScopedWhTypes()
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
-  const { data: allMatsData = [] } = useMaterials()
-  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng
-  const allMats = allMatsData.filter(m => !m.is_non_stock) as ({ id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits)[]
+  // Dán Excel: tra ĐÚNG các mã vừa dán (trước đây nạp cả danh mục mã hàng về trình duyệt chỉ để
+  // dò 1 mã). Mã PHI HÀNG HÓA (chiết khấu/dịch vụ) không được nhận vào dòng hàng.
+  const qc = useQueryClient()
+  const resolveMats = useCallback(async (codes: string[]) => {
+    const map = await fetchMaterialsByCodes(qc, codes)
+    for (const [k, m] of map) if (m.is_non_stock) map.delete(k)
+    return map
+  }, [qc])
 
   // Loại xe = DANH MỤC độc lập (user chốt 04/07) — kho chưa có khung giờ vẫn tạo được đơn;
   // loại có khung giờ tại kho được ưu tiên lên đầu.
@@ -1698,29 +1706,26 @@ function GDOFormBody({
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
   }, [items])
 
-  function lookupMat(code: string) {
-    const mat = allMats.find(m => m.material_code === code.trim())
-    return mat ?? null
-  }
-
-  // Paste tab-separated Excel row(s) into material code cell — fills all columns
-  function handlePasteRowAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+  // Paste tab-separated Excel row(s) into material code cell — fills all columns.
+  // `async` vì phải TRA MÃ TRÊN SERVER trước khi điền: số lượng được quy đổi theo hệ số
+  // thùng/hộp của mã (`qtyFromEntryBase`) — điền trước rồi vá sau sẽ ra SỐ SAI.
+  // preventDefault phải gọi TRƯỚC await (sau await là trình duyệt đã dán xong).
+  async function handlePasteRowAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
     const text = e.clipboardData.getData('text')
+    e.preventDefault()
     if (!text.includes('\t') && !text.includes('\n')) {
       // Single code paste — auto-lookup if exact match
-      const mat = lookupMat(text.trim())
-      if (mat) {
-        e.preventDefault()
-        setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
-          ...r, material_code: text.trim(),
-          mat_name: mat.short_name ?? '', unit: unitCodeOf(mat), category: mat.category ?? null,
-          mat_units: mat,
-        }))
-      }
+      const code = text.trim()
+      const mat = (await resolveMats([code])).get(code.toUpperCase()) ?? null
+      setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
+        ...r, material_code: code,
+        ...(mat ? { mat_name: mat.short_name ?? '', unit: unitCodeOf(mat), category: mat.category ?? null, mat_units: mat } : {}),
+      }))
       return
     }
-    e.preventDefault()
     const lines = text.trim().split(/\r?\n/).filter(Boolean)
+    const matMap = await resolveMats(lines.map(l => (l.split('\t')[0] ?? '').trim()))
+    const lookupMat = (code: string) => matMap.get(code.trim().toUpperCase()) ?? null
     setItems(prev => {
       const rows = [...prev]
       while (rows.length < startIdx + lines.length) rows.push(makeItem())
@@ -1756,18 +1761,21 @@ function GDOFormBody({
     })
   }
 
-  function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
+  async function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
     const text = e.clipboardData.getData('text')
     if (!text.includes('\n')) return
     e.preventDefault()
     const values = text.trim().split(/\r?\n/).filter(Boolean)
+    // Dòng chưa có hệ số thùng/hộp (mã gõ tay) → tra trước, nếu không số quy đổi sẽ sai
+    const need = items.slice(startIdx, startIdx + values.length).filter(r => !r.mat_units && r.material_code).map(r => r.material_code)
+    const matMap = need.length ? await resolveMats(need) : new Map()
     setItems(prev => {
       const rows = [...prev]
       while (rows.length < startIdx + values.length) rows.push(makeItem())
       values.forEach((val, offset) => {
         const row = rows[startIdx + offset]
         if (row.sap_linked) return   // dòng gốc SAP: SL khóa — paste bỏ qua
-        const u = row.mat_units ?? lookupMat(row.material_code)
+        const u = row.mat_units ?? matMap.get(row.material_code.trim().toUpperCase()) ?? null
         const thung = parseInt(val.trim().replace(/[^0-9]/g, '')) || 0
         rows[startIdx + offset] = { ...row, mat_units: row.mat_units ?? u, cartons: qtyFromEntryBase(thung, 0, u) }
       })

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 import { usePopoverAnchor } from './usePopoverAnchor'
@@ -21,6 +21,16 @@ interface SingleSelectProps {
   disabled?: boolean
   dropUp?: boolean          // giữ prop cho tương thích — vị trí thực do usePopoverAnchor tự tính
   triggerClassName?: string
+  /**
+   * Danh mục LỚN (mã hàng, vị trí, biển số): `options` do SERVER trả theo từ khóa.
+   * Bật cờ này thì KHÔNG lọc lại ở client (server đã lọc + cắt) và mỗi lần gõ sẽ gọi
+   * `onSearchChange` sau 250ms. Cha tự quản query (`useMaterials({ search, limit: 50 })`).
+   */
+  serverSearch?: boolean
+  onSearchChange?: (term: string) => void
+  loading?: boolean
+  /** Nhãn của giá trị đang chọn khi nó KHÔNG nằm trong `options` hiện tại (server-search). */
+  selectedLabel?: string
 }
 
 /**
@@ -32,20 +42,28 @@ export function SingleSelect({
   options, value, onChange,
   placeholder = 'Chọn…', searchPlaceholder = 'Tìm…',
   searchable = true, disabled, triggerClassName = '',
+  serverSearch = false, onSearchChange, loading = false, selectedLabel,
 }: SingleSelectProps) {
   const [open, setOpen]     = useState(false)
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const anchor = usePopoverAnchor(triggerRef, open)
 
-  const filtered = search
+  // Server-search: báo từ khóa lên cha sau 250ms (gõ nhanh không bắn mỗi phím 1 request)
+  useEffect(() => {
+    if (!serverSearch || !onSearchChange) return
+    const t = setTimeout(() => onSearchChange(search), 250)
+    return () => clearTimeout(t)
+  }, [search, serverSearch, onSearchChange])
+
+  const filtered = search && !serverSearch
     ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sub ?? '').toLowerCase().includes(search.toLowerCase()))
     : options
 
   const selected     = options.find(o => o.value === value)
-  const displayLabel = selected?.label ?? placeholder
+  const displayLabel = selected?.label ?? (value ? selectedLabel ?? value : placeholder)
 
-  function close() { setOpen(false); setSearch('') }
+  function close() { setOpen(false); setSearch(''); onSearchChange?.('') }
 
   return (
     <div className={triggerClassName}>
@@ -84,8 +102,12 @@ export function SingleSelect({
                 </div>
               )}
               <div className="max-h-48 overflow-y-auto">
-                {filtered.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
+                {loading ? (
+                  <p className="text-[11px] text-slate-400 text-center py-3">Đang tìm…</p>
+                ) : filtered.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 text-center py-3">
+                    {serverSearch && !search ? 'Gõ để tìm…' : 'Không tìm thấy'}
+                  </p>
                 ) : filtered.map(o => (
                   <label key={o.value}
                     className={`flex items-center gap-2 px-3 py-1.5 ${o.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}>

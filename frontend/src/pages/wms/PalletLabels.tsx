@@ -18,7 +18,7 @@ import { parseCodeFields } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
-  useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
+  useWarehouses, useMaterials, useMaterialsByCodes, useInventoryEntries, useInventoryFacets, type MaterialLite,
   useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -189,8 +189,10 @@ function MatPicker({ value, label, category, onPick }: {
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
-  const enabled = q.length > 1 || !!category
-  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined, category: category || undefined }, enabled)
+  // Tìm TRÊN SERVER, tối đa 50 dòng — trước đây chọn Loại hàng là kéo cả danh mục mã của loại đó
+  // về trình duyệt. Vẫn giữ hành vi cũ: bấm vào ô (chưa gõ) mà đã chọn Loại hàng thì hiện 50 mã đầu.
+  const enabled = open && (q.length > 1 || !!category)
+  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined, category: category || undefined, limit: 50 }, enabled)
   const showList = open && enabled && mats.length > 0
   return (
     <div className="relative">
@@ -635,12 +637,6 @@ export default function PalletLabels() {
   const [histCycles, setHistCycles]   = useState<string[]>([])
   const [histMachines, setHistMachines] = useState<string[]>([])
   const [histBy, setHistBy]     = useState<string[]>([])
-  const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
-  const matByCode = useMemo(() => {
-    const m = new Map<string, Material>()
-    for (const x of allMats as Material[]) m.set(x.material_code, x)
-    return m
-  }, [allMats])
   // Search server-side (mã pallet / mã hàng / người in) — debounce 400ms, tối thiểu 3 ký tự
   const [histSearch, setHistSearch] = useState('')
   const [histSearchDeb, setHistSearchDeb] = useState('')
@@ -653,6 +649,17 @@ export default function PalletLabels() {
     date_from: histFrom || undefined, date_to: histTo || undefined,
     search: histSearchOk ? histSearchDeb : undefined,
   }, tab === 'history' && histReady)
+  // Tên hàng + hệ số thùng/hộp: chỉ tra ĐÚNG các mã có trong lịch sử đang xem
+  // (trước đây nạp cả danh mục mã hàng về trình duyệt).
+  const { data: allMats = [] } = useMaterialsByCodes(
+    useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))], [histRows]),
+    tab === 'history',
+  )
+  const matByCode = useMemo(() => {
+    const m = new Map<string, MaterialLite>()
+    for (const x of allMats) m.set(x.material_code, x)
+    return m
+  }, [allMats])
   const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
     .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
   const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])

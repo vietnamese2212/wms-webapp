@@ -14,26 +14,43 @@ function buildShortName(description: string, code: string, custom?: string | nul
   return `${base} [${suffix}]`
 }
 
+// Cột TỐI THIỂU cho dropdown/bảng tra (view=lite) — bỏ cột chỉ trang Danh mục Mã hàng dùng
+// (dims/khối lượng/ảnh/ghi chú/old_code/audit + join NSX). Payload/dòng giảm ~2,5× vì tên cột
+// lặp lại theo SỐ DÒNG: cột rỗng 100% vẫn tốn ~60KB/2.740 mã. Đo 27/07: 2.566KB → xem verify.
+const MATERIAL_LITE_COLS =
+  'id, material_code, material_description, short_name, product_type, category, is_active,' +
+  'cartons_per_pallet, pallet_per_ea, units_per_carton, base_unit, entry_unit, shelf_life_days,' +
+  'no_qr_tracking, is_non_stock, is_pallet_carrier, batch_prefix,' +
+  'warehouse_pallet_overrides, supplier_shelf_life_overrides'
+
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes } = req.query
     // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
     const scopeCats = scopeCategoriesOf(req)
+    // limit=N (typeahead): chỉ lấy N dòng đầu, KHÔNG kéo cả danh mục về trình duyệt
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
+    // codes=A,B,C — chặn 300/lượt đúng trần URL của PostgREST (xem memory id-list-url-limits)
+    const codeList = codes ? String(codes).split(',').map(c => c.trim()).filter(Boolean).slice(0, 300) : null
+    if (codeList && codeList.length === 0) return ok(res, [])
 
     // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response của PostgREST.
     // Đã >1000 mã hàng active → không phân trang thì 4+ mã biến mất khỏi mọi list + dropdown chọn mã (Inbound/Outbound/TMS...).
     const buildQuery = () => {
       let query = supabase
         .from('Material')
-        .select('*, manufacturer:Manufacturer(id, code, name)')
+        .select(view === 'lite' ? MATERIAL_LITE_COLS : '*, manufacturer:Manufacturer(id, code, name)')
         .order('material_code')
       if (active === 'true') query = query.eq('is_active', true)
       if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
       if (storage_category) query = query.eq('storage_category', String(storage_category))
       if (category) query = query.eq('category', String(category))
       if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
+      // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
+      if (codeList) query = query.in('material_code', codeList)
       if (search) {
         const s = safeSearch(search)
         query = query.or(
@@ -42,8 +59,13 @@ export async function listMaterials(req: Request, res: Response) {
       }
       return query
     }
-    // Phân trang SONG SONG (helper) — >1000 mã cần 2+ round-trip, chạy đồng thời giảm độ trễ
-    // (trước ~3.5s do 2 lượt nối tiếp). Giữ yêu cầu trả HẾT (dropdown chọn mã cần đầy đủ).
+    // limit=N → 1 round-trip, dừng ở N dòng (typeahead). Không limit: phân trang SONG SONG
+    // (helper) — >1000 mã cần 2+ round-trip, chạy đồng thời giảm độ trễ (trước ~3.5s nối tiếp).
+    if (cap > 0) {
+      const { data, error } = await buildQuery().limit(cap)
+      if (error) throw error
+      return ok(res, data ?? [])
+    }
     const out = await fetchAllRowsParallel(buildQuery)
     ok(res, out)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

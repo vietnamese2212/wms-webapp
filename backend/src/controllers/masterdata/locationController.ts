@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { safeFilterValue } from '../../utils/search'
+import { safeFilterValue, safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
@@ -31,9 +31,18 @@ async function guardLocScope(req: Request, res: Response, locationId: string): P
   return true
 }
 
+// Cột tối thiểu cho dropdown chọn vị trí (view=lite): bỏ audit + join Kho + đếm tồn tổng.
+// Giữ max_pallets/categories/slot_no_* vì picker Nhập kho & Slotting đọc.
+const LOCATION_LITE_COLS =
+  'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
+  'max_pallets, is_active, requires_stocktake, slot_no_in, slot_no_out'
+
 export async function listLocations(req: Request, res: Response) {
   try {
-    const { warehouse_id, sub_code, active, category, material_id } = req.query
+    const { warehouse_id, sub_code, active, category, material_id, view, search, limit } = req.query
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+    // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
 
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
@@ -46,10 +55,10 @@ export async function listLocations(req: Request, res: Response) {
     const scopeCats = scopeCategoriesOf(req)
 
     // Phân trang né cap ~1000 (>1000 vị trí thì list/dropdown mất vị trí)
-    const data = await fetchAllRowsParallel(() => {
+    const buildQ = () => {
       let query = supabase
         .from('Location')
-        .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
+        .select(view === 'lite' ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
         .order('sub_code').order('row').order('shelf').order('id')
       if (effective) {
         query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
@@ -62,8 +71,17 @@ export async function listLocations(req: Request, res: Response) {
       if (category) query = (query as any).or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
       // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (giao ≥1 loại; null vẫn hiện)
       if (scopeCats) query = (query as any).or(categoriesOrScopeFilter('categories', scopeCats))
+      if (search) query = query.ilike('location_code', `%${safeSearch(search)}%`)
       return query
-    })
+    }
+    let data: Record<string, unknown>[]
+    if (cap > 0) {
+      const { data: page, error } = await buildQ().limit(cap)
+      if (error) throw error
+      data = (page ?? []) as unknown as Record<string, unknown>[]
+    } else {
+      data = await fetchAllRowsParallel(buildQ) as unknown as Record<string, unknown>[]
+    }
 
     // used_slots (layer 1 IN_STOCK/PARTIAL): 1 lượt quét gộp thay N+1 count query
     // (trước: mỗi vị trí 1 roundtrip — nghìn vị trí = nghìn query song song, cạn connection)

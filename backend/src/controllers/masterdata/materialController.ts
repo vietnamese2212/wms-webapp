@@ -325,6 +325,10 @@ export async function uploadExcel(req: Request, res: Response) {
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
 
+    // Danh mục Loại kho hợp lệ (để chặn loại lạ trong file → loại mồ côi)
+    const { data: whTypes } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+    const whTypeSet = new Set(((whTypes ?? []) as { value: string }[]).map(r => String(r.value)))
+
     const now = new Date().toISOString()
     let skipped = 0
     const errors: string[] = []
@@ -391,6 +395,12 @@ export async function uploadExcel(req: Request, res: Response) {
       // Scope Loại hàng: bỏ qua (báo lỗi) mã thuộc loại ngoài phạm vi user (mã mới chưa gán loại vẫn cho)
       const effCat = category ?? dbRow?.category ?? null
       if (!categoryAllowed(req, effCat)) { errors.push(`${material_code} — Loại hàng "${effCat ?? ''}" ngoài phạm vi của bạn`); continue }
+      // Loại hàng phải CÓ trong danh mục Loại kho — file ghi loại lạ (vd 'PM01' khi danh mục là
+      // 'POSM') từng ghi thẳng vào DB, sinh loại mồ côi: mã không lọt filter/scope nào, khu vực và
+      // phân quyền theo loại không khớp. Chặn tại đây để user sửa file hoặc đổi tên loại trước.
+      if (category && !whTypeSet.has(category)) {
+        errors.push(`${material_code} — Loại hàng "${category}" không có trong danh mục Loại kho (hiện có: ${[...whTypeSet].join(', ')})`); continue
+      }
       // BASE UNIT: validate cặp đơn vị theo GIÁ TRỊ HIỆU LỰC sau merge (file đắp lên DB) — cùng luật
       // với form tạo/sửa mã (createMaterial): entry đòi hệ số > 0, entry ≠ base. Thiếu guard này
       // upload từng cho tạo mã khai entry mà không hệ số → app coi như không entry (phát hiện smoke 23/07).
@@ -401,7 +411,7 @@ export async function uploadExcel(req: Request, res: Response) {
         const effBase  = baseUnit ?? (acc?.base_unit as string | null | undefined) ?? dbRow?.base_unit ?? null
         const effUpc   = upc ?? (acc?.units_per_carton as number | null | undefined) ?? dbRow?.units_per_carton ?? null
         if (effEntry && !(Number(effUpc) > 0)) {
-          errors.push(`${material_code} — Entry unit "${effEntry}" cần hệ số quy đổi (cột Hộp/thùng) > 0`); continue
+          errors.push(`${material_code} — có Entry Unit "${effEntry}" thì phải điền cột "Đv/Thùng" (số ${effBase ?? 'base'} trong 1 ${effEntry}) > 0`); continue
         }
         if (effEntry && effBase && effEntry === effBase) {
           errors.push(`${material_code} — Entry unit phải KHÁC Base unit (đang cùng "${effEntry}")`); continue
@@ -442,6 +452,12 @@ export async function uploadExcel(req: Request, res: Response) {
         })
       }
     }
+
+    // ALL-OR-NOTHING (user chốt 27/07): còn 1 dòng lỗi là KHÔNG ghi gì.
+    // Trước đây ghi per-row (dòng hợp lệ vẫn vào, dòng lỗi bị loại) → file 3.5k dòng có vài dòng
+    // "khai entry mà thiếu số hộp/thùng" ghi vào 2.662 mã dở dang, phải xoá tay rồi up lại.
+    // Đồng bộ với upload Tồn kho + Vị trí kho: sửa file rồi up lại, DB không bao giờ nửa vời.
+    if (errors.length) return ok(res, { inserted: 0, updated: 0, skipped, errors })
 
     let inserted = 0, updated = 0
     const insertRecords = [...insertByCode.values()]

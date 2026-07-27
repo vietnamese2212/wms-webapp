@@ -1380,7 +1380,9 @@ export default function Materials() {
       {showUpload && (
         <UploadExcelDialog
           title="Upload Mã hàng từ Excel"
-          hint="Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị (ô trống = giữ nguyên)."
+          hint={'Còn 1 dòng lỗi là KHÔNG ghi gì — sửa file rồi upload lại (không sợ nhập dở dang). '
+              + 'Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị, ô trống giữ nguyên. '
+              + 'Mã có Entry Unit thì bắt buộc điền "Đv/Thùng"; Loại hàng phải có sẵn trong danh mục Loại kho.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadMaterialTemplate}
           onUpload={file => uploadMaterials.mutateAsync({ file })}

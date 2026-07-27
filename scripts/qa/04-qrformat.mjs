@@ -2,16 +2,19 @@
 // Mặc định: test Ở TRẠNG THÁI CỜ HIỆN TẠI (format đúng phải NHẬN + lưu nguyên văn, format kia phải 422).
 // `--flip`: lật cờ test cả 2 chiều rồi TRẢ VỀ như cũ — ⚠ trong ~1 phút lật, user thật đang quét sẽ bị 422.
 //   CHỈ chạy --flip ngoài giờ vận hành.
-import { login, api, check, finish, restAll, HAS_DB, FIX } from './lib.mjs'
+import { login, api, check, finish, restAll, resolveFixtures, HAS_DB, FIX } from './lib.mjs'
 
 const FLIP = process.argv.includes('--flip')
-const LOC = '81d19b1b-4c7c-4f61-ae59-c33bc4036a0f'   // vị trí B_TP1_1_T1 @ Ba Vì (kho QR)
+// Vị trí + mã hàng RESOLVE theo dữ liệu thật (id cứng chết sau mỗi lần reset dữ liệu)
+let LOC = ''
 // Chuỗi QR hợp lệ 2 format cho mã pool test (V2 GIỮ đệm space như tem nhà máy)
 const V2 = `${FIX.MAT_POOL};      1;QA260709A099;09/07/2026;09/01/2027;      1;00:00`
 const V1 = `090726_${FIX.MAT_POOL}_C01_M1_001_B`
 
 console.log(`── GÓI QR-FORMAT${FLIP ? ' (--flip: test cả 2 cờ)' : ' (cờ hiện tại)'} ──`)
 await login()
+await resolveFixtures()
+LOC = FIX.LOC_QR_ID
 
 const st = await api('/wms/settings')
 const flag = (st.j?.data ?? []).find(s => s.key === 'label_format')?.value ?? 'underscore'
@@ -20,7 +23,7 @@ console.log(`  cờ label_format hiện tại = ${flag}`)
 // Phiếu nhập tại kho QR Ba Vì để có chỗ quét
 async function createOrder() {
   const c = await api('/wms/inbound-orders', 'POST', {
-    warehouse_id: FIX.WH_QR.id, material_id: '4a55517f-a069-4f43-a889-376eb285cfce',
+    warehouse_id: FIX.WH_QR.id, material_id: FIX.MAT_POOL_ID,
     planned_cartons: 10, source_type: 'FACTORY', notes: 'QA-QRFORMAT',
   })
   return c.j?.data?.order ?? c.j?.data

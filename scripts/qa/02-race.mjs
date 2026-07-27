@@ -1,15 +1,34 @@
 // GÓI RACE — đua đồng thời trên cùng tài nguyên, bất biến số liệu phải giữ.
 // Tự dọn về baseline khi xong. Kho: Bluestar (QTY, mã pool 510000306).
-import { login, api, check, finish, pool, teardownGdo, restAll, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, teardownGdo, restAll, restWrite, resolveFixtures, FIX } from './lib.mjs'
+import { randomUUID } from 'crypto'
 
 console.log('── GÓI RACE ──')
 await login()
+await resolveFixtures()
 
 // Đọc pool thẳng DB (PostgREST) — không phụ thuộc shape API list
 async function poolRemaining() {
   const rows = await restAll('InventoryEntry',
     `select=cartons_remaining&warehouse_id=eq.${FIX.WH_QTY.id}&pallet_code=eq.${FIX.MAT_POOL}`)
   return rows.reduce((s, r) => s + Number(r.cartons_remaining ?? 0), 0)
+}
+
+// TỰ DỰNG pool nếu kho QTY chưa có tồn cho mã test (sau reset dữ liệu là rỗng).
+// Gói test không được phụ thuộc tồn kho "có sẵn" — nó tự tạo, tự xoá.
+let seededPoolId = null
+if ((await poolRemaining()) === 0) {
+  const now = new Date().toISOString()
+  const [row] = await restWrite('InventoryEntry', 'POST', null, {
+    id: randomUUID(), material_id: FIX.MAT_POOL_ID, pallet_code: FIX.MAT_POOL,
+    warehouse_id: FIX.WH_QTY.id, location_id: null,
+    cartons_imported: 500, cartons_remaining: 500, cartons_reserved: 0,
+    status: 'IN_STOCK', stack_layer: 1,
+    import_date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    notes: FIX.DVVT_TAG, created_at: now, updated_at: now,
+  })
+  seededPoolId = row?.id ?? null
+  console.log(`  (đã dựng pool test 500 cho ${FIX.MAT_POOL}@${FIX.WH_QTY.name} — sẽ xoá khi xong)`)
 }
 const pool0 = await poolRemaining()
 console.log(`  pool ${FIX.MAT_POOL}@${FIX.WH_QTY.name} baseline = ${pool0}`)
@@ -86,6 +105,13 @@ async function trfCount(gdoId) {
   check('R3 dọn sạch', await teardownGdo(gdo.id, g.j?.data?.status))
   const p3 = await poolRemaining()
   check('R3 pool về baseline sau dọn', p3 === pool0, `pool=${p3} (baseline ${pool0})`)
+}
+
+// Xoá pool tự dựng — trả staging về đúng trạng thái trước khi chạy
+if (seededPoolId) {
+  await restWrite('InventoryEntry', 'DELETE', `id=eq.${seededPoolId}`)
+  const left = await poolRemaining()
+  check('R0 dọn pool test đã dựng', left === 0, `còn ${left}`)
 }
 
 finish('RACE')

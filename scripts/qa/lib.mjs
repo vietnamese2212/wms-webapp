@@ -81,6 +81,45 @@ export async function restAll(table, filter, maxRows = 50_000) {
   console.warn(`  ⚠ ${table}: chạm cầu chì ${maxRows} dòng — kiểm tra có thể THIẾU (cần chuyển check này sang RPC)`)
   return out
 }
+// Ghi thẳng PostgREST (chỉ dùng để DỰNG/DỌN fixture test, không dùng cho logic nghiệp vụ)
+export async function restWrite(table, method, filter, body) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${table}${filter ? '?' + filter : ''}`, {
+    method,
+    headers: {
+      apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json', Prefer: 'return=representation',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const t = await r.text()
+  if (!r.ok) throw new Error(`PostgREST ${method} ${table}: ${r.status} ${t}`)
+  try { return JSON.parse(t) } catch { return [] }
+}
+
+/**
+ * RESOLVE fixture theo MÃ/TÊN thay vì UUID cứng.
+ *
+ * Bài học 27/07: reset dữ liệu demo TRUNCATE Material + Location rồi upload lại → UUID mới,
+ * mọi id hard-code trong QA chết ⇒ cổng QA đỏ vì FIXTURE, không phải vì code. Cổng gác mà tự
+ * hỏng thì hoặc bị bỏ qua, hoặc chặn oan — cả hai đều nguy hiểm hơn là không có cổng.
+ * ⇒ Fixture phải tự tìm lại theo khoá NGHIỆP VỤ (mã hàng, mã kho), không phải id.
+ */
+export async function resolveFixtures() {
+  const mats = await restAll('Material', `select=id,material_code,category&material_code=eq.${FIX.MAT_POOL}`)
+  if (!mats.length) throw new Error(`Fixture: không tìm thấy mã hàng ${FIX.MAT_POOL} — cập nhật FIX.MAT_POOL`)
+  FIX.MAT_POOL_ID = mats[0].id
+  FIX.MAT_POOL_CAT = mats[0].category
+
+  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại)
+  const cat = FIX.MAT_POOL_CAT
+  const locs = await restAll('Location',
+    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&order=location_code&limit=200`)
+  const hit = locs.find(l => !l.categories?.length || (cat && l.categories.includes(cat))) ?? locs[0]
+  if (!hit) throw new Error(`Fixture: kho QR ${FIX.WH_QR.name} không có vị trí nào`)
+  FIX.LOC_QR_ID = hit.id
+  FIX.LOC_QR_CODE = hit.location_code
+}
+
 export function chunk(arr, n = 300) {
   const out = []
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))

@@ -145,19 +145,15 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING']).gt('cartons_remaining', 0)
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter !== null && p.locationFilter !== undefined) {
-    const whIds = p.warehouseIds ?? []
-    if (p.locationFilter.length > 0 && whIds.length > 0) {
-      const locStr = p.locationFilter.join(',')
-      const whStr  = whIds.join(',')
-      q = q.or(`location_id.in.(${locStr}),and(location_id.is.null,warehouse_id.in.(${whStr}))`)
-    } else if (p.locationFilter.length > 0) {
-      q = q.in('location_id', p.locationFilter)
-    } else if (whIds.length > 0) {
-      // Kho chưa có location nào nhưng có thể có POSM
-      q = q.is('location_id', null).in('warehouse_id', whIds)
-    }
-  }
+  // Lọc KHO = cột warehouse_id TRỰC TIẾP (index idx_ie_wh_importdate) — cột đã backfill từ Location
+  // + mọi writer set khi tạo / sync khi đổi vị trí (migration 20260727_entry_warehouse_id_direct).
+  // ⚠️ TRƯỚC ĐÂY liệt kê mọi location_id của kho nhét vào .or(): kho 1.517 vị trí → filter ~56KB
+  // → PostgREST nghiền 60s → Vercel 504 (bug filter Kho Bàu Bàng 27/07). KHÔNG quay lại cách cũ.
+  const whIds = p.warehouseIds ?? []
+  if (whIds.length === 1)    q = q.eq('warehouse_id', whIds[0])
+  else if (whIds.length > 1) q = q.in('warehouse_id', whIds)
+  // Lọc VỊ TRÍ cụ thể (facet chọn lẻ vài vị trí — id đã resolve + cắt scope ở resolveInventoryFilter)
+  if (p.locationFilter && p.locationFilter.length > 0) q = q.in('location_id', p.locationFilter)
   if (p.materialFilter)  q = q.in('material_id', p.materialFilter)
   // Dùng embedded filter thay vì IN (material_id) để tránh URL quá dài khi nhiều material
   if (p.categoryFilter && p.categoryFilter.length === 1)    q = q.eq('material.category', p.categoryFilter[0])
@@ -374,7 +370,9 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
     return { ...base, empty: true }
 
-  const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
+  // Chỉ resolve id vị trí khi user CHỌN vị trí cụ thể trong facet. Lọc theo KHO đi thẳng cột
+  // warehouse_id (applyInventoryFilters) — KHÔNG liệt kê nghìn vị trí của kho vào URL nữa.
+  const needLocFilter = filterLocations.length > 0
 
   const locResult = needLocFilter ? await (async () => {
     try {
@@ -402,10 +400,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   if ((locResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     locationFilter = ((locResult as any).data ?? []).map((l: any) => l.id as string)
-    // Trả về rỗng nếu: không tìm được location VÀ (có filter location cụ thể HOẶC không có warehouse scope nào)
-    // → Không áp dụng khi chỉ có warehouse scope — vẫn có thể có POSM (location_id IS NULL)
-    if (locationFilter!.length === 0 && (filterLocations.length > 0 || effectiveWarehouseIds.length === 0))
-      return { ...base, empty: true }
+    // Có chọn vị trí cụ thể mà không resolve ra id nào (sai mã / ngoài scope kho) → list rỗng
+    if (locationFilter!.length === 0) return { ...base, empty: true }
   }
 
   // filter_material_ids từ facet ĐÃ là material_id → dùng thẳng, không cần query Material resolve.
@@ -976,7 +972,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
 
   const { data: loc } = await supabase.from('Location')
-    .select('id, is_active, location_code, max_pallets')
+    .select('id, is_active, location_code, max_pallets, warehouse_id')
     .eq('id', location_id).maybeSingle()
   if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
   if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
@@ -992,7 +988,8 @@ export async function bulkTransferLocation(req: Request, res: Response) {
         `Vị trí ${loc.location_code} không đủ chỗ (còn ${Math.max(0, available)} slot, cần ${ids.length})`)
     }
   }
-  const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
+  // Sync cột lọc theo kho (đổi vị trí = có thể đổi kho thật — filter Tồn kho lọc thẳng cột này)
+  const patch: Record<string, unknown> = { location_id, warehouse_id: (loc as { warehouse_id?: string }).warehouse_id ?? null, updated_at: now, update_date: vnDate }
   if (updatedBy) patch.updated_by = updatedBy
   const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
@@ -1079,7 +1076,18 @@ export async function stocktakeEntry(req: Request, res: Response) {
     patch.updated_by   = employee_id
   }
 
-  if (new_location_id) patch.location_id = new_location_id
+  // Đổi vị trí khi kiểm: nạp vị trí mới 1 lần — sync cả warehouse_id (cột lọc theo kho) + dùng lại cho snapshot log
+  type SnapLoc = { location_code?: string; warehouse_id?: string; categories?: string[] | null }
+  let newLoc: SnapLoc | null = null
+  if (new_location_id) {
+    if (new_location_id !== existing.location_id) {
+      const { data: nl } = await supabase.from('Location')
+        .select('location_code, warehouse_id, categories').eq('id', new_location_id).maybeSingle()
+      newLoc = (nl as SnapLoc | null) ?? null
+    }
+    patch.location_id = new_location_id
+    if (newLoc?.warehouse_id) patch.warehouse_id = newLoc.warehouse_id
+  }
 
   if (physical_count !== undefined && physical_count !== null) {
     const appCount = Number(existing.cartons_remaining ?? 0)
@@ -1106,10 +1114,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; categories?: string[] | null } | null
     let snapLocId = existing.location_id as string | null
-    if (new_location_id && new_location_id !== existing.location_id) {
-      const { data: nl } = await supabase.from('Location').select('location_code, warehouse_id, categories').eq('id', new_location_id).maybeSingle()
-      if (nl) { snapLoc = nl as typeof snapLoc; snapLocId = new_location_id }
-    }
+    if (newLoc) { snapLoc = newLoc; snapLocId = new_location_id ?? snapLocId }
     await supabase.from('StocktakeLog').insert({
       id: randomUUID(),
       entry_id: id,

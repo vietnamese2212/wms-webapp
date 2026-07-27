@@ -724,7 +724,9 @@ export default function Locations() {
       {showUpload && (
         <UploadExcelDialog
           title="Upload Excel — Vị trí kho"
-          hint={'Kho điền MÃ hoặc TÊN. Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (tầng bỏ trống được). '
+          hint={'Điền dữ liệu từ DÒNG 3 của file mẫu (giữ nguyên 2 dòng tiêu đề); báo lỗi đếm theo dòng dữ liệu — '
+              + 'dòng dữ liệu #1 = dòng 3 trong Excel. Kho điền MÃ hoặc TÊN. '
+              + 'Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (tầng bỏ trống được). '
               + 'Khu phải có sẵn trong Cài đặt WMS → Khu vực — Loại hàng & Tên khu lấy theo khu, không lấy từ file. '
               + 'Vị trí đã có sẽ được CẬP NHẬT sức chứa/kiểu. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
           onClose={() => setShowUpload(false)}

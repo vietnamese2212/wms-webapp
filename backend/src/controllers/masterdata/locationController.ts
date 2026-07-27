@@ -324,13 +324,19 @@ export async function uploadExcel(req: Request, res: Response) {
       lineNo++
       const whRaw = lcStr(r.warehouse), subRaw = lcStr(r.sub_code), rowRaw = lcStr(r.row)
       const shelf = lcStr(r.shelf)
-      const at = `dòng #${lineNo}`
+      // Đánh số theo DÒNG DỮ LIỆU (đã bỏ dòng tiêu đề) — nhắc rõ trong hint dialog để user không lệch
+      const at = `dòng dữ liệu #${lineNo}`
 
       const missing: string[] = []
       if (!whRaw) missing.push('kho')
       if (!subRaw) missing.push('khu')
       if (!rowRaw) missing.push('dãy')
-      if (missing.length) { errors.push(`${at} — thiếu: ${missing.join(', ')}`); continue }
+      if (missing.length) {
+        // Kèm các ô ĐÃ điền để user dò ra đúng dòng trong file (dòng thiếu thì không có mã vị trí để bám)
+        const co = [whRaw && `kho "${whRaw}"`, subRaw && `khu "${subRaw}"`, rowRaw && `dãy "${rowRaw}"`, shelf && `tầng "${shelf}"`].filter(Boolean)
+        errors.push(`${at} — thiếu: ${missing.join(', ')}${co.length ? ` (đang có ${co.join(' · ')})` : ' (dòng trống các cột bắt buộc)'}`)
+        continue
+      }
 
       const wh = whByCode.get(whRaw.toLowerCase()) ?? whByName.get(whRaw.toLowerCase())
       if (!wh) { errors.push(`${at} — kho không khớp danh mục: "${whRaw}" (điền MÃ kho hoặc TÊN kho)`); continue }
@@ -355,7 +361,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const prefix = (wh.nmsx_code && lcStr(wh.nmsx_code)) || wh.code
       const code = buildLocationCode(prefix, sub, rowRaw, shelf)
       const dup = seenCode.get(code.toLowerCase())
-      if (dup) { errors.push(`${at} — trùng vị trí "${code}" với dòng #${dup} trong cùng file`); continue }
+      if (dup) { errors.push(`${at} — trùng vị trí "${code}" với dòng dữ liệu #${dup} trong cùng file`); continue }
       seenCode.set(code.toLowerCase(), lineNo)
 
       parsed.push({

@@ -305,16 +305,22 @@ export async function uploadExcel(req: Request, res: Response) {
     if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
-    // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000
+    // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000.
+    // ⚠️ PHẢI đủ MỌI cột mà file có thể đắp: PostgREST upsert lấy HỢP các key của CẢ LÔ, nên cột chỉ
+    // xuất hiện ở VÀI dòng sẽ bị set NULL ở những dòng còn lại. Thiếu cột ở đây = mất dữ liệu âm thầm
+    // (26/07: file sửa 3 mã entry_unit + 25 mã category cùng lô → 25 mã kia MẤT entry_unit='CAR').
     type ExistingMat = {
       id: string; material_code: string; material_description: string | null; short_name: string | null
       custom_short_name: string | null; category: string | null; product_type: string | null
       weight_kg: number | null; cartons_per_pallet: number | null; units_per_carton: number | null
       pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
-      base_unit: string | null; entry_unit: string | null
+      base_unit: string | null; entry_unit: string | null; batch_prefix: string | null
+      carton_length_mm: number | null; carton_width_mm: number | null; carton_height_mm: number | null
+      max_stack_layers: number | null; stack_on_top: boolean
+      no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -410,6 +416,13 @@ export async function uploadExcel(req: Request, res: Response) {
           weight_kg: dbRow!.weight_kg, cartons_per_pallet: dbRow!.cartons_per_pallet,
           units_per_carton: dbRow!.units_per_carton, pallet_per_ea: dbRow!.pallet_per_ea,
           shelf_life_days: dbRow!.shelf_life_days, notes: dbRow!.notes,
+          // Các cột dưới BẮT BUỘC có mặt dù file không đắp — xem cảnh báo ở khối nạp `existing`:
+          // dòng nào thiếu key mà lô có key sẽ bị PostgREST ghi NULL đè.
+          base_unit: dbRow!.base_unit, entry_unit: dbRow!.entry_unit, batch_prefix: dbRow!.batch_prefix,
+          carton_length_mm: dbRow!.carton_length_mm, carton_width_mm: dbRow!.carton_width_mm,
+          carton_height_mm: dbRow!.carton_height_mm, max_stack_layers: dbRow!.max_stack_layers,
+          stack_on_top: dbRow!.stack_on_top, no_qr_tracking: dbRow!.no_qr_tracking,
+          is_non_stock: dbRow!.is_non_stock, is_pallet_carrier: dbRow!.is_pallet_carrier,
         }
         upsertByCode.set(material_code, apply(base))
       } else if (insertByCode.has(material_code)) {

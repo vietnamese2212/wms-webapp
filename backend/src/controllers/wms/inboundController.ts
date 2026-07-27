@@ -338,9 +338,13 @@ export async function listOrders(req: Request, res: Response) {
         Promise.all(idChunks.map(slice => fetchAllRowsParallel(() => supabase.from('InventoryEntry')
           .select('import_order_id, pallet_code, cartons_imported, cycle, machine_code, location:Location(location_code, sub_code)')
           .in('import_order_id', slice).order('id'), 1000, 4))),
+        // Chunk 300 vị trí/lô (fetchAllByIdChunks): kho lớn (Bàu Bàng 1.517 vị trí) nhét cả danh
+        // sách vào `.in()` = URL 55KB → PostgREST 400/đứt kết nối (đo 27/07 — cùng bug filter Kho
+        // trang Tồn kho). KHÔNG bỏ chunk dù thấy "kho mình ít vị trí".
         locationIds.length
-          ? fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-              .select('location_id').in('location_id', locationIds).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'), 1000, 4)
+          ? fetchAllByIdChunks(locationIds, lc => supabase.from('InventoryEntry')
+              .select('location_id').in('location_id', lc).eq('stack_layer', 1)
+              .in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
           : Promise.resolve([] as unknown[]),
       ])
       for (const e of (entryGroups.flat() as OrderEntry[])) {

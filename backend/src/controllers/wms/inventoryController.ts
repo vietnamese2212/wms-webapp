@@ -43,10 +43,13 @@ async function guardEntriesScope(req: Request, res: Response, ids: string[]): Pr
   const scope = scopeWhIds(req)
   const cats = scopeCategoriesOf(req)
   if (scope === null && cats === null) return true
-  // Chunk ids (cap ~1000 dòng/response + URL dài) — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu
+  // Chunk ids 300 — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu.
+  // ⚠️ 300 là TRẦN CỨNG của filter `.in()` (id 36 ký tự): đo 27/07 trên PostgREST staging —
+  // 300 id = URL 11KB → 200; 400 id = 14,5KB → đứt kết nối; 700 id = 25KB → 400 Bad Request.
+  // Trước đây chunk 500 (18KB) → user có scope kho bulk >400 pallet là hỏng.
   const data: unknown[] = []
-  for (let i = 0; i < ids.length; i += 500) {
-    const chunk = ids.slice(i, i + 500)
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300)
     const r = await supabase.from('InventoryEntry')
       .select('id, warehouse_id, location:Location!location_id(warehouse_id), material:Material(category)')
       .in('id', chunk)
@@ -256,6 +259,17 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return out
 }
 const IN_CHUNK = 300
+
+// UPDATE hàng loạt theo tập id: BẮT BUỘC chunk — filter `.in()` nằm trên URL nên >300 id (36 ký tự)
+// là vỡ (đo 27/07: 400 id đứt kết nối, 700 id → 400). Bulk chọn cả trang/cả kho vài nghìn pallet
+// trước đây ném lỗi toàn bộ. Trả message lỗi đầu tiên (lô trước đã ghi — vẫn hơn hỏng sạch).
+async function updateEntriesByIds(ids: string[], patch: Record<string, unknown>): Promise<string | null> {
+  for (const c of chunkArray(ids, IN_CHUNK)) {
+    const { error } = await supabase.from('InventoryEntry').update(patch).in('id', c)
+    if (error) return error.message
+  }
+  return null
+}
 
 // Tổng cartons_remaining của 1 tập id (chunk 300 → tránh URL 414). Song song các lô.
 async function sumRemainingByIds(ids: string[]): Promise<number> {
@@ -905,8 +919,8 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 
@@ -931,8 +945,8 @@ export async function bulkUpdateNcc(req: Request, res: Response) {
   }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 
@@ -991,8 +1005,8 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   // Sync cột lọc theo kho (đổi vị trí = có thể đổi kho thật — filter Tồn kho lọc thẳng cột này)
   const patch: Record<string, unknown> = { location_id, warehouse_id: (loc as { warehouse_id?: string }).warehouse_id ?? null, updated_at: now, update_date: vnDate }
   if (updatedBy) patch.updated_by = updatedBy
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length, location_code: loc.location_code })
 }
 
@@ -1016,8 +1030,8 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length, material_code: mat.material_code })
 }
 
@@ -1162,13 +1176,18 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const stCats = scopeCategoriesOf(req)
   let resolvedLocationIds: string[]
   if (explicitIds.length) {
-    // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user
-    let vQ = supabase.from('Location').select('id').in('id', explicitIds)
-    if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
-    if (stCats) vQ = vQ.or(categoriesOrScopeFilter('categories', stCats))
-    const { data: valid, error: vErr } = await vQ
-    if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
-    resolvedLocationIds = ((valid ?? []) as { id: string }[]).map(l => l.id)
+    // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user.
+    // Chunk 300: user chọn cả trăm/nghìn vị trí thì `.in()` 1 phát là vỡ URL (trần ~300 id).
+    const validIds: string[] = []
+    for (const c of chunkArray(explicitIds, IN_CHUNK)) {
+      let vQ = supabase.from('Location').select('id').in('id', c)
+      if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
+      if (stCats) vQ = vQ.or(categoriesOrScopeFilter('categories', stCats))
+      const { data: valid, error: vErr } = await vQ
+      if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
+      validIds.push(...((valid ?? []) as { id: string }[]).map(l => l.id))
+    }
+    resolvedLocationIds = validIds
     if (!resolvedLocationIds.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
   } else {
     if (scopeWhIds.length > 0 && warehouse_id && !scopeWhIds.includes(warehouse_id))
@@ -1329,19 +1348,35 @@ export async function stocktakeLog(req: Request, res: Response) {
   const stCats = scopeCategoriesOf(req)
 
   const CAP = 2000
+  // Chọn nhiều vị trí → chunk 300 rồi gộp (filter `.in()` >300 id là vỡ URL). 1 lô = 1 query
+  // song song; gộp xong sort lại theo counted_at desc rồi cắt CAP để giữ đúng ngữ nghĩa trang.
+  const locIdList = location_ids ? String(location_ids).split(',').filter(Boolean) : []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q: any = supabase.from('StocktakeLog').select('*', { count: 'exact' })
-    .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
-  if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter)
-  if (category) q = q.contains('categories', [category])
-  if (stCats)   q = q.or(categoriesOrScopeFilter('categories', stCats))
-  if (location_ids) {
-    const ids = String(location_ids).split(',').filter(Boolean)
-    if (ids.length) q = q.in('location_id', ids)
+  const buildQ = (locChunk: string[] | null): any => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase.from('StocktakeLog').select('*', { count: 'exact' })
+      .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
+    if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter)
+    if (category) q = q.contains('categories', [category])
+    if (stCats)   q = q.or(categoriesOrScopeFilter('categories', stCats))
+    if (locChunk) q = q.in('location_id', locChunk)
+    if (search) q = q.ilike('pallet_code', `%${safeFilterValue(String(search))}%`)
+    return q.order('counted_at', { ascending: false }).range(0, CAP - 1)
   }
-  if (search) q = q.ilike('pallet_code', `%${safeFilterValue(String(search))}%`)
-
-  const { data, count, error } = await q.order('counted_at', { ascending: false }).range(0, CAP - 1)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let data: any[] = []; let count = 0; let error: { message: string } | null = null
+  if (locIdList.length > IN_CHUNK) {
+    const parts = await Promise.all(chunkArray(locIdList, IN_CHUNK).map(c => buildQ(c)))
+    for (const p of parts) {
+      if (p.error) { error = p.error; break }
+      data.push(...(p.data ?? [])); count += p.count ?? 0
+    }
+    data.sort((a, b) => String(b.counted_at ?? '').localeCompare(String(a.counted_at ?? '')))
+    data = data.slice(0, CAP)
+  } else {
+    const r = await buildQ(locIdList.length ? locIdList : null)
+    data = r.data ?? []; count = r.count ?? 0; error = r.error
+  }
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, {
     rows: data ?? [],
@@ -1380,8 +1415,8 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 

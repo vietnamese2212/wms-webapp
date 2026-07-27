@@ -168,10 +168,11 @@ export async function listOrders(req: Request, res: Response) {
         }
 
         if (qrImportIds.length) {
-          // Phân trang né cap-1000: tổng entry qua TẤT CẢ chuyến trong list dễ vượt 1000
+          // Chunk 300 id/lô + phân trang né cap-1000: khoảng ngày rộng → hàng trăm/nghìn phiếu nhập,
+          // nhét cả danh sách vào `.in()` là vỡ URL (trần ~300 id — đo 27/07).
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
-            .select('import_order_id, cartons_imported, material:Material!material_id(units_per_carton, entry_unit, base_unit)').in('import_order_id', qrImportIds)
+          const entries = await fetchAllByIdChunks(qrImportIds, chunk => supabase.from('InventoryEntry')
+            .select('import_order_id, cartons_imported, material:Material!material_id(units_per_carton, entry_unit, base_unit)').in('import_order_id', chunk)
             .order('import_order_id', { ascending: true }))
           for (const entry of entries as any[]) {
             const ordId = importToOrder.get(entry.import_order_id)

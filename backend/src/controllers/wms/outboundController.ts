@@ -18,6 +18,16 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 
 const now = () => new Date().toISOString()
 
+// XÓA theo tập id: filter `.in()` nằm trên URL nên phải CHUNK 300 (đo 27/07 trên PostgREST staging:
+// 300 id = URL 11KB OK · 400 id đứt kết nối · 700 id → 400 Bad Request). Chuyến nhiều NPP / upload
+// lại file lớn dễ vượt ngưỡng này.
+async function deleteByIdsChunked(table: string, ids: string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += 300) {
+    const { error } = await supabase.from(table).delete().in('id', ids.slice(i, i + 300))
+    if (error) throw new Error(error.message)
+  }
+}
+
 // Chuẩn hóa ô Excel: chuỗi trim (rỗng → null) · số (rỗng/NaN → null). Dùng cho parse VL06O raw.
 const cellStr = (v: any): string | null => { const s = String(v ?? '').trim(); return s || null }
 const cellNum = (v: any): number | null => {
@@ -1451,7 +1461,7 @@ export async function updateGDO(req: Request, res: Response) {
       // Xóa items bị loại bỏ (chưa xuất)
       const toDeleteIds = [...existingById.keys()].filter(id => !requestedDbIds.has(id))
       if (toDeleteIds.length) {
-        await supabase.from('OutboundItem').delete().in('id', toDeleteIds)
+        await deleteByIdsChunked('OutboundItem', toDeleteIds)
       }
 
       // Load material cho các item chưa xuất mà đổi mã hàng
@@ -1555,7 +1565,7 @@ export async function updateGDO(req: Request, res: Response) {
         .filter((i: any) => !newCodes.has(i.material_code_raw as string))
         .map((i: any) => i.id as string)
       if (toDeleteIds.length) {
-        await supabase.from('OutboundItem').delete().in('id', toDeleteIds)
+        await deleteByIdsChunked('OutboundItem', toDeleteIds)
       }
 
       // Load material cho items mới
@@ -2007,10 +2017,11 @@ async function mergePausedGDO(
     .select('id, delivery_code, distributor_name').eq('gdo_id', gdoId)
 
   const existingDoIds = (existingDOs ?? []).map((d: any) => d.id as string)
-  const { data: existingItems } = existingDoIds.length
-    ? await supabase.from('OutboundItem')
-        .select('id, do_id, material_code_raw, cartons_scanned').in('do_id', existingDoIds)
-    : { data: [] }
+  // Chunk 300 (chuyến nhiều NPP → nhiều DO): `.in()` quá ~300 id là vỡ URL PostgREST
+  const existingItems = existingDoIds.length
+    ? await fetchAllByIdChunks(existingDoIds, chunk => supabase.from('OutboundItem')
+        .select('id, do_id, material_code_raw, cartons_scanned').in('do_id', chunk).order('id'))
+    : []
 
   const nppOf = (d: any) => String(d.distributor_name ?? '').trim()
   const existingDOByNpp = new Map<string, any>()
@@ -2076,7 +2087,7 @@ async function mergePausedGDO(
     .filter((i: any) => !newFileItemKeys.has(`${doIdToNpp.get(i.do_id) ?? ''}::${i.material_code_raw ?? ''}`))
     .map((i: any) => i.id as string)
   if (staleItemIds.length) {
-    await supabase.from('OutboundItem').delete().in('id', staleItemIds)
+    await deleteByIdsChunked('OutboundItem', staleItemIds)
   }
 
   // Update GDO header — preserve workflow fields (started_at, assigned_at, status, license_plate, etc.)
@@ -2157,7 +2168,7 @@ async function mergePausedGDO(
     const safeToDelete = staleDOIds.filter(id => !doWithScanned.has(id))
     if (safeToDelete.length) {
       await releaseScansForDOs(safeToDelete)   // nhả tồn trước cascade (an toàn — DO rỗng thường no-op)
-      await supabase.from('OutboundDelivery').delete().in('id', safeToDelete)
+      await deleteByIdsChunked('OutboundDelivery', safeToDelete)
     }
   }
 

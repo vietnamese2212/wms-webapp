@@ -26,7 +26,9 @@ async function qtyBaseIntError(materialCode: unknown, qtyBase: unknown): Promise
 
 // Cap an toàn cho filter chéo "Trong kế hoạch": số DO của cửa sổ đưa vào .in() không được quá lớn
 // (URL PostgREST) → vượt thì bỏ filter + trả cảnh báo (KHÔNG cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
-const PLAN_FILTER_CAP = 1500
+// 800 ≈ 9KB URL (đo 27/07: 1000 giá trị 9 ký tự = 9,8KB OK · 1300 = 12,7KB đứt kết nối).
+// Cap cũ 1500 vượt ngưỡng → lọc rộng sẽ lỗi thay vì hiện cảnh báo "thu hẹp ngày".
+const PLAN_FILTER_CAP = 800
 
 // Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
 async function reconcileQuiet(keys: OdKey[], actor: string | null) {

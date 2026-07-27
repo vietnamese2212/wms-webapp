@@ -12,7 +12,9 @@ const now = () => new Date().toISOString()
 
 // Cap an toàn cho filter chéo "Trong DO SAP" (đối xứng erpOrderController): tập DO của cửa sổ đưa vào .in()
 // không được quá lớn → vượt thì bỏ filter + trả cảnh báo (không cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
-const DOSAP_FILTER_CAP = 1500
+// 800 ≈ 9KB URL. ĐO 27/07 trên PostgREST staging: 1000 giá trị 9 ký tự = 9,8KB → 200; 1300 = 12,7KB
+// → đứt kết nối. Cap cũ 1500 (≈16KB) là VƯỢT NGƯỠNG — lọc rộng sẽ lỗi thay vì hiện cảnh báo.
+const DOSAP_FILTER_CAP = 800
 
 // v2.2 — luật XÓA an toàn: dòng Kế hoạch mà chuyến đã sinh CÓ HÀNG ĐÃ QUÉT → CHẶN xóa cứng.
 type KDelRow = { id: string; group_code: string }

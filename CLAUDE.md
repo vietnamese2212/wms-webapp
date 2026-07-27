@@ -81,7 +81,11 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 
 **QUY MÔ — app phục vụ VÀI NGHÌN người dùng, dữ liệu VÀI TRIỆU dòng/năm:**
 - Mọi thiết kế/query phải giả định bảng nghiệp vụ (InventoryEntry, OutboundScanEntry, TmsOrder, Attendance, gate_registrations…) sẽ có **hàng triệu dòng** — "hiện tại mới vài trăm dòng" KHÔNG phải lý do bỏ qua.
-- **PostgREST cap ~1000 dòng/response** — query không phân trang bị cắt ÂM THẦM (data thiếu, báo oan, dedup hỏng); `.limit(N>1000)` cũng KHÔNG vượt được cap. Mọi query trả list phải: `fetchAllRowsParallel` (`utils/pagination`) / range-loop; `.in('col', ids)` với ids lớn phải **chunk 300–500**; kiểm quyền/scope trên list phải kiểm **ĐỦ MỌI dòng** (cắt 1000 đầu = lỗ hổng). Chiến dịch quét: memory `cap-1000-campaign`.
+- **PostgREST cap ~1000 dòng/response** — query không phân trang bị cắt ÂM THẦM (data thiếu, báo oan, dedup hỏng); `.limit(N>1000)` cũng KHÔNG vượt được cap. Mọi query trả list phải: `fetchAllRowsParallel` (`utils/pagination`) / range-loop; kiểm quyền/scope trên list phải kiểm **ĐỦ MỌI dòng** (cắt 1000 đầu = lỗ hổng). Chiến dịch quét: memory `cap-1000-campaign`.
+- **DANH SÁCH ID TRONG URL — 2 TRẦN CỨNG (đo thật 27/07, memory `id-list-url-limits`):** filter `.in()`/`.or(in.())` của PostgREST và query-string của API đều nằm trên URL.
+  - **BE → PostgREST: tối đa ~300 id uuid (~11KB)** — 400 id đứt kết nối, 700 id → `400 Bad Request`. Giá trị ngắn (mã hàng/DO 9–10 ký tự): ~800–1000. ⇒ mọi `.in('col', ids)` mà ids **có thể** vượt 300 phải **chunk 300** (`fetchAllByIdChunks` / `chunkArray`), kể cả UPDATE/DELETE (filter cũng trên URL). Chunk 500 là SAI.
+  - **Client → API (Vercel): query string tối đa ~800 id uuid (~32KB)** → vượt là **414** *trước khi* tới BE (chunk phía BE vô hiệu). ⇒ FE **không** nhồi danh sách id lớn vào query: gửi **cờ ngữ nghĩa** để BE tự resolve (mẫu `requires_only=1` ở Kiểm kê), hoặc chặn + hướng dẫn thu hẹp (KHÔNG cắt âm thầm).
+  - **Lọc theo KHO phải dùng cột `warehouse_id` trực tiếp**, KHÔNG liệt kê vị trí của kho (bug 504 Bàu Bàng 27/07 — 1.517 vị trí = 55KB URL).
 - Gặp vấn đề cùng họ scale (query kéo cả bảng, N+1 roundtrip, đếm/tổng client-side trên list cắt cụt, ghi tuần tự từng dòng…) → **tìm giải pháp và xử lý NGAY trong lượt làm việc đó**, không hoãn, không chỉ fix chỗ đang đụng — quét luôn các chỗ cùng pattern.
 
 **Mutation & realtime** (skill `mutation-realtime` + `verify-feature`):

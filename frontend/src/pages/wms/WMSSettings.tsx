@@ -16,6 +16,7 @@ import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
@@ -400,10 +401,6 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const { mutate: update, isPending: updating } = useUpdateWarehouseZone()
   const isPending = creating || updating
 
-  function toggleCategory(v: string) {
-    setCategories(prev => prev.includes(v) ? prev.filter(c => c !== v) : [...prev, v])
-  }
-
   function handleSubmit() {
     setErr('')
     if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
@@ -460,20 +457,17 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </div>
           )}
 
-          {/* Loại kho — chọn NHIỀU, bắt buộc ≥1 (khu chứa cả RM01 + PK01…) */}
+          {/* Loại kho — chọn NHIỀU, bắt buộc ≥1 (khu chứa cả RM01 + PK01…) — dropdown chuẩn form */}
           <div className="space-y-1">
             <Label className="text-xs">Loại kho <span className="text-red-500">*</span> <span className="text-slate-400 font-normal">(chọn được nhiều)</span></Label>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 rounded border border-slate-200 px-2.5 py-2">
-              {warehouseTypes.map(t => (
-                <label key={t.id} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
-                  <input type="checkbox" className="h-4 w-4 rounded accent-blue-600"
-                    checked={categories.includes(t.value)}
-                    onChange={() => toggleCategory(t.value)} />
-                  {t.value}
-                </label>
-              ))}
-              {warehouseTypes.length === 0 && <span className="text-xs text-slate-400">Chưa có Loại kho — khai ở tab Loại kho trước</span>}
-            </div>
+            <WarehouseMultiSelect
+              warehouses={warehouseTypes.map(t => ({ id: t.value, name: t.value }))}
+              selected={categories}
+              onChange={setCategories}
+              placeholder="Chọn loại kho…"
+              unitLabel="loại kho"
+              searchPlaceholder="Tìm loại kho…"
+            />
             <p className="text-[10px] text-slate-400">Khu chỉ nhận hàng đúng các loại đã chọn; vị trí trong khu tự kế thừa</p>
           </div>
 

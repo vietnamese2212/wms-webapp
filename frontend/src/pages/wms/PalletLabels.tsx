@@ -444,6 +444,11 @@ export default function PalletLabels() {
     warehouse_ids: rpWh ? [rpWh] : undefined,
     categories: rpCats.length ? rpCats : undefined,
   }).data
+  // Filter Tên hàng: tìm trên server (facet không còn nhồi cả danh mục mã hàng vào payload)
+  const [rpMatTerm, setRpMatTerm] = useState('')
+  const { data: rpMatRows = [], isFetching: rpMatLoading } = useMaterials(
+    { search: rpMatTerm || undefined, category: rpCats.length === 1 ? rpCats[0] : undefined, limit: 50 },
+    !!rpMatTerm)
   const { data: invData } = useInventoryEntries({
     warehouse_ids: rpWh ? [rpWh] : undefined,
     categories: rpCats.length ? rpCats : undefined,
@@ -511,6 +516,10 @@ export default function PalletLabels() {
     warehouse_ids: auWh ? [auWh] : undefined,
     categories: auCats.length ? auCats : undefined,
   }).data
+  const [auMatTerm, setAuMatTerm] = useState('')
+  const { data: auMatRows = [], isFetching: auMatLoading } = useMaterials(
+    { search: auMatTerm || undefined, category: auCats.length === 1 ? auCats[0] : undefined, limit: 50 },
+    !!auMatTerm)
 
   // (1) Lấy pallet THẬT từ tồn kho theo filter
   const { data: auInvData } = useInventoryEntries({
@@ -738,7 +747,8 @@ export default function PalletLabels() {
     { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: rpCats,
       onChange: v => { setRpCats(v); setRpMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: rpMatIds, onChange: setRpMatIds,
-      options: (rpFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+      serverSearch: true, onSearchChange: setRpMatTerm, loading: rpMatLoading,
+      options: rpMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: rpCycles, onChange: setRpCycles,
       searchable: (rpFacets?.cycles ?? []).length > 6, options: (rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: rpMachines, onChange: setRpMachines,
@@ -753,7 +763,8 @@ export default function PalletLabels() {
     { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: auCats,
       onChange: v => { setAuCats(v); setAuMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: auMatIds, onChange: setAuMatIds,
-      options: (auFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+      serverSearch: true, onSearchChange: setAuMatTerm, loading: auMatLoading,
+      options: auMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: auCycles, onChange: setAuCycles,
       searchable: (auFacets?.cycles ?? []).length > 6, options: (auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: auMachines, onChange: setAuMachines,

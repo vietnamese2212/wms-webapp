@@ -716,62 +716,29 @@ export async function listFacets(req: Request, res: Response) {
     return ok(res, { cycles: [], machines: [], locations: [], materials: [], nccs: [] })
   }
 
-  // Materials: PHÂN TRANG để trả ĐỦ — >1000 mã (hiện 1788) → cap 1000/response CẮT MẤT ~788 mã khỏi
-  // filter "Tên hàng" (facet.materials). Batch song song (fetchAllRowsParallel).
-  const buildMatQ = () => {
-    let q = supabase.from('Material').select('id, material_code, short_name').order('material_code')
-    if (categories.length === 1)    q = q.eq('category', categories[0])
-    else if (categories.length > 1) q = q.in('category', categories)
-    return q
-  }
-  // Locations: phân trang đủ (kho lớn có thể >1000 vị trí).
-  const buildLocQ = () => {
-    let q = supabase.from('Location').select('id, location_code').order('location_code').order('id')
-    if (warehouseIds.length === 1)    q = q.eq('warehouse_id', warehouseIds[0])
-    else if (warehouseIds.length > 1) q = q.in('warehouse_id', warehouseIds)
-    return q
-  }
-
-  // Cycles & machines & ncc: no reference table — query InventoryEntry, lọc theo category/warehouse
-  // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
-  // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy/NCC.
-  const invSelect = 'id, cycle, machine_code, ncc_id'
-    + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
-    + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
-  const buildInvQ = () => {
-    let q = supabase.from('InventoryEntry').select(invSelect)
-      .in('status', ['IN_STOCK', 'PARTIAL'])
-      .order('id', { ascending: true })
-    if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
-    else if (warehouseIds.length > 1) q = q.in('location.warehouse_id', warehouseIds)
-    if (categories.length === 1)      q = q.eq('material.category', categories[0])
-    else if (categories.length > 1)   q = q.in('material.category', categories)
-    return q
-  }
-
-  // Tất cả fetch chạy SONG SONG (materials + inventory + locations phân trang song song) —
-  // né cap 1000 + giảm round-trip tuần tự (trước fetchAllPaged tuần tự ~5s).
+  // Chu kỳ / Máy / NCC: DISTINCT DƯỚI DB (RPC `inventory_facet_values`) — trước đây kéo TOÀN BỘ
+  // dòng tồn IN_STOCK/PARTIAL về Node chỉ để gom tập giá trị: 12.637 dòng ≈ 13 round-trip hôm nay,
+  // vài triệu dòng/năm là hàng nghìn round-trip mỗi lần mở trang Tồn kho.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let matData: any[], invData: any[], locData: any[]
+  let facetVals: { kind: string; val: string }[]
   try {
-    const [m, inv, loc] = await Promise.all([
-      fetchAllRowsParallel(buildMatQ),
-      fetchAllRowsParallel(buildInvQ, 1000, 4),   // tồn ~4000 dòng → batch 4 lấy trong 1 round-trip
-      fetchAllRowsParallel(buildLocQ),
-    ])
-    matData = m
-    invData = inv
-    locData = loc
+    const { data, error } = await supabase.rpc('inventory_facet_values', {
+      p_warehouse_ids: warehouseIds.length ? warehouseIds : null,
+      p_categories:    categories.length   ? categories   : null,
+    })
+    if (error) throw error
+    facetVals = (data ?? []) as { kind: string; val: string }[]
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
 
-  const cycles   = [...new Set(invData.map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
-  const machines = [...new Set(invData.map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+  const pick = (k: string) => facetVals.filter(v => v.kind === k).map(v => v.val)
+  const cycles   = pick('cycle').sort()
+  const machines = pick('machine').sort()
 
   // NCC facet: hàng nhập NCC có ncc_id (đoạn 4 QR = mã NCC, machine_code = null) → lọc "Máy" không ra.
   // Lấy tên NCC từ TransportCompany cho các ncc_id thực có trong tồn (scope kho/loại hàng).
-  const nccIds = [...new Set(invData.map((e: any) => e.ncc_id).filter(Boolean))] as string[]
+  const nccIds = pick('ncc')
   let nccs: { id: string; name: string }[] = []
   if (nccIds.length) {
     // Chunk 300 + phân trang (fetchAllByIdChunks) — >1000 NCC distinct trong tồn thì facet NCC bị cắt âm thầm
@@ -782,12 +749,10 @@ export async function listFacets(req: Request, res: Response) {
       .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
   }
 
-  const materials = ((matData ?? []) as any[])
-    .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
-  const locations = ((locData ?? []) as any[])
-    .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
-
-  return ok(res, { cycles, machines, locations, materials, nccs })
+  // `materials` + `locations` KHÔNG còn nằm trong facet: 2.740 mã + 1.753 vị trí = phần lớn
+  // của 420KB mỗi lần mở trang. Hai filter đó nay TÌM TRÊN SERVER
+  // (`/masterdata/materials?search=&limit=` và `/masterdata/locations?search=&limit=`).
+  return ok(res, { cycles, machines, nccs })
 }
 
 const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']

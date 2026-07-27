@@ -666,6 +666,17 @@ export default function Inventory() {
     categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,
   })
 
+  // Filter Tên hàng + Vị trí: TÌM TRÊN SERVER (50 dòng) — trước đây facet nhồi cả 2.740 mã
+  // và 1.753 vị trí vào payload (~420KB) mỗi lần mở trang Tồn kho.
+  const [matFilterTerm, setMatFilterTerm] = useState('')
+  const { data: matFilterRows = [], isFetching: matFilterLoading } = useMaterials(
+    { search: matFilterTerm || undefined, category: f.materialCategories.length === 1 ? f.materialCategories[0] : undefined, limit: 50 },
+    !!matFilterTerm)
+  const [locFilterTerm, setLocFilterTerm] = useState('')
+  const { data: locFilterRows = [], isFetching: locFilterLoading } = useLocationsReal(
+    { search: locFilterTerm || undefined, warehouse_id: f.warehouseIds.length === 1 ? f.warehouseIds[0] : undefined, limit: 50 },
+    !!locFilterTerm)
+
   // Normalize old JWT abbreviations (TP→Thành phẩm, BAO_BI→Bao bì)
   const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const userAllowedCats = (user?.allowed_categories ?? []).map(normCatFe)
@@ -873,8 +884,8 @@ export default function Inventory() {
   // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
   const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
-  const locationOpts   = (facets?.locations ?? []).map(l => ({ value: l.code, label: l.code }))
-  const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))
+  const locationOpts   = (locFilterRows as { location_code: string }[]).map(l => ({ value: l.location_code, label: l.location_code }))
+  const materialOpts   = matFilterRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code }))
   const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
   const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
@@ -904,8 +915,10 @@ export default function Inventory() {
     { key: 'status', label: 'Tình trạng', type: 'single', options: [{ value: 'ALL', label: 'Tất cả' }], value: f.status === 'ALL' ? 'ALL' : '', allLabel: 'Còn tồn',
       onChange: v => setInventory({ status: v === 'ALL' ? 'ALL' : '', page: 1 }) },
     { key: 'material', label: 'Tên hàng', type: 'multi', options: materialOpts, selected: f.filterMaterialIds,
+      serverSearch: true, onSearchChange: setMatFilterTerm, loading: matFilterLoading,
       onChange: v => setInventory({ filterMaterialIds: v, page: 1 }) },
     { key: 'location', label: 'Vị trí', type: 'multi', options: locationOpts, selected: f.filterLocations,
+      serverSearch: true, onSearchChange: setLocFilterTerm, loading: locFilterLoading,
       onChange: v => setInventory({ filterLocations: v, page: 1 }) },
     { key: 'qa', label: 'QA Status', type: 'multi', options: qaOpts, selected: f.qaStatusIds,
       onChange: v => setInventory({ qaStatusIds: v, page: 1 }) },

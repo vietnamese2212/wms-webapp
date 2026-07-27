@@ -1085,11 +1085,11 @@ export function useInventoryFacets(params?: { warehouse_ids?: string[]; categori
           ...(categories?.length    ? { categories:    categories.join(',')    } : {}),
         },
       })
+      // `materials` + `locations` ĐÃ BỎ khỏi facet (2.740 mã + 1.753 vị trí ≈ 420KB/lần mở trang)
+      // → 2 filter đó dùng tìm-trên-server: useMaterials/useLocationsReal với `search` + `limit`.
       return data.data as {
         cycles:    string[]
         machines:  string[]
-        locations: { id: string; code: string }[]
-        materials: { id: string; code: string; name: string | null }[]
         nccs:      { id: string; name: string }[]
       }
     },

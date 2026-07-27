@@ -199,7 +199,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `scanlog` | Lịch sử quét | Lịch sử quét | view, **export**=nút Xuất Excel |
 | `loosepicking` | Nhặt lẻ | Nhặt lẻ | view, scan, complete (create/start/cancel ĐÃ BỎ 27/06 — nhặt lẻ tạo/bắt đầu/hủy đều qua Outbound, không route riêng) |
 | `stocktake` | Kiểm kho | Kiểm kho | view, create, scan, complete, **export**=Xuất Excel (cả tab Kiểm kê + Lịch sử kiểm) |
-| `locations` | Vị trí kho | Vị trí kho | view, create, edit, delete, **export**=Xuất Excel danh sách |
+| `locations` | Vị trí kho | Vị trí kho | view, create, edit, delete, **import**=Upload Excel tạo vị trí hàng loạt (dựng kho mới; Loại hàng + Tên khu lấy từ `WarehouseZone`, khu chưa khai → chặn cả file), **export**=Xuất Excel danh sách |
 | `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, delete |
 | `pallet_print` | In tem pallet | In tem pallet | view, **mỗi tab 1 quyền (02/07)**: generate=tab Sinh tem mới, reprint=tab In lại từ tồn kho + nút In lại trong Lịch sử, history=tab Lịch sử in, audit=tab Truy cứu |
 | `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split |

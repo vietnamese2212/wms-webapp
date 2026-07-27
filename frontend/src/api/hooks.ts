@@ -1996,6 +1996,28 @@ export function useUploadMaterialsExcel() {
   })
 }
 
+export function useUploadLocationsExcel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+      guardUploadSize(file)
+      const form = new FormData()
+      form.append('file', file)
+      return apiClient.post('/masterdata/locations/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      }).then(r => r.data.data)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['locations'] })
+      qc.invalidateQueries({ queryKey: ['sub-groups'] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
 export function useUploadInventoryExcel() {
   const qc = useQueryClient()
   return useMutation({

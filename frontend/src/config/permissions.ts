@@ -89,6 +89,7 @@ export const MODULES = {
       create: 'Thêm vị trí',
       edit:   'Sửa vị trí',
       delete: 'Xóa vị trí',
+      import: 'Upload Excel vị trí (tạo hàng loạt)',
       export: 'Xuất Excel danh sách vị trí',
     },
   },

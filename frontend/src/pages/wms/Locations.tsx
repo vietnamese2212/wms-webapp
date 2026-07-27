@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -22,9 +22,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
   useLocationsReal, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
+  useUploadLocationsExcel,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -109,6 +111,7 @@ export default function Locations() {
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
   const [bulkOpen,      setBulkOpen]      = useState(false)   // dialog gắn/bỏ cờ cần-check hàng loạt
+  const [showUpload,    setShowUpload]    = useState(false)   // dialog upload Excel vị trí
   const [bulkErr,       setBulkErr]       = useState('')
 
   // Data
@@ -136,6 +139,7 @@ export default function Locations() {
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
   const bulkFlag        = useBulkFlagLocations()
+  const uploadLocations = useUploadLocationsExcel()
 
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
@@ -269,9 +273,11 @@ export default function Locations() {
   ]
 
   function exportExcel() {
+    // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
     const sheet = filtered.map(l => ({
       'Kho': l.warehouse?.name ?? '', 'Loại': l.category ?? '',
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
+      'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
       'Cần check': l.requires_stocktake ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
     }))
@@ -279,6 +285,17 @@ export default function Locations() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Vị trí kho')
     saveWorkbook(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
+  }
+
+  // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key, dòng 3 = ví dụ (ghi đè bằng dữ liệu thật)
+  function downloadLocationTemplate() {
+    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Kiểu']
+    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'sub_type']
+    const ex     = ['20000016', 'TP1', '1', 'T1', 2, '']
+    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ViTriKho')
+    saveWorkbook(wb, 'mau_vi_tri_kho.xlsx')
   }
 
   return (
@@ -308,6 +325,11 @@ export default function Locations() {
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
               disabled: !filtered.length,
               onClick: exportExcel,
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'locations', 'import') ? [{
+              key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload Excel tạo vị trí hàng loạt (dựng kho mới)',
+              mobileHidden: true, // upload file là việc trên PC
+              onClick: () => setShowUpload(true),
             } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'edit') ? [{
               key: 'bulkflag', icon: Flag, label: 'Cờ check',
@@ -698,6 +720,18 @@ export default function Locations() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showUpload && (
+        <UploadExcelDialog
+          title="Upload Excel — Vị trí kho"
+          hint={'Kho điền MÃ hoặc TÊN. Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (tầng bỏ trống được). '
+              + 'Khu phải có sẵn trong Cài đặt WMS → Khu vực — Loại hàng & Tên khu lấy theo khu, không lấy từ file. '
+              + 'Vị trí đã có sẽ được CẬP NHẬT sức chứa/kiểu. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
+          onClose={() => setShowUpload(false)}
+          onDownloadTemplate={downloadLocationTemplate}
+          onUpload={file => uploadLocations.mutateAsync({ file })}
+        />
+      )}
     </div>
   )
 }

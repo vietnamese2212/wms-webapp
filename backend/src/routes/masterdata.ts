@@ -28,6 +28,7 @@ router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse')
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
 router.get('/locations',             location.listLocations)    // ?warehouse_id=&sub_code=
 router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
+router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), location.uploadExcel)  // phải trước /:id
 router.patch('/locations/bulk-flag', requirePerm('locations', 'edit'), location.bulkFlagLocations)  // gắn/bỏ cờ cần-kiểm hàng loạt (phải trước /:id)
 router.get('/locations/:id',         location.getLocation)
 router.put('/locations/:id',         requirePerm('locations', 'edit'), location.updateLocation)

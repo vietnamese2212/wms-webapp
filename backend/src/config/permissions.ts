@@ -5,7 +5,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   scanlog:      ['view', 'export'],
   loosepicking: ['view', 'scan', 'complete'],
   stocktake:    ['view', 'scan', 'complete', 'export'],
-  locations:    ['view', 'create', 'edit', 'delete', 'export'],
+  locations:    ['view', 'create', 'edit', 'delete', 'import', 'export'],
   employees:    ['view'],
   user_admin:   ['view', 'create', 'edit', 'set_password', 'delete', 'manage_roles'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_unit', 'manage_zone', 'manage_shift', 'manage_qa', 'manage_system'],

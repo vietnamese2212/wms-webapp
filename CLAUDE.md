@@ -86,6 +86,11 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
   - **BE → PostgREST: tối đa ~300 id uuid (~11KB)** — 400 id đứt kết nối, 700 id → `400 Bad Request`. Giá trị ngắn (mã hàng/DO 9–10 ký tự): ~800–1000. ⇒ mọi `.in('col', ids)` mà ids **có thể** vượt 300 phải **chunk 300** (`fetchAllByIdChunks` / `chunkArray`), kể cả UPDATE/DELETE (filter cũng trên URL). Chunk 500 là SAI.
   - **Client → API (Vercel): query string tối đa ~800 id uuid (~32KB)** → vượt là **414** *trước khi* tới BE (chunk phía BE vô hiệu). ⇒ FE **không** nhồi danh sách id lớn vào query: gửi **cờ ngữ nghĩa** để BE tự resolve (mẫu `requires_only=1` ở Kiểm kê), hoặc chặn + hướng dẫn thu hẹp (KHÔNG cắt âm thầm).
   - **Lọc theo KHO phải dùng cột `warehouse_id` trực tiếp**, KHÔNG liệt kê vị trí của kho (bug 504 Bàu Bàng 27/07 — 1.517 vị trí = 55KB URL).
+- **DANH MỤC LỚN KHÔNG ĐƯỢC NẠP CẢ VÀO TRÌNH DUYỆT (chốt 27/07, memory `catalogue-payload-campaign`):** Mã hàng / Vị trí / Biển số xe (và mọi danh mục sẽ vượt ~1.000 dòng). Đo thật: 2.740 mã = **2.566KB**/lần gọi, nạp ở 12 chỗ; cột **rỗng 100% vẫn tốn ~60KB** vì tên cột lặp theo SỐ DÒNG. Ba luật:
+  1. **Ô chọn (dropdown/filter) = TÌM TRÊN SERVER**: `search` + `limit: 50` + `useDebouncedValue(term, 250)`; bật `serverSearch` của `SingleSelect`/`FilterBar` (không lọc lại client, ẩn dòng "Tất cả"). Giữ mã đã chọn trong state riêng (`pickedMat`) để nó không biến mất khi từ khóa đổi.
+  2. **Bảng tra hiển thị (lịch sử, map code→tên) = tra ĐÚNG mã trên màn**: `useMaterialsByCodes(codes)` (chunk 300). KHÔNG nạp cả danh mục để dò vài dòng.
+  3. **Chỗ quy đổi số lượng (`qtyFromEntryBase`) phải tra ĐỒNG BỘ trước khi ghi/điền** (`fetchMaterialsByCodes`) — điền trước rồi vá sau = **SỐ SAI**. Dán Excel: `e.preventDefault()` TRƯỚC `await`.
+  Chỉ trang danh mục gốc mới lấy đủ cột (`useMaterialsFull` / `useLocationsFull`); còn lại mặc định `view=lite`.
 - Gặp vấn đề cùng họ scale (query kéo cả bảng, N+1 roundtrip, đếm/tổng client-side trên list cắt cụt, ghi tuần tự từng dòng…) → **tìm giải pháp và xử lý NGAY trong lượt làm việc đó**, không hoãn, không chỉ fix chỗ đang đụng — quét luôn các chỗ cùng pattern.
 
 **Mutation & realtime** (skill `mutation-realtime` + `verify-feature`):

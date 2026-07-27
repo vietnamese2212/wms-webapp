@@ -8,8 +8,10 @@ import { PageFallback } from '@/components/shared/PageFallback'
 import { PageErrorBoundary } from '@/components/shared/PageErrorBoundary'
 import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
+import { inboundPagedQueryOptions, inboundListParamsOf } from '@/api/hooks'
 import { connectRealtimeEvents } from '@/api/realtimeEvents'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
 import { OfflineBanner } from '@/offline/OfflineBanner'
 import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
@@ -35,11 +37,19 @@ export function Shell() {
 
     // Prefetch inbound orders immediately so navigating to /wms/inbound is instant.
     // Fires while user is still on the home/dashboard page.
-    qc.prefetchQuery({
-      queryKey: ['inbound-orders', {}],
-      queryFn: () => apiClient.get('/wms/inbound-orders').then((r) => r.data.data),
-      staleTime: 30_000,
-    })
+    // Phải prefetch ĐÚNG key + ĐÚNG bộ lọc trang sẽ dùng (bản cũ gọi list KHÔNG tham số =
+    // kéo cả bảng rồi vứt vì key ['inbound-orders', {}] không khớp key nào).
+    {
+      const f = useWmsFilterStore.getState().inbound
+      const user = useAuthStore.getState().user
+      qc.prefetchQuery({
+        ...inboundPagedQueryOptions({
+          ...inboundListParamsOf(f, user?.warehouse_id),
+          page: f.page || 1, limit: f.pageSize || 500,
+        }),
+        staleTime: 30_000,
+      })
+    }
 
     // Gắn vé realtime đã persist (nếu có) TRƯỚC khi mở kênh → reload app vẫn kết nối
     // realtime dưới RLS đóng-hẳn. refreshUser() ở trên sẽ tái cấp vé mới khi /me trả về.

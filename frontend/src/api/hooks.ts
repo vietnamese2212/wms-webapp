@@ -457,15 +457,125 @@ function lsGet<T>(key: string): T | undefined {
 function lsSet(key: string, val: unknown): void {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
 }
-export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string }) {
+export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string; gate_registration_id?: string }) {
   return useQuery({
     queryKey: ['inbound-orders', params],
+    // undefined = caller CHƯA sẵn điều kiện (quy ước cả 2 consumer) — không được fetch,
+    // vì request không tham số kéo CẢ BẢNG (vượt trần 10k → 400 khi dữ liệu lớn, đo 27/07)
+    enabled: params !== undefined,
     staleTime: 0,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/inbound-orders', { params })
       return data.data as InboundOrder[]
+    },
+  })
+}
+
+// ── Nhập kho PHÂN TRANG SERVER (27/07) — user xem CẢ THÁNG+ (~500 phiếu/ngày) nên list
+// không thể trả toàn bộ. BE: RPC inbound_orders_page chọn trang id dưới DB. ──
+export interface InboundListPage { items: InboundOrder[]; total: number; page: number; limit: number }
+export interface InboundSummary {
+  total_orders: number; sx: number; ncc: number; tf: number; completed: number
+  total_pallets: number; total_cartons: number
+  locations: { loc: string; pallets: number; cartons: number }[]
+}
+export interface InboundFacets { materials: { value: string; label: string }[]; cycles: string[]; machines: string[] }
+
+export interface InboundListFilterParams {
+  warehouse_id?: string; search?: string; date_from?: string; date_to?: string; material_category?: string
+  material_ids?: string[]; cycles?: string[]; machines?: string[]; shift_ids?: string[]; source_types?: string[]
+  importer?: string
+}
+// Mảng → CSV cho query string (BE parse lại); mảng rỗng = bỏ param
+function inboundCsvParams(p: InboundListFilterParams) {
+  return {
+    warehouse_id: p.warehouse_id, search: p.search, date_from: p.date_from, date_to: p.date_to,
+    material_category: p.material_category, importer: p.importer,
+    material_ids: p.material_ids?.length ? p.material_ids.join(',') : undefined,
+    cycles:       p.cycles?.length       ? p.cycles.join(',')       : undefined,
+    machines:     p.machines?.length     ? p.machines.join(',')     : undefined,
+    shift_ids:    p.shift_ids?.length    ? p.shift_ids.join(',')    : undefined,
+    source_types: p.source_types?.length ? p.source_types.join(',') : undefined,
+  }
+}
+
+// key + queryFn dùng chung cho hook của trang VÀ prefetch ở Shell — prefetch phải trúng ĐÚNG
+// key trang mới có tác dụng (bản cũ prefetch key ['inbound-orders', {}] không tham số: kéo cả
+// bảng rồi vứt đi vì không khớp key nào).
+export function inboundPagedQueryOptions(params: InboundListFilterParams & { page: number; limit: number }) {
+  const qp = { ...inboundCsvParams(params), page: params.page, limit: params.limit }
+  return {
+    queryKey: ['inbound-orders-paged', qp] as const,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inbound-orders', { params: qp })
+      return data.data as InboundListPage
+    },
+  }
+}
+
+// Bộ lọc trang Nhập kho → tham số API. Khai 1 CHỖ để trang và prefetch không lệch nhau.
+export function inboundListParamsOf(
+  f: {
+    search: string; dateFrom: string; dateTo: string; warehouseId: string; materialCategory: string
+    filterMaterials?: string[]; filterCycles?: string[]; filterMachines?: string[]
+    filterShiftIds?: string[]; filterSourceTypes?: string[]; importerSearch?: string
+  },
+  userWarehouseId?: string | null,
+  searchOverride?: string,
+): InboundListFilterParams {
+  return {
+    warehouse_id:      f.warehouseId || userWarehouseId || undefined,
+    search:            (searchOverride ?? f.search) || undefined,
+    date_from:         f.dateFrom || undefined,
+    date_to:           f.dateTo   || undefined,
+    material_category: f.materialCategory || undefined,
+    material_ids:      f.filterMaterials ?? [],
+    cycles:            f.filterCycles    ?? [],
+    machines:          f.filterMachines  ?? [],
+    shift_ids:         f.filterShiftIds  ?? [],
+    source_types:      f.filterSourceTypes ?? [],
+    importer:          f.importerSearch || undefined,
+  }
+}
+
+export function useInboundOrdersPaged(params: InboundListFilterParams & { page: number; limit: number }) {
+  return useQuery({
+    ...inboundPagedQueryOptions(params),
+    staleTime: 0,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,   // lật trang giữ bảng cũ, không nháy trắng
+  })
+}
+
+// Tổng SummaryBand + bảng "Vị trí hàng nhập" — SQL trên TOÀN BỘ kết quả lọc (không phải trang)
+export function useInboundSummary(params: InboundListFilterParams) {
+  const qp = inboundCsvParams(params)
+  return useQuery({
+    queryKey: ['inbound-summary', qp],
+    staleTime: 0,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inbound-orders/summary', { params: qp })
+      return data.data as InboundSummary
+    },
+  })
+}
+
+// Option filter Material / Chu kỳ / Máy — DISTINCT dưới DB theo filter nền (kho/loại/ngày)
+export function useInboundFacets(params: { warehouse_id?: string; material_category?: string; date_from?: string; date_to?: string }) {
+  return useQuery({
+    queryKey: ['inbound-facets', params],
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inbound-orders/facets', { params })
+      return data.data as InboundFacets
     },
   })
 }

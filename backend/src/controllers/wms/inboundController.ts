@@ -205,95 +205,206 @@ async function attachCount(raw: unknown): Promise<Record<string, unknown>> {
 
 // ─── List inbound orders ─────────────────────────────────────
 
-export async function listOrders(req: Request, res: Response) {
-  try {
-    const { warehouse_id, status, material_id, material_category, search, date, date_from, date_to, shift_id, from_gdo_id } = req.query as Record<string, string>
+// Ngữ cảnh lọc CHUNG cho list (2 mode) + summary + facets — parse 1 chỗ để 3 endpoint
+// không lệch nhau (pager, SummaryBand, option filter cùng 1 bộ lọc).
+type InboundListCtx = {
+  emptyScope: boolean            // scope kho ∩ filter = ∅ → trả rỗng luôn
+  whIds: string[] | null         // kho hiệu lực (scope ∩ ?warehouse_id); null = không giới hạn
+  scopeCategories: string[]
+  material_category: string | null
+  status: string | null
+  from: string | null
+  to: string | null
+  nextDay: string | null
+  search: string | null
+  searchFilters: string | null   // chuỗi .or() cho mode cũ (PostgREST)
+  searchMatIds: string[]         // mã hàng khớp term (cho RPC)
+  searchOrderIds: string[]       // phiếu chứa tem pallet khớp term (cho RPC)
+  tooBroad: string | null        // search quá chung → 400 (không cắt âm thầm)
+  materialIds: string[]          // các filter trước đây lọc CLIENT — nay xuống SQL (mode phân trang)
+  cycles: string[]
+  machines: string[]
+  shiftIds: string[]
+  sourceTypes: string[]
+  importer: string | null
+}
 
-    // Enforce user's warehouse scope from JWT
-    const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
-      ? (req.user?.warehouse_ids ?? [])
-      : []
-    let effectiveWarehouses: string[] | null = null
-    if (scopeWarehouses.length > 0) {
-      const effective = warehouse_id
-        ? scopeWarehouses.filter(id => id === warehouse_id)
-        : scopeWarehouses
-      if (effective.length === 0) { ok(res, []); return }
-      effectiveWarehouses = effective
+async function getListCtx(req: Request): Promise<InboundListCtx> {
+  const q = req.query as Record<string, string>
+  const { warehouse_id, status, material_category, search, date, date_from, date_to } = q
+  const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+
+  // Enforce user's warehouse scope from JWT
+  const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
+    ? (req.user?.warehouse_ids ?? [])
+    : []
+  let whIds: string[] | null = null
+  let emptyScope = false
+  if (scopeWarehouses.length > 0) {
+    const effective = warehouse_id
+      ? scopeWarehouses.filter(id => id === warehouse_id)
+      : scopeWarehouses
+    if (effective.length === 0) emptyScope = true
+    whIds = effective
+  } else if (warehouse_id) {
+    whIds = [warehouse_id]
+  }
+
+  // Lọc theo warehouse_type lưu trực tiếp trên order
+  // NATIONAL scope: không giới hạn category, chỉ lọc theo query param nếu có
+  const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
+  const isNational = req.user?.warehouse_scope === 'NATIONAL'
+  const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
+
+  // Date range – support legacy ?date= và ?date_from=/?date_to=. Chuẩn hoá về YYYY-MM-DD
+  // (slice 10) để robust khi client lỡ gửi kèm time (vd "2026-06-18T00:00:00") → tránh nextDay
+  // parse ra Invalid Date làm .toISOString() ném 500.
+  const from = (date_from || date || '').slice(0, 10) || null
+  const to   = (date_to   || date || '').slice(0, 10) || null
+  let nextDay: string | null = null
+  if (to) {
+    const [y, m, d] = to.split('-').map(Number)
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
     }
+  }
 
-    // Lọc theo warehouse_type lưu trực tiếp trên order
-    // NATIONAL scope: không giới hạn category, chỉ lọc theo query param nếu có
-    const normCat = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
-    const isNational = req.user?.warehouse_scope === 'NATIONAL'
-    const scopeCategories = isNational ? [] : (req.user?.allowed_categories ?? []).map(normCat)
-
-    // Date range – support legacy ?date= và ?date_from=/?date_to=. Chuẩn hoá về YYYY-MM-DD
-    // (slice 10) để robust khi client lỡ gửi kèm time (vd "2026-06-18T00:00:00") → tránh nextDay
-    // parse ra Invalid Date làm .toISOString() ném 500.
-    const from = (date_from || date || '').slice(0, 10) || null
-    const to   = (date_to   || date || '').slice(0, 10) || null
-    let nextDay: string | null = null
-    if (to) {
-      const [y, m, d] = to.split('-').map(Number)
-      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
-        nextDay = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
-      }
+  // Search → resolve material ids ONCE (trước khi phân trang)
+  let searchFilters: string | null = null
+  let searchMatIds: string[] = []
+  let searchOrderIds: string[] = []
+  let tooBroad: string | null = null
+  if (search) {
+    const [matRes, palletRes] = await Promise.all([
+      supabase.from('Material').select('id')
+        .or(`material_code.ilike.%${safeSearch(search)}%,short_name.ilike.%${safeSearch(search)}%`).limit(500),
+      // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
+      supabase.from('InventoryEntry').select('import_order_id')
+        .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
+    ])
+    let matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
+    const orderIds = [...new Set(
+      ((palletRes.data ?? []) as { import_order_id: string | null }[])
+        .map(p => p.import_order_id).filter((v): v is string => !!v)
+    )]
+    // Term ngắn/phổ biến ("51", "-", "_") khớp hàng trăm mã → `material_id.in.(…)` phình >13KB
+    // → PostgREST từ chối → 500 trắng trang (đo 26/07). Thu hẹp về mã CÓ phiếu nhập (RPC DISTINCT,
+    // migration 20260726_omni_search_narrow.sql); vẫn quá nhiều → báo 400 rõ, KHÔNG cắt âm thầm.
+    if (matIds.length > 60) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: nar, error: narErr } = await (supabase.rpc('omni_narrow_import_material_ids', { p_ids: matIds }) as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!narErr) matIds = ((nar ?? []) as any[]).map(r => String(r.id))
     }
-
-    // Search → resolve material ids ONCE (trước khi phân trang)
-    let searchFilters: string | null = null
-    if (search) {
-      const [matRes, palletRes] = await Promise.all([
-        supabase.from('Material').select('id')
-          .or(`material_code.ilike.%${safeSearch(search)}%,short_name.ilike.%${safeSearch(search)}%`).limit(500),
-        // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
-        supabase.from('InventoryEntry').select('import_order_id')
-          .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
-      ])
-      let matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
-      const orderIds = [...new Set(
-        ((palletRes.data ?? []) as { import_order_id: string | null }[])
-          .map(p => p.import_order_id).filter((v): v is string => !!v)
-      )]
-      // Term ngắn/phổ biến ("51", "-", "_") khớp hàng trăm mã → `material_id.in.(…)` phình >13KB
-      // → PostgREST từ chối → 500 trắng trang (đo 26/07). Thu hẹp về mã CÓ phiếu nhập (RPC DISTINCT,
-      // migration 20260726_omni_search_narrow.sql); vẫn quá nhiều → báo 400 rõ, KHÔNG cắt âm thầm.
-      if (matIds.length > 60) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: nar, error: narErr } = await (supabase.rpc('omni_narrow_import_material_ids', { p_ids: matIds }) as any)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!narErr) matIds = ((nar ?? []) as any[]).map(r => String(r.id))
-      }
-      if (matIds.length + orderIds.length > 300)
-        return fail(res, `Từ khóa "${search}" quá chung (khớp ${matIds.length} mã hàng · ${orderIds.length} pallet). Gõ thêm ký tự để thu hẹp.`, 400)
+    if (matIds.length + orderIds.length > 300) {
+      tooBroad = `Từ khóa "${search}" quá chung (khớp ${matIds.length} mã hàng · ${orderIds.length} pallet). Gõ thêm ký tự để thu hẹp.`
+    } else {
       const filters = [`import_code.ilike.%${safeSearch(search)}%`]
       if (matIds.length > 0)   filters.push(`material_id.in.(${matIds.join(',')})`)
       if (orderIds.length > 0) filters.push(`id.in.(${orderIds.join(',')})`)
       searchFilters = filters.join(',')
+      searchMatIds = matIds
+      searchOrderIds = orderIds
     }
+  }
+
+  return {
+    emptyScope, whIds, scopeCategories,
+    material_category: material_category || null, status: status || null,
+    from, to, nextDay,
+    search: search || null, searchFilters, searchMatIds, searchOrderIds, tooBroad,
+    materialIds: csv(q.material_ids), cycles: csv(q.cycles), machines: csv(q.machines),
+    shiftIds: csv(q.shift_ids), sourceTypes: csv(q.source_types), importer: q.importer || null,
+  }
+}
+
+// Tham số cho RPC inbound_orders_page / inbound_orders_summary (PHẢI khớp chữ ký migration
+// 20260727_inbound_orders_paged_rpc.sql). Filter Người nhập: resolve tên → Employee.id ở đây
+// ([] = có gõ tên nhưng không khớp ai → RPC trả 0 dòng, đúng ngữ nghĩa).
+async function inboundRpcFilterParams(ctx: InboundListCtx): Promise<Record<string, unknown>> {
+  let importerIds: string[] | null = null
+  if (ctx.importer) {
+    const { data: emps, error: empErr } = await supabase.from('Employee')
+      .select('id').ilike('name', `%${safeSearch(ctx.importer)}%`).limit(100)
+    if (empErr) throw new Error(empErr.message)
+    importerIds = ((emps ?? []) as { id: string }[]).map(e => e.id)
+  }
+  return {
+    p_warehouse_ids:    ctx.whIds,
+    p_scope_categories: ctx.scopeCategories.length ? ctx.scopeCategories : null,
+    p_category:         ctx.material_category,
+    p_status:           ctx.status,
+    p_date_from:        ctx.from,
+    p_date_to:          ctx.to,
+    p_material_ids:     ctx.materialIds.length ? ctx.materialIds : null,
+    p_cycles:           ctx.cycles.length ? ctx.cycles : null,
+    p_machines:         ctx.machines.length ? ctx.machines : null,
+    p_shift_ids:        ctx.shiftIds.length ? ctx.shiftIds : null,
+    p_source_types:     ctx.sourceTypes.length ? ctx.sourceTypes : null,
+    p_importer_ids:     importerIds,
+    p_search:           ctx.search,
+    p_search_mat_ids:   ctx.search ? ctx.searchMatIds : null,
+    p_search_order_ids: ctx.search ? ctx.searchOrderIds : null,
+  }
+}
+
+export async function listOrders(req: Request, res: Response) {
+  try {
+    const { status, material_id, material_category, shift_id, from_gdo_id, gate_registration_id, page, limit } = req.query as Record<string, string>
+    const ctx = await getListCtx(req)
+    if (ctx.tooBroad) return fail(res, ctx.tooBroad, 400)
+
+    // ── MODE PHÂN TRANG (?page=) — RPC chọn trang id + đếm tổng dưới DB, chỉ enrich 1 trang.
+    // User xem CẢ THÁNG+ (~500 phiếu/ngày) nên không thể trả toàn bộ như mode cũ. ──
+    if (page) {
+      const pageNum  = Math.max(1, parseInt(page) || 1)
+      const limitNum = Math.min(1000, Math.max(1, parseInt(limit) || 500))
+      if (ctx.emptyScope) { ok(res, { items: [], total: 0, page: pageNum, limit: limitNum }); return }
+      const rpcParams = await inboundRpcFilterParams(ctx)
+      const { data: pg, error: pgErr } = await supabase.rpc('inbound_orders_page', {
+        p_offset: (pageNum - 1) * limitNum, p_limit: limitNum, ...rpcParams,
+      })
+      if (pgErr) throw new Error(pgErr.message)
+      const ids   = ((pg as { ids?: string[] } | null)?.ids ?? [])
+      const total = Number((pg as { total?: number } | null)?.total ?? 0)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let rows: any[] = []
+      if (ids.length) {
+        rows = await fetchAllByIdChunks(ids, chunk =>
+          supabase.from('ProductionImport').select(ORDER_SELECT).in('id', chunk).order('id'))
+        // `.in()` không giữ thứ tự → sắp lại theo ids (RPC đã sắp ngày desc + nhóm chuyến)
+        const pos = new Map(ids.map((v, i) => [v, i]))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rows.sort((a: any, b: any) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
+      }
+      ok(res, { items: await enrichOrders(rows), total, page: pageNum, limit: limitNum })
+      return
+    }
+
+    // ── MODE CŨ (trả MẢNG — giữ back-compat cho consumer khác: dialog phiếu gần đây,
+    // InboundDetail, bundle cũ đang mở). Có trần cứng chống kéo vô hạn. ──
+    if (ctx.emptyScope) { ok(res, []); return }
 
     // Rebuild query mỗi trang (PostgREST builder dùng 1 lần) — phân trang để vượt cap ~1000 dòng/response.
     const buildQuery = () => {
       let q = supabase.from('ProductionImport').select(ORDER_SELECT)
         .order('import_date', { ascending: false })
         .order('created_at',  { ascending: false })
-      if (effectiveWarehouses) {
-        q = effectiveWarehouses.length === 1
-          ? q.eq('warehouse_id', effectiveWarehouses[0])
-          : q.in('warehouse_id', effectiveWarehouses)
-      } else if (warehouse_id) {
-        q = q.eq('warehouse_id', warehouse_id)
+      if (ctx.whIds) {
+        q = ctx.whIds.length === 1
+          ? q.eq('warehouse_id', ctx.whIds[0])
+          : q.in('warehouse_id', ctx.whIds)
       }
       if (status)      q = q.eq('status', status)
       else             q = q.neq('status', 'CANCELLED')
       if (material_id) q = q.eq('material_id', material_id)
       if (shift_id)    q = q.eq('shift_id', shift_id)
       if (from_gdo_id) q = q.eq('from_gdo_id', from_gdo_id)
+      if (gate_registration_id) q = q.eq('gate_registration_id', gate_registration_id)
       if (material_category) { const mc = String(material_category).replace(/[",()]/g, ''); q = q.or(`warehouse_type.eq."${mc}",source_type.eq.TRANSFER`) }
-      if (from)      q = q.gte('import_date', from)
-      if (nextDay)   q = q.lt('import_date', nextDay)
-      if (searchFilters) q = q.or(searchFilters)
+      if (ctx.from)    q = q.gte('import_date', ctx.from)
+      if (ctx.nextDay) q = q.lt('import_date', ctx.nextDay)
+      if (ctx.searchFilters) q = q.or(ctx.searchFilters)
       return q
     }
 
@@ -306,14 +417,23 @@ export async function listOrders(req: Request, res: Response) {
     // Post-filter: TRANSFER luôn hiển thị bất kể category scope của user
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let filtered: any[] = data ?? []
-    if (!material_category && scopeCategories.length > 0) {
+    if (!material_category && ctx.scopeCategories.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       filtered = filtered.filter((o: any) =>
-        o.source_type === 'TRANSFER' || scopeCategories.includes(o.warehouse_type ?? '')
+        o.source_type === 'TRANSFER' || ctx.scopeCategories.includes(o.warehouse_type ?? '')
       )
     }
 
-    filtered.forEach(applyInboundMode)  // kho QTY → ép no-QR hiệu lực
+    ok(res, await enrichOrders(filtered))
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ── Enrich list phiếu (dùng chung mode cũ trả mảng + mode phân trang): applyInboundMode +
+// bulk entries + đếm slot theo vị trí + GDO cartons + mã DO transfer. Logic GIỮ NGUYÊN. ──
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function enrichOrders(orders: any[]): Promise<any[]> {
+  const filtered = orders
+  filtered.forEach(applyInboundMode)  // kho QTY → ép no-QR hiệu lực
 
     // ── BULK thay N+1 (trước: mỗi phiếu 2-3 query → hàng trăm phiếu × trăm user = cạn connection) ──
     // 1 query entries cho TẤT CẢ phiếu (chunk id ≤100 tránh URL dài + phân trang né cap-1000) + 1 query
@@ -379,15 +499,48 @@ export async function listOrders(req: Request, res: Response) {
       }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = withCount.map((o: any) => ({
+    return withCount.map((o: any) => ({
       ...o,
       from_gdo_delivery_codes: o.from_gdo_id ? (codesByGdo.get(o.from_gdo_id) ?? []) : [],
     }))
-    ok(res, result)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 // ─── Create inbound order ────────────────────────────────────
+
+// ── Tổng SummaryBand + bảng "Vị trí hàng nhập" — SQL trên TOÀN BỘ kết quả lọc (không kéo
+// dòng về Node). Cùng bộ lọc với mode phân trang của listOrders → số không lệch trang. ──
+export async function listOrdersSummary(req: Request, res: Response) {
+  try {
+    const ctx = await getListCtx(req)
+    if (ctx.tooBroad) return fail(res, ctx.tooBroad, 400)
+    if (ctx.emptyScope) {
+      ok(res, { total_orders: 0, sx: 0, ncc: 0, tf: 0, completed: 0, total_pallets: 0, total_cartons: 0, locations: [] })
+      return
+    }
+    const { data, error } = await supabase.rpc('inbound_orders_summary', await inboundRpcFilterParams(ctx))
+    if (error) throw new Error(error.message)
+    ok(res, data)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ── Option filter Material / Chu kỳ / Máy — DISTINCT dưới DB theo filter NỀN (kho/loại/ngày).
+// Thay cho việc FE gom option từ toàn bộ dòng đã tải (mode cũ). ──
+export async function listOrdersFacets(req: Request, res: Response) {
+  try {
+    const ctx = await getListCtx(req)
+    if (ctx.emptyScope) { ok(res, { materials: [], cycles: [], machines: [] }); return }
+    const { data, error } = await supabase.rpc('inbound_orders_facets', {
+      p_warehouse_ids:    ctx.whIds,
+      p_scope_categories: ctx.scopeCategories.length ? ctx.scopeCategories : null,
+      p_category:         ctx.material_category,
+      p_status:           ctx.status,
+      p_date_from:        ctx.from,
+      p_date_to:          ctx.to,
+    })
+    if (error) throw new Error(error.message)
+    ok(res, data)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
 
 export async function createOrder(req: Request, res: Response) {
   try {

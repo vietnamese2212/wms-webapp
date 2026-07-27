@@ -32,6 +32,8 @@ interface InboundFilters {
   filterCycles: string[]
   filterMachines: string[]
   importerSearch: string
+  page: number        // phân trang server (27/07) — mọi filter đổi phải reset page: 1
+  pageSize: number
 }
 interface InventoryFilters {
   search: string
@@ -305,6 +307,7 @@ const INBOUND_DEFAULT: InboundFilters = {
   search: '', dateFrom: today(), dateTo: today(), filterShiftIds: [], filterSourceTypes: [],
   warehouseId: '', materialCategory: '',
   filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
+  page: 1, pageSize: 500,
 }
 
 // Giá trị mặc định cho TẤT CẢ filter — gói trong hàm để reset() lấy được `today()` mới

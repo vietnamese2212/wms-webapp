@@ -106,6 +106,10 @@ router.delete('/inbound-plan/:id',       requireAnyPerm(['tms_plan', 'upload_inb
 
 // Inbound orders (phiếu nhập kho)
 router.get('/inbound-orders',                           inbound.listOrders)
+// summary/facets PHẢI đứng TRƯỚC '/inbound-orders/:id' (không thì bị :id nuốt).
+// Hở đọc như listOrders (CLAUDE.md) — scope kho + loại vẫn cắt trong controller theo JWT.
+router.get('/inbound-orders/summary',                   inbound.listOrdersSummary)
+router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)

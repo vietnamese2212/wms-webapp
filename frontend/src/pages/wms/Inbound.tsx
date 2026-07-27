@@ -19,11 +19,13 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
+  useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
   useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useImportShifts,
   useEmployeeRecords, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
 import { usePrefetchInboundOrders } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -1197,9 +1199,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   )
 }
 
-// Ca sort order: Ca 1 → Ca 2 → Ca 3 → HC → unknown last
-const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, 'HC': 3 }
-
 type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
 // Khóa nhóm "cùng chuyến" để vẽ bracket nối phiếu: theo lệnh TMS (chuyển kho) HOẶC biển số xe (gate) cho NCC nhiều mã cùng chuyến.
@@ -1211,26 +1210,9 @@ export function inboundGroupKey(o: InboundOrder): string | null {
   return null
 }
 
-// ─── Client-side cascade filter ───────────────────────────────
-
-function applyClientFilters(
-  orders: InboundOrder[],
-  mats: string[], cycles: string[], machines: string[], importer: string, shiftIds: string[], sourceTypes: string[],
-  exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift' | 'source'
-) {
-  return orders.filter(order => {
-    // TRANSFER không có ca/máy/cycle — skip các filter này để không bị ẩn nhầm
-    const isTransfer = order.source_type === 'TRANSFER'
-    const importerName = (order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '').toLowerCase()
-    if (exclude !== 'source'   && sourceTypes.length > 0 && !sourceTypes.includes(order.source_type ?? ''))                  return false
-    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                            return false
-    if (!isTransfer && exclude !== 'cycle'   && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))  return false
-    if (!isTransfer && exclude !== 'machine' && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m))) return false
-    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))                     return false
-    if (!isTransfer && exclude !== 'shift'   && shiftIds.length > 0 && !shiftIds.includes(order.shift_id ?? ''))              return false
-    return true
-  })
-}
+// (27/07) Các filter Material/Chu kỳ/Máy/Ca/Nguồn/Người nhập đã chuyển XUỐNG SERVER
+// (RPC inbound_orders_page — TRANSFER vẫn được miễn filter Chu kỳ/Máy/Ca như trước).
+// List phân trang server nên KHÔNG còn lọc/sort client-side trên trang.
 
 // Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
@@ -1356,16 +1338,6 @@ export default function Inbound() {
   // Resolve effective warehouse: UI filter override → user's single fixed warehouse → let backend scope handle multi-warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
-  const { data: serverOrders = [], isLoading, error: listErr } = useInboundOrders({
-    warehouse_id:      effectiveWarehouseId,
-    search:            f.search           || undefined,
-    date_from:         f.dateFrom         || undefined,
-    date_to:           f.dateTo           || undefined,
-    material_category: f.materialCategory || undefined,
-  })
-  // Prefetch chi tiết phiếu ĐANG MỞ khi có mạng → offline quét được cả phiếu chưa bấm vào
-  usePrefetchInboundOrders(serverOrders)
-
   // Null-safe defaults for all array/string fields (guards against stale session state)
   const filterMaterials = f.filterMaterials ?? []
   const filterCycles    = f.filterCycles    ?? []
@@ -1373,12 +1345,37 @@ export default function Inbound() {
   const filterShiftIds  = f.filterShiftIds  ?? []
   const filterSourceTypes = f.filterSourceTypes ?? []
   const importerSearch  = f.importerSearch  ?? ''
+  const page     = f.page     || 1     // state cũ persist chưa có field → fallback
+  const pageSize = f.pageSize || 500
 
-  // Cascade-filtered orders
-  const filteredOrders = useMemo(
-    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes),
-    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes]
-  )
+  // Ô gõ chữ (tìm kiếm + người nhập) debounce 250ms trước khi gọi server
+  const debSearch   = useDebouncedValue(f.search, 250)
+  const debImporter = useDebouncedValue(importerSearch, 250)
+
+  // PHÂN TRANG SERVER (27/07): mọi filter xuống SQL; list chỉ tải 1 trang; tổng
+  // SummaryBand + bảng vị trí = RPC tính trên TOÀN BỘ kết quả lọc (không phải trang).
+  const listParams = inboundListParamsOf(
+    { ...f, importerSearch: debImporter }, user?.warehouse_id, debSearch)
+  const { data: pageData, isLoading, error: listErr } = useInboundOrdersPaged({ ...listParams, page, limit: pageSize })
+  const serverOrders = pageData?.items ?? []
+  const total        = pageData?.total ?? 0
+  const totalPages   = Math.max(1, Math.ceil(total / pageSize))
+  const { data: summary } = useInboundSummary(listParams)
+  const { data: facets }  = useInboundFacets({
+    warehouse_id:      effectiveWarehouseId,
+    material_category: f.materialCategory || undefined,
+    date_from:         f.dateFrom || undefined,
+    date_to:           f.dateTo   || undefined,
+  })
+  // Prefetch chi tiết phiếu ĐANG MỞ khi có mạng → offline quét được cả phiếu chưa bấm vào
+  usePrefetchInboundOrders(serverOrders)
+
+  // Filter co kết quả lại khi đang đứng trang sau → kéo về trang cuối còn dữ liệu
+  useEffect(() => {
+    if (!isLoading && total > 0 && page > totalPages) setInbound({ page: totalPages })
+  }, [isLoading, total, page, totalPages, setInbound])
+
+  const filteredOrders = serverOrders   // filter đã áp ở server — giữ tên cho phần render phía dưới
 
   // Shift options for multi-select (from master data, not derived from orders)
   const shiftOptions = useMemo(() =>
@@ -1386,27 +1383,9 @@ export default function Inbound() {
     [shifts]
   )
 
-  // Sort: ngày desc → nhóm theo chuyến (lệnh TMS hoặc xe NCC) → ca asc → giờ tạo asc
-  const sortedOrders = useMemo(() =>
-    [...filteredOrders].sort((a, b) => {
-      const dateA = a.import_date ?? ''
-      const dateB = b.import_date ?? ''
-      if (dateA !== dateB) return dateB.localeCompare(dateA)
-      // Nhóm theo chuyến trong cùng ngày (phiếu có nhóm xếp trước, sắp theo khóa nhóm)
-      const keyA = inboundGroupKey(a) ?? ''
-      const keyB = inboundGroupKey(b) ?? ''
-      if (keyA !== keyB) {
-        if (!keyA && keyB) return 1
-        if (keyA && !keyB) return -1
-        return keyA.localeCompare(keyB)
-      }
-      const sA = SHIFT_ORDER[a.shift?.name ?? ''] ?? 99
-      const sB = SHIFT_ORDER[b.shift?.name ?? ''] ?? 99
-      if (sA !== sB) return sA - sB
-      return a.created_at.localeCompare(b.created_at)
-    }),
-    [filteredOrders]
-  )
+  // Thứ tự dòng do RPC quyết định (ngày desc → nhóm theo chuyến → ca → giờ tạo) —
+  // KHÔNG sort lại client (sort trong 1 trang sẽ phá thứ tự xuyên trang).
+  const sortedOrders = filteredOrders
 
   // Tính vị trí bracket cho mỗi row trong nhóm "cùng chuyến" (lệnh TMS hoặc xe NCC)
   const bracketPositions = useMemo(() => {
@@ -1426,76 +1405,38 @@ export default function Inbound() {
     return pos
   }, [sortedOrders])
 
-  function openEditNccGroup(order: InboundOrder) {
+  async function openEditNccGroup(order: InboundOrder) {
     // Nhóm sửa PHẢI khớp đúng nhóm bracket hiển thị (cùng inboundGroupKey = cùng chuyến/cổng).
     // Phiếu NCC chưa gắn xe → key null → chỉ chính nó, KHÔNG gom theo ngày+kho (tránh kéo nhầm phiếu khác chuyến vào).
-    const key = inboundGroupKey(order)
-    const group = key
-      ? sortedOrders.filter(o => o.source_type === 'NCC' && inboundGroupKey(o) === key)
-      : [order]
-    setEditNccGroup(group.length > 0 ? group : [order])
+    // Phân trang server: nhóm có thể nằm VẮT qua ranh giới trang → lấy đủ nhóm từ server theo
+    // lượt cổng (mode cũ trả mảng enrich đủ), lỗi mạng thì fallback nhóm trên trang hiện tại.
+    const gate = (order as { gate_registration_id?: string | null }).gate_registration_id
+    if (order.source_type === 'NCC' && gate) {
+      try {
+        const { data } = await apiClient.get('/wms/inbound-orders', { params: { gate_registration_id: gate } })
+        const group = ((data?.data ?? []) as InboundOrder[]).filter(o => o.source_type === 'NCC')
+        if (group.length > 0) { setEditNccGroup(group); return }
+      } catch { /* fallback dưới */ }
+      const key = inboundGroupKey(order)
+      const group = sortedOrders.filter(o => o.source_type === 'NCC' && inboundGroupKey(o) === key)
+      setEditNccGroup(group.length > 0 ? group : [order])
+      return
+    }
+    setEditNccGroup([order])
   }
 
-  // Options for each multi-select — computed from subset excluding that filter's own selection
-  const materialOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'mat')
-    const seen = new Map<string, string>()
-    for (const o of sub)
-      if (o.material_id && !seen.has(o.material_id))
-        seen.set(o.material_id, o.material?.short_name ?? o.material?.material_description ?? o.material_id)
-    return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [serverOrders, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
+  // Options cho các multi-select — DISTINCT dưới DB theo filter nền (RPC inbound_orders_facets),
+  // không còn gom từ toàn bộ dòng đã tải (đã bỏ nạp-cả-list vào trình duyệt)
+  const materialOptions = facets?.materials ?? []
+  const cycleOptions    = useMemo(() => (facets?.cycles ?? []).map(c => ({ value: c, label: c })), [facets])
+  const machineOptions  = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
 
-  const cycleOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'cycle')
-    return [...new Set(sub.flatMap(o => o.cycles ?? []))].map(c => ({ value: c, label: c }))
-  }, [serverOrders, filterMaterials, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
-
-  const machineOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'machine')
-    return [...new Set(sub.flatMap(o => o.machine_codes ?? []))].map(m => ({ value: m, label: m }))
-  }, [serverOrders, filterMaterials, filterCycles, importerSearch, filterShiftIds, filterSourceTypes])
-
-  // Totals
-  const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
-  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (tổng hiển thị = thùng quy đổi)
-  const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + qtyEntryDecimal(o.total_cartons ?? 0, o.material), 0), [filteredOrders])
-  const srcCounts = useMemo(() => {
-    let sx = 0, ncc = 0, tf = 0
-    for (const o of filteredOrders) {
-      if (o.source_type === 'NCC') ncc++
-      else if (o.source_type === 'TRANSFER') tf++
-      else sx++
-    }
-    return { sx, ncc, tf }
-  }, [filteredOrders])
-
-  // Location summary — aggregate theo vị trí thực tế của từng pallet (entries_by_location)
-  // không dùng order.location vì user có thể đổi vị trí phiếu sau khi đã quét
-  const locationSummary = useMemo(() => {
-    const map = new Map<string, { loc: string; pallets: number; cartons: number }>()
-    for (const order of filteredOrders) {
-      const byLoc = order.entries_by_location
-      if (byLoc && byLoc.length > 0) {
-        for (const { loc, pallets, cartons } of byLoc) {
-          const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
-          cur.pallets += pallets
-          cur.cartons += qtyEntryDecimal(cartons, order.material)   // BASE UNIT: quy đổi thùng per-mã
-          map.set(loc, cur)
-        }
-      } else if (order._count.inventory_entries > 0) {
-        // Fallback khi entries_by_location chưa có (dữ liệu cũ)
-        const loc = order.location
-          ? `${order.location.location_code}-${order.location.sub_code}`
-          : '(chưa xác định)'
-        const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
-        cur.pallets += order._count.inventory_entries
-        cur.cartons += qtyEntryDecimal(order.total_cartons ?? 0, order.material)   // BASE UNIT: quy đổi thùng per-mã
-        map.set(loc, cur)
-      }
-    }
-    return [...map.values()].sort((a, b) => b.pallets - a.pallets)
-  }, [filteredOrders])
+  // Totals + bảng "Vị trí hàng nhập" — SQL tính trên TOÀN BỘ kết quả lọc (RPC inbound_orders_summary,
+  // quy đổi thùng per-mã như qtyEntryDecimal). Cộng trên trang hiện tại = SỐ SAI (thiếu các trang kia).
+  const totalPallets = Number(summary?.total_pallets ?? 0)
+  const totalCartons = Number(summary?.total_cartons ?? 0)
+  const srcCounts = { sx: summary?.sx ?? 0, ncc: summary?.ncc ?? 0, tf: summary?.tf ?? 0 }
+  const locationSummary = summary?.locations ?? []
 
   // Date label
   const hasDate = f.dateFrom || f.dateTo
@@ -1523,26 +1464,27 @@ export default function Inbound() {
     .filter(c => !inboundAllowedCats || inboundAllowedCats.includes(c))
     .map(c => ({ value: c, label: c }))
 
+  // Mọi filter đổi phải reset page: 1 (đang đứng trang 5 mà đổi lọc → trang 5 của bộ lọc mới là vô nghĩa)
   const filterDefs: FilterDef[] = [
     { key: 'date',     label: 'Ngày',       type: 'daterange', from: f.dateFrom, to: f.dateTo,
-      onChange: (from, to) => setInbound({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setInbound({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho',       type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+      onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
-      onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+      onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'source',   label: 'Nguồn gốc',  type: 'multi', searchable: false, selected: filterSourceTypes,
       options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }],
-      onChange: v => setInbound({ filterSourceTypes: v }) },
+      onChange: v => setInbound({ filterSourceTypes: v, page: 1 }) },
     { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
-      onChange: v => setInbound({ filterShiftIds: v }) },
+      onChange: v => setInbound({ filterShiftIds: v, page: 1 }) },
     { key: 'material', label: 'Material',   type: 'multi', options: materialOptions, selected: filterMaterials, searchable: true,
-      onChange: v => setInbound({ filterMaterials: v }) },
+      onChange: v => setInbound({ filterMaterials: v, page: 1 }) },
     { key: 'cycle',    label: 'Chu kỳ',     type: 'multi', options: cycleOptions,    selected: filterCycles,
-      onChange: v => setInbound({ filterCycles: v }) },
+      onChange: v => setInbound({ filterCycles: v, page: 1 }) },
     { key: 'machine',  label: 'Máy',        type: 'multi', options: machineOptions,  selected: filterMachines,
-      onChange: v => setInbound({ filterMachines: v }) },
+      onChange: v => setInbound({ filterMachines: v, page: 1 }) },
     { key: 'importer', label: 'Người nhập', type: 'text',  value: importerSearch, placeholder: 'Tên người nhập…',
-      onChange: v => setInbound({ importerSearch: v }) },
+      onChange: v => setInbound({ importerSearch: v, page: 1 }) },
   ]
 
   // ─── Saved Views ───
@@ -1567,7 +1509,7 @@ export default function Inbound() {
         {/* Row 1: Title + Search + Views + Density + Create */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
-          <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa, tem pallet…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setInbound({ search: v, page: 1 })} placeholder="Tìm mã phiếu, hàng hóa, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -1575,7 +1517,7 @@ export default function Inbound() {
             module="inbound"
             currentFilters={viewSnapshot}
             activeId={activeViewId}
-            onApply={(filters) => setInbound(filters as Partial<typeof f>)}
+            onApply={(filters) => setInbound({ ...(filters as Partial<typeof f>), page: 1 })}
           />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
@@ -1597,7 +1539,7 @@ export default function Inbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY, page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -1615,8 +1557,8 @@ export default function Inbound() {
           )}
         </p>
 
-        {/* Vị trí hàng nhập – collapsible trong header */}
-        {!isLoading && filteredOrders.length > 0 && (
+        {/* Vị trí hàng nhập – collapsible trong header (số liệu = RPC summary, toàn bộ kết quả lọc) */}
+        {!isLoading && locationSummary.length > 0 && (
           <div className="rounded-md border border-slate-200 overflow-hidden">
             <button
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
@@ -1673,13 +1615,14 @@ export default function Inbound() {
       {/* Dải tile tổng hợp (Manhattan Insight) */}
       <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
-        { label: 'Phiếu nhập', value: filteredOrders.length },
+        { label: 'Phiếu nhập', value: summary?.total_orders ?? total },
         { label: 'SX',         value: srcCounts.sx },
         { label: 'NCC',        value: srcCounts.ncc },
         { label: 'TF',         value: srcCounts.tf },
         { label: 'Pallet',     value: totalPallets },
         { label: 'Thực nhập',  value: totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
+        { label: 'Hoàn thành', value: summary?.completed ?? 0 },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
       ]} />
 
       {/* Scrollable content + Pane (Manhattan Insight) */}
@@ -1761,6 +1704,25 @@ export default function Inbound() {
                   })}
                 </TableBody>
               </Table>
+
+              {/* Pager (như Tồn kho) */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
+                  <button
+                    disabled={page <= 1}
+                    onClick={() => setInbound({ page: page - 1 })}
+                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
+                    ← Trước
+                  </button>
+                  <span className="text-xs text-slate-500">{page} / {totalPages}</span>
+                  <button
+                    disabled={page >= totalPages}
+                    onClick={() => setInbound({ page: page + 1 })}
+                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
+                    Sau →
+                  </button>
+                </div>
+              )}
           </>
         )}
        </div>
@@ -1769,10 +1731,21 @@ export default function Inbound() {
        )}
       </div>
 
-      {/* Footer đếm bản ghi (Manhattan) */}
-      {!isLoading && filteredOrders.length > 0 && (
+      {/* Footer đếm bản ghi (Manhattan) — khoảng dòng của trang / tổng + chọn dòng/trang */}
+      {!isLoading && total > 0 && (
         <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>1–{filteredOrders.length} / {filteredOrders.length} phiếu</span>
+          <span>
+            {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} / {total.toLocaleString('vi-VN')} phiếu
+            <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
+              · Dòng/trang:
+              <select
+                value={pageSize}
+                onChange={e => setInbound({ pageSize: Number(e.target.value), page: 1 })}
+                className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
+                {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          </span>
           <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng</span>
         </div>
       )}

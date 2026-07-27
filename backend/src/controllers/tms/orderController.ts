@@ -6,10 +6,7 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 import { uuidList } from '../../utils/ids'
-import { fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
-
-// Trần dòng: lưới Kế hoạch TMS render toàn bộ ở client (rowspan theo nhóm) → chặn kéo rộng ngày.
-const LIST_ROW_CAP = 5000
+import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

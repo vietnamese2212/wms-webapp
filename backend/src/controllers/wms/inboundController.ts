@@ -7,17 +7,12 @@ import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
-import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
-
-// Trần dòng cho các list FE render toàn bộ ở client (bảng + tổng client-side).
-// Bảng nghiệp vụ sẽ có HÀNG TRIỆU dòng/năm; filter ngày mặc định = hôm nay nên bình thường
-// chỉ vài trăm dòng. Trần này chặn trường hợp kéo rộng khoảng ngày.
-const LIST_ROW_CAP = 5000
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)

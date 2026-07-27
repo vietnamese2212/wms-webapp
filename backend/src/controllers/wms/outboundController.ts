@@ -8,18 +8,13 @@ import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
-
-// Trần dòng cho list mà FE render TOÀN BỘ ở client (bảng + tổng client-side).
-// Bảng nghiệp vụ sẽ có hàng triệu dòng/năm; filter ngày mặc định = hôm nay nên bình thường
-// chỉ vài trăm dòng — trần này chặn trường hợp kéo rộng khoảng ngày.
-const LIST_ROW_CAP = 5000
 
 const now = () => new Date().toISOString()
 

@@ -2,12 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
-
-// Trần dòng cho list mà FE render TOÀN BỘ ở client (bảng + tổng client-side).
-// Bảng nghiệp vụ sẽ có hàng triệu dòng/năm; filter ngày mặc định = hôm nay nên bình thường
-// chỉ vài trăm dòng — trần này chặn trường hợp kéo rộng khoảng ngày.
-const LIST_ROW_CAP = 5000
+import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}

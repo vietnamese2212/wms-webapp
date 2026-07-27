@@ -51,6 +51,19 @@ export async function fetchUpTo(
   return { rows: out.slice(0, max), truncated: out.length > max }
 }
 
+/**
+ * Trần dòng cho list mà FE render TOÀN BỘ ở client — khai 1 CHỖ cho mọi controller.
+ *
+ * Căn cứ (đo 27/07): 1 dòng danh sách ≈ **1,5KB** (đã gồm các bảng nhúng), 1.000 dòng ≈ 1,4s.
+ * ⇒ 10.000 dòng ≈ 15MB / ~14s — đã là ngưỡng KHÓ CHỊU nhưng chưa chạm giới hạn 60s của Vercel.
+ * Sản lượng user: ~500 dòng/ngày ⇒ trần này ≈ 20 ngày.
+ *
+ * ĐÂY LÀ LƯỚI AN TOÀN, KHÔNG PHẢI GIẢI PHÁP: xem 1 tháng (15.000 dòng ≈ 22MB) vẫn không tải
+ * nổi, và nâng trần cũng vô ích vì bức tường thật là payload + số ô DOM. Lối ra duy nhất là
+ * PHÂN TRANG SERVER (kèm tổng SummaryBand tính bằng SQL) — xem docs/plans/CUTOVER_2026-07-27.md.
+ */
+export const LIST_ROW_CAP = 10_000
+
 export const LIST_TOO_LARGE_MSG = (max: number) =>
   `Kết quả quá lớn (hơn ${max.toLocaleString('vi-VN')} bản ghi) nên không tải hết được. `
   + 'Vui lòng thu hẹp KHOẢNG NGÀY, hoặc lọc thêm theo Kho / Loại kho rồi thử lại.'

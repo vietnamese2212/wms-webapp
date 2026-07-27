@@ -281,12 +281,20 @@ const M_FIELDS: FieldDef[] = [
   { key: 'stack_on_top',         label: 'Xếp trên hàng khác', aliases: ['xep tren hang khac 1 0', 'xep tren hang khac'] },
   { key: 'base_unit',            label: 'Base Unit',          aliases: ['base unit'] },
   { key: 'entry_unit',           label: 'Entry Unit',         aliases: ['entry unit'] },
+  { key: 'no_qr_tracking',       label: 'Không quản QR',      aliases: ['khong quan qr'] },
+  { key: 'is_non_stock',         label: 'Mã phi hàng hóa',    aliases: ['ma phi hang hoa'] },
+  { key: 'is_pallet_carrier',    label: 'Pallet mang hàng',   aliases: ['pallet mang hang'] },
 ]
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
 const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return (!Number.isFinite(n) || n < 0) ? null : n }
 const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return (!Number.isFinite(n) || n < 0) ? null : n }
+// Cờ 1/x/có/yes → true; 0/không/no → false; ô TRỐNG → null = giữ nguyên giá trị cũ
+const mBool = (v: unknown): boolean | null => {
+  const s = mStr(v)?.toLowerCase() ?? null
+  return s == null ? null : ['1', 'x', 'true', 'có', 'co', 'yes'].includes(s)
+}
 
 export async function uploadExcel(req: Request, res: Response) {
   try {
@@ -339,8 +347,10 @@ export async function uploadExcel(req: Request, res: Response) {
       const cHei         = mNum(row.carton_height_mm)
       const maxLayers    = mInt(row.max_stack_layers)
       // Xếp trên hàng khác: 1/x/có/yes → true; 0/không/no → false; ô trống → giữ nguyên
-      const onTopRaw     = mStr(row.stack_on_top)?.toLowerCase() ?? null
-      const onTop        = onTopRaw == null ? null : ['1', 'x', 'true', 'có', 'co', 'yes'].includes(onTopRaw)
+      const onTop        = mBool(row.stack_on_top)
+      const noQr         = mBool(row.no_qr_tracking)      // mã không quản QR (kho QTY, hàng không tem)
+      const nonStock     = mBool(row.is_non_stock)        // mã chiết khấu/dịch vụ — loại khỏi Xuất/Nhập/Tồn
+      const palletCarry  = mBool(row.is_pallet_carrier)   // pallet mang hàng (Loscam) — không đếm trùng
       const baseUnit     = (() => { const s = mStr(row.base_unit);  return s ? s.toUpperCase() : null })()
       const entryUnit    = (() => { const s = mStr(row.entry_unit); return s ? s.toUpperCase() : null })()
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
@@ -364,6 +374,9 @@ export async function uploadExcel(req: Request, res: Response) {
         if (onTop        != null) base.stack_on_top = onTop
         if (baseUnit     != null) base.base_unit = baseUnit
         if (entryUnit    != null) base.entry_unit = entryUnit
+        if (noQr         != null) base.no_qr_tracking = noQr
+        if (nonStock     != null) base.is_non_stock = nonStock
+        if (palletCarry  != null) base.is_pallet_carrier = palletCarry
         base.updated_at = now
         return base
       }
@@ -411,6 +424,7 @@ export async function uploadExcel(req: Request, res: Response) {
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,
           max_stack_layers: maxLayers, stack_on_top: onTop ?? false,
           base_unit: baseUnit, entry_unit: entryUnit,
+          no_qr_tracking: noQr ?? false, is_non_stock: nonStock ?? false, is_pallet_carrier: palletCarry ?? false,
           is_active: true, created_at: now, updated_at: now,
         })
       }

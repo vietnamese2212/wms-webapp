@@ -303,6 +303,10 @@ export default function Materials() {
     labels.push('Base Unit *', 'Entry Unit')
     keys.push('base_unit', 'entry_unit')
     ex.push('HOP', 'CAR')
+    // 3 cờ nghiệp vụ (1/0) — ô trống = giữ nguyên với mã đã có, = tắt với mã mới
+    labels.push('Không quản QR (1/0)', 'Mã phi hàng hóa (1/0)', 'Pallet mang hàng (1/0)')
+    keys.push('no_qr_tracking', 'is_non_stock', 'is_pallet_carrier')
+    ex.push(0, 0, 0)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')

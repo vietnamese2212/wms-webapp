@@ -2,6 +2,12 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
+
+// Trần dòng cho list mà FE render TOÀN BỘ ở client (bảng + tổng client-side).
+// Bảng nghiệp vụ sẽ có hàng triệu dòng/năm; filter ngày mặc định = hôm nay nên bình thường
+// chỉ vài trăm dòng — trần này chặn trường hợp kéo rộng khoảng ngày.
+const LIST_ROW_CAP = 5000
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -70,15 +76,10 @@ export async function listGateRegistrations(req: Request, res: Response) {
     if (status)         q = q.eq('status', status)
     return q
   }
-  const PAGE = 1000
-  const data: unknown[] = []
-  for (let page = 0; ; page++) {
-    const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-    if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
-    const arr = batch ?? []
-    data.push(...arr)
-    if (arr.length < PAGE) break
-  }
+  // Trần dòng: FE render toàn bộ lượt đăng ký ở client → vượt trần thì BÁO RÕ để user thu hẹp,
+  // KHÔNG cắt âm thầm (luật CLAUDE.md).
+  const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
+  if (truncated) return apiErr(res, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
   return res.json({ success: true, data })
 }
 

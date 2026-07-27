@@ -6,6 +6,10 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 import { uuidList } from '../../utils/ids'
+import { fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
+
+// Trần dòng: lưới Kế hoạch TMS render toàn bộ ở client (rowspan theo nhóm) → chặn kéo rộng ngày.
+const LIST_ROW_CAP = 5000
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -205,8 +209,10 @@ export async function listOrders(req: Request, res: Response) {
     const listCats = scopeCategoriesOf(req)
 
     // Phân trang né cap-1000 của PostgREST: >1000 đơn/ngày/kho sẽ bị mất nếu không page.
+    // Kèm TRẦN CỨNG: FE render toàn bộ lưới Kế hoạch ở client → kéo rộng khoảng ngày (cả năm)
+    // sẽ là hàng chục nghìn đơn. Vượt trần thì BÁO RÕ, KHÔNG cắt âm thầm (luật CLAUDE.md).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await fetchAllPaged(() => {
+    const { rows: data, truncated } = await fetchUpTo(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q = supabase.from('TmsOrder')
         .select(ORDER_SELECT)
@@ -219,7 +225,8 @@ export async function listOrders(req: Request, res: Response) {
       if (userNccId)    q = q.eq('ncc_id', userNccId)
       if (listCats)     q = q.or(`warehouse_type.is.null,warehouse_type.in.(${listCats.map(c => `"${c}"`).join(',')})`)
       return q
-    })
+    }, LIST_ROW_CAP)
+    if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
     return ok(res, data)
   } catch (e) { return fail(res, String(e)) }
 }

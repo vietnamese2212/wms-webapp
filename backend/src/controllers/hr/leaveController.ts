@@ -2,7 +2,12 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
+
+// Trần dòng cho list mà FE render TOÀN BỘ ở client (bảng + tổng client-side).
+// Bảng nghiệp vụ sẽ có hàng triệu dòng/năm; filter ngày mặc định = hôm nay nên bình thường
+// chỉ vài trăm dòng — trần này chặn trường hợp kéo rộng khoảng ngày.
+const LIST_ROW_CAP = 5000
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -182,15 +187,10 @@ export async function listLeaves(req: Request, res: Response) {
       if (date_from)    q = q.gte('date_to', date_from)
       return q
     }
-    const PAGE = 1000
-    const data: unknown[] = []
-    for (let page = 0; ; page++) {
-      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) return fail(res, error.message)
-      const arr = batch ?? []
-      data.push(...arr)
-      if (arr.length < PAGE) break
-    }
+    // Trần dòng: FE render toàn bộ đơn nghỉ ở client → vượt trần thì BÁO RÕ để user thu hẹp,
+    // KHÔNG cắt âm thầm (luật CLAUDE.md).
+    const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
     if (scopeEmpIds !== null) {

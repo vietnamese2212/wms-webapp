@@ -9,6 +9,17 @@ export function safeSearch(input: unknown): string {
     .replace(/[,()]/g, ' ')              // bỏ ký tự phá cú pháp .or()
 }
 
+// Chuẩn hóa TỪ KHÓA để khớp cột `search_norm` (Material/Location) — PHẢI KHỚP công thức
+// của cột GENERATED trong migration 20260727_search_norm_unaccent.sql:
+//   lower(unaccent(...))  ⇔  bỏ dấu tiếng Việt (kể cả Đ→D) + thường hoá.
+// Nhờ vậy gõ "nha dam" tìm ra "Nha Đam". FE gửi từ khóa THÔ — chuẩn hoá làm ở BE (1 chỗ).
+export function normalizeSearchTerm(input: unknown): string {
+  return String(input ?? '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')   // bỏ dấu tổ hợp
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')              // đ/Đ là chữ riêng, NFD không tách
+    .toLowerCase()
+}
+
 // Giá trị làm HẰNG so-khớp-CHÍNH-XÁC trong `.or()/.eq()/.cs.{}` (KHÔNG phải ilike pattern):
 // loại ký tự cấu trúc `, ( ) { } "` để không chèn thêm predicate / phá array literal `{...}`.
 // Khác safeSearch (dành cho ilike): ở đây KHÔNG escape `% _` vì là so khớp literal, không phải LIKE.

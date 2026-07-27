@@ -7,12 +7,17 @@ import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+
+// Trần dòng cho các list FE render toàn bộ ở client (bảng + tổng client-side).
+// Bảng nghiệp vụ sẽ có HÀNG TRIỆU dòng/năm; filter ngày mặc định = hôm nay nên bình thường
+// chỉ vài trăm dòng. Trần này chặn trường hợp kéo rộng khoảng ngày.
+const LIST_ROW_CAP = 5000
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
@@ -297,15 +302,10 @@ export async function listOrders(req: Request, res: Response) {
       return q
     }
 
-    const PAGE = 1000
-    const rows: unknown[] = []
-    for (let page = 0; ; page++) {
-      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) throw error
-      const arr = batch ?? []
-      rows.push(...arr)
-      if (arr.length < PAGE) break
-    }
+    // Trần CỨNG: FE render toàn bộ phiếu ở client (bảng + SummaryBand cộng tổng) nên không thể
+    // kéo vô hạn. Vượt trần → BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
+    const { rows, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
     const data = rows
 
     // Post-filter: TRANSFER luôn hiển thị bất kể category scope của user

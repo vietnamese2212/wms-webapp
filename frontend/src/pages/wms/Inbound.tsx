@@ -31,6 +31,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
@@ -1355,7 +1356,7 @@ export default function Inbound() {
   // Resolve effective warehouse: UI filter override → user's single fixed warehouse → let backend scope handle multi-warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
-  const { data: serverOrders = [], isLoading } = useInboundOrders({
+  const { data: serverOrders = [], isLoading, error: listErr } = useInboundOrders({
     warehouse_id:      effectiveWarehouseId,
     search:            f.search           || undefined,
     date_from:         f.dateFrom         || undefined,
@@ -1670,6 +1671,7 @@ export default function Inbound() {
       </div>
 
       {/* Dải tile tổng hợp (Manhattan Insight) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Phiếu nhập', value: filteredOrders.length },
         { label: 'SX',         value: srcCounts.sx },

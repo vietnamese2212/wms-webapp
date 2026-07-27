@@ -19,6 +19,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { RowFilterChips, rowFilterPass, type RowFilterVal } from '@/components/shared/RowFilterChips'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
@@ -3724,7 +3725,7 @@ export default function TMSBookings() {
   const { data: whTypesMain = [] }            = useScopedWhTypes()
   const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
-  const { data: orders = [], isLoading }      = useTmsOrders(
+  const { data: orders = [], isLoading, error: listErr } = useTmsOrders(
     (warehouseId || isNccUser) ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined } : undefined,
   )
   const nppSuggestions = useMemo(() =>
@@ -4184,6 +4185,7 @@ export default function TMSBookings() {
           />
         </div>
       ) : null}
+      {activeTab === 'main' && <ListErrorBanner error={listErr} />}
       {activeTab === 'main' && (warehouseId || isNccUser) && tableRows.length > 0 && (
         <SummaryBand compact tiles={[
           { label: 'Đơn',        value: mainSummary.orders.toLocaleString('vi-VN') },

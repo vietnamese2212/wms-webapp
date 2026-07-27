@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
-import { safeFilterValue, safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
+import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
@@ -71,7 +71,8 @@ export async function listLocations(req: Request, res: Response) {
       if (category) query = (query as any).or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
       // Scope Loại hàng: không truyền category → vẫn cắt theo allowed_categories (giao ≥1 loại; null vẫn hiện)
       if (scopeCats) query = (query as any).or(categoriesOrScopeFilter('categories', scopeCats))
-      if (search) query = query.ilike('location_code', `%${safeSearch(search)}%`)
+      // Tìm BỎ DẤU trên cột chuẩn-hoá (mã vị trí + mã khu + tên khu)
+      if (search) query = query.ilike('search_norm', `%${safeSearch(normalizeSearchTerm(search))}%`)
       return query
     }
     let data: Record<string, unknown>[]

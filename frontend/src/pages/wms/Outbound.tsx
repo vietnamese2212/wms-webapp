@@ -11,6 +11,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -306,7 +307,7 @@ export default function Outbound() {
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
-  const { data: gdos = [], isLoading, isFetching } = useGDOs({
+  const { data: gdos = [], isLoading, isFetching, error: listErr } = useGDOs({
     warehouse_id: f.warehouseId || undefined,
     // search lọc client-side (omni đa cột) — không gửi lên BE để không bị thu hẹp theo mỗi group_code
     date_from: f.dateFrom || undefined,
@@ -846,6 +847,7 @@ export default function Outbound() {
       </div>
 
       {/* Summary band (Manhattan) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
         { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },

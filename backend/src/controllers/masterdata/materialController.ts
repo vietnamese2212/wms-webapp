@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
+import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -51,12 +51,9 @@ export async function listMaterials(req: Request, res: Response) {
       // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
       // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
       if (codeList) query = query.in('material_code', codeList)
-      if (search) {
-        const s = safeSearch(search)
-        query = query.or(
-          `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
-        )
-      }
+      // Tìm BỎ DẤU trên cột chuẩn-hoá `search_norm` (mã + mô tả + tên ngắn + mã cũ):
+      // gõ "nha dam" ra "Nha Đam". Từ khóa chuẩn hoá bằng ĐÚNG công thức của cột (normalizeSearchTerm).
+      if (search) query = query.ilike('search_norm', `%${safeSearch(normalizeSearchTerm(search))}%`)
       return query
     }
     // limit=N → 1 round-trip, dừng ở N dòng (typeahead). Không limit: phân trang SONG SONG
@@ -259,19 +256,11 @@ export async function deleteMaterial(req: Request, res: Response) {
 
 export async function listCategories(_req: Request, res: Response) {
   try {
-    // Phân trang để không sót category chỉ xuất hiện ở mã hàng thứ >1000 (cap PostgREST)
-    const PAGE = 1000
-    const rows: { category: string | null }[] = []
-    for (let page = 0; ; page++) {
-      const { data, error } = await supabase
-        .from('Material').select('category').eq('is_active', true).not('category', 'is', null)
-        .range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) throw error
-      const arr = (data ?? []) as { category: string | null }[]
-      rows.push(...arr)
-      if (arr.length < PAGE) break
-    }
-    const cats = [...new Set(rows.map(m => m.category).filter(Boolean))].sort()
+    // DISTINCT dưới DB (RPC `material_categories`) — trước đây quét MỌI dòng Material về Node
+    // rồi mới Set(): 10 round-trip ở 10.000 mã, chỉ để lấy ~5 giá trị.
+    const { data, error } = await supabase.rpc('material_categories')
+    if (error) throw error
+    const cats = ((data ?? []) as { category: string }[]).map(r => r.category)
     ok(res, cats)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

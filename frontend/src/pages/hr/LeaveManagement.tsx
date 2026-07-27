@@ -10,6 +10,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { SavedViews } from '@/components/shared/SavedViews'
 import {
   useDepartments, useEmployeeRecords, useJobTitles,
@@ -59,7 +60,7 @@ export function LeaveSection() {
   const [dense, setDense] = useState(() => localStorage.getItem('leave_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('leave_density', d ? '0' : '1'); return !d })
 
-  const { data: leavesRaw = [], isLoading } = useLeaves(
+  const { data: leavesRaw = [], isLoading, error: listErr } = useLeaves(
     { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined, direct: (mine && direct) || undefined },
     true,
   )
@@ -170,6 +171,7 @@ export function LeaveSection() {
       </div>
       <FilterBar defs={defs} className="hidden sm:flex shrink-0" />
 
+      <ListErrorBanner error={listErr} />
       <SummaryBand className="rounded-lg shrink-0" tiles={[
         { label: 'Tổng đơn', value: counts.total },
         { label: 'Chờ duyệt', value: counts.pending, accent: counts.pending > 0 },

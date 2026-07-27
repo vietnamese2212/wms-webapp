@@ -28,6 +28,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Rows3, AlignJustify } from 'lucide-react'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -410,7 +411,7 @@ export default function GateRegistration() {
   if (fDirection)     params.direction      = fDirection
   if (fStatus)        params.status         = fStatus
 
-  const { data: regs = [], isLoading } = useQuery<GateRegistration[]>({
+  const { data: regs = [], isLoading, error: listErr } = useQuery<GateRegistration[]>({
     queryKey: ['gate-registrations', params],
     queryFn: () => apiClient.get('/tms/gate-registrations', { params }).then(r => r.data.data),
   })
@@ -1127,6 +1128,7 @@ export default function GateRegistration() {
       </div>
 
       {/* Summary band (Manhattan) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Tổng xe', value: displayRegs.length },
         { label: 'Đang chờ', value: displayRegs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length },

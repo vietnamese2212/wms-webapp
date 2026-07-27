@@ -27,6 +27,34 @@ export async function fetchAllByIdChunks(
   return results.flat()
 }
 
+/**
+ * Nạp tối đa `max` dòng rồi DỪNG, kèm cờ báo đã chạm trần — dùng cho các list mà FE render
+ * TOÀN BỘ ở client (bảng + SummaryBand cộng tổng client-side). Trước đây các list này kéo mọi
+ * dòng khớp filter: an toàn vì filter ngày mặc định = HÔM NAY, nhưng ai kéo rộng khoảng ngày
+ * (cả năm) là hàng chục nghìn dòng → chậm/timeout.
+ *
+ * Nguyên tắc (CLAUDE.md): **chặn + hướng dẫn thu hẹp, KHÔNG cắt âm thầm**. Gọi hàm này rồi
+ * `if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(max))`.
+ * Lấy `max + 1` dòng để biết "còn nữa" mà không tốn thêm query đếm.
+ */
+export async function fetchUpTo(
+  makeQuery: () => SupaQuery, max: number, pageSize = 1000,
+): Promise<{ rows: any[]; truncated: boolean }> {
+  const out: any[] = []
+  for (let p = 0; out.length <= max; p++) {
+    const r = await makeQuery().range(p * pageSize, p * pageSize + pageSize - 1)
+    if (r.error) throw new Error(r.error.message)
+    const arr = r.data ?? []
+    out.push(...arr)
+    if (arr.length < pageSize) break
+  }
+  return { rows: out.slice(0, max), truncated: out.length > max }
+}
+
+export const LIST_TOO_LARGE_MSG = (max: number) =>
+  `Kết quả quá lớn (hơn ${max.toLocaleString('vi-VN')} bản ghi) nên không tải hết được. `
+  + 'Vui lòng thu hẹp KHOẢNG NGÀY, hoặc lọc thêm theo Kho / Loại kho rồi thử lại.'
+
 export async function fetchAllRowsParallel(
   makeQuery: () => SupaQuery, pageSize = 1000, batch = 2,
 ): Promise<any[]> {

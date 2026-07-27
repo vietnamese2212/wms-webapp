@@ -38,3 +38,15 @@ $$;
 CREATE INDEX IF NOT EXISTS idx_ie_facet_wh_status
   ON "InventoryEntry" (warehouse_id, status)
   INCLUDE (cycle, machine_code, ncc_id, material_id);
+
+-- ── Tập LOẠI KHO đang được dùng bởi mã hàng (dropdown "Loại hàng") ─────────────
+-- Trước: controller quét MỌI dòng Material (phân trang 1000/lượt) rồi Set() ở Node.
+-- Sau: DISTINCT dưới DB, trả vài dòng.
+CREATE OR REPLACE FUNCTION material_categories()
+RETURNS TABLE (category text)
+LANGUAGE sql STABLE
+AS $$
+  SELECT m.category FROM "Material" m
+  WHERE m.is_active AND m.category IS NOT NULL AND m.category <> ''
+  GROUP BY m.category ORDER BY m.category;
+$$;

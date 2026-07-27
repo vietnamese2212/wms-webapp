@@ -13,7 +13,7 @@
 
 ## B. VALIDATE
 - Số lượng theo BASE UNIT: cột "Thùng" = entry (mã có entry → SỐ NGUYÊN; mã không entry = base, thập phân OK); cột "Hộp"/lẻ = base. Convert 1 lần tại rìa bằng `qtyFromEntryBase`; BE chốt `qtyIntegerError` (422 theo dòng kèm gợi ý quy đổi).
-- Chọn ngữ nghĩa rõ: **all-or-nothing** (Tồn kho — 1 dòng lỗi là không ghi gì) hoặc **per-row** (Mã hàng, KH nhập — dòng lỗi bị loại, trả list lỗi). Ghi rõ trong response.
+- Chọn ngữ nghĩa rõ: **all-or-nothing** (Tồn kho · Mã hàng · Vị trí kho — 1 dòng lỗi là KHÔNG ghi gì) hoặc **per-row** (KH nhập — dòng lỗi bị loại, trả list lỗi). Ghi rõ trong response VÀ trong hint dialog. ⚠️ **Mặc định nên all-or-nothing với UPLOAD DANH MỤC** (Mã hàng/Vị trí/Tồn): per-row để lại DB NỬA VỜI — sự cố thật 27/07: file Mã hàng có vài dòng khai Entry Unit mà thiếu Đv/Thùng, per-row ghi 2.662 mã rồi liệt kê lỗi ⇒ user phải xoá tay 2.662 mã mới up lại được. Per-row chỉ hợp khi mỗi dòng là 1 GIAO DỊCH độc lập (KH nhập), không phải khi cả file là 1 bộ danh mục.
 - Scope kho + loại hàng: guard TRƯỚC khi ghi (all-or-nothing với scope).
 
 ## C. GHI — theo LÔ, idempotent, chống đua

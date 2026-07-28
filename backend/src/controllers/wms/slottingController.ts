@@ -181,9 +181,33 @@ export async function getSlotting(req: Request, res: Response) {
     // không ai đọc. Đo 28/07: gửi cả danh sách = 598KB/3.269 dòng (~183 B/dòng) ⇒ kho lớn hơn
     // là vượt trần 4,5MB của Vercel chỉ vì phần tooltip không dùng được.
     const allWarnings = categoryWarnings(stats)
+
+    // Bảng ABC: PHÂN TRANG. Đo 28/07 với 2.378 mã = 902KB; danh mục 10.000 mã ≈ 3,8MB, cộng phần
+    // còn lại là vượt trần 4,5MB của Vercel.
+    // ⚠️ XẾP HẠNG vẫn phải tính trên TOÀN BỘ mã: hạng A/B/C là % LŨY KẾ lượt nhặt, cắt trang trước
+    // khi xếp hạng thì trang 2 sẽ toàn hạng A (mỗi trang tự tính lũy kế lại) — sai hoàn toàn.
+    // Nên: engine xếp hạng đủ tập → mới cắt trang → và các ô SummaryBand đếm trên ĐỦ TẬP.
+    const pageNum  = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(1000, Math.max(1, parseInt(String(req.query.page_size ?? '200'), 10) || 200))
+    // Tìm mã/tên: lọc ở SERVER (lọc client sau khi phân trang = lọc trên đúng 1 trang)
+    const term = String(req.query.search ?? '').trim().toLowerCase()
+    const filtered = term
+      ? materials.filter(m => `${m.code} ${m.name ?? ''}`.toLowerCase().includes(term))
+      : materials
+    const offset = (pageNum - 1) * pageSize
+
     return ok(res, {
       window_days: days, total_picks: stats.total_picks, has_ranked_zones: hasRanked,
-      zones, materials,
+      zones,
+      materials: filtered.slice(offset, offset + pageSize),
+      materials_total: filtered.length,
+      page: pageNum, page_size: pageSize,
+      // 5 ô SummaryBand đếm trên TOÀN BỘ mã khớp lọc (đếm ở FE = chỉ đếm trang đang xem)
+      n_a: filtered.filter(m => m.abc === 'A').length,
+      n_b: filtered.filter(m => m.abc === 'B').length,
+      n_c: filtered.filter(m => m.abc === 'C').length,
+      misplaced_mats:    filtered.filter(m => m.misplaced_pallets > 0).length,
+      misplaced_pallets: filtered.reduce((s, m) => s + m.misplaced_pallets, 0),
       warnings: allWarnings.slice(0, WARN_PREVIEW),
       warnings_total: allWarnings.length,
       warnings_pallets: allWarnings.reduce((s, w) => s + w.pallets, 0),

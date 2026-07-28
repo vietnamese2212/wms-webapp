@@ -3297,14 +3297,27 @@ export interface SlottingData {
   // `warnings` chỉ là PHẦN ĐẦU (tối đa 50 dòng) — tổng đếm trên toàn bộ nằm ở 2 field dưới.
   // Trước đây trả cả danh sách: 3.269 dòng = 598KB chỉ để đổ vào 1 tooltip không ai đọc hết.
   warnings: SlottingWarning[]; warnings_total?: number; warnings_pallets?: number
+  // `materials` chỉ là 1 TRANG (2.378 mã = 902KB; 10.000 mã ≈ 3,8MB vượt trần 4,5MB).
+  // Xếp hạng A/B/C vẫn tính trên ĐỦ TẬP ở server (là % lũy kế — cắt trang trước khi xếp hạng
+  // thì trang nào cũng toàn hạng A). 5 số dưới cũng đếm trên đủ tập khớp lọc.
+  materials_total?: number; page?: number; page_size?: number
+  n_a?: number; n_b?: number; n_c?: number
+  misplaced_mats?: number; misplaced_pallets?: number
 }
-export function useSlotting(warehouseId: string, categories: string[] = [], days = 30) {
+export function useSlotting(
+  warehouseId: string, categories: string[] = [], days = 30,
+  page = 1, pageSize = 200, search = '',
+) {
   return useQuery({
-    queryKey: ['slotting', warehouseId, categories.join(','), days],
+    queryKey: ['slotting', warehouseId, categories.join(','), days, page, pageSize, search],
     enabled: !!warehouseId,
     queryFn: async () => {
-      const params: Record<string, string> = { warehouse_id: warehouseId, days: String(days) }
+      const params: Record<string, string> = {
+        warehouse_id: warehouseId, days: String(days),
+        page: String(page), page_size: String(pageSize),
+      }
       if (categories.length > 0) params.categories = categories.join(',')
+      if (search) params.search = search           // tìm mã/tên trên SERVER
       const { data } = await apiClient.get('/wms/slotting', { params })
       return data.data as SlottingData
     },

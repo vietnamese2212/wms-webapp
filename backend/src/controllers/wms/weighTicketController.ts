@@ -175,9 +175,6 @@ export async function listWeighTickets(req: Request, res: Response) {
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
     let qDone = countQ().eq('is_complete', true)
     let qMatch = countQ().not('gdo_id', 'is', null)
-    // Đếm TỔNG riêng: khi trang vượt phạm vi, `count` của query chính không về được (PostgREST 416)
-    // nhưng footer vẫn phải hiện đúng tổng để user biết mà bấm lùi trang.
-    let qTotal = countQ()
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
     const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
@@ -207,8 +204,8 @@ export async function listWeighTickets(req: Request, res: Response) {
       }
       return qq
     }
-    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch); qTotal = applyFilters(qTotal)
-    const [{ data, count, error }, doneRes, matchRes, totalRes] = await Promise.all([query, qDone, qMatch, qTotal])
+    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch)
+    const [{ data, count, error }, doneRes, matchRes] = await Promise.all([query, qDone, qMatch])
     if (error) {
       if (/relation .*WeighTicket.* does not exist/i.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_tickets', 503, 'NOT_READY')
@@ -217,9 +214,12 @@ export async function listWeighTickets(req: Request, res: Response) {
       // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống (PostgREST trả 416 khi offset ≥
       // tổng dòng). Rất dễ gặp: đang ở trang cuối rồi gõ tìm cho kết quả co lại, hoặc số trang đã
       // được nhớ theo user từ lần trước. Xem `isRangeNotSatisfiable`.
+      // Đếm tổng CHỈ chạy ở nhánh này (query chính đã mang `count:'exact'`) — thêm 1 câu đếm
+      // luôn chạy là tự làm nặng đường nóng dưới tải ghi.
       if (isRangeNotSatisfiable(error)) {
+        const { count: totCount } = await applyFilters(countQ())
         return ok(res, {
-          rows: [], total: totalRes.count ?? 0,
+          rows: [], total: totCount ?? 0,
           done: doneRes.count ?? 0, matched: matchRes.count ?? 0,
           page: pageNum, limit: limitNum,
         })

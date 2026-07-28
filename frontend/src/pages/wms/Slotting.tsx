@@ -16,6 +16,8 @@ import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
   useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
@@ -107,10 +109,18 @@ export default function Slotting() {
   }, [effectiveWhId, warehouseId, setSlotting])
 
   const [search, setSearch] = useState('')
+  const searchDeb = useDebouncedValue(search, 250)   // tìm trên SERVER → đợi 250ms mới gọi
+  const [matPage, setMatPage] = useState(1)
+  const [matPageSize, setMatPageSize] = useState(200)
+  // Đổi bộ lọc/từ khóa → về trang 1 (đang ở trang 12 mà lọc còn 1 trang = bảng trống)
+  useEffect(() => { setMatPage(1) }, [searchDeb, effectiveWhId, categories, days])
   const [showPlanSheet, setShowPlanSheet] = useState(false)
   // Query phân tích ở CHA để nút "Tạo kế hoạch" nằm trên toolbar (chuẩn table-format: action lên trên);
   // chỉ fetch khi đang ở tab Phân tích ('' = disabled)
-  const analysisQuery = useSlotting(tab === 'analysis' ? effectiveWhId : '', categories, days)
+  // Bảng ABC PHÂN TRANG SERVER: 2.378 mã = 902KB, danh mục 10.000 mã ≈ 3,8MB (trần 4,5MB).
+  const analysisQuery = useSlotting(
+    tab === 'analysis' ? effectiveWhId : '', categories, days, matPage, matPageSize, searchDeb,
+  )
   const { data: analysisData } = analysisQuery
 
   const filterDefs: FilterDef[] = [
@@ -180,7 +190,8 @@ export default function Slotting() {
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
-        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level} search={search} />}
+        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level}
+            page={matPage} pageSize={matPageSize} onPage={setMatPage} onPageSize={n => { setMatPageSize(n); setMatPage(1) }} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
@@ -196,9 +207,10 @@ export default function Slotting() {
 }
 
 // ─── Tab Phân tích ABC ─────────────────────────────────────────────────────────
-function AnalysisTab({ warehouseId, query, days, level, search }: {
+function AnalysisTab({ warehouseId, query, days, level, page, pageSize, onPage, onPageSize }: {
   warehouseId: string; query: ReturnType<typeof useSlotting>; days: number
-  level: SlottingLevel; search: string
+  level: SlottingLevel
+  page: number; pageSize: number; onPage: (p: number) => void; onPageSize: (n: number) => void
 }) {
   const { data, isLoading, error, refetch } = query
 
@@ -208,27 +220,24 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
 
   const zoneByCode = useMemo(() => new Map((data?.zones ?? []).map(z => [z.code, z])), [data?.zones])
 
-  const displayMats = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const list = data?.materials ?? []
-    if (!q) return list
-    return list.filter(m => `${m.code} ${m.name ?? ''}`.toLowerCase().includes(q))
-  }, [data?.materials, search])
+  // Trang do SERVER trả (đã lọc theo từ khóa) — KHÔNG lọc lại ở client: lọc client sau khi phân
+  // trang là lọc trên đúng 1 trang, số dòng và ô tổng đều sai.
+  const displayMats = data?.materials ?? []
+  const matsTotal = data?.materials_total ?? 0
+  const totalPages = Math.max(1, Math.ceil(matsTotal / pageSize))
 
+  // 5 ô đếm lấy từ SERVER (đếm trên TOÀN BỘ mã khớp lọc). Đếm trên `data.materials` là chỉ đếm
+  // trang đang xem — và hạng A/B/C là % LŨY KẾ nên đếm theo trang còn sai bản chất.
   const tiles: BandTile[] = useMemo(() => {
-    const mats = data?.materials ?? []
-    const nA = mats.filter(m => m.abc === 'A').length
-    const nB = mats.filter(m => m.abc === 'B').length
-    const nC = mats.filter(m => m.abc === 'C').length
-    const misplacedMats = mats.filter(m => m.misplaced_pallets > 0)
-    const misplacedPallets = mats.reduce((s, m) => s + m.misplaced_pallets, 0)
+    const misMats = data?.misplaced_mats ?? 0
+    const misPallets = data?.misplaced_pallets ?? 0
     return [
       { label: `Lượt nhặt ${days} ngày`, value: nf.format(data?.total_picks ?? 0), accent: true },
-      { label: 'Mã hạng A', value: nf.format(nA) },
-      { label: 'Mã hạng B', value: nf.format(nB) },
-      { label: 'Mã hạng C', value: nf.format(nC) },
-      { label: 'Mã lệch chỗ', value: nf.format(misplacedMats.length), danger: misplacedMats.length > 0 },
-      { label: 'Pallet lệch chỗ', value: nf.format(misplacedPallets), danger: misplacedPallets > 0 },
+      { label: 'Mã hạng A', value: nf.format(data?.n_a ?? 0) },
+      { label: 'Mã hạng B', value: nf.format(data?.n_b ?? 0) },
+      { label: 'Mã hạng C', value: nf.format(data?.n_c ?? 0) },
+      { label: 'Mã lệch chỗ', value: nf.format(misMats), danger: misMats > 0 },
+      { label: 'Pallet lệch chỗ', value: nf.format(misPallets), danger: misPallets > 0 },
     ]
   }, [data, days])
 
@@ -296,9 +305,11 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
           </Table>
         )}
       </div>
-      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">
-        1–{displayMats.length} / {(data?.materials ?? []).length} mã · xếp hạng theo lượt nhặt {days} ngày (A = 80% lượt nhặt lũy kế, B = 15% kế, C = còn lại)
-      </div>
+      <PagerNav page={page} totalPages={totalPages} onPage={onPage} />
+      <ListFooter
+        page={page} pageSize={pageSize} total={matsTotal} unit="mã"
+        onPageSize={onPageSize}
+        right={`xếp hạng theo lượt nhặt ${days} ngày (A = 80% lượt nhặt lũy kế, B = 15% kế, C = còn lại)`} />
     </>
   )
 }

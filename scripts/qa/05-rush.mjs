@@ -1,10 +1,14 @@
 // GÓI RUSH — "giờ cao điểm": 4 nhóm thao tác THẬT chạy đồng thời ~2', ~25 in-flight.
 // Không nằm trong run-all mặc định (nặng) — chạy tay trước go-live: node scripts/qa/05-rush.mjs
 // Trong lúc chạy nên mở app refresh vài lần (không được văng /login). Kết thúc: tự dọn + tự check bất biến.
-import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, resolveFixtures, FIX } from './lib.mjs'
 
 console.log('── GÓI RUSH (giờ cao điểm ~2 phút) ──')
 await login()
+// FIX.MAT_POOL_ID phải tra lúc CHẠY: id hardcode cũ (4a55517f…) đã không còn trong DB
+// ⇒ mọi lần tạo phiếu nhập của gói này trả 404 "không tìm thấy hàng hóa" mà không ai biết
+// (gói không nằm trong run-all). Đo 28/07.
+await resolveFixtures()
 
 async function poolRemaining() {
   const rows = await restAll('InventoryEntry',
@@ -29,7 +33,7 @@ const groupA = Array.from({ length: 8 }, (_, k) => async () => {
 // B. 6 người nhập kho (tạo phiếu + nhập tay + hủy) — đụng pool 510000306@Bluestar 2 chiều
 const groupB = Array.from({ length: 6 }, (_, k) => async () => {
   const c = await api('/wms/inbound-orders', 'POST', {
-    warehouse_id: FIX.WH_QTY.id, material_id: '4a55517f-a069-4f43-a889-376eb285cfce',
+    warehouse_id: FIX.WH_QTY.id, material_id: FIX.MAT_POOL_ID,
     planned_cartons: 3, source_type: 'FACTORY', notes: 'QA-RUSH',
   })
   const ord = c.j?.data?.order ?? c.j?.data

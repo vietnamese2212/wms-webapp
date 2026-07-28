@@ -142,6 +142,9 @@ async function narrowOmniIds(matIds?: string[], locIds?: string[]): Promise<[str
   return [await call('omni_narrow_material_ids', matIds), await call('omni_narrow_location_ids', locIds)]
 }
 
+// Mảng rỗng → null cho tham số RPC (null = "không lọc theo chiều này")
+const arrOrNull = (v: string[] | null | undefined): string[] | null => (v && v.length ? v : null)
+
 function applyInventoryFilters(q: any, p: FilterParams): any {
   // Mặc định "Còn tồn" = status active VÀ tồn > 0 (user 18/07: upload cho phép tồn=0 → 31k dòng
   // tồn=0 status IN_STOCK lọt list dù filter ghi "Còn tồn"). Muốn xem cả tồn=0 → chọn "Tất cả".
@@ -558,60 +561,66 @@ export async function listInventory(req: Request, res: Response) {
   // material!inner để lọc category → PostgREST group-by category (mỗi category 1 dòng) nên cộng .sum tất cả.
   // BASE UNIT: SUM group theo material_id để chia hệ số ra "thùng quy đổi" (JS chia sau khi nhận group).
   // Group rows ≤ số mã khớp filter — phân trang qua fetchAllPaged để không dính cap 1000.
-  const sumSelect = catActive ? 'material_id, cartons_remaining.sum(), material:Material!inner(category)' : 'material_id, cartons_remaining.sum()'
-  const sumQ = (async () => {
-    try {
-      const groups = await fetchAllPaged(() =>
-        applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params).order('material_id'))
-      const matIds = [...new Set(groups.map((g: any) => g.material_id).filter(Boolean))] as string[]
-      const unitRows = matIds.length
-        ? (await Promise.all(chunkArray(matIds, IN_CHUNK).map(c =>
-            supabase.from('Material').select('id, base_unit, entry_unit, units_per_carton').in('id', c)))).flatMap(r2 => (r2.data ?? []) as any[])
-        : []
-      const uMap = new Map(unitRows.map((m: any) => [m.id, m]))
-      return { data: groups.map((g: any) => ({ sum: qtyEntryDecimal(Number(g.sum ?? 0), uMap.get(g.material_id) ?? null) })), error: null }
-    } catch (e) { return { data: null, error: { message: (e as Error).message } } }
-  })()
+  // 2 ô SummaryBand ("Thùng tồn" + "Pallet") gom trong MỘT lời gọi RPC `inventory_band_totals`.
+  //
+  // Bản cũ không phải 1 query mà là một CHUỖI round-trip: `fetchAllPaged` nạp nhóm SUM theo
+  // material_id (tới ~2.700 dòng) → rồi chunk 300 tra `Material` lấy hệ số thùng → quy đổi trong
+  // Node → cộng thêm 1 query đếm pallet còn tồn. Đo 28/07 (gói QA `06-readload` + đường cong sức
+  // chứa): trang Tồn kho từ 1.955ms (0 người ghi) lên **19.774ms ở 24 người ghi** rồi vượt trần
+  // 8s của PostgREST thành 500 — trong khi câu NHẸ cùng lúc vẫn 1.147ms và connection chỉ 26/60,
+  // tức nút thắt nằm ở chính chuỗi round-trip này.
+  const bandQ = supabase.rpc('inventory_band_totals', {
+    p_ids:            r.datePctIds,
+    p_status:         r.params.status ?? null,
+    p_wh_ids:         arrOrNull(r.params.warehouseIds),
+    p_location_ids:   arrOrNull(r.params.locationFilter),
+    p_material_ids:   arrOrNull(r.params.materialFilter),
+    p_categories:     arrOrNull(r.params.categoryFilter),
+    p_qa_ids:         arrOrNull(r.params.qa_status_ids),
+    p_search:         r.params.search ? r.params.search.replace(/[,()]/g, ' ').trim() : null,
+    p_search_mat_ids: arrOrNull(r.params.searchMatIds),
+    p_search_loc_ids: arrOrNull(r.params.searchLocIds),
+    p_manufacturer:   r.params.manufacturer_id ?? null,
+    p_cycles:         arrOrNull(r.params.filterCycles),
+    p_machines:       arrOrNull(r.params.filterMachines),
+    p_nmsx:           arrOrNull(r.params.filterNmsx),
+    p_ncc_ids:        arrOrNull(r.params.nccIds),
+    p_import_from:    r.params.import_date_from ?? null,
+    p_import_to:      r.params.import_date_to ?? null,
+  })
 
-  // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list chỉ hiện pallet 0 khi chọn "Tất cả" (user 18/07,
-  // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
-  // catActive PHẢI embed Material!inner (filter category lọc trên bảng nhúng — thiếu là PostgREST lỗi → tile về 0).
-  const cntSelect = catActive ? 'id, material:Material!inner(category)' : 'id'
-  const cntQ = applyInventoryFilters(
-    supabase.from('InventoryEntry').select(cntSelect, { count: 'exact', head: true }), r.params,
-  ).gt('cartons_remaining', 0)
-
-  // Đếm TỔNG riêng: khi trang vượt phạm vi, `count` của query chính không về được (PostgREST 416)
-  // nhưng footer vẫn phải hiện đúng tổng để user biết mà lùi trang.
-  const totQ = applyInventoryFilters(
-    supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
-  )
-  // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) + đếm tổng (tot) độc lập nhau.
-  const [mainRes, sumRes, cntRes, totRes] = await Promise.all([mainQ, sumQ, cntQ, totQ])
+  // Chạy SONG SONG: list rows (main) + 2 ô band (1 RPC) — độc lập nhau.
+  const [mainRes, bandRes] = await Promise.all([mainQ, bandQ])
   const { data, count, error } = mainRes
   if (error) {
     // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống. Số trang được NHỚ THEO USER
     // (`scopedPersist`) nên mở lại app khi dữ liệu đã ít đi là gặp ngay. Xem `isRangeNotSatisfiable`.
+    // Đếm tổng CHỈ chạy ở nhánh này (query chính đã mang `count:'exact'`) — thêm 1 câu đếm luôn
+    // chạy là tự làm nặng đường nóng: đo 28/07 dưới tải ghi, mỗi câu đếm thừa đẩy trang này thêm
+    // vài giây và tới trần 8s của PostgREST thì thành 500.
     if (isRangeNotSatisfiable(error)) {
+      const { count: totCount } = await applyInventoryFilters(
+        supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
+      )
+      const band0 = (bandRes.data ?? {}) as { total_pallets_in_stock?: number }
       return ok(res, {
-        entries: [], total: (totRes as { count: number | null }).count ?? 0,
+        entries: [], total: totCount ?? 0,
         page: r.pageNum, limit: r.limitNum,
-        total_cartons_remaining: 0, total_pallets_in_stock: (cntRes as { count: number | null }).count ?? 0,
+        total_cartons_remaining: 0, total_pallets_in_stock: Number(band0.total_pallets_in_stock) || 0,
       })
     }
     return fail(res, 500, 'DB_ERROR', error.message)
   }
 
-  // Lỗi sum/cnt KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
+  // Lỗi band KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((sumRes as any).error) console.error('[inventory] tính tổng thùng tồn lỗi:', (sumRes as any).error.message)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  else total_cartons_remaining = (((sumRes as any).data ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((cntRes as any).error) console.error('[inventory] đếm pallet còn tồn lỗi:', (cntRes as any).error.message)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const total_pallets_in_stock = ((cntRes as any).count as number | null) ?? 0
+  let total_pallets_in_stock = 0
+  if (bandRes.error) console.error('[inventory] tính 2 ô band lỗi:', bandRes.error.message)
+  else {
+    const b = (bandRes.data ?? {}) as { total_cartons_remaining?: number; total_pallets_in_stock?: number }
+    total_cartons_remaining = Number(b.total_cartons_remaining) || 0
+    total_pallets_in_stock  = Number(b.total_pallets_in_stock)  || 0
+  }
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
 }

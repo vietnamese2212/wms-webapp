@@ -110,6 +110,7 @@ router.get('/inbound-orders',                           inbound.listOrders)
 // Hở đọc như listOrders (CLAUDE.md) — scope kho + loại vẫn cắt trong controller theo JWT.
 router.get('/inbound-orders/summary',                   inbound.listOrdersSummary)
 router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
+router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
@@ -151,6 +152,9 @@ router.get('/loosepicking',                                   requirePerm('loose
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)
+// summary/facets của list Xuất — cùng quyền view như list (scope kho + loại cắt trong controller)
+router.get('/outbound/summary',                               requirePerm('outbound', 'view'), outbound.listGDOsSummary)
+router.get('/outbound/facets',                                requirePerm('outbound', 'view'), outbound.listGDOsFacets)
 router.post('/outbound',                                      requirePerm('outbound', 'create'), outbound.createGDO)
 router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadExcel)
 router.post('/outbound/upload-vl06o',                         requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadVl06o)   // ĐỢT 3: raw SAP → erp_outbound_orders

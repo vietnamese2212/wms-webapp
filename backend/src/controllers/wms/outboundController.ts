@@ -8,9 +8,9 @@ import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeFilterValue } from '../../utils/search'
+import { safeFilterValue, safeSearch } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
@@ -326,9 +326,131 @@ async function fetchGDOFull(id: string) {
 
 // ─── List GDOs ────────────────────────────────────────────────
 
+// Ngữ cảnh lọc CHUNG cho list Xuất (2 mode) + summary + facets — parse 1 chỗ để 3 endpoint
+// không lệch nhau. Các filter trước đây lọc CLIENT (loại xe/ĐVVT/NPP/mã hàng/loại kho/tình
+// trạng) nay nhận qua query CSV và đẩy xuống RPC.
+async function getGdoListCtx(req: Request) {
+  const q = req.query as Record<string, string>
+  const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+  const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
+  const scopeCats = scopeCategoriesOf(req)
+
+  let whIds: string[] | null = null
+  let emptyScope = false
+  if (scopeWarehouseIds.length > 0) {
+    const effective = q.warehouse_id ? scopeWarehouseIds.filter(id => id === q.warehouse_id) : scopeWarehouseIds
+    if (effective.length === 0) emptyScope = true
+    whIds = effective
+  } else if (q.warehouse_id) {
+    whIds = [q.warehouse_id]
+  }
+
+  // Tìm kiếm: mã chuyến khớp thẳng trong SQL; mã/tên hàng + NPP + tem pallet resolve Ở ĐÂY
+  // thành TẬP ID (khuôn listOrders của Nhập kho) — KHÔNG ghép chuỗi trong SQL vì phải quét
+  // toàn bảng, không index nào đỡ (ghi chú đầu file migration 20260728).
+  const search = (q.search ?? '').trim() || null
+  let searchGdoIds: string[] = []
+  let tooBroad: string | null = null
+  if (search) {
+    const term = safeSearch(search)
+    const [matRes, dlvRes, scanRes] = await Promise.all([
+      supabase.from('Material').select('id')
+        .or(`material_code.ilike.%${term}%,short_name.ilike.%${term}%`).limit(300),
+      supabase.from('OutboundDelivery').select('gdo_id').ilike('distributor_name', `%${term}%`).limit(500),
+      supabase.from('OutboundScanEntry').select('item_id').ilike('pallet_code', `%${term}%`).limit(500),
+    ])
+    const ids = new Set<string>()
+    for (const d of ((dlvRes.data ?? []) as { gdo_id: string | null }[])) if (d.gdo_id) ids.add(d.gdo_id)
+    // mã hàng khớp → item → DO → GDO (chunk 300 theo luật id-list-url-limits)
+    const matIds = ((matRes.data ?? []) as { id: string }[]).map(m => m.id)
+    const itemIds = [...new Set(((scanRes.data ?? []) as { item_id: string | null }[])
+      .map(s => s.item_id).filter((v): v is string => !!v))]
+    const doIds = new Set<string>()
+    if (matIds.length) {
+      const rows = await fetchAllByIdChunks(matIds, chunk =>
+        supabase.from('OutboundItem').select('do_id').in('material_id', chunk).order('id'))
+      for (const r of (rows as { do_id: string | null }[])) if (r.do_id) doIds.add(r.do_id)
+    }
+    if (itemIds.length) {
+      const rows = await fetchAllByIdChunks(itemIds, chunk =>
+        supabase.from('OutboundItem').select('do_id').in('id', chunk).order('id'))
+      for (const r of (rows as { do_id: string | null }[])) if (r.do_id) doIds.add(r.do_id)
+    }
+    if (doIds.size > 5000) {
+      tooBroad = `Từ khóa "${search}" quá chung (khớp ${doIds.size} đơn giao). Gõ thêm ký tự để thu hẹp.`
+    } else if (doIds.size) {
+      const rows = await fetchAllByIdChunks([...doIds], chunk =>
+        supabase.from('OutboundDelivery').select('gdo_id').in('id', chunk).order('id'))
+      for (const r of (rows as { gdo_id: string | null }[])) if (r.gdo_id) ids.add(r.gdo_id)
+    }
+    searchGdoIds = [...ids]
+  }
+
+  return {
+    emptyScope, whIds, scopeCats, tooBroad,
+    status: q.status || null, transfer_status: q.transfer_status || null,
+    date: q.date || null, date_from: q.date_from || null, date_to: q.date_to || null,
+    warehouse_types: csv(q.warehouse_types), export_types: csv(q.export_types),
+    dvvts: csv(q.dvvts), npps: csv(q.npps), material_codes: csv(q.material_codes),
+    status_labels: csv(q.status_labels),
+    search, searchGdoIds,
+  }
+}
+type GdoListCtx = Awaited<ReturnType<typeof getGdoListCtx>>
+
+// Tham số RPC outbound_gdos_page / _summary (PHẢI khớp chữ ký migration 20260728)
+function gdoRpcParams(ctx: GdoListCtx): Record<string, unknown> {
+  const arr = (a: string[]) => (a.length ? a : null)
+  return {
+    p_warehouse_ids:    ctx.whIds,
+    p_scope_categories: ctx.scopeCats && ctx.scopeCats.length ? ctx.scopeCats : null,
+    p_warehouse_types:  arr(ctx.warehouse_types),
+    p_status:           ctx.status,
+    p_transfer_status:  ctx.transfer_status,
+    p_date_from:        ctx.date_from || ctx.date || null,
+    p_date_to:          ctx.date_to   || ctx.date || null,
+    p_export_types:     arr(ctx.export_types),
+    p_dvvts:            arr(ctx.dvvts),
+    p_npps:             arr(ctx.npps),
+    p_material_codes:   arr(ctx.material_codes),
+    p_status_labels:    arr(ctx.status_labels),
+    p_search:           ctx.search,
+    p_search_gdo_ids:   ctx.search ? ctx.searchGdoIds : null,
+  }
+}
+
 export async function listGDOs(req: Request, res: Response) {
   try {
-    const { warehouse_id, status, date, date_from, date_to, search, transfer_status } = req.query as Record<string, string>
+    const { warehouse_id, status, date, date_from, date_to, search, transfer_status, page, limit } = req.query as Record<string, string>
+
+    // ── MODE PHÂN TRANG (?page=) — RPC chọn trang id + đếm dưới DB, chỉ enrich 1 trang ──
+    if (page) {
+      const ctx = await getGdoListCtx(req)
+      if (ctx.tooBroad) return fail(res, ctx.tooBroad, 400)
+      const pageNum  = Math.max(1, parseInt(page) || 1)
+      const limitNum = Math.min(1000, Math.max(1, parseInt(limit) || 200))
+      if (ctx.emptyScope) { ok(res, { items: [], total: 0, page: pageNum, limit: limitNum }); return }
+      const { data: pg, error: pgErr } = await supabase.rpc('outbound_gdos_page', {
+        p_offset: (pageNum - 1) * limitNum, p_limit: limitNum, ...gdoRpcParams(ctx),
+      })
+      if (pgErr) throw new Error(pgErr.message)
+      const ids   = ((pg as { ids?: string[] } | null)?.ids ?? [])
+      const total = Number((pg as { total?: number } | null)?.total ?? 0)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let rows: any[] = []
+      if (ids.length) {
+        rows = await fetchAllByIdChunks(ids, chunk => supabase.from('GroupDeliveryOrder')
+          .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
+          .in('id', chunk).order('id'))
+        const pos = new Map(ids.map((v, i) => [v, i]))   // `.in()` không giữ thứ tự RPC đã sắp
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rows.sort((a: any, b: any) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
+      }
+      ok(res, { items: await enrichGdos(rows), total, page: pageNum, limit: limitNum })
+      return
+    }
+
+    // ── MODE CŨ (trả MẢNG — back-compat cho consumer khác) ──
     const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
       : []
@@ -362,9 +484,17 @@ export async function listGDOs(req: Request, res: Response) {
     // thì BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
     const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
     if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
+    return ok(res, await enrichGdos(data ?? []))
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+}
 
+// ── Enrich list chuyến (dùng chung mode cũ trả mảng + mode phân trang): bulk DO/item +
+// breakdown theo (mã × NPP) + tổng thùng/pallet + qty_unit. Logic GIỮ NGUYÊN. ──
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function enrichGdos(data: any[]): Promise<any[]> {
+  {
     const gdoIds = (data ?? []).map((g: any) => g.id)
-    if (!gdoIds.length) return ok(res, [])
+    if (!gdoIds.length) return []
 
     // Bulk fetch DOs and items for aggregation — CHUNK id 300/lô (khoảng ngày rộng → hàng nghìn
     // gdo/do id nhồi 1 `.in()` = URL quá dài → PostgREST Bad Request) + phân trang trong lô (cap ~1000).
@@ -404,7 +534,7 @@ export async function listGDOs(req: Request, res: Response) {
       itemsByDo.set(i.do_id, list)
     }
 
-    return ok(res, (data ?? []).map((g: any) => {
+    return (data ?? []).map((g: any) => {
       const gdoDOs   = dosByGdo.get(g.id) ?? []
       const gdoItems = gdoDOs.flatMap((d: any) => itemsByDo.get(d.id) ?? [])
       const noqrItems = gdoItems.filter((i: any) => isExcludedFromCount(i))
@@ -476,8 +606,40 @@ export async function listGDOs(req: Request, res: Response) {
         qty_unit,
         item_breakdown:    [...breakdownMap.values()],
       }
-    }))
-  } catch (e) { return fail(res, String(e)) }
+    })
+  }
+}
+
+// ── Tổng SummaryBand + bảng "Phân bổ theo NPP" — SQL trên TOÀN BỘ kết quả lọc ──
+export async function listGDOsSummary(req: Request, res: Response) {
+  try {
+    const ctx = await getGdoListCtx(req)
+    if (ctx.tooBroad) return fail(res, ctx.tooBroad, 400)
+    if (ctx.emptyScope) {
+      return ok(res, { count: 0, completed: 0, cartons: 0, cartons_qr: 0, cartons_noqr: 0, pallets: 0, npp_breakdown: [] })
+    }
+    const { data, error } = await supabase.rpc('outbound_gdos_summary', gdoRpcParams(ctx))
+    if (error) throw new Error(error.message)
+    return ok(res, data)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+}
+
+// ── Option filter (Loại xe / ĐVVT / NPP / Mã hàng / Loại kho / Tình trạng) — DISTINCT dưới DB ──
+export async function listGDOsFacets(req: Request, res: Response) {
+  try {
+    const ctx = await getGdoListCtx(req)
+    if (ctx.emptyScope) {
+      return ok(res, { export_types: [], dvvts: [], warehouse_types: [], npps: [], status_labels: [], materials: [] })
+    }
+    const { data, error } = await supabase.rpc('outbound_gdos_facets', {
+      p_warehouse_ids:    ctx.whIds,
+      p_scope_categories: ctx.scopeCats && ctx.scopeCats.length ? ctx.scopeCats : null,
+      p_date_from:        ctx.date_from || ctx.date || null,
+      p_date_to:          ctx.date_to   || ctx.date || null,
+    })
+    if (error) throw new Error(error.message)
+    return ok(res, data)
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Tra cứu chuyến xuất theo tem pallet ──────────────────────
@@ -511,7 +673,7 @@ export async function lookupPalletGdos(req: Request, res: Response) {
     }
     const gdoIds = [...new Set(dos.map(d => d.gdo_id).filter((v): v is string => !!v))]
     return ok(res, gdoIds)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Get GDO detail ───────────────────────────────────────────
@@ -529,7 +691,7 @@ export async function getGDO(req: Request, res: Response) {
     const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
     const cartonPolicy = await warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type)
     return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // PATCH /wms/outbound/scan-entries/:scanId/cartons — đính danh sách mã THÙNG vào 1 dòng scan pallet
@@ -564,7 +726,7 @@ export async function attachCartonScans(req: Request, res: Response) {
       .update({ carton_scans: clean, updated_at: now() }).eq('id', scanId)
     if (error) return fail(res, `Lỗi lưu mã thùng: ${error.message}`, 500)
     return ok(res, { id: scanId, carton_count: clean.length })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── DVVT trên phiếu xuất khớp 1 ĐVVT hoặc NCC (code/alias/tên) → chuẩn hoá về TÊN chính tắc ──
@@ -817,7 +979,7 @@ export async function createGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Tạo & Xuất luôn (quick-export — hàng không tem: mã no-QR / kho QTY) ──────
@@ -996,7 +1158,7 @@ export async function quickExportGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(gdoId)
     return ok(res, result, 201)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── "Xuất luôn" trên GDO ĐÃ LƯU (kho QTY/NONE) — 1 bước: nhập biển số → tự Bắt đầu + ghi nhận mọi mã + Hoàn thành ──
@@ -1120,7 +1282,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     ])
     if ((winRows?.length ?? 0) > 0) await maybeAutoCreateTransferOrder(gdoId, tEnd)
     return ok(res, await fetchGDOFull(gdoId))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Auto-create/SYNC TmsOrder khi GDO COMPLETED — theo cờ Xác nhận giao hàng ───
@@ -1321,7 +1483,7 @@ export async function deleteGDO(req: Request, res: Response) {
     }
     await supabase.from('GroupDeliveryOrder').delete().eq('id', req.params.id)
     return ok(res, { success: true })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Update GDO (header + items, chỉ PENDING) ─────────────────
@@ -1594,7 +1756,7 @@ export async function updateGDO(req: Request, res: Response) {
     }
 
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Patch GDO (delivery_date / status / misc fields) ────────
@@ -1694,7 +1856,7 @@ export async function patchGDO(req: Request, res: Response) {
 
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Assign GDO (Giao đơn) ────────────────────────────────────
@@ -1709,7 +1871,7 @@ export async function assignGDO(req: Request, res: Response) {
     if (error) return fail(res, error.message)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Unassign GDO (Gỡ giao đơn) ──────────────────────────────
@@ -1726,7 +1888,7 @@ export async function unassignGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Start GDO (Bắt đầu xuất kho) ────────────────────────────
@@ -1791,7 +1953,7 @@ export async function startGDO(req: Request, res: Response) {
     if (error) return fail(res, error.message)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Update transport info (Sửa thông tin xe) ────────────────
@@ -1840,7 +2002,7 @@ export async function updateTransport(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Unstart GDO (Gỡ bắt đầu) ────────────────────────────────
@@ -1889,7 +2051,7 @@ export async function unstartGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Uncomplete GDO (Bỏ hoàn thành) ──────────────────────────
@@ -1932,7 +2094,7 @@ export async function uncompleteGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
     return ok(res, await fetchGDOFull(req.params.id))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Get warehouse employees (for forklift driver dropdown) ──
@@ -1961,7 +2123,7 @@ export async function getWarehouseEmployees(req: Request, res: Response) {
       job_title: e.job_title_id ? jtMap.get(e.job_title_id) ?? null : null,
     }))
     return ok(res, result)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Merge upload for PAUSED GDO ─────────────────────────────
@@ -2195,7 +2357,7 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!byVehicle.size) return fail(res, 'Không tìm thấy cột "Số xe" hoặc dữ liệu trống', 400)
 
     return await processVehicleGroups(req, res, byVehicle, warehouse_id)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // Xử lý CHUNG cho mọi nguồn upload kế hoạch xuất — nhận map (Số xe → các dòng theo row-shape file gộp):
@@ -2805,7 +2967,7 @@ export async function uploadVl06o(req: Request, res: Response) {
       reconcile, reconcile_error,
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // Upload KHVC (kế hoạch điều vận, tự soạn) → JOIN raw VL06O theo DO → reshape về row-shape file gộp
@@ -2995,7 +3157,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     if (!byVehicle.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
 
     return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true)   // KHVC/SAP → nhặt lẻ auto theo pallet
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Get available inventory for an item ─────────────────────
@@ -3046,7 +3208,7 @@ export async function getItemInventory(req: Request, res: Response) {
     ])
     if (!itemRes.data) return fail(res, 'Không tìm thấy mặt hàng', 404)
     return ok(res, await fetchMaterialInventory(itemRes.data.material_id, gdoRes.data?.warehouse_id ?? null))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Cảnh báo thiếu tồn theo (kho, ngày giao) ─────────────────
@@ -3072,7 +3234,7 @@ export async function getOutboundShortages(req: Request, res: Response) {
       })
       .filter(r => r.level > 0)
     return ok(res, rows)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // Tồn theo mã hàng + kho (nút search tồn kho ở bảng chuẩn bị, không gắn item cụ thể)
@@ -3081,7 +3243,7 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
     const { material_id, warehouse_id } = req.query as Record<string, string>
     if (!material_id) return fail(res, 'material_id là bắt buộc', 400)
     return ok(res, await fetchMaterialInventory(material_id, warehouse_id || null))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Gợi ý vị trí lấy FEFO theo mã hàng (dùng chung: board Chuẩn bị hàng + cột "Vị trí lấy") ──
@@ -3158,7 +3320,7 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
     const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
     const sugByMat = await fefoSuggestionsByMaterial(matIds, gdo.warehouse_id ? [gdo.warehouse_id] : [])
     return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Bảng chuẩn bị hàng — gom ≥1 GDO, tính pallet CÒN PHẢI chuẩn bị + gợi ý vị trí FEFO ──
@@ -3258,7 +3420,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
       total_cartons: rows.reduce((s, r) => s + qtyEntryDecimal(r.cartons_remaining, r), 0),
       total_pallets: rows.reduce((s, r) => s + r.pallets_remaining, 0),
     })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Check scan validity (no save) ───────────────────────────
@@ -3387,7 +3549,7 @@ export async function checkScanItem(req: Request, res: Response) {
         suggested_cartons: Math.min(available, remaining_on_item),
       },
     })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Scan QR for an item ──────────────────────────────────────
@@ -3587,7 +3749,7 @@ export async function scanItem(req: Request, res: Response) {
       scan_entry: { id: scanId, pallet_code: qr, cartons_scanned: to_take },
       item: { ...item, cartons_scanned: new_scanned, status: new_item_status },
     })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Delete scan entry (hủy QR đã quét) ─────────────────────
@@ -3673,7 +3835,7 @@ export async function deleteScanEntry(req: Request, res: Response) {
     }
 
     return ok(res, { success: true })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Confirm loose picking entries for an item ────────────────
@@ -3758,7 +3920,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     }
 
     return ok(res, { confirmed: (claimed as any[]).length })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Lưu thủ công nhặt lẻ (hàng no-QR: POSM/Loscam) ───────────
@@ -3844,7 +4006,7 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (delta !== 0) await addItemScanned(itemId, delta, n => n === 0 ? 'PENDING' : 'IN_PROGRESS')
 
     return ok(res, { scan_entry: { pallet_code: matCode, cartons_scanned: newQty } })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
@@ -3941,7 +4103,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     })
 
     return ok(res, result)
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Get stock for manual-complete dialog ─────────────────────
@@ -3982,7 +4144,7 @@ export async function getManualItemStock(req: Request, res: Response) {
       ...(date_pools ? { date_pools } : {}),
       has_pool:          rows.length > 0,                                   // có dòng tồn = được theo dõi
     })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Manual complete item ─────────────────────────────────────
@@ -4183,7 +4345,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     ])
 
     return ok(res, { success: true })
-  } catch (e) { return fail(res, String(e)) }
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
 // ─── Scan log (lịch sử quét xuất kho) ───────────────────────────────────────

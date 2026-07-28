@@ -11,6 +11,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
@@ -19,7 +20,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchMaterialsByCodes, useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -28,7 +29,6 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
-import { omniMatch } from '@/utils/omniSearch'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -86,12 +86,8 @@ function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
 }
 
-function naturalSortCode(a: string, b: string): number {
-  const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0', 10)
-  const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0', 10)
-  if (numA !== numB) return numA - numB
-  return a.localeCompare(b)
-}
+// (naturalSortCode đã chuyển xuống SQL — outbound_gdos_page sắp theo số ở CUỐI mã chuyến;
+//  sort ở client chỉ tác dụng trong trang đang xem nên bỏ hẳn.)
 
 function fTime(ts: string | null | undefined): string {
   if (!ts) return '—'
@@ -307,12 +303,39 @@ export default function Outbound() {
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
-  const { data: gdos = [], isLoading, isFetching, error: listErr } = useGDOs({
+  const page     = f.page     || 1     // state persist cũ chưa có field → fallback
+  const pageSize = f.pageSize || 200
+  const debSearch = useDebouncedValue(f.search, 250)
+
+  // PHÂN TRANG SERVER (28/07): mọi filter xuống SQL; list chỉ tải 1 trang; tổng SummaryBand +
+  // phân bổ NPP = RPC tính trên TOÀN BỘ kết quả lọc (cộng trên trang đang xem là SỐ SAI).
+  const listParams = {
+    warehouse_id:    f.warehouseId || undefined,
+    search:          debSearch || undefined,
+    date_from:       f.dateFrom || undefined,
+    date_to:         f.dateTo   || undefined,
+    warehouse_types: f.filterWarehouseTypes ?? [],
+    export_types:    f.filterTypes          ?? [],
+    dvvts:           f.filterDvvts          ?? [],
+    npps:            f.filterNpps           ?? [],
+    material_codes:  f.filterMaterials      ?? [],
+    status_labels:   f.filterStatuses       ?? [],
+  }
+  const { data: pageData, isLoading, isFetching, error: listErr } = useGDOsPaged({ ...listParams, page, limit: pageSize })
+  const gdos       = useMemo(() => pageData?.items ?? [], [pageData])
+  const total      = pageData?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const { data: summaryData } = useOutboundSummary(listParams)
+  const { data: facets }      = useOutboundFacets({
     warehouse_id: f.warehouseId || undefined,
-    // search lọc client-side (omni đa cột) — không gửi lên BE để không bị thu hẹp theo mỗi group_code
     date_from: f.dateFrom || undefined,
     date_to:   f.dateTo   || undefined,
   })
+
+  // Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối còn dữ liệu
+  useEffect(() => {
+    if (!isLoading && total > 0 && page > totalPages) setOutbound({ page: totalPages })
+  }, [isLoading, total, page, totalPages, setOutbound])
   // Prefetch chi tiết chuyến ĐANG CHẠY khi có mạng → offline quét được cả chuyến chưa bấm vào
   usePrefetchGdos(gdos)
   // (BỎ prefetch cả danh mục mã hàng — ô chọn mã trong form nay TÌM TRÊN SERVER theo từ khóa,
@@ -323,25 +346,19 @@ export default function Outbound() {
   const { mutate: assignGDO } = useAssignGDO()
   const { mutateAsync: patchGDOAsync } = usePatchGDO()
   // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó
-  const { data: palletGdoIds = [] } = useOutboundPalletLookup(f.search)
-  const palletGdoSet = useMemo(() => new Set(palletGdoIds), [palletGdoIds])
+  // (Tra tem pallet đã chuyển xuống BE — getGdoListCtx resolve mã tem → tập chuyến, nên
+  //  ô tìm kiếm hoạt động trên TOÀN BỘ dữ liệu chứ không chỉ trang đang xem.)
 
   useEffect(() => {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
   }, [isFetching, postUploadLoading])
 
-  const typeOptions       = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
-  const dvvtOptions       = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
-  const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
-  const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
-  const materialOptions   = useMemo(() => {
-    const seen = new Map<string, string>()  // code → label
-    for (const g of gdos) for (const b of g.item_breakdown ?? []) {
-      if (!seen.has(b.material_code))
-        seen.set(b.material_code, b.material_name ? `${b.material_code} · ${b.material_name}` : b.material_code)
-    }
-    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([value, label]) => ({ value, label }))
-  }, [gdos])
+  // Option filter — DISTINCT dưới DB (RPC facets), không gom từ dòng đã tải (chỉ có 1 trang)
+  const typeOptions       = facets?.export_types    ?? []
+  const dvvtOptions       = facets?.dvvts           ?? []
+  const nppOptions        = facets?.npps            ?? []
+  const warehouseTypeOpts = facets?.warehouse_types ?? []
+  const materialOptions   = facets?.materials       ?? []
 
   const filterTypes          = f.filterTypes          ?? []
   const filterDvvts          = f.filterDvvts          ?? []
@@ -350,42 +367,14 @@ export default function Outbound() {
   const filterWarehouseTypes = f.filterWarehouseTypes ?? []
   const filterStatuses       = f.filterStatuses       ?? []
 
-  const statusOptions = useMemo(() => {
-    const labels = new Set<string>()
-    for (const g of gdos) { const { label } = gdoStatusInfo(g); if (label !== '—') labels.add(label) }
-    return [...labels].map(l => ({ value: l, label: l }))
-  }, [gdos])
+  const statusOptions = useMemo(() =>
+    (facets?.status_labels ?? []).map(l => ({ value: l, label: l })), [facets])
 
-  const filtered = useMemo(() => gdos.filter(g => {
-    if (filterTypes.length          > 0 && !filterTypes.includes(g.export_type ?? ''))                              return false
-    if (filterDvvts.length          > 0 && !filterDvvts.includes(g.dvvt ?? ''))                                     return false
-    if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
-    if (filterMaterials.length      > 0 && !(g.item_breakdown ?? []).some(b => filterMaterials.includes(b.material_code))) return false
-    if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
-    if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
-    // Search khớp cả mã/tên hàng (item_breakdown) → gõ mã hàng ra đơn xuất chứa mã đó.
-    // + tem pallet: chuyến khớp nếu id nằm trong kết quả tra tem (palletGdoSet).
-    if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label,
-      ...(g.distributor_names ?? []),
-      ...(g.item_breakdown ?? []).flatMap(b => [b.material_code, b.material_name])], f.search)
-      && !((f.search ?? '').trim() && palletGdoSet.has(g.id))) return false
-    return true
-  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterMaterials, filterWarehouseTypes, filterStatuses, palletGdoSet])
-
-  const sorted = useMemo(() => [...filtered].sort((a, b) => {
-    if (a.delivery_date !== b.delivery_date)
-      return b.delivery_date.localeCompare(a.delivery_date)
-    // Gom các chuyến chung 1 xe liền nhau (để nối bracket); chuyến có nhóm xếp trước
-    const keyA = outboundGroupKey(a) ?? '', keyB = outboundGroupKey(b) ?? ''
-    if (keyA !== keyB) {
-      if (!keyA && keyB) return 1
-      if (keyA && !keyB) return -1
-      return keyA.localeCompare(keyB)
-    }
-    const ta = a.export_type ?? '', tb = b.export_type ?? ''
-    if (ta !== tb) return tb.localeCompare(ta)
-    return naturalSortCode(a.group_code, b.group_code)
-  }), [filtered])
+  // Lọc + sắp xếp đã chuyển XUỐNG SERVER (RPC outbound_gdos_page giữ nguyên thứ tự cũ:
+  // ngày giao DESC → nhóm cùng xe → export_type DESC → naturalSortCode).
+  // KHÔNG lọc/sort lại ở client — làm vậy chỉ tác dụng trong trang đang xem = sai âm thầm.
+  const filtered = gdos
+  const sorted   = gdos
 
   // Vị trí bracket cho mỗi chuyến trong nhóm "cùng xe" (cùng ngày + cùng outboundGroupKey)
   const bracketPositions = useMemo(() => {
@@ -405,31 +394,31 @@ export default function Outbound() {
     return pos
   }, [sorted])
 
-  const summary = useMemo(() => ({
-    count:     sorted.length,
-    cartons:   sorted.reduce((s, g) => s + (g.total_cartons ?? 0), 0),
-    cartonsQr:   sorted.reduce((s, g) => s + ((g.total_cartons ?? 0) - (g.total_cartons_noqr ?? 0)), 0),
-    cartonsNoqr: sorted.reduce((s, g) => s + (g.total_cartons_noqr ?? 0), 0),
-    pallets:   sorted.reduce((s, g) => s + (g.total_pallets ?? 0), 0),
-    completed: sorted.filter(g => g.status === 'COMPLETED').length,
-  }), [sorted])
+  // Tổng + phân bổ NPP: SQL tính trên TOÀN BỘ kết quả lọc (RPC outbound_gdos_summary).
+  // Cộng trên trang đang xem = tổng của trang 1, SAI mà không báo gì.
+  // too_wide: phạm vi quá rộng → BE không tính tổng (tránh chiếm DB của người khác) → hiện "—".
+  const tooWide = summaryData?.too_wide === true
+  const summary = {
+    count:       summaryData?.count ?? total,
+    cartons:     Number(summaryData?.cartons ?? 0),
+    cartonsQr:   Number(summaryData?.cartons_qr ?? 0),
+    cartonsNoqr: Number(summaryData?.cartons_noqr ?? 0),
+    pallets:     Number(summaryData?.pallets ?? 0),
+    completed:   summaryData?.completed ?? 0,
+  }
+  const fmtTotal = (v: number) =>
+    tooWide ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
 
-  // Phân bổ theo NPP — gom item_breakdown của các chuyến đã lọc; nếu đang lọc mã hàng thì
-  // chỉ tính mã hàng đó (gõ mã hàng → đi những nhà nào, bao nhiêu, tổng). Kiểu expand Inbound.
+  // Phân bổ theo NPP — RPC đã thu hẹp theo mã hàng đang lọc (gõ mã hàng → đi những nhà nào)
   const nppBreakdown = useMemo(() => {
     const map = new Map<string, { npp: string; planned: number; scanned: number }>()
-    for (const g of sorted) for (const b of g.item_breakdown ?? []) {
-      if (filterMaterials.length > 0 && !filterMaterials.includes(b.material_code)) continue
-      const npp = b.distributor_name ?? '(không tên)'
-      const cur = map.get(npp) ?? { npp, planned: 0, scanned: 0 }
-      cur.planned += b.cartons
-      cur.scanned += b.cartons_scanned ?? 0
-      map.set(npp, cur)
+    for (const b of summaryData?.npp_breakdown ?? []) {
+      map.set(b.npp, { npp: b.npp, planned: Number(b.planned), scanned: Number(b.scanned) })
     }
     return [...map.values()]
       .map(r => ({ ...r, remaining: Math.max(0, r.planned - r.scanned) }))
       .sort((a, b) => b.planned - a.planned)
-  }, [sorted, filterMaterials])
+  }, [summaryData])
   const nppTotals = useMemo(() => ({
     planned:   nppBreakdown.reduce((s, r) => s + r.planned, 0),
     scanned:   nppBreakdown.reduce((s, r) => s + r.scanned, 0),
@@ -643,21 +632,21 @@ export default function Outbound() {
 
   const filterDefs: FilterDef[] = [
     { key: 'date',     label: 'Ngày xuất', type: 'daterange', from: f.dateFrom, to: f.dateTo,
-      onChange: (from, to) => setOutbound({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setOutbound({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho xuất', type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setOutbound({ warehouseId: v }) },
+      onChange: v => setOutbound({ warehouseId: v, page: 1 }) },
     { key: 'whType',   label: 'Loại kho',  type: 'multi',  options: warehouseTypeOpts.map(t => ({ value: t, label: t })), selected: filterWarehouseTypes,
-      onChange: v => setOutbound({ filterWarehouseTypes: v }) },
+      onChange: v => setOutbound({ filterWarehouseTypes: v, page: 1 }) },
     { key: 'vehType',  label: 'Loại xe',   type: 'multi',  options: typeOptions.map(t => ({ value: t, label: t })), selected: filterTypes,
-      onChange: v => setOutbound({ filterTypes: v }) },
+      onChange: v => setOutbound({ filterTypes: v, page: 1 }) },
     { key: 'dvvt',     label: 'ĐVVT',      type: 'multi',  options: dvvtOptions.map(d => ({ value: d, label: d })), selected: filterDvvts,
-      onChange: v => setOutbound({ filterDvvts: v }) },
+      onChange: v => setOutbound({ filterDvvts: v, page: 1 }) },
     { key: 'npp',      label: 'NPP',       type: 'multi',  options: nppOptions.map(n => ({ value: n, label: n })), selected: filterNpps, searchable: true,
-      onChange: v => setOutbound({ filterNpps: v }) },
+      onChange: v => setOutbound({ filterNpps: v, page: 1 }) },
     { key: 'material', label: 'Mã hàng',   type: 'multi',  options: materialOptions, selected: filterMaterials, searchable: true,
-      onChange: v => setOutbound({ filterMaterials: v }) },
+      onChange: v => setOutbound({ filterMaterials: v, page: 1 }) },
     { key: 'status',   label: 'Tình trạng', type: 'multi', options: statusOptions, selected: filterStatuses,
-      onChange: v => setOutbound({ filterStatuses: v }) },
+      onChange: v => setOutbound({ filterStatuses: v, page: 1 }) },
   ]
 
   // ─── Chuyển ngày xuất hàng loạt (multi-select chuyến PENDING — đơn rớt ngày, user 22/07) ───
@@ -713,7 +702,7 @@ export default function Outbound() {
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v, page: 1 })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng chủ đích (hết cảnh mỗi nút 1 hàng rời rạc trên PDA);
               desktop sm:contents → tan vào hàng toolbar như cũ */}
@@ -722,7 +711,7 @@ export default function Outbound() {
             module="outbound"
             currentFilters={viewSnapshot}
             activeId={activeViewId}
-            onApply={(filters) => setOutbound(filters as Partial<typeof f>)}
+            onApply={(filters) => setOutbound({ ...(filters as Partial<typeof f>), page: 1 })}
           />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
@@ -774,7 +763,7 @@ export default function Outbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setOutbound({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setOutbound({ dateFrom: TODAY, dateTo: TODAY, page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -850,12 +839,19 @@ export default function Outbound() {
       <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
-        { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Tổng (QR)', value: summary.cartonsQr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
+        { label: 'Tổng thùng', value: fmtTotal(summary.cartons) },
+        { label: 'Tổng (QR)', value: fmtTotal(summary.cartonsQr) },
+        { label: 'Tổng (k QR)', value: fmtTotal(summary.cartonsNoqr) },
+        { label: 'Pallet', value: fmtTotal(fmtPallets(summary.pallets)) },
+        { label: 'Hoàn thành', value: tooWide ? '—' : summary.completed, accent: !tooWide && summary.completed > 0 },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
       ]} />
+      {tooWide && (
+        <div className="shrink-0 bg-amber-50 border-b border-amber-200 px-3 py-1.5 text-[11px] text-amber-800">
+          Khoảng lọc quá rộng nên chưa tính tổng (danh sách vẫn xem bình thường).
+          Thu hẹp <span className="font-medium">khoảng ngày</span> hoặc chọn <span className="font-medium">1 kho</span> để xem tổng thùng · pallet · phân bổ NPP.
+        </div>
+      )}
 
       {/* Table + Pane (Manhattan Insight) */}
       <div className="flex flex-1 min-h-0">
@@ -924,16 +920,18 @@ export default function Outbound() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setOutbound({ page: p })} />
       </div>
       {selectedId && sorted.find(g => g.id === selectedId) && (
         <OutboundPane gdo={sorted.find(g => g.id === selectedId)!} onClose={() => setSelectedId(null)} />
       )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {sorted.length > 0 ? `1–${sorted.length} / ${sorted.length} chuyến xe` : '0 chuyến xe'}
-      </div>
+      <ListFooter
+        page={page} pageSize={pageSize} total={total} unit="chuyến xe"
+        onPageSize={n => setOutbound({ pageSize: n, page: 1 })}
+        right={`${fmtTotal(summary.pallets)} pallet · ${fmtTotal(summary.cartons)} thùng`}
+      />
      </div>
 
       {/* Modal chuyển ngày xuất hàng loạt (đơn rớt ngày) */}

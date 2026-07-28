@@ -15,6 +15,8 @@ interface OutboundFilters {
   warehouseId: string
   filterWarehouseTypes: string[]
   filterStatuses: string[]
+  page: number        // phân trang server (28/07) — mọi filter đổi phải reset page: 1
+  pageSize: number
 }
 interface OutboundPrepareFilters {
   date: string
@@ -320,6 +322,7 @@ function initialFilters() {
       search: '', dateFrom: today(), dateTo: today(),
       filterTypes: [], filterDvvts: [], filterNpps: [], filterMaterials: [],
       warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
+      page: 1, pageSize: 200,
     },
     outboundPrepare: { date: today(), warehouseId: '' },
     inbound:   { ...INBOUND_DEFAULT },

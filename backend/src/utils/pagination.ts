@@ -64,6 +64,22 @@ export async function fetchUpTo(
  */
 export const LIST_ROW_CAP = 10_000
 
+/**
+ * PostgREST chạy dưới role `authenticator` có **statement_timeout = 8s CỐ ĐỊNH** (không sửa
+ * được từ app). Khi nhiều người cùng yêu cầu một khoảng lọc rất rộng, query bị huỷ giữa chừng
+ * → nếu để nguyên sẽ thành 500 "Lỗi hệ thống", user không biết phải làm gì.
+ * Hàm này nhận diện lỗi đó để controller đổi thành 400 KÈM HƯỚNG DẪN THU HẸP (luật CLAUDE.md:
+ * chặn có hướng dẫn, không để lỗi trắng).
+ */
+export function isQueryTimeout(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e ?? '')
+  return /statement timeout|canceling statement|57014/i.test(msg)
+}
+
+export const QUERY_TIMEOUT_MSG =
+  'Khoảng lọc quá rộng nên hệ thống chưa tính kịp (nhiều người đang cùng truy vấn). '
+  + 'Vui lòng thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho rồi thử lại.'
+
 export const LIST_TOO_LARGE_MSG = (max: number) =>
   `Kết quả quá lớn (hơn ${max.toLocaleString('vi-VN')} bản ghi) nên không tải hết được. `
   + 'Vui lòng thu hẹp KHOẢNG NGÀY, hoặc lọc thêm theo Kho / Loại kho rồi thử lại.'

@@ -1907,6 +1907,73 @@ export function useGDOs(params?: { warehouse_id?: string; status?: string; trans
   })
 }
 
+// ── Xuất kho PHÂN TRANG SERVER (28/07) — cùng khuôn Nhập kho ──
+export interface GdoListPage { items: GDO[]; total: number; page: number; limit: number }
+// too_wide = phạm vi lọc vượt trần an toàn (số DÒNG HÀNG phải quét) → BE cố ý KHÔNG tính tổng
+// (các trường số trả null) để không chiếm DB của người khác; FE hiện "—" + hướng dẫn thu hẹp.
+export interface OutboundSummary {
+  count: number | null; completed: number | null
+  cartons: number | null; cartons_qr: number | null; cartons_noqr: number | null; pallets: number | null
+  npp_breakdown: { npp: string; planned: number; scanned: number }[]
+  too_wide?: boolean
+}
+export interface OutboundFacets {
+  export_types: string[]; dvvts: string[]; warehouse_types: string[]
+  npps: string[]; status_labels: string[]
+  materials: { value: string; label: string }[]
+}
+export interface OutboundListFilterParams {
+  warehouse_id?: string; search?: string; date_from?: string; date_to?: string
+  warehouse_types?: string[]; export_types?: string[]; dvvts?: string[]
+  npps?: string[]; material_codes?: string[]; status_labels?: string[]
+}
+function outboundCsvParams(p: OutboundListFilterParams) {
+  const j = (a?: string[]) => (a?.length ? a.join(',') : undefined)
+  return {
+    warehouse_id: p.warehouse_id, search: p.search, date_from: p.date_from, date_to: p.date_to,
+    warehouse_types: j(p.warehouse_types), export_types: j(p.export_types), dvvts: j(p.dvvts),
+    npps: j(p.npps), material_codes: j(p.material_codes), status_labels: j(p.status_labels),
+  }
+}
+
+export function useGDOsPaged(params: OutboundListFilterParams & { page: number; limit: number }) {
+  const qp = { ...outboundCsvParams(params), page: params.page, limit: params.limit }
+  return useQuery({
+    queryKey: ['gdos-paged', qp],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound', { params: qp })
+      return data.data as GdoListPage
+    },
+  })
+}
+
+// Tổng SummaryBand + phân bổ NPP — SQL trên TOÀN BỘ kết quả lọc (không phải trang)
+export function useOutboundSummary(params: OutboundListFilterParams) {
+  const qp = outboundCsvParams(params)
+  return useQuery({
+    queryKey: ['outbound-summary', qp],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/summary', { params: qp })
+      return data.data as OutboundSummary
+    },
+  })
+}
+
+// Option filter — DISTINCT dưới DB theo filter nền (kho + ngày)
+export function useOutboundFacets(params: { warehouse_id?: string; date_from?: string; date_to?: string }) {
+  return useQuery({
+    queryKey: ['outbound-facets', params],
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/facets', { params })
+      return data.data as OutboundFacets
+    },
+  })
+}
+
 // Tra cứu chuyến xuất theo tem pallet (ô tìm kiếm danh sách Xuất) — chỉ chạy khi q≥2
 export function useOutboundPalletLookup(q?: string) {
   const term = (q ?? '').trim()

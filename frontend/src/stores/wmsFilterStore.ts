@@ -63,6 +63,8 @@ interface LoosePickingFilters {
   filterNpps: string[]
   filterWarehouseTypes: string[]
   filterTypes: string[]
+  page: number
+  pageSize: number
 }
 export interface ScanLogFilters {
   from_date: string
@@ -115,6 +117,8 @@ interface StocktakeSummaryFilters {
   locationIds: string[]
   requiresOnly: boolean
   view: StocktakeView
+  page: number
+  pageSize: number
 }
 interface StocktakeHistoryFilters {
   warehouseId: string
@@ -124,6 +128,8 @@ interface StocktakeHistoryFilters {
   dateFrom: string   // Ngày kiểm (mặc định 7 ngày gần nhất)
   dateTo: string
   search: string
+  page: number
+  pageSize: number
 }
 interface GateRegistrationFilters {
   fDate: string
@@ -340,7 +346,7 @@ function initialFilters() {
     },
     loosePicking: {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
-      filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
+      filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [], page: 1, pageSize: 100,
     },
     scanLog: {
       from_date: today(), to_date: today(),
@@ -353,8 +359,8 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
-    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView },
-    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '' },
+    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
+    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
     locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',

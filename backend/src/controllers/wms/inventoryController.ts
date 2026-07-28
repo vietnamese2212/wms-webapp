@@ -1127,7 +1127,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, location_id, location_ids, requires_only, view = 'problem', date_from, date_to } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, location_ids, requires_only, view = 'problem', date_from, date_to, page, page_size } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
   // requires_only='1': lọc "chỉ vị trí cần check" bằng CỜ — BE tự resolve vị trí từ kho. FE KHÔNG
   // được nhồi hàng nghìn id vào query string (kho 1.517 vị trí = URL 55KB → Vercel 414 trước khi
@@ -1201,96 +1201,58 @@ export async function stocktakeEntries(req: Request, res: Response) {
   const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
   const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
 
-  // Điều kiện LỌC + ĐẾM trong DB (kho lớn vài chục nghìn pallet không kéo toàn bộ về Node).
-  // toISOString() luôn ra chuỗi UTC 'Z' (không có '+') nên an toàn trong .or().
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const CHECKED_RANGE = (q: any): any => q.gte('stocktake_at', rangeStart).lte('stocktake_at', rangeEnd)
-  const UNCHECKED_OR = `stocktake_at.is.null,stocktake_at.lt.${rangeStart},stocktake_at.gt.${rangeEnd}`
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const applyView = (q: any): any => {
-    if (view === 'flagged')   return CHECKED_RANGE(q.eq('stocktake_flagged', true))
-    if (view === 'unchecked') return q.or(UNCHECKED_OR)
-    if (view === 'checked')   return CHECKED_RANGE(q)
-    if (view === 'problem')   return q.or(`and(stocktake_flagged.eq.true,stocktake_at.gte.${rangeStart},stocktake_at.lte.${rangeEnd}),${UNCHECKED_OR}`)
-    return q
-  }
+  // LỌC + SẮP + ĐẾM + CẮT TRANG đều nằm trong RPC `stocktake_entries_page` (migration
+  // 20260728_stocktake_paged_rpc.sql). Đường cũ chặn cứng 2000 dòng: kho 8.074 pallet chỉ xem
+  // được 25% và không có cách nào tới phần còn lại. Danh sách vị trí đi qua THAM SỐ MẢNG của
+  // RPC (POST body) nên không dính trần ~300 id trên URL ⇒ bỏ luôn vòng chunk 300 × 4 câu đếm.
+  const pageNum  = Math.max(1, parseInt(String(page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(page_size ?? '200'), 10) || 200))
 
-  // Stats bằng COUNT head (không kéo dòng) — chunk vị trí 300/lô né URL dài, cộng dồn qua lô
-  const locChunks: string[][] = []
-  for (let i = 0; i < resolvedLocationIds.length; i += 300) locChunks.push(resolvedLocationIds.slice(i, i + 300))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseCount = (chunk: string[]): any => supabase.from('InventoryEntry')
-    .select('id', { count: 'exact', head: true })
-    .in('location_id', chunk)
-    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-    .gt('cartons_remaining', 0)   // CHỈ pallet còn tồn — bỏ remaining 0 (đã xuất hết) khỏi tổng hợp KK
-  let total = 0, checked = 0, flagged = 0, totalFiltered = 0
-  try {
-    for (const chunk of locChunks) {
-      const [t, c, f, v] = await Promise.all([
-        baseCount(chunk),
-        CHECKED_RANGE(baseCount(chunk)),
-        CHECKED_RANGE(baseCount(chunk).eq('stocktake_flagged', true)),
-        applyView(baseCount(chunk)),
-      ])
-      for (const r of [t, c, f, v]) if (r.error) throw new Error(r.error.message)
-      total += t.count ?? 0; checked += c.count ?? 0; flagged += f.count ?? 0; totalFiltered += v.count ?? 0
-    }
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
-  }
+  const { data: pageData, error: pageErr } = await supabase.rpc('stocktake_entries_page', {
+    p_loc_ids: resolvedLocationIds,
+    p_from:    rangeStart,
+    p_to:      rangeEnd,
+    p_view:    view,
+    p_offset:  (pageNum - 1) * pageSize,
+    p_limit:   pageSize,
+  })
+  if (pageErr) return fail(res, 500, 'DB_ERROR', pageErr.message)
+  const pd = (pageData ?? {}) as { ids?: string[]; total?: number; st_total?: number; checked?: number; flagged?: number }
+  const pageIds = pd.ids ?? []
+  const total   = pd.st_total ?? 0
+  const checked = pd.checked ?? 0
+  const flagged = pd.flagged ?? 0
   const unchecked = total - checked
   const matched   = Math.max(0, checked - flagged)   // đã kiểm KHỚP = đã kiểm − chênh lệch
 
-  // Entries: lọc view TRONG SQL + CAP 2000 dòng (chọn cả kho vài chục nghìn pallet → payload/thời gian
-  // bị chặn; FE hiện cảnh báo thu hẹp vị trí khi truncated). Chưa-quét-bao-giờ lên đầu (nullsFirst).
-  const CAP = 2000
+  // Nạp dòng đầy đủ của ĐÚNG trang này rồi xếp lại theo thứ tự RPC đã quyết (join làm ở PostgREST
+  // cho gọn — 1 trang ≤1000 id nên chunk 300 là đủ, không cần đưa join vào SQL).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const entries: any[] = []
-  try {
-    for (const chunk of locChunks) {
-      if (entries.length >= CAP) break
-      for (let p = 0; entries.length < CAP; p++) {
-        const { data, error } = await applyView(supabase.from('InventoryEntry')
-          .select(`
-            id, pallet_code, cartons_remaining, import_date,
-            stocktake_flagged, stocktake_flag_note, stocktake_at,
-            location:Location(id, location_code),
-            material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton),
-            stocktake_by_emp:Employee!stocktake_by(id, name)
-          `)
-          .in('location_id', chunk)
-          .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-          .gt('cartons_remaining', 0)   // bỏ pallet hết tồn khỏi danh sách kiểm
-          .order('stocktake_at', { ascending: true, nullsFirst: true })
-          .order('id', { ascending: true }))
-          .range(p * 1000, p * 1000 + 999)
-        if (error) return fail(res, 500, 'DB_ERROR', error.message)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const batch = (data ?? []) as any[]
-        entries.push(...batch.slice(0, CAP - entries.length))
-        if (batch.length < 1000) break
-      }
+  let entries: any[] = []
+  if (pageIds.length) {
+    try {
+      const rows = await fetchAllByIdChunks(pageIds, chunk => supabase.from('InventoryEntry')
+        .select(`
+          id, pallet_code, cartons_remaining, import_date,
+          stocktake_flagged, stocktake_flag_note, stocktake_at,
+          location:Location(id, location_code),
+          material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton),
+          stocktake_by_emp:Employee!stocktake_by(id, name)
+        `)
+        .in('id', chunk))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const byId = new Map((rows as any[]).map(r => [r.id as string, r]))
+      entries = pageIds.map(id => byId.get(id)).filter(Boolean)
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
     }
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
-
-  type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
-  const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= rangeStart && e.stocktake_at <= rangeEnd)
-  // Sort chính xác trên tập đã cap (rẻ): CHƯA quét lên đầu; trong nhóm đã quét: lệch trước
-  ;(entries as E[]).sort((a, b) => {
-    const aOk = isChecked(a), bOk = isChecked(b)
-    if (aOk !== bOk) return aOk ? 1 : -1
-    if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
-    return 0
-  })
 
   return ok(res, {
     stats: { total, checked, unchecked, flagged, matched },
     entries,
-    total_filtered: totalFiltered,
-    truncated: totalFiltered > entries.length,
+    total_filtered: pd.total ?? 0,
+    page: pageNum, page_size: pageSize,
     date_from: dfrom, date_to: dto,
   })
 }
@@ -1298,7 +1260,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
 // Lịch sử kiểm kê: đọc từ StocktakeLog (append-only) — xem lại kết quả kiểm mọi ngày/đợt,
 // kể cả pallet đã xuất / đã kiểm lại. Scope kho + loại (null-inclusive) như báo cáo tổng hợp.
 export async function stocktakeLog(req: Request, res: Response) {
-  const { warehouse_id, category, location_ids, requires_only, date_from, date_to, search } = req.query as Record<string, string>
+  const { warehouse_id, category, location_ids, requires_only, date_from, date_to, search, page, page_size } = req.query as Record<string, string>
   const reqOnly = String(requires_only ?? '') === '1'   // cờ thay cho danh sách id (xem stocktakeEntries)
   const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
@@ -1318,9 +1280,6 @@ export async function stocktakeLog(req: Request, res: Response) {
   }
   const stCats = scopeCategoriesOf(req)
 
-  const CAP = 2000
-  // Chọn nhiều vị trí → chunk 300 rồi gộp (filter `.in()` >300 id là vỡ URL). 1 lô = 1 query
-  // song song; gộp xong sort lại theo counted_at desc rồi cắt CAP để giữ đúng ngữ nghĩa trang.
   let locIdList = location_ids ? String(location_ids).split(',').filter(Boolean) : []
   // Cờ "chỉ vị trí cần check": BE tự resolve id (phân trang) → client không phải gửi nghìn id
   if (reqOnly && !locIdList.length) {
@@ -1338,37 +1297,45 @@ export async function stocktakeLog(req: Request, res: Response) {
       return fail(res, 500, 'DB_ERROR', (e as Error).message)
     }
   }
+  // Lọc + sắp + đếm + cắt trang trong RPC `stocktake_log_page`. Đường cũ cắt cứng 2000 dòng và
+  // chunk vị trí 300/lô rồi gộp ở Node — vừa không tới được phần sau, vừa lệch thứ tự giữa các lô.
+  // 1 lần quét kiểm = 1 dòng ⇒ bảng này phình nhanh nhất module (kho 12k pallet ≈ 150k dòng/năm).
+  const pageNum  = Math.max(1, parseInt(String(page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(page_size ?? '200'), 10) || 200))
+
+  const { data: pageData, error: rpcErr } = await supabase.rpc('stocktake_log_page', {
+    p_wh_ids:     whFilter,
+    p_loc_ids:    locIdList.length ? locIdList : null,
+    p_category:   category || null,
+    p_scope_cats: stCats,
+    p_search:     search ? safeFilterValue(String(search)) : null,
+    p_from:       rangeStart,
+    p_to:         rangeEnd,
+    p_offset:     (pageNum - 1) * pageSize,
+    p_limit:      pageSize,
+  })
+  if (rpcErr) return fail(res, 500, 'DB_ERROR', rpcErr.message)
+  const pd = (pageData ?? {}) as { ids?: string[]; total?: number; counted?: number; flagged?: number }
+  const pageIds = pd.ids ?? []
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const buildQ = (locChunk: string[] | null): any => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q: any = supabase.from('StocktakeLog').select('*', { count: 'exact' })
-      .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
-    if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter)
-    if (category) q = q.contains('categories', [category])
-    if (stCats)   q = q.or(categoriesOrScopeFilter('categories', stCats))
-    if (locChunk) q = q.in('location_id', locChunk)
-    if (search) q = q.ilike('pallet_code', `%${safeFilterValue(String(search))}%`)
-    return q.order('counted_at', { ascending: false }).range(0, CAP - 1)
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let data: any[] = []; let count = 0; let error: { message: string } | null = null
-  if (locIdList.length > IN_CHUNK) {
-    const parts = await Promise.all(chunkArray(locIdList, IN_CHUNK).map(c => buildQ(c)))
-    for (const p of parts) {
-      if (p.error) { error = p.error; break }
-      data.push(...(p.data ?? [])); count += p.count ?? 0
+  let rows: any[] = []
+  if (pageIds.length) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = await fetchAllByIdChunks(pageIds, chunk => supabase.from('StocktakeLog').select('*').in('id', chunk)) as any[]
+      const byId = new Map(raw.map(r => [r.id as string, r]))
+      rows = pageIds.map(id => byId.get(id)).filter(Boolean)
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
     }
-    data.sort((a, b) => String(b.counted_at ?? '').localeCompare(String(a.counted_at ?? '')))
-    data = data.slice(0, CAP)
-  } else {
-    const r = await buildQ(locIdList.length ? locIdList : null)
-    data = r.data ?? []; count = r.count ?? 0; error = r.error
   }
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, {
-    rows: data ?? [],
-    total: count ?? 0,
-    truncated: (count ?? 0) > (data?.length ?? 0),
+    rows,
+    total: pd.total ?? 0,
+    counted: pd.counted ?? 0,     // 2 ô SummaryBand tính trên TOÀN BỘ bộ lọc, không phải trang
+    flagged: pd.flagged ?? 0,
+    page: pageNum, page_size: pageSize,
     date_from: dfrom, date_to: dto,
   })
 }

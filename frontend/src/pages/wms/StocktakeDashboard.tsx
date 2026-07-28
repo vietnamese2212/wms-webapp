@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   useWarehouses, useLocationsReal,
-  useUnflagEntry, useStocktakeEntries, useInventoryEntry,
+  useUnflagEntry, useStocktakeEntries, useInventoryEntry, fetchAllStocktakeEntries,
   type StocktakeEntryRow,
 } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -234,7 +235,7 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, requiresOnly, view, page, pageSize } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
@@ -286,19 +287,22 @@ export default function StocktakeDashboard() {
   // Đúng bộ "cần check" → gửi CỜ requires_only (BE tự resolve vị trí). Nhồi cả nghìn id vào query
   // string là 414 trước khi tới BE (kho 1.517 vị trí = URL 55KB; ngưỡng ~800 id/32KB — đo 27/07).
   const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
+  const queryParams = {                              // không truyền ngày → BE mặc định HÔM NAY
+    warehouse_id: isImportantScope ? (warehouseId || undefined) : undefined,
+    category: isImportantScope ? (category || undefined) : undefined,
+    requires_only: isImportantScope ? '1' : undefined,
+    location_ids: isImportantScope ? undefined : locationIds.join(','),
+    view,
+  }
   const { data, isFetching } = useStocktakeEntries(
-    {                                                // không truyền ngày → BE mặc định HÔM NAY
-      warehouse_id: isImportantScope ? (warehouseId || undefined) : undefined,
-      category: isImportantScope ? (category || undefined) : undefined,
-      requires_only: isImportantScope ? '1' : undefined,
-      location_ids: isImportantScope ? undefined : locationIds.join(','),
-      view,
-    },
+    { ...queryParams, page, page_size: pageSize },
     locationIds.length > 0 && !tooManyLocs,
   )
 
   const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0, matched: 0 }
   const entries = data?.entries ?? []
+  const totalRows  = data?.total_filtered ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize))
 
   // Chỉ số kết quả kiểm (đếm chính xác từ BE): bao phủ = đã kiểm/tổng; chính xác = khớp/đã kiểm.
   // KHÔNG cộng "Σ lệch" cross-mã (đơn vị base khác nhau → tổng vô nghĩa; đã có số PALLET lệch ở thẻ Chênh lệch).
@@ -316,18 +320,29 @@ export default function StocktakeDashboard() {
 
   const defs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
-      onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [] }),
+      onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [], page: 1 }),
       options: (warehouses as { id: string; name: string }[]).filter(w => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
     { key: 'category', label: 'Loại hàng', type: 'single', value: category, allLabel: 'Tất cả loại',
-      onChange: v => setStocktakeSummary({ category: v, locationIds: [] }),
+      onChange: v => setStocktakeSummary({ category: v, locationIds: [], page: 1 }),
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
-      onChange: ids => { setStocktakeSummary({ locationIds: ids }); setSelectedId(null) },
+      onChange: ids => { setStocktakeSummary({ locationIds: ids, page: 1 }); setSelectedId(null) },
       options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
   ]
 
-  function exportExcel() {
-    const sheet = entries.map(e => {
+  // Xuất Excel = TOÀN BỘ kết quả lọc (duyệt hết trang), không phải trang đang xem — file cụt
+  // là kiểu sai âm thầm: người nhận không có cách nào biết là thiếu.
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    let all: StocktakeEntryRow[]
+    try {
+      all = await fetchAllStocktakeEntries(queryParams)
+    } catch {
+      setExporting(false)
+      return
+    }
+    const sheet = all.map(e => {
       const diff = parseDiff(e.stocktake_flag_note ?? null)
       return {
         'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
@@ -344,6 +359,7 @@ export default function StocktakeDashboard() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Tổng hợp KK')
     saveWorkbook(wb, `tong_hop_kk_${todayVN}.xlsx`)
+    setExporting(false)
   }
 
   return (
@@ -363,7 +379,7 @@ export default function StocktakeDashboard() {
               title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê" (ở trang Vị trí kho). Bỏ tick để chọn vị trí khác.`}>
               <input type="checkbox" checked={isImportantScope} onChange={e => {
                 const on = e.target.checked
-                setStocktakeSummary(on ? { requiresOnly: true, locationIds: importantLocIds } : { requiresOnly: false, locationIds: [] })
+                setStocktakeSummary(on ? { requiresOnly: true, locationIds: importantLocIds, page: 1 } : { requiresOnly: false, locationIds: [], page: 1 })
               }} className="h-3 w-3 cursor-pointer" />
               <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
                 <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
@@ -384,8 +400,9 @@ export default function StocktakeDashboard() {
           <ActionCluster className="shrink-0" mobileInline items={[
             // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
             ...(can(perms, 'stocktake', 'export') ? [{
-              key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
-              mobileHidden: true, disabled: !entries.length,
+              key: 'export', icon: Download, label: exporting ? 'Đang tải…' : 'Excel',
+              tip: 'Xuất Excel TOÀN BỘ danh sách theo bộ lọc đang áp (không chỉ trang đang xem)',
+              mobileHidden: true, disabled: !entries.length || exporting, busy: exporting,
               onClick: exportExcel,
             } satisfies ActionItem] : []),
           ]} />
@@ -399,16 +416,16 @@ export default function StocktakeDashboard() {
           <div className="flex gap-1.5">
             <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
-              onClick={() => setStocktakeSummary({ view: 'all' })} />
+              onClick={() => setStocktakeSummary({ view: 'all', page: 1 })} />
             <StatCard label="Đã kiểm" value={stats.checked}
               active={view === 'checked'} color="bg-green-100 text-green-700 border-green-300"
-              onClick={() => setStocktakeSummary({ view: 'checked' })} />
+              onClick={() => setStocktakeSummary({ view: 'checked', page: 1 })} />
             <StatCard label="Chưa kiểm" value={stats.unchecked}
               active={view === 'unchecked'} color="bg-amber-100 text-amber-700 border-amber-300"
-              onClick={() => setStocktakeSummary({ view: 'unchecked' })} />
+              onClick={() => setStocktakeSummary({ view: 'unchecked', page: 1 })} />
             <StatCard label="Chênh lệch" value={stats.flagged}
               active={view === 'flagged'} color="bg-red-100 text-red-700 border-red-300"
-              onClick={() => setStocktakeSummary({ view: 'flagged' })} />
+              onClick={() => setStocktakeSummary({ view: 'flagged', page: 1 })} />
           </div>
         )}
 
@@ -444,12 +461,6 @@ export default function StocktakeDashboard() {
           <>
             {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
-              {data?.truncated && (
-                <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-                  Đang hiển thị {entries.length.toLocaleString('vi-VN')} / {(data.total_filtered ?? 0).toLocaleString('vi-VN')} dòng —
-                  thu hẹp <b>Vị trí</b> ở thanh lọc để xem đủ (xuất Excel cũng chỉ gồm dòng đang hiển thị). Số liệu thống kê phía trên vẫn tính trên TOÀN BỘ.
-                </div>
-              )}
               <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
@@ -560,6 +571,7 @@ export default function StocktakeDashboard() {
                   })}
                 </TableBody>
               </Table>
+              <PagerNav page={page} totalPages={totalPages} onPage={p => { setStocktakeSummary({ page: p }); setSelectedId(null) }} />
             </div>
 
             {/* Side detail panel */}
@@ -570,10 +582,16 @@ export default function StocktakeDashboard() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {locationIds.length > 0 ? `${entries.length} pallet · ${locationIds.length} vị trí` : 'Chọn vị trí để xem tổng hợp'}
-      </div>
+      {/* Footer đếm bản ghi — chuẩn dùng chung mọi list page */}
+      {locationIds.length > 0 && !tooManyLocs ? (
+        <ListFooter page={page} pageSize={pageSize} total={totalRows} unit="pallet"
+          onPageSize={n => setStocktakeSummary({ pageSize: n, page: 1 })}
+          right={`${locationIds.length.toLocaleString('vi-VN')} vị trí`} />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+          Chọn vị trí để xem tổng hợp
+        </div>
+      )}
      </div>
     </div>
   )

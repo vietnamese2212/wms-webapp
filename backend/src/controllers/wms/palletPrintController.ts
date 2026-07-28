@@ -79,7 +79,83 @@ export async function logPrints(req: Request, res: Response) {
 // GET /wms/pallet-prints?qr_code=&qr_codes=&search=&categories=&cycles=&machines=&nmsx=&material_codes=&date_from=&date_to=&limit=
 // qr_codes (csv): lấy log cho 1 TẬP mã pallet — dùng cho Truy cứu (base = tồn kho, LEFT JOIN số lần in).
 // Lọc SERVER-SIDE (dữ liệu có thể vài triệu dòng) — frontend chỉ gọi khi đã có filter/quét mã.
+const printCsv = (s?: string | string[]) => {
+  const arr = Array.isArray(s) ? s : (s ? String(s).split(',') : [])
+  return arr.map(x => String(x).trim()).filter(Boolean)
+}
+const printTs = (d: string | undefined, endOfDay: boolean) =>
+  d ? new Date(`${d}T${endOfDay ? '23:59:59' : '00:00:00'}+07:00`).toISOString() : null
+
+// Bộ lọc dùng chung cho trang + facet — hai đường PHẢI cùng 1 mệnh đề WHERE, lệch nhau là ô chọn
+// liệt kê giá trị không có thật (hoặc thiếu giá trị đang có).
+function printScope(req: Request) {
+  return {
+    p_wh_scope:  req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null,
+    p_cat_scope: scopeCategoriesOf(req),
+  }
+}
+
+// Lịch sử in tem — phân trang theo PHIẾU IN (mỗi lần bấm In = 1 phiếu, gập/mở trên màn hình).
+// Đường cũ trả mảng tối đa 20.000 dòng, cắt âm thầm; xem migration 20260728_pallet_prints_paged_rpc.sql.
+export async function listPrintsPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '50'), 10) || 50))
+  const arg = (v?: string) => { const a = printCsv(v); return a.length ? a : null }
+
+  const { data, error } = await supabase.rpc('pallet_prints_page', {
+    ...printScope(req),
+    p_from:      printTs(q.date_from, false),
+    p_to:        printTs(q.date_to, true),
+    p_search:    q.search ? String(q.search).replace(/[%_]/g, m => `\\${m}`) : null,
+    p_modes:     arg(q.modes),
+    p_materials: arg(q.material_codes),
+    p_cycles:    arg(q.cycles),
+    p_machines:  arg(q.machines),
+    p_printers:  arg(q.printers),
+    p_offset:    (pageNum - 1) * pageSize,
+    p_limit:     pageSize,
+  })
+  if (error) return fail(res, error.message, 500)
+  const pd = (data ?? {}) as { ids?: string[]; total?: number; total_rows?: number; new_n?: number; reprint_n?: number }
+  const ids = pd.ids ?? []
+
+  let rows: unknown[] = []
+  if (ids.length) {
+    // Chunk 300 id/lô: 1 trang phiếu có thể gồm hàng trăm tem, `.in()` dài là vỡ URL PostgREST
+    const parts: unknown[][] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data: part, error: e2 } = await supabase.from('PalletLabelPrint')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .in('id', ids.slice(i, i + 300))
+      if (e2) return fail(res, e2.message, 500)
+      parts.push((part ?? []) as unknown[])
+    }
+    rows = parts.flat()
+    ;(rows as { created_at: string }[]).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+  }
+  return ok(res, {
+    rows, total: pd.total ?? 0, total_rows: pd.total_rows ?? 0,
+    new_n: pd.new_n ?? 0, reprint_n: pd.reprint_n ?? 0,
+    page: pageNum, page_size: pageSize,
+  })
+}
+
+// Ô chọn bộ lọc lấy từ TOÀN BỘ bộ lọc ngày/tìm kiếm (không phải từ trang đang xem)
+export async function listPrintFacets(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const { data, error } = await supabase.rpc('pallet_prints_facets', {
+    ...printScope(req),
+    p_from:   printTs(q.date_from, false),
+    p_to:     printTs(q.date_to, true),
+    p_search: q.search ? String(q.search).replace(/[%_]/g, m => `\\${m}`) : null,
+  })
+  if (error) return fail(res, error.message, 500)
+  return ok(res, data ?? {})
+}
+
 export async function listPrints(req: Request, res: Response) {
+  if (req.query.page) return await listPrintsPaged(req, res)
   try {
     const { qr_code, qr_codes, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useWarehouses, useLocationsReal, useStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -45,7 +46,7 @@ export default function StocktakeHistory() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search } = useWmsFilterStore(s => s.stocktakeHistory)
+  const { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search, page, pageSize } = useWmsFilterStore(s => s.stocktakeHistory)
   const setF = useWmsFilterStore(s => s.setStocktakeHistory)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_history_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_history_density', d ? '0' : '1'); return !d })
@@ -77,7 +78,7 @@ export default function StocktakeHistory() {
   // Đúng bộ "cần check" → gửi CỜ requires_only, BE tự resolve vị trí. Nhồi cả nghìn id vào query
   // string là 414 (kho 1.517 vị trí = URL 55KB; ngưỡng Vercel ~800 id / 32KB — đo 27/07).
   const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
-  const { data, isFetching } = useStocktakeLog({
+  const queryParams = {
     warehouse_id: warehouseId || undefined,
     category: category || undefined,
     location_ids: (!isImportantScope && locationIds.length && !tooManyLocs) ? locationIds.join(',') : undefined,
@@ -85,30 +86,39 @@ export default function StocktakeHistory() {
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
     search: search || undefined,
-  }, !tooManyLocs)
+  }
+  const { data, isFetching } = useStocktakeLog({ ...queryParams, page, page_size: pageSize }, !tooManyLocs)
 
   const rows  = data?.rows ?? []
   const total = data?.total ?? 0
-  const flaggedN = rows.filter(r => r.is_flagged).length
-  const countedN = rows.filter(r => r.physical_qty != null).length
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  // 3 ô SummaryBand đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm trên `rows` là đếm mỗi trang đang xem,
+  // đứng cạnh ô "Lượt kiểm" (toàn bộ) thành hai con số đá nhau.
+  const flaggedN = data?.flagged ?? 0
+  const countedN = data?.counted ?? 0
   const matchedN = Math.max(0, countedN - flaggedN)
 
   const defs: FilterDef[] = [
     { key: 'daterange', label: 'Ngày kiểm', type: 'daterange', pinned: true, from: dateFrom, to: dateTo,
-      onChange: (from, to) => setF({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setF({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
-      onChange: v => setF({ warehouseId: v, locationIds: [] }),
+      onChange: v => setF({ warehouseId: v, locationIds: [], page: 1 }),
       options: (warehouses as { id: string; name: string }[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
     { key: 'category', label: 'Loại hàng', type: 'single', value: category, allLabel: 'Tất cả loại',
-      onChange: v => setF({ category: v, locationIds: [] }),
+      onChange: v => setF({ category: v, locationIds: [], page: 1 }),
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
-      onChange: ids => setF({ locationIds: ids }),
+      onChange: ids => setF({ locationIds: ids, page: 1 }),
       options: (locations as { id: string; location_code: string }[]).map(l => ({ value: l.id, label: l.location_code })) },
   ]
 
-  function exportExcel() {
-    const sheet = rows.map(r => ({
+  // Xuất Excel = TOÀN BỘ kết quả lọc (duyệt hết trang), không phải trang đang xem
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    let all: StocktakeLogRow[]
+    try { all = await fetchAllStocktakeLog(queryParams) } catch { setExporting(false); return }
+    const sheet = all.map(r => ({
       'Thời gian kiểm': `${formatTimestampDate(r.counted_at, true)} ${formatTimestampTime(r.counted_at)}`,
       'Mã pallet': r.pallet_code, 'Vị trí': r.location_code ?? '',
       'Tên hàng': r.short_name ?? r.material_code ?? '',
@@ -122,6 +132,7 @@ export default function StocktakeHistory() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử kiểm')
     saveWorkbook(wb, `lich_su_kiem_${dateFrom}_${dateTo}.xlsx`)
+    setExporting(false)
   }
 
   return (
@@ -140,14 +151,14 @@ export default function StocktakeHistory() {
               title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê". Bỏ tick để xem tất cả.`}>
               <input type="checkbox" checked={isImportantScope} onChange={e => {
                 const on = e.target.checked
-                setF(on ? { requiresOnly: true, locationIds: importantLocIds } : { requiresOnly: false, locationIds: [] })
+                setF(on ? { requiresOnly: true, locationIds: importantLocIds, page: 1 } : { requiresOnly: false, locationIds: [], page: 1 })
               }} className="h-3 w-3 cursor-pointer" />
               <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
                 <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
               </span>
             </label>
           )}
-          <SearchInput value={search} onChange={v => setF({ search: v })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
+          <SearchInput value={search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
           <FilterSheetButton defs={defs} className="sm:hidden" />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <SavedViews module="stocktake_history" currentFilters={viewSnapshot} activeId={activeViewId}
@@ -160,8 +171,9 @@ export default function StocktakeHistory() {
             <ActionCluster className="shrink-0" mobileInline items={[
               // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
               ...(can(perms, 'stocktake', 'export') ? [{
-                key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel lịch sử kiểm đang hiển thị',
-                mobileHidden: true, disabled: !rows.length, onClick: exportExcel,
+                key: 'export', icon: Download, label: exporting ? 'Đang tải…' : 'Excel',
+                tip: 'Xuất Excel TOÀN BỘ lịch sử kiểm theo bộ lọc đang áp (không chỉ trang đang xem)',
+                mobileHidden: true, disabled: !rows.length || exporting, busy: exporting, onClick: exportExcel,
               } satisfies ActionItem] : []),
             ]} />
           </div>
@@ -182,11 +194,6 @@ export default function StocktakeHistory() {
           <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
             Đang chọn {locationIds.length.toLocaleString('vi-VN')} vị trí — quá nhiều để lọc (tối đa {LOC_ID_CAP}).
             Bỏ bớt vị trí, hoặc bỏ chọn hết để xem cả kho / dùng “Chỉ vị trí cần check”.
-          </div>
-        )}
-        {data?.truncated && (
-          <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-            Đang hiển thị {rows.length.toLocaleString('vi-VN')} / {total.toLocaleString('vi-VN')} lượt — thu hẹp khoảng ngày hoặc vị trí để xem đủ.
           </div>
         )}
         <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
@@ -256,11 +263,11 @@ export default function StocktakeHistory() {
             })}
           </TableBody>
         </Table>
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setF({ page: p })} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {rows.length > 0 ? `${rows.length} / ${total} lượt kiểm` : '0 lượt kiểm'}
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="lượt kiểm"
+        onPageSize={n => setF({ pageSize: n, page: 1 })} />
      </div>
     </div>
   )

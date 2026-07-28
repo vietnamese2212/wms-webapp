@@ -19,8 +19,10 @@ import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useMaterialsByCodes, useInventoryEntries, useInventoryFacets, type MaterialLite,
-  useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
+  useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
+  useTransportCompanies, useSystemSettings, type PalletPrintRow,
 } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -656,10 +658,34 @@ export default function PalletLabels() {
   // Bắt buộc tối thiểu 1 filter (khoảng ngày HOẶC search) mới tải — tránh dump toàn bộ log in.
   // Các filter còn lại (Chế độ/Tên hàng/Chu kỳ/Máy-NCC/Người in) lọc client-side trên tập đã tải.
   const histReady = !!(histFrom || histTo || histSearchOk)
-  const { data: histRows = [] } = usePalletPrints({
+  const [histPage, setHistPage] = useState(1)
+  const [histPageSize, setHistPageSize] = useState(50)
+  // MỌI bộ lọc xuống server: lọc trên tập đã tải là lọc trong 1 trang (ra thiếu mà không báo).
+  // Trang cắt theo PHIẾU IN nên 1 lệnh in không bị xẻ đôi qua 2 trang.
+  const histBase = {
     date_from: histFrom || undefined, date_to: histTo || undefined,
     search: histSearchOk ? histSearchDeb : undefined,
-  }, tab === 'history' && histReady)
+    modes: histMode.join(',') || undefined,
+    material_codes: histMats.join(',') || undefined,
+    cycles: histCycles.join(',') || undefined,
+    machines: histMachines.join(',') || undefined,
+    printers: histBy.join(',') || undefined,
+  }
+  const { data: histData } = usePalletPrintsPaged(
+    { ...histBase, page: histPage, page_size: histPageSize },
+    tab === 'history' && histReady,
+  )
+  const histRows = histData?.rows ?? []
+  const histTotalBatches = histData?.total ?? 0
+  const histTotalPages   = Math.max(1, Math.ceil(histTotalBatches / histPageSize))
+  // Ô chọn bộ lọc lấy trên TOÀN BỘ khoảng ngày/từ khoá (không phải trang đang xem)
+  const { data: histFacets } = usePalletPrintFacets(
+    { date_from: histFrom || undefined, date_to: histTo || undefined, search: histSearchOk ? histSearchDeb : undefined },
+    tab === 'history' && histReady,
+  )
+  // Đổi bộ lọc → về trang 1 (nếu không, đang ở trang 7 mà lọc còn 2 trang thì bảng rỗng khó hiểu)
+  useEffect(() => { setHistPage(1) },
+    [histFrom, histTo, histSearchDeb, histMode.join(','), histMats.join(','), histCycles.join(','), histMachines.join(','), histBy.join(',')])
   // Tên hàng + hệ số thùng/hộp: chỉ tra ĐÚNG các mã có trong lịch sử đang xem
   // (trước đây nạp cả danh mục mã hàng về trình duyệt).
   const { data: allMats = [] } = useMaterialsByCodes(
@@ -671,26 +697,19 @@ export default function PalletLabels() {
     for (const x of allMats) m.set(x.material_code, x)
     return m
   }, [allMats])
-  const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
-    .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
-  const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
-  const histCycleOpts = useMemo(() => [...new Set(histRows.map(r => r.cycle).filter((x): x is string => !!x))].map(c => ({ value: c, label: c })), [histRows])
+  const histMatOpts = useMemo(() => (histFacets?.materials ?? [])
+    .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histFacets, matByCode])
+  const histByOpts = useMemo(() => (histFacets?.printers ?? []).map(n => ({ value: n, label: n })), [histFacets])
+  const histCycleOpts = useMemo(() => (histFacets?.cycles ?? []).map(c => ({ value: c, label: c })), [histFacets])
   // Đoạn 4 (Máy / NCC): value = giá trị thô trong log; nhãn = tên NCC nếu là hàng NCC, ngược lại giữ mã Máy
   const histMachineOpts = useMemo(() => {
     const seen = new Map<string, string>()
-    for (const r of histRows) { if (r.machine && !seen.has(r.machine)) seen.set(r.machine, seg4Display(r.category, r.machine)) }
+    for (const m of (histFacets?.machines ?? [])) if (m.v && !seen.has(m.v)) seen.set(m.v, seg4Display(m.c, m.v))
     return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [histRows, nccNameByCode])
-  const histFiltered = useMemo(() => histRows.filter(r =>
-    (!histMode.length || histMode.includes(r.mode)) &&
-    (!histMats.length || (r.material_code != null && histMats.includes(r.material_code))) &&
-    (!histCycles.length || (r.cycle != null && histCycles.includes(r.cycle))) &&
-    (!histMachines.length || (r.machine != null && histMachines.includes(r.machine))) &&
-    (!histBy.length || (r.printed_by_name != null && histBy.includes(r.printed_by_name)))
-  ), [histRows, histMode, histMats, histCycles, histMachines, histBy])
+  }, [histFacets, nccNameByCode])
   const histBatches = useMemo(() => {
     const m = new Map<string, { key: string; at: string; mode: string; by: string | null; rows: PalletPrintRow[] }>()
-    for (const r of histFiltered) {
+    for (const r of histRows) {
       // Có batch_id thì gom theo batch; chưa có (log cũ) → gom theo created_at+mode+người in
       // (mọi tem trong 1 lần bấm In chia sẻ cùng created_at vì backend set 1 lần)
       const key = r.batch_id ?? `${r.created_at}|${r.mode}|${r.printed_by_name ?? ''}`
@@ -699,7 +718,7 @@ export default function PalletLabels() {
       else m.set(key, { key, at: r.created_at, mode: r.mode, by: r.printed_by_name, rows: [r] })
     }
     return [...m.values()].sort((a, b) => b.at.localeCompare(a.at))
-  }, [histFiltered])
+  }, [histRows])
 
   function logRowToLabel(r: PalletPrintRow): LabelData {
     const f = parseCodeFields(r.qr_code)   // đúng cả 2 format (V1 `_` / V2 `;`)
@@ -873,10 +892,11 @@ export default function PalletLabels() {
           ]
         : tab === 'history'
         ? [
-            { label: 'Số lệnh in', value: histBatches.length, accent: histBatches.length > 0 },
-            { label: 'Tổng tem', value: histRows.length },
-            { label: 'Sinh mới', value: histBatches.filter(b => b.mode !== 'REPRINT').length },
-            { label: 'In lại', value: histBatches.filter(b => b.mode === 'REPRINT').length },
+            // 4 ô đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm `histBatches` là đếm trang đang xem
+            { label: 'Số lệnh in', value: histTotalBatches, accent: histTotalBatches > 0 },
+            { label: 'Tổng tem', value: histData?.total_rows ?? 0 },
+            { label: 'Sinh mới', value: histData?.new_n ?? 0 },
+            { label: 'In lại', value: histData?.reprint_n ?? 0 },
           ]
         : [
             { label: 'Số tem', value: labels.length, accent: labels.length > 0 },
@@ -1392,6 +1412,14 @@ export default function PalletLabels() {
                 )})}
               </tbody>
             </table>
+            {histReady && (
+              <>
+                <PagerNav page={histPage} totalPages={histTotalPages} onPage={setHistPage} />
+                <ListFooter page={histPage} pageSize={histPageSize} total={histTotalBatches} unit="lệnh in"
+                  onPageSize={n => { setHistPageSize(n); setHistPage(1) }}
+                  right={`${(histData?.total_rows ?? 0).toLocaleString('vi-VN')} tem`} />
+              </>
+            )}
             </div>
           </div>
         ) : (

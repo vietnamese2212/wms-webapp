@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -30,7 +31,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const PAGE_SIZE = 500
+
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
 // Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (32 cột). Cột 0 (Ngày xuất) sticky-left.
@@ -132,6 +133,7 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
 export default function OutboundScanLog() {
   const navigate = useNavigate()
   const [page, setPage]                 = useState(1)
+  const [pageSize, setPageSize]         = useState(500)
   const [exporting, setExporting]       = useState(false)
   const [exportError, setExportError]   = useState('')
   const { widths: colW, startResize, totalWidth } = useColumnResize('scanlog_col_widths', SCANLOG_COL_DEFAULTS)
@@ -247,7 +249,7 @@ export default function OutboundScanLog() {
   }, [filters.search])
   const searchMode = debouncedQ.trim().length >= 2
 
-  const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: PAGE_SIZE }), [filters, page])
+  const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: pageSize }), [filters, page, pageSize])
   const { data: listData, isLoading: listLoading, isError: listError } = useOutboundScanLog(params, canFetch && !searchMode)
   const { data: searchData, isLoading: searchLoading, isError: searchError } = useScanLogSearch(debouncedQ, page, searchMode)
   const data      = searchMode ? searchData : listData
@@ -255,7 +257,7 @@ export default function OutboundScanLog() {
   const isError   = searchMode ? searchError : listError
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const isBlocked = !searchMode && canFetch && !isLoading && total > 200_000
 
   // Đổi filter / từ khóa search → về trang 1
@@ -490,33 +492,18 @@ export default function OutboundScanLog() {
             </TableBody>
           </Table>
         )}
+        {!isBlocked && <PagerNav page={page} totalPages={totalPages} onPage={setPage} />}
       </div>
 
-      {/* Footer đếm bản ghi + phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span className="flex-1">
-          {canFetch && !isLoading && !isBlocked
-            ? `${total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0}–${Math.min(page * PAGE_SIZE, total)} / ${total.toLocaleString('vi-VN')} bản ghi`
-            : 'Chọn Kho và Loại hàng để xem dữ liệu'}
-        </span>
-        {!isBlocked && totalPages > 1 && (
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-              disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span className="px-1">{page} / {totalPages}</span>
-            <button
-              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-              disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Phân trang — chuẩn dùng chung mọi list page (PagerNav trong vùng cuộn, ListFooter dính đáy) */}
+      {canFetch && !isLoading && !isBlocked ? (
+        <ListFooter page={page} pageSize={pageSize} total={total} unit="bản ghi"
+          onPageSize={n => { setPageSize(n); setPage(1) }} />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+          Chọn Kho và Loại hàng để xem dữ liệu
+        </div>
+      )}
      </div>
     </div>
   )

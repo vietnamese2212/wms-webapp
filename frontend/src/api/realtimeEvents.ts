@@ -15,7 +15,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   Material:            [['materials'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
-  PalletLabelPrint:    [['pallet-prints']],
+  PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],

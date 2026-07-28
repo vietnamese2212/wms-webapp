@@ -4011,9 +4011,33 @@ export async function manualLooseItem(req: Request, res: Response) {
 
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
 
+const looseCsv = (v?: string | string[]) => {
+  const arr = Array.isArray(v) ? v : (v ? String(v).split(',') : [])
+  const out = arr.map(x => String(x).trim()).filter(Boolean)
+  return out.length ? out : null
+}
+
+// Ô chọn bộ lọc trang Nhặt lẻ — tính trên phạm vi NGÀY + KHO trong DB (đường cũ dựng option từ
+// tập đã tải về trình duyệt, phân trang xong sẽ chỉ còn giá trị của trang đang xem).
+export async function getLoosePickingFacets(req: Request, res: Response) {
+  const { warehouse_id, date, date_from, date_to } = req.query as Record<string, string | undefined>
+  const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+  if (scope && warehouse_id && !scope.includes(warehouse_id)) return ok(res, {})
+  const { data, error } = await supabase.rpc('loose_picking_facets', {
+    p_wh_scope:     scope,
+    p_cat_scope:    scopeCategoriesOf(req),
+    p_warehouse_id: warehouse_id || null,
+    p_from:         date || date_from || null,
+    p_to:           date || date_to || null,
+  })
+  if (error) return fail(res, error.message)
+  return ok(res, data ?? {})
+}
+
 export async function listLoosePickingItems(req: Request, res: Response) {
   try {
     const { warehouse_id, date, date_from, date_to } = req.query as { warehouse_id?: string; date?: string; date_from?: string; date_to?: string }
+    const q = req.query as Record<string, string | undefined>
 
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
       ? (req.user?.warehouse_ids ?? [])
@@ -4027,29 +4051,49 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       const effective = warehouse_id
         ? scopeWhIds.filter(id => id === warehouse_id)
         : scopeWhIds
-      if (effective.length === 0) return ok(res, [])
+      if (effective.length === 0) return ok(res, { items: [], total: 0, page: 1, page_size: 0, items_n: 0, pending_n: 0, loose_total: 0, loose_done: 0 })
       effectiveWh = effective
     } else if (warehouse_id) {
       effectiveWh = [warehouse_id]
     }
 
-    // Phân trang né cap-1000 (khoảng ngày rộng có thể >1000 GDO/DO/item → trước đây cụt danh sách nhặt lẻ).
-    // makeQuery PHẢI build query MỚI mỗi lần (fetchAllRowsParallel gọi nhiều lần/lô) — tái dùng 1 builder
-    // sẽ khiến .range() các trang đè lên nhau ⇒ chỉ còn trang cuối (offset lớn) ⇒ trả RỖNG.
-    const makeGdoQ = () => {
-      let q = supabase.from('GroupDeliveryOrder')
-        .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
-        .neq('status', 'CANCELLED')
-      if (looseCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${looseCats.map(c => `"${c}"`).join(',')})`)
-      if (effectiveWh) q = effectiveWh.length === 1 ? q.eq('warehouse_id', effectiveWh[0]) : q.in('warehouse_id', effectiveWh)
-      if (date) q = q.eq('delivery_date', date)
-      if (date_from) q = q.gte('delivery_date', date_from)
-      if (date_to)   q = q.lte('delivery_date', date_to)
-      return q.order('id')
+    // TRANG = CHUYẾN XE, chọn trong RPC `loose_picking_page` (migration 20260728_loose_picking_paged_rpc.sql).
+    // Đường cũ nạp HẾT chuyến trong khoảng ngày rồi mới lọc `loose_picking > 0` ở tầng thứ ba —
+    // vừa không có trần, vừa ngược chiều (điều kiện chọn-lọc-nhất áp cuối cùng).
+    const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+    const { data: pageData, error: pageErr } = await supabase.rpc('loose_picking_page', {
+      p_wh_scope:     effectiveWh,
+      p_cat_scope:    looseCats,
+      p_warehouse_id: null,          // đã gộp vào p_wh_scope ở trên
+      p_from:         date || date_from || null,
+      p_to:           date || date_to || null,
+      p_wh_types:     looseCsv(q.wh_types),
+      p_export_types: looseCsv(q.export_types),
+      p_dvvts:        looseCsv(q.dvvts),
+      p_npps:         looseCsv(q.npps),
+      p_search:       q.search || null,
+      p_offset:       (pageNum - 1) * pageSize,
+      p_limit:        pageSize,
+    })
+    if (pageErr) return fail(res, pageErr.message)
+    const pd = (pageData ?? {}) as {
+      gdo_ids?: string[]; total?: number; items_n?: number; pending_n?: number
+      loose_total?: number; loose_done?: number
     }
-    const gdos = await fetchAllRowsParallel(makeGdoQ, 1000, 4)
+    const meta = {
+      total: pd.total ?? 0, page: pageNum, page_size: pageSize,
+      items_n: pd.items_n ?? 0, pending_n: pd.pending_n ?? 0,
+      loose_total: Number(pd.loose_total ?? 0), loose_done: Number(pd.loose_done ?? 0),
+    }
+    const gdoIdsPage = pd.gdo_ids ?? []
+    if (!gdoIdsPage.length) return ok(res, { items: [], ...meta })
 
-    if (!gdos?.length) return ok(res, [])
+    const gdos = await fetchAllByIdChunks(gdoIdsPage, chunk => supabase.from('GroupDeliveryOrder')
+      .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
+      .in('id', chunk).order('id'))
+
+    if (!gdos?.length) return ok(res, { items: [], ...meta })
 
     const gdoIds = (gdos as any[]).map((g: any) => g.id as string)
     // CHUNK id 300/lô — hàng nghìn id trong 1 `.in()` = URL quá dài → PostgREST Bad Request (đồng bộ listGDOs)
@@ -4057,7 +4101,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       .select('id, gdo_id, distributor_name').in('gdo_id', chunk).order('id'))
 
     const doIds = (dos ?? []).map((d: any) => d.id as string)
-    if (!doIds.length) return ok(res, [])
+    if (!doIds.length) return ok(res, { items: [], ...meta })
 
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
       .select('*, material:Material(id,material_code,short_name,base_unit,entry_unit,units_per_carton)')
@@ -4066,7 +4110,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       .neq('status', 'CANCELLED')
       .order('id'))
 
-    if (!items?.length) return ok(res, [])
+    if (!items?.length) return ok(res, { items: [], ...meta })
 
     const doToGdoId: Record<string, string> = {}
     for (const d of (dos ?? [])) doToGdoId[d.id] = d.gdo_id
@@ -4102,7 +4146,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
       return { ...item, gdo, loose_scanned: looseScannedByItem[item.id] ?? 0 }
     })
 
-    return ok(res, result)
+    return ok(res, { items: result, ...meta })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 

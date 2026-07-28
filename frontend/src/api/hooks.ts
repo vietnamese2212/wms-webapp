@@ -113,6 +113,52 @@ export function useLogPalletPrints() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pallet-prints'] }),
   })
 }
+// Lịch sử in tem — phân trang theo PHIẾU IN. Mọi bộ lọc phải đi xuống server: lọc trên tập đã
+// tải = lọc trong 1 trang (ra thiếu), còn ô chọn thì chỉ liệt kê giá trị của trang đó.
+export type PalletPrintsPageParams = {
+  date_from?: string; date_to?: string; search?: string
+  modes?: string; material_codes?: string; cycles?: string; machines?: string; printers?: string
+  page?: number; page_size?: number
+}
+export type PalletPrintsPage = {
+  rows: PalletPrintRow[]
+  total: number        // số PHIẾU IN khớp bộ lọc (đơn vị trang)
+  total_rows: number   // số TEM khớp bộ lọc
+  new_n: number; reprint_n: number
+  page: number; page_size: number
+}
+export type PalletPrintFacets = {
+  modes: string[]; materials: string[]; cycles: string[]
+  machines: { v: string; c: string | null }[]; printers: string[]
+}
+
+export function usePalletPrintsPaged(params: PalletPrintsPageParams, enabled = true) {
+  return useQuery({
+    queryKey: ['pallet-prints-paged', params],
+    enabled,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/wms/pallet-prints', { params: q })
+      return data.data as PalletPrintsPage
+    },
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function usePalletPrintFacets(params: { date_from?: string; date_to?: string; search?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['pallet-print-facets', params],
+    enabled,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v) q[k] = String(v)
+      const { data } = await apiClient.get('/wms/pallet-prints/facets', { params: q })
+      return data.data as PalletPrintFacets
+    },
+  })
+}
+
 export function usePalletPrints(params: { qr_code?: string; qr_codes?: string; search?: string; date_from?: string; date_to?: string; categories?: string; cycles?: string; machines?: string; nmsx?: string; material_codes?: string }, enabled = true) {
   return useQuery({
     queryKey: ['pallet-prints', params],
@@ -1461,36 +1507,52 @@ export interface StocktakeEntryRow {
 export interface StocktakeEntriesResult {
   stats:   { total: number; checked: number; unchecked: number; flagged: number; matched: number }
   entries: StocktakeEntryRow[]
-  // BE cap 2000 dòng/lần (chọn cả kho vài chục nghìn pallet) — truncated=true → FE hiện cảnh báo thu hẹp vị trí
-  total_filtered?: number
-  truncated?: boolean
+  total_filtered?: number   // tổng dòng khớp view đang chọn (toàn bộ, không chỉ trang này)
+  page?: number
+  page_size?: number
   date_from?: string
   date_to?:   string
+}
+
+export type StocktakeEntriesParams = {
+  warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string
+  view?: string; date_from?: string; date_to?: string; page?: number; page_size?: number
 }
 
 // requires_only='1': lọc "chỉ vị trí cần check" bằng CỜ, để BE tự resolve vị trí — KHÔNG nhồi
 // hàng nghìn id vào query string (kho 1.517 vị trí = URL 55KB → Vercel 414, trang trắng; đo 27/07:
 // ngưỡng ~800 id / 32KB). Xem [[cap-1000-campaign]] họ lỗi "danh sách id trong URL".
-export function useStocktakeEntries(
-  params: { warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string; view?: string; date_from?: string; date_to?: string },
-  enabled = true,
-) {
+export function useStocktakeEntries(params: StocktakeEntriesParams, enabled = true) {
   return useQuery({
     queryKey: ['stocktake-entries', params],
     queryFn: async () => {
-      const q: Record<string, string> = {}
-      if (params.warehouse_id) q.warehouse_id = params.warehouse_id
-      if (params.category)     q.category     = params.category
-      if (params.location_ids) q.location_ids = params.location_ids
-      if (params.requires_only) q.requires_only = params.requires_only
-      if (params.view)         q.view         = params.view
-      if (params.date_from)    q.date_from    = params.date_from
-      if (params.date_to)      q.date_to      = params.date_to
-      const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: q })
+      const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: stkParams(params) })
       return data.data as StocktakeEntriesResult
     },
     enabled,
+    placeholderData: keepPreviousData,   // đổi trang không trắng bảng
   })
+}
+
+function stkParams(p: StocktakeEntriesParams): Record<string, string> {
+  const q: Record<string, string> = {}
+  for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== '') q[k] = String(v)
+  return q
+}
+
+// Xuất Excel = duyệt HẾT các trang của bộ lọc đang áp (không chỉ trang đang xem — file cụt là
+// kiểu sai âm thầm: người nhận không biết thiếu). Trần 50 trang × 1000 = 50k dòng/lần xuất.
+export async function fetchAllStocktakeEntries(params: StocktakeEntriesParams): Promise<StocktakeEntryRow[]> {
+  const out: StocktakeEntryRow[] = []
+  for (let page = 1; page <= 50; page++) {
+    const { data } = await apiClient.get('/wms/inventory/stocktake-entries', {
+      params: stkParams({ ...params, page, page_size: 1000 }),
+    })
+    const res = data.data as StocktakeEntriesResult
+    out.push(...(res.entries ?? []))
+    if (out.length >= (res.total_filtered ?? 0) || !res.entries?.length) break
+  }
+  return out
 }
 
 export interface StocktakeLogRow {
@@ -1516,26 +1578,44 @@ export interface StocktakeLogRow {
 
 export interface StocktakeLogResult {
   rows: StocktakeLogRow[]
-  total: number
-  truncated?: boolean
+  total: number       // 3 ô dưới đây đếm trên TOÀN BỘ bộ lọc (BE), không phải trang đang xem
+  counted?: number
+  flagged?: number
+  page?: number
+  page_size?: number
   date_from?: string
   date_to?: string
 }
 
-export function useStocktakeLog(
-  params: { warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string; date_from?: string; date_to?: string; search?: string },
-  enabled = true,
-) {
+export type StocktakeLogParams = {
+  warehouse_id?: string; category?: string; location_ids?: string; requires_only?: string
+  date_from?: string; date_to?: string; search?: string; page?: number; page_size?: number
+}
+
+export function useStocktakeLog(params: StocktakeLogParams, enabled = true) {
   return useQuery({
     queryKey: ['stocktake-log', params],
     queryFn: async () => {
-      const q: Record<string, string> = {}
-      for (const [k, v] of Object.entries(params)) if (v) q[k] = v
-      const { data } = await apiClient.get('/wms/inventory/stocktake-log', { params: q })
+      const { data } = await apiClient.get('/wms/inventory/stocktake-log', { params: stkParams(params) })
       return data.data as StocktakeLogResult
     },
     enabled,
+    placeholderData: keepPreviousData,
   })
+}
+
+// Xuất Excel lịch sử kiểm = duyệt hết trang của bộ lọc (xem `fetchAllStocktakeEntries`)
+export async function fetchAllStocktakeLog(params: StocktakeLogParams): Promise<StocktakeLogRow[]> {
+  const out: StocktakeLogRow[] = []
+  for (let page = 1; page <= 50; page++) {
+    const { data } = await apiClient.get('/wms/inventory/stocktake-log', {
+      params: stkParams({ ...params, page, page_size: 1000 }),
+    })
+    const res = data.data as StocktakeLogResult
+    out.push(...(res.rows ?? []))
+    if (out.length >= (res.total ?? 0) || !res.rows?.length) break
+  }
+  return out
 }
 
 // WMS (mock — legacy, không dùng nữa)
@@ -1859,12 +1939,41 @@ export type LoosePickingItem = {
   } | null
 }
 
-export function useLoosePickingItems(params: { warehouse_id?: string; date_from?: string; date_to?: string }) {
+export type LoosePickingParams = {
+  warehouse_id?: string; date_from?: string; date_to?: string
+  wh_types?: string; export_types?: string; dvvts?: string; npps?: string; search?: string
+  page?: number; page_size?: number
+}
+export type LoosePickingResult = {
+  items: LoosePickingItem[]
+  total: number         // số CHUYẾN khớp bộ lọc (đơn vị trang)
+  page: number; page_size: number
+  items_n: number; pending_n: number; loose_total: number; loose_done: number
+}
+export type LoosePickingFacets = { dvvts: string[]; npps: string[]; wh_types: string[]; export_types: string[] }
+
+// Trang = CHUYẾN XE; mọi bộ lọc + 4 ô tổng do server tính (lọc/đếm ở FE sau phân trang = 1 trang)
+export function useLoosePickingItems(params: LoosePickingParams) {
   return useQuery({
     queryKey: ['loosepicking', params],
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/loosepicking', { params })
-      return data.data as LoosePickingItem[]
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/wms/loosepicking', { params: q })
+      return data.data as LoosePickingResult
+    },
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useLoosePickingFacets(params: { warehouse_id?: string; date_from?: string; date_to?: string }) {
+  return useQuery({
+    queryKey: ['loosepicking-facets', params],
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v) q[k] = String(v)
+      const { data } = await apiClient.get('/wms/loosepicking/facets', { params: q })
+      return data.data as LoosePickingFacets
     },
   })
 }
@@ -2971,7 +3080,7 @@ export function useWeighTickets(params: WeighTicketParams) {
     queryKey: ['weigh-tickets', params],
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/weigh-tickets', { params })
-      return data.data as { rows: WeighTicket[]; total: number; page: number; limit: number }
+      return data.data as { rows: WeighTicket[]; total: number; done: number; matched: number; page: number; limit: number }
     },
     staleTime: 15_000,
     placeholderData: keepPreviousData,

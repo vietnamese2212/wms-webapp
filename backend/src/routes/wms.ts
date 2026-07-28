@@ -76,6 +76,8 @@ router.delete('/lookup-unit/:id',  requirePerm('wms_settings', 'manage_unit'), l
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
 // list dùng cho tab Lịch sử in + Truy cứu + chọn tem In lại — anyOf theo tab
+// (phải khai TRƯỚC '/pallet-prints' để không bị nuốt bởi route cùng prefix)
+router.get('/pallet-prints/facets', requireAnyPerm(['pallet_print', 'view'], ['pallet_print', 'history'], ['pallet_print', 'audit'], ['pallet_print', 'reprint']), palletPrint.listPrintFacets)
 router.get('/pallet-prints',  requireAnyPerm(['pallet_print', 'view'], ['pallet_print', 'history'], ['pallet_print', 'audit'], ['pallet_print', 'reprint']), palletPrint.listPrints)
 
 // Dồn / Tách pallet
@@ -148,6 +150,7 @@ router.patch('/inventory/:id/unflag',             requirePerm('stocktake', 'comp
 router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan'), inventory.stocktakeEntry)
 
 // Loose picking (nhặt lẻ)
+router.get('/loosepicking/facets',                            requirePerm('loosepicking', 'view'), outbound.getLoosePickingFacets)   // phải trước '/loosepicking'
 router.get('/loosepicking',                                   requirePerm('loosepicking', 'view'), outbound.listLoosePickingItems)
 
 // Outbound (chuyến xe / xuất kho)

@@ -163,12 +163,18 @@ export async function listWeighTickets(req: Request, res: Response) {
     const { from_date, to_date, q, direction, match_state, warehouse_ids, page = '1', limit = '500' } = req.query
     const pageNum = Math.max(1, parseInt(String(page)))
     const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
+    // 2 ô SummaryBand ("Đã cân xong" / "Đã gắn chuyến") phải đếm trên TOÀN BỘ bộ lọc — đếm ở FE
+    // trên `rows` là đếm trang đang xem, đứng cạnh ô "Tổng" (toàn bộ) thành hai con số đá nhau.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const countQ = (): any => supabase.from('WeighTicket').select('id', { count: 'exact', head: true })
     let query = supabase.from('WeighTicket')
       .select('*', { count: 'exact' })
       // sort theo GIỜ CÂN LẦN 1 (in_time = GInTime, fallback mốc cân sớm nhất) — user chốt 16/07
       .order('in_time', { ascending: false, nullsFirst: false })
       .order('source_id', { ascending: false })
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
+    let qDone = countQ().eq('is_complete', true)
+    let qMatch = countQ().not('gdo_id', 'is', null)
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
     const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
@@ -176,24 +182,30 @@ export async function listWeighTickets(req: Request, res: Response) {
       ? (requested.length > 0 ? requested.filter(id => scopeWhIds.includes(id)) : scopeWhIds)
       : requested
     if (requested.length > 0 && effective.length === 0)
-      return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
-    if (requested.length > 0) query = query.in('warehouse_id', effective)
-    else if (effective.length > 0)
-      query = query.or(`warehouse_id.in.(${effective.join(',')}),warehouse_id.is.null`)
-    if (from_date) query = query.gte('weigh_date', String(from_date))
-    if (to_date)   query = query.lte('weigh_date', String(to_date))
-    if (direction) query = query.eq('direction', String(direction))
-    if (match_state === 'matched')   query = query.not('gdo_id', 'is', null)
-    if (match_state === 'unmatched') query = query.is('gdo_id', null)
-    if (match_state === 'pending')   query = query.eq('is_complete', false)
-    if (q) {
-      const nq = String(q).trim().replace(/[%_,()]/g, ' ').trim()
-      if (nq) {
-        const pl = normPlate(nq) ?? nq
-        query = query.or(`license_plate_norm.ilike.%${pl}%,ticket_no.ilike.%${nq}%,goods_name.ilike.%${nq}%`)
+      return ok(res, { rows: [], total: 0, done: 0, matched: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
+    // Cùng 1 mệnh đề lọc cho trang và 2 ô đếm — lệch nhau là số trong band không khớp bảng
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = (qq: any): any => {
+      if (requested.length > 0) qq = qq.in('warehouse_id', effective)
+      else if (effective.length > 0)
+        qq = qq.or(`warehouse_id.in.(${effective.join(',')}),warehouse_id.is.null`)
+      if (from_date) qq = qq.gte('weigh_date', String(from_date))
+      if (to_date)   qq = qq.lte('weigh_date', String(to_date))
+      if (direction) qq = qq.eq('direction', String(direction))
+      if (match_state === 'matched')   qq = qq.not('gdo_id', 'is', null)
+      if (match_state === 'unmatched') qq = qq.is('gdo_id', null)
+      if (match_state === 'pending')   qq = qq.eq('is_complete', false)
+      if (q) {
+        const nq = String(q).trim().replace(/[%_,()]/g, ' ').trim()
+        if (nq) {
+          const pl = normPlate(nq) ?? nq
+          qq = qq.or(`license_plate_norm.ilike.%${pl}%,ticket_no.ilike.%${nq}%,goods_name.ilike.%${nq}%`)
+        }
       }
+      return qq
     }
-    const { data, count, error } = await query
+    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch)
+    const [{ data, count, error }, doneRes, matchRes] = await Promise.all([query, qDone, qMatch])
     if (error) {
       if (/relation .*WeighTicket.* does not exist/i.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_tickets', 503, 'NOT_READY')
@@ -223,7 +235,11 @@ export async function listWeighTickets(req: Request, res: Response) {
       gdo_group_code: r.gdo_id ? (gdoMap.get(r.gdo_id)?.group_code ?? null) : null,
       gdo_status:     r.gdo_id ? (gdoMap.get(r.gdo_id)?.status ?? null) : null,
     }))
-    return ok(res, { rows: out, total: count ?? 0, page: pageNum, limit: limitNum })
+    return ok(res, {
+      rows: out, total: count ?? 0,
+      done: doneRes?.count ?? 0, matched: matchRes?.count ?? 0,
+      page: pageNum, limit: limitNum,
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 

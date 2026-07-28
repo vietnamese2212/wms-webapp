@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { Scale, ChevronLeft, ChevronRight, Link2, Unlink } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
@@ -20,7 +21,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
 
-const PAGE_SIZE = 500
+
 
 const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'weigh_date',  label: 'Ngày cân' },
@@ -55,6 +56,7 @@ export default function WeighTickets() {
   const filters = useWmsFilterStore(s => s.weighTickets)
   const setF    = useWmsFilterStore(s => s.setWeighTickets)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(500)
   const [matchFor, setMatchFor] = useState<WeighTicket | null>(null)
   const { widths: colW, startResize, totalWidth } = useColumnResize('weigh_col_widths', COL_DEFAULTS)
 
@@ -67,12 +69,12 @@ export default function WeighTickets() {
     direction: filters.direction || undefined,
     match_state: filters.match_state || undefined,
     warehouse_ids: filters.warehouse_ids.length > 0 ? filters.warehouse_ids.join(',') : undefined,
-    page, limit: PAGE_SIZE,
-  }), [filters, page])
+    page, limit: pageSize,
+  }), [filters, page, pageSize])
   const { data, isLoading, isError, error } = useWeighTickets(params)
   const rows  = data?.rows ?? []
   const total = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   const paramsKey = JSON.stringify({ ...params, page: 0 })
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,7 +118,7 @@ export default function WeighTickets() {
       </div>
 
       <SummaryBand tiles={[
-        { label: 'Phiếu (trang này)', value: rows.length },
+        { label: 'Phiếu', value: total.toLocaleString('vi-VN') },
         { label: 'Đã cân xong', value: nComplete },
         { label: 'Đã gắn chuyến', value: nMatched, accent: nMatched > 0 },
         { label: 'Tổng', value: total.toLocaleString('vi-VN') },
@@ -197,16 +199,11 @@ export default function WeighTickets() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={setPage} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{rows.length > 0 ? `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + rows.length} / ${total.toLocaleString('vi-VN')}` : '0 phiếu'}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="phiếu"
+        onPageSize={n => { setPageSize(n); setPage(1) }} />
      </div>
 
      {matchFor && <MatchDialog ticket={matchFor} onClose={() => setMatchFor(null)} />}

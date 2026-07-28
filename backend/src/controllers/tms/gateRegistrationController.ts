@@ -2,7 +2,8 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
-import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
+import { uuidList } from '../../utils/ids'
+import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -76,6 +77,107 @@ export async function listGateRegistrations(req: Request, res: Response) {
   const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
   if (truncated) return apiErr(res, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
   return res.json({ success: true, data })
+}
+
+// ─── CÂY LƯỜI (user chốt 28/07) ─────────────────────────────────────────────────────────────────
+// Trang Đăng ký cổng là cây gập/mở 3 cấp, không phải list phẳng → thay vì tải hết rồi dựng cây ở
+// máy: (1) /tree lấy thống kê từng nhóm + tổng, (2) /leaves lấy dòng chi tiết theo đúng thứ tự cây,
+// cuộn tới đâu lấy tới đó. Bộ lọc parse 1 CHỖ để 2 endpoint không lệch nhau.
+type GateFilterCtx = {
+  from: string; to: string
+  warehouseId: string | null; warehouseType: string | null
+  vehicleTypes: string[] | null; companyId: string | null
+  direction: string | null; status: string | null
+  scopeWh: string[] | null; categories: string[] | null
+  badFilter: boolean       // id gửi lên không phải uuid → không khớp gì (KHÔNG để Postgres 22P02 → 500)
+}
+// Nhận cả CSV lẫn MẢNG (`?x[]=a&x[]=b`) — tên loại kho/loại xe có thể chứa dấu phẩy nên FE gửi
+// mảng; nhận CSV để tương thích link cũ. Sai kiểu ở đây là 500 (đã dính khi test).
+const gateCsv = (v?: string | string[]): string[] | null => {
+  const a = (Array.isArray(v) ? v : String(v ?? '').split(','))
+    .map(s => String(s).trim()).filter(Boolean)
+  return a.length ? a : null
+}
+function getGateCtx(req: Request): GateFilterCtx {
+  const q = req.query as Record<string, string | string[] | undefined>
+  const str = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '')
+  const from = str(q.date_from) || str(q.date) || ''
+  const to   = str(q.date_to)   || str(q.date) || from
+  const scope = scopeWhIds(req)
+  const rawCompany = str(q.company_id) || null
+  const companyId = rawCompany && uuidList([rawCompany]).length ? rawCompany : null
+  return {
+    from, to,
+    warehouseId: str(q.warehouse_id) || null,
+    warehouseType: str(q.warehouse_type) || null,
+    vehicleTypes: gateCsv(q.vehicle_types as string | string[] | undefined),
+    companyId,
+    badFilter: !!rawCompany && !companyId,
+    direction: str(q.direction) || null,
+    status: str(q.status) || null,
+    scopeWh: scope && scope.length ? scope : (scope ? [] : null),
+    categories: scopeCategoriesOf(req),
+  }
+}
+const gateRpcParams = (c: GateFilterCtx) => ({
+  p_date_from: c.from, p_date_to: c.to,
+  p_warehouse_id: c.warehouseId, p_warehouse_type: c.warehouseType,
+  p_vehicle_types: c.vehicleTypes, p_company_id: c.companyId,
+  p_direction: c.direction, p_status: c.status,
+  p_scope_wh: c.scopeWh, p_categories: c.categories,
+})
+
+// GET /api/tms/gate-registrations/tree — thống kê từng nhóm (Kho × Loại kho × Loại xe) + tổng
+export async function getGateTree(req: Request, res: Response) {
+  try {
+    const ctx = getGateCtx(req)
+    if (!ctx.from) return apiErr(res, 'BAD_REQUEST', 'date hoặc date_from là bắt buộc', 400)
+    if (ctx.badFilter || (ctx.scopeWh && ctx.scopeWh.length === 0)) {
+      return res.json({ success: true, data: { nodes: [], totals: { total: 0, done: 0, inside: 0, waiting: 0 } } })
+    }
+    const { data, error } = await supabase.rpc('gate_tree', gateRpcParams(ctx))
+    if (error) throw new Error(error.message)
+    return res.json({ success: true, data })
+  } catch (e) {
+    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    return apiErr(res, 'INTERNAL', String(e), 500)
+  }
+}
+
+// GET /api/tms/gate-registrations/leaves?offset&limit&order_wh&order_wt&order_vt&collapsed_*
+// Thứ tự nhóm do FE gửi xuống (kho theo tên, loại kho/loại xe theo Cài đặt) — SQL không tự đoán.
+export async function getGateLeaves(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | string[] | undefined>
+    const one = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '')
+    const arr = (v: string | string[] | undefined) => gateCsv(v as string | string[] | undefined)
+    const ctx = getGateCtx(req)
+    if (!ctx.from) return apiErr(res, 'BAD_REQUEST', 'date hoặc date_from là bắt buộc', 400)
+    if (ctx.badFilter || (ctx.scopeWh && ctx.scopeWh.length === 0)) return res.json({ success: true, data: { rows: [], total: 0 } })
+    const offset = Math.max(0, Number(one(q.offset)) || 0)
+    const limit  = Math.min(500, Math.max(1, Number(one(q.limit)) || 200))
+    const { data, error } = await supabase.rpc('gate_leaves_page', {
+      p_offset: offset, p_limit: limit, ...gateRpcParams(ctx),
+      p_wh_order: arr(q.order_wh), p_wt_order: arr(q.order_wt), p_vt_order: arr(q.order_vt),
+      p_collapsed_wh: arr(q.collapsed_wh), p_collapsed_wt: arr(q.collapsed_wt),
+      p_collapsed_vt: arr(q.collapsed_vt),
+      // Nhãn nhóm rỗng do FE quy định — dùng chung 1 khoá cho thứ tự / gập / hiển thị
+      p_wt_null: one(q.wt_null) || '∅', p_vt_null: one(q.vt_null) || '∅',
+    })
+    if (error) throw new Error(error.message)
+    const p = (data ?? {}) as { ids?: string[]; total?: number }
+    const ids = p.ids ?? []
+    const rows = ids.length
+      ? await fetchAllByIdChunks(ids, chunk => supabase.from('gate_registrations').select('*').in('id', chunk).order('id'))
+      : []
+    // PostgREST `.in()` không giữ thứ tự → sắp lại đúng thứ tự cây mà RPC đã quyết
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
+    return res.json({ success: true, data: { rows: ids.map(id => byId.get(id)).filter(Boolean), total: p.total ?? 0 } })
+  } catch (e) {
+    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    return apiErr(res, 'INTERNAL', String(e), 500)
+  }
 }
 
 // NCC KHÔNG booking: fallback tìm đơn KH nhập PENDING (chưa book khung giờ) khớp tiêu chí gate

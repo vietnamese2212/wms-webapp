@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch } from '../../utils/search'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
@@ -182,11 +182,14 @@ async function fetchFull(opts: {
     : { data: [] as { id: string; name: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
-  // Phân trang (cap ~1000/response) — NV × kho được gán dễ vượt 1000 khi nhân sự tăng
+  // CHUNK 300 id/lô: nhồi cả danh sách nhân sự vào 1 `.in()` là vỡ URL PostgREST — đo thật
+  // 28/07 trên staging: 385 nhân sự còn chạy, **395 là đứt kết nối → HTTP 500 sau 8,5s**
+  // (trang Quản lý người dùng + Bảng công trắng màn). Xem [[id-list-url-limits]]: trần ~300
+  // uuid/11KB URL. fetchAllByIdChunks lo cả chunk id lẫn phân trang cap ~1000 trong mỗi lô.
   const empIds = emps.map(e => e.id)
-  const waRows = await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess')
+  const waRows = await fetchAllByIdChunks(empIds, chunk => supabase.from('UserWarehouseAccess')
     .select('employee_id, warehouse_id')
-    .in('employee_id', empIds)
+    .in('employee_id', chunk)
     .order('employee_id').order('warehouse_id')) as { employee_id: string; warehouse_id: string }[]
 
   const wIds = [...new Set(((waRows ?? []) as { employee_id: string; warehouse_id: string }[]).map(r => r.warehouse_id))]
@@ -209,10 +212,11 @@ async function fetchFull(opts: {
 
   // ── Quản lý trực tiếp ────────────────────────────────────────────────────
   const mgrIds = [...new Set(emps.map(e => e.manager_id).filter((x): x is string => !!x))]
-  const { data: mgrs } = mgrIds.length
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await supabase.from('Employee').select('id, name, employee_code').in('id', mgrIds)
-    : { data: [] as { id: string; name: string; employee_code: string }[] }
+  // cũng chunk 300 — số quản lý ít hơn nhân sự nhưng vẫn tăng theo quy mô, đừng để vỡ URL
+  const mgrs = mgrIds.length
+    ? await fetchAllByIdChunks(mgrIds, chunk => supabase.from('Employee')
+        .select('id, name, employee_code').in('id', chunk).order('id'))
+    : ([] as { id: string; name: string; employee_code: string }[])
   const mgrMap = new Map(((mgrs ?? []) as { id: string; name: string; employee_code: string }[]).map(m => [m.id, m]))
 
   return emps.map(emp => ({

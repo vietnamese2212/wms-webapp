@@ -60,8 +60,12 @@ export function LeaveSection() {
   const [dense, setDense] = useState(() => localStorage.getItem('leave_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('leave_density', d ? '0' : '1'); return !d })
 
+  // "Chờ tôi duyệt" BỎ QUA khoảng ngày mặc định: đơn chờ duyệt từ năm trước vẫn phải hiện ra,
+  // không được để mặc định "từ đầu năm" giấu mất việc cần làm (tập chờ duyệt vốn nhỏ).
   const { data: leavesRaw = [], isLoading, error: listErr } = useLeaves(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined, date_from: from || undefined, date_to: to || undefined, to_approve: mine || undefined, direct: (mine && direct) || undefined },
+    { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined,
+      date_from: mine ? undefined : (from || undefined), date_to: mine ? undefined : (to || undefined),
+      to_approve: mine || undefined, direct: (mine && direct) || undefined },
     true,
   )
   const leaves = jt ? leavesRaw.filter(l => l.employee?.job_title === jt) : leavesRaw

@@ -12,6 +12,24 @@ export const ok = (res: Response, data: unknown, status = 200) =>
 // chỉ log server-side.
 const GENERIC_5XX = 'Lỗi hệ thống, vui lòng thử lại'
 
+/**
+ * Che message cho lỗi 5xx (log chi tiết server-side) — dùng cho các controller có helper `fail`
+ * RIÊNG của mình.
+ *
+ * VÌ SAO CÓ HÀM NÀY (phát hiện 28/07 khi test tải): 7 controller tự khai `fail` cục bộ
+ * (`palletPrint`, `palletOps`, `lookup`, `zone`, `slotting`, `weighTicket`, `controlTower`) và các
+ * bản đó trả **NGUYÊN VĂN message ở mọi status** — tức đi vòng qua đúng lá chắn mà `fail` dùng chung
+ * ở trên được viết ra để giữ. Bằng chứng thật: In tem dưới tải trả
+ * `500 {"message":"canceling statement due to statement timeout"}` — client nhận nguyên văn lỗi
+ * Postgres. Message của PostgREST hay chứa tên bảng/cột/constraint ⇒ lộ schema nội bộ.
+ * Sửa ở helper cục bộ (1 dòng/file) thay vì đổi signature — 200+ chỗ gọi không phải chạm.
+ */
+export function maskServerMessage(message: string, status: number): string {
+  if (status < 500) return message
+  console.error('[fail]', message)
+  return GENERIC_5XX
+}
+
 export function fail(res: Response, arg2: string | number, arg3?: string | number, arg4?: string): Response {
   if (typeof arg2 === 'number') {
     if (arg2 >= 500) {

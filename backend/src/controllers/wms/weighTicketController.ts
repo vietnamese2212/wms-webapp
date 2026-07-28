@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
@@ -14,7 +15,8 @@ function ok(res: Response, data: unknown, status = 200) {
   return res.status(status).json({ success: true, data })
 }
 function fail(res: Response, message: string, status = 500, code = 'ERROR') {
-  return res.status(status).json({ success: false, error: { code, message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 
 // Biển số về dạng khớp: bỏ mọi ký tự không phải chữ/số + upper ("29K-06037" → "29K06037")

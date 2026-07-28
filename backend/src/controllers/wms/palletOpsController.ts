@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
@@ -9,7 +10,8 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
-  return res.status(status).json({ success: false, error: { message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
 }
 
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

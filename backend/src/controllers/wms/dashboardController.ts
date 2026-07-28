@@ -39,46 +39,20 @@ type ZoneCapRow = {
 // - used = pallet tồn quy đổi: mã có EA/Pallet (Material.pallet_per_ea) → Σ số lượng × EA/Pallet;
 //   mã không có → đếm pallet (mỗi entry active còn tồn gắn vị trí = 1).
 // Gom (vị trí, mã) phía DB bằng aggregate — không kéo bảng tồn về Node.
+// MỘT lời gọi cho cả dải: danh sách khu + sức chứa + pallet đã dùng, đã lọc loại và đã sắp thứ tự.
+// Trước đây khâu này tốn 3 request PostgREST (khu phân trang + bảng Kho + RPC pallet-đã-dùng).
+// Dashboard tự nó chỉ ~267ms trong DB nhưng dưới tải 24 luồng ghi lên 22,4s: nút thắt là **pool
+// ~10 khe NỘI BỘ của PostgREST**, không phải máy DB (đo song song: pg trực tiếp p95 338ms).
+// Có hàng đợi thì độ trễ ≈ SỐ REQUEST × thời gian chờ ⇒ gộp request là đòn trực tiếp.
+// Công thức + null-inclusive giữ NGUYÊN — xem migration 20260728i_zone_capacity_one_call.sql.
 async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null): Promise<ZoneCapRow[]> {
-  const [zones, warehouses] = await Promise.all([
-    fetchAllRowsParallel(() => {
-      let q = supabase.from('WarehouseZone')
-        .select('id, warehouse_id, code, name, categories, sort_order, max_pallets')
-        .eq('is_active', true).order('id')
-      if (whIds) q = q.in('warehouse_id', whIds)
-      return q
-    }),
-    supabase.from('Warehouse').select('id, name').then(r => r.data ?? []),
-  ])
-
-  // Pallet ĐÃ DÙNG gom trong SQL theo (kho, khu) — RPC `zone_used_pallets`.
-  // Trước đây: thử aggregate của PostgREST (project TẮT aggregate ⇒ LUÔN lỗi) rồi rơi xuống
-  // fallback gom trong JS = kéo TOÀN BỘ dòng tồn có vị trí về mỗi lần vào Dashboard. Đo 28/07
-  // với 52.635 pallet: dashboard 8,3s mà RPC dashboard_stats chỉ 1,56s — gần 4s là khâu này.
-  // Xem migration 20260728d_zone_used_pallets_rpc.sql (công thức giữ nguyên, số không đổi).
-  const { data: usedRows, error: usedErr } = await supabase.rpc('zone_used_pallets', { p_wh_ids: whIds })
-  if (usedErr) throw new Error(usedErr.message)
-  const usedByZoneKey = new Map<string, number>()
-  for (const r of (usedRows ?? []) as { warehouse_id: string; sub_code: string; used: number }[]) {
-    usedByZoneKey.set(`${r.warehouse_id}|${r.sub_code}`, Number(r.used) || 0)
-  }
-
-  const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
-  return (zones as { id: string; warehouse_id: string; code: string; name: string; categories: string[] | null; sort_order: number | null; max_pallets: number | null }[])
-    .filter(z => !cats || !z.categories?.length || z.categories.some(c => cats.includes(c))) // giao ≥1 loại; null-inclusive
-    .map(z => ({
-      zone_id: z.id, warehouse_id: z.warehouse_id,
-      warehouse_name: whName.get(z.warehouse_id) ?? z.warehouse_id,
-      code: z.code, name: z.name,
-      // FE Dashboard hiển thị chuỗi — giữ key `category` (join) để không đổi payload
-      category: z.categories?.length ? z.categories.join(', ') : null,
-      capacity: z.max_pallets ?? 0,
-      used: Math.round((usedByZoneKey.get(`${z.warehouse_id}|${z.code}`) ?? 0) * 10) / 10,
-      sort_order: z.sort_order,
-    }))
-    .sort((a, b) => a.warehouse_name.localeCompare(b.warehouse_name)
-      || (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || a.code.localeCompare(b.code))
-    .map(({ sort_order: _s, ...r }) => r)
+  const { data, error } = await supabase.rpc('zone_capacity_rows', { p_wh_ids: whIds, p_categories: cats })
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as ZoneCapRow[]).map(z => ({
+    zone_id: z.zone_id, warehouse_id: z.warehouse_id, warehouse_name: z.warehouse_name,
+    code: z.code, name: z.name, category: z.category,
+    capacity: Number(z.capacity) || 0, used: Number(z.used) || 0,
+  }))
 }
 
 export async function getDashboard(req: Request, res: Response) {

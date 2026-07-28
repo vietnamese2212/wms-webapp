@@ -125,21 +125,41 @@ export const LIST_TOO_LARGE_MSG = (max: number) =>
   `Kết quả quá lớn (hơn ${max.toLocaleString('vi-VN')} bản ghi) nên không tải hết được. `
   + 'Vui lòng thu hẹp KHOẢNG NGÀY, hoặc lọc thêm theo Kho / Loại kho rồi thử lại.'
 
+/**
+ * TRANG ĐẦU BẮN MỘT MÌNH, chỉ khi nó ĐẦY mới gối đầu song song các trang sau.
+ *
+ * VÌ SAO (đo 28/07 — sửa 1 hàm, ảnh hưởng ~165 chỗ gọi): bản cũ luôn bắn `batch = 2` request ngay
+ * lượt đầu để gối đầu cho tập >1000 dòng. Nhưng ĐẠI ĐA SỐ chỗ gọi trả **dưới 1000 dòng**, nên
+ * request thứ hai chắc chắn về mảng RỖNG — tức mỗi lần nạp tốn 1 request vô ích, và
+ * `fetchAllByIdChunks` thì nhân con số đó với SỐ LÔ.
+ *
+ * Vì sao 1 request vô ích lại quan trọng: nút thắt dưới tải KHÔNG phải máy Postgres mà là **pool
+ * ~10 khe NỘI BỘ của PostgREST** (đo song song cùng lúc, câu cực nhẹ: pg trực tiếp p95 338ms ·
+ * PostgREST p95 2.432ms · qua backend p95 5.023ms; đỉnh connection chỉ 24/60). Mỗi request HTTP
+ * chiếm 1 khe + tốn 3 câu SQL (`set_config` + câu thật + `COMMIT`). Có hàng đợi thì độ trễ ≈
+ * SỐ REQUEST × thời gian chờ ⇒ bỏ được request thừa là giảm thẳng đuôi độ trễ toàn app.
+ *
+ * Đánh đổi: tập >1000 dòng mất phần gối đầu của LƯỢT ĐẦU (1 round-trip tuần tự thêm), nhưng các
+ * lượt sau vẫn song song. Đổi cái hiếm để lấy cái phổ biến.
+ */
 export async function fetchAllRowsParallel(
   makeQuery: () => SupaQuery, pageSize = 1000, batch = 2,
 ): Promise<any[]> {
-  const out: any[] = []
-  for (let start = 0; ; start += batch) {
-    const reqs: SupaQuery[] = []
-    for (let i = 0; i < batch; i++) {
-      const p = start + i
-      reqs.push(makeQuery().range(p * pageSize, p * pageSize + pageSize - 1))
-    }
-    const results = await Promise.all(reqs)
+  const page = async (p: number) => {
+    const r = await makeQuery().range(p * pageSize, p * pageSize + pageSize - 1)
+    if (r.error) throw new Error(r.error.message)
+    return (r.data ?? []) as any[]
+  }
+  const first = await page(0)
+  const out: any[] = [...first]
+  if (first.length < pageSize) return out          // hết ngay ⇒ CHỈ 1 request (đường đi phổ biến)
+
+  for (let start = 1; ; start += batch) {
+    const results = await Promise.all(
+      Array.from({ length: batch }, (_, i) => page(start + i)),
+    )
     let done = false
-    for (const r of results) {
-      if (r.error) throw new Error(r.error.message)
-      const arr = r.data ?? []
+    for (const arr of results) {
       out.push(...arr)
       if (arr.length < pageSize) done = true
     }

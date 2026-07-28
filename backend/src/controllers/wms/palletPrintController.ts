@@ -1,4 +1,6 @@
 import { Request, Response } from 'express'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -7,7 +9,8 @@ function ok(res: Response, data: unknown) {
   return res.json({ success: true, data })
 }
 function fail(res: Response, message: string, status = 400) {
-  return res.status(status).json({ success: false, error: { message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
 }
 
 type LabelIn = {
@@ -121,18 +124,25 @@ export async function listPrintsPaged(req: Request, res: Response) {
     p_offset:    (pageNum - 1) * pageSize,
     p_limit:     pageSize,
   })
-  if (error) return fail(res, error.message, 500)
-  const pd = (data ?? {}) as { ids?: string[]; total?: number; total_rows?: number; new_n?: number; reprint_n?: number }
-  const ids = pd.ids ?? []
+  // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN, không phải
+  // "Lỗi hệ thống". Quan sát thật dưới tải 24 luồng ghi: câu gom 29.279 tem chỉ mất 59ms lúc rảnh
+  // nhưng vượt 8s khi tranh CPU ⇒ user cần biết "hãy thu hẹp khoảng ngày", không phải lỗi trắng.
+  if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message, 500)
+  const pd = (data ?? {}) as { rows?: unknown[]; ids?: string[]; total?: number; total_rows?: number; new_n?: number; reprint_n?: number }
 
-  let rows: unknown[] = []
-  if (ids.length) {
-    // Chunk 300 id/lô: 1 trang phiếu có thể gồm hàng trăm tem, `.in()` dài là vỡ URL PostgREST
+  // RPC trả THẲNG dòng (migration 20260728h) ⇒ 1 request PostgREST cho cả trang.
+  // Trước đây RPC trả id rồi ở đây nạp lại theo chunk 300 → 1 trang 100 phiếu (~3.000 tem) = **11
+  // request**, mỗi request chiếm 1 khe trong pool ~10 khe của PostgREST ⇒ dưới tải là 24s + 500
+  // "statement timeout". Xem đầu file migration để biết phép đo phân biệt tầng.
+  let rows: unknown[] = pd.rows ?? []
+  if (!pd.rows && pd.ids?.length) {
+    // Nhánh dự phòng cho cửa sổ triển khai: code mới lên trước khi migration được apply (RPC cũ vẫn
+    // trả `ids`). Không có nhánh này thì trang hiện RỖNG cho tới lúc apply migration.
     const parts: unknown[][] = []
-    for (let i = 0; i < ids.length; i += 300) {
+    for (let i = 0; i < pd.ids.length; i += 300) {
       const { data: part, error: e2 } = await supabase.from('PalletLabelPrint')
         .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
-        .in('id', ids.slice(i, i + 300))
+        .in('id', pd.ids.slice(i, i + 300))
       if (e2) return fail(res, e2.message, 500)
       parts.push((part ?? []) as unknown[])
     }

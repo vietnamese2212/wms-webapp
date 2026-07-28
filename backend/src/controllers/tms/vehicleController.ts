@@ -47,15 +47,19 @@ async function listVehiclesPaged(req: Request, res: Response) {
     if (q.search)           qq = qq.ilike('license_plate', `%${safeSearch(q.search)}%`)
     return qq
   }
-  // Ô tổng đếm trên TOÀN BỘ bộ lọc (đếm ở FE = chỉ đếm trang đang xem)
-  const [{ count: totalN }, { count: activeN }, { count: inactiveN }] = await Promise.all([
+  // Ô tổng đếm trên TOÀN BỘ bộ lọc (đếm ở FE = chỉ đếm trang đang xem).
+  // 2 câu đếm, không 3: `Vehicle.is_active` là NOT NULL ⇒ `inactive = total − active` LUÔN đúng,
+  // không cần round-trip thứ ba. Mỗi request PostgREST chiếm 1 khe trong pool ~10 khe của nó, nên
+  // dưới tải thì bớt được 1 request là bớt hẳn một lượt xếp hàng (đo 28/07 — xem migration
+  // 20260728i). Nếu sau này cột thành nullable thì phải đếm lại riêng.
+  const [{ count: totalN }, { count: activeN }] = await Promise.all([
     buildQ().limit(1),
     buildQ().eq('is_active', true).limit(1),
-    buildQ().eq('is_active', false).limit(1),
   ])
   const total = totalN ?? 0
+  const active = activeN ?? 0
   const offset = (pageNum - 1) * pageSize
-  const meta = { total, active: activeN ?? 0, inactive: inactiveN ?? 0, page: pageNum, page_size: pageSize }
+  const meta = { total, active, inactive: total - active, page: pageNum, page_size: pageSize }
   // Trang vượt phạm vi → TRANG RỖNG, không phải lỗi. Đếm TRƯỚC rồi mới `.range()`: PostgREST trả
   // 416 khi offset ≥ tổng số dòng, mà tình huống này rất dễ gặp (đang ở trang 25 rồi gõ tìm còn
   // 1 trang; hoặc số trang đã nhớ theo user từ lần trước). Xem `isRangeNotSatisfiable`.

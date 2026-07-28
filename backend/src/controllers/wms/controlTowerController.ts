@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 
@@ -10,7 +11,8 @@ function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
 }
 function fail(res: Response, message: string, status = 500, code = 'ERROR') {
-  return res.status(status).json({ success: false, error: { code, message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 
 // GET /wms/control-tower?warehouse_ids=a,b,c&categories=x,y

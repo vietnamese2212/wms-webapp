@@ -1,10 +1,12 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 function fail(res: Response, message: string, status = 400) {
-  return res.status(status).json({ success: false, error: { message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
 }
 
 const ZONE_COLS = 'id, warehouse_id, code, name, categories, sort_order, pick_rank, flow_type, max_pallets, is_active, created_at, updated_at, created_by, updated_by'

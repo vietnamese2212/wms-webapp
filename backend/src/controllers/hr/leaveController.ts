@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -193,7 +193,8 @@ async function listLeavesPaged(req: Request, res: Response) {
     p_offset:    (pageNum - 1) * pageSize,
     p_limit:     pageSize,
   })
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp khoảng ngày
+  if (error) return isQueryTimeout(error) ? fail(res, 400, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, 500, 'DB_ERROR', error.message)
   const p = (data ?? {}) as { ids?: string[]; total?: number; pending?: number; approved?: number; rejected?: number }
   const ids = p.ids ?? []
   const meta = {

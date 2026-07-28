@@ -1,5 +1,5 @@
 // Vercel serverless entry → Express backend.
 // Bump dòng dưới để buộc Vercel rebuild function khi backend/src thay đổi (tránh chạy bản cache cũ).
-// rebuild-token: 2026-07-28.405
+// rebuild-token: 2026-07-28.406
 import app from '../backend/src/app'
 export default app

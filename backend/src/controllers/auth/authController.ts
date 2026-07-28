@@ -86,10 +86,18 @@ export async function login(req: Request, res: Response) {
     if (!email || !password) return fail(res, 'Email và mật khẩu là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: emps } = await supabase.from('Employee')
+    const { data: emps, error: lookupErr } = await supabase.from('Employee')
       .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
       .ilike('email', escapeLikeEmail(email))
       .limit(1)
+
+    // DB KHÔNG TRUY CẬP ĐƯỢC ≠ SAI MẬT KHẨU (phát hiện 28/07: staging trả 522 giữa lúc test tải).
+    // Trước đây `error` bị BỎ QUA ⇒ data null ⇒ rơi vào nhánh 401 "Tên đăng nhập hoặc mật khẩu không
+    // đúng": trong một sự cố DB thì TOÀN BỘ nhân sự tưởng mật khẩu mình hỏng và đi đổi mật khẩu, còn
+    // người trực thì mất thời gian tìm sai chỗ. Nay trả 503 (client thấy message 5xx chung — đủ để
+    // hiểu là lỗi hệ thống chứ không phải sai mật khẩu; chi tiết log server-side).
+    // KHÔNG làm yếu chống-liệt-kê-tài-khoản: nhánh này không phụ thuộc tài khoản có tồn tại hay không.
+    if (lookupErr) return fail(res, `login: Employee lookup failed — ${lookupErr.message}`, 503)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]

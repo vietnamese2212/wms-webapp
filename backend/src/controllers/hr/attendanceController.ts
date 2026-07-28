@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -68,7 +68,10 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
       p_offset:     (pageNum - 1) * pageSize,
       p_limit:      pageSize,
     })
-    if (error) return fail(res, error.message)
+    // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp, không
+    // phải "Lỗi hệ thống". Bảng công là ma trận NGƯỜI × NGÀY nên kéo rộng khoảng ngày + nhiều người
+    // cùng xem là chạm trần (quan sát thật dưới tải 24 luồng ghi ngày 28/07).
+    if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message)
     const m = (data ?? {}) as {
       emp_ids?: string[]; total?: number; roster_total?: number; missing_total?: number
       work_days?: number; leave_days?: number; ot?: number; early?: number

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -175,6 +175,9 @@ export async function listWeighTickets(req: Request, res: Response) {
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
     let qDone = countQ().eq('is_complete', true)
     let qMatch = countQ().not('gdo_id', 'is', null)
+    // Đếm TỔNG riêng: khi trang vượt phạm vi, `count` của query chính không về được (PostgREST 416)
+    // nhưng footer vẫn phải hiện đúng tổng để user biết mà bấm lùi trang.
+    let qTotal = countQ()
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
     const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
@@ -204,13 +207,23 @@ export async function listWeighTickets(req: Request, res: Response) {
       }
       return qq
     }
-    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch)
-    const [{ data, count, error }, doneRes, matchRes] = await Promise.all([query, qDone, qMatch])
+    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch); qTotal = applyFilters(qTotal)
+    const [{ data, count, error }, doneRes, matchRes, totalRes] = await Promise.all([query, qDone, qMatch, qTotal])
     if (error) {
       if (/relation .*WeighTicket.* does not exist/i.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_tickets', 503, 'NOT_READY')
       if (/warehouse_id/.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_ticket_warehouse', 503, 'NOT_READY')
+      // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống (PostgREST trả 416 khi offset ≥
+      // tổng dòng). Rất dễ gặp: đang ở trang cuối rồi gõ tìm cho kết quả co lại, hoặc số trang đã
+      // được nhớ theo user từ lần trước. Xem `isRangeNotSatisfiable`.
+      if (isRangeNotSatisfiable(error)) {
+        return ok(res, {
+          rows: [], total: totalRes.count ?? 0,
+          done: doneRes.count ?? 0, matched: matchRes.count ?? 0,
+          page: pageNum, limit: limitNum,
+        })
+      }
       return fail(res, error.message, 500, 'DB_ERROR')
     }
     // Đính group_code của chuyến đã gắn + tên kho (soft link — join tay, ids ít)

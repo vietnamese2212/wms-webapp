@@ -40,7 +40,7 @@ type ZoneCapRow = {
 //   mã không có → đếm pallet (mỗi entry active còn tồn gắn vị trí = 1).
 // Gom (vị trí, mã) phía DB bằng aggregate — không kéo bảng tồn về Node.
 async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null): Promise<ZoneCapRow[]> {
-  const [zones, locations, warehouses, ppeMats] = await Promise.all([
+  const [zones, warehouses] = await Promise.all([
     fetchAllRowsParallel(() => {
       let q = supabase.from('WarehouseZone')
         .select('id, warehouse_id, code, name, categories, sort_order, max_pallets')
@@ -48,69 +48,19 @@ async function computeZoneCapacity(whIds: string[] | null, cats: string[] | null
       if (whIds) q = q.in('warehouse_id', whIds)
       return q
     }),
-    fetchAllRowsParallel(() => {
-      let q = supabase.from('Location')
-        .select('id, warehouse_id, sub_code')
-        .eq('is_active', true).order('id')
-      if (whIds) q = q.in('warehouse_id', whIds)
-      return q
-    }),
     supabase.from('Warehouse').select('id, name').then(r => r.data ?? []),
-    fetchAllRowsParallel(() => supabase.from('Material')
-      .select('id, pallet_per_ea, base_unit, entry_unit, units_per_carton').not('pallet_per_ea', 'is', null).order('id')),
   ])
-  // BASE UNIT: pallet_per_ea tính trên THÙNG (entry) → qty base chia hệ số trước khi nhân
-  const ppeByMat = new Map((ppeMats as ({ id: string; pallet_per_ea: number } & MatUnits)[])
-    .map(m => [String(m.id), { ppe: Number(m.pallet_per_ea) || 0, units: m as MatUnits }]))
 
-  // pallet quy đổi theo từng vị trí — gom (location_id, material_id): n = số entry, qty = Σ tồn
-  type UsedGroup = { location_id: string; material_id: string; n: number; qty: number }
-  let groups: UsedGroup[]
-  try {
-    const rows = await fetchAllRowsParallel(() => {
-      let q = supabase.from('InventoryEntry')
-        .select('location_id, material_id, n:id.count(), qty:cartons_remaining.sum()')
-        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-        .gt('cartons_remaining', 0)
-        .not('location_id', 'is', null)
-        .order('location_id').order('material_id')
-      if (whIds) q = q.in('warehouse_id', whIds)
-      return q
-    })
-    groups = rows.map(r => ({ location_id: String(r.location_id), material_id: String(r.material_id), n: Number(r.n) || 0, qty: Number(r.qty) || 0 }))
-  } catch {
-    // Aggregate tắt (silo chưa bật pgrst.db_aggregates_enabled) → gom JS; tồn active gắn vị trí bounded theo sức chứa vật lý
-    const entries = await fetchAllRowsParallel(() => {
-      let q = supabase.from('InventoryEntry').select('location_id, material_id, cartons_remaining')
-        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-        .gt('cartons_remaining', 0)
-        .not('location_id', 'is', null)
-        .order('id')
-      if (whIds) q = q.in('warehouse_id', whIds)
-      return q
-    })
-    const m = new Map<string, UsedGroup>()
-    for (const e of entries as { location_id: string; material_id: string; cartons_remaining: number }[]) {
-      const key = `${e.location_id}|${e.material_id}`
-      const g = m.get(key) ?? { location_id: String(e.location_id), material_id: String(e.material_id), n: 0, qty: 0 }
-      g.n += 1; g.qty += Number(e.cartons_remaining) || 0
-      m.set(key, g)
-    }
-    groups = [...m.values()]
-  }
-  const usedByLoc = new Map<string, number>()
-  for (const g of groups) {
-    const pm = ppeByMat.get(g.material_id)
-    const pallets = pm && pm.ppe > 0 ? qtyEntryDecimal(g.qty, pm.units) * pm.ppe : g.n
-    usedByLoc.set(g.location_id, (usedByLoc.get(g.location_id) ?? 0) + pallets)
-  }
-
-  // Gom vị trí theo (kho, khu) — sub_code của Location = code của WarehouseZone trong cùng kho
+  // Pallet ĐÃ DÙNG gom trong SQL theo (kho, khu) — RPC `zone_used_pallets`.
+  // Trước đây: thử aggregate của PostgREST (project TẮT aggregate ⇒ LUÔN lỗi) rồi rơi xuống
+  // fallback gom trong JS = kéo TOÀN BỘ dòng tồn có vị trí về mỗi lần vào Dashboard. Đo 28/07
+  // với 52.635 pallet: dashboard 8,3s mà RPC dashboard_stats chỉ 1,56s — gần 4s là khâu này.
+  // Xem migration 20260728d_zone_used_pallets_rpc.sql (công thức giữ nguyên, số không đổi).
+  const { data: usedRows, error: usedErr } = await supabase.rpc('zone_used_pallets', { p_wh_ids: whIds })
+  if (usedErr) throw new Error(usedErr.message)
   const usedByZoneKey = new Map<string, number>()
-  for (const l of locations as { id: string; warehouse_id: string; sub_code: string | null }[]) {
-    if (!l.sub_code) continue
-    const key = `${l.warehouse_id}|${l.sub_code}`
-    usedByZoneKey.set(key, (usedByZoneKey.get(key) ?? 0) + (usedByLoc.get(String(l.id)) ?? 0))
+  for (const r of (usedRows ?? []) as { warehouse_id: string; sub_code: string; used: number }[]) {
+    usedByZoneKey.set(`${r.warehouse_id}|${r.sub_code}`, Number(r.used) || 0)
   }
 
   const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))

@@ -1415,7 +1415,10 @@ export default function PalletLabels() {
             {histReady && (
               <>
                 <PagerNav page={histPage} totalPages={histTotalPages} onPage={setHistPage} />
+                {/* Dòng/trang chỉ tới 100: 1 lệnh in nở ra ~30 tem, nên 500 lệnh ≈ 15.000 tem
+                    ≈ 4,9MB → vượt trần 4,5MB của Vercel (đo 28/07). */}
                 <ListFooter page={histPage} pageSize={histPageSize} total={histTotalBatches} unit="lệnh in"
+                  options={[20, 50, 100]}
                   onPageSize={n => { setHistPageSize(n); setHistPage(1) }}
                   right={`${(histData?.total_rows ?? 0).toLocaleString('vi-VN')} tem`} />
               </>

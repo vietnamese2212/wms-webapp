@@ -43,6 +43,8 @@ type Level = 'EASY' | 'NORMAL' | 'HARD'
 type Principle = 'FIFO' | 'FEFO' | 'LIFO'
 const LEVELS: Level[] = ['EASY', 'NORMAL', 'HARD']
 const PRINCIPLES: Principle[] = ['FIFO', 'FEFO', 'LIFO']
+// Số dòng cảnh báo "sai khu" gửi về FE (FE hiện 6 dòng + tooltip). Tổng vẫn đếm trên TOÀN BỘ.
+const WARN_PREVIEW = 50
 
 // ─── Kiểu dữ liệu từ RPC ─────────────────────────────────────────────────────
 interface StatsZone { id: string; code: string; name: string; categories: string[] | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
@@ -174,9 +176,17 @@ export async function getSlotting(req: Request, res: Response) {
       const idx = ranked.findIndex(r => r.code === z.code)
       return { ...z, band: z.pick_rank != null && idx >= 0 ? bandOfIndex(idx, ranked.length) : null }
     })
+    // Cảnh báo "hàng nằm sai khu": TRẢ TỐI ĐA 50 DÒNG + tổng đếm trên toàn bộ.
+    // FE chỉ hiện 6 dòng đầu + "…+N", còn lại nhồi vào tooltip — mà tooltip 3.269 dòng thì
+    // không ai đọc. Đo 28/07: gửi cả danh sách = 598KB/3.269 dòng (~183 B/dòng) ⇒ kho lớn hơn
+    // là vượt trần 4,5MB của Vercel chỉ vì phần tooltip không dùng được.
+    const allWarnings = categoryWarnings(stats)
     return ok(res, {
       window_days: days, total_picks: stats.total_picks, has_ranked_zones: hasRanked,
-      zones, materials, warnings: categoryWarnings(stats),
+      zones, materials,
+      warnings: allWarnings.slice(0, WARN_PREVIEW),
+      warnings_total: allWarnings.length,
+      warnings_pallets: allWarnings.reduce((s, w) => s + w.pallets, 0),
     })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

@@ -92,6 +92,26 @@ export function rowCapForBytes(bytesPerRow: number, hardMax = LIST_ROW_CAP): num
  * Hàm này nhận diện lỗi đó để controller đổi thành 400 KÈM HƯỚNG DẪN THU HẸP (luật CLAUDE.md:
  * chặn có hướng dẫn, không để lỗi trắng).
  */
+/**
+ * PostgREST trả **416 "Requested range not satisfiable" (PGRST103)** khi `.range(offset, …)` bắt
+ * đầu SAU dòng cuối cùng. Nếu để nguyên, controller biến nó thành **500 "Lỗi hệ thống"** — trong
+ * khi đúng nghĩa nghiệp vụ chỉ là "trang này rỗng".
+ *
+ * ĐÂY LÀ TÌNH HUỐNG RẤT DỄ GẶP, không phải ca biên (phát hiện qua Playwright 28/07):
+ *  - Đang ở trang 25 rồi gõ tìm → kết quả co lại còn 1 trang ⇒ request trang 25 → 500.
+ *  - Số trang được NHỚ THEO USER (`scopedPersist`): lần sau mở lại trang 900 mà dữ liệu đã ít đi
+ *    ⇒ mở trang là thấy lỗi, không hiểu tại sao.
+ * Reset trang về 1 ở FE là cần nhưng KHÔNG đủ (còn khoảng trễ debounce + trang đã persist).
+ *
+ * Endpoint dùng RPC không bị (offset lớn chỉ trả mảng rỗng); chỉ các chỗ `.range()` trực tiếp
+ * của PostgREST mới cần chặn lỗi này rồi trả TRANG RỖNG kèm `total` đúng.
+ */
+export function isRangeNotSatisfiable(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e ?? '')
+  const code = (e as { code?: string })?.code ?? ''
+  return /range not satisfiable/i.test(msg) || code === 'PGRST103'
+}
+
 export function isQueryTimeout(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e ?? '')
   return /statement timeout|canceling statement|57014/i.test(msg)

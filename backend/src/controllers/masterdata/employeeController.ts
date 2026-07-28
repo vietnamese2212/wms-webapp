@@ -143,6 +143,11 @@ const EMP_BASE = [
   'ncc_id', 'is_driver', 'manager_id',
 ].join(', ')
 
+// `view=lite`: chỉ các cột đủ để DỰNG SƠ ĐỒ / ĐỔ DROPDOWN, không phải hồ sơ đầy đủ.
+// Đo 28/07: dòng nhân sự đầy đủ ≈ 830 B ⇒ 1.539 người = 1.230KB và ~5.400 người là vượt trần
+// 4,5MB của Vercel. Sơ đồ tổ chức chỉ cần tên + chức danh + kho; ô chọn chỉ cần tên + mã.
+const EMP_LITE = ['id', 'name', 'employee_code', 'job_title_id', 'department_id', 'is_active'].join(', ')
+
 // Fetch employees và join dept / job_title / warehouse_access thủ công
 // (tránh Supabase FK join cho FK mới — PostgREST schema cache có thể chưa reload)
 async function fetchFull(opts: {
@@ -151,6 +156,7 @@ async function fetchFull(opts: {
   is_active?: boolean
   search?: string
   include_deleted?: boolean
+  lite?: boolean          // chỉ cột dựng sơ đồ / đổ dropdown (xem EMP_LITE)
 }) {
   // Phân trang (cap ~1000 dòng/response) — Employee sẽ vượt 1000 khi thêm tài khoản lái xe;
   // scope lọc SAU fetch (listEmployees) nên bị cắt là mất người khỏi DS âm thầm.
@@ -164,12 +170,29 @@ async function fetchFull(opts: {
   }
   // Có danh sách id (nạp đúng 1 trang) → CHUNK 300: trang 500 dòng nhồi 1 `.in()` là vỡ URL
   // PostgREST (trần ~300 uuid — xem [[id-list-url-limits]]). Không có id → phân trang cả bảng.
+  const SEL = opts.lite ? EMP_LITE : EMP_BASE
   const emps = (opts.ids?.length
     ? await fetchAllByIdChunks(opts.ids, chunk => applyF(
-        supabase.from('Employee').select(EMP_BASE).in('id', chunk)).order('name').order('id'))
+        supabase.from('Employee').select(SEL).in('id', chunk)).order('name').order('id'))
     : await fetchAllRowsParallel(() => applyF(
-        supabase.from('Employee').select(EMP_BASE)).order('name').order('id'))) as unknown as EmpRow[]
+        supabase.from('Employee').select(SEL)).order('name').order('id'))) as unknown as EmpRow[]
   if (!emps.length) return []
+
+  // LITE: chỉ kèm danh sách id kho được gán (sơ đồ tổ chức lọc theo kho) — KHÔNG tra tên
+  // phòng ban / chức danh / quản lý / tên kho. Bên gọi đã có sẵn danh mục đó (useJobTitles,
+  // useDepartments, useScopedWarehouses) nên nhúng lại vào TỪNG dòng chỉ làm phình payload.
+  if (opts.lite) {
+    const waLite = await fetchAllByIdChunks(emps.map(e => e.id), chunk =>
+      supabase.from('UserWarehouseAccess').select('employee_id, warehouse_id')
+        .in('employee_id', chunk).order('employee_id')) as { employee_id: string; warehouse_id: string }[]
+    const byEmp = new Map<string, { warehouse_id: string }[]>()
+    for (const wa of waLite) {
+      const l = byEmp.get(wa.employee_id) ?? []
+      l.push({ warehouse_id: wa.warehouse_id })
+      byEmp.set(wa.employee_id, l)
+    }
+    return emps.map(emp => ({ ...emp, warehouse_access: byEmp.get(emp.id) ?? [] }))
+  }
 
   // ── Departments ────────────────────────────────────────────────────────────
   const deptIds = [...new Set(emps.map(e => e.department_id).filter((x): x is string => !!x))]
@@ -275,13 +298,16 @@ export async function listEmployees(req: Request, res: Response) {
     // Chế độ MẢNG giữ nguyên cho các consumer cần roster đầy đủ (Sơ đồ tổ chức, chọn người
     // trong Nhập kho, map tên ở Nghỉ phép) — chỉ trang Quản lý người dùng truyền ?page=.
     if (req.query.page) return await listEmployeesPaged(req, res)
-    const { department_id, is_active, search, include_deleted } = req.query as Record<string, string>
+    const { department_id, is_active, search, include_deleted, view } = req.query as Record<string, string>
     const scope = await visibleEmployeeIds(req)
     const data = await fetchFull({
       department_id: department_id || undefined,
       is_active: is_active !== undefined ? is_active === 'true' : undefined,
       search: search || undefined,
       include_deleted: include_deleted === 'true',
+      // ?view=lite — chỉ cột dựng sơ đồ / đổ dropdown (Sơ đồ tổ chức, ô chọn NV ở Nghỉ phép).
+      // Hồ sơ đầy đủ ≈ 830 B/dòng ⇒ vượt trần 4,5MB từ ~5.400 người.
+      lite: view === 'lite',
     })
     return ok(res, scope === null ? data : data.filter(e => scope.has(e.id)))
   } catch (e) { return fail(res, String(e)) }

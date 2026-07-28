@@ -257,7 +257,12 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
 
       {/* Cảnh báo pallet nằm SAI LOẠI khu (vd hàng thường trong khu SCA) — chỉ cảnh báo,
           muốn sinh lệnh kéo về thì tick ô trong sheet Tạo kế hoạch (user chốt) */}
-      {(data?.warnings ?? []).length > 0 && <CategoryWarnings warnings={data!.warnings} />}
+      {(data?.warnings ?? []).length > 0 && (
+        <CategoryWarnings
+          warnings={data!.warnings}
+          totalPallets={data!.warnings_pallets ?? data!.warnings.reduce((s, w) => s + w.pallets, 0)}
+          totalCount={data!.warnings_total ?? data!.warnings.length} />
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {error ? (
@@ -300,16 +305,20 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
 
 // Cảnh báo pallet nằm SAI LOẠI khu — chỉ cảnh báo; kéo về = checkbox lúc tạo kế hoạch.
 // NÉN 1 dòng (bảng chiếm ~80% — user 18/07): chi tiết đầy đủ trong tooltip.
-function CategoryWarnings({ warnings }: { warnings: SlottingWarning[] }) {
-  const total = warnings.reduce((s, w) => s + w.pallets, 0)
+function CategoryWarnings({ warnings, totalPallets, totalCount }: {
+  warnings: SlottingWarning[]     // chỉ PHẦN ĐẦU (server trả tối đa 50 dòng)
+  totalPallets: number            // tổng pallet trên TOÀN BỘ cảnh báo
+  totalCount: number              // tổng số dòng cảnh báo
+}) {
   const detail = warnings.map(w => `${w.material_code} [${w.material_category ?? 'chưa khai loại'}] — ${w.pallets} pallet ở ${w.zone_code} (khu ${w.zone_category})`).join('\n')
+    + (totalCount > warnings.length ? `\n… và ${nf.format(totalCount - warnings.length)} mã nữa (xem cột "Sai khu" trong bảng)` : '')
   return (
     <div className="border-b bg-amber-50/60 px-3 py-1 shrink-0 text-[10px] flex items-center gap-1 min-w-0" title={detail}>
       <AlertTriangle className="h-3 w-3 shrink-0 text-amber-700" />
       <span className="text-amber-800 truncate">
-        <b>{nf.format(total)} pallet nằm sai loại khu</b> (rê chuột xem chi tiết — muốn kéo về đúng khu, tick ô trong "Tạo kế hoạch"):{' '}
+        <b>{nf.format(totalPallets)} pallet nằm sai loại khu</b> (rê chuột xem chi tiết — muốn kéo về đúng khu, tick ô trong "Tạo kế hoạch"):{' '}
         {warnings.slice(0, 6).map(w => `${w.material_code}×${w.pallets}@${w.zone_code}`).join(' · ')}
-        {warnings.length > 6 ? ` … +${warnings.length - 6}` : ''}
+        {totalCount > 6 ? ` … +${nf.format(totalCount - 6)}` : ''}
       </span>
     </div>
   )

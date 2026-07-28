@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
@@ -581,10 +581,26 @@ export async function listInventory(req: Request, res: Response) {
     supabase.from('InventoryEntry').select(cntSelect, { count: 'exact', head: true }), r.params,
   ).gt('cartons_remaining', 0)
 
-  // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) độc lập nhau.
-  const [mainRes, sumRes, cntRes] = await Promise.all([mainQ, sumQ, cntQ])
+  // Đếm TỔNG riêng: khi trang vượt phạm vi, `count` của query chính không về được (PostgREST 416)
+  // nhưng footer vẫn phải hiện đúng tổng để user biết mà lùi trang.
+  const totQ = applyInventoryFilters(
+    supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
+  )
+  // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) + đếm tổng (tot) độc lập nhau.
+  const [mainRes, sumRes, cntRes, totRes] = await Promise.all([mainQ, sumQ, cntQ, totQ])
   const { data, count, error } = mainRes
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) {
+    // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống. Số trang được NHỚ THEO USER
+    // (`scopedPersist`) nên mở lại app khi dữ liệu đã ít đi là gặp ngay. Xem `isRangeNotSatisfiable`.
+    if (isRangeNotSatisfiable(error)) {
+      return ok(res, {
+        entries: [], total: (totRes as { count: number | null }).count ?? 0,
+        page: r.pageNum, limit: r.limitNum,
+        total_cartons_remaining: 0, total_pallets_in_stock: (cntRes as { count: number | null }).count ?? 0,
+      })
+    }
+    return fail(res, 500, 'DB_ERROR', error.message)
+  }
 
   // Lỗi sum/cnt KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0

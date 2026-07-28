@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
 import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
@@ -47,21 +47,29 @@ async function listVehiclesPaged(req: Request, res: Response) {
     if (q.search)           qq = qq.ilike('license_plate', `%${safeSearch(q.search)}%`)
     return qq
   }
-  const { data, count, error } = await buildQ()
-    .order('license_plate').order('id')
-    .range((pageNum - 1) * pageSize, pageNum * pageSize - 1)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
-  const rows = (data ?? []) as unknown as Record<string, unknown>[]
   // Ô tổng đếm trên TOÀN BỘ bộ lọc (đếm ở FE = chỉ đếm trang đang xem)
-  const [{ count: activeN }, { count: inactiveN }] = await Promise.all([
+  const [{ count: totalN }, { count: activeN }, { count: inactiveN }] = await Promise.all([
+    buildQ().limit(1),
     buildQ().eq('is_active', true).limit(1),
     buildQ().eq('is_active', false).limit(1),
   ])
-  return ok(res, {
-    items: await withRelations(rows), total: count ?? 0,
-    active: activeN ?? 0, inactive: inactiveN ?? 0,
-    page: pageNum, page_size: pageSize,
-  })
+  const total = totalN ?? 0
+  const offset = (pageNum - 1) * pageSize
+  const meta = { total, active: activeN ?? 0, inactive: inactiveN ?? 0, page: pageNum, page_size: pageSize }
+  // Trang vượt phạm vi → TRANG RỖNG, không phải lỗi. Đếm TRƯỚC rồi mới `.range()`: PostgREST trả
+  // 416 khi offset ≥ tổng số dòng, mà tình huống này rất dễ gặp (đang ở trang 25 rồi gõ tìm còn
+  // 1 trang; hoặc số trang đã nhớ theo user từ lần trước). Xem `isRangeNotSatisfiable`.
+  if (offset >= total) return ok(res, { items: [], ...meta })
+
+  const { data, error } = await buildQ()
+    .order('license_plate').order('id')
+    .range(offset, offset + pageSize - 1)
+  if (error) {
+    if (isRangeNotSatisfiable(error)) return ok(res, { items: [], ...meta })
+    return fail(res, 500, 'DB_ERROR', error.message)
+  }
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+  return ok(res, { items: await withRelations(rows), ...meta })
 }
 
 export async function listVehicles(req: Request, res: Response) {

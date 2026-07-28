@@ -100,7 +100,12 @@ function printScope(req: Request) {
 export async function listPrintsPaged(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>
   const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
-  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '50'), 10) || 50))
+  // TRẦN 100 PHIẾU/trang — KHÔNG phải 500. Đơn vị trang là PHIẾU IN nhưng payload là TEM, mỗi
+  // phiếu ~30 tem (332 B/tem đo thật 28/07) ⇒ 100 phiếu ≈ 3.000 tem ≈ 972KB (an toàn), còn
+  // 500 phiếu ≈ 15.000 tem ≈ **4.859KB / 9,9s — VƯỢT trần 4,5MB của Vercel**.
+  // Bẫy: "Dòng/trang" đếm theo đơn vị người dùng thấy, nhưng trần hạ tầng đếm theo BYTE của dòng
+  // THẬT. Ô chọn ở FE cũng chỉ để 20/50/100 để cái user chọn = cái user nhận.
+  const pageSize = Math.min(100, Math.max(1, parseInt(String(q.page_size ?? '50'), 10) || 50))
   const arg = (v?: string) => { const a = printCsv(v); return a.length ? a : null }
 
   const { data, error } = await supabase.rpc('pallet_prints_page', {

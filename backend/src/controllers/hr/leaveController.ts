@@ -155,23 +155,70 @@ async function guardLeaveScope(req: Request, res: Response, leaveId: string): Pr
   return guardLeaveTarget(req, res, empId)
 }
 
+// Scope kho của người gọi → danh sách id nhân sự được phép xem đơn (null = không giới hạn).
+// Tách riêng để nhánh phân trang và nhánh mảng dùng CHUNG một luật — đơn nghỉ có cột LÝ DO
+// (dữ liệu cá nhân) nên lệch luật giữa 2 đường là rò dữ liệu.
+async function leaveScopeEmpIds(req: Request, warehouse_id?: string): Promise<string[] | null | 'FORBIDDEN'> {
+  const uL = userOf(req)
+  if (uL.name === 'Admin' || uL.warehouse_scope === 'NATIONAL') return null
+  const myWhs = (uL.warehouse_ids ?? []) as string[]
+  if (warehouse_id && !myWhs.includes(warehouse_id)) return 'FORBIDDEN'
+  const whIds = warehouse_id ? [warehouse_id] : myWhs
+  const access = whIds.length
+    ? await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess').select('employee_id').in('warehouse_id', whIds).order('id'))
+    : []
+  return [...new Set([...((access ?? []) as { employee_id: string }[]).map(a => a.employee_id), ...(uL.sub ? [uL.sub] : [])])]
+}
+
+// Tab Nghỉ phép — PHÂN TRANG SERVER (?page=). Bộ lọc NGÀY mặc định của trang là CẢ NĂM: đo 28/07
+// với 6.001 đơn = 3.812KB, sát trần 4,5MB của Vercel ⇒ công ty vài nghìn người là vượt trần ngay
+// ở màn hình mặc định. Hàng rào `rowCapForBytes` chặn đúng nhưng lại chặn chính màn hình đó.
+// Lọc CHỨC DANH cũng xuống SQL (trước lọc client = lọc trên đúng 1 trang, 4 ô tổng cũng sai).
+async function listLeavesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+  const scope = await leaveScopeEmpIds(req, q.warehouse_id)
+  if (scope === 'FORBIDDEN') return fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao')
+
+  const { data, error } = await supabase.rpc('hr_leaves_page', {
+    p_scope_emp_ids: scope,
+    p_warehouse: q.warehouse_id || null,
+    p_dept:      q.department_id || null,
+    p_employee:  q.employee_id || null,
+    p_jt_name:   q.jt || null,
+    p_status:    q.status || null,
+    p_from:      q.date_from || null,
+    p_to:        q.date_to || null,
+    p_offset:    (pageNum - 1) * pageSize,
+    p_limit:     pageSize,
+  })
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const p = (data ?? {}) as { ids?: string[]; total?: number; pending?: number; approved?: number; rejected?: number }
+  const ids = p.ids ?? []
+  const meta = {
+    total: p.total ?? 0, pending: p.pending ?? 0, approved: p.approved ?? 0, rejected: p.rejected ?? 0,
+    page: pageNum, page_size: pageSize,
+  }
+  if (!ids.length) return ok(res, { items: [], ...meta })
+  const rows = await fetchAllByIdChunks(ids, chunk =>
+    supabase.from('LeaveRequest').select(LEAVE_SELECT).in('id', chunk)) as { id: string; employee_id: string }[]
+  const withEmp = await attachEmployees(rows)
+  // `.in()` không giữ thứ tự → sắp lại theo thứ tự RPC đã trả (date_from desc, id)
+  const byId = new Map(withEmp.map(r => [(r as { id: string }).id, r]))
+  return ok(res, { items: ids.map(id => byId.get(id)).filter(Boolean), ...meta })
+}
+
 export async function listLeaves(req: Request, res: Response) {
   try {
+    if (req.query.page) return await listLeavesPaged(req, res)
     const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
     // SCOPE KHO (RULE user): chỉ thấy đơn của NV thuộc kho được giao + đơn của chính mình.
     // Thiếu lớp này thì ai có `leave.view` (10/19 chức danh) đọc được đơn nghỉ + LÝ DO của toàn công ty
     // (verify runtime 26/07 đã rò thật). Superadmin / NATIONAL → không giới hạn.
-    const uL = userOf(req)
-    let scopeEmpIds: string[] | null = null
-    if (uL.name !== 'Admin' && uL.warehouse_scope !== 'NATIONAL') {
-      const myWhs = (uL.warehouse_ids ?? []) as string[]
-      if (warehouse_id && !myWhs.includes(warehouse_id)) return fail(res, 'Ngoài phạm vi kho được giao', 403)
-      const whIds = warehouse_id ? [warehouse_id] : myWhs
-      const access = whIds.length
-        ? await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess').select('employee_id').in('warehouse_id', whIds).order('id'))
-        : []
-      scopeEmpIds = [...new Set([...((access ?? []) as { employee_id: string }[]).map(a => a.employee_id), ...(uL.sub ? [uL.sub] : [])])]
-    }
+    const sc = await leaveScopeEmpIds(req, warehouse_id)
+    if (sc === 'FORBIDDEN') return fail(res, 'Ngoài phạm vi kho được giao', 403)
+    const scopeEmpIds: string[] | null = sc
     const buildQuery = () => {
       let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)

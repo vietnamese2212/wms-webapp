@@ -12,9 +12,10 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { SavedViews } from '@/components/shared/SavedViews'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
   useDepartments, useEmployeeRecords, useJobTitles,
-  useLeaves, useCreateLeave, useDecideLeave, useDeleteLeave,
+  useLeaves, useLeavesPaged, fetchAllLeaves, useCreateLeave, useDecideLeave, useDeleteLeave,
   type LeaveRow,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -62,43 +63,70 @@ export function LeaveSection() {
 
   // "Chờ tôi duyệt" BỎ QUA khoảng ngày mặc định: đơn chờ duyệt từ năm trước vẫn phải hiện ra,
   // không được để mặc định "từ đầu năm" giấu mất việc cần làm (tập chờ duyệt vốn nhỏ).
-  const { data: leavesRaw = [], isLoading, error: listErr } = useLeaves(
+  // ⇒ Chế độ này giữ đường MẢNG (cần `canApprove` theo cấp dưới, không đưa vào RPC được);
+  //   danh sách thường đi đường PHÂN TRANG SERVER (mặc định lọc CẢ NĂM = 6.001 đơn ≈ 3,8MB,
+  //   sát trần 4,5MB của Vercel — đo 28/07).
+  const { data: leavesRaw = [], isLoading: loadingMine, error: mineErr } = useLeaves(
     { warehouse_id: wh || undefined, department_id: dept || undefined, status: status || undefined,
-      date_from: mine ? undefined : (from || undefined), date_to: mine ? undefined : (to || undefined),
-      to_approve: mine || undefined, direct: (mine && direct) || undefined },
-    true,
+      to_approve: true, direct: direct || undefined },
+    mine,
   )
-  const leaves = jt ? leavesRaw.filter(l => l.employee?.job_title === jt) : leavesRaw
+  const { data: pageData, isFetching: loadingPage, error: pageErr } = useLeavesPaged(
+    { warehouse_id: wh || undefined, department_id: dept || undefined, jt: jt || undefined,
+      status: status || undefined, date_from: from || undefined, date_to: to || undefined,
+      page: f.page, page_size: f.pageSize },
+    !mine,
+  )
+  // chế độ "chờ tôi duyệt": tập nhỏ nên lọc chức danh ở client là đủ
+  const leaves = mine ? (jt ? leavesRaw.filter(l => l.employee?.job_title === jt) : leavesRaw) : (pageData?.items ?? [])
+  const isLoading = mine ? loadingMine : loadingPage
+  const listErr = mine ? mineErr : pageErr
   const decide = useDecideLeave()
   const del    = useDeleteLeave()
   const [err, setErr] = useState<string | null>(null)
   const [warn, setWarn] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
 
-  const counts = {
-    total: leaves.length,
-    pending: leaves.filter(l => l.status === 'PENDING').length,
-    approved: leaves.filter(l => l.status === 'APPROVED').length,
-    rejected: leaves.filter(l => l.status === 'REJECTED').length,
-  }
+  // Ô tổng: khi phân trang phải lấy số của TOÀN BỘ bộ lọc từ server (đếm trên `leaves` = đếm 1 trang)
+  const counts = mine
+    ? {
+      total: leaves.length,
+      pending: leaves.filter(l => l.status === 'PENDING').length,
+      approved: leaves.filter(l => l.status === 'APPROVED').length,
+      rejected: leaves.filter(l => l.status === 'REJECTED').length,
+    }
+    : {
+      total: pageData?.total ?? 0, pending: pageData?.pending ?? 0,
+      approved: pageData?.approved ?? 0, rejected: pageData?.rejected ?? 0,
+    }
 
   const defs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setLeave({ warehouseId: v }), allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setLeave({ warehouseId: v, page: 1 }), allLabel: 'Tất cả kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setLeave({ deptId: v }), allLabel: 'Tất cả phòng',
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setLeave({ deptId: v, page: 1 }), allLabel: 'Tất cả phòng',
       options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setLeave({ jt: v }), allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setLeave({ jt: v, page: 1 }), allLabel: 'Tất cả chức danh',
       options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
-    { key: 'status', label: 'Trạng thái', type: 'single', value: status, onChange: v => setLeave({ status: v }),
+    { key: 'status', label: 'Trạng thái', type: 'single', value: status, onChange: v => setLeave({ status: v, page: 1 }),
       options: [{ value: 'PENDING', label: 'Chờ duyệt' }, { value: 'APPROVED', label: 'Đã duyệt' }, { value: 'REJECTED', label: 'Từ chối' }] },
-    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f2, t2) => setLeave({ from: f2, to: t2 }) },
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (f2, t2) => setLeave({ from: f2, to: t2, page: 1 }) },
   ]
   const viewSnapshot = { warehouseId: wh, deptId: dept, jt, status, from, to }
   const savedViews = useSavedViewsStore(s => s.views['leave'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
-  function exportExcel() {
-    const sheet = leaves.map(l => ({
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    try { await doExport() } finally { setExporting(false) }
+  }
+  async function doExport() {
+    // Phân trang rồi thì phải duyệt HẾT trang — lấy `leaves` là file Excel bị cắt theo trang đang xem.
+    const all = mine ? leaves : await fetchAllLeaves({
+      warehouse_id: wh || undefined, department_id: dept || undefined, jt: jt || undefined,
+      status: status || undefined, date_from: from || undefined, date_to: to || undefined,
+    })
+    const sheet = all.map(l => ({
       'Nhân viên': l.employee?.name ?? '', 'Mã NV': l.employee?.employee_code ?? '',
       'Chức danh': l.employee?.job_title ?? '', 'Từ ngày': formatDate(l.date_from), 'Đến ngày': formatDate(l.date_to),
       'Loại': typeLabel(l.leave_type), 'Lý do': l.reason ?? '',
@@ -162,7 +190,7 @@ export function LeaveSection() {
           ...(can(perms, 'leave', 'export') ? [{
             key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel danh sách đơn nghỉ phép',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
-            disabled: !leaves.length,
+            disabled: !counts.total || exporting,
             onClick: exportExcel,
           } satisfies ActionItem] : []),
           ...(canRequest ? [{
@@ -241,7 +269,15 @@ export function LeaveSection() {
             })}
           </tbody>
         </table>
+        {/* "Chờ tôi duyệt" là tập nhỏ (không phân trang) → chỉ hiện pager ở danh sách thường */}
+        {!mine && <PagerNav page={f.page} totalPages={Math.max(1, Math.ceil(counts.total / f.pageSize))} onPage={p => setLeave({ page: p })} />}
       </div>
+      {!mine && (
+        <ListFooter
+          page={f.page} pageSize={f.pageSize} total={counts.total} unit="đơn nghỉ"
+          onPageSize={n => setLeave({ pageSize: n, page: 1 })}
+          right={loadingPage ? 'đang tải…' : undefined} />
+      )}
 
       {openCreate && <CreateLeaveDialog wh={wh} dept={dept} onClose={() => setOpenCreate(false)} />}
     </div>
@@ -269,7 +305,8 @@ export function CreateLeaveDialog({ wh, dept, onClose, fixedEmployeeId }: { wh: 
   // User thường chỉ nộp cho chính mình.
   const canPickOther = can(perms, 'leave', 'approve')
   const create = useCreateLeave()
-  const { data: emps = [] } = useEmployeeRecords(dept ? { department_id: dept } : undefined)
+  // Ô chọn nhân viên chỉ cần tên + mã → `view: 'lite'` (hồ sơ đầy đủ ≈ 830 B/dòng).
+  const { data: emps = [] } = useEmployeeRecords(dept ? { department_id: dept, view: 'lite' } : { view: 'lite' })
 
   const [empId, setEmpId]   = useState<string>(fixedEmployeeId ?? user?.id ?? '')
   const [from, setFrom]     = useState<string>(TODAY())

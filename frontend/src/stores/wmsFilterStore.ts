@@ -213,6 +213,8 @@ interface LeaveFilters {
   status: string
   from: string
   to: string
+  page: number
+  pageSize: number
 }
 interface SlottingFilters {
   warehouseId: string
@@ -383,7 +385,7 @@ function initialFilters() {
     // Nghỉ phép mặc định = TỪ ĐẦU NĂM đến hôm nay. Trước đây để TRỐNG = kéo TOÀN BỘ lịch sử đơn
     // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
     // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
-    leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today() },
+    leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', page: 1, pageSize: 50 },
     khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

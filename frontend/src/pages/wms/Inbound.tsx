@@ -375,11 +375,16 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined, search: matTerm || undefined, limit: 50 }, !!subType)
   const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
 
-  const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
+  // Chỉ cần id nhân sự của CHÍNH người đang đăng nhập → tìm trên server theo tên.
+  // Trước đây nạp TOÀN BỘ nhân sự đang hoạt động chỉ để dò 1 dòng: đo 28/07 = 1.230KB với
+  // 1.539 người, và ~830 B/dòng nghĩa là 5.400 người đã vượt trần 4,5MB của Vercel.
+  const { data: meEmployees = [] } = useEmployeeRecords(
+    user?.name ? { is_active: 'true', search: user.name } : undefined,
+  )
   type EmpItem = { id: string; name: string; employee_code: string }
   const importedByEmpId = useMemo(
-    () => (allEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
-    [allEmployees, user?.name]
+    () => (meEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
+    [meEmployees, user?.name]
   )
 
   useEffect(() => {

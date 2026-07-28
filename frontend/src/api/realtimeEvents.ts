@@ -54,7 +54,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   UserWarehouseAccess:  [['employee-record'], ['employee-records']],
   Skill:                [['hr-skills'], ['hr-emp-skills']],
   EmployeeSkill:        [['hr-emp-skills']],
-  LeaveRequest:         [['hr-leaves']],
+  LeaveRequest:         [['hr-leaves'], ['hr-leaves-paged']],
   WorkAssignmentSheet:  [['hr-sheets'], ['hr-sheet']],
   WorkAssignmentDemand: [['hr-sheet']],
   WorkAssignment:       [['hr-sheet']],

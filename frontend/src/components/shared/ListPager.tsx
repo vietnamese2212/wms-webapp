@@ -43,7 +43,7 @@ export function PagerNav({ page, totalPages, onPage }: {
  * @param from,to khoảng dòng THẬT của trang (1-based) — chỉ truyền khi trang KHÔNG chia đều
  *        pageSize, vd lưới TMS Kế hoạch cắt tại ranh giới cụm nên trang có thể dôi vài dòng.
  */
-export function ListFooter({ page, pageSize, total, unit, onPageSize, right, children, from, to }: {
+export function ListFooter({ page, pageSize, total, unit, onPageSize, right, children, from, to, options }: {
   page: number
   pageSize: number
   total: number
@@ -53,6 +53,13 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
   children?: React.ReactNode
   from?: number
   to?: number
+  /**
+   * Ghi đè danh sách dòng/trang — CHỈ dùng khi 1 "dòng" của trang nở ra NHIỀU dòng dữ liệu thật.
+   * Vd Lịch sử in tem: đơn vị trang là PHIẾU IN nhưng mỗi phiếu ~30 tem, nên 500 phiếu ≈ 15.000
+   * tem ≈ 4,9MB → vượt trần 4,5MB của Vercel. Phải cho ít lựa chọn hơn để cái user chọn ĐÚNG BẰNG
+   * cái user nhận (đừng để BE âm thầm hạ xuống).
+   */
+  options?: readonly number[]
 }) {
   const lo = from ?? (page - 1) * pageSize + 1
   const hi = to ?? Math.min(page * pageSize, total)
@@ -69,7 +76,7 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
             value={pageSize}
             onChange={e => onPageSize(Number(e.target.value))}
             className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
-            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+            {(options ?? PAGE_SIZE_OPTIONS).map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
       </span>

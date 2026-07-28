@@ -1767,7 +1767,10 @@ export function useJobTitles(departmentId?: string) {
   })
 }
 
-export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string; include_deleted?: boolean }) {
+// `view: 'lite'` → chỉ id/tên/mã/chức danh/phòng ban + danh sách id kho (không kèm hồ sơ đầy đủ).
+// Dùng cho Sơ đồ tổ chức và ô chọn nhân viên: hồ sơ đầy đủ ≈ 830 B/dòng ⇒ 1.539 người đã
+// 1.230KB và ~5.400 người là vượt trần 4,5MB của Vercel.
+export function useEmployeeRecords(params?: { department_id?: string; search?: string; is_active?: string; include_deleted?: boolean; view?: 'lite' }) {
   return useQuery({
     queryKey: ['employee-records', params],
     // Bảng Employee bị khóa khỏi realtime anon (bảo mật) → poll 60s để DS nhân viên tự cập nhật
@@ -3290,7 +3293,10 @@ export interface SlottingWarning {
 }
 export interface SlottingData {
   window_days: number; total_picks: number; has_ranked_zones: boolean
-  zones: SlottingZone[]; materials: SlottingMaterial[]; warnings: SlottingWarning[]
+  zones: SlottingZone[]; materials: SlottingMaterial[]
+  // `warnings` chỉ là PHẦN ĐẦU (tối đa 50 dòng) — tổng đếm trên toàn bộ nằm ở 2 field dưới.
+  // Trước đây trả cả danh sách: 3.269 dòng = 598KB chỉ để đổ vào 1 tooltip không ai đọc hết.
+  warnings: SlottingWarning[]; warnings_total?: number; warnings_pallets?: number
 }
 export function useSlotting(warehouseId: string, categories: string[] = [], days = 30) {
   return useQuery({
@@ -4442,6 +4448,41 @@ export function useLeaves(params: { warehouse_id?: string; department_id?: strin
       return data.data as LeaveRow[]
     },
   })
+}
+
+// Tab Nghỉ phép — PHÂN TRANG SERVER. Lọc ngày mặc định của trang là CẢ NĂM: 6.001 đơn = 3.812KB
+// (đo 28/07), sát trần 4,5MB của Vercel ⇒ vượt trần ngay ở màn hình mặc định khi công ty đông.
+// `jt` (chức danh) gửi xuống server — lọc client sau khi phân trang là lọc trên đúng 1 trang.
+export interface LeavesPage {
+  items: LeaveRow[]; total: number; pending: number; approved: number; rejected: number
+  page: number; page_size: number
+}
+export type LeavesPageParams = {
+  warehouse_id?: string; department_id?: string; employee_id?: string; jt?: string
+  status?: string; date_from?: string; date_to?: string; page: number; page_size: number
+}
+export function useLeavesPaged(params: LeavesPageParams, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-leaves-paged', params],
+    enabled,
+    placeholderData: prev => prev,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/hr/leaves', { params })
+      return data.data as LeavesPage
+    },
+  })
+}
+
+// Xuất Excel đơn nghỉ: phải duyệt HẾT trang, không thì file bị cắt âm thầm theo trang đang xem.
+export async function fetchAllLeaves(params: Omit<LeavesPageParams, 'page' | 'page_size'>, maxPages = 50): Promise<LeaveRow[]> {
+  const out: LeaveRow[] = []
+  for (let page = 1; page <= maxPages; page++) {
+    const { data } = await apiClient.get('/hr/leaves', { params: { ...params, page, page_size: 500 } })
+    const d = data.data as LeavesPage
+    out.push(...(d.items ?? []))
+    if (out.length >= (d.total ?? 0) || (d.items?.length ?? 0) < 500) break
+  }
+  return out
 }
 export function useCreateLeave() {
   const qc = useQueryClient()

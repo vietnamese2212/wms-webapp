@@ -112,9 +112,20 @@ export function isRangeNotSatisfiable(e: unknown): boolean {
   return /range not satisfiable/i.test(msg) || code === 'PGRST103'
 }
 
+/**
+ * ⚠️ PHẢI đọc `.message` của OBJECT THƯỜNG, không chỉ của `Error`.
+ * Bản cũ là `e instanceof Error ? e.message : String(e)` ⇒ với lỗi của supabase-js (một OBJECT
+ * THƯỜNG `{message, code}`, KHÔNG phải instance của Error) thì `String(e)` ra `"[object Object]"`
+ * và hàm LUÔN trả false. Nghĩa là mọi chỗ `const { error } = await supabase...` rồi
+ * `if (isQueryTimeout(error))` đều KHÔNG BAO GIỜ khớp — âm thầm rơi xuống nhánh 500.
+ * (Các chỗ `catch (e)` vẫn chạy đúng vì `fetchAllRowsParallel` ném `new Error(...)` thật — nên lỗi
+ * này ẩn được lâu.) Phát hiện 28/07 bằng chính test predicate với chuỗi lỗi THẬT bắt được dưới tải.
+ * Giữ khuôn giống `isRangeNotSatisfiable` ngay trên: message (cả 2 dạng) HOẶC mã lỗi Postgres.
+ */
 export function isQueryTimeout(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e ?? '')
-  return /statement timeout|canceling statement|57014/i.test(msg)
+  const msg = e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e ?? '')
+  const code = (e as { code?: string })?.code ?? ''
+  return /statement timeout|canceling statement/i.test(msg) || code === '57014'
 }
 
 export const QUERY_TIMEOUT_MSG =

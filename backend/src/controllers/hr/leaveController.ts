@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes } from '../../utils/pagination'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -184,8 +184,12 @@ export async function listLeaves(req: Request, res: Response) {
     }
     // Trần dòng: FE render toàn bộ đơn nghỉ ở client → vượt trần thì BÁO RÕ để user thu hẹp,
     // KHÔNG cắt âm thầm (luật CLAUDE.md).
-    const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
-    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
+    // Trần tính theo BYTE, không theo số dòng: đo 28/07 dòng đơn nghỉ ≈ 650 B ⇒ trần cũ 10.000
+    // dòng ≈ 6,2MB, tức VƯỢT trần 4,5MB của Vercel TRƯỚC KHI hàng rào kịp chặn (user chỉ thấy
+    // trang lỗi trắng, không thấy câu "hãy thu hẹp khoảng ngày" mà ta cố tình viết ra).
+    const CAP = rowCapForBytes(650)
+    const { rows: data, truncated } = await fetchUpTo(buildQuery, CAP)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(CAP))
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
     if (scopeEmpIds !== null) {

@@ -12,10 +12,11 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, type PalletOpRow, type MaterialLite,
+  usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, type PalletOpRow, type MaterialLite,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { materialCodeOf } from '@/utils/qr'
@@ -125,37 +126,39 @@ export default function PalletOps() {
   const [hType, setHType]     = useState('')   // '' | MERGE | SPLIT | UNGROUP
   const [hFrom, setHFrom]     = useState('')
   const [hTo, setHTo]         = useState('')
-  // Lịch sử: chỉ query khi đã chọn Kho (tránh tải quá nhiều); lọc thêm Loại kho phía client
-  const { data: opsRaw = [] } = usePalletOps(
-    { search: hSearch.trim() || undefined, type: hType || undefined, warehouse_id: opWh || undefined, date_from: hFrom || undefined, date_to: hTo || undefined },
+  const [hPage, setHPage]         = useState(1)
+  const [hPageSize, setHPageSize] = useState(200)
+  // Đổi bất kỳ bộ lọc nào → về trang 1 (không thì đang ở trang 30 mà lọc còn 2 trang = bảng trống)
+  const resetPage = () => setHPage(1)
+  // Lịch sử PHÂN TRANG SERVER: đường cũ cắt âm thầm ở 5.000 thao tác. Loại kho gửi xuống server
+  // (lọc ở client sau khi phân trang = lọc trên đúng 1 trang, ô tổng cũng sai).
+  const { data: hist, isFetching: histLoading } = usePalletOpsPaged(
+    {
+      search: hSearch.trim() || undefined, type: hType || undefined, category: opCat || undefined,
+      warehouse_id: opWh || undefined, date_from: hFrom || undefined, date_to: hTo || undefined,
+      page: hPage, page_size: hPageSize,
+    },
     tab === 'history' && !!opWh,
   )
+  const ops = hist?.items ?? []
   const undo = useUndoPalletOp()
   const opCols = useColumnResize('palletOps_col_widths', [150, 78, 180, 180, 150, 80, 100, 100, 110])
   const opLabel = (t: string) => t === 'MERGE' ? 'Dồn' : t === 'SPLIT' ? 'Tách' : t === 'UNGROUP' ? 'Gỡ nhóm' : t
   const canUndo = canMerge || canUngroup || canSplit
   // Filter Lịch sử kiểu Manhattan (chip + sheet mobile) — Kho/Loại kho là scope riêng ở hàng trên
   const histDefs: FilterDef[] = [
-    { key: 'type', label: 'Loại thao tác', type: 'single', value: hType, onChange: setHType, allLabel: 'Tất cả', options: [{ value: 'MERGE', label: 'Dồn' }, { value: 'SPLIT', label: 'Tách' }, { value: 'UNGROUP', label: 'Gỡ nhóm' }] },
-    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: hFrom, to: hTo, onChange: (f, t) => { setHFrom(f); setHTo(t) } },
+    { key: 'type', label: 'Loại thao tác', type: 'single', value: hType, onChange: v => { setHType(v); resetPage() }, allLabel: 'Tất cả', options: [{ value: 'MERGE', label: 'Dồn' }, { value: 'SPLIT', label: 'Tách' }, { value: 'UNGROUP', label: 'Gỡ nhóm' }] },
+    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: hFrom, to: hTo, onChange: (f, t) => { setHFrom(f); setHTo(t); resetPage() } },
   ]
   // In tem từ Lịch sử (tách rồi chưa in được ngay → vào đây in)
   // Chỉ tra ĐÚNG các mã xuất hiện trong lịch sử đang xem (trước đây nạp cả danh mục mã hàng
   // về trình duyệt chỉ để lấy tên + hệ số thùng/hộp cho vài chục dòng).
   const histCodes = useMemo(() => [...new Set(
-    opsRaw.flatMap(o => [...(o.target_codes ?? []), ...(o.source_codes ?? [])].map(c => materialCodeOf(c)))
+    ops.flatMap(o => [...(o.target_codes ?? []), ...(o.source_codes ?? [])].map(c => materialCodeOf(c)))
       .filter((c): c is string => !!c)
-  )], [opsRaw])
+  )], [ops])
   const { data: allMats = [] } = useMaterialsByCodes(histCodes, tab === 'history')
   const matByCode = useMemo(() => { const m = new Map<string, MaterialLite>(); for (const x of allMats) m.set(x.material_code, x); return m }, [allMats])
-  // Lọc thêm theo Loại kho (client-side, suy từ mã hàng của pallet)
-  const ops = useMemo(() => {
-    if (!opCat) return opsRaw
-    return opsRaw.filter(o => {
-      const code = o.target_codes?.[0] || o.source_codes?.[0] || ''
-      return matByCode.get(materialCodeOf(code))?.category === opCat
-    })
-  }, [opsRaw, opCat, matByCode])
   function printOp(o: PalletOpRow) {
     const qtyByCode = new Map<string, number>()
     for (const c of (o.detail?.children ?? []) as { code: string; qty: number }[]) qtyByCode.set(c.code, c.qty)
@@ -230,7 +233,8 @@ export default function PalletOps() {
           ? [{ label: 'Pallet đích', value: mergeTarget ? 1 : 0 }, { label: 'Pallet con', value: allChildren.length, accent: allChildren.length > 0 }, { label: 'Thao tác', value: 'Gom nhóm' }, { label: 'Số lượng', value: 'Giữ nguyên' }]
           : tab === 'split'
           ? [{ label: 'Tồn gốc', value: srcEntry ? qtyLabel(remaining, srcEntry.material) : '—' }, { label: 'Tách ra', value: srcEntry ? qtyLabel(totalSplit, srcEntry.material) : totalSplit, accent: totalSplit > 0 }, { label: 'Giữ lại', value: srcEntry ? qtyLabel(keepLeft, srcEntry.material) : '—' }, { label: 'Pallet con', value: splitQtys.filter(q => Number(q) > 0).length }]
-          : [{ label: 'Số thao tác', value: ops.length, accent: ops.length > 0 }, { label: 'Dồn', value: ops.filter(o => o.type === 'MERGE').length }, { label: 'Tách', value: ops.filter(o => o.type === 'SPLIT').length }, { label: 'Đã hoàn tác', value: ops.filter(o => o.undone_at).length }]} />
+          /* Ô tổng đếm TRÊN TOÀN BỘ bộ lọc (server) — đếm trên `ops` là chỉ đếm trang đang xem */
+          : [{ label: 'Số thao tác', value: hist?.total ?? 0, accent: (hist?.total ?? 0) > 0 }, { label: 'Dồn', value: hist?.merge_n ?? 0 }, { label: 'Tách', value: hist?.split_n ?? 0 }, { label: 'Đã hoàn tác', value: hist?.undone_n ?? 0 }]} />
 
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
          {tab === 'history' ? (
@@ -243,14 +247,14 @@ export default function PalletOps() {
             {/* Bộ lọc lịch sử — chuẩn Manhattan: Kho/Loại kho (scope, bắt buộc chọn Kho) + Search + FilterBar */}
             <div className="px-3 py-1.5 border-b border-slate-200 space-y-1 sm:py-2 sm:space-y-1.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="w-36"><WarehouseSingleSelect warehouses={whOptions} value={opWh} onChange={setOpWh} allLabel="Chọn kho *" triggerClassName="h-8" /></div>
-                <Select value={opCat || '__all__'} onValueChange={v => setOpCat(v === '__all__' ? '' : v)}>
+                <div className="w-36"><WarehouseSingleSelect warehouses={whOptions} value={opWh} onChange={v => { setOpWh(v); resetPage() }} allLabel="Chọn kho *" triggerClassName="h-8" /></div>
+                <Select value={opCat || '__all__'} onValueChange={v => { setOpCat(v === '__all__' ? '' : v); resetPage() }}>
                   <SelectTrigger className="h-8 text-sm w-32"><SelectValue placeholder="Loại kho" /></SelectTrigger>
                   <SelectContent><SelectItem value="__all__">Tất cả loại</SelectItem>{categoryOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
                 <div className="relative flex-1 min-w-[120px]">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                  <Input className="pl-7 h-8 text-sm w-full" placeholder="Tìm / quét mã pallet" value={hSearch} onChange={e => setHSearch(e.target.value)} />
+                  <Input className="pl-7 h-8 text-sm w-full" placeholder="Tìm / quét mã pallet" value={hSearch} onChange={e => { setHSearch(e.target.value); resetPage() }} />
                 </div>
                 {/* Mobile: action + nút Lọc GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
                 <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -310,7 +314,12 @@ export default function PalletOps() {
                   )})}
                 </tbody>
               </table>
+              <PagerNav page={hPage} totalPages={Math.max(1, Math.ceil((hist?.total ?? 0) / hPageSize))} onPage={setHPage} />
             </div>
+            <ListFooter
+              page={hPage} pageSize={hPageSize} total={hist?.total ?? 0} unit="thao tác"
+              onPageSize={n => { setHPageSize(n); setHPage(1) }}
+              right={histLoading ? 'đang tải…' : undefined} />
           </div>
          ) : (
           <div className="p-4">

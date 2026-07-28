@@ -2,12 +2,12 @@
 // Nếu material có supplier_shelf_life_overrides cho NCC đang xét → dùng giá trị đó;
 // không có NCC (SX/chuyển kho/pallet cũ) hoặc không khai override → dùng shelf_life_days mặc định.
 
-interface SupplierOverride {
+export interface SupplierOverride {
   transport_company_id: string
   shelf_life_days: number
 }
 
-interface MaterialShelfInfo {
+export interface MaterialShelfInfo {
   shelf_life_days?: number | null
   supplier_shelf_life_overrides?: SupplierOverride[] | null
 }

@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
-import { computePctDate } from '../../utils/shelfLife'
+import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { scopeCategoriesOf, categoryAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
@@ -602,87 +602,85 @@ export async function listInventory(req: Request, res: Response) {
 
 // View tổng hợp: gom tồn kho theo (Kho × Mã hàng × Ngày SX) — KHÔNG chi tiết tới pallet.
 // Vì %date suy ra từ ngày SX + hạn dùng nên mỗi nhóm có 1 giá trị %date duy nhất.
+//
+// GOM + PHÂN TRANG TRONG SQL (RPC `inventory_summary_page`). Đo 28/07 với 52.635 pallet →
+// 41.107 nhóm: đường cũ trả HẾT nhóm = **18.147KB / 12,8s** (4× trần 4,5MB của Vercel — local
+// "chạy được", production đứt); gom trong Node vẫn phải kéo 52.635 dòng thô MỖI lần đổi trang
+// (duyệt 42 trang = 251s). Nay DB gom 1 lượt, chỉ trả 1 trang.
+// ⚠️ Bộ lọc trong RPC phải KHỚP `applyInventoryFilters` — đổi 1 bên mà quên bên kia là bảng và
+// ô tổng lệch nhau. Xem migration 20260728c_inventory_summary_paged_rpc.sql
 export async function summaryInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
-  if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0 })
+  if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0, page: r.pageNum, limit: r.limitNum })
 
-  // Lấy TOÀN BỘ entry khớp filter (phân trang 1000 — cap response + aggregate tắt) rồi gom JS.
-  // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
-  const summarySelect = 'id, warehouse_id, production_date, expiry_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
-    + 'location:Location(warehouse:Warehouse(id, name)), '
-    + 'ncc:TransportCompany!ncc_id(id, name), '
-    + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton)'
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let rows: any[]
-  try {
-    rows = await fetchAllInventory(summarySelect, r.params, r.datePctIds)
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
-  }
-  // Map id→tên kho (fallback cho POSM: location_id null nhưng có warehouse_id)
-  const { data: whRows } = await supabase.from('Warehouse').select('id, name')
+  const p = r.params
+  const arr = (v: string[] | null | undefined) => (v && v.length ? v : null)
+  const { data, error } = await supabase.rpc('inventory_summary_page', {
+    // Lọc %Date: tầng TS đã resolve tập id ĐÃ áp đủ filter khác → chỉ cần lọc theo id.
+    // Danh sách id đi POST body của RPC nên KHÔNG dính trần ~300 id của URL PostgREST.
+    p_ids:            r.datePctIds,
+    p_status:         p.status ?? null,
+    p_wh_ids:         arr(p.warehouseIds),
+    p_location_ids:   arr(p.locationFilter),
+    p_material_ids:   arr(p.materialFilter),
+    p_categories:     arr(p.categoryFilter),
+    p_qa_ids:         arr(p.qa_status_ids),
+    p_search:         p.search ? p.search.replace(/[,()]/g, ' ').trim() : null,
+    p_search_mat_ids: arr(p.searchMatIds),
+    p_search_loc_ids: arr(p.searchLocIds),
+    p_manufacturer:   p.manufacturer_id ?? null,
+    p_cycles:         arr(p.filterCycles),
+    p_machines:       arr(p.filterMachines),
+    p_nmsx:           arr(p.filterNmsx),
+    p_ncc_ids:        arr(p.nccIds),
+    p_import_from:    p.import_date_from ?? null,
+    p_import_to:      p.import_date_to ?? null,
+    p_offset:         r.offset,
+    p_limit:          r.limitNum,
+  })
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const whMap: Record<string, string> = Object.fromEntries(((whRows ?? []) as any[]).map(w => [w.id, w.name]))
-  const now = Date.now()
-
-  interface Group {
+  type RpcGroup = MaterialShelfInfo & {
     warehouse_id: string | null; warehouse_name: string; material_id: string
     material_code: string | null; short_name: string | null; category: string | null
-    production_date: string | null; date_pct: number | null; ncc_name: string | null
-    cartons_imported: number; cartons_remaining: number; pallet_count: number
-    base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+    production_date: string | null; expiry_date: string | null
+    ncc_id: string | null; ncc_name: string | null
+    mat_shelf_life_days: number | null
+    cartons_imported: number; cartons_remaining: number; cartons_exported: number
+    pallet_count: number; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   }
-  const map = new Map<string, Group>()
-
-  for (const e of (rows ?? []) as any[]) {
-    const whId   = (e.location?.warehouse?.id ?? e.warehouse_id ?? null) as string | null
-    const whName = e.location?.warehouse?.name ?? (whId ? whMap[whId] : null) ?? '—'
-    const matId  = e.material_id as string
-    const prod   = (e.production_date ?? null) as string | null
-    const expiry = (e.expiry_date ?? null) as string | null
-    const nccId  = (e.ncc_id ?? null) as string | null
-    const shelfDays = (e.shelf_life_days ?? null) as number | null
-    // Gom theo NCC + shelflife-lô + HSD (cùng mã/kho/ngày nhưng khác NCC/shelflife/HSD → %Date khác)
-    const key    = `${whId}|${matId}|${prod}|${nccId ?? ''}|${shelfDays ?? ''}|${expiry ?? ''}`
-
-    let g = map.get(key)
-    if (!g) {
-      const pct = computePctDate(e, e.material, now)   // ưu tiên HSD tường minh (tem V2)
-      g = {
-        warehouse_id: whId, warehouse_name: whName, material_id: matId,
-        material_code: e.material?.material_code ?? null,
-        short_name:    e.material?.short_name ?? null,
-        category:      e.material?.category ?? null,
-        production_date: prod,
-        date_pct: pct == null ? null : Math.round(pct),
-        ncc_name: e.ncc?.name ?? null,
-        cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
-        base_unit: e.material?.base_unit ?? null,
-        entry_unit: e.material?.entry_unit ?? null,
-        units_per_carton: e.material?.units_per_carton ?? null,
-      }
-      map.set(key, g)
+  const out = (data ?? {}) as { total?: number; total_cartons_remaining?: number; groups?: RpcGroup[] }
+  const now = Date.now()
+  // %Date tính bằng hàm TẬP TRUNG `computePctDate` cho ĐÚNG các nhóm của trang — cố tình KHÔNG
+  // viết lại công thức trong SQL (shelf-life có ngoại lệ theo NCC; tách 2 nơi là lệch số).
+  const groups = (out.groups ?? []).map(g => {
+    const pct = computePctDate(
+      { production_date: g.production_date, expiry_date: g.expiry_date, ncc_id: g.ncc_id, shelf_life_days: g.shelf_life_days },
+      { shelf_life_days: g.mat_shelf_life_days, supplier_shelf_life_overrides: g.supplier_shelf_life_overrides },
+      now,
+    )
+    return {
+      warehouse_id: g.warehouse_id, warehouse_name: g.warehouse_name, material_id: g.material_id,
+      material_code: g.material_code, short_name: g.short_name, category: g.category,
+      production_date: g.production_date,
+      date_pct: pct == null ? null : Math.round(pct),
+      ncc_name: g.ncc_name,
+      cartons_imported: Number(g.cartons_imported) || 0,
+      cartons_remaining: Number(g.cartons_remaining) || 0,
+      cartons_exported: Number(g.cartons_exported) || 0,
+      pallet_count: Number(g.pallet_count) || 0,
+      base_unit: g.base_unit, entry_unit: g.entry_unit, units_per_carton: g.units_per_carton,
     }
-    g.cartons_imported  += Number(e.cartons_imported ?? 0)
-    g.cartons_remaining += Number(e.cartons_remaining ?? 0)
-    g.pallet_count      += Number(e.cartons_remaining ?? 0) > 0 ? 1 : 0   // chỉ đếm pallet CÒN TỒN (user chốt 05/07)
-  }
-
-  const groups = [...map.values()]
-    .map(g => ({ ...g, cartons_exported: Math.max(0, g.cartons_imported - g.cartons_remaining) }))
-    .sort((a, b) => {
-      const mc = (a.material_code ?? '').localeCompare(b.material_code ?? '')
-      if (mc !== 0) return mc
-      const wn = a.warehouse_name.localeCompare(b.warehouse_name)
-      if (wn !== 0) return wn
-      return (b.production_date ?? '').localeCompare(a.production_date ?? '') // ngày SX mới nhất trước
-    })
-
-  // BASE UNIT: tổng cross-mã = thùng quy đổi (group per mã đã mang units)
-  const total_cartons_remaining = groups.reduce((s, g) => s + qtyEntryDecimal(g.cartons_remaining, g), 0)
-  return ok(res, { groups, total: groups.length, total_cartons_remaining })
+  })
+  return ok(res, {
+    groups,
+    total: out.total ?? 0,
+    // BASE UNIT: tổng cross-mã = thùng quy đổi per-mã rồi mới cộng (SQL dùng chung qty_entry_decimal)
+    total_cartons_remaining: Number(out.total_cartons_remaining) || 0,
+    page: r.pageNum, limit: r.limitNum,
+  })
 }
 
 // Export chi tiết pallet: trả TOÀN BỘ entry khớp filter (phân trang 1000) để FE dựng Excel.

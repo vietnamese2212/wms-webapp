@@ -61,8 +61,29 @@ export async function fetchUpTo(
  * ĐÂY LÀ LƯỚI AN TOÀN, KHÔNG PHẢI GIẢI PHÁP: xem 1 tháng (15.000 dòng ≈ 22MB) vẫn không tải
  * nổi, và nâng trần cũng vô ích vì bức tường thật là payload + số ô DOM. Lối ra duy nhất là
  * PHÂN TRANG SERVER (kèm tổng SummaryBand tính bằng SQL) — xem docs/plans/CUTOVER_2026-07-27.md.
+ *
+ * ⚠️ ĐỪNG dùng hằng số này cho list mới — dùng `rowCapForBytes()` bên dưới.
  */
 export const LIST_ROW_CAP = 10_000
+
+/**
+ * Trần dòng suy từ SỐ BYTE MỖI DÒNG — vì bức tường thật là **trần 4,5MB response của Vercel**,
+ * không phải con số "10.000 dòng".
+ *
+ * BÀI HỌC 28/07: mọi list dùng chung trần 10.000 dòng, nhưng byte/dòng lệch nhau nhiều lần nên
+ * cùng một con số cho ra payload rất khác — ĐO THẬT (payload ÷ số dòng):
+ *   Nghỉ phép        650 B/dòng → 10.000 dòng ≈ 6,2MB   ❌ vượt trần TRƯỚC KHI hàng rào kịp chặn
+ *   Đăng ký cổng   1.044 B/dòng → 10.000 dòng ≈ 10,0MB  ❌ vượt hơn 2 lần
+ *   Báo cáo nhập     333 B/dòng → 10.000 dòng ≈ 3,3MB   ✅ vừa
+ * ⇒ Hàng rào đếm SAI ĐƠN VỊ thì vô dụng: request chết ở tầng hạ tầng (413/504), user thấy trang
+ * lỗi trắng chứ KHÔNG thấy thông báo "hãy thu hẹp khoảng ngày" mà ta cố tình viết ra.
+ *
+ * Mỗi điểm gọi khai byte/dòng ĐO THẬT của chính nó, không đoán.
+ */
+const SAFE_RESPONSE_BYTES = 3_500_000   // chừa biên dưới 4,5MB (header + dòng dài hơn trung bình)
+export function rowCapForBytes(bytesPerRow: number, hardMax = LIST_ROW_CAP): number {
+  return Math.max(500, Math.min(hardMax, Math.floor(SAFE_RESPONSE_BYTES / Math.max(1, bytesPerRow))))
+}
 
 /**
  * PostgREST chạy dưới role `authenticator` có **statement_timeout = 8s CỐ ĐỊNH** (không sửa

@@ -23,8 +23,50 @@ async function withRelations(vehicles: Record<string, unknown>[]) {
   }))
 }
 
+// Danh mục XE — PHÂN TRANG SERVER (?page=). Tab "Xe" của Cài đặt TMS trước đây nạp CẢ đội xe rồi
+// lọc client: đo 28/07 với 4.953 xe = **2.300KB/lần gọi**, và 10.000 xe ≈ 4,6MB là vượt trần 4,5MB
+// của Vercel. Biển số xe nằm đúng danh sách "danh mục KHÔNG được nạp cả vào trình duyệt" trong
+// CLAUDE.md (cùng Mã hàng, Vị trí). 4 bộ lọc của tab cũng phải xuống server — lọc client sau khi
+// phân trang là lọc trên đúng 1 trang.
+async function listVehiclesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string>
+  const userNccId: string | null = req.user?.ncc_id ?? null
+  if (q.search && searchLooksLikeInjection(q.search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
+  const nccIds = (q.ncc_ids ?? '').split(',').filter(Boolean)
+  const vtIds  = (q.vehicle_type_ids ?? '').split(',').filter(Boolean)
+
+  const buildQ = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let qq: any = supabase.from('Vehicle').select('*', { count: 'exact' })
+    if (userNccId)          qq = qq.eq('ncc_id', userNccId)   // ĐVVT chỉ xem xe của mình
+    else if (nccIds.length) qq = qq.in('ncc_id', nccIds)
+    if (vtIds.length)       qq = qq.in('vehicle_type_id', vtIds)
+    if (q.is_active !== undefined && q.is_active !== '') qq = qq.eq('is_active', q.is_active === 'true')
+    if (q.search)           qq = qq.ilike('license_plate', `%${safeSearch(q.search)}%`)
+    return qq
+  }
+  const { data, count, error } = await buildQ()
+    .order('license_plate').order('id')
+    .range((pageNum - 1) * pageSize, pageNum * pageSize - 1)
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+  // Ô tổng đếm trên TOÀN BỘ bộ lọc (đếm ở FE = chỉ đếm trang đang xem)
+  const [{ count: activeN }, { count: inactiveN }] = await Promise.all([
+    buildQ().eq('is_active', true).limit(1),
+    buildQ().eq('is_active', false).limit(1),
+  ])
+  return ok(res, {
+    items: await withRelations(rows), total: count ?? 0,
+    active: activeN ?? 0, inactive: inactiveN ?? 0,
+    page: pageNum, page_size: pageSize,
+  })
+}
+
 export async function listVehicles(req: Request, res: Response) {
   try {
+    if (req.query.page) return await listVehiclesPaged(req, res)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
     const { ncc_id, is_active, unassigned, pool_branches, search, limit } = req.query as Record<string, string>

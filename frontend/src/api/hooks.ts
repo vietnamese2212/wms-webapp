@@ -222,12 +222,37 @@ export function usePalletOps(params: { search?: string; type?: string; warehouse
     },
   })
 }
+// Lịch sử dồn/tách — PHÂN TRANG SERVER. Đường không phân trang cắt âm thầm ở 5.000 thao tác
+// (kho vài trăm lượt/ngày ⇒ chạm trần trong ~2 tuần). Lọc Loại kho cũng gửi xuống server:
+// lọc ở client sau khi phân trang là lọc trên đúng 1 trang → số dòng và ô tổng đều sai.
+export interface PalletOpsPage {
+  items: PalletOpRow[]; total: number; merge_n: number; split_n: number; undone_n: number
+  page: number; page_size: number
+}
+export function usePalletOpsPaged(
+  params: { search?: string; type?: string; category?: string; warehouse_id?: string; date_from?: string; date_to?: string; page: number; page_size: number },
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['pallet-ops-paged', params],
+    enabled,
+    placeholderData: prev => prev,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/pallet-ops', { params })
+      return data.data as PalletOpsPage
+    },
+  })
+}
 export function useUndoPalletOp() {
   const inv = useInvalidateInventory()
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.post(`/wms/pallet-ops/${id}/undo`).then(r => r.data.data),
-    onSuccess: () => { inv(); qc.invalidateQueries({ queryKey: ['pallet-ops-log'] }) },
+    onSuccess: () => {
+      inv()
+      qc.invalidateQueries({ queryKey: ['pallet-ops-log'] })
+      qc.invalidateQueries({ queryKey: ['pallet-ops-paged'] })
+    },
   })
 }
 
@@ -1271,8 +1296,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, page, limit, ...rest } = params ?? {}
-      void page; void limit // tổng hợp trả tất cả nhóm, phân trang client-side
+      const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, ...rest } = params ?? {}
       const { data } = await apiClient.get('/wms/inventory/summary', {
         params: {
           ...rest,
@@ -1288,9 +1312,40 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number }
+      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number; page: number; limit: number }
     },
   })
+}
+
+// Xuất Excel view Tổng hợp: /summary giờ trả 1 TRANG (41.107 nhóm = 18MB, vượt trần 4,5MB),
+// nên phải duyệt hết trang — nếu lấy `groups` của trang đang xem thì file Excel bị CẮT âm thầm.
+const SUMMARY_EXPORT_PAGE = 1000
+export async function fetchAllInventorySummary(
+  params?: Parameters<typeof useInventoryEntries>[0], maxPages = 50,
+): Promise<InventorySummaryGroup[]> {
+  const out: InventorySummaryGroup[] = []
+  for (let page = 1; page <= maxPages; page++) {
+    const { warehouse_ids, categories, filter_locations, filter_material_ids, qa_status_ids, filter_cycles, filter_machines, filter_nmsx, ncc_ids, date_pct_ranges, ...rest } = params ?? {}
+    const { data } = await apiClient.get('/wms/inventory/summary', {
+      params: {
+        ...rest, page, limit: SUMMARY_EXPORT_PAGE,
+        ...(warehouse_ids?.length       ? { warehouse_ids:      warehouse_ids.join(',')       } : {}),
+        ...(categories?.length          ? { categories:         categories.join(',')          } : {}),
+        ...(filter_locations?.length    ? { filter_locations:   filter_locations.join(',')    } : {}),
+        ...(filter_material_ids?.length ? { filter_material_ids:filter_material_ids.join(',') } : {}),
+        ...(qa_status_ids?.length       ? { qa_status_ids:      qa_status_ids.join(',')       } : {}),
+        ...(filter_cycles?.length       ? { filter_cycles:      filter_cycles.join(',')       } : {}),
+        ...(filter_machines?.length     ? { filter_machines:    filter_machines.join(',')     } : {}),
+        ...(filter_nmsx?.length         ? { filter_nmsx:        filter_nmsx.join(',')         } : {}),
+        ...(ncc_ids?.length             ? { ncc_ids:            ncc_ids.join(',')             } : {}),
+        ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
+      },
+    })
+    const d = data.data as { groups: InventorySummaryGroup[]; total: number }
+    out.push(...(d.groups ?? []))
+    if (out.length >= (d.total ?? 0) || (d.groups?.length ?? 0) < SUMMARY_EXPORT_PAGE) break
+  }
+  return out
 }
 
 // Lấy TOÀN BỘ entry khớp filter để export Excel (BE phân trang nội bộ). On-demand, không phải useQuery.
@@ -3577,12 +3632,42 @@ export function useTmsVehicles(params?: { ncc_id?: string; is_active?: string; u
   })
 }
 
+// Danh mục XE phân trang SERVER — tab "Xe" trước đây nạp cả đội xe (4.953 xe = 2.300KB) rồi lọc
+// client; biển số xe thuộc nhóm danh mục KHÔNG được nạp cả vào trình duyệt (CLAUDE.md).
+export interface TmsVehiclesPage {
+  items: TmsVehicle[]; total: number; active: number; inactive: number; page: number; page_size: number
+}
+export function useTmsVehiclesPaged(
+  params: { ncc_ids?: string[]; vehicle_type_ids?: string[]; is_active?: string; search?: string; page: number; page_size: number },
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['tms-vehicles-paged', params],
+    enabled,
+    placeholderData: prev => prev,
+    queryFn: async () => {
+      const { ncc_ids, vehicle_type_ids, ...rest } = params
+      const { data } = await apiClient.get('/tms/vehicles', {
+        params: {
+          ...rest,
+          ...(ncc_ids?.length          ? { ncc_ids:          ncc_ids.join(',')          } : {}),
+          ...(vehicle_type_ids?.length ? { vehicle_type_ids: vehicle_type_ids.join(',') } : {}),
+        },
+      })
+      return data.data as TmsVehiclesPage
+    },
+  })
+}
+
 export function useCreateTmsVehicle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string }) =>
       apiClient.post('/tms/vehicles', body).then(r => r.data.data as TmsVehicle),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicles'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicles-paged'] })
+    },
   })
 }
 
@@ -3591,7 +3676,10 @@ export function useUpdateTmsVehicle() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean }) =>
       apiClient.put(`/tms/vehicles/${id}`, body).then(r => r.data.data as TmsVehicle),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicles'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicles-paged'] })
+    },
   })
 }
 
@@ -3601,6 +3689,7 @@ export function useDeleteTmsVehicle() {
     mutationFn: (id: string) => apiClient.delete(`/tms/vehicles/${id}`).then(r => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
+      qc.invalidateQueries({ queryKey: ['tms-vehicles-paged'] })
       qc.invalidateQueries({ queryKey: ['employees'] })
     },
   })

@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { uuidList } from '../../utils/ids'
-import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -74,8 +74,13 @@ export async function listGateRegistrations(req: Request, res: Response) {
   }
   // Trần dòng: FE render toàn bộ lượt đăng ký ở client → vượt trần thì BÁO RÕ để user thu hẹp,
   // KHÔNG cắt âm thầm (luật CLAUDE.md).
-  const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
-  if (truncated) return apiErr(res, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
+  // Trần tính theo BYTE: đo 28/07 dòng đăng ký cổng ≈ 1.044 B ⇒ trần cũ 10.000 dòng ≈ 10MB,
+  // gấp hơn 2 lần trần 4,5MB của Vercel (hàng rào đếm sai đơn vị thì không kịp chặn).
+  // (Trang Đăng ký cổng đã dùng cây LAZY `gate_leaves_page`; endpoint phẳng này còn phục vụ
+  // picker ở Nhập kho / chi tiết Xuất kho — luôn kèm 1 ngày + 1 kho nên rất nhẹ.)
+  const CAP = rowCapForBytes(1044)
+  const { rows: data, truncated } = await fetchUpTo(buildQuery, CAP)
+  if (truncated) return apiErr(res, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(CAP), 400)
   return res.json({ success: true, data })
 }
 

@@ -16,7 +16,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Material:            [['materials'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
-  PalletOperation:     [['pallet-ops-log']],
+  PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],
   WarehouseZone:       [['warehouse-zones'], ['dashboard']],

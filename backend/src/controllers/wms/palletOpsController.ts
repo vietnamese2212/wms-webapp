@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint } from './systemSettingController'
 import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
@@ -269,15 +269,53 @@ export async function splitPallet(req: Request, res: Response) {
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 
+const OPS_SELECT = 'id, type, source_codes, target_codes, detail, operated_by_name, created_at, undone_at, undone_by_name'
+
+// ── LỊCH SỬ dồn/tách: PHÂN TRANG SERVER (?page=) ──
+// Đường cũ (mảng trần, hardCap 5.000) CẮT ÂM THẦM: 25.000 thao tác → trả 5.000, không total,
+// không cờ ⇒ người dùng tưởng đã hết. Nâng trần không cứu (20.000 dòng ≈ 5,6MB > trần 4,5MB
+// của Vercel). Lọc Loại kho cũng phải xuống SQL — lọc ở client sau khi phân trang là lọc trên
+// ĐÚNG 1 TRANG (số dòng và ô tổng đều sai). Chi tiết: migration 20260728_pallet_ops_paged_rpc.sql
+async function listOpsPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
+  const { data, error } = await supabase.rpc('pallet_ops_page', {
+    p_wh:       q.warehouse_id || null,
+    p_type:     q.type || null,
+    p_category: q.category || null,
+    p_search:   q.search?.trim() || null,
+    p_from:     q.date_from ? new Date(`${q.date_from}T00:00:00+07:00`).toISOString() : null,
+    p_to:       q.date_to   ? new Date(`${q.date_to}T23:59:59+07:00`).toISOString()   : null,
+    p_offset:   (pageNum - 1) * pageSize,
+    p_limit:    pageSize,
+  })
+  if (error) return fail(res, error.message, 500)
+  const p = (data ?? {}) as { ids?: string[]; total?: number; merge_n?: number; split_n?: number; undone_n?: number }
+  const ids = p.ids ?? []
+  const meta = {
+    total: p.total ?? 0, merge_n: p.merge_n ?? 0, split_n: p.split_n ?? 0, undone_n: p.undone_n ?? 0,
+    page: pageNum, page_size: pageSize,
+  }
+  if (!ids.length) return ok(res, { items: [], ...meta })
+  const rows = await fetchAllByIdChunks(ids, chunk =>
+    supabase.from('PalletOperation').select(OPS_SELECT).in('id', chunk))
+  // `.in()` không giữ thứ tự → sắp lại theo thứ tự RPC đã trả (created_at desc, id)
+  const byId = new Map((rows as { id: string }[]).map(r => [r.id, r]))
+  const items = ids.map(id => byId.get(id)).filter(Boolean)
+  return ok(res, { items, ...meta })
+}
+
 // ── LỊCH SỬ dồn/tách + tìm kiếm theo mã pallet ──
-// GET /wms/pallet-ops?search=&type=&date_from=&date_to=&limit=
+// GET /wms/pallet-ops?search=&type=&date_from=&date_to=&limit=   (thêm ?page= = 1 trang)
 export async function listOps(req: Request, res: Response) {
   try {
+    if (req.query.page) return await listOpsPaged(req, res)
     const { search, type, warehouse_id, date_from, date_to, limit } = req.query as Record<string, string | undefined>
     // Lọc dùng chung; tạo query MỚI mỗi trang (PostgREST cap ~1000 dòng/response → phải phân trang)
     const applyFilters = () => {
       let q = supabase.from('PalletOperation')
-        .select('id, type, source_codes, target_codes, detail, operated_by_name, created_at, undone_at, undone_by_name')
+        .select(OPS_SELECT)
         .order('created_at', { ascending: false })
       if (type) q = q.eq('type', type)
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)

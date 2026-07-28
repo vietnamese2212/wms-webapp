@@ -952,10 +952,14 @@ export async function getInboundReport(req: Request, res: Response) {
 
     // 1. Fetch plan lines với join material, ncc, warehouse — PHÂN TRANG (cap ~1000/response):
     // khoảng ngày rộng có thể vài nghìn dòng KH, không phân trang = báo cáo cắt cụt âm thầm.
+    // TRẦN DÒNG: báo cáo trả MẢNG TRẦN 1 dòng/kế hoạch, không phân trang. Đo 28/07: 40.000 dòng
+    // KH (1 năm) ⇒ ~12MB, vượt trần 4,5MB của Vercel. Chặn KÈM HƯỚNG DẪN thu hẹp (không cắt âm
+    // thầm) — cùng cách đã dùng cho Nghỉ phép / Đăng ký cổng. Mặc định của trang là 30 ngày nên
+    // hàng rào này chỉ chạm khi user tự kéo rộng khoảng ngày.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let planLines: any[]
     try {
-      planLines = await fetchAllPaged(() => {
+      const pl = await fetchUpTo(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let q = supabase.from('inbound_plan_lines')
           .select(`
@@ -973,7 +977,9 @@ export async function getInboundReport(req: Request, res: Response) {
           .order('id')
         if (whIds) q = whIds.length === 1 ? q.eq('warehouse_id', whIds[0]) : q.in('warehouse_id', whIds)
         return q
-      })
+      }, LIST_ROW_CAP)
+      if (pl.truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
+      planLines = pl.rows
     } catch (e) { return fail(res, (e as Error).message) }
     // Cắt theo Loại hàng của user (null-inclusive: dòng không khai loại vẫn hiện)
     planLines = planLines.filter((l: any) => categoryAllowed(req, l.material?.category))
@@ -1037,11 +1043,16 @@ export async function getInboundReport(req: Request, res: Response) {
     }
 
     if (importIds.length > 0) {
-      // Phân trang né cap-1000 (báo cáo nhập gộp nhiều chuyến → có thể >1000 entry)
+      // CHUNK 300 id — trước đây nhồi CẢ tập importIds vào MỘT `.in()`: khoảng ngày rộng có
+      // 40.000 phiếu nhập ⇒ URL ~1,5MB, PostgREST đứt kết nối → 500 "Lỗi hệ thống" sau 43s
+      // (đo 28/07). Trần thật là ~300 id uuid/URL (memory id-list-url-limits) — `fetchAllPaged`
+      // chỉ phân trang KẾT QUẢ, không chia nhỏ FILTER nên không đỡ được.
+      // Dùng helper DÙNG CHUNG (chunk 300 + các lô chạy SONG SONG). Bản `fetchAllByIdChunks` cục
+      // bộ trong file này chunk 100 và chạy TUẦN TỰ ⇒ 4.400 phiếu = 44 lượt nối tiếp (đo: 10,3s).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
+      const entries = await fetchByIdChunks(importIds, chunk => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported')
-        .in('import_order_id', importIds)
+        .in('import_order_id', chunk)
         .order('import_order_id', { ascending: true }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const e of entries as any[]) {

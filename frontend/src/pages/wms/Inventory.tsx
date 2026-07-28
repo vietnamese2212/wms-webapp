@@ -23,7 +23,7 @@ import {
   useLocationsReal, useMaterials,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
-  useInventorySummary, type InventorySummaryGroup, fetchInventoryExport,
+  useInventorySummary, type InventorySummaryGroup, fetchInventoryExport, fetchAllInventorySummary,
   useSystemSettings,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
@@ -730,11 +730,12 @@ export default function Inventory() {
     ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
   }
   const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
-  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary(queryParams, aggregate)
+  // Tổng hợp phân trang SERVER: trước đây nhận HẾT nhóm rồi tự `slice` — 41.107 nhóm = 18MB,
+  // vượt trần 4,5MB của Vercel (pager trông đúng nhưng payload vẫn chết).
+  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate)
 
   const displayEntries    = data?.entries               ?? []
-  const summaryGroups     = summaryData?.groups          ?? []
-  const pagedGroups       = useMemo(() => summaryGroups.slice((f.page - 1) * limit, f.page * limit), [summaryGroups, f.page, limit])
+  const pagedGroups       = summaryData?.groups          ?? []
   const loading           = aggregate ? summaryLoading : isLoading
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
@@ -761,10 +762,11 @@ export default function Inventory() {
     }
     try {
       if (aggregate) {
-        const groups = summaryData?.groups ?? []
-        if (groups.length === 0) { setExportError('Không có dữ liệu để xuất'); return }
-        if (groups.length > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${groups.length.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
+        if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
+        if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
         setExporting(true)
+        // Duyệt HẾT trang — lấy `groups` của trang đang xem là file Excel bị cắt âm thầm
+        const groups = await fetchAllInventorySummary(queryParams)
         writeXlsx(groups.map(g => {
           const nh = qc(g.cartons_imported, g), xu = qc(g.cartons_exported, g), to = qc(g.cartons_remaining, g)
           return {

@@ -34,6 +34,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
@@ -1705,24 +1706,7 @@ export default function Inbound() {
                 </TableBody>
               </Table>
 
-              {/* Pager (như Tồn kho) */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
-                  <button
-                    disabled={page <= 1}
-                    onClick={() => setInbound({ page: page - 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    ← Trước
-                  </button>
-                  <span className="text-xs text-slate-500">{page} / {totalPages}</span>
-                  <button
-                    disabled={page >= totalPages}
-                    onClick={() => setInbound({ page: page + 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    Sau →
-                  </button>
-                </div>
-              )}
+              <PagerNav page={page} totalPages={totalPages} onPage={p => setInbound({ page: p })} />
           </>
         )}
        </div>
@@ -1731,23 +1715,12 @@ export default function Inbound() {
        )}
       </div>
 
-      {/* Footer đếm bản ghi (Manhattan) — khoảng dòng của trang / tổng + chọn dòng/trang */}
-      {!isLoading && total > 0 && (
-        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>
-            {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} / {total.toLocaleString('vi-VN')} phiếu
-            <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
-              · Dòng/trang:
-              <select
-                value={pageSize}
-                onChange={e => setInbound({ pageSize: Number(e.target.value), page: 1 })}
-                className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
-                {[100, 200, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
-          </span>
-          <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng</span>
-        </div>
+      {!isLoading && (
+        <ListFooter
+          page={page} pageSize={pageSize} total={total} unit="phiếu"
+          onPageSize={n => setInbound({ pageSize: n, page: 1 })}
+          right={`${totalPallets} pallet · ${totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`}
+        />
       )}
      </div>
 

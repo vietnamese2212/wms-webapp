@@ -14,6 +14,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
@@ -1112,23 +1113,7 @@ export default function Inventory() {
               </Table>
               )}
 
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
-                  <button
-                    disabled={f.page <= 1}
-                    onClick={() => setInventory({ page: f.page - 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    ← Trước
-                  </button>
-                  <span className="text-xs text-slate-500">{f.page} / {totalPages}</span>
-                  <button
-                    disabled={f.page >= totalPages}
-                    onClick={() => setInventory({ page: f.page + 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    Sau →
-                  </button>
-                </div>
-              )}
+              <PagerNav page={f.page} totalPages={totalPages} onPage={p => setInventory({ page: p })} />
             </>
           )}
         </div>
@@ -1151,22 +1136,11 @@ export default function Inventory() {
         ) : null}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {total > 0
-          ? `${(f.page - 1) * limit + 1}–${Math.min(f.page * limit, total)} / ${total.toLocaleString('vi-VN')} ${aggregate ? 'nhóm' : 'pallet'}`
-          : (aggregate ? '0 nhóm' : '0 pallet')}
+      <ListFooter
+        page={f.page} pageSize={limit} total={total} unit={aggregate ? 'nhóm' : 'pallet'}
+        onPageSize={n => setInventory({ pageSize: n, page: 1 })}>
         {selected && checkedCount === 0 && <span className="ml-2 text-blue-600">· 1 đang xem</span>}
-        <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
-          <span className="hidden sm:inline">·</span> Dòng/trang:
-          <select
-            value={limit}
-            onChange={e => setInventory({ pageSize: Number(e.target.value), page: 1 })}
-            className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
-            {[50, 100, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-      </div>
+      </ListFooter>
      </div>
 
       {/* ── Floating action bar (when items checked) ── */}

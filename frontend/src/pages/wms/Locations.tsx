@@ -4,13 +4,13 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
-import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
@@ -24,10 +24,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { FormSheet } from '@/components/shared/FormSheet'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
-  useLocationsFull, useWarehouses, useWarehouseZones,
+  useLocationsPaged, useLocationsSummary, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
   useUploadLocationsExcel,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -81,8 +82,11 @@ const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const { search, warehouseId, catFilter, statusFilter, flagFilter } = useWmsFilterStore(s => s.locations)
-  const setLocationsFilter = useWmsFilterStore(s => s.setLocations)
+  const locFilter = useWmsFilterStore(s => s.locations)
+  const { search, warehouseId, catFilter, statusFilter, flagFilter } = locFilter
+  const setLocations = useWmsFilterStore(s => s.setLocations)
+  // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
+  const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
   const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagFilter }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
@@ -119,20 +123,23 @@ export default function Locations() {
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
-  // Chỉ nạp vị trí khi đã chọn kho (tránh kéo toàn bộ dữ liệu).
-  const { data: raw = [], isLoading }   = useLocationsFull(
-    warehouseId ? { warehouse_id: warehouseId } : undefined,
-    !!warehouseId,
-  )
+  // PHÂN TRANG SERVER (chỉ khi đã chọn kho): 1 kho có thể vài nghìn vị trí — trước đây render hết
+  // + cộng tổng ở máy. Bộ lọc (loại/tìm/cờ) + 4 ô tổng nay tính bằng SQL trên toàn bộ kết quả lọc.
+  const listParams = useMemo(() => warehouseId ? {
+    warehouse_id: warehouseId, category: catFilter || undefined, search,
+    flag: flagFilter, include_inactive: statusFilter.includes('inactive'),
+  } : undefined, [warehouseId, catFilter, search, flagFilter, statusFilter])
+  const { data: pageData, isLoading } = useLocationsPaged(
+    listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
+  const { data: locSummary } = useLocationsSummary(listParams)
+  const raw = useMemo(() => (pageData?.rows ?? []) as RealLocation[], [pageData])
+  const totalRows = pageData?.total ?? 0
 
   const allowedLocWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
   const warehouses   = (activeWhRaw as WhWithCount[]).filter(w => !allowedLocWhIds || allowedLocWhIds.has(w.id))
-  const showInactive = statusFilter.includes('inactive')
-  const locations    = showInactive
-    ? (raw as RealLocation[])
-    : (raw as RealLocation[]).filter(l => l.is_active)
+  const locations = raw   // server đã lọc theo trạng thái
 
   // Mutations
   const createLocation  = useCreateLocation()
@@ -144,27 +151,26 @@ export default function Locations() {
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      await bulkFlag.mutateAsync({ ids: activeFiltered.map(l => l.id), requires_stocktake: flag })
+      // Gửi CỜ bộ lọc: áp cho TOÀN BỘ vị trí đang lọc (không chỉ trang đang xem) mà không phải
+      // nhồi hàng nghìn id qua mạng — BE tự resolve bằng đúng bộ lọc này.
+      await bulkFlag.mutateAsync({ by_filter: true, filter: listParams ?? {}, requires_stocktake: flag })
       setBulkOpen(false)
     } catch (e: unknown) {
       setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
     }
   }
 
-  // ── Table filter ─────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    return locations.filter(l => {
-      if (catFilter && !(l.categories ?? []).includes(catFilter)) return false
-      if (!omniMatch([l.location_code, l.sub_code, l.sub_name, l.sub_type, (l.categories ?? []).join(' '), l.row, l.shelf, l.warehouse?.code, l.warehouse?.name], search)) return false
-      if (flagFilter && !l.requires_stocktake) return false
-      return true
-    })
-  }, [locations, catFilter, search, flagFilter])
-
-  const activeFiltered = filtered.filter(l => l.is_active)
-  const totalSlots = activeFiltered.reduce((s, l) => s + l.max_pallets, 0)
-  const usedSlots  = activeFiltered.reduce((s, l) => s + l.used_slots,  0)
-  const fullCount  = activeFiltered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
+  // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
+  const filtered = locations
+  // 4 ô tổng tính bằng SQL trên TOÀN BỘ bộ lọc (chỉ vị trí đang dùng) — không cộng trên trang
+  const activeCount = locSummary?.count ?? 0
+  const totalSlots  = locSummary?.capacity ?? 0
+  const usedSlots   = locSummary?.used ?? 0
+  const fullCount   = locSummary?.full ?? 0
+  const totalPages  = Math.max(1, Math.ceil(totalRows / locFilter.pageSize))
+  useEffect(() => {
+    if (!isLoading && locFilter.page > totalPages) setLocations({ page: totalPages })
+  }, [isLoading, totalPages, locFilter.page, setLocations])
 
   // ── Form cascaded options ────────────────────────────────────
   const filteredZones = useMemo(() =>
@@ -268,9 +274,35 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ flagFilter: v.includes('flag') }) },
   ]
 
-  function exportExcel() {
+  // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`
+  // thì file chỉ có 200 dòng của trang đang xem mà KHÔNG báo gì (đúng kiểu sai âm thầm).
+  const [exporting, setExporting] = useState(false)
+  async function fetchAllFiltered(): Promise<RealLocation[]> {
+    if (!listParams) return []
+    const out: RealLocation[] = []
+    for (let page = 1; page <= 200; page++) {
+      const { data } = await apiClient.get('/masterdata/locations', {
+        params: {
+          warehouse_id: listParams.warehouse_id, category: listParams.category, search: listParams.search || undefined,
+          flag: listParams.flag ? '1' : undefined, include_inactive: listParams.include_inactive ? '1' : undefined,
+          page, page_size: 1000,
+        },
+      })
+      const d = data.data as { rows: RealLocation[]; total: number }
+      out.push(...d.rows)
+      if (!d.rows.length || out.length >= d.total) break
+    }
+    return out
+  }
+
+  async function exportExcel() {
+    setExporting(true)
+    try { await doExportExcel(await fetchAllFiltered()) } finally { setExporting(false) }
+  }
+
+  function doExportExcel(rowsToExport: RealLocation[]) {
     // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
-    const sheet = filtered.map(l => ({
+    const sheet = rowsToExport.map(l => ({
       'Kho': l.warehouse?.name ?? '', 'Loại': (l.categories ?? []).join(', '),
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
@@ -317,9 +349,10 @@ export default function Locations() {
           <ActionCluster className="shrink-0" mobileInline items={[
             // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG locations.export (không đi ké 'view')
             ...(can(perms, 'locations', 'export') ? [{
-              key: 'excel', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách vị trí đang lọc',
+              key: 'excel', icon: Download, label: 'Excel',
+              tip: 'Xuất Excel TOÀN BỘ vị trí đang lọc (không chỉ trang đang xem)',
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
-              disabled: !filtered.length,
+              disabled: !totalRows || exporting, busy: exporting,
               onClick: exportExcel,
             } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'import') ? [{
@@ -330,7 +363,7 @@ export default function Locations() {
             ...(can(perms, 'locations', 'edit') ? [{
               key: 'bulkflag', icon: Flag, label: 'Cờ check',
               tip: 'Gắn / bỏ cờ "cần kiểm kê" hàng loạt cho các vị trí đang lọc (vị trí quan trọng)',
-              disabled: !activeFiltered.length,
+              disabled: !activeCount,
               onClick: () => { setBulkErr(''); setBulkOpen(true) },
             } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'create') ? [{
@@ -350,7 +383,7 @@ export default function Locations() {
 
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
-        { label: 'Vị trí', value: activeFiltered.length },
+        { label: 'Vị trí', value: activeCount },
         { label: 'Pallet đang dùng', value: usedSlots },
         { label: 'Sức chứa', value: totalSlots },
         { label: 'Đầy', value: fullCount, accent: fullCount > 0 },
@@ -464,6 +497,7 @@ export default function Locations() {
               </TableBody>
             </Table>
           )}
+          <PagerNav page={locFilter.page} totalPages={totalPages} onPage={p => setLocations({ page: p })} />
         </div>
 
         {/* Detail panel */}
@@ -497,10 +531,9 @@ export default function Locations() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} vị trí` : '0 vị trí'}
-      </div>
+      {/* Footer đếm bản ghi + chọn dòng/trang (chuẩn chung ListPager) */}
+      <ListFooter page={locFilter.page} pageSize={locFilter.pageSize} total={totalRows} unit="vị trí"
+        onPageSize={n => setLocations({ pageSize: n, page: 1 })} />
      </div>
 
       {/* Add / Edit FormSheet */}
@@ -668,8 +701,7 @@ export default function Locations() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
-            Áp cho <span className="font-semibold">{activeFiltered.length}</span> vị trí đang lọc
-            {' '}(đang gắn cờ: <span className="font-semibold">{activeFiltered.filter(l => l.requires_stocktake).length}</span>).
+            Áp cho <span className="font-semibold">{activeCount}</span> vị trí đang lọc (toàn bộ kết quả lọc, không chỉ trang đang xem).
             Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}

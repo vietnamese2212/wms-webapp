@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } from '../../utils/warehouseTypeMeta'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
@@ -23,6 +24,80 @@ const MATERIAL_LITE_COLS =
   'no_qr_tracking, is_non_stock, is_pallet_carrier, batch_prefix,' +
   'warehouse_pallet_overrides, supplier_shelf_life_overrides'
 
+// ─── Phân trang SERVER cho TRANG DANH MỤC Mã hàng ───────────────────────────────────────────────
+// Trang gốc cần ĐỦ CỘT nhưng chỉ 1 trang; 2 luật "Trùng tên" / "Thiếu thông tin" phải tính trên
+// TOÀN BẢNG nên nằm trong RPC (xem 20260728_materials_paged_rpc.sql).
+type MatListCtx = {
+  tokens: string[] | null
+  categories: string[] | null
+  scopeCats: string[] | null
+  status: string[] | null
+  qr: string[] | null
+  dq: string[] | null
+}
+const matCsv = (v?: string | string[]): string[] | null => {
+  const a = (Array.isArray(v) ? v : String(v ?? '').split(','))
+    .map(s => String(s).trim()).filter(Boolean)
+  return a.length ? a : null
+}
+function getMatListCtx(req: Request): MatListCtx {
+  const q = req.query as Record<string, string | string[] | undefined>
+  const rawSearch = typeof q.search === 'string' ? q.search : ''
+  // Chuẩn hoá bằng ĐÚNG công thức của cột `search_norm` rồi tách token (khớp AND như omniMatch FE)
+  const norm = normalizeSearchTerm(rawSearch).trim()
+  return {
+    tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
+    categories: matCsv(q.categories),
+    scopeCats: scopeCategoriesOf(req),
+    status: matCsv(q.status),
+    qr: matCsv(q.qr),
+    dq: matCsv(q.dq),
+  }
+}
+async function matRpcParams(c: MatListCtx) {
+  return {
+    p_tokens: c.tokens, p_categories: c.categories, p_scope_cats: c.scopeCats,
+    p_status: c.status, p_qr: c.qr, p_dq: c.dq,
+    p_cat_rules: await getMaterialCategoryRules(),
+    p_legacy_no_sl: LEGACY_NO_SHELF_LIFE, p_legacy_pe: LEGACY_PALLET_PER_EA,
+  }
+}
+
+// GET /api/masterdata/materials?page=1&page_size=200&… — 1 TRANG danh mục (đủ cột)
+async function listMaterialsPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const page = Math.max(1, Number(q.page) || 1)
+  const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
+  const ctx = getMatListCtx(req)
+  const { data, error } = await supabase.rpc('materials_page', {
+    p_offset: (page - 1) * pageSize, p_limit: pageSize, ...(await matRpcParams(ctx)),
+  })
+  if (error) throw error
+  const p = (data ?? {}) as { ids?: string[]; dup_ids?: string[]; total?: number }
+  const ids = p.ids ?? []
+  const dupSet = new Set(p.dup_ids ?? [])
+  const rows = ids.length
+    ? await fetchAllByIdChunks(ids, chunk => supabase.from('Material')
+        .select('*, manufacturer:Manufacturer(id, code, name)').in('id', chunk).order('material_code'))
+    : []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
+  // `is_dup_name` phải do SERVER gắn: "trùng tên" chỉ đúng khi soi toàn bảng, không suy được từ 1 trang
+  const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+  for (const r of ordered) r.is_dup_name = dupSet.has(r.id)
+  return ok(res, { rows: ordered, total: p.total ?? 0 })
+}
+
+// GET /api/masterdata/materials/summary — 6 ô SummaryBand trên TOÀN BỘ bộ lọc
+export async function listMaterialsSummary(req: Request, res: Response) {
+  try {
+    const ctx = getMatListCtx(req)
+    const { data, error } = await supabase.rpc('materials_summary', await matRpcParams(ctx))
+    if (error) throw error
+    return ok(res, data ?? {})
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function listMaterials(req: Request, res: Response) {
   try {
     const { active, search, manufacturer_id, storage_category, category, view, limit, codes } = req.query
@@ -35,6 +110,10 @@ export async function listMaterials(req: Request, res: Response) {
     // codes=A,B,C — chặn 300/lượt đúng trần URL của PostgREST (xem memory id-list-url-limits)
     const codeList = codes ? String(codes).split(',').map(c => c.trim()).filter(Boolean).slice(0, 300) : null
     if (codeList && codeList.length === 0) return ok(res, [])
+
+    // Có ?page= → TRANG danh mục (trang Mã hàng). Không có → giữ mode cũ trả MẢNG cho mọi
+    // consumer khác (dropdown lite, codes=…, typeahead limit=N).
+    if (req.query.page) return await listMaterialsPaged(req, res)
 
     // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response của PostgREST.
     // Đã >1000 mã hàng active → không phân trang thì 4+ mã biến mất khỏi mọi list + dropdown chọn mã (Inbound/Outbound/TMS...).

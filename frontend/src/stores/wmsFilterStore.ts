@@ -99,6 +99,8 @@ interface LocationsFilters {
   catFilter: string
   statusFilter: string[]
   flagFilter: boolean
+  page: number
+  pageSize: number
 }
 export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 interface StocktakeFilters {
@@ -139,6 +141,8 @@ interface MaterialsFilters {
   statusFilter: string[]
   qrFilter: string[]
   dqFilter: string[]   // chất lượng dữ liệu: 'incomplete' (thiếu thông tin) | 'dup' (trùng tên)
+  page: number
+  pageSize: number
 }
 interface InboundReportFilters {
   dateFrom: string
@@ -351,12 +355,12 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '' },
-    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
+    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [] },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],

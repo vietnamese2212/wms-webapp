@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
@@ -37,6 +37,101 @@ const LOCATION_LITE_COLS =
   'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
   'max_pallets, is_active, requires_stocktake, slot_no_in, slot_no_out'
 
+// ─── Phân trang SERVER cho TRANG danh mục Vị trí kho ────────────────────────────────────────────
+// 1 kho có thể vài nghìn vị trí (Bàu Bàng 1.517) — trước đây render hết + cộng tổng ở máy.
+// Bộ lọc parse 1 CHỖ cho cả trang / tổng / gắn-cờ-hàng-loạt.
+type LocListCtx = {
+  whIds: string[] | null      // rỗng = ngoài phạm vi → trả rỗng
+  category: string | null
+  scopeCats: string[] | null
+  tokens: string[] | null
+  flag: boolean
+  inclInactive: boolean
+  blocked: boolean
+}
+function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx {
+  const q = (raw ?? req.query) as Record<string, unknown>
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const warehouseId = str(q.warehouse_id) || null
+  const scope = scopeWhIds(req)
+  let whIds: string[] | null = warehouseId ? [warehouseId] : null
+  let blocked = false
+  if (scope !== null) {
+    const eff = warehouseId ? scope.filter(id => id === warehouseId) : scope
+    blocked = eff.length === 0
+    whIds = eff
+  }
+  const norm = normalizeSearchTerm(str(q.search)).trim()
+  return {
+    whIds, blocked,
+    category: str(q.category) || null,
+    scopeCats: scopeCategoriesOf(req),
+    tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
+    // nhận '1' | 'true' | true — cờ boolean qua query-string mỗi client serialize một kiểu
+    flag: q.flag === '1' || q.flag === 'true' || q.flag === true,
+    inclInactive: q.include_inactive === '1' || q.include_inactive === 'true' || q.include_inactive === true,
+  }
+}
+const locRpcParams = (c: LocListCtx) => ({
+  p_wh_ids: c.whIds, p_category: c.category, p_scope_cats: c.scopeCats,
+  p_tokens: c.tokens, p_flag: c.flag,
+})
+
+// Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem (định nghĩa khớp listLocations)
+async function usedSlotsFor(ids: string[]): Promise<Map<string, number>> {
+  const used = new Map<string, number>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+      .select('location_id').in('location_id', ids.slice(i, i + 300))
+      .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
+    for (const r of rows as { location_id: string }[])
+      used.set(r.location_id, (used.get(r.location_id) ?? 0) + 1)
+  }
+  return used
+}
+
+async function listLocationsPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const page = Math.max(1, Number(q.page) || 1)
+  const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
+  const ctx = getLocListCtx(req)
+  if (ctx.blocked) return ok(res, { rows: [], total: 0 })
+  const { data, error } = await supabase.rpc('locations_page', {
+    p_offset: (page - 1) * pageSize, p_limit: pageSize,
+    ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
+  })
+  if (error) throw error
+  const p = (data ?? {}) as { ids?: string[]; total?: number }
+  const ids = p.ids ?? []
+  if (!ids.length) return ok(res, { rows: [], total: p.total ?? 0 })
+  const rows = await fetchAllByIdChunks(ids, chunk => supabase.from('Location')
+    .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)').in('id', chunk).order('id'))
+  const used = await usedSlotsFor(ids)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
+  const ordered = ids.map(id => byId.get(id)).filter(Boolean).map((loc) => {
+    const { InventoryEntry, ...rest } = loc as Record<string, unknown>
+    return {
+      ...rest,
+      _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
+      used_slots: used.get(rest.id as string) ?? 0,
+      has_same_material: false,
+    }
+  })
+  return ok(res, { rows: ordered, total: p.total ?? 0 })
+}
+
+// GET /api/masterdata/locations/summary — 4 ô SummaryBand trên TOÀN BỘ bộ lọc (chỉ vị trí đang dùng)
+export async function listLocationsSummary(req: Request, res: Response) {
+  try {
+    const ctx = getLocListCtx(req)
+    if (ctx.blocked) return ok(res, { count: 0, capacity: 0, used: 0, full: 0 })
+    const { data, error } = await supabase.rpc('locations_summary', locRpcParams(ctx))
+    if (error) throw error
+    return ok(res, data ?? {})
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id, view, search, limit } = req.query
@@ -53,6 +148,10 @@ export async function listLocations(req: Request, res: Response) {
       if (effective.length === 0) return ok(res, [])
     }
     const scopeCats = scopeCategoriesOf(req)
+
+    // Có ?page= → TRANG (trang danh mục Vị trí kho). Không có → giữ mode cũ trả MẢNG cho mọi
+    // consumer khác (picker chọn vị trí, gợi ý vị trí theo mã hàng, Slotting…).
+    if (req.query.page) return await listLocationsPaged(req, res)
 
     // Phân trang né cap ~1000 (>1000 vị trí thì list/dropdown mất vị trí)
     const buildQ = () => {
@@ -259,7 +358,19 @@ export async function updateLocation(req: Request, res: Response) {
 export async function bulkFlagLocations(req: Request, res: Response) {
   try {
     const { ids, requires_stocktake } = req.body as { ids?: unknown; requires_stocktake?: unknown }
-    const idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    let idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    // Danh sách đã PHÂN TRANG → client không còn đủ id của bộ lọc: gửi CỜ bộ lọc, BE tự resolve
+    // (luật id-list-url-limits: không nhồi hàng nghìn id qua mạng).
+    const body = req.body as { by_filter?: boolean; filter?: Record<string, unknown> }
+    if (!idList.length && body.by_filter) {
+      const ctx = getLocListCtx(req, body.filter ?? {})
+      if (ctx.blocked) return ok(res, { updated: 0, requires_stocktake: Boolean(requires_stocktake) })
+      const { data, error } = await supabase.rpc('locations_page', {
+        p_offset: 0, p_limit: 1_000_000, ...locRpcParams(ctx), p_incl_inactive: false,
+      })
+      if (error) throw error
+      idList = ((data ?? {}) as { ids?: string[] }).ids ?? []
+    }
     if (!idList.length) return fail(res, 400, 'INVALID_INPUT', 'Thiếu danh sách vị trí')
     const flag = Boolean(requires_stocktake)
 

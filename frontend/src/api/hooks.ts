@@ -57,6 +57,48 @@ export function useLocationsFull(params?: LocationListParams, enabled = true) {
   })
 }
 
+// ─── Trang DANH MỤC Vị trí kho: phân trang SERVER ───────────────────────────────────────────────
+// 1 kho có thể vài nghìn vị trí; tổng (sức chứa / đang dùng / đầy) tính bằng SQL trên toàn bộ lọc.
+export type LocationsListParams = {
+  warehouse_id?: string; category?: string; search?: string; flag?: boolean; include_inactive?: boolean
+}
+export type LocationsSummary = { count: number; capacity: number; used: number; full: number }
+
+function locationsQp(p: LocationsListParams) {
+  return {
+    warehouse_id: p.warehouse_id || undefined, category: p.category || undefined,
+    search: p.search || undefined,
+    flag: p.flag ? '1' : undefined, include_inactive: p.include_inactive ? '1' : undefined,
+  }
+}
+
+export function useLocationsPaged(params: (LocationsListParams & { page: number; page_size: number }) | undefined) {
+  const qp = params ? { ...locationsQp(params), page: params.page, page_size: params.page_size } : undefined
+  return useQuery({
+    queryKey: ['locations-paged', qp],
+    enabled: !!params,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations', { params: qp })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return data.data as { rows: any[]; total: number }
+    },
+  })
+}
+
+export function useLocationsSummary(params?: LocationsListParams) {
+  const qp = params ? locationsQp(params) : undefined
+  return useQuery({
+    queryKey: ['locations-summary', qp],
+    enabled: !!params,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations/summary', { params: qp })
+      return data.data as LocationsSummary
+    },
+  })
+}
+
 // ─── Pallet label prints (truy vết in tem) ───────────────────
 export type PalletPrintRow = {
   id: string; batch_id: string | null; qr_code: string; material_code: string | null; category: string | null
@@ -242,6 +284,44 @@ export function useMaterialsFull(params?: MaterialListParams, enabled = true) {
   })
 }
 
+// ─── Trang DANH MỤC Mã hàng: phân trang SERVER ──────────────────────────────────────────────────
+// Trang gốc cần đủ cột nhưng chỉ 1 trang. 2 luật "Trùng tên" / "Thiếu thông tin" tính bằng SQL
+// trên TOÀN bảng (không suy được từ 200 dòng đang xem) — server gắn cờ `is_dup_name` per dòng.
+export type MaterialsListParams = {
+  search?: string; categories?: string[]; status?: string[]; qr?: string[]; dq?: string[]
+}
+export type MaterialsPage = { rows: (import('@/types').Material & { is_dup_name?: boolean })[]; total: number }
+export type MaterialsSummary = { total: number; active: number; inactive: number; no_qr: number; incomplete: number; dup: number }
+
+function materialsCsvParams(p: MaterialsListParams) {
+  const j = (a?: string[]) => (a?.length ? a.join(',') : undefined)
+  return { search: p.search || undefined, categories: j(p.categories), status: j(p.status), qr: j(p.qr), dq: j(p.dq) }
+}
+
+export function useMaterialsPaged(params: MaterialsListParams & { page: number; page_size: number }) {
+  const qp = { ...materialsCsvParams(params), page: params.page, page_size: params.page_size }
+  return useQuery({
+    queryKey: ['materials-paged', qp],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials', { params: qp })
+      return data.data as MaterialsPage
+    },
+  })
+}
+
+export function useMaterialsSummary(params: MaterialsListParams) {
+  const qp = materialsCsvParams(params)
+  return useQuery({
+    queryKey: ['materials-summary', qp],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials/summary', { params: qp })
+      return data.data as MaterialsSummary
+    },
+  })
+}
+
 export function useImportShifts() {
   return useQuery({
     queryKey: ['import-shifts'],
@@ -387,9 +467,15 @@ export function useDeleteLocation() {
 export function useBulkFlagLocations() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { ids: string[]; requires_stocktake: boolean }) =>
+    // Danh sách đã phân trang → gửi CỜ bộ lọc (`by_filter`) để BE tự resolve TOÀN BỘ vị trí khớp,
+    // thay vì nhồi hàng nghìn id qua mạng. Vẫn nhận `ids` cho chỗ gọi cũ.
+    mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>; requires_stocktake: boolean }) =>
       apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number; requires_stocktake: boolean }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['locations-paged'] })
+      qc.invalidateQueries({ queryKey: ['locations-summary'] })
+    },
   })
 }
 

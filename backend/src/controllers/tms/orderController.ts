@@ -6,7 +6,8 @@ import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 import { uuidList } from '../../utils/ids'
-import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP } from '../../utils/pagination'
+import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -198,6 +199,14 @@ export async function listOrders(req: Request, res: Response) {
     const from = date_from || date
     const to   = date_to || date
     if (!from) return fail(res, 'date_from là bắt buộc', 400)
+
+    // Có ?page= → TRANG (lưới Kế hoạch). Không có → giữ mode cũ trả MẢNG cho consumer khác
+    // (dialog chọn đơn, trang chi tiết…) — đổi hết một lượt là rủi ro, không cần thiết.
+    if (req.query.page) {
+      const ctx = getTmsListCtx(req)
+      if (!ctx.warehouseId && !ctx.nccUser) return fail(res, 'warehouse_id là bắt buộc', 400)
+      return await listOrdersPaged(req, res, ctx)
+    }
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
     // Scope kho + Loại hàng: ASSIGNED không xem được kho ngoài phạm vi / loại ngoài allowed_categories
@@ -225,6 +234,189 @@ export async function listOrders(req: Request, res: Response) {
     }, LIST_ROW_CAP)
     if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
     return ok(res, data)
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// ─── Phân trang SERVER lưới Kế hoạch (3 endpoint dùng CHUNG bộ lọc) ─────────────────────────────
+// Lệch bộ lọc giữa page/summary/facets = pager và tổng đá nhau → parse 1 CHỖ duy nhất ở đây.
+type TmsListCtx = {
+  from: string; to: string
+  warehouseId: string | null
+  nccUser: string | null
+  categories: string[] | null
+  scopeWh: string[] | null
+  directions: string[] | null
+  dvvt: string[] | null
+  whTypes: string[] | null
+  vehicleTypes: string[] | null
+  slotIds: string[] | null
+  unbooked: boolean
+  blocked: boolean          // ngoài phạm vi kho được giao → trả rỗng (không lộ dữ liệu kho khác)
+}
+
+// Nhận cả chuỗi CSV (query-string) lẫn mảng (bộ lọc gửi trong body JSON) — sai kiểu ở đây từng
+// làm material-summary văng 500 khi client gửi mảng.
+const csv = (v?: string | string[]): string[] | null => {
+  const arr = (Array.isArray(v) ? v : String(v ?? '').split(','))
+    .map(s => String(s).trim()).filter(Boolean)
+  return arr.length ? arr : null
+}
+
+// `q` tách khỏi req để dùng được cả cho query-string (GET) lẫn object bộ lọc trong body (POST).
+type RawFilter = Record<string, string | string[] | boolean | undefined>
+function getTmsListCtx(req: Request, raw: RawFilter = req.query as RawFilter): TmsListCtx {
+  const q = raw
+  const str = (v: string | string[] | boolean | undefined): string => (typeof v === 'string' ? v : '')
+  const from = str(q.date_from) || str(q.date) || ''
+  const to   = str(q.date_to)   || str(q.date) || from
+  const scope = scopeWhIds(req)
+  const warehouseId = str(q.warehouse_id) || null
+  const slotIds = csv(q.slot_ids as string | string[] | undefined)
+  return {
+    from, to,
+    warehouseId,
+    nccUser: req.user?.ncc_id ?? null,
+    categories: scopeCategoriesOf(req),
+    // Chọn 1 kho cụ thể → đã gác bằng `blocked`; không chọn kho thì cắt theo danh sách kho được giao.
+    scopeWh: warehouseId ? null : scope,
+    directions:   csv(q.directions as string | string[] | undefined),
+    dvvt:         uuidList(csv(q.dvvt as string | string[] | undefined) ?? []).length
+                    ? uuidList(csv(q.dvvt as string | string[] | undefined) ?? []) : null,
+    whTypes:      csv(q.wh_types as string | string[] | undefined),
+    vehicleTypes: csv(q.vehicle_types as string | string[] | undefined),
+    slotIds:      slotIds && uuidList(slotIds).length ? uuidList(slotIds) : null,
+    unbooked:     q.unbooked === '1' || q.unbooked === true || (slotIds?.includes('__chua_dat__') ?? false),
+    blocked:      scope !== null && (scope.length === 0 || (!!warehouseId && !scope.includes(warehouseId))),
+  }
+}
+
+const tmsRpcFilterParams = (c: TmsListCtx) => ({
+  p_date_from: c.from, p_date_to: c.to,
+  p_warehouse_id: c.warehouseId, p_ncc_user: c.nccUser,
+  p_categories: c.categories, p_scope_wh: c.scopeWh,
+  p_directions: c.directions, p_dvvt: c.dvvt,
+  p_wh_types: c.whTypes, p_vehicle_types: c.vehicleTypes,
+  p_slot_ids: c.slotIds, p_unbooked: c.unbooked,
+})
+
+// GET /api/tms/orders?page=1&page_size=200&… — 1 TRANG lưới Kế hoạch.
+// Đơn vị trang = CỤM xe gom (đơn chủ + đơn gom chung xe) để lưới rowspan không bị cắt ngang trang.
+async function listOrdersPaged(req: Request, res: Response, ctx: TmsListCtx) {
+  const q = req.query as Record<string, string>
+  const page     = Math.max(1, Number(q.page) || 1)
+  const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
+  if (ctx.blocked) {
+    return ok(res, { rows: [], total: 0, total_pages: 1, page_from: 0, page_to: 0 })
+  }
+
+  const { data: pageData, error: pageErr } = await supabase.rpc('tms_orders_page', {
+    p_offset: (page - 1) * pageSize, p_limit: pageSize, ...tmsRpcFilterParams(ctx),
+  })
+  if (pageErr) throw new Error(pageErr.message)
+  const p = (pageData ?? {}) as {
+    ids?: string[]; total_orders?: number; total_blocks?: number; page_from?: number; page_orders?: number
+    stt?: Record<string, number>
+  }
+  const ids = p.ids ?? []
+  const sttMap = p.stt ?? {}
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = ids.length
+    ? await fetchByIdChunks(ids, chunk => supabase.from('TmsOrder').select(ORDER_SELECT).in('id', chunk).order('id'))
+    : []
+  // PostgREST `.in()` KHÔNG giữ thứ tự → sắp lại đúng thứ tự hiển thị mà RPC đã quyết.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byId = new Map<string, any>(rows.map((r: any) => [r.id as string, r]))
+  const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+  for (const o of ordered) {
+    // Thứ tự xe trong 1 đơn phải KHỚP thứ tự RPC đánh STT (created_at, id) — PostgREST không đảm bảo.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    o.vehicle_slots = ((o.vehicle_slots ?? []) as any[]).sort((a, b) =>
+      (a.created_at ?? '') < (b.created_at ?? '') ? -1 : (a.created_at ?? '') > (b.created_at ?? '') ? 1 : (a.id < b.id ? -1 : 1))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of o.vehicle_slots as any[]) s.stt = sttMap[`${o.id}/${s.id}`] ?? null
+    o.stt_no_slot = sttMap[`${o.id}/`] ?? null   // đơn chưa có xe: STT của dòng ảo
+  }
+
+  const total      = p.total_orders ?? 0
+  const totalPages = Math.max(1, Math.ceil((p.total_blocks ?? 0) / pageSize))
+  const pageFrom   = p.page_orders ? (p.page_from ?? 1) : 0
+  return ok(res, {
+    rows: ordered, total, total_pages: totalPages,
+    page_from: pageFrom, page_to: pageFrom ? pageFrom + (p.page_orders ?? 0) - 1 : 0,
+  })
+}
+
+// GET /api/tms/orders/summary — tổng SummaryBand trên TOÀN BỘ bộ lọc (không phải trang đang xem)
+export async function listOrdersSummary(req: Request, res: Response) {
+  try {
+    const ctx = getTmsListCtx(req)
+    if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+    if (ctx.blocked) return ok(res, { orders: 0, vehicles: 0, boxes: 0, pallets: 0, tons: 0, done: 0 })
+    const { data, error } = await supabase.rpc('tms_orders_summary', tmsRpcFilterParams(ctx))
+    if (error) throw new Error(error.message)
+    return ok(res, data ?? {})
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// GET /api/tms/orders/facets — option filter ĐVVT / Loại kho / Loại xe + gợi ý NPP (DISTINCT dưới DB)
+export async function listOrdersFacets(req: Request, res: Response) {
+  try {
+    const ctx = getTmsListCtx(req)
+    if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+    if (ctx.blocked) return ok(res, { dvvt: [], wh_types: [], vehicle_types: [], npp_names: [] })
+    const { data, error } = await supabase.rpc('tms_orders_facets', {
+      p_date_from: ctx.from, p_date_to: ctx.to,
+      p_warehouse_id: ctx.warehouseId, p_ncc_user: ctx.nccUser,
+      p_categories: ctx.categories, p_scope_wh: ctx.scopeWh,
+    })
+    if (error) throw new Error(error.message)
+    return ok(res, data ?? {})
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// GET /api/tms/orders/consolidatable?order_id=… — đơn có thể GOM CHUNG XE với đơn đang đặt lịch.
+// Trước đây dialog lọc trong danh sách đã tải về máy; phân trang rồi thì phải hỏi server.
+export async function listConsolidatable(req: Request, res: Response) {
+  try {
+    const orderId = (req.query.order_id as string) || ''
+    if (!uuidList([orderId]).length) return ok(res, [])
+    const { data: cur } = await supabase.from('TmsOrder')
+      .select('id, date, ncc_id, direction, warehouse_id').eq('id', orderId).maybeSingle()
+    if (!cur) return ok(res, [])
+    const o = cur as { id: string; date: string; ncc_id: string | null; direction: string | null; warehouse_id: string }
+    const scope = scopeWhIds(req)
+    if (scope !== null && !scope.includes(o.warehouse_id)) return ok(res, [])
+    if (!o.ncc_id) return ok(res, [])
+    const cats = scopeCategoriesOf(req)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = supabase.from('TmsOrder').select(ORDER_SELECT)
+      .eq('date', o.date).eq('ncc_id', o.ncc_id).neq('id', o.id)
+      .eq('warehouse_id', o.warehouse_id)
+      .neq('source_type', 'TRANSFER')
+      .order('created_at')
+    if (o.direction) q = q.eq('direction', o.direction)
+    if (cats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${cats.map(c => `"${c}"`).join(',')})`)
+    const { data, error } = await q.limit(500)
+    if (error) throw new Error(error.message)
+    // Điều kiện gom (mirror FE cũ): xe chính còn PENDING và CHƯA nằm trong cụm gom nào
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = ((data ?? []) as any[]).filter(row => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const slots = (row.vehicle_slots ?? []) as any[]
+      const main = slots.find(vs => vs.consolidation_group_id) ?? slots[0]
+      return main && main.status === 'PENDING' && !main.consolidation_group_id
+    })
+    return ok(res, list)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -641,7 +833,23 @@ export async function getPlanVsActual(req: Request, res: Response) {
 // vs thực nhận (ProductionImport → InventoryEntry; mã no-QR dùng posm_cartons). Khớp với actual_received của list.
 export async function getMaterialSummary(req: Request, res: Response) {
   try {
-    const { order_ids } = req.body as { order_ids?: string[] }
+    let { order_ids } = req.body as { order_ids?: string[] }
+    // Lưới Kế hoạch đã PHÂN TRANG → client không còn giữ đủ id đơn NHẬP của bộ lọc. Gửi CỜ bộ lọc
+    // (`by_filter`) để BE tự resolve — không nhồi hàng nghìn id qua mạng (luật id-list-url-limits).
+    if (!order_ids && (req.body as { by_filter?: boolean }).by_filter) {
+      const ctx = getTmsListCtx(req, (req.body as { filter?: Record<string, string> }).filter ?? {})
+      if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+      if (ctx.blocked) return ok(res, [])
+      // Chỉ đơn NHẬP mới có inbound_plan_lines; giao với filter Hướng đang chọn (chọn Xuất → rỗng).
+      const dirs = ctx.directions ? (ctx.directions.includes('INBOUND') ? ['INBOUND'] : []) : ['INBOUND']
+      if (!dirs.length) return ok(res, [])
+      const { data, error } = await supabase.rpc('tms_orders_page', {
+        p_offset: 0, p_limit: 2_000_000_000, p_with_stt: false,
+        ...tmsRpcFilterParams({ ...ctx, directions: dirs }),
+      })
+      if (error) throw new Error(error.message)
+      order_ids = ((data ?? {}) as { ids?: string[] }).ids ?? []
+    }
     if (!Array.isArray(order_ids) || order_ids.length === 0) return ok(res, [])
     // Lọc id không phải UUID trước khi query cột uuid: id rác ("abc"/số/null) → Postgres lỗi cast
     // 22P02 → controller nuốt thành 500 thô (fuzz API 26/07). Lọc xong rỗng → trả [] (không khớp gì).

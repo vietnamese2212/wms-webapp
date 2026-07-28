@@ -435,6 +435,8 @@ export interface TmsVehicleSlot {
   gate_exit_at:              string | null
   created_at:    string
   updated_at:    string
+  /** STT xe trong TOÀN phạm vi ngày+kho (server tính — không đổi khi lọc/lật trang) */
+  stt?:          number | null
 }
 
 export interface TmsOrder {
@@ -466,6 +468,8 @@ export interface TmsOrder {
   updated_at:      string
   completed_at?:   string | null
   vehicle_slots:   TmsVehicleSlot[]
+  /** STT dòng ảo của đơn CHƯA có xe nào (server tính cùng `TmsVehicleSlot.stt`) */
+  stt_no_slot?:    number | null
 }
 
 // TMS – Foundation

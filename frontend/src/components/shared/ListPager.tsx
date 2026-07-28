@@ -40,8 +40,10 @@ export function PagerNav({ page, totalPages, onPage }: {
  * @param unit  danh từ đếm của trang: 'phiếu' | 'pallet' | 'chuyến' | 'dòng'…
  * @param right nội dung phụ căn PHẢI (vd tổng pallet · thùng)
  * @param children chèn ngay sau phần đếm (vd "· 1 đang xem")
+ * @param from,to khoảng dòng THẬT của trang (1-based) — chỉ truyền khi trang KHÔNG chia đều
+ *        pageSize, vd lưới TMS Kế hoạch cắt tại ranh giới cụm nên trang có thể dôi vài dòng.
  */
-export function ListFooter({ page, pageSize, total, unit, onPageSize, right, children }: {
+export function ListFooter({ page, pageSize, total, unit, onPageSize, right, children, from, to }: {
   page: number
   pageSize: number
   total: number
@@ -49,12 +51,16 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
   onPageSize: (n: number) => void
   right?: React.ReactNode
   children?: React.ReactNode
+  from?: number
+  to?: number
 }) {
+  const lo = from ?? (page - 1) * pageSize + 1
+  const hi = to ?? Math.min(page * pageSize, total)
   return (
     <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between gap-3 sm:rounded-b-xl">
       <span className="min-w-0">
         {total > 0
-          ? `${((page - 1) * pageSize + 1).toLocaleString('vi-VN')}–${Math.min(page * pageSize, total).toLocaleString('vi-VN')} / ${total.toLocaleString('vi-VN')} ${unit}`
+          ? `${lo.toLocaleString('vi-VN')}–${hi.toLocaleString('vi-VN')} / ${total.toLocaleString('vi-VN')} ${unit}`
           : `0 ${unit}`}
         {children}
         <label className="ml-3 inline-flex items-center gap-1 text-slate-400">

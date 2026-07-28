@@ -19,6 +19,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { RowFilterChips, rowFilterPass, type RowFilterVal } from '@/components/shared/RowFilterChips'
@@ -31,14 +32,15 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import {
   useWarehouses, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
-  useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
+  useTmsOrdersPaged, useTmsOrdersSummary, useTmsOrdersFacets, useConsolidatableOrders, tmsCsvParams,
+  useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
   usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials, useMaterialsByCodes,
   fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
-  useCompleteInboundOrder, useScanManualPallet, useMaterialSummary,
+  useCompleteInboundOrder, useScanManualPallet, useMaterialSummary, useMaterialSummaryByFilter,
   useCancelInboundOrder, useDeletePalletEntry,
   type TransferOrder,
 } from '@/api/hooks'
@@ -224,11 +226,10 @@ function PlateCombobox({ value, onChange, plates }: {
 
 // ── ĐVVT Book Dialog (điền slot + biển số + SĐT cho 1 VehicleSlot) ──────────
 
-function BookSlotDialog({ vslot, order, onClose, allOrders }: {
+function BookSlotDialog({ vslot, order, onClose }: {
   vslot: TmsVehicleSlot | null
   order: TmsOrder | null
   onClose: () => void
-  allOrders: TmsOrder[]
 }) {
   const updateSlot = useUpdateVehicleSlot()
   const user = useAuthStore(s => s.user)
@@ -260,19 +261,18 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     }
   }, [vslot?.id, isDriver])
 
-  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group này
+  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group này — hỏi SERVER (danh sách Kế
+  // hoạch đã phân trang nên không còn mảng "toàn bộ đơn" ở client để lọc).
+  const canConsolidate = !isDriver && !!order && ['PENDING', 'BOOKED', 'ARRIVED'].includes(vslot?.status ?? '')
+  const { data: consolidatableRaw = [] } = useConsolidatableOrders(canConsolidate ? order?.id : undefined)
   const consolidatableOrders = useMemo(() => {
-    if (isDriver || !order || !['PENDING', 'BOOKED', 'ARRIVED'].includes(vslot?.status ?? '')) return []
+    if (!canConsolidate) return []
     const currentGroupId = vslot?.consolidation_group_id ?? null
-    return allOrders.filter(o => {
-      if (o.id === order.id || o.ncc_id !== order.ncc_id || o.date !== order.date) return false
-      if (o.direction !== order.direction) return false  // Xuất chỉ đi với Xuất, Nhập với Nhập
+    return consolidatableRaw.filter(o => {
       const mainSlot = o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
-      if (!mainSlot) return false
-      if (currentGroupId && mainSlot.consolidation_group_id === currentGroupId) return false
-      return mainSlot.status === 'PENDING' && !mainSlot.consolidation_group_id
+      return !!mainSlot && !(currentGroupId && mainSlot.consolidation_group_id === currentGroupId)
     })
-  }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, vslot?.consolidation_group_id, isDriver])
+  }, [consolidatableRaw, canConsolidate, vslot?.consolidation_group_id])
 
   const handleSave = async (skipVtCheck = false) => {
     if (!vslot || !order) return
@@ -1998,13 +1998,17 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
 }
 
 // Band tổng hợp theo MÃ HÀNG (KH · thực tế · chênh lệch) để tra cứu — kiểu expand "Phân bổ theo NPP" của Outbound.
-// orderIds = các đơn ĐÃ lọc trên UI; có ô tìm mã hàng/tên để tra cứu nhanh. Tổng ở header tính trên dòng đã lọc.
-function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
+// Tính trên TOÀN BỘ đơn NHẬP của bộ lọc (BE tự resolve từ cờ filter — danh sách đã phân trang nên
+// client không còn giữ đủ id); có ô tìm mã hàng/tên để tra cứu nhanh.
+// `filter` = lưới Kế hoạch (đã phân trang); `orderIds` = tab Chuyển kho (danh sách nhỏ, chưa phân trang).
+function MaterialSummaryBand({ filter, orderIds }: { filter?: Record<string, string | undefined>; orderIds?: string[] }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   // isLoading (lần tải ĐẦU của key) thay isFetching: band đăng ký realtime 4 bảng nóng (InventoryEntry…)
   // → refetch nền vài giây/lần, dùng isFetching làm chữ "đang tải" nhấp nháy liên tục. Refetch nền chạy im lặng.
-  const { data: rows = [], isLoading } = useMaterialSummary(orderIds, orderIds.length > 0)
+  const byFilter = useMaterialSummaryByFilter(orderIds ? undefined : filter)
+  const byIds    = useMaterialSummary(orderIds ?? [], !!orderIds)
+  const { data: rows = [], isLoading } = orderIds ? byIds : byFilter
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -2027,7 +2031,7 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
   const unitSummary = (u: string, t: { planned: number; actual: number; diff: number }) =>
     `${unitLabel(u)}: KH ${t.planned.toLocaleString('vi-VN')} · TT ${t.actual.toLocaleString('vi-VN')} · CL ${fmtDiff(t.diff)}`
 
-  if (orderIds.length === 0) return null
+  if ((!filter && !orderIds?.length) || (!isLoading && rows.length === 0)) return null
   return (
     <div className="border-b border-slate-200 bg-white shrink-0">
       <button type="button" onClick={() => setOpen(v => !v)}
@@ -3693,12 +3697,12 @@ export default function TMSBookings() {
   const tf    = useWmsFilterStore(s => s.tmsBookings)
   const setTf = useWmsFilterStore(s => s.setTmsBookings)
   const dateFrom       = tf.dateFrom;  const dateTo            = tf.dateTo
-  const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v })
-  const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v })
-  const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v })
-  const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v })
-  const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v })
-  const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v })
+  const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v, page: 1 })
+  const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v, page: 1 })
+  const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v, page: 1 })
+  const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v, page: 1 })
+  const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v, page: 1 })
+  const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v, page: 1 })
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
 
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
@@ -3725,13 +3729,25 @@ export default function TMSBookings() {
   const { data: whTypesMain = [] }            = useScopedWhTypes()
   const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
-  const { data: orders = [], isLoading, error: listErr } = useTmsOrders(
-    (warehouseId || isNccUser) ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined } : undefined,
-  )
-  const nppSuggestions = useMemo(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.npp_name).filter(Boolean) as string[])].sort(),
-    [orders]
-  )
+  // PHÂN TRANG SERVER: trang + tổng + option filter là 3 lời gọi CÙNG một bộ lọc (lệch nhau =
+  // pager và tổng đá nhau). Không lọc/sắp xếp lại ở client — thứ tự do SQL quyết.
+  const canQuery = !!(warehouseId || isNccUser) && !!dateFrom
+  const listParams = useMemo(() => canQuery ? {
+    date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined,
+    directions: huongFilter, dvvt: dvvtFilter, wh_types: loaiKhoFilter, vehicle_types: loaiXeFilter,
+    slot_ids: khungGioFilter.filter(v => v !== '__chua_dat__'),
+    unbooked: khungGioFilter.includes('__chua_dat__'),
+  } : undefined, [canQuery, dateFrom, dateTo, warehouseId, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+  const baseParams = useMemo(() => canQuery
+    ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined }
+    : undefined, [canQuery, dateFrom, dateTo, warehouseId])
+
+  const { data: pageData, isLoading, error: listErr } =
+    useTmsOrdersPaged(listParams ? { ...listParams, page: tf.page, page_size: tf.pageSize } : undefined)
+  const { data: summary } = useTmsOrdersSummary(listParams)
+  const { data: facets }  = useTmsOrdersFacets(baseParams)
+  const orders = pageData?.rows ?? []
+  const nppSuggestions = facets?.npp_names ?? []
   const deleteOrder        = useDeleteOrder()
   const addVehicleSlot     = useAddVehicleSlot()
   const releaseVehicleSlot = useReleaseVehicleSlot()
@@ -3754,55 +3770,23 @@ export default function TMSBookings() {
     { value: 'OUTBOUND', label: 'Xuất' },
     { value: 'INBOUND',  label: 'Nhập' },
   ]
+  // Option filter lấy từ FACETS (DISTINCT dưới DB trên phạm vi nền) — KHÔNG suy từ trang đang xem,
+  // nếu không thì lật trang là danh sách lựa chọn đổi theo.
   const dvvtOptions = useMemo<MSOpt[]>(() =>
-    [...new Map((orders as TmsOrder[])
-      .filter(o => o.ncc_id && o.ncc?.name)
-      .map(o => [o.ncc_id!, { value: o.ncc_id!, label: o.ncc!.name! }])
-    ).values()], [orders]
-  )
+    (facets?.dvvt ?? []).map(d => ({ value: d.id, label: d.name })), [facets])
   const loaiKhoOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.warehouse_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })), [orders]
-  )
+    (facets?.wh_types ?? []).map(v => ({ value: v, label: v })), [facets])
   const loaiXeOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.vehicle_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })), [orders]
-  )
+    (facets?.vehicle_types ?? []).map(v => ({ value: v, label: v })), [facets])
 
-  // Filter client-side trên orders
-  const filteredOrders = useMemo(() => {
-    let list = orders as TmsOrder[]
-    if (huongFilter.length)    list = list.filter(o => o.direction && huongFilter.includes(o.direction))
-    if (dvvtFilter.length)     list = list.filter(o => o.ncc_id && dvvtFilter.includes(o.ncc_id))
-    if (loaiKhoFilter.length)  list = list.filter(o => o.warehouse_type && loaiKhoFilter.includes(o.warehouse_type))
-    if (loaiXeFilter.length) {
-      const directIds = new Set(list.filter(o => o.vehicle_type && loaiXeFilter.includes(o.vehicle_type)).map(o => o.id))
-      const partnerGroupIds = new Set<string>()
-      for (const o of list) {
-        if (!directIds.has(o.id)) continue
-        for (const vs of o.vehicle_slots) {
-          if (vs.consolidation_group_id) partnerGroupIds.add(vs.consolidation_group_id)
-        }
-      }
-      list = list.filter(o => {
-        if (directIds.has(o.id)) return true
-        return o.vehicle_slots.some(vs => vs.consolidation_group_id && partnerGroupIds.has(vs.consolidation_group_id))
-      })
-    }
-    if (khungGioFilter.length) {
-      list = list.filter(o => o.vehicle_slots.some(vs => {
-        if (!vs.slot_id && khungGioFilter.includes('__chua_dat__')) return true
-        if (vs.slot_id && khungGioFilter.includes(vs.slot_id)) return true
-        return false
-      }))
-    }
-    return list
-  }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+  // Trang đã được SERVER lọc + sắp xếp — dựng lưới thẳng từ đây (không lọc lại client).
+  const filteredOrders = orders as TmsOrder[]
 
-  // Tất cả filter tab Kế hoạch gom 1 chỗ qua FilterBar (ngày = daterange Từ–Đến)
+  // Tất cả filter tab Kế hoạch gom 1 chỗ qua FilterBar (ngày = daterange Từ–Đến).
+  // MỌI onChange filter phải kèm page: 1 — không thì đang đứng trang 5 lọc xong sẽ ra trang trống.
   const mainFilterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
-      onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf }) } },
+      onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf, page: 1 }) } },
     { key: 'huong', label: 'Hướng', type: 'single', allLabel: 'Tất cả',
       value: huongFilter.length === 1 ? huongFilter[0] : '',
       onChange: v => setHuongFilter(v ? [v] : []), options: huongOptions },
@@ -3813,22 +3797,16 @@ export default function TMSBookings() {
   ]
 
 
-  // STT ổn định theo toàn kho (không nhảy khi filter) — pre-compute trên ALL orders
+  // STT xe do SERVER đánh trên TOÀN phạm vi ngày+kho (không nhảy khi lọc, không lệ thuộc trang
+  // đang xem). Trước đây tính ở client trên toàn bộ đơn đã tải — phân trang rồi thì không còn đủ dữ liệu.
   const stableVehicleStt = useMemo<Map<string, number>>(() => {
     const map = new Map<string, number>()
-    let stt = 0
     for (const o of (orders as TmsOrder[])) {
-      const slots = o.vehicle_slots.length > 0 ? o.vehicle_slots : [null as unknown as TmsVehicleSlot]
-      for (let si = 0; si < slots.length; si++) {
-        const s = slots[si]
-        if (s && s.consolidation_group_id && !s.is_consolidation_primary) continue
-        map.set(`${o.id}/${si}`, ++stt)
+      if (o.vehicle_slots.length === 0) {
+        if (o.stt_no_slot != null) map.set(`${o.id}/0`, o.stt_no_slot)
+        continue
       }
-    }
-    // Orphans (all slots are secondary)
-    for (const o of (orders as TmsOrder[])) {
-      if (o.vehicle_slots.some((_, si) => map.has(`${o.id}/${si}`))) continue
-      map.set(`${o.id}/0`, ++stt)
+      o.vehicle_slots.forEach((s, si) => { if (s.stt != null) map.set(`${o.id}/${si}`, s.stt) })
     }
     return map
   }, [orders])
@@ -3951,48 +3929,23 @@ export default function TMSBookings() {
     return rows
   }, [filteredOrders])
 
-  // Phân trang lưới Kế hoạch: render theo TRANG để không treo khi nhiều đơn/đa-ngày.
-  // CẮT TẠI RANH GIỚI CỤM (blockKey) → 1 cụm xe gom/tách luôn trọn 1 trang → rowspan co dãn đúng.
-  const [planPage, setPlanPage] = useState(1)
-  const [planPageSize, setPlanPageSize] = useState(200)
-  const planPages = useMemo<TableRow[][]>(() => {
-    const out: TableRow[][] = []
-    let cur: TableRow[] = []
-    let i = 0
-    while (i < tableRows.length) {
-      const bk = tableRows[i].blockKey
-      const block: TableRow[] = []
-      while (i < tableRows.length && tableRows[i].blockKey === bk) { block.push(tableRows[i]); i++ }
-      // đóng trang trước khi thêm cụm sẽ vượt cỡ (trang có thể >pageSize chút để trọn cụm — đúng "200 hoặc hơn")
-      if (cur.length > 0 && cur.length + block.length > planPageSize) { out.push(cur); cur = [] }
-      cur.push(...block)
-    }
-    if (cur.length) out.push(cur)
-    return out
-  }, [tableRows, planPageSize])
-  const planPageCount = Math.max(1, planPages.length)
-  const planSafePage  = Math.min(planPage, planPageCount)
-  const pagedRows     = planPages[planSafePage - 1] ?? []
-  // Reset về trang 1 khi đổi filter/ngày/kho/cỡ trang — KHÔNG reset khi realtime refetch (giữ trang đang xem)
-  useEffect(() => { setPlanPage(1) }, [dateFrom, dateTo, warehouseId, planPageSize, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+  // Phân trang do SERVER cắt (đơn vị = CỤM xe gom, xem migration 20260728_tms_orders_paged_rpc):
+  // 1 cụm luôn trọn 1 trang nên rowspan không bao giờ bị xé ngang trang.
+  const planPage        = tf.page
+  const planPageSize    = tf.pageSize
+  const setPlanPage     = (p: number) => setTf({ page: p })
+  const setPlanPageSize = (n: number) => setTf({ pageSize: n, page: 1 })
+  const planPageCount   = pageData?.total_pages ?? 1
+  const planSafePage    = Math.min(planPage, planPageCount)
+  const pagedRows       = tableRows
+  // Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối (không để màn trống)
+  useEffect(() => {
+    if (!isLoading && pageData && tf.page > pageData.total_pages) setTf({ page: pageData.total_pages })
+  }, [isLoading, pageData, tf.page, setTf])
 
-  // Subtotal tab Kế hoạch (SummaryBand) — tính trên dữ liệu ĐÃ filter
-  const mainSummary = useMemo(() => {
-    let boxes = 0, pallets = 0, tons = 0
-    for (const o of filteredOrders) {
-      boxes   += o.planned_boxes ?? 0
-      pallets += o.planned_pallets ?? 0
-      tons    += o.planned_tons ?? 0
-    }
-    const vehicles = tableRows.filter(r => r.stt !== null).length
-    const done = filteredOrders.filter(o => o.vehicle_slots.length > 0 && o.vehicle_slots.every(vs => vs.status === 'DONE')).length
-    return { orders: filteredOrders.length, vehicles, boxes, pallets, tons, done }
-  }, [filteredOrders, tableRows])
-
-  // Band tổng hợp mã hàng chỉ cho phần NHẬP (Kế hoạch) — đơn INBOUND mới có inbound_plan_lines.
-  const inboundOrderIds = useMemo(
-    () => filteredOrders.filter(o => o.direction === 'INBOUND').map(o => o.id),
-    [filteredOrders])
+  // Tổng SummaryBand tính bằng SQL trên TOÀN BỘ bộ lọc — KHÔNG cộng trên trang đang xem (sẽ ra
+  // "tổng của trang 1", đúng họ bẫy im lặng của phân trang).
+  const mainSummary = summary ?? { orders: 0, vehicles: 0, boxes: 0, pallets: 0, tons: 0, done: 0 }
 
   const canEditOrder = (o: TmsOrder) =>
     canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
@@ -4198,7 +4151,7 @@ export default function TMSBookings() {
         ]} />
       )}
       {activeTab === 'main' && (warehouseId || isNccUser) && (
-        <MaterialSummaryBand orderIds={inboundOrderIds} />
+        <MaterialSummaryBand filter={listParams ? tmsCsvParams(listParams) : undefined} />
       )}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>
         {!warehouseId && !isNccUser ? (
@@ -4543,28 +4496,20 @@ export default function TMSBookings() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={planSafePage} totalPages={planPageCount} onPage={setPlanPage} />
       </div>
 
-      {/* Footer đếm bản ghi + phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl flex items-center gap-3 flex-wrap">
-        {activeTab === 'main' ? (
-          <>
-            <span>{(orders as TmsOrder[]).length.toLocaleString('vi-VN')} đơn · {tableRows.length.toLocaleString('vi-VN')} dòng</span>
-            {planPageCount > 1 && (
-              <span className="flex items-center gap-1.5">
-                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage <= 1} onClick={() => setPlanPage(p => Math.max(1, p - 1))}>‹ Trước</button>
-                <span className="tabular-nums">Trang {planSafePage}/{planPageCount}</span>
-                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage >= planPageCount} onClick={() => setPlanPage(p => Math.min(planPageCount, p + 1))}>Sau ›</button>
-              </span>
-            )}
-            <span className="flex items-center gap-1">Cỡ trang:
-              {[200, 500, 1000].map(sz => (
-                <button key={sz} className={`px-1.5 py-0.5 rounded border ${planPageSize === sz ? 'border-sky-500 text-sky-700 bg-sky-50' : 'border-slate-300 hover:bg-slate-100'}`} onClick={() => setPlanPageSize(sz)}>{sz}</button>
-              ))}
-            </span>
-          </>
-        ) : 'Chuyển kho'}
-      </div>
+      {/* Footer đếm bản ghi + phân trang (chuẩn chung ListPager) */}
+      {activeTab === 'main' ? (
+        <ListFooter
+          page={planSafePage} pageSize={planPageSize} total={pageData?.total ?? 0} unit="đơn"
+          from={pageData?.page_from ?? 0} to={pageData?.page_to ?? 0}
+          onPageSize={setPlanPageSize}
+          right={`${tableRows.length.toLocaleString('vi-VN')} dòng · ${mainSummary.vehicles.toLocaleString('vi-VN')} xe`}
+        />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">Chuyển kho</div>
+      )}
      </div>
 
       <CreateEditDialog
@@ -4579,7 +4524,6 @@ export default function TMSBookings() {
         vslot={bookingSlot?.vslot ?? null}
         order={bookingSlot?.order ?? null}
         onClose={() => setBookingSlot(null)}
-        allOrders={orders as TmsOrder[]}
       />
       <SlotOverviewDialog
         open={slotOverviewOpen}

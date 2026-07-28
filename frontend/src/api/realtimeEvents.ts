@@ -29,8 +29,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc
   Vehicle:             [['tms-vehicles']],
   // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
-  TmsOrder:            [['tms-orders'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
-  TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
+  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
+  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations'], ['control-tower']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
@@ -88,19 +88,18 @@ function patchSlotCache(payload: Payload) {
   )
 
   // 2. Patch slot embedded trong TmsOrder.vehicle_slots[].slot
-  queryClient.setQueriesData<TmsOrder[]>(
-    { queryKey: ['tms-orders'] },
-    (old) => {
-      if (!Array.isArray(old)) return old
-      return old.map(o => ({
-        ...o,
-        vehicle_slots: o.vehicle_slots.map(vs =>
-          vs.slot_id === updated.id && vs.slot
-            ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
-            : vs
-        ),
-      }))
-    }
+  const patchOrder = (o: TmsOrder): TmsOrder => ({
+    ...o,
+    vehicle_slots: o.vehicle_slots.map(vs =>
+      vs.slot_id === updated.id && vs.slot
+        ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
+        : vs
+    ),
+  })
+  // Lưới Kế hoạch đã phân trang server → cache là { rows, total… }, không phải mảng
+  queryClient.setQueriesData<{ rows: TmsOrder[] }>(
+    { queryKey: ['tms-orders-paged'] },
+    (old) => (old?.rows ? { ...old, rows: old.rows.map(patchOrder) } : old)
   )
 }
 
@@ -190,7 +189,7 @@ export function connectRealtimeEvents(): void {
         // isMutating() bị loại khỏi check vì nó block cả gate mutations (same SPA).
         const suppress = Date.now() < suppressTmsOrdersUntil
         keys.forEach((k) => {
-          if (suppress && k[0] === 'tms-orders') return
+          if (suppress && (k[0] === 'tms-orders-paged' || k[0] === 'tms-orders-summary')) return
           coalescedInvalidate(k)
         })
       }

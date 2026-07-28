@@ -605,7 +605,8 @@ export default function GateRegistration() {
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['gate-registrations'] })
     // call/entry/exit cập nhật TmsOrder.export_status + slot → làm mới trang Bookings đang mở song song
-    qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    qc.invalidateQueries({ queryKey: ['tms-orders-paged'] })
+    qc.invalidateQueries({ queryKey: ['tms-orders-summary'] })
     qc.invalidateQueries({ queryKey: ['gate-suggest'] })
   }
 

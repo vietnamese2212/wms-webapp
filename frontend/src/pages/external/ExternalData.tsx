@@ -3,7 +3,7 @@
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -14,6 +14,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -113,8 +114,6 @@ function StatusBadge({ used, syncStatus }: { used: boolean | undefined; syncStat
 function apiError(err: unknown, fallback: string) {
   return (err as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? fallback
 }
-
-const PAGE_SIZES = [50, 100, 200]
 
 // ─── Shell: chọn tab theo quyền, render tab tương ứng ─────────────────────────
 export default function ExternalData() {
@@ -428,24 +427,10 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setDoSap({ page: p })} />
       </div>
 
-      {/* Footer phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setDoSap({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setDoSap({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setDoSap({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setDoSap({ pageSize: n })} />
      </div>
 
       {/* FormSheet Sửa cả DO — bảng gom mọi mã cùng od_number (mô hình base gốc).
@@ -1119,23 +1104,10 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setKhvc({ page: p })} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setKhvc({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setKhvc({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setKhvc({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setKhvc({ pageSize: n })} />
      </div>
 
       {/* FormSheet Sửa cả Số xe — bảng gom mọi DO cùng group_code.
@@ -1530,7 +1502,6 @@ const ACTION_BADGE: Record<string, { label: string; cls: string }> = {
   BLOCKED:         { label: 'Chặn · trả hàng', cls: 'bg-red-100 text-red-700' },
   RECONCILE_ONLY:  { label: 'Chỉ đối soát', cls: 'bg-slate-100 text-slate-600' },
 }
-const RC_PAGE_SIZES = [50, 100, 200]
 
 function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
   const user  = useAuthStore(s => s.user)
@@ -1668,23 +1639,10 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setReconcile({ page: p })} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 việc'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setReconcile({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {RC_PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setReconcile({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setReconcile({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="việc" onPageSize={n => setReconcile({ pageSize: n })} />
      </div>
 
       {/* Confirm xử lý */}

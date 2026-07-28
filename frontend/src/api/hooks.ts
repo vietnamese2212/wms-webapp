@@ -699,7 +699,7 @@ export function useCompleteInboundOrder() {
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['transfer-goods'] })
     },
@@ -713,7 +713,7 @@ export function useUncompleteInboundOrder() {
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
       qc.invalidateQueries({ queryKey: ['inbound-order', id] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['transfer-goods'] })
     },
@@ -1846,7 +1846,7 @@ export function useQuickExportGDO() {
       qc.invalidateQueries({ queryKey: ['inventory-facets'] })
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
     },
   })
@@ -1868,7 +1868,7 @@ export function useQuickExportExistingGDO() {
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })
       qc.invalidateQueries({ queryKey: ['manual-item-stock'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
     },
   })
@@ -2014,7 +2014,7 @@ export function usePatchGDO() {
     onSettled: (_, __, { id }) => {
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo', id] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
     },
   })
@@ -2714,7 +2714,7 @@ export const useUnstartGDO    = makeUndoGDOMutation('unstart',
   old => ({ ...old, started_at: null, license_plate: null, container_number: null, exporter_name: null, loader_name: null, forklift_driver_id: null, forklift_driver_names: null, status: 'PENDING' }))
 export const useUncompleteGDO = makeUndoGDOMutation('uncomplete',
   old => ({ ...old, status: 'IN_PROGRESS', completed_at: null, scan_completed_at: null }),
-  [['tms-orders'], ['tms-orders-transfer']])
+  [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-transfer']])
 
 export function useWarehouseEmployees(warehouse_id?: string | null) {
   return useQuery({
@@ -3389,14 +3389,81 @@ export function useGenerateSlots() {
 
 // ── TMS Orders ───────────────────────────────────────────────────────────────
 
-export function useTmsOrders(params?: { date_from?: string; date_to?: string; warehouse_id?: string }) {
+// ─── Lưới Kế hoạch vận chuyển: PHÂN TRANG SERVER ────────────────────────────────────────────────
+// Đơn vị trang = CỤM xe gom (đơn chủ + đơn gom chung xe) → lưới rowspan không bị cắt ngang trang;
+// vì thế số đơn mỗi trang xê dịch, `page_from`/`page_to` do SERVER trả (FE không tự nhân page*size).
+export type TmsListFilterParams = {
+  date_from: string; date_to: string; warehouse_id?: string
+  directions?: string[]; dvvt?: string[]; wh_types?: string[]; vehicle_types?: string[]
+  slot_ids?: string[]; unbooked?: boolean
+}
+export type TmsOrdersPage = {
+  rows: import('@/types').TmsOrder[]
+  total: number; total_pages: number; page_from: number; page_to: number
+}
+export type TmsOrdersSummary = { orders: number; vehicles: number; boxes: number; pallets: number; tons: number; done: number }
+export type TmsOrdersFacets = { dvvt: { id: string; name: string }[]; wh_types: string[]; vehicle_types: string[]; npp_names: string[] }
+
+export function tmsCsvParams(p: TmsListFilterParams) {
+  const j = (a?: string[]) => (a?.length ? a.join(',') : undefined)
+  return {
+    date_from: p.date_from, date_to: p.date_to, warehouse_id: p.warehouse_id || undefined,
+    directions: j(p.directions), dvvt: j(p.dvvt), wh_types: j(p.wh_types),
+    vehicle_types: j(p.vehicle_types), slot_ids: j(p.slot_ids),
+    unbooked: p.unbooked ? '1' : undefined,
+  }
+}
+
+export function useTmsOrdersPaged(params: (TmsListFilterParams & { page: number; page_size: number }) | undefined) {
+  const qp = params ? { ...tmsCsvParams(params), page: params.page, page_size: params.page_size } : undefined
   return useQuery({
-    queryKey: ['tms-orders', params],
+    queryKey: ['tms-orders-paged', qp],
+    enabled: !!params,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { data } = await apiClient.get('/tms/orders', { params })
+      const { data } = await apiClient.get('/tms/orders', { params: qp })
+      return data.data as TmsOrdersPage
+    },
+  })
+}
+
+export function useTmsOrdersSummary(params?: TmsListFilterParams) {
+  const qp = params ? tmsCsvParams(params) : undefined
+  return useQuery({
+    queryKey: ['tms-orders-summary', qp],
+    enabled: !!params,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/orders/summary', { params: qp })
+      return data.data as TmsOrdersSummary
+    },
+  })
+}
+
+export function useTmsOrdersFacets(params?: { date_from: string; date_to: string; warehouse_id?: string }) {
+  return useQuery({
+    queryKey: ['tms-orders-facets', params],
+    enabled: !!params,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/orders/facets', { params })
+      return data.data as TmsOrdersFacets
+    },
+  })
+}
+
+// Đơn có thể GOM CHUNG XE với đơn đang đặt lịch (cùng ngày/ĐVVT/hướng, xe chính còn PENDING).
+// Hỏi server vì danh sách đã phân trang — trước đây lọc trong mảng đơn tải sẵn ở máy.
+export function useConsolidatableOrders(orderId?: string) {
+  return useQuery({
+    queryKey: ['tms-consolidatable', orderId],
+    enabled: !!orderId,
+    staleTime: 10_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/orders/consolidatable', { params: { order_id: orderId } })
       return data.data as import('@/types').TmsOrder[]
     },
-    enabled: !!params?.date_from,
   })
 }
 
@@ -3472,6 +3539,7 @@ export type MaterialSummaryRow = {
 }
 
 // Tổng hợp theo mã hàng across danh sách đơn (band tra cứu). order_ids = các đơn ĐÃ lọc trên UI → band khớp list.
+// Theo danh sách id — dùng cho tab Chuyển kho (danh sách nhỏ, chưa phân trang).
 export function useMaterialSummary(orderIds: string[], enabled: boolean) {
   return useQuery({
     queryKey: ['tms-material-summary', [...orderIds].sort().join(',')],
@@ -3480,6 +3548,20 @@ export function useMaterialSummary(orderIds: string[], enabled: boolean) {
       return data.data as MaterialSummaryRow[]
     },
     enabled: enabled && orderIds.length > 0,
+    staleTime: 15_000,
+  })
+}
+
+// Band "Tổng hợp mã hàng" của lưới Kế hoạch: gửi CỜ bộ lọc (BE tự resolve đơn NHẬP của bộ lọc) —
+// danh sách đã phân trang nên client không còn đủ id, và nhồi hàng nghìn id qua mạng là sai luật.
+export function useMaterialSummaryByFilter(filter?: Record<string, string | undefined>) {
+  return useQuery({
+    queryKey: ['tms-material-summary', filter],
+    enabled: !!filter,
+    queryFn: async () => {
+      const { data } = await apiClient.post('/tms/orders/material-summary', { by_filter: true, filter })
+      return data.data as MaterialSummaryRow[]
+    },
     staleTime: 15_000,
   })
 }
@@ -3565,12 +3647,33 @@ type OrderWriteBody = {
   eta?: string | null
 }
 
+// ── Cache lưới Kế hoạch (đã phân trang server) ──────────────────────────────────────────────────
+// Cache là { rows, total… } chứ KHÔNG còn là mảng đơn; và mỗi lần đổi dòng thì TỔNG cũng đổi.
+// Gom 4 helper để mọi mutation chạm đủ cả 2 (rows + summary) — sót 1 chỗ là số liệu lệch im lặng.
+type QC = ReturnType<typeof useQueryClient>
+type TmsOrderT = import('@/types').TmsOrder
+const tmsOrdersCancel = (qc: QC) => qc.cancelQueries({ queryKey: ['tms-orders-paged'] })
+const tmsOrdersSnapshot = (qc: QC) =>
+  qc.getQueriesData({ queryKey: ['tms-orders-paged'] }) as [unknown, unknown][]
+function tmsOrdersPatch(qc: QC, fn: (rows: TmsOrderT[]) => TmsOrderT[]) {
+  qc.setQueriesData<TmsOrdersPage>({ queryKey: ['tms-orders-paged'] },
+    old => (old?.rows ? { ...old, rows: fn(old.rows) } : old))
+}
+function tmsOrdersInvalidate(qc: QC) {
+  qc.invalidateQueries({ queryKey: ['tms-orders-paged'] })
+  qc.invalidateQueries({ queryKey: ['tms-orders-summary'] })
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const tmsRollback = (qc: QC) => (_e: unknown, _v: unknown, ctx: any) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx?.snapshots?.forEach(([k, d]: any) => qc.setQueryData(k, d))
+
 export function useCreateOrder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: OrderWriteBody) =>
       apiClient.post('/tms/orders', body).then(r => r.data.data as import('@/types').TmsOrder),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onSuccess: () => { tmsOrdersInvalidate(qc); qc.invalidateQueries({ queryKey: ['tms-orders-facets'] }) },
   })
 }
 
@@ -3580,7 +3683,7 @@ export function useUpdateOrder() {
     mutationFn: ({ id, ...body }: OrderWriteBody & { id: string }) =>
       apiClient.patch(`/tms/orders/${id}`, body).then(r => r.data.data as import('@/types').TmsOrder),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
     },
   })
@@ -3590,15 +3693,14 @@ export function useDeleteOrder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/orders/${id}`).then(() => id),
-    // Optimistic: gỡ đơn khỏi mọi cache 'tms-orders' NGAY khi bấm (không chờ refetch — xóa lẻ lẫn hàng loạt đều mượt).
+    // Optimistic: gỡ đơn khỏi mọi cache lưới NGAY khi bấm (không chờ refetch — xóa lẻ lẫn hàng loạt đều mượt).
     onMutate: async (id: string) => {
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      qc.setQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] },
-        old => old?.filter(o => o.id !== id))
+      await tmsOrdersCancel(qc)
+      tmsOrdersPatch(qc, rows => rows.filter(o => o.id !== id))
     },
     // Lỗi → refetch trả dòng về (rollback bằng dữ liệu thật, an toàn khi xóa song song nhiều đơn).
-    onError: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onError: () => tmsOrdersInvalidate(qc),
+    onSuccess: () => tmsOrdersInvalidate(qc),
   })
 }
 
@@ -3607,7 +3709,7 @@ export function useBulkCreateOrders() {
   return useMutation({
     mutationFn: (orders: OrderWriteBody[]) =>
       apiClient.post('/tms/orders/bulk', { orders }, { timeout: 120000 }).then(r => r.data.data as { inserted: number }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onSuccess: () => { tmsOrdersInvalidate(qc); qc.invalidateQueries({ queryKey: ['tms-orders-facets'] }) },
   })
 }
 
@@ -3617,18 +3719,14 @@ export function useBulkUpdateOrderDate() {
     mutationFn: ({ ids, date }: { ids: string[]; date: string }) =>
       apiClient.patch('/tms/orders/bulk-date', { ids, date }).then(r => r.data.data as { updated: number }),
     onMutate: async ({ ids }) => {
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      await tmsOrdersCancel(qc)
+      const snapshots = tmsOrdersSnapshot(qc)
       const idSet = new Set(ids)
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.filter(o => !idSet.has(o.id)) ?? old,
-      )
+      tmsOrdersPatch(qc, rows => rows.filter(o => !idSet.has(o.id)))
       return { snapshots }
     },
-    onError: (_e, _v, ctx: { snapshots: [unknown, unknown][] } | undefined) =>
-      ctx?.snapshots.forEach(([k, d]) => qc.setQueryData(k as Parameters<typeof qc.setQueryData>[0], d)),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onError: tmsRollback(qc),
+    onSettled: () => tmsOrdersInvalidate(qc),
   })
 }
 
@@ -3646,8 +3744,8 @@ export function useAddVehicleSlot() {
     mutationFn: (orderId: string) =>
       apiClient.post(`/tms/orders/${orderId}/vehicle-slots`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onMutate: async (orderId: string) => {
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
+      await tmsOrdersCancel(qc)
+      const snapshots = tmsOrdersSnapshot(qc)
       const tempSlot: import('@/types').TmsVehicleSlot = {
         id: `_temp_${Date.now()}`, order_id: orderId,
         slot_id: null, slot: null, license_plate: null,
@@ -3656,24 +3754,17 @@ export function useAddVehicleSlot() {
         gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.map(o => o.id === orderId ? { ...o, vehicle_slots: [...o.vehicle_slots, tempSlot] } : o)
-      )
+      tmsOrdersPatch(qc, rows => rows.map(o => o.id === orderId ? { ...o, vehicle_slots: [...o.vehicle_slots, tempSlot] } : o))
       return { snapshots }
     },
     onSuccess: (newSlot) => {
       // Thay thế temp slot bằng real UUID ngay khi server trả về — tránh action button dùng _temp_ id
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.map(o => o.id === newSlot.order_id
-          ? { ...o, vehicle_slots: o.vehicle_slots.map(vs => vs.id.startsWith('_temp_') && vs.order_id === newSlot.order_id ? newSlot : vs) }
-          : o
-        )
-      )
+      tmsOrdersPatch(qc, rows => rows.map(o => o.id === newSlot.order_id
+        ? { ...o, vehicle_slots: o.vehicle_slots.map(vs => vs.id.startsWith('_temp_') && vs.order_id === newSlot.order_id ? newSlot : vs) }
+        : o))
     },
-    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['tms-orders'] }),
+    onError: tmsRollback(qc),
+    onSettled: () => tmsOrdersInvalidate(qc),
   })
 }
 
@@ -3690,7 +3781,7 @@ export function useUpdateVehicleSlot() {
           old => old?.map(s => s.id === updated.slot_id ? { ...s, booked_count: (updated.slot as import('@/types').DeliverySlot).booked_count } : s)
         )
       }
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
@@ -3704,24 +3795,21 @@ export function useReleaseVehicleSlot() {
       apiClient.patch(`/tms/vehicle-slots/${id}/release`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onMutate: async (id: string) => {
       suppressTmsOrdersRealtime(5000)
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.map(o => ({
-          ...o,
-          vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
-            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
-            : vs
-          ),
-        }))
-      )
+      await tmsOrdersCancel(qc)
+      const snapshots = tmsOrdersSnapshot(qc)
+      tmsOrdersPatch(qc, rows => rows.map(o => ({
+        ...o,
+        vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
+          ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
+          : vs
+        ),
+      })))
       return { snapshots }
     },
-    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onError: tmsRollback(qc),
     onSettled: () => {
       suppressTmsOrdersRealtime(2500)
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })
@@ -3734,24 +3822,21 @@ export function useRevokeVehicleSlot() {
       apiClient.patch(`/tms/vehicle-slots/${id}/revoke`).then(r => r.data.data as import('@/types').TmsVehicleSlot),
     onMutate: async (id: string) => {
       suppressTmsOrdersRealtime(5000)
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.map(o => ({
-          ...o,
-          vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
-            ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
-            : vs
-          ),
-        }))
-      )
+      await tmsOrdersCancel(qc)
+      const snapshots = tmsOrdersSnapshot(qc)
+      tmsOrdersPatch(qc, rows => rows.map(o => ({
+        ...o,
+        vehicle_slots: o.vehicle_slots.map(vs => vs.id === id
+          ? { ...vs, slot_id: null, slot: null, license_plate: null, driver_phone: null, status: 'PENDING', consolidation_group_id: null, is_consolidation_primary: false, gate_export_status: null, gate_registered_at: null, gate_entry_at: null, gate_exit_at: null }
+          : vs
+        ),
+      })))
       return { snapshots }
     },
-    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onError: tmsRollback(qc),
     onSettled: () => {
       suppressTmsOrdersRealtime(2500)
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })
@@ -3807,7 +3892,7 @@ export function useBulkCreatePlanLines() {
       apiClient.post('/wms/inbound-plan/bulk', { lines }).then(r => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
     },
   })
 }
@@ -3823,7 +3908,7 @@ export function useUpdatePlanLine() {
       apiClient.patch(`/wms/inbound-plan/${id}`, body).then(r => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['inbound-report'] })
     },
   })
@@ -3835,7 +3920,7 @@ export function useDeletePlanLine() {
     mutationFn: (id: string) => apiClient.delete(`/wms/inbound-plan/${id}`).then(() => id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
     },
   })
 }
@@ -3847,7 +3932,7 @@ export function useCancelPlanLine() {
       apiClient.patch(`/wms/inbound-plan/${id}/cancel`, { cancel_reason }).then(r => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
     },
   })
 }
@@ -3886,7 +3971,7 @@ export function useBulkCreatePlanLinesForOrder() {
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines-by-order', vars.tms_order_id] })
       qc.invalidateQueries({ queryKey: ['plan-vs-actual', vars.tms_order_id] })
       qc.invalidateQueries({ queryKey: ['inbound-plan-lines'] })
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
     },
   })
 }
@@ -3896,17 +3981,14 @@ export function useDeleteVehicleSlot() {
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/tms/vehicle-slots/${id}`).then(() => id),
     onMutate: async (id: string) => {
-      await qc.cancelQueries({ queryKey: ['tms-orders'] })
-      const snapshots = qc.getQueriesData<import('@/types').TmsOrder[]>({ queryKey: ['tms-orders'] })
-      qc.setQueriesData<import('@/types').TmsOrder[]>(
-        { queryKey: ['tms-orders'] },
-        old => old?.map(o => ({ ...o, vehicle_slots: o.vehicle_slots.filter(vs => vs.id !== id) }))
-      )
+      await tmsOrdersCancel(qc)
+      const snapshots = tmsOrdersSnapshot(qc)
+      tmsOrdersPatch(qc, rows => rows.map(o => ({ ...o, vehicle_slots: o.vehicle_slots.filter(vs => vs.id !== id) })))
       return { snapshots }
     },
-    onError: (_e, _v, ctx: any) => ctx?.snapshots.forEach(([k, d]: any) => qc.setQueryData(k, d)),
+    onError: tmsRollback(qc),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['tms-orders'] })
+      tmsOrdersInvalidate(qc)
       qc.invalidateQueries({ queryKey: ['tms-delivery-slots'] })
     },
   })

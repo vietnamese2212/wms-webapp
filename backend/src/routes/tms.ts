@@ -33,6 +33,10 @@ router.post('/slots/generate', requireAnyPerm(['tms_plan', 'book'], ['tms_plan',
 
 // TmsOrder (Kế hoạch vận chuyển — điều vận tạo)
 router.get('/orders',                    requirePerm('tms_plan', 'view'),                                                    order.listOrders)
+// Phân trang SERVER lưới Kế hoạch — 3 endpoint cùng bộ lọc (khai TRƯỚC '/orders/:id' để không bị nuốt)
+router.get('/orders/summary',            requirePerm('tms_plan', 'view'),   order.listOrdersSummary)
+router.get('/orders/facets',             requirePerm('tms_plan', 'view'),   order.listOrdersFacets)
+router.get('/orders/consolidatable',     requirePerm('tms_plan', 'view'),   order.listConsolidatable)
 router.post('/orders',                   requirePerm('tms_plan', 'create'),                                                  order.createOrder)
 router.post('/orders/bulk',              requireAnyPerm(['tms_plan', 'upload_outbound'], ['tms_plan', 'upload_inbound']),     order.bulkCreateOrders)
 router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_date'),                                      order.bulkUpdateOrderDate)

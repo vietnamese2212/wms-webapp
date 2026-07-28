@@ -162,6 +162,8 @@ interface TmsBookingsFilters {
   dvvt: string[]
   khungGio: string[]
   tab: 'main' | 'transfer'
+  page: number
+  pageSize: number
 }
 interface TmsTransferFilters {
   dateFrom: string
@@ -359,7 +361,7 @@ function initialFilters() {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
-    tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
+    tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
     tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
     userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__' },
     attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },

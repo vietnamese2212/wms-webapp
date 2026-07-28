@@ -14,8 +14,9 @@ import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
-  useDepartments, useJobTitles, useEmployeeRecords,
+  useDepartments, useJobTitles, useAttendanceMatrix,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
   useLeaves,
 } from '@/api/hooks'
@@ -346,7 +347,6 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
-  const { data: employees = [] } = useEmployeeRecords()
   const del = useDeleteAttendance()
   const today = TODAY()
 
@@ -357,79 +357,76 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const [dense, setDense] = useState(() => localStorage.getItem('attendance_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('attendance_density', d ? '0' : '1'); return !d })
 
-  const { data: rows = [], isLoading } = useAttendance(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
-  )
-  const ql = q.trim().toLowerCase()
-  const filtered = rows.filter(r =>
-    (!jt || r.employee?.job_title === jt) &&
-    (!ql || (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql)),
-  )
-
   const dates = useMemo(() => eachDate(from, to), [from, to])
   // ngày cần chấm công = trong khoảng, đã qua (≤ hôm nay), không phải Chủ nhật, không phải ngày lễ
   const isWorkDay = (ds: string) => ds <= today && dowOf(ds) !== 'CN' && !getHoliday(ds)
 
-  // roster nhân viên thuộc phạm vi lọc (kho/phòng/chức danh/tìm) — để biết ai CHƯA chấm
+  // TRANG = NGƯỜI. Đo thật 28/07: trả cả bảng thì 3.000 NV × 28 ngày = 82.914 dòng = 44MB /
+  // 18,9s ⇒ vượt trần 4,5MB response của Vercel từ khoảng ~290 NV. Nay chỉ tải công của người
+  // trên trang; các ô tổng + "Lượt thiếu" do server đếm trên TOÀN BỘ roster.
+  // Danh sách ngày CẦN chấm gửi xuống server (FE giữ bảng lễ VN + luật bỏ CN + chỉ ngày đã qua).
+  const workDatesParam = useMemo(() => dates.filter(isWorkDay).join(','),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dates.join(','), today])
+  const { data: mx, isLoading } = useAttendanceMatrix({
+    warehouse_id: wh || undefined, department_id: dept || undefined,
+    job_title: jt || undefined, search: q.trim() || undefined,
+    date_from: from, date_to: to, work_dates: workDatesParam, status,
+    page: f.page, page_size: f.pageSize,
+  })
+  const rows = mx?.rows ?? []
+  const rosterTotal = mx?.total ?? 0
+  const rosterPages = Math.max(1, Math.ceil(rosterTotal / f.pageSize))
+  // Server đã lọc theo chức danh + tìm kiếm → KHÔNG lọc lại (lọc lần hai chỉ mất dòng)
+  const filtered = rows
+
+  // Ma trận của TRANG hiện tại: roster do server trả (đã lọc + sắp theo tên), ô lấy từ công của trang
   const recByKey = useMemo(() => {
     const m = new Map<string, AttendanceRow>()
     for (const r of rows) m.set(`${r.employee_id}|${r.work_date}`, r)
     return m
   }, [rows])
-  const matrixAll = useMemo(() => {
-    return employees
-      .filter(e =>
-        e.is_active && !e.deleted_at &&
-        (!wh || e.warehouse_access?.some(w => w.warehouse_id === wh)) &&
-        (!dept || e.department_id === dept) &&
-        (!jt || e.job_title?.name === jt) &&
-        (!ql || e.name.toLowerCase().includes(ql) || e.employee_code.toLowerCase().includes(ql)),
-      )
-      .map<MatrixRow>(e => {
-        const byDate = new Map<string, AttendanceRow>()
-        let hours = 0
-        for (const d of dates) {
-          const r = recByKey.get(`${e.id}|${d}`)
-          if (r) { byDate.set(d, r); hours += rowTotal(r) }
-        }
-        const missingDays = dates.filter(d => isWorkDay(d) && !byDate.has(d))
-        return { id: e.id, name: e.name, code: e.employee_code, job: e.job_title?.name ?? null, byDate, hours, missingDays }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employees, wh, dept, jt, ql, dates, recByKey, today])
-  const matrixEmps = matrixAll.filter(g => status === 'all' || (status === 'done' ? g.missingDays.length === 0 : g.missingDays.length > 0))
-  const totalMissing = matrixAll.reduce((s, g) => s + g.missingDays.length, 0)
-
-  const sum = useMemo(() => {
-    let workDays = 0, ot = 0, early = 0, leave = 0
-    for (const r of filtered) {
-      if (r.kind === 'LEAVE') { leave++; continue }
-      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
+  const matrixEmps = useMemo<MatrixRow[]>(() => (mx?.employees ?? []).map(e => {
+    const byDate = new Map<string, AttendanceRow>()
+    let hours = 0
+    for (const d of dates) {
+      const r = recByKey.get(`${e.id}|${d}`)
+      if (r) { byDate.set(d, r); hours += rowTotal(r) }
     }
-    const hours = workDays * 8 + ot - early
-    return { workDays, ot, early, leave, cong: toCong(hours) }
-  }, [filtered])
+    const missingDays = dates.filter(d => isWorkDay(d) && !byDate.has(d))
+    return { id: e.id, name: e.name, code: e.code, job: e.job, byDate, hours, missingDays }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [mx?.employees, dates.join(','), recByKey, today])
+
+  // MỌI ô tổng đếm trên TOÀN BỘ bộ lọc (server), không phải trang đang xem
+  const totalMissing = mx?.missing_total ?? 0
+  const sum = {
+    workDays: mx?.work_days ?? 0,
+    ot:       mx?.ot ?? 0,
+    early:    mx?.early ?? 0,
+    leave:    mx?.leave_days ?? 0,
+    cong:     toCong((mx?.work_days ?? 0) * 8 + (mx?.ot ?? 0) - (mx?.early ?? 0)),
+  }
 
   const defs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setAtt({ warehouseId: v }), allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setAtt({ warehouseId: v, page: 1 }), allLabel: 'Tất cả kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setAtt({ deptId: v }), allLabel: 'Tất cả phòng',
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setAtt({ deptId: v, page: 1 }), allLabel: 'Tất cả phòng',
       options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setAtt({ jt: v }), allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setAtt({ jt: v, page: 1 }), allLabel: 'Tất cả chức danh',
       options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
     ...(view === 'matrix' ? [{ key: 'status', label: 'Tình trạng', type: 'single' as const,
-      value: status === 'all' ? '' : status, onChange: (v: string) => setAtt({ status: (v || 'all') as 'all' | 'done' | 'missing' }),
+      value: status === 'all' ? '' : status, onChange: (v: string) => setAtt({ status: (v || 'all') as 'all' | 'done' | 'missing', page: 1 }),
       allLabel: 'Tất cả tình trạng',
       options: [{ value: 'done', label: 'Đã chấm đủ' }, { value: 'missing', label: 'Còn thiếu' }] }] : []),
-    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (ff, tt) => setAtt({ from: ff, to: tt }) },
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (ff, tt) => setAtt({ from: ff, to: tt, page: 1 }) },
   ]
   const viewSnapshot = { warehouseId: wh, deptId: dept, jt, q, status, from, to }
   const savedViews = useSavedViewsStore(s => s.views['attendance'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
   function exportExcel() {
-    const sheet = filtered.map(r => ({
+    const sheet = filtered.map((r: AttendanceRow) => ({
       'Ngày': formatDate(r.work_date), 'Nhân viên': r.employee?.name ?? '', 'Mã NV': r.employee?.employee_code ?? '',
       'Chức danh': r.employee?.job_title ?? '', 'Loại': KIND_SHORT[r.kind] ?? r.kind,
       'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
@@ -447,7 +444,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           <button onClick={() => setAtt({ view: 'matrix' })} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
           <button onClick={() => setAtt({ view: 'raw' })} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
         </div>
-        <Input value={q} onChange={e => setAtt({ q: e.target.value })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
+        <Input value={q} onChange={e => setAtt({ q: e.target.value, page: 1 })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
         {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
         <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -474,7 +471,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
       </div>
 
       <SummaryBand className="rounded-lg shrink-0" tiles={[
-        { label: 'Số người', value: matrixAll.length },
+        { label: 'Số người', value: rosterTotal },
         { label: 'Tổng công', value: sum.cong, accent: true },
         { label: 'Ngày công', value: sum.workDays },
         { label: 'Giờ OT', value: sum.ot || '—' },
@@ -487,6 +484,14 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         : view === 'matrix'
           ? <MatrixTable emps={matrixEmps} dates={dates} isWorkDay={isWorkDay} dense={dense} />
           : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName dense={dense} />}
+
+      {/* Phân trang theo NGƯỜI — chuẩn dùng chung mọi list page */}
+      <div className="shrink-0">
+        <PagerNav page={f.page} totalPages={rosterPages} onPage={p => setAtt({ page: p })} />
+        <ListFooter page={f.page} pageSize={f.pageSize} total={rosterTotal} unit="nhân viên"
+          onPageSize={n => setAtt({ pageSize: n, page: 1 })}
+          right={view === 'raw' ? `${filtered.length.toLocaleString('vi-VN')} dòng công trên trang` : undefined} />
+      </div>
     </div>
   )
 }

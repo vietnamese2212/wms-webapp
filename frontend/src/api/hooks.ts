@@ -1725,6 +1725,64 @@ export function useEmployeeRecords(params?: { department_id?: string; search?: s
   })
 }
 
+// Quản lý người dùng — phân trang SERVER. Đo thật 28/07: trả cả bảng thì 3.000 nhân sự =
+// 2.495KB/lần gọi (trần 4,5MB response của Vercel ở ~5.400 NV) và mọi bộ lọc chạy ở trình duyệt.
+export type EmployeesPageParams = {
+  department_id?: string; job_title_id?: string; warehouse_id?: string; search?: string
+  is_active?: string; include_deleted?: boolean; status?: string
+  page?: number; page_size?: number
+}
+export type EmployeesPage = {
+  rows: EmployeeRecord[]
+  total: number
+  active: number; paused: number; hidden: number   // đếm trên TOÀN BỘ bộ lọc, không phải trang
+  page: number; page_size: number
+}
+
+export function useEmployeesPaged(params: EmployeesPageParams) {
+  return useQuery({
+    queryKey: ['employee-records-paged', params],
+    refetchInterval: 60_000,   // Employee khoá khỏi realtime anon → poll như hook mảng
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/masterdata/employees', { params: q })
+      return data.data as EmployeesPage
+    },
+    placeholderData: keepPreviousData,
+  })
+}
+
+// Bảng công ma trận — TRANG = NGƯỜI. Đo thật: 3.000 NV × 28 ngày = 44MB/18,9s nếu trả cả bảng.
+// `work_dates` = ngày CẦN chấm công, FE tính (giữ bảng lễ VN + bỏ CN + chỉ ngày đã qua) rồi
+// truyền xuống để server đếm "thiếu công" trên TOÀN BỘ roster, không chỉ trang đang xem.
+export type AttendanceMatrixParams = {
+  warehouse_id?: string; department_id?: string; job_title?: string; search?: string
+  date_from: string; date_to: string; work_dates: string; status?: string
+  page?: number; page_size?: number
+}
+export type AttendanceMatrixResult = {
+  employees: { id: string; name: string; code: string; job: string | null }[]
+  rows: AttendanceRow[]
+  total: number; roster_total: number; missing_total: number
+  work_days: number; leave_days: number; ot: number; early: number
+  page: number; page_size: number
+}
+
+export function useAttendanceMatrix(params: AttendanceMatrixParams, enabled = true) {
+  return useQuery({
+    queryKey: ['hr-attendance-matrix', params],
+    enabled,
+    queryFn: async () => {
+      const q: Record<string, string> = {}
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+      const { data } = await apiClient.get('/hr/attendance/matrix', { params: q })
+      return data.data as AttendanceMatrixResult
+    },
+    placeholderData: keepPreviousData,
+  })
+}
+
 export function useEmployeeRecord(id?: string) {
   return useQuery({
     queryKey: ['employee-record', id],

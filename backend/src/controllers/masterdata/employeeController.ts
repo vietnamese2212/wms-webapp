@@ -154,17 +154,21 @@ async function fetchFull(opts: {
 }) {
   // Phân trang (cap ~1000 dòng/response) — Employee sẽ vượt 1000 khi thêm tài khoản lái xe;
   // scope lọc SAU fetch (listEmployees) nên bị cắt là mất người khỏi DS âm thầm.
-  const buildQ = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('Employee').select(EMP_BASE).order('name').order('id')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyF = (q: any): any => {
     if (!opts.include_deleted) q = q.is('deleted_at', null)
-    if (opts.ids?.length)      q = q.in('id', opts.ids)
     if (opts.department_id)    q = q.eq('department_id', opts.department_id)
     if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
     if (opts.search) { const s = safeSearch(opts.search); q = q.or(`name.ilike.%${s}%,employee_code.ilike.%${s}%,email.ilike.%${s}%`) }
     return q
   }
-  const emps = await fetchAllRowsParallel(buildQ) as unknown as EmpRow[]
+  // Có danh sách id (nạp đúng 1 trang) → CHUNK 300: trang 500 dòng nhồi 1 `.in()` là vỡ URL
+  // PostgREST (trần ~300 uuid — xem [[id-list-url-limits]]). Không có id → phân trang cả bảng.
+  const emps = (opts.ids?.length
+    ? await fetchAllByIdChunks(opts.ids, chunk => applyF(
+        supabase.from('Employee').select(EMP_BASE).in('id', chunk)).order('name').order('id'))
+    : await fetchAllRowsParallel(() => applyF(
+        supabase.from('Employee').select(EMP_BASE)).order('name').order('id'))) as unknown as EmpRow[]
   if (!emps.length) return []
 
   // ── Departments ────────────────────────────────────────────────────────────
@@ -230,8 +234,47 @@ async function fetchFull(opts: {
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 
+// Trang Quản lý người dùng — phân trang SERVER (RPC `hr_employees_page`).
+// Đo thật 28/07: trả cả bảng thì 3.000 nhân sự = 2.495KB (trần 4,5MB response của Vercel ở
+// ~5.400 NV) và mọi bộ lọc/tìm kiếm chạy ở trình duyệt trên tập đã tải. Scope nhân sự vẫn
+// resolve ở đây (kho ∩ cấp dưới theo JobTitle) rồi truyền xuống RPC bằng THAM SỐ MẢNG —
+// POST body nên không dính trần ~300 id trên URL.
+export async function listEmployeesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+  const scope = await visibleEmployeeIds(req)
+
+  const { data, error } = await supabase.rpc('hr_employees_page', {
+    p_scope_ids:    scope === null ? null : [...scope],
+    p_dept:         q.department_id || null,
+    p_jt_id:        q.job_title_id || null,
+    p_wh:           q.warehouse_id || null,
+    p_search:       q.search || null,
+    p_active:       q.is_active === undefined || q.is_active === '' ? null : String(q.is_active),
+    p_incl_deleted: q.include_deleted === 'true',
+    p_status:       q.status || null,
+    p_offset:       (pageNum - 1) * pageSize,
+    p_limit:        pageSize,
+  })
+  if (error) return fail(res, error.message)
+  const pd = (data ?? {}) as { ids?: string[]; total?: number; active?: number; paused?: number; hidden?: number }
+  const ids = pd.ids ?? []
+  // fetchFull chỉ nạp ĐÚNG nhân sự của trang này (đã chunk 300 bên trong)
+  const rows = ids.length ? await fetchFull({ ids, include_deleted: true }) : []
+  const byId = new Map(rows.map(r => [r.id, r]))
+  return ok(res, {
+    rows: ids.map(id => byId.get(id)).filter(Boolean),
+    total: pd.total ?? 0, active: pd.active ?? 0, paused: pd.paused ?? 0, hidden: pd.hidden ?? 0,
+    page: pageNum, page_size: pageSize,
+  })
+}
+
 export async function listEmployees(req: Request, res: Response) {
   try {
+    // Chế độ MẢNG giữ nguyên cho các consumer cần roster đầy đủ (Sơ đồ tổ chức, chọn người
+    // trong Nhập kho, map tên ở Nghỉ phép) — chỉ trang Quản lý người dùng truyền ?page=.
+    if (req.query.page) return await listEmployeesPaged(req, res)
     const { department_id, is_active, search, include_deleted } = req.query as Record<string, string>
     const scope = await visibleEmployeeIds(req)
     const data = await fetchFull({

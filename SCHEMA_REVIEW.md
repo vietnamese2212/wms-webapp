@@ -244,3 +244,4 @@ created_at, updated_at
 | `20260728_stocktake_paged_rpc.sql` | `stocktake_entries_page` + `stocktake_log_page` — bỏ CAP 2000 của 2 tab Kiểm kê (kho 8.074 pallet chỉ xem được 2.000) | ✅ apply | ⏳ khi merge main |
 | `20260728_pallet_prints_paged_rpc.sql` | `pallet_prints_page` + `pallet_prints_facets` + index `idx_pallet_print_created_batch` — Lịch sử in tem phân trang theo PHIẾU IN (trước: mảng ≤20.000 dòng, cắt âm thầm) | ✅ apply | ⏳ khi merge main |
 | `20260728_loose_picking_paged_rpc.sql` | `qty_entry_decimal` + `loose_picking_page` + `loose_picking_facets` + 2 index — Nhặt lẻ đảo chiều truy vấn (lọc item nhặt lẻ TRƯỚC rồi join lên chuyến) + phân trang theo CHUYẾN | ✅ apply | ⏳ khi merge main |
+| `20260728_hr_paged_rpc.sql` | `hr_employees_page` + `hr_attendance_matrix` + 3 index — phân trang theo NGƯỜI cho Quản lý người dùng & Bảng công ma trận (đo thật: bảng công 3.000 NV/tháng từ 44.665KB/18,9s → 461KB/0,75s) | ✅ apply | ⏳ khi merge main |

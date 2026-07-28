@@ -40,6 +40,74 @@ async function scopedEmployeeIds(req: Request, warehouse_id?: string): Promise<{
   return { empIds: [...new Set(ids)] }
 }
 
+// BẢNG CÔNG (ma trận NV × ngày) — TRANG = NGƯỜI, tổng tính trên toàn bộ bộ lọc.
+// Đo thật 28/07: trả cả bảng thì 3.000 NV × 28 ngày = 82.914 dòng = 44.665KB / 18,9s ⇒ vượt
+// trần 4,5MB response của Vercel từ khoảng ~290 NV. Nay chỉ trả công của NV TRÊN TRANG.
+// `work_dates` = ngày CẦN chấm, do FE truyền xuống (nó giữ bảng lễ VN + bỏ CN + chỉ ngày đã qua)
+// — tối đa 31 phần tử nên đi query string vẫn nhẹ.
+export async function getAttendanceMatrix(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+    const sc = await scopedEmployeeIds(req, q.warehouse_id)
+    if (sc.forbidden) return fail(res, sc.forbidden, 403)
+
+    const workDates = (q.work_dates ? String(q.work_dates).split(',') : [])
+      .map(s => s.trim()).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
+    const { data, error } = await supabase.rpc('hr_attendance_matrix', {
+      p_scope_ids:  sc.empIds,
+      p_wh:         q.warehouse_id || null,
+      p_dept:       q.department_id || null,
+      p_jt_name:    q.job_title || null,
+      p_search:     q.search || null,
+      p_from:       q.date_from || null,
+      p_to:         q.date_to || null,
+      p_work_dates: workDates,
+      p_status:     q.status || 'all',
+      p_offset:     (pageNum - 1) * pageSize,
+      p_limit:      pageSize,
+    })
+    if (error) return fail(res, error.message)
+    const m = (data ?? {}) as {
+      emp_ids?: string[]; total?: number; roster_total?: number; missing_total?: number
+      work_days?: number; leave_days?: number; ot?: number; early?: number
+    }
+    const empIds = m.emp_ids ?? []
+    const meta = {
+      total: m.total ?? 0, roster_total: m.roster_total ?? 0, missing_total: Number(m.missing_total ?? 0),
+      work_days: Number(m.work_days ?? 0), leave_days: Number(m.leave_days ?? 0),
+      ot: Number(m.ot ?? 0), early: Number(m.early ?? 0),
+      page: pageNum, page_size: pageSize,
+    }
+    if (!empIds.length) return ok(res, { employees: [], rows: [], ...meta })
+
+    // Thông tin NV + công của ĐÚNG trang này (chunk 300 — 1 trang có thể 500 người)
+    const [emps, rows] = await Promise.all([
+      fetchAllByIdChunks(empIds, chunk => supabase.from('Employee')
+        .select('id, name, employee_code, department_id, job_title_id').in('id', chunk).order('id')),
+      fetchAllByIdChunks(empIds, chunk => {
+        let qq = supabase.from('Attendance').select(SEL).in('employee_id', chunk)
+        if (q.date_from) qq = qq.gte('work_date', q.date_from)
+        if (q.date_to)   qq = qq.lte('work_date', q.date_to)
+        return qq.order('work_date', { ascending: false }).order('id')
+      }),
+    ])
+    const jtIds = [...new Set((emps as { job_title_id: string | null }[]).map(e => e.job_title_id).filter((x): x is string => !!x))]
+    const jts = jtIds.length
+      ? await fetchAllByIdChunks(jtIds, chunk => supabase.from('JobTitle').select('id, name').in('id', chunk).order('id'))
+      : []
+    const jtMap = new Map(((jts ?? []) as { id: string; name: string }[]).map(j => [j.id, j.name]))
+    const empById = new Map((emps as { id: string; name: string; employee_code: string; job_title_id: string | null }[])
+      .map(e => [e.id, { id: e.id, name: e.name, code: e.employee_code, job: jtMap.get(e.job_title_id ?? '') ?? null }]))
+    return ok(res, {
+      employees: empIds.map(id => empById.get(id)).filter(Boolean),   // giữ đúng thứ tự RPC (theo tên)
+      rows: rows ?? [],
+      ...meta,
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 async function attachEmp<T extends { employee_id: string }>(rows: T[]) {
   if (!rows.length) return rows.map(r => ({ ...r, employee: null }))
   const ids = [...new Set(rows.map(r => r.employee_id))]

@@ -48,7 +48,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
-  Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
+  Employee:             [['employees'], ['employee-records'], ['employee-records-paged'], ['employee-record'], ['warehouse-employees'], ['hr-attendance-matrix']],
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],
   UserWarehouseAccess:  [['employee-record'], ['employee-records']],
@@ -62,7 +62,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkLayoutSkill:      [['hr-layout']],
   WorkLayoutJobTitle:   [['hr-layout']],
   ShiftRestRule:        [['hr-shift-rules']],
-  Attendance:           [['hr-attendance'], ['hr-att-report']],
+  Attendance:           [['hr-attendance'], ['hr-attendance-matrix'], ['hr-att-report']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>

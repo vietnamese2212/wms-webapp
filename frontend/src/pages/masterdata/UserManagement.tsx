@@ -7,6 +7,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -22,7 +23,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
-  useDepartments, useJobTitles, useEmployeeRecords,
+  useDepartments, useJobTitles, useEmployeesPaged,
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
@@ -815,6 +816,7 @@ export default function UserManagement() {
   // "Quản lý skill" = có bất kỳ quyền ghi danh mục Vị trí/Skill (create/edit/delete)
   const canManageSkill = can(perms, 'work_skill', 'create') || can(perms, 'work_skill', 'edit') || can(perms, 'work_skill', 'delete')
   const { data: allJts = [] } = useJobTitles()
+  const { data: allWarehouses = [] } = useWarehouses()   // ô chọn Kho lấy từ danh mục gốc
   const subordinateJtIds = (() => {
     const set = new Set<string>()
     const myJt = user?.job_title_id
@@ -830,7 +832,7 @@ export default function UserManagement() {
   const ua = useWmsFilterStore(s => s.userAdmin)
   const setUserAdmin = useWmsFilterStore(s => s.setUserAdmin)
   const { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter, jtDept: filterDeptJt } = ua
-  const setSearch       = (v: string) => setUserAdmin({ search: v })
+  const setSearch       = (v: string) => setUserAdmin({ search: v, page: 1 })
   const setFilterDept   = (v: string) => setUserAdmin({ deptId: v })
   const setFilterJt     = (v: string) => setUserAdmin({ jtId: v })
   const setFilterWh     = (v: string) => setUserAdmin({ warehouseId: v })
@@ -864,46 +866,44 @@ export default function UserManagement() {
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
   // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
   const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
-  const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
-    department_id: filterDept === '__all__' ? undefined : filterDept,
-    search: search || undefined,
+  // Phân trang SERVER + MỌI bộ lọc xuống server. Đo thật 28/07: trả cả bảng thì 3.000 nhân sự
+  // = 2.495KB/lần gọi, và lọc trên tập đã tải sau phân trang = lọc trong 1 trang (ra thiếu).
+  const { data: empPage, isLoading, isError, error } = useEmployeesPaged({
+    department_id:   filterDept === '__all__' ? undefined : filterDept,
+    job_title_id:    filterJt   === '__all__' ? undefined : filterJt,
+    warehouse_id:    filterWh   === '__all__' ? undefined : filterWh,
+    search:          search || undefined,
     include_deleted: statusFilter !== 'active' ? true : undefined,
+    status:          statusFilter,
+    page:            ua.page,
+    page_size:       ua.pageSize,
   })
-  // Options 2 filter dẫn xuất từ DS nhân viên đang tải (đã lọc Phòng ban + phạm vi) → tự liên kết
-  const jtOptions = (() => {
-    const m = new Map<string, { id: string; label: string; sub?: string }>()
-    for (const e of rawEmployees) if (e.job_title_id) m.set(e.job_title_id, { id: e.job_title_id, label: e.job_title?.name ?? '—', sub: e.dept?.name })
-    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
-  })()
-  const whOptions = (() => {
-    const m = new Map<string, { id: string; label: string; sub?: string }>()
-    for (const e of rawEmployees) for (const wa of (e.warehouse_access ?? [])) m.set(wa.warehouse_id, { id: wa.warehouse_id, label: wa.warehouse?.name ?? wa.warehouse_id, sub: wa.warehouse?.code })
-    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
-  })()
-  // Lọc thêm theo Chức danh + Kho (multi-select, client-side)
-  const matchExtra = (e: EmployeeRecord) =>
-    (filterJt === '__all__' || e.job_title_id === filterJt) &&
-    (filterWh === '__all__' || (e.warehouse_access ?? []).some(wa => wa.warehouse_id === filterWh))
-  const scopedRaw = rawEmployees.filter(matchExtra)
-  const employees = statusFilter === 'hidden'
-    ? scopedRaw.filter(e => !!e.deleted_at)
-    : scopedRaw
+  const employees   = empPage?.rows ?? []
+  const empTotal    = empPage?.total ?? 0
+  const empPages    = Math.max(1, Math.ceil(empTotal / ua.pageSize))
+  // Ô chọn lấy từ DANH MỤC gốc (chức danh / kho), KHÔNG dẫn xuất từ trang đang xem — sau khi
+  // phân trang thì tập đang tải chỉ còn 100 dòng, dẫn xuất ra là mất phần lớn lựa chọn.
+  const jtOptions = allJts.map(j => ({ id: j.id, label: j.name }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  const whOptions = (allWarehouses as { id: string; name: string; code?: string }[])
+    .map(w => ({ id: w.id, label: w.name, sub: w.code }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 
   // Filter danh sách nhân viên — FilterBar chuẩn (Kho · Phòng ban · Chức danh · Tình trạng)
   const empFilterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
-      value: filterWh === '__all__' ? '' : filterWh, onChange: v => setFilterWh(v || '__all__'),
+      value: filterWh === '__all__' ? '' : filterWh, onChange: v => { setFilterWh(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: whOptions.map(o => ({ value: o.id, label: o.label })) },
     { key: 'dept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
       value: filterDept === '__all__' ? '' : filterDept,
-      onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__') },
+      onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__'); setUserAdmin({ page: 1 }) },
       options: departments.map(d => ({ value: d.id, label: d.name })) },
     { key: 'jt', label: 'Chức danh', type: 'single', allLabel: 'Tất cả chức danh',
-      value: filterJt === '__all__' ? '' : filterJt, onChange: v => setFilterJt(v || '__all__'),
+      value: filterJt === '__all__' ? '' : filterJt, onChange: v => { setFilterJt(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: jtOptions.map(o => ({ value: o.id, label: o.label })) },
     { key: 'status', label: 'Tình trạng', type: 'single', allLabel: 'Đang hoạt động',
       value: statusFilter === 'active' ? '' : statusFilter,
-      onChange: v => setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'),
+      onChange: v => { setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'); setUserAdmin({ page: 1 }) },
       options: [{ value: 'hidden', label: 'Đang ẩn' }, { value: 'all', label: 'Toàn bộ' }] },
   ]
 
@@ -961,10 +961,11 @@ export default function UserManagement() {
           </div>
           <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
+          {/* 3 ô đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm ở FE là đếm trang đang xem */}
           <SummaryBand compact className="shrink-0 rounded-lg" tiles={[
-            { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },
-            { label: 'Tạm dừng', value: scopedRaw.filter(e => !e.deleted_at && !e.is_active).length },
-            { label: 'Đã ẩn', value: scopedRaw.filter(e => !!e.deleted_at).length },
+            { label: 'Đang hoạt động', value: empPage?.active ?? 0, accent: true },
+            { label: 'Tạm dừng', value: empPage?.paused ?? 0 },
+            { label: 'Đã ẩn', value: empPage?.hidden ?? 0 },
           ]} />
 
           {isError && (
@@ -1095,8 +1096,11 @@ export default function UserManagement() {
                       })}
                     </TableBody>
                   </Table>
+                  <PagerNav page={ua.page} totalPages={empPages} onPage={p => { setUserAdmin({ page: p }); setSelectedEmp(null) }} />
                 </div>
               )}
+              <ListFooter page={ua.page} pageSize={ua.pageSize} total={empTotal} unit="nhân viên"
+                onPageSize={n => setUserAdmin({ pageSize: n, page: 1 })} />
             </Card>
             {selectedEmp && (
               <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">

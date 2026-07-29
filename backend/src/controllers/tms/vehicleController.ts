@@ -47,11 +47,29 @@ async function listVehiclesPaged(req: Request, res: Response) {
     if (q.search)           qq = qq.ilike('license_plate', `%${safeSearch(q.search)}%`)
     return qq
   }
-  // Ô tổng đếm trên TOÀN BỘ bộ lọc (đếm ở FE = chỉ đếm trang đang xem).
-  // 2 câu đếm, không 3: `Vehicle.is_active` là NOT NULL ⇒ `inactive = total − active` LUÔN đúng,
-  // không cần round-trip thứ ba. Mỗi request PostgREST chiếm 1 khe trong pool ~10 khe của nó, nên
-  // dưới tải thì bớt được 1 request là bớt hẳn một lượt xếp hàng (đo 28/07 — xem migration
-  // 20260728i). Nếu sau này cột thành nullable thì phải đếm lại riêng.
+  // MỘT RPC cho cả trang: rows (đã ghép ĐVVT + loại xe) + total + active (migration 20260729).
+  // Đường cũ = 5 request (2 câu đếm + trang + TransportCompany + VehicleType) — mỗi request chiếm
+  // 1 khe pool ~10 khe của PostgREST, dưới tải là 5 lượt xếp hàng. `inactive = total − active`
+  // (Vehicle.is_active NOT NULL). Fallback đường cũ khi RPC chưa được apply (cửa sổ triển khai).
+  const { data: rp, error: rpErr } = await supabase.rpc('tms_vehicles_page', {
+    p_ncc_ids: userNccId ? [userNccId] : (nccIds.length ? nccIds : null),
+    p_vt_ids:  vtIds.length ? vtIds : null,
+    p_active:  (q.is_active !== undefined && q.is_active !== '') ? q.is_active === 'true' : null,
+    p_search:  q.search ? safeSearch(q.search) : null,
+    p_offset:  (pageNum - 1) * pageSize,
+    p_limit:   pageSize,
+  })
+  if (!rpErr && rp) {
+    const d = rp as { rows?: unknown[]; total?: number; active?: number }
+    const total = d.total ?? 0
+    const active = d.active ?? 0
+    return ok(res, {
+      items: d.rows ?? [], total, active, inactive: total - active,
+      page: pageNum, page_size: pageSize,
+    })
+  }
+
+  // ── Nhánh dự phòng cửa sổ triển khai (RPC chưa apply) — đường cũ nguyên vẹn ──
   const [{ count: totalN }, { count: activeN }] = await Promise.all([
     buildQ().limit(1),
     buildQ().eq('is_active', true).limit(1),

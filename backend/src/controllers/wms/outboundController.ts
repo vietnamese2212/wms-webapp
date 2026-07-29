@@ -4078,7 +4078,7 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     })
     if (pageErr) return fail(res, pageErr.message)
     const pd = (pageData ?? {}) as {
-      gdo_ids?: string[]; total?: number; items_n?: number; pending_n?: number
+      gdo_ids?: string[]; items?: unknown[]; total?: number; items_n?: number; pending_n?: number
       loose_total?: number; loose_done?: number
     }
     const meta = {
@@ -4089,6 +4089,11 @@ export async function listLoosePickingItems(req: Request, res: Response) {
     const gdoIdsPage = pd.gdo_ids ?? []
     if (!gdoIdsPage.length) return ok(res, { items: [], ...meta })
 
+    // RPC trả THẲNG items đầy đủ (material + gdo + loose_scanned — migration 20260729)
+    // ⇒ 1 request thay vì 5 (trước: nạp GDO + OutboundDelivery + OutboundItem + OutboundScanEntry).
+    if (pd.items) return ok(res, { items: pd.items, ...meta })
+
+    // Nhánh dự phòng cửa sổ triển khai (code mới chạy trước khi migration được apply)
     const gdos = await fetchAllByIdChunks(gdoIdsPage, chunk => supabase.from('GroupDeliveryOrder')
       .select('id, group_code, delivery_date, planned_date, status, started_at, dvvt, warehouse_type, warehouse:Warehouse(id,code,name)')
       .in('id', chunk).order('id'))

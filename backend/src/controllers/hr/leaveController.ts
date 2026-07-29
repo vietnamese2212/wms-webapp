@@ -195,13 +195,17 @@ async function listLeavesPaged(req: Request, res: Response) {
   })
   // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp khoảng ngày
   if (error) return isQueryTimeout(error) ? fail(res, 400, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, 500, 'DB_ERROR', error.message)
-  const p = (data ?? {}) as { ids?: string[]; total?: number; pending?: number; approved?: number; rejected?: number }
+  const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number; pending?: number; approved?: number; rejected?: number }
   const ids = p.ids ?? []
   const meta = {
     total: p.total ?? 0, pending: p.pending ?? 0, approved: p.approved ?? 0, rejected: p.rejected ?? 0,
     page: pageNum, page_size: pageSize,
   }
   if (!ids.length) return ok(res, { items: [], ...meta })
+  // RPC trả THẲNG rows + employee embed (migration 20260729) ⇒ 1 request thay vì 4
+  // (trước: nạp LeaveRequest chunk + attachEmployees = Employee + JobTitle).
+  if (p.rows) return ok(res, { items: p.rows, ...meta })
+  // Nhánh dự phòng cửa sổ triển khai (code mới chạy trước khi migration được apply)
   const rows = await fetchAllByIdChunks(ids, chunk =>
     supabase.from('LeaveRequest').select(LEAVE_SELECT).in('id', chunk)) as { id: string; employee_id: string }[]
   const withEmp = await attachEmployees(rows)

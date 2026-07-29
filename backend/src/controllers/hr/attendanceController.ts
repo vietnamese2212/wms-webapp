@@ -73,7 +73,8 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     // cùng xem là chạm trần (quan sát thật dưới tải 24 luồng ghi ngày 28/07).
     if (error) return isQueryTimeout(error) ? fail(res, QUERY_TIMEOUT_MSG, 400) : fail(res, error.message)
     const m = (data ?? {}) as {
-      emp_ids?: string[]; total?: number; roster_total?: number; missing_total?: number
+      emp_ids?: string[]; employees?: unknown[]; rows?: unknown[]
+      total?: number; roster_total?: number; missing_total?: number
       work_days?: number; leave_days?: number; ot?: number; early?: number
     }
     const empIds = m.emp_ids ?? []
@@ -85,6 +86,12 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     }
     if (!empIds.length) return ok(res, { employees: [], rows: [], ...meta })
 
+    // RPC trả THẲNG employees + rows (migration 20260729) ⇒ 1 request PostgREST cho cả trang.
+    // Trước: RPC trả emp_ids rồi ở dưới nạp lại Employee + Attendance + JobTitle = 4 request —
+    // mỗi request chen 1 khe pool ~10 khe của PostgREST, dưới tải là 4 lượt xếp hàng.
+    if (m.employees) return ok(res, { employees: m.employees, rows: m.rows ?? [], ...meta })
+
+    // Nhánh dự phòng cửa sổ triển khai (code mới chạy trước khi migration được apply)
     // Thông tin NV + công của ĐÚNG trang này (chunk 300 — 1 trang có thể 500 người)
     const [emps, rows] = await Promise.all([
       fetchAllByIdChunks(empIds, chunk => supabase.from('Employee')

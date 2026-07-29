@@ -96,14 +96,26 @@ async function listLocationsPaged(req: Request, res: Response) {
   const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
   const ctx = getLocListCtx(req)
   if (ctx.blocked) return ok(res, { rows: [], total: 0 })
-  const { data, error } = await supabase.rpc('locations_page', {
+  // RPC trả THẲNG dòng + used_slots (migration 20260729, p_with_rows) ⇒ 1 request thay vì 3.
+  // Cửa sổ triển khai: code mới + RPC CŨ (8 tham số) → PostgREST PGRST202 "no matching function"
+  // vì thêm p_with_rows là ĐỔI CHỮ KÝ — phải gọi lại đúng chữ ký cũ, đừng để trang chết chờ migration.
+  let { data, error } = await supabase.rpc('locations_page', {
     p_offset: (page - 1) * pageSize, p_limit: pageSize,
     ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
+    p_with_rows: true,
   })
+  if (error && (error as { code?: string }).code === 'PGRST202') {
+    ({ data, error } = await supabase.rpc('locations_page', {
+      p_offset: (page - 1) * pageSize, p_limit: pageSize,
+      ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
+    }))
+  }
   if (error) throw error
-  const p = (data ?? {}) as { ids?: string[]; total?: number }
+  const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number }
   const ids = p.ids ?? []
   if (!ids.length) return ok(res, { rows: [], total: p.total ?? 0 })
+  if (p.rows) return ok(res, { rows: p.rows, total: p.total ?? 0 })
+  // Nhánh dự phòng (RPC cũ): nạp dòng + used_slots như trước
   const rows = await fetchAllByIdChunks(ids, chunk => supabase.from('Location')
     .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)').in('id', chunk).order('id'))
   const used = await usedSlotsFor(ids)

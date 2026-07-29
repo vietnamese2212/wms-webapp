@@ -66,6 +66,15 @@ export async function getDashboard(req: Request, res: Response) {
     const cats = scopeCategoriesOf(req)
     const today = todayVN()
 
+    // MỘT lời gọi cho CẢ dashboard: stats + zones (migration 20260729, `dashboard_all`).
+    // Trước đây 2 request song song (dashboard_stats + zone_capacity_rows) — trang ai cũng mở
+    // đầu tiên, dưới tải mỗi request là 1 lượt xếp hàng ở pool ~10 khe của PostgREST.
+    const { data: allData, error: allErr } = await supabase.rpc('dashboard_all', {
+      p_warehouse_ids: whIds, p_categories: cats, p_today: today,
+    })
+    if (!allErr && allData) return ok(res, { ...(allData as object), source: 'rpc' })
+
+    // ── Nhánh dự phòng cửa sổ triển khai (dashboard_all chưa apply) — đường cũ nguyên vẹn ──
     // Sức chứa khu vực chạy song song với RPC — lỗi phần khu không được kéo sập dashboard
     const zonesPromise = computeZoneCapacity(whIds, cats).catch(() => [] as ZoneCapRow[])
 

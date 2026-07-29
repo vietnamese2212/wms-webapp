@@ -185,6 +185,36 @@ export async function listWeighTickets(req: Request, res: Response) {
       : requested
     if (requested.length > 0 && effective.length === 0)
       return ok(res, { rows: [], total: 0, done: 0, matched: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
+
+    // MỘT RPC cho cả trang: rows (đã đắp tên kho + group_code chuyến) + total + done + matched
+    // (migration 20260729). Đường cũ = 5 request (trang + 2 câu đếm + nạp Kho + nạp GDO) — mỗi
+    // request chiếm 1 khe pool ~10 khe của PostgREST. Filter trong RPC mirror applyFilters dưới
+    // (kể cả null-inclusive khi lọc theo scope). Fallback đường cũ khi RPC chưa apply.
+    {
+      const nq0 = q ? String(q).trim().replace(/[%_,()]/g, ' ').trim() : ''
+      const { data: rp, error: rpErr } = await supabase.rpc('weigh_tickets_page', {
+        p_wh_ids:   effective.length > 0 ? effective : null,
+        p_null_ok:  requested.length === 0,          // scope-mode: phiếu chưa gắn kho vẫn hiện
+        p_from:      from_date ? String(from_date) : null,
+        p_to:        to_date ? String(to_date) : null,
+        p_direction: direction ? String(direction) : null,
+        p_match:     match_state ? String(match_state) : null,
+        p_q:         nq0 || null,
+        p_plate:     nq0 ? normPlate(nq0) : null,
+        p_offset:    (pageNum - 1) * limitNum,
+        p_limit:     limitNum,
+      })
+      if (!rpErr && rp) {
+        const d = rp as { rows?: unknown[]; total?: number; done?: number; matched?: number }
+        return ok(res, {
+          rows: d.rows ?? [], total: d.total ?? 0,
+          done: d.done ?? 0, matched: d.matched ?? 0,
+          page: pageNum, limit: limitNum,
+        })
+      }
+    }
+
+    // ── Nhánh dự phòng cửa sổ triển khai (RPC chưa apply) — đường cũ nguyên vẹn ──
     // Cùng 1 mệnh đề lọc cho trang và 2 ô đếm — lệch nhau là số trong band không khớp bảng
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyFilters = (qq: any): any => {

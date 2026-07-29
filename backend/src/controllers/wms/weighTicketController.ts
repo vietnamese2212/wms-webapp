@@ -3,6 +3,7 @@ import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -179,7 +180,7 @@ export async function listWeighTickets(req: Request, res: Response) {
     let qMatch = countQ().not('gdo_id', 'is', null)
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
-    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const requested = parseListParam(warehouse_ids) ?? []
     const effective = scopeWhIds.length > 0
       ? (requested.length > 0 ? requested.filter(id => scopeWhIds.includes(id)) : scopeWhIds)
       : requested

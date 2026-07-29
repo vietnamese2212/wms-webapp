@@ -3,8 +3,13 @@
 // predicate tham chiếu cột bất kỳ (rò rỉ dữ liệu kiểu blind-boolean, vd dò cột `password`).
 // Ngoài ra `%` `_` `\` là wildcard LIKE → escape để khớp đúng nghĩa đen.
 // Dùng: `q.or(\`name.ilike.%${safeSearch(s)}%,code.ilike.%${safeSearch(s)}%\`)`
+// Ký tự ĐIỀU KHIỂN (C0 + DEL) không bao giờ có nghĩa trong từ khóa, nhưng lọt xuống Postgres là
+// lỗi cứng: 22P05/500 (fuzz 29/07: search=%00 đánh sập Mã hàng). Lột sạch TRƯỚC mọi xử lý.
+const CONTROL_RE = /[\u0000-\u001F\u007F]/g
+
 export function safeSearch(input: unknown): string {
   return String(input ?? '')
+    .replace(CONTROL_RE, ' ')
     .replace(/[\\%_]/g, m => '\\' + m)   // escape wildcard LIKE
     .replace(/[,()]/g, ' ')              // bỏ ký tự phá cú pháp .or()
 }
@@ -15,6 +20,7 @@ export function safeSearch(input: unknown): string {
 // Nhờ vậy gõ "nha dam" tìm ra "Nha Đam". FE gửi từ khóa THÔ — chuẩn hoá làm ở BE (1 chỗ).
 export function normalizeSearchTerm(input: unknown): string {
   return String(input ?? '')
+    .replace(CONTROL_RE, ' ')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')   // bỏ dấu tổ hợp
     .replace(/đ/g, 'd').replace(/Đ/g, 'D')              // đ/Đ là chữ riêng, NFD không tách
     .toLowerCase()
@@ -25,7 +31,7 @@ export function normalizeSearchTerm(input: unknown): string {
 // Khác safeSearch (dành cho ilike): ở đây KHÔNG escape `% _` vì là so khớp literal, không phải LIKE.
 // Dùng cho: mã kho/shipto, category, đoạn QR (giá trị do user/QR đưa vào rồi ghép thẳng vào filter).
 export function safeFilterValue(input: unknown): string {
-  return String(input ?? '').replace(/[,(){}"\\]/g, '').trim()
+  return String(input ?? '').replace(CONTROL_RE, ' ').replace(/[,(){}"\\]/g, '').trim()
 }
 
 // Từ khóa trông như SQL-injection bị WAF trước Supabase CHẶN Ở TẦNG HẠ TẦNG: nó trả trang HTML

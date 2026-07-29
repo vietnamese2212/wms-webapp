@@ -82,8 +82,11 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
 
 export async function login(req: Request, res: Response) {
   try {
-    const { email, password } = req.body as { email?: string; password?: string }
-    if (!email || !password) return fail(res, 'Email và mật khẩu là bắt buộc', 400)
+    const { email, password } = req.body as { email?: unknown; password?: unknown }
+    // Kiểm KIỂU chứ không chỉ truthy: email dạng object/mảng (payload dị dạng) từng lọt xuống
+    // .ilike → 500 (digest bắt 29/07). Rác đầu vào = 400, không phải lỗi hệ thống.
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password)
+      return fail(res, 'Email và mật khẩu là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps, error: lookupErr } = await supabase.from('Employee')

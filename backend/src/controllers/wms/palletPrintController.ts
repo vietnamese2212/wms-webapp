@@ -4,6 +4,7 @@ import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { parseListParam } from '../../utils/httpQuery'
 
 function ok(res: Response, data: unknown) {
   return res.json({ success: true, data })
@@ -82,10 +83,7 @@ export async function logPrints(req: Request, res: Response) {
 // GET /wms/pallet-prints?qr_code=&qr_codes=&search=&categories=&cycles=&machines=&nmsx=&material_codes=&date_from=&date_to=&limit=
 // qr_codes (csv): lấy log cho 1 TẬP mã pallet — dùng cho Truy cứu (base = tồn kho, LEFT JOIN số lần in).
 // Lọc SERVER-SIDE (dữ liệu có thể vài triệu dòng) — frontend chỉ gọi khi đã có filter/quét mã.
-const printCsv = (s?: string | string[]) => {
-  const arr = Array.isArray(s) ? s : (s ? String(s).split(',') : [])
-  return arr.map(x => String(x).trim()).filter(Boolean)
-}
+const printCsv = (s?: string | string[]) => parseListParam(s) ?? []
 const printTs = (d: string | undefined, endOfDay: boolean) =>
   d ? new Date(`${d}T${endOfDay ? '23:59:59' : '00:00:00'}+07:00`).toISOString() : null
 
@@ -173,7 +171,7 @@ export async function listPrints(req: Request, res: Response) {
   if (req.query.page) return await listPrintsPaged(req, res)
   try {
     const { qr_code, qr_codes, search, categories, cycles, machines, nmsx, material_codes, date_from, date_to, limit } = req.query as Record<string, string | undefined>
-    const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+    const csv = (s?: string) => parseListParam(s) ?? []
 
     // Scope theo user: kho được giao + Loại hàng được phép (dòng cũ chưa gắn kho/loại vẫn hiện)
     const scopeWh = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null

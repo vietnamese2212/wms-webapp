@@ -15,6 +15,7 @@ import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../ut
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { parseListParam } from '../../utils/httpQuery'
 
 const now = () => new Date().toISOString()
 
@@ -331,7 +332,7 @@ async function fetchGDOFull(id: string) {
 // trạng) nay nhận qua query CSV và đẩy xuống RPC.
 async function getGdoListCtx(req: Request) {
   const q = req.query as Record<string, string>
-  const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+  const csv = (s?: string) => parseListParam(s) ?? []
   const scopeWarehouseIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
   const scopeCats = scopeCategoriesOf(req)
 
@@ -3328,7 +3329,7 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
 // invalidate (prefix 'gdo'), pallet cần chuẩn bị giảm dần khi quét. KHÔNG giữ chỗ (reserve).
 export async function getPrepareBoard(req: Request, res: Response) {
   try {
-    const gdoIds = String(req.query.gdo_ids ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const gdoIds = parseListParam(req.query.gdo_ids) ?? []
     if (!gdoIds.length) return ok(res, { rows: [], total_cartons: 0, total_pallets: 0 })
 
     const { data: gdos } = await supabase.from('GroupDeliveryOrder')
@@ -4012,8 +4013,7 @@ export async function manualLooseItem(req: Request, res: Response) {
 // ─── List loose picking items (nhặt lẻ) ──────────────────────
 
 const looseCsv = (v?: string | string[]) => {
-  const arr = Array.isArray(v) ? v : (v ? String(v).split(',') : [])
-  const out = arr.map(x => String(x).trim()).filter(Boolean)
+  const out = parseListParam(v) ?? []
   return out.length ? out : null
 }
 
@@ -4416,7 +4416,7 @@ export async function getScanLog(req: Request, res: Response) {
     : []
   let effectiveWarehouseIds: string | null = null
   if (scopeWhIds.length > 0) {
-    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const requested = parseListParam(warehouse_ids) ?? []
     const effective = requested.length > 0
       ? requested.filter(id => scopeWhIds.includes(id))
       : scopeWhIds
@@ -4504,7 +4504,7 @@ export async function getScanLogFacets(req: Request, res: Response) {
     : []
   let effectiveWarehouseIds: string | null = null
   if (scopeWhIds.length > 0) {
-    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const requested = parseListParam(warehouse_ids) ?? []
     const effective = requested.length > 0
       ? requested.filter(id => scopeWhIds.includes(id))
       : scopeWhIds

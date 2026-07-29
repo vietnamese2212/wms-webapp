@@ -3051,7 +3051,7 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: 'Hướng' },
   { label: 'Loại kho' },
   { label: 'Loại xe' },
-  { label: 'Thùng', align: 'right' },
+  { label: 'SL (quy đổi)', align: 'right' },
   { label: 'Pallet', align: 'right' },
   { label: 'Tấn', align: 'right' },
   { label: 'SĐT' },
@@ -3083,7 +3083,7 @@ function srcEditing(o: TransferOrder): boolean {
 // Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
 const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
   { label: 'Số DO' }, { label: 'Ngày xuất' }, { label: 'Kho xuất' }, { label: 'Kho nhận' },
-  { label: 'Ngày nhận' }, { label: 'Thùng KH', align: 'right' }, { label: 'Thực nhận', align: 'right' },
+  { label: 'Ngày nhận' }, { label: 'KH (quy đổi)', align: 'right' }, { label: 'Thực nhận', align: 'right' },
   { label: 'Chênh lệch', align: 'right' }, { label: 'Tình trạng GN' }, { label: 'Dự kiến giao' },
   { label: 'ĐVVT' }, { label: 'Biển số' }, { label: 'Số điện thoại' }, { label: 'Tình trạng' },
   { label: 'Số GDO' }, { label: 'Ghi chú' }, { label: 'Mã lệnh' },

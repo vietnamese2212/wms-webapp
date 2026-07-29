@@ -6,10 +6,12 @@ import { fileURLToPath } from 'url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+// `||` chứ không `??`: trong CI, secret chưa khai đi vào env là CHUỖI RỖNG (không phải undefined)
+// — `??` sẽ giữ chuỗi rỗng và login bằng tài khoản rỗng.
 export const BASE = process.env.QA_BASE_URL
-  ?? 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
-const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL ?? 'admin'
-const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD ?? 'Bavi1234'   // tài khoản test STAGING
+  || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL || 'admin'
+const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD || 'Bavi1234'   // tài khoản test STAGING
 
 // ── Dữ liệu nền cố định của staging dùng cho test (đổi ở đây nếu staging thay data nền) ──
 export const FIX = {

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { maskServerMessage } from '../../utils/response'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { parseListParam } from '../../utils/httpQuery'
 
 // ─── Control Tower (Giám sát vận hành) ────────────────────────────────────────
 // Toàn bộ số liệu trong-ngày gộp 1 RPC (aggregate phía DB — bảng triệu dòng, PostgREST
@@ -21,8 +22,7 @@ export async function getControlTower(req: Request, res: Response) {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     // Scope kho: JWT ∩ filter user chọn (như listWeighTickets)
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
-    const requested = req.query.warehouse_ids
-      ? String(req.query.warehouse_ids).split(',').filter(Boolean) : []
+    const requested = parseListParam(req.query.warehouse_ids) ?? []
     const effective = scopeWhIds.length > 0
       ? (requested.length > 0 ? requested.filter(id => scopeWhIds.includes(id)) : scopeWhIds)
       : requested
@@ -30,16 +30,14 @@ export async function getControlTower(req: Request, res: Response) {
       return fail(res, 'Kho chọn ngoài phạm vi được phân quyền', 403, 'FORBIDDEN')
     // Loại kho: filter user chọn ∩ scope loại JWT
     const scopeCats = scopeCategoriesOf(req)
-    const reqCats = req.query.categories
-      ? String(req.query.categories).split(',').filter(Boolean) : []
+    const reqCats = parseListParam(req.query.categories) ?? []
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats
     if (reqCats.length > 0 && effCats.length === 0)
       return fail(res, 'Loại kho chọn ngoài phạm vi được phân quyền', 403, 'FORBIDDEN')
     // Mã hàng: lọc đích danh (chỉ cắt 2 khối hàng-theo-mã trong RPC)
-    const matCodes = req.query.material_codes
-      ? String(req.query.material_codes).split(',').filter(Boolean).slice(0, 100) : []
+    const matCodes = parseListParam(req.query.material_codes, 100) ?? []
 
     const { data, error } = await supabase.rpc('control_tower_stats', {
       p_warehouse_ids: effective.length > 0 ? effective : null,

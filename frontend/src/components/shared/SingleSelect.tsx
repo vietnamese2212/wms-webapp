@@ -11,7 +11,7 @@ export interface SingleSelectOption {
   disabled?: boolean
 }
 
-interface SingleSelectProps {
+type SingleSelectProps = {
   options: SingleSelectOption[]
   value: string
   onChange: (value: string) => void
@@ -21,17 +21,18 @@ interface SingleSelectProps {
   disabled?: boolean
   dropUp?: boolean          // giữ prop cho tương thích — vị trí thực do usePopoverAnchor tự tính
   triggerClassName?: string
+} & (
+  | { serverSearch?: false; onSearchChange?: never; loading?: never; selectedLabel?: never }
   /**
    * Danh mục LỚN (mã hàng, vị trí, biển số): `options` do SERVER trả theo từ khóa.
    * Bật cờ này thì KHÔNG lọc lại ở client (server đã lọc + cắt) và mỗi lần gõ sẽ gọi
    * `onSearchChange` sau 250ms. Cha tự quản query (`useMaterials({ search, limit: 50 })`).
+   * `selectedLabel` là BẮT BUỘC KHAI (nghiệm thu 29/07): giá trị đang chọn không khớp từ khóa
+   * hiện tại thì không còn trong `options` → trigger sẽ hiện GIÁ TRỊ THÔ (uuid). Truyền nhãn
+   * của giá trị đang chọn (được phép `undefined` khi chưa chọn gì).
    */
-  serverSearch?: boolean
-  onSearchChange?: (term: string) => void
-  loading?: boolean
-  /** Nhãn của giá trị đang chọn khi nó KHÔNG nằm trong `options` hiện tại (server-search). */
-  selectedLabel?: string
-}
+  | { serverSearch: true; onSearchChange: (term: string) => void; loading?: boolean; selectedLabel: string | undefined }
+)
 
 /**
  * Dropdown chọn-1 dùng chung — ĐỒNG NHẤT look/behavior với WarehouseSingleSelect ("Kho").

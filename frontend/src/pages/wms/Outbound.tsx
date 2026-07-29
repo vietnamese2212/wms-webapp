@@ -32,7 +32,7 @@ import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -114,7 +114,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
   { id: 'plate',     label: 'Biển số xe',    w: 110 },
-  { id: 'cartons',   label: 'Tổng thùng',    w: 118, align: 'right' },
+  { id: 'cartons',   label: 'Tổng SL',       w: 118, align: 'right' },   // cell (GdoQty) tự ghi đơn vị — chuyến nhiều mã khác ĐVT thì là SL quy đổi
   { id: 'cartons_qr', label: 'Tổng (QR)',    w: 118, align: 'right' },
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 118, align: 'right' },
   { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 118, align: 'right' },
@@ -839,9 +839,9 @@ export default function Outbound() {
       <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
-        { label: 'Tổng thùng', value: fmtTotal(summary.cartons) },
-        { label: 'Tổng (QR)', value: fmtTotal(summary.cartonsQr) },
-        { label: 'Tổng (k QR)', value: fmtTotal(summary.cartonsNoqr) },
+        { label: QTY_CONVERTED_LABEL, value: fmtTotal(summary.cartons), tip: QTY_CONVERTED_TIP },
+        { label: 'QR (quy đổi)', value: fmtTotal(summary.cartonsQr), tip: QTY_CONVERTED_TIP },
+        { label: 'K QR (quy đổi)', value: fmtTotal(summary.cartonsNoqr), tip: QTY_CONVERTED_TIP },
         { label: 'Pallet', value: fmtTotal(fmtPallets(summary.pallets)) },
         { label: 'Hoàn thành', value: tooWide ? '—' : summary.completed, accent: !tooWide && summary.completed > 0 },
         ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),

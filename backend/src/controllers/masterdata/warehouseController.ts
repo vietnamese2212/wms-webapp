@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -13,8 +14,7 @@ function extractCount(arr: unknown): number {
 
 // Chuẩn hoá danh sách ship-to phụ: nhận mảng hoặc chuỗi "A, B" → mảng mã UPPER, bỏ trùng/rỗng.
 function normShiptoCodes(input: unknown): string[] {
-  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
-  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+  return [...new Set((parseListParam(input) ?? []).map(s => s.toUpperCase()))]
 }
 
 // Chặn 1 mã ship-to thuộc >1 kho (gây mơ hồ auto-detect chuyển kho). Trả mã đụng đầu tiên (nếu có).
@@ -65,8 +65,7 @@ function normSapPlant(input: unknown): string | null {
   return v || null
 }
 function normSapSlocs(input: unknown): string[] {
-  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
-  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+  return [...new Set((parseListParam(input) ?? []).map(s => s.toUpperCase()))]
 }
 
 // Danh sách Loại kho phải quét thùng tại kho (multi) — null khi rỗng/không phải mảng

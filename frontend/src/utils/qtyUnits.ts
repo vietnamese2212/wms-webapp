@@ -134,3 +134,16 @@ export function qtyEntryDecimal(qty: number, m?: MatUnits | null): number {
 export function qtyEntryText(qty: number, m?: MatUnits | null): string {
   return fmt(qtyEntryDecimal(qty, m))
 }
+
+/**
+ * NHÃN + TOOLTIP cho ô TỔNG cộng CROSS-MÃ (band/tile) — nguồn DUY NHẤT, đừng tự đặt chữ.
+ * Tổng cross-mã = qtyEntryDecimal per-mã rồi cộng: mã có thùng về thùng, mã KHÔNG entry
+ * (NVL kg / bao bì cái) góp SỐ BASE THÔ — nên gọi cả cụm là "thùng" là SAI ĐƠN VỊ và thổi số
+ * (Tồn kho 29/07: 118 triệu "thùng" thực chất 116 triệu là CÁI; TMS 26/07: 12,5 triệu tương tự).
+ * Từ vựng chốt 26/07: "SL (quy đổi)".
+ */
+export const QTY_CONVERTED_LABEL = 'SL (quy đổi)'
+export const QTY_CONVERTED_TIP =
+  'Số lượng quy đổi: mã có quy cách thùng được quy về THÙNG, mã tính theo KG/cái '
+  + '(nguyên liệu, bao bì) cộng theo đơn vị gốc — nên đây KHÔNG phải số thùng hàng thực tế. '
+  + 'Xem số đúng đơn vị ở cột số lượng của từng dòng.'

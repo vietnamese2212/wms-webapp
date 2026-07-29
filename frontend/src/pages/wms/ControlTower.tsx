@@ -358,6 +358,7 @@ export default function ControlTower() {
     { key: 'material', label: 'Mã hàng', type: 'multi', searchable: true,
       serverSearch: true, onSearchChange: setMatTerm, loading: matFetching,
       options: allMaterials.map(m => ({ value: m.material_code, label: `${m.material_code} — ${m.short_name ?? ''}` })),
+      selectedOpts: filters.material_codes.map(c => ({ value: c, label: c })),   // value = mã nghiệp vụ, tự đọc được
       selected: filters.material_codes,
       onChange: v => setF({ material_codes: v }) },
   ]

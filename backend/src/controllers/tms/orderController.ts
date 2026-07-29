@@ -8,6 +8,7 @@ import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -260,8 +261,7 @@ type TmsListCtx = {
 // Nhận cả chuỗi CSV (query-string) lẫn mảng (bộ lọc gửi trong body JSON) — sai kiểu ở đây từng
 // làm material-summary văng 500 khi client gửi mảng.
 const csv = (v?: string | string[]): string[] | null => {
-  const arr = (Array.isArray(v) ? v : String(v ?? '').split(','))
-    .map(s => String(s).trim()).filter(Boolean)
+  const arr = parseListParam(v) ?? []
   return arr.length ? arr : null
 }
 

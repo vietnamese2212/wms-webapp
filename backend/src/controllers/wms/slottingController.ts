@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
+import { parseListParam } from '../../utils/httpQuery'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -156,7 +157,7 @@ export async function getSlotting(req: Request, res: Response) {
     if (!warehouseId) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouseId)) return
     const scopeCats = scopeCategoriesOf(req)
-    const reqCats = req.query.categories ? String(req.query.categories).split(',').filter(Boolean) : []
+    const reqCats = parseListParam(req.query.categories) ?? []
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats

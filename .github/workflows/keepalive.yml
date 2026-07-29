@@ -46,6 +46,16 @@ jobs:
             401) exit 0 ;;
             *) echo "app/DB production KHONG phan hoi nhu du kien (code=$code)"; exit 1 ;;
           esac
+      - name: Production LOF — digest lỗi 24h (BE 5xx > 0 = job đỏ → GitHub email)
+        run: |
+          body=$(curl -s --max-time 30 'https://wms-webapp.vercel.app/api/telemetry/digest')
+          echo "digest production: $body"
+          be=$(echo "$body" | grep -o '"be_24h":[0-9]*' | cut -d: -f2)
+          case "$be" in
+            '') echo "digest chưa sẵn sàng (endpoint/migration chưa lên production) — bỏ qua" ;;
+            0)  echo "0 lỗi 5xx BE trong 24h qua" ;;
+            *)  echo "::error::production có $be lỗi 5xx trong 24h qua — soi bảng error_logs (Supabase LOF)"; exit 1 ;;
+          esac
       - name: Staging — REST gateway (phụ, không làm đỏ job)
         continue-on-error: true
         env:

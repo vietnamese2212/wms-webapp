@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -53,8 +54,7 @@ export async function getAttendanceMatrix(req: Request, res: Response) {
     const sc = await scopedEmployeeIds(req, q.warehouse_id)
     if (sc.forbidden) return fail(res, sc.forbidden, 403)
 
-    const workDates = (q.work_dates ? String(q.work_dates).split(',') : [])
-      .map(s => s.trim()).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
+    const workDates = (parseListParam(q.work_dates) ?? []).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
     const { data, error } = await supabase.rpc('hr_attendance_matrix', {
       p_scope_ids:  sc.empIds,
       p_wh:         q.warehouse_id || null,

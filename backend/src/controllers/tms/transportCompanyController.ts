@@ -3,11 +3,11 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 // "A, B" → ['A','B'] (UPPER, bỏ trùng/rỗng)
 function normAlias(input: unknown): string[] {
-  const raw = Array.isArray(input) ? input : String(input ?? '').split(',')
-  return [...new Set(raw.map(s => String(s).toUpperCase().trim()).filter(Boolean))]
+  return [...new Set((parseListParam(input) ?? []).map(s => s.toUpperCase()))]
 }
 
 // Chặn 1 mã (code/alias) thuộc >1 NCC/ĐVVT (gây mơ hồ khi upload khớp theo mã). Trả mã đụng (nếu có).

@@ -307,7 +307,9 @@ export const MODULES = {
       create: 'Thêm dòng (tay)',
       edit:   'Sửa dòng',
       delete: 'Xóa dòng (lẻ + hàng loạt)',
-      export: 'Xuất Excel DO SAP',
+      // `export` cũ là action MỒ CÔI copy-paste từ external_do_sap (không nút FE, không route BE
+      // — gói QA 08-perm-coverage bắt 29/07): admin tick vào cũng không có tác dụng gì. Tab KHVC
+      // chưa có nút Xuất Excel; khi làm thì thêm lại đủ 4 nơi theo skill add-permission.
     },
   },
   work_assignment: {

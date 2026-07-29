@@ -22,16 +22,31 @@ export function dedupOpts(opts: FBOpt[]): FBOpt[] {
   return [...seen.values()]
 }
 
+// serverSearch: danh mục LỚN (mã hàng…) — `options` do server trả theo từ khóa, KHÔNG lọc lại
+// ở client và KHÔNG có dòng "Tất cả" (chọn tất cả của 50 dòng đang thấy là hiểu nhầm tai hại).
+// `selectedOpts` là BẮT BUỘC (lỗi biên dịch nếu thiếu — nghiệm thu 29/07): options chỉ chứa dòng
+// khớp TỪ KHÓA HIỆN TẠI, nên giá trị đang chọn không khớp (hoặc mở lại app với filter đã nhớ)
+// sẽ mất nhãn → chip in giá trị thô (uuid) + bảng trống, user tưởng mất dữ liệu. Truyền nhãn
+// tra theo id (vd `useMaterialsByIds`); value là mã nghiệp vụ thì `v => ({ value: v, label: v })`.
+type FBMulti = { key: string; label: string; type: 'multi'; options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean } & (
+  | { serverSearch?: false; onSearchChange?: never; loading?: never; selectedOpts?: never }
+  | { serverSearch: true; onSearchChange: (term: string) => void; loading?: boolean; selectedOpts: FBOpt[] }
+)
+
 // pinned: chip LUÔN hiện trên bar kể cả khi trống (không rơi vào menu "+ Thêm lọc" khi xóa giá trị)
 export type FilterDef = (
-  // serverSearch: danh mục LỚN (mã hàng…) — `options` do server trả theo từ khóa, KHÔNG lọc lại
-  // ở client và KHÔNG có dòng "Tất cả" (chọn tất cả của 50 dòng đang thấy là hiểu nhầm tai hại).
-  | { key: string; label: string; type: 'multi';     options: FBOpt[]; selected: string[]; onChange: (v: string[]) => void; searchable?: boolean; serverSearch?: boolean; onSearchChange?: (term: string) => void; loading?: boolean }
+  | FBMulti
   | { key: string; label: string; type: 'single';    options: FBOpt[]; value: string; onChange: (v: string) => void; allLabel?: string }
   | { key: string; label: string; type: 'date';      value: string; onChange: (v: string) => void }
   | { key: string; label: string; type: 'daterange'; from: string; to: string; onChange: (from: string, to: string) => void }
   | { key: string; label: string; type: 'text';      value: string; onChange: (v: string) => void; placeholder?: string }
 ) & { pinned?: boolean }
+
+// Nguồn option DUY NHẤT cho mọi chỗ đọc def.options của multi — serverSearch thì ghim
+// [đang chọn] lên đầu rồi mới tới kết quả tìm (dedup theo value, bản ghim thắng).
+function optsOf(def: FBMulti): FBOpt[] {
+  return def.serverSearch ? dedupOpts([...def.selectedOpts, ...def.options]) : def.options
+}
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -53,7 +68,7 @@ function chipValue(def: FilterDef): string {
   switch (def.type) {
     case 'multi': {
       if (def.selected.length === 1) {
-        const o = def.options.find(o => o.value === def.selected[0])
+        const o = optsOf(def).find(o => o.value === def.selected[0])
         return o?.label ?? def.selected[0]
       }
       return `${def.selected.length} mục`
@@ -400,9 +415,10 @@ function MultiList({ def, onClose, fullWidth = false }: { def: Extract<FilterDef
     const t = setTimeout(() => onSearchChange(search), 250)
     return () => clearTimeout(t)
   }, [search, server, onSearchChange])
+  const baseOpts = optsOf(def)
   const visible = searchable && search && !server
-    ? def.options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
-    : def.options
+    ? baseOpts.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    : baseOpts
   const allSelected  = visible.length > 0 && visible.every(o => def.selected.includes(o.value))
   const someSelected = !allSelected && visible.some(o => def.selected.includes(o.value))
   const shell = fullWidth ? 'w-full max-h-72 border rounded-md' : 'shadow-lg min-w-[190px] max-h-64'

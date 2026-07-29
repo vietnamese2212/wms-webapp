@@ -13,6 +13,7 @@ import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -192,7 +193,7 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
 }
 
 function parseArr(raw: string | undefined): string[] {
-  return raw ? raw.split(',').filter(Boolean) : []
+  return parseListParam(raw) ?? []
 }
 
 function matchDatePct(pct: number, range: string): boolean {
@@ -328,6 +329,7 @@ interface ResolvedFilter {
   empty?: boolean
   error?: string
   tooBroad?: string   // từ khóa khớp quá nhiều mã/vị trí → 400 kèm thông báo, KHÔNG để thành 500
+  badParam?: string   // id sai dạng uuid (warehouse_ids/ncc_ids) → 400, kẻo 22P02 thành 500
   params: FilterParams
   datePctIds: string[] | null
   pageNum: number
@@ -348,6 +350,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   // Multi-value params (comma-separated)
   const warehouseIds      = parseArr(q.warehouse_ids)
   const categories        = parseArr(q.categories)
+  // warehouse_id/ncc_id là CỘT uuid — chuỗi lạ lọt xuống Postgres = 22P02 → 500 (fuzz 29/07)
+  const badIds = nonUuidEntries([...warehouseIds, ...parseArr(q.ncc_ids)])
 
   // Enforce user's warehouse + category scope from JWT
   const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
@@ -380,6 +384,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   const offset   = (pageNum - 1) * limitNum
 
   const base = { params: {} as FilterParams, datePctIds: null as string[] | null, pageNum, limitNum, offset }
+
+  if (badIds.length) return { ...base, badParam: `Tham số id không hợp lệ: ${badIds.slice(0, 3).join(', ')}` }
 
   // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
   if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
@@ -512,6 +518,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 export async function listInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0, total_pallets_in_stock: 0 })
 
@@ -637,6 +644,7 @@ export async function listInventory(req: Request, res: Response) {
 export async function summaryInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0, page: r.pageNum, limit: r.limitNum })
 
@@ -713,6 +721,7 @@ export async function summaryInventory(req: Request, res: Response) {
 export async function exportInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
   if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [] })
 
@@ -733,6 +742,7 @@ export async function listFacets(req: Request, res: Response) {
   const scopeCats = scopeCategoriesOf(req)
   const reqWh  = parseArr(q.warehouse_ids)
   const reqCat = parseArr(q.categories)
+  if (nonUuidEntries(reqWh).length) return fail(res, 400, 'INVALID_ID', 'Tham số warehouse_ids không hợp lệ')
   const warehouseIds = scopeWh.length > 0 ? (reqWh.length > 0 ? reqWh.filter(id => scopeWh.includes(id)) : scopeWh) : reqWh
   const categories   = scopeCats ? (reqCat.length > 0 ? reqCat.filter(c => scopeCats.includes(c)) : scopeCats) : reqCat
   if ((scopeWh.length > 0 && warehouseIds.length === 0) || (scopeCats && categories.length === 0)) {
@@ -1162,9 +1172,8 @@ export async function stocktakeEntries(req: Request, res: Response) {
     : []
 
   // Resolve location IDs to query against. Ưu tiên danh sách vị trí chọn (CSV); fallback location_id đơn.
-  const explicitIds = location_ids
-    ? String(location_ids).split(',').filter(Boolean)
-    : (location_id ? [location_id] : [])
+  const locIdsParam = parseListParam(location_ids) ?? []
+  const explicitIds = locIdsParam.length ? locIdsParam : (location_id ? [location_id] : [])
   const stCats = scopeCategoriesOf(req)
   let resolvedLocationIds: string[]
   if (explicitIds.length) {
@@ -1303,7 +1312,7 @@ export async function stocktakeLog(req: Request, res: Response) {
   }
   const stCats = scopeCategoriesOf(req)
 
-  let locIdList = location_ids ? String(location_ids).split(',').filter(Boolean) : []
+  let locIdList = parseListParam(location_ids) ?? []
   // Cờ "chỉ vị trí cần check": BE tự resolve id (phân trang) → client không phải gửi nghìn id
   if (reqOnly && !locIdList.length) {
     try {

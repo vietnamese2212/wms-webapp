@@ -9,10 +9,12 @@ import App from './App'
 import { queryClient } from './api/queryClient'
 import { persistOptions } from './offline/persist'
 import { initTheme } from './stores/uiStore'
+import { installClientErrorReport } from './lib/clientErrorReport'
 import './stores/scopedPersist' // scope filter/saved-views theo user (side-effect)
 import './index.css'
 
 initTheme()
+installClientErrorReport()   // lỗi JS của user thật tự báo về error_logs (digest hằng ngày)
 
 // Service worker PWA: precache app shell → mở app/điều hướng được khi offline.
 // autoUpdate: deploy mới tự cập nhật nền (không dialog hỏi user).

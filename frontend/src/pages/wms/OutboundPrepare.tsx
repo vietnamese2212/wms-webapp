@@ -14,7 +14,7 @@ import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
@@ -300,7 +300,7 @@ export default function OutboundPrepare() {
         { label: 'Xe đã chọn', value: selected.size },
         { label: 'Mã hàng cần', value: rows.length },
         { label: 'Pallet cần', value: (board?.total_pallets ?? 0).toLocaleString('vi-VN'), accent: (board?.total_pallets ?? 0) > 0 },
-        { label: 'Thùng cần', value: (board?.total_cartons ?? 0).toLocaleString('vi-VN') },
+        { label: 'Cần (SL quy đổi)', value: (board?.total_cartons ?? 0).toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
       ]} />
 
       {/* Bảng chuẩn bị */}

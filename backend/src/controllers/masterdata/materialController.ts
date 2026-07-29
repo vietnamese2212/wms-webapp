@@ -7,6 +7,7 @@ import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination
 import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } from '../../utils/warehouseTypeMeta'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
+import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
@@ -36,8 +37,7 @@ type MatListCtx = {
   dq: string[] | null
 }
 const matCsv = (v?: string | string[]): string[] | null => {
-  const a = (Array.isArray(v) ? v : String(v ?? '').split(','))
-    .map(s => String(s).trim()).filter(Boolean)
+  const a = parseListParam(v) ?? []
   return a.length ? a : null
 }
 function getMatListCtx(req: Request): MatListCtx {
@@ -109,14 +109,12 @@ export async function listMaterials(req: Request, res: Response) {
     const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
     // codes=A,B,C — chặn 300/lượt đúng trần URL của PostgREST (xem memory id-list-url-limits)
     // Xét theo SỰ CÓ MẶT của tham số, không theo truthy: `?codes=` (chuỗi rỗng) là "tra 0 mã" →
-    // phải trả [] . Dùng `codes ?` thì chuỗi rỗng thành falsy ⇒ bỏ lọc ⇒ TRẢ CẢ DANH MỤC 2.740 mã
-    // (~2,5MB) — đúng cái đang bị cấm. Một `join(',')` trên mảng rỗng ở phía gọi là đủ để dính.
-    const splitIdParam = (v: unknown) =>
-      v === undefined ? null : String(v).split(',').map(c => c.trim()).filter(Boolean).slice(0, 300)
-    const codeList = splitIdParam(codes)
+    // phải trả []. Dùng `codes ?` thì chuỗi rỗng thành falsy ⇒ bỏ lọc ⇒ TRẢ CẢ DANH MỤC 2.740 mã
+    // (~2,5MB). Ngữ nghĩa này nằm trong parseListParam (utils/httpQuery) — đừng tự split.
+    const codeList = parseListParam(codes, 300)
     if (codeList && codeList.length === 0) return ok(res, [])
     // ids=uuid1,uuid2 — tra nhãn cho các mã ĐANG ĐƯỢC CHỌN ở filter (chip lọc), cùng trần 300 như codes.
-    const idList = splitIdParam(ids)
+    const idList = parseListParam(ids, 300)
     if (idList && idList.length === 0) return ok(res, [])
 
     // Có ?page= → TRANG danh mục (trang Mã hàng). Không có → giữ mode cũ trả MẢNG cho mọi

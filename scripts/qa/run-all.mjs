@@ -9,10 +9,13 @@ const DIR = dirname(fileURLToPath(import.meta.url))
 const withScale = process.argv.includes('--scale')
 const scaleN = process.argv[process.argv.indexOf('--scale') + 1]
 const steps = [
+  ['09-static-gate.mjs'],         // cổng tĩnh ratchet (không cần server) — rẻ nhất, fail nhanh nhất
   ['00-invariant.mjs'],
   ['01-smoke.mjs'],
   ['02-race.mjs'],
   ['04-qrformat.mjs'],            // test theo cờ HIỆN TẠI (không lật cờ — --flip chạy tay ngoài giờ)
+  ['07-params-fuzz.mjs'],         // fuzz tham số rỗng/lạ mọi API list (read-only) — bắt 500/dump danh mục/quá 4MB
+  ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),
 ]

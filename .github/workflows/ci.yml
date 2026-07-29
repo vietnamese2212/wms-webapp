@@ -1,0 +1,78 @@
+# CI mỗi lần push dev/main — "pipeline đi tuần" thay vì chờ người nhớ chạy tay (chốt 29/07).
+# 2 tầng:
+#   static  — tsc BE+FE + cổng tĩnh ratchet + build FE. KHÔNG cần secret, chạy được ngay.
+#   qa-smoke — chờ Vercel Preview build xong đúng commit này (poll /api/version) rồi bắn các gói
+#              QA read-only (invariant + params-fuzz + perm-coverage). Cần secrets — thiếu thì SKIP
+#              có chủ đích (in hướng dẫn), không đỏ oan.
+# Secrets cần khai 1 lần (Settings → Secrets and variables → Actions):
+#   QA_DATABASE_URL  = SUPABASE_URL|SERVICE_ROLE_KEY của STAGING, nối bằng dấu | (2 giá trị 1 secret)
+#     (chỉ staging — TUYỆT ĐỐI không đặt key production vào đây)
+# Gói race/scale KHÔNG chạy ở đây (có ghi dữ liệu — chạy tay/đêm, tránh đè giờ demo).
+name: ci
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch: {}
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Cài dependency (BE + FE)
+        run: |
+          cd backend && npm ci --no-audit --no-fund &
+          cd frontend && npm ci --no-audit --no-fund &
+          wait
+      - name: Cổng tĩnh ratchet (as any / split(',') / timezone / nhãn quy đổi)
+        run: node scripts/qa/09-static-gate.mjs
+      - name: tsc backend
+        run: cd backend && npx tsc --noEmit
+      - name: tsc + build frontend
+        run: cd frontend && npx tsc --noEmit && npm run build
+
+  qa-smoke:
+    # Chỉ dev: main deploy production — không bắn QA vào production.
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    env:
+      PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
+        run: |
+          for i in $(seq 1 72); do
+            sha=$(curl -s --max-time 15 "$PREVIEW_URL/api/version" | grep -o '"sha":"[a-f0-9]*"' | cut -d'"' -f4 || true)
+            echo "lần $i: preview=$sha cần=$GITHUB_SHA"
+            if [ "$sha" = "$GITHUB_SHA" ]; then echo "Preview ĐÃ live đúng commit"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::Preview không lên đúng commit sau 12 phút (Vercel build fail?)"; exit 1
+      - name: Dựng env cho bộ QA (từ secret — thiếu thì skip có chủ đích)
+        id: qaenv
+        run: |
+          if [ -z "${{ secrets.QA_DATABASE_URL }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Chưa khai secret QA_DATABASE_URL — bỏ qua QA smoke (chỉ chạy static). Khai ở Settings→Secrets: SUPABASE_URL|SERVICE_ROLE_KEY (staging) nối bằng dấu |"
+          else
+            IFS='|' read -r url key <<< "${{ secrets.QA_DATABASE_URL }}"
+            mkdir -p backend
+            printf 'SUPABASE_URL=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$url" "$key" > backend/.env
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: "QA read-only: invariant + params-fuzz + perm-coverage"
+        if: steps.qaenv.outputs.skip == 'false'
+        env:
+          QA_BASE_URL: ${{ env.PREVIEW_URL }}
+          # 2 secret tuỳ chọn — chưa khai thì lib.mjs dùng tài khoản test staging mặc định;
+          # sau khi đổi mật khẩu admin thì BẮT BUỘC khai (lib.mjs dùng ||, chuỗi rỗng vẫn fallback)
+          QA_ADMIN_EMAIL: ${{ secrets.QA_ADMIN_EMAIL }}
+          QA_ADMIN_PASSWORD: ${{ secrets.QA_ADMIN_PASSWORD }}
+        run: |
+          node scripts/qa/00-invariant.mjs
+          node scripts/qa/07-params-fuzz.mjs
+          node scripts/qa/08-perm-coverage.mjs

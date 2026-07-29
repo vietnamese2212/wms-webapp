@@ -1,7 +1,29 @@
 import { Response } from 'express'
+import { supabase } from '../lib/supabase'
 
 export const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data })
+
+/**
+ * TAI MẮT PRODUCTION (29/07): mọi 5xx đi qua fail/maskServerMessage được ghi vào bảng
+ * `error_logs` (fire-and-forget — KHÔNG await, KHÔNG bao giờ làm hỏng response đang trả).
+ * Workflow keepalive đọc GET /api/telemetry/digest hằng ngày: đếm BE 24h > 0 → job đỏ → email.
+ * Trước đây lỗi chỉ được thấy KHI CÓ NGƯỜI NGỒI KIỂM — giờ app tự khai trong vòng 1 ngày.
+ */
+export function recordServerError(source: 'be' | 'fe', message: string, status?: number, code?: string, url?: string, ua?: string) {
+  try {
+    void supabase.from('error_logs')
+      .insert({ source, status: status ?? null, code: code ?? null, message: String(message).slice(0, 500), url: url ?? null, ua: ua ?? null })
+      .then(() => {
+        // dọn lười: ~1% lượt ghi xoá log >30 ngày (bảng chỉ để digest — không cần giữ lâu)
+        if (Math.random() < 0.01) {
+          void supabase.from('error_logs')
+            .delete().lt('created_at', new Date(Date.now() - 30 * 86400_000).toISOString())
+            .then(() => {}, () => {})
+        }
+      }, () => { /* bảng chưa có (chưa apply migration) / DB sập — nuốt im, đừng đổ thêm dầu */ })
+  } catch { /* không bao giờ để telemetry phá request thật */ }
+}
 
 // Supports two call patterns:
 //   fail(res, 'message')            → 500
@@ -27,6 +49,7 @@ const GENERIC_5XX = 'Lỗi hệ thống, vui lòng thử lại'
 export function maskServerMessage(message: string, status: number): string {
   if (status < 500) return message
   console.error('[fail]', message)
+  recordServerError('be', message, status)
   return GENERIC_5XX
 }
 
@@ -34,6 +57,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
   if (typeof arg2 === 'number') {
     if (arg2 >= 500) {
       if (arg4) console.error('[fail]', arg3 ?? 'ERROR', arg4)
+      recordServerError('be', arg4 ?? String(arg3 ?? 'ERROR'), arg2, typeof arg3 === 'string' ? arg3 : undefined)
       return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: GENERIC_5XX } })
     }
     return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: arg4 ?? '' } })
@@ -41,6 +65,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
   const status = typeof arg3 === 'number' ? arg3 : 500
   if (status >= 500) {
     console.error('[fail]', arg2)   // log chi tiết server-side
+    recordServerError('be', arg2, status)
     return res.status(status).json({ success: false, error: { message: GENERIC_5XX } })
   }
   return res.status(status).json({ success: false, error: { message: arg2 } })

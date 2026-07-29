@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -99,8 +100,7 @@ type GateFilterCtx = {
 // Nhận cả CSV lẫn MẢNG (`?x[]=a&x[]=b`) — tên loại kho/loại xe có thể chứa dấu phẩy nên FE gửi
 // mảng; nhận CSV để tương thích link cũ. Sai kiểu ở đây là 500 (đã dính khi test).
 const gateCsv = (v?: string | string[]): string[] | null => {
-  const a = (Array.isArray(v) ? v : String(v ?? '').split(','))
-    .map(s => String(s).trim()).filter(Boolean)
+  const a = parseListParam(v) ?? []
   return a.length ? a : null
 }
 function getGateCtx(req: Request): GateFilterCtx {

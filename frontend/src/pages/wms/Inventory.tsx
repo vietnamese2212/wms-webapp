@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
@@ -33,7 +33,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { saveWorkbook } from '@/utils/saveExcel'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
@@ -131,13 +131,6 @@ const SUMMARY_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
   { id: 'pallets',   label: 'Số pallet',w: 72, align: 'right' },
 ]
 const SUMMARY_COL_DEFAULTS = SUMMARY_COLS.map(c => c.w)
-
-// Ô tổng số lượng của cả kho LUÔN gộp nhiều đơn vị (mã có thùng → quy đổi ra thùng; mã tính
-// KG/cái như nguyên liệu & bao bì → cộng thẳng base). Nhãn "Thùng tồn" cũ khiến người xem đọc ra
-// "N thùng hàng" trong khi phần lớn con số là CÁI/KG. Cùng cách gọi với trang Xuất kho.
-const CARTON_TILE_TIP = 'Thùng quy đổi: mã có quy cách thùng được quy về thùng, mã tính theo KG/cái '
-  + '(nguyên liệu, bao bì) cộng theo đơn vị gốc — nên đây KHÔNG phải số thùng hàng thực tế. '
-  + 'Xem số lượng đúng đơn vị ở cột Tồn của từng dòng.'
 
 const DATE_PCT_OPTIONS = [
   { value: '80',   label: '> 80%'  },
@@ -899,12 +892,9 @@ export default function Inventory() {
   const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
   const locationOpts   = (locFilterRows as { location_code: string }[]).map(l => ({ value: l.location_code, label: l.location_code }))
-  // Mã ĐANG CHỌN phải luôn có nhãn (và luôn nằm trong danh sách) — kết quả tìm-trên-server chỉ
-  // chứa mã khớp từ khóa hiện tại, nên thiếu bước này chip lọc sẽ in uuid thô khi từ khóa đổi
-  // hoặc khi mở lại app (filter được nhớ theo user).
   const matLabel       = (m: { id: string; material_code: string; short_name?: string | null }) =>
     ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })
-  const materialOpts   = dedupOpts([...pickedMatRows.map(matLabel), ...matFilterRows.map(matLabel)])
+  const materialOpts   = matFilterRows.map(matLabel)
   const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
   const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
@@ -935,9 +925,11 @@ export default function Inventory() {
       onChange: v => setInventory({ status: v === 'ALL' ? 'ALL' : '', page: 1 }) },
     { key: 'material', label: 'Tên hàng', type: 'multi', options: materialOpts, selected: f.filterMaterialIds,
       serverSearch: true, onSearchChange: setMatFilterTerm, loading: matFilterLoading,
+      selectedOpts: pickedMatRows.map(matLabel),
       onChange: v => setInventory({ filterMaterialIds: v, page: 1 }) },
     { key: 'location', label: 'Vị trí', type: 'multi', options: locationOpts, selected: f.filterLocations,
       serverSearch: true, onSearchChange: setLocFilterTerm, loading: locFilterLoading,
+      selectedOpts: f.filterLocations.map(v => ({ value: v, label: v })),   // value = mã vị trí, tự làm nhãn
       onChange: v => setInventory({ filterLocations: v, page: 1 }) },
     { key: 'qa', label: 'QA Status', type: 'multi', options: qaOpts, selected: f.qaStatusIds,
       onChange: v => setInventory({ qaStatusIds: v, page: 1 }) },
@@ -1031,12 +1023,12 @@ export default function Inventory() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={aggregate ? [
         { label: 'Nhóm (mã×kho×ngày)', value: total.toLocaleString('vi-VN') },
-        { label: 'Thùng quy đổi', value: totalCartons.toLocaleString('vi-VN'), tip: CARTON_TILE_TIP },
+        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ] : [
         // Chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (fallback total khi BE cũ chưa deploy)
         { label: 'Pallet', value: (data?.total_pallets_in_stock ?? total).toLocaleString('vi-VN') },
-        { label: 'Thùng quy đổi', value: totalCartons.toLocaleString('vi-VN'), tip: CARTON_TILE_TIP },
+        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ]} />

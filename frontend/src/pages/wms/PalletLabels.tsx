@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
-import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
 import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -772,7 +772,8 @@ export default function PalletLabels() {
       onChange: v => { setRpCats(v); setRpMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: rpMatIds, onChange: setRpMatIds,
       serverSearch: true, onSearchChange: setRpMatTerm, loading: rpMatLoading,
-      options: dedupOpts([...rpPickedMats, ...rpMatRows].map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code }))) },
+      selectedOpts: rpPickedMats.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })),
+      options: rpMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: rpCycles, onChange: setRpCycles,
       searchable: (rpFacets?.cycles ?? []).length > 6, options: (rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: rpMachines, onChange: setRpMachines,
@@ -788,7 +789,8 @@ export default function PalletLabels() {
       onChange: v => { setAuCats(v); setAuMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: auMatIds, onChange: setAuMatIds,
       serverSearch: true, onSearchChange: setAuMatTerm, loading: auMatLoading,
-      options: dedupOpts([...auPickedMats, ...auMatRows].map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code }))) },
+      selectedOpts: auPickedMats.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })),
+      options: auMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: auCycles, onChange: setAuCycles,
       searchable: (auFacets?.cycles ?? []).length > 6, options: (auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: auMachines, onChange: setAuMachines,

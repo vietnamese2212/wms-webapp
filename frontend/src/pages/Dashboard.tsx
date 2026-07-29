@@ -33,7 +33,7 @@ export default function Dashboard() {
   // Kho đã chọn không còn trong scope (đổi phân quyền) → coi như "Tất cả kho"
   const effWhId = scopedWhs.length > 0 && whId && !scopedWhs.some(w => w.id === whId) ? '' : whId
   const { data: stats, isLoading, isError } = useDashboardStats(effWhId)
-  const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' })
 
   // Gộp theo kho (RPC trả dòng kho×loại) + tổng toàn scope
   const { byWarehouse, totals } = useMemo(() => {
@@ -118,9 +118,9 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {[
             { icon: PackagePlus, color: 'text-green-600 bg-green-100', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay' },
-            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'Thùng nhập hôm nay' },
+            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'SL nhập (quy đổi)' },
             { icon: Truck, color: 'text-blue-600 bg-blue-100', value: t?.outbound_gdos, label: 'Chuyến xuất hôm nay' },
-            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'Thùng KH xuất hôm nay' },
+            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'SL KH xuất (quy đổi)' },
           ].map(({ icon: Icon, color, value, label }) => (
             <Card key={label}>
               <CardContent className="p-4 sm:p-5">

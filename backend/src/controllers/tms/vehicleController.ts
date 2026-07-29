@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
 import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
+import { parseListParam } from '../../utils/httpQuery'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -34,8 +35,8 @@ async function listVehiclesPaged(req: Request, res: Response) {
   if (q.search && searchLooksLikeInjection(q.search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
   const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
   const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
-  const nccIds = (q.ncc_ids ?? '').split(',').filter(Boolean)
-  const vtIds  = (q.vehicle_type_ids ?? '').split(',').filter(Boolean)
+  const nccIds = parseListParam(q.ncc_ids) ?? []
+  const vtIds  = parseListParam(q.vehicle_type_ids) ?? []
 
   const buildQ = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

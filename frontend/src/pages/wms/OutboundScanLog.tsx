@@ -12,7 +12,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -180,11 +180,10 @@ export default function OutboundScanLog() {
   const categoryOpts = useMemo(() =>
     (categories as string[]).map(c => ({ value: c, label: c }))
   , [categories])
-  const materialOpts  = useMemo(() =>
-    dedupOpts([...pickedMats, ...materials].map(m => ({
-      value: m.id,
-      label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}`,
-    }))), [materials, pickedMats])
+  const matLabel = (m: { id: string; material_code: string; short_name?: string | null }) =>
+    ({ value: m.id, label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}` })
+  const materialOpts   = useMemo(() => materials.map(matLabel), [materials])
+  const pickedMatOpts  = useMemo(() => pickedMats.map(matLabel), [pickedMats])
   const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
   const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
@@ -208,7 +207,7 @@ export default function OutboundScanLog() {
     { key: 'category',     label: 'Loại hàng',   type: 'single', options: categoryOpts, value: filters.material_category, allLabel: 'Tất cả loại',
       onChange: v => setScanLog({ material_category: v, materials: [], machines: [], cycles: [] }) },
     { key: 'material',     label: 'Mã / Tên hàng', type: 'multi', options: materialOpts, selected: filters.materials, searchable: true,
-      serverSearch: true, onSearchChange: setMatTerm, loading: matFetching,
+      serverSearch: true, onSearchChange: setMatTerm, loading: matFetching, selectedOpts: pickedMatOpts,
       onChange: v => setScanLog({ materials: v }) },
     { key: 'machine',      label: 'Máy',         type: 'multi', options: machineOpts, selected: filters.machines, searchable: machineOpts.length > 6,
       onChange: v => setScanLog({ machines: v }) },

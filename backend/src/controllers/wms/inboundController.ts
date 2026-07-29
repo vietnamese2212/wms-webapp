@@ -13,6 +13,7 @@ import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { parseListParam } from '../../utils/httpQuery'
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
@@ -232,7 +233,7 @@ type InboundListCtx = {
 async function getListCtx(req: Request): Promise<InboundListCtx> {
   const q = req.query as Record<string, string>
   const { warehouse_id, status, material_category, search, date, date_from, date_to } = q
-  const csv = (s?: string) => (s ? s.split(',').map(x => x.trim()).filter(Boolean) : [])
+  const csv = (s?: string) => parseListParam(s) ?? []
 
   // Enforce user's warehouse scope from JWT
   const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'

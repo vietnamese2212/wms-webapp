@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { parseListParam } from '../../utils/httpQuery'
 
 type Actor = string | null
 const actorOf = (req: Request): Actor => (req as { user?: { name?: string } }).user?.name ?? null
@@ -65,7 +66,7 @@ export async function listSkills(req: Request, res: Response) {
     const { job_title_id, job_title_ids, department_id, include_inactive, with_descendants } = req.query as Record<string, string>
     let jtIds: string[] | null = null
     if (job_title_ids) {
-      const base = job_title_ids.split(',').map(s => s.trim()).filter(Boolean)
+      const base = parseListParam(job_title_ids) ?? []
       jtIds = with_descendants === 'true'
         ? [...new Set((await Promise.all(base.map(scopeJobTitleIds))).flat())]
         : base

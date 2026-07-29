@@ -1,0 +1,66 @@
+# KEEP-ALIVE Supabase free-tier — chống AUTO-PAUSE khi project không có hoạt động >7 ngày.
+# Bối cảnh: 29/07/2026 Supabase email doạ pause project PRODUCTION LOF (svicyfquresxaigfxsdb) vì
+# chưa có người dùng thật → không có truy vấn nào. User chốt: GIỮ FREE + keep-alive (không nâng Pro).
+#
+# Mỗi ngày ping MỖI project 2 phát:
+#   1. REST gateway với ANON key → hoạt động ở tầng API. Dự kiến 401 vì RLS đã ĐÓNG anon
+#      (audit 12/07) — 401 là ĐÚNG THIẾT KẾ, request vẫn được tính; anon key vốn PUBLIC by design
+#      (nằm sẵn trong bundle FE của chính app) nên đặt trong file này KHÔNG phải lộ bí mật.
+#   2. Login app với creds giả → backend chạy SELECT Employee THẬT trên DB (hoạt động tầng DB).
+#      Dự kiến 401 "sai mật khẩu". Sau khi merge dev→main, DB sập sẽ trả 503 (fix ffc22358)
+#      → bước này kiêm luôn health-check: job ĐỎ = GitHub tự gửi email báo user.
+#
+# ⚠️ Schedule CHỈ chạy từ branch MẶC ĐỊNH (main) — file này phải tồn tại trên main (nội dung
+# GIỮ Y HỆT giữa dev và main để merge sau này không conflict).
+# Staging ping là phụ (continue-on-error) — ngày thường staging sống nhờ hoạt động dev.
+name: keepalive-supabase
+on:
+  schedule:
+    - cron: '0 20 * * *'   # 03:00 giờ VN hằng ngày
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production LOF — REST gateway (401 = RLS đóng anon, đúng thiết kế)
+        env:
+          URL: https://svicyfquresxaigfxsdb.supabase.co
+          KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2aWN5ZnF1cmVzeGFpZ2Z4c2RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0MDQzODEsImV4cCI6MjA5ODk4MDM4MX0.b1R1GqtTbCFg1ASGNRjtJebj-ZT3crzaSXyxjWcEWOc
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/Warehouse?select=id&limit=1")
+          echo "REST production: $code"
+          case "$code" in
+            200|401) exit 0 ;;
+            *) echo "project production KHONG phan hoi binh thuong (code=$code)"; exit 1 ;;
+          esac
+      - name: Production LOF — truy vấn DB thật qua app (login giả → 401; khác = có vấn đề)
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"email":"keepalive-ping@wms.local","password":"ping"}' \
+            'https://wms-webapp.vercel.app/api/auth/login')
+          echo "login production: $code"
+          case "$code" in
+            401) exit 0 ;;
+            *) echo "app/DB production KHONG phan hoi nhu du kien (code=$code)"; exit 1 ;;
+          esac
+      - name: Staging — REST gateway (phụ, không làm đỏ job)
+        continue-on-error: true
+        env:
+          URL: https://bxxryrmpfabvjitqbdnw.supabase.co
+          KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4eHJ5cm1wZmFidmppdHFiZG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMTU4OTQsImV4cCI6MjA5MzY5MTg5NH0.NZJlp2MfVW5uQQvGK_Agr0tOG5S-Z5aDxdaVMg_XcDo
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/Warehouse?select=id&limit=1")
+          echo "REST staging: $code"
+      - name: Staging — truy vấn DB thật qua app Preview (phụ)
+        continue-on-error: true
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"email":"keepalive-ping@wms.local","password":"ping"}' \
+            'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app/api/auth/login')
+          echo "login staging (Preview): $code"

@@ -74,6 +74,34 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   chk(r.s === 200, 'materials ?ids= 350 uuid (vượt chunk 300)', `HTTP ${r.s} · ${rowsOf(r.j)?.length ?? '?'} dòng`)
 }
 
+// ── 4) Ô TỔNG ⇄ DANH SÁCH phải khớp KHI LỌC (bug thật 29/07: `inb_pallets` của RPC
+// control_tower_stats thiếu lọc Loại kho → lọc PK01: ô "Pallet nhập" vẫn 2.374 còn danh sách
+// chỉ 252 → người xem tưởng mất dữ liệu / đọc sai tiến độ. Cùng họ: MỌI ô tổng phải chịu
+// ĐÚNG bộ lọc như danh sách nó đứng cạnh) ──
+{
+  const all = await api('/wms/control-tower')
+  const inList = all.j?.data?.in_by_material
+  const cat = (inList?.list ?? []).map(r => r.category).find(c => c && c !== 'Khác')
+  if (all.s !== 200) {
+    chk(false, 'control-tower đọc được', `HTTP ${all.s}`)
+  } else if (!cat) {
+    console.log('  ⊘ ô tổng ⇄ danh sách (nhập): hôm nay chưa có hàng nhập — bỏ qua')
+  } else {
+    const r = await api(`/wms/control-tower?categories=${encodeURIComponent(cat)}`)
+    const d = r.j?.data
+    const rows = d?.in_by_material?.list ?? []
+    const nMats = d?.in_by_material?.n_materials ?? 0
+    const sumPallets = rows.reduce((s, x) => s + Number(x.pallets ?? 0), 0)
+    const tile = Number(d?.inbound?.pallets ?? -1)
+    if (nMats > rows.length) {
+      console.log(`  ⊘ ô tổng ⇄ danh sách (nhập): ${nMats} mã > ${rows.length} dòng hiển thị (top-30) — không so được`)
+    } else {
+      chk(r.s === 200 && tile === sumPallets, `ô "Pallet nhập" khớp danh sách khi lọc Loại kho=${cat}`,
+        `ô ${tile} vs Σ danh sách ${sumPallets} (${nMats} mã)`)
+    }
+  }
+}
+
 console.log(`\n[PARAMS-FUZZ] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}`)
 if (fail) console.log('  Hỏng: ' + bad.join(' | '))
 // KHÔNG process.exit() cưỡng bức sau fetch HTTPS (libuv assert trên Windows) — đặt exitCode, thoát tự nhiên.

@@ -214,7 +214,8 @@ function AnalysisTab({ warehouseId, query, days, level, page, pageSize, onPage, 
 }) {
   const { data, isLoading, error, refetch } = query
 
-  const cols = ['Mã hàng', 'Tên hàng', 'Loại', 'Hạng', 'Lượt nhặt', 'Thùng xuất', '% lũy kế', 'Pallet tồn', 'Khu đang nằm', 'Khu đề xuất', 'Lệch chỗ']
+  // 'SL xuất' (không ghi "Thùng"): cartons_out lấy từ RPC theo base per-mã — mã KG/cái không phải thùng
+  const cols = ['Mã hàng', 'Tên hàng', 'Loại', 'Hạng', 'Lượt nhặt', 'SL xuất', '% lũy kế', 'Pallet tồn', 'Khu đang nằm', 'Khu đề xuất', 'Lệch chỗ']
   const { widths, startResize, totalWidth } = useColumnResize('slotting_col_widths',
     [96, 190, 84, 48, 72, 76, 66, 70, 200, 120, 76])
 

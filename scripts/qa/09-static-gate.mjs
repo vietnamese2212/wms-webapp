@@ -20,10 +20,15 @@ function* walk(dir, exts) {
     else if (exts.some(e => name.endsWith(e))) yield p
   }
 }
+// roots = thư mục HOẶC đường dẫn file cụ thể (luật chỉ áp cho vài trang tổng gộp)
+function filesOf(root, exts) {
+  const p = join(ROOT, root)
+  return statSync(p).isFile() ? [p] : [...walk(p, exts)]
+}
 function countMatches(roots, exts, test, sampleOut) {
   let n = 0
   for (const root of roots) {
-    for (const f of walk(join(ROOT, root), exts)) {
+    for (const f of filesOf(root, exts)) {
       const lines = readFileSync(f, 'utf8').split(/\r?\n/)
       lines.forEach((line, i) => {
         if (test(line)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
@@ -54,6 +59,17 @@ const RULES = [
     key: 'band_label_thung_ton',
     label: `nhãn ô tổng cross-mã ghi "Thùng tồn"/"Tổng thùng" — phải QTY_CONVERTED_LABEL "SL (quy đổi)". Baseline 2 = cột per-MÃ ở OutboundDetail/LoosePickingDetail (tách Thùng/Hộp đúng luật base-unit, KHÔNG phải bug — đừng "dọn")`,
     count: (s) => countMatches(['frontend/src'], ['.tsx'], l => /label:\s*['"](Thùng tồn|Tổng thùng)['"]/.test(l), s),
+  },
+  {
+    key: 'thung_unit_on_aggregate_pages',
+    label: 'nhãn đơn vị "thùng" trên TRANG TỔNG GỘP CROSS-MÃ (Dashboard/Giám sát vận hành/Báo cáo nhập/Slotting) — ' +
+           'ô & cột ở đây cộng cả mã KG/cái nên KHÔNG được gọi là "thùng" (bug 29/07: khối "Hàng nhập theo mã" ' +
+           'hiện 2.816.800 "thùng" cho 22 pallet — thực chất là CÁI). Dùng QTY_CONVERTED_LABEL / in ĐVT theo dòng',
+    count: (s) => countMatches(
+      ['frontend/src/pages/Dashboard.tsx', 'frontend/src/pages/wms/ControlTower.tsx',
+       'frontend/src/pages/tms/TMSReport.tsx', 'frontend/src/pages/wms/Slotting.tsx'],
+      [''],   // đường dẫn FILE (không phải thư mục) — walk() nhận qua exts rỗng khớp mọi tên
+      l => /\((thùng|Thùng)\)|>\s*Thùng\s*<|['"]Thùng['"]\s*[,:\]]|\{['"]Thùng['"]\}/.test(l), s),
   },
 ]
 

@@ -3265,6 +3265,9 @@ export interface ControlTowerMatOut {
 }
 export interface ControlTowerMatIn {
   code: string; name: string; category: string; pallets: number; cartons: number
+  // Đơn vị THẬT của `cartons`: entry_unit (mã có quy cách thùng) hoặc base_unit (EA/KG).
+  // optional — RPC cũ (trước 20260729c) không trả field này.
+  unit?: string | null
 }
 export interface ControlTowerData {
   date: string

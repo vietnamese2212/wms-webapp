@@ -33,8 +33,9 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'mcode', label: 'Mã hàng' },
   { id: 'mname', label: 'Tên hàng' },
   { id: 'unit',  label: 'ĐVT' },
-  { id: 'plan',  label: 'KH (thùng)',     align: 'right' },
-  { id: 'act',   label: 'Thực tế (thùng)', align: 'right' },
+  // Dòng = 1 MÃ, số theo ĐVT của mã đó (cột ĐVT bên cạnh) — mã tính KG/cái KHÔNG phải "thùng"
+  { id: 'plan',  label: 'KH',      align: 'right' },
+  { id: 'act',   label: 'Thực tế', align: 'right' },
   { id: 'pct',   label: '% TT/KH',        align: 'right' },
   { id: 'note',  label: 'Ghi chú' },
 ]
@@ -137,8 +138,8 @@ export default function TMSReport() {
       'Mã hàng':          r.material_code,
       'Tên hàng':         r.material_name,
       'ĐVT':              r.unit,
-      'KH (thùng)':       r.planned_boxes,
-      'Thực tế (thùng)':  r.actual_boxes,
+      'KH (theo ĐVT)':      r.planned_boxes,
+      'Thực tế (theo ĐVT)': r.actual_boxes,
       '% TT/KH':          r.pct != null ? r.pct / 100 : null,
       'Ghi chú':          r.note || '',
     }))
@@ -199,8 +200,9 @@ export default function TMSReport() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
         { label: 'Dòng', value: filteredRows.length },
-        { label: 'KH (thùng)', value: summary.totalPlan.toLocaleString('vi-VN') },
-        { label: 'Thực (thùng)', value: summary.totalActual.toLocaleString('vi-VN') },
+        // Ô TỔNG gộp mọi mã (thùng + KG/cái) → nhãn quy đổi (luật 1b CLAUDE.md)
+        { label: 'KH (quy đổi)', value: summary.totalPlan.toLocaleString('vi-VN') },
+        { label: 'Thực (quy đổi)', value: summary.totalActual.toLocaleString('vi-VN') },
         { label: '% TT/KH', value: `${overallPct}%`, accent: overallPct >= 100 },
       ]} />
 

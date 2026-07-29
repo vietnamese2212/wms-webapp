@@ -12,6 +12,7 @@ import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
@@ -106,10 +107,11 @@ export default function Dashboard() {
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
           ) : (
             <>
-              <StatsCard title="Tồn (thùng)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              {/* Tổng gộp MỌI mã (thùng + EA/KG) → nhãn quy đổi, KHÔNG ghi "thùng" (luật 1b CLAUDE.md) */}
+              <StatsCard title="Tồn (quy đổi)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
               <StatsCard title="Pallet tồn" value={nf0(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
               <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
-              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'thùng'} icon={PackageMinus} iconColor="text-blue-600" />
+              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'SL quy đổi'} icon={PackageMinus} iconColor="text-blue-600" />
             </>
           )}
         </div>
@@ -225,7 +227,7 @@ export default function Dashboard() {
                           <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Kho</th>
                           <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Loại hàng</th>
                           <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Pallet</th>
-                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Thùng</th>
+                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}</th>
                           <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Mã hàng</th>
                         </tr>
                       </thead>

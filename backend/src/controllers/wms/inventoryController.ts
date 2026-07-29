@@ -1453,15 +1453,25 @@ function nmsxFromPallet(code: string, fallback: string | null): string | null {
   const raw = (parts.length >= 6 && parts[5] && !HASH8.test(parts[5])) ? parts[5] : fallback
   return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
 }
-// Ngày SX → yyyy-mm-dd. Chịu: yyyy-mm-dd / dd-mm-yyyy (- hoặc /), số serial Excel.
+// Ngày phải TỒN TẠI trên lịch: regex chỉ soi hình dạng nên "32/13/2026" hay "31/02/2026" vẫn khớp
+// → ghép thành '2026-02-31' rồi Postgres nổ "date out of range" LÚC GHI (vỡ cam kết "lỗi hiện ở bước
+// kiểm trước"). Round-trip qua Date để loại ngày không có thật.
+function isRealISODate(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return false
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+}
+// Ngày SX / Ngày nhập → yyyy-mm-dd. Chịu: yyyy-mm-dd / dd-mm-yyyy (- hoặc /), số serial Excel.
 function invToISODate(v: unknown): string | null {
   if (v == null || v === '') return null
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10)
   const s = String(v).trim()
+  const ok = (iso: string) => (isRealISODate(iso) ? iso : null)
   let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(s)
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  if (m) return ok(`${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`)
   m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(s)
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  if (m) return ok(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`)
   if (/^\d+(\.\d+)?$/.test(s)) {
     const d = new Date(Math.round((Number(s) - 25569) * 86400000))
     return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)

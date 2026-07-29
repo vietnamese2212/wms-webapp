@@ -239,8 +239,13 @@ function parseExcelDate(val: any): string | null {
   // dd/mm/yyyy (Vietnamese default — JS Date() would misread as mm/dd)
   const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (dmy) {
-    const date = new Date(Date.UTC(parseInt(dmy[3]), parseInt(dmy[2]) - 1, parseInt(dmy[1])))
-    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10)
+    const [dd, mm, yy] = [parseInt(dmy[1]), parseInt(dmy[2]), parseInt(dmy[3])]
+    const date = new Date(Date.UTC(yy, mm - 1, dd))
+    if (isNaN(date.getTime())) return null
+    // Date.UTC TRÀN ÂM THẦM: 32/13/2026 → 01/02/2027 (ngày SAI mà không báo lỗi). Ngày không tồn
+    // tại trên lịch phải trả null để controller báo "ngày không hợp lệ" thay vì ghi ngày lệch.
+    if (date.getUTCFullYear() !== yy || date.getUTCMonth() !== mm - 1 || date.getUTCDate() !== dd) return null
+    return date.toISOString().slice(0, 10)
   }
   const d = new Date(s)
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)

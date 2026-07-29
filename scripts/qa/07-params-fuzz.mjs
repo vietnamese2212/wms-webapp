@@ -6,7 +6,7 @@
 //   2. Tham số tra-cứu RỖNG (`?ids=`/`?codes=`) → 0 dòng, KHÔNG dump cả danh mục.
 //   3. Payload < 4MB (trần Vercel 4,5MB — chừa lề an toàn).
 // usage: node scripts/qa/07-params-fuzz.mjs
-import { BASE, login, api } from './lib.mjs'
+import { BASE, login, api, HAS_DB, restAll } from './lib.mjs'
 
 const MAX_BYTES = 4 * 1024 * 1024
 let pass = 0, fail = 0
@@ -99,6 +99,75 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
       chk(r.s === 200 && tile === sumPallets, `ô "Pallet nhập" khớp danh sách khi lọc Loại kho=${cat}`,
         `ô ${tile} vs Σ danh sách ${sumPallets} (${nMats} mã)`)
     }
+  }
+}
+
+// ── 5) LƯỚI KẾ HOẠCH VC: thứ tự hiển thị + phân trang theo CỤM (migration 20260729d).
+// Trang này phân trang SERVER theo cụm (rowspan) nên thứ tự do SQL quyết — sai là sai ÂM THẦM.
+// 3 lời hứa với người dùng, kiểm không phụ thuộc collation:
+//   a. lật hết trang: KHÔNG trùng, KHÔNG mất đơn (cụm bị xé ngang trang = vỡ rowspan + lặp đơn)
+//   b. đơn cùng (ngày·hướng·loại kho·loại xe·ĐVVT) phải LIỀN KHỐI — mất 1 khóa ORDER BY là scatter
+//   c. STT xe tăng dần theo chiều đọc (ORDER BY của `stt` phải khớp của `branked`; lệch → màu vằn vón cục)
+{
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const from = new Date(Date.now() - 60 * 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // API bắt buộc warehouse_id (không truyền = 400) mà danh mục kho có ~150 dòng (gồm kho NPP) →
+  // KHÔNG quét mò 12 kho đầu (alphabet, toàn NPP rỗng → check tự skip mà tưởng đã chạy).
+  // Chọn kho ĐANG CÓ nhiều lệnh nhất từ DB, rồi mới đi đường API như người dùng.
+  let target = null
+  if (HAS_DB) {
+    const rows = await restAll('TmsOrder',
+      `select=warehouse_id&date=gte.${from}&date=lte.${today}&source_type=neq.TRANSFER`, 20_000)
+    const cnt = new Map()
+    for (const r of rows) if (r.warehouse_id) cnt.set(r.warehouse_id, (cnt.get(r.warehouse_id) ?? 0) + 1)
+    const top = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0]
+    if (top && top[1] > 3) {
+      const r = await api(`/tms/orders?date_from=${from}&date_to=${today}&warehouse_id=${top[0]}&page=1&page_size=1`)
+      if (r.s === 200 && Number(r.j?.data?.total ?? 0) > 3) target = { w: { id: top[0] }, total: Number(r.j.data.total) }
+    }
+  }
+  if (!target) {
+    console.log(`  ⊘ lưới Kế hoạch VC: ${HAS_DB ? 'không kho nào có >3 lệnh trong 60 ngày' : 'thiếu SUPABASE_URL/KEY để chọn kho có dữ liệu'} — bỏ qua`)
+  } else {
+    const seen = new Map(), order = []
+    let pages = 0, dup = 0, httpBad = 0
+    for (let page = 1; page <= 40; page++) {
+      const r = await api(`/tms/orders?date_from=${from}&date_to=${today}&warehouse_id=${target.w.id}&page=${page}&page_size=10`)
+      if (r.s !== 200) { httpBad++; break }
+      const rows = r.j?.data?.rows ?? []
+      if (!rows.length) break
+      pages++
+      for (const o of rows) { if (seen.has(o.id)) dup++; seen.set(o.id, o); order.push(o) }
+      if (seen.size >= target.total) break
+    }
+    chk(httpBad === 0 && dup === 0 && seen.size === target.total,
+      `lưới KH VC: lật ${pages} trang (10 cụm/trang) không trùng/mất đơn`,
+      `${seen.size}/${target.total} đơn · trùng ${dup}${httpBad ? ' · HTTP lỗi' : ''}`)
+
+    // Dòng CON của cụm gom xe (toàn slot phụ) đi theo đơn chủ ⇒ khóa của nó khác đơn chủ là BÌNH THƯỜNG
+    const isSecondary = (o) => {
+      const s = o.vehicle_slots ?? []
+      return s.length > 0 && s.every(x => x.consolidation_group_id && !x.is_consolidation_primary)
+    }
+    const lead = order.filter(o => !isSecondary(o))
+    const keyOf = (o) => [o.date, o.direction === 'OUTBOUND' ? 0 : 1, o.warehouse_type ?? '',
+      o.vehicle_type ?? '', o.ncc?.name ?? ''].join('|')
+    const firstAt = new Map(), scattered = []
+    lead.forEach((o, i) => {
+      const k = keyOf(o)
+      const prev = firstAt.get(k)
+      if (prev === undefined) firstAt.set(k, { start: i, end: i })
+      else if (prev.end !== i - 1 && i > prev.end) scattered.push(k)
+      if (firstAt.has(k)) firstAt.get(k).end = i
+    })
+    chk(scattered.length === 0, 'lưới KH VC: đơn cùng ngày·hướng·loại kho·loại xe·ĐVVT nằm LIỀN KHỐI',
+      scattered.length ? `bị xé: ${[...new Set(scattered)].slice(0, 2).join(' / ')}` : `${firstAt.size} khối / ${lead.length} đơn`)
+
+    const stts = lead.map(o => (o.vehicle_slots ?? []).map(s => s.stt).find(v => v != null) ?? o.stt_no_slot)
+      .filter(v => v != null)
+    const mono = stts.every((v, i) => i === 0 || v >= stts[i - 1])
+    chk(mono, 'lưới KH VC: STT xe tăng dần theo chiều đọc',
+      stts.length ? `${stts[0]} → ${stts[stts.length - 1]} (${stts.length} xe)` : 'không có STT')
   }
 }
 

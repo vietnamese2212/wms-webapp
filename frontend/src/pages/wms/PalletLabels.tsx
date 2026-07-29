@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
-import { FilterBar, FilterSheetButton, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef, type FBOpt } from '@/components/shared/FilterBar'
 import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -18,7 +18,7 @@ import { parseCodeFields } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
-  useWarehouses, useMaterials, useMaterialsByCodes, useInventoryEntries, useInventoryFacets, type MaterialLite,
+  useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
   useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
   useTransportCompanies, useSystemSettings, type PalletPrintRow,
 } from '@/api/hooks'
@@ -453,6 +453,8 @@ export default function PalletLabels() {
   const { data: rpMatRows = [], isFetching: rpMatLoading } = useMaterials(
     { search: rpMatTerm || undefined, category: rpCats.length === 1 ? rpCats[0] : undefined, limit: 50 },
     !!rpMatTerm)
+  // Nhãn cho mã ĐANG CHỌN (state này được lưu lại) — kẻo chip lọc in uuid thô khi mở lại tab.
+  const { data: rpPickedMats = [] } = useMaterialsByIds(rpMatIds)
   const { data: invData } = useInventoryEntries({
     warehouse_ids: rpWh ? [rpWh] : undefined,
     categories: rpCats.length ? rpCats : undefined,
@@ -524,6 +526,7 @@ export default function PalletLabels() {
   const { data: auMatRows = [], isFetching: auMatLoading } = useMaterials(
     { search: auMatTerm || undefined, category: auCats.length === 1 ? auCats[0] : undefined, limit: 50 },
     !!auMatTerm)
+  const { data: auPickedMats = [] } = useMaterialsByIds(auMatIds)
 
   // (1) Lấy pallet THẬT từ tồn kho theo filter
   const { data: auInvData } = useInventoryEntries({
@@ -769,7 +772,7 @@ export default function PalletLabels() {
       onChange: v => { setRpCats(v); setRpMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: rpMatIds, onChange: setRpMatIds,
       serverSearch: true, onSearchChange: setRpMatTerm, loading: rpMatLoading,
-      options: rpMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
+      options: dedupOpts([...rpPickedMats, ...rpMatRows].map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code }))) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: rpCycles, onChange: setRpCycles,
       searchable: (rpFacets?.cycles ?? []).length > 6, options: (rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: rpMachines, onChange: setRpMachines,
@@ -785,7 +788,7 @@ export default function PalletLabels() {
       onChange: v => { setAuCats(v); setAuMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: auMatIds, onChange: setAuMatIds,
       serverSearch: true, onSearchChange: setAuMatTerm, loading: auMatLoading,
-      options: auMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
+      options: dedupOpts([...auPickedMats, ...auMatRows].map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code }))) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: auCycles, onChange: setAuCycles,
       searchable: (auFacets?.cycles ?? []).length > 6, options: (auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: auMachines, onChange: setAuMachines,

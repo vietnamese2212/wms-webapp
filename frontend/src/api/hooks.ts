@@ -318,6 +318,32 @@ export function useMaterialsByCodes(codes: string[], enabled = true) {
 }
 
 /**
+ * Tra mã hàng theo DANH SÁCH ID — dùng cho NHÃN của filter "Tên hàng" đang được chọn.
+ * Vì sao cần: ô chọn mã hàng TÌM TRÊN SERVER nên `options` chỉ chứa kết quả của từ khóa hiện tại.
+ * Mã đã chọn mà không khớp từ khóa (hoặc từ khóa rỗng sau khi mở lại app — filter được NHỚ theo
+ * user) sẽ không có nhãn để tra → FilterBar in giá trị thô, người dùng thấy chip là một chuỗi uuid
+ * và bảng trống, tưởng mất dữ liệu. Chunk 300 đúng trần URL của PostgREST.
+ */
+export function useMaterialsByIds(ids: string[], enabled = true) {
+  const key = [...new Set(ids.filter(Boolean))].sort()
+  return useQuery({
+    queryKey: ['materials', 'by-ids', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const out: MaterialLite[] = []
+      for (let i = 0; i < key.length; i += 300) {
+        const { data } = await apiClient.get('/masterdata/materials', {
+          params: { ids: key.slice(i, i + 300).join(','), view: 'lite' },
+        })
+        out.push(...(data.data as MaterialLite[]))
+      }
+      return out
+    },
+  })
+}
+
+/**
  * Tra mã hàng theo mã, gọi TRỰC TIẾP trong handler (dán Excel): phải có kết quả TRƯỚC khi
  * điền dòng vì số lượng được quy đổi theo hệ số của mã (`qtyFromEntryBase`) — vá sau là ra số sai.
  * Dùng chung cache với `useMaterialsByCodes`.

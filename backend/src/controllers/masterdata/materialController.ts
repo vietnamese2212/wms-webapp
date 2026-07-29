@@ -100,7 +100,7 @@ export async function listMaterialsSummary(req: Request, res: Response) {
 
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category, view, limit, codes } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids } = req.query
     // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
@@ -108,8 +108,16 @@ export async function listMaterials(req: Request, res: Response) {
     // limit=N (typeahead): chỉ lấy N dòng đầu, KHÔNG kéo cả danh mục về trình duyệt
     const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
     // codes=A,B,C — chặn 300/lượt đúng trần URL của PostgREST (xem memory id-list-url-limits)
-    const codeList = codes ? String(codes).split(',').map(c => c.trim()).filter(Boolean).slice(0, 300) : null
+    // Xét theo SỰ CÓ MẶT của tham số, không theo truthy: `?codes=` (chuỗi rỗng) là "tra 0 mã" →
+    // phải trả [] . Dùng `codes ?` thì chuỗi rỗng thành falsy ⇒ bỏ lọc ⇒ TRẢ CẢ DANH MỤC 2.740 mã
+    // (~2,5MB) — đúng cái đang bị cấm. Một `join(',')` trên mảng rỗng ở phía gọi là đủ để dính.
+    const splitIdParam = (v: unknown) =>
+      v === undefined ? null : String(v).split(',').map(c => c.trim()).filter(Boolean).slice(0, 300)
+    const codeList = splitIdParam(codes)
     if (codeList && codeList.length === 0) return ok(res, [])
+    // ids=uuid1,uuid2 — tra nhãn cho các mã ĐANG ĐƯỢC CHỌN ở filter (chip lọc), cùng trần 300 như codes.
+    const idList = splitIdParam(ids)
+    if (idList && idList.length === 0) return ok(res, [])
 
     // Có ?page= → TRANG danh mục (trang Mã hàng). Không có → giữ mode cũ trả MẢNG cho mọi
     // consumer khác (dropdown lite, codes=…, typeahead limit=N).
@@ -130,6 +138,7 @@ export async function listMaterials(req: Request, res: Response) {
       // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
       // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
       if (codeList) query = query.in('material_code', codeList)
+      if (idList) query = query.in('id', idList)
       // Tìm BỎ DẤU trên cột chuẩn-hoá `search_norm` (mã + mô tả + tên ngắn + mã cũ):
       // gõ "nha dam" ra "Nha Đam". Từ khóa chuẩn hoá bằng ĐÚNG công thức của cột (normalizeSearchTerm).
       if (search) query = query.ilike('search_norm', `%${safeSearch(normalizeSearchTerm(search))}%`)

@@ -11,6 +11,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 
 export interface FBOpt { value: string; label: string }
 
+/**
+ * Gộp option giữ THỨ TỰ, bỏ trùng theo `value` (bản đầu thắng).
+ * Dùng cho ô chọn `serverSearch`: ghép [mã ĐANG CHỌN] + [kết quả tìm theo từ khóa] — mã đã chọn
+ * phải luôn có nhãn, kẻo chip lọc in giá trị thô (uuid) khi nó không khớp từ khóa hiện tại.
+ */
+export function dedupOpts(opts: FBOpt[]): FBOpt[] {
+  const seen = new Map<string, FBOpt>()
+  for (const o of opts) if (!seen.has(o.value)) seen.set(o.value, o)
+  return [...seen.values()]
+}
+
 // pinned: chip LUÔN hiện trên bar kể cả khi trống (không rơi vào menu "+ Thêm lọc" khi xóa giá trị)
 export type FilterDef = (
   // serverSearch: danh mục LỚN (mã hàng…) — `options` do server trả theo từ khóa, KHÔNG lọc lại

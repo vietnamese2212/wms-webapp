@@ -12,13 +12,13 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, dedupOpts, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
-  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
+  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials, useMaterialsByIds,
   fetchScanLogExport, useScanLogSearch,
 } from '@/api/hooks'
 import type { ScanLogParams } from '@/api/hooks'
@@ -157,6 +157,8 @@ export default function OutboundScanLog() {
     !!filters.material_category,
   )
   const materials = materialsData ?? []
+  // Nhãn cho mã ĐANG CHỌN — options tìm-trên-server không chứa nó khi từ khóa đổi / mở lại app.
+  const { data: pickedMats = [] } = useMaterialsByIds(filters.materials)
 
   // Kho mặc định cho user theo phạm vi (non-NATIONAL) — chỉ set 1 lần khi trống
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,10 +181,10 @@ export default function OutboundScanLog() {
     (categories as string[]).map(c => ({ value: c, label: c }))
   , [categories])
   const materialOpts  = useMemo(() =>
-    materials.map(m => ({
+    dedupOpts([...pickedMats, ...materials].map(m => ({
       value: m.id,
       label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}`,
-    })), [materials])
+    }))), [materials, pickedMats])
   const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
   const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.

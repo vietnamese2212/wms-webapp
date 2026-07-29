@@ -5,6 +5,33 @@
 > + yêu cầu user: "nhiều người cùng upload các kế hoạch của các kho họ" + dữ liệu lớn.
 > Mẫu chuẩn ĐẦY ĐỦ NHẤT: `inboundPlanController.bulkCreatePlanLines` (parse→validate→upsert→race-safe→recalc lô).
 
+## 0. KIỂM TRƯỚC KHI GHI — 2 PHA (BẮT BUỘC mọi upload, user chốt 29/07)
+> "Upload xong file thì hiện lên các vấn đề của file đó với view 80% màn hình, và cho nút xác nhận
+> trước khi upload dữ liệu lên." KHÔNG được ghi thẳng rồi mới báo kết quả.
+
+**Luồng:** chọn file → gửi `?preflight=1` (BE parse + validate, **KHÔNG ghi gì**) → `<UploadPreflightPanel>`
+80% màn hình → bấm "Xác nhận nhập N …" → FE gửi **LẠI CÙNG File** để ghi thật.
+- **BE**: `backend/src/utils/uploadPreflight.ts` — `isPreflight(req)` + `buildPreflight({unit,total,toInsert,toUpdate,skipped,errors,warnings,mode,extra})`.
+  Chèn **ĐÚNG 1 dòng** `if (isPreflight(req)) return ok(res, buildPreflight(...))` vào **GIỮA pha kiểm và pha ghi** —
+  **TUYỆT ĐỐI KHÔNG viết logic kiểm riêng cho preflight** (báo cáo phải sinh từ chính code lúc ghi, kẻo lệch).
+  Đếm `toInsert/toUpdate` lấy từ **chính mảng sắp ghi** (không đoán).
+- **Gửi file 2 lần** là chủ đích: serverless không có chỗ lưu file tạm giữa 2 request.
+- **FE**: `components/shared/UploadPreflightPanel.tsx` (dải ô đếm + chip lọc Lỗi/Cảnh báo + bảng dòng có
+  vấn đề + nút Tải danh sách lỗi ra Excel + nút Xác nhận). `UploadExcelDialog` đã 2 pha sẵn — trang mới chỉ cần
+  `onUpload={(file, preflight) => hook.mutateAsync({ file, preflight })}`. Hook: `?preflight=1` + **KHÔNG
+  invalidateQueries khi preflight** (DB không đổi).
+- **Chỉ hiện DÒNG CÓ VẤN ĐỀ + số đếm phần hợp lệ** (không dump mọi dòng) → file 8.600 dòng vẫn không chạm trần 4,5MB.
+- **Nói RÕ ngữ nghĩa trên dialog**: all-or-nothing → "File còn N lỗi nên sẽ KHÔNG ghi gì" + `will_write=0` (nút tắt);
+  per-row → "N dòng lỗi sẽ bị BỎ QUA".
+- ⚠️ **RÀ TỪNG NHÁNH GHI TRƯỚC ĐIỂM RETURN** — 29/07 tìm được 2 chỗ "kiểm trước mà vẫn ghi": nhánh chuyến TẠM DỪNG
+  gọi `mergePausedGDO` (ghi ngay trong pha build → preflight phải `continue` + chỉ đếm) và `khvc_lines` upsert tầng raw
+  (bọc `if (!isPreflight(req))`). Cách rà: `grep -nE "\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\("` trong
+  KHOẢNG từ đầu hàm tới điểm return preflight — phải RỖNG.
+- File hỏng toàn bộ (thiếu cột bắt buộc / không đọc được / 0 dòng dùng được) vẫn trả **400 + banner đỏ** như cũ (đúng
+  chuẩn: không có gì để báo cáo).
+- **Cổng tự động**: luật ratchet `upload_without_preflight` (`scripts/qa/09-static-gate.mjs`, baseline 0) soi TỪNG route
+  `upload.single('file')` → thân hàm controller phải có `isPreflight`. Thêm upload mới mà quên = **cổng ĐỎ**.
+
 ## A. PARSE file — map theo TÊN cột
 - `sheet_to_json(ws)` mặc định (object theo header) hoặc helper `parseSheetByHeader` (`backend/src/utils/excelHeader.ts`) — alias = {key snake_case + nhãn tiếng Việt}, chuẩn hóa trim/lowercase/bỏ dấu → chịu ĐẢO thứ tự cột + đổi tên nhãn. **KHÔNG map theo vị trí cột** (`header: 1` + mảng KEYS — đảo cột là lệch dữ liệu âm thầm).
 - Lấy **sheet ĐẦU TIÊN** (chốt user). Guard cột bắt buộc thiếu → 400 báo tên cột (đừng nuốt).
@@ -42,6 +69,7 @@
 - Export tôn trọng filter đang áp trên list; dữ liệu lớn → nút hiện trạng thái đang tải.
 
 ## Checklist
+- [ ] **2 PHA: `isPreflight` giữa pha kiểm & pha ghi · 0 lệnh ghi trước điểm return · dialog 80% + nút Xác nhận**
 - [ ] Parse theo TÊN cột (sheet đầu, guard cột bắt buộc, ngày/số VN-safe)
 - [ ] Validate base-unit + số nguyên; ngữ nghĩa all-or-nothing/per-row rõ
 - [ ] Ghi LÔ 500 (insert/upsert full-record/find-or-create lô/recalc lô) — 0 vòng `for...await` per-row

@@ -53,6 +53,8 @@ interface InventoryFilters {
   filterNmsx: string[]
   nccIds: string[]
   datePctRanges: string[]
+  importDateFrom: string   // lọc theo NGÀY NHẬP KHO (import_date), khác Ngày SX
+  importDateTo: string
 }
 interface LoosePickingFilters {
   warehouseId: string
@@ -349,6 +351,7 @@ function initialFilters() {
       filterLocations: [], filterMaterialIds: [],
       qaStatusIds: [], status: '', page: 1, pageSize: 50, manufacturerId: '',
       filterCycles: [], filterMachines: [], filterNmsx: [], nccIds: [], datePctRanges: [],
+      importDateFrom: '', importDateTo: '',
     },
     loosePicking: {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',

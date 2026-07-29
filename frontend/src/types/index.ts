@@ -389,6 +389,10 @@ export interface InventoryEntry {
   stocktake_flag_note: string | null
   created_at:          string
   updated_at:          string
+  // ⚠️ FK → Employee.id (KHÔNG phải tên). Hiển thị phải dùng created_by_emp/updated_by_emp,
+  // in thẳng 2 cột này ra màn là ra uuid thô.
+  created_by:          string | null
+  updated_by:          string | null
   location:              { id: string; location_code: string; sub_code: string; sub_name: string | null; sub_type: string | null; warehouse?: { id: string; name: string; code: string } | null } | null
   material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; category: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   manufacturer:          { id: string; code: string; name: string | null } | null

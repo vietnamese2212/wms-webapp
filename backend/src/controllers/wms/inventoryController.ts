@@ -22,7 +22,7 @@ const ENTRY_SELECT = `
   production_date, status, import_date, update_date, adjustment_qty, ncc_id, shelf_life_days,
   batch, expiry_date, parent_pallet_code, origin,
   stocktake_at, stocktake_flagged, stocktake_flag_note,
-  created_at, updated_at,
+  created_at, updated_at, created_by, updated_by,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
   material:Material(id, material_code, short_name, shelf_life_days, supplier_shelf_life_overrides, category, base_unit, entry_unit, units_per_carton),
   ncc:TransportCompany!ncc_id(id, name),
@@ -1436,6 +1436,10 @@ const INV_FIELDS: FieldDef[] = [
   { key: 'qa_status',       label: 'QA',          aliases: ['qa', 'qa mac dinh ok'] },
   { key: 'shelf_life_days', label: 'HSD (ngày)',  aliases: ['hsd', 'hsd ngay', 'hsd ngay tuy'] },
   { key: 'boxes_base',      label: 'Hộp (lẻ)',    aliases: ['hop', 'hop phan le', 'hop phan le tuy'] },
+  // 2 cột TÙY CHỌN (29/07) — bê tồn kho cũ vào thì phải khai được NGÀY VÀO KHO THẬT + AI nhận,
+  // không thì mọi số "nhập trong ngày" (Giám sát vận hành/Dashboard) tính cả tồn upload thành hàng mới nhận.
+  { key: 'import_date',     label: 'Ngày nhập',   aliases: ['ngay nhap', 'ngay nhap kho', 'ngay nhap tuy', 'ngay nhap trong hom nay'] },
+  { key: 'created_by',      label: 'Người nhập',  aliases: ['nguoi nhap', 'nguoi nhan', 'nguoi nhap tuy'] },
 ]
 
 const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
@@ -1522,6 +1526,23 @@ export async function uploadExcel(req: Request, res: Response) {
     const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
     const qaNames = qas.map(q => q.name).join(' / ')
 
+    // NGƯỜI NHẬP (cột tùy chọn): `created_by` là FK → Employee.id, KHÔNG phải tên. File khai
+    // mã nhân viên hoặc tên → resolve sang id; sai/trùng tên thì báo lỗi dòng (đừng ghi bừa → 23503).
+    // Chỉ nạp danh sách nhân sự KHI file thật sự có khai (đỡ 1 query cho phần lớn file).
+    const hasImporterCol = rows.some(r => invStr(r.created_by))
+    const empByCode = new Map<string, string>()
+    const empByName = new Map<string, string[]>()
+    if (hasImporterCol) {
+      const emps = await fetchAllRowsParallel(() => supabase.from('Employee')
+        .select('id, employee_code, name').order('id')) as { id: string; employee_code: string | null; name: string | null }[]
+      for (const e of emps) {
+        const code = String(e.employee_code ?? '').trim().toLowerCase()
+        const name = String(e.name ?? '').trim().toLowerCase()
+        if (code) empByCode.set(code, e.id)
+        if (name) empByName.set(name, [...(empByName.get(name) ?? []), e.id])
+      }
+    }
+
     // Pallet ĐÃ CÓ (active) khớp mã trong file → CẬP NHẬT thay vì báo lỗi (user chốt 05/07).
     // Khóa khớp = (kho, mã pallet) — 1 mã pallet tồn tại hợp lệ ở NHIỀU kho (no-QR pallet_code=mã hàng),
     // khớp unique index uq_inventory_active_wh_pallet. Chỉ fetch entry theo mã trong file (không kéo cả bảng).
@@ -1570,6 +1591,27 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!locRaw)         missing.push('vị trí')
       if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
       if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
+
+      // NGÀY NHẬP (tùy): khai thì dùng ngày trong file, trống thì = hôm nay. Ngày ở TƯƠNG LAI là
+      // gõ sai (hàng chưa vào kho) → chặn, không thì mọi báo cáo "nhập trong ngày" lệch âm thầm.
+      const impRaw = invStr(r.import_date)
+      const impIso = invToISODate(r.import_date)
+      if (impRaw && !impIso) { errors.push(`${at} — Ngày nhập sai định dạng "${impRaw}" (dùng dd/mm/yyyy hoặc yyyy-mm-dd)`); continue }
+      if (impIso && impIso > importDateVN) { errors.push(`${at} — Ngày nhập ${impIso} ở TƯƠNG LAI (hôm nay ${importDateVN})`); continue }
+
+      // NGƯỜI NHẬP: trống = người bấm upload. Khai thì phải khớp nhân sự (mã ưu tiên, rồi tên).
+      const impByRaw = invStr(r.created_by)
+      let importerId: string | null = null
+      if (impByRaw) {
+        const k = impByRaw.toLowerCase()
+        importerId = empByCode.get(k) ?? null
+        if (!importerId) {
+          const hits = empByName.get(k) ?? []
+          if (hits.length === 1) importerId = hits[0]
+          else if (hits.length > 1) { errors.push(`${at} — "Người nhập" trùng ${hits.length} nhân sự cùng tên "${impByRaw}" — điền MÃ nhân viên`); continue }
+          else { errors.push(`${at} — "Người nhập" không khớp nhân sự: "${impByRaw}" (điền mã nhân viên hoặc tên đúng)`); continue }
+        }
+      }
 
       const palletLc = pallet!.toLowerCase()
       const matId = matMap.get(mcode!.toLowerCase())
@@ -1640,7 +1682,11 @@ export async function uploadExcel(req: Request, res: Response) {
           cartons_remaining: qtyBase,
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-          updated_at: now,
+          // Ngày nhập / Người nhập: CHỈ đè khi file có khai (ô trống giữ giá trị cũ — đúng luật merge,
+          // không được lấy "hôm nay" đè lên ngày nhập thật của pallet đã có).
+          ...(impIso ? { import_date: impIso } : {}),
+          ...(importerId ? { created_by: importerId } : {}),
+          updated_at: now, updated_by: actorId,   // FK → Employee.id (KHÔNG phải tên)
         })
         if (qtyBase !== before) {
           adjustLogs.push({
@@ -1657,7 +1703,12 @@ export async function uploadExcel(req: Request, res: Response) {
           stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-          import_date: importDateVN, created_at: now, updated_at: now,
+          // Ngày nhập từ file nếu có (bê tồn cũ giữ đúng ngày vào kho), trống = hôm nay.
+          // created_by/updated_by là FK → Employee.id: trước 29/07 upload KHÔNG ghi gì nên mọi
+          // pallet bê vào đều "không rõ ai nhập"; nay = nhân sự khai ở file, trống = người upload.
+          import_date: impIso ?? importDateVN,
+          created_by: importerId ?? actorId, updated_by: actorId,
+          created_at: now, updated_at: now,
         })
       }
     }

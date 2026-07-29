@@ -1267,6 +1267,8 @@ export function useInventoryEntries(params?: {
   filter_nmsx?: string[]
   ncc_ids?: string[]
   date_pct_ranges?: string[]
+  import_date_from?: string   // lọc theo NGÀY NHẬP KHO (BE đã hỗ trợ sẵn ở cả list, tổng hợp, facets)
+  import_date_to?: string
 }, enabled = true) {
   return useQuery({
     queryKey: ['inventory-entries', params],

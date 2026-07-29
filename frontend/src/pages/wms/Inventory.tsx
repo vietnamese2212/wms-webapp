@@ -92,7 +92,7 @@ function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
   saveWorkbook(wb, baseName)   // chọn vị trí + nhớ thư mục trước (fallback tải thẳng)
 }
 
-// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (19 cột)
+// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (21 cột)
 const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',     label: '',         w: 32 },
   { id: 'warehouse', label: 'Kho',      w: 110 },
@@ -112,6 +112,9 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'datePct',   label: '%Date',    w: 60, align: 'right' },
   { id: 'qa',        label: 'QA',       w: 60 },
   { id: 'adjust',    label: 'Đ.chỉnh',  w: 64, align: 'right' },
+  // Ngày VÀO KHO + ai nhận (khác cột "Nhập" là SỐ LƯỢNG) — bê tồn cũ bằng Excel phải soát được
+  { id: 'importDate', label: 'Ngày nhập',  w: 84 },
+  { id: 'createdBy',  label: 'Người nhập', w: 110 },
   { id: 'chevron',   label: '',         w: 28 },
 ]
 const INVENTORY_COL_DEFAULTS = INVENTORY_COLS.map(c => c.w)
@@ -730,6 +733,8 @@ export default function Inventory() {
     filter_nmsx:        f.filterNmsx.length > 0 ? f.filterNmsx : undefined,
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
     ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
+    import_date_from:   f.importDateFrom || undefined,
+    import_date_to:     f.importDateTo   || undefined,
   }
   const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
   // Tổng hợp phân trang SERVER: trước đây nhận HẾT nhóm rồi tự `slice` — 41.107 nhóm = 18MB,
@@ -810,6 +815,10 @@ export default function Inventory() {
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
             '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '',
             'Điều chỉnh (thùng)': dc.t, 'Điều chỉnh (hộp)': dc.h,
+            // Round-trip với mẫu upload: 2 cột này up lại được (tên cột khớp alias parser).
+            // Xuất TÊN nhân sự (parser nhận cả mã lẫn tên) — KHÔNG xuất created_by vì đó là Employee.id.
+            'Ngày nhập': e.import_date ? formatTimestampDate(e.import_date) : '',
+            'Người nhập': e.created_by_emp?.name ?? '',
           }
         }), `ton_kho_chi_tiet_${stamp}`)
       }
@@ -824,9 +833,11 @@ export default function Inventory() {
   // Mẫu Excel Tồn kho đầu kỳ — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
   function downloadInventoryTemplate() {
     // BASE UNIT: mã có Hộp/thùng → "Số thùng" SỐ NGUYÊN + phần lẻ ghi cột "Hộp" (đơn vị gốc)
-    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)']
-    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base']
-    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24]
+    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)',
+      'Ngày nhập (tùy, trống = hôm nay)', 'Người nhập (tùy, trống = người upload)']
+    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base',
+      'import_date', 'created_by']
+    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24, '2026-06-05', 'Nguyễn Văn A']
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
@@ -943,6 +954,9 @@ export default function Inventory() {
       onChange: v => setInventory({ datePctRanges: v, page: 1 }) },
     { key: 'ncc', label: 'NCC', type: 'multi', options: nccFilterOpts, selected: f.nccIds, searchable: nccFilterOpts.length > 5,
       onChange: v => setInventory({ nccIds: v, page: 1 }) },
+    // NGÀY NHẬP KHO (không phải Ngày SX) — soát lại lô vừa upload / xem hàng vào kho trong khoảng nào
+    { key: 'importDate', label: 'Ngày nhập', type: 'daterange', from: f.importDateFrom, to: f.importDateTo,
+      onChange: (from, to) => setInventory({ importDateFrom: from, importDateTo: to, page: 1 }) },
   ]
 
   const viewSnapshot = {
@@ -952,6 +966,7 @@ export default function Inventory() {
     filterNmsx: f.filterNmsx,
     datePctRanges: f.datePctRanges,
     nccIds: f.nccIds,
+    importDateFrom: f.importDateFrom, importDateTo: f.importDateTo,
   }
   const savedViews = useSavedViewsStore(s => s.views['inventory'] ?? [])
   const activeViewId = useMemo(() => {
@@ -1215,7 +1230,9 @@ export default function Inventory() {
       {showUpload && (
         <UploadExcelDialog
           title="Upload Tồn kho từ Excel"
-          hint="Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên."
+          hint={'Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên. '
+            + '“Ngày nhập” = ngày hàng VÀO KHO (bê tồn cũ thì khai ngày thật, để trống = hôm nay) — mọi báo cáo “nhập trong ngày” đọc theo cột này. '
+            + '“Người nhập” điền mã nhân viên hoặc tên (để trống = người đang upload).'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadInventoryTemplate}
           onUpload={(file, preflight) => uploadInventory.mutateAsync({ file, preflight })}
@@ -1366,6 +1383,18 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         ) : (
           <span className="text-[10px] text-slate-300">—</span>
         )}
+      </TableCell>
+      {/* Ngày nhập kho (KHÔNG phải ngày SX) — upload tồn cũ khai được ngày thật, trống thì = ngày upload */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {e.import_date
+          ? <span className="text-[10px] tabular-nums">{formatTimestampDate(e.import_date, true)}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      {/* TÊN người nhập lấy từ join created_by_emp — `created_by` là Employee.id, in ra sẽ là uuid thô */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {e.created_by_emp?.name
+          ? <span className="text-[10px] truncate block max-w-[100px]" title={e.created_by_emp.name}>{e.created_by_emp.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-1 py-1">
         <ChevronRight className={`h-3 w-3 text-slate-300 transition-transform ${isSelected ? 'rotate-90 text-white' : ''}`} />

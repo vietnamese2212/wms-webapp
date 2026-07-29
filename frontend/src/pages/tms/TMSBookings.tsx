@@ -1206,10 +1206,19 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
   const validVtNames = new Set(vehicleTypes.map(vt => vt.name.toLowerCase().trim()))
-  const nccByCode    = Object.fromEntries(transportCompanies.flatMap(c => [
-    [c.code.toLowerCase().trim(), c.id] as [string, string],
-    ...((c.alias_codes ?? []).map(a => [String(a).toLowerCase().trim(), c.id] as [string, string])),
-  ]))
+  // ĐVVT nhận MÃ · ALIAS · TÊN (chuẩn chung với upload KH xuất & KH nhập — 29/07 phát hiện chỗ này
+  // thiếu TÊN nên file ghi tên đơn vị bị báo "không tìm thấy"). Mã/alias ưu tiên hơn tên khi trùng key.
+  const nccByCode: Record<string, string> = {}
+  for (const c of transportCompanies) {
+    const nm = String(c.name ?? '').toLowerCase().trim()
+    if (nm && !(nm in nccByCode)) nccByCode[nm] = c.id
+  }
+  for (const c of transportCompanies) {
+    for (const k of [c.code, ...(c.alias_codes ?? [])]) {
+      const key = String(k ?? '').toLowerCase().trim()
+      if (key) nccByCode[key] = c.id
+    }
+  }
 
   const reset = () => { setRows([]); setResult(null); setErr(''); setRowFilter('all') }
   useEffect(() => { if (open) reset() }, [open])
@@ -1249,7 +1258,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (!whId && !whName) errors.push('thiếu kho')
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
-          if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
+          if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không khớp danh mục (điền mã, alias hoặc tên)`)
           if (!orderCode) errors.push('thiếu mã đơn')
           else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: BV_X_260610_1)`)
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)

@@ -1274,14 +1274,23 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (tonsNum != null && Math.abs(tonsNum) > 9999999.999)
             errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9.999.999,999)`)
 
-          // CẢNH BÁO không chặn — bắt từ file thật 29/07: 94/118 dòng Pallet kiểu "19112" (= 19,112
-          // pallet bị MẤT DẤU thập phân từ nguồn) → KH ghi 582.167 pallet/53 xe mà không ai hay.
-          // 1 xe không chở nổi >200 pallet hay >200 tấn — vượt là gần chắc lỗi dấu thập phân.
+          // TỰ SỬA "mất dấu thập phân" — bắt từ file thật 29/07: 94/118 dòng Pallet kiểu "19112"
+          // (= 19,112 pallet, nguồn SAP/Excel đánh rơi dấu phẩy VN) → KH ghi 582.167 pallet/53 xe.
+          // Chữ ký lỗi rất đặc trưng: số phình ĐÚNG ×1000, mà 1 xe không chở nổi >200 pallet/tấn
+          // ⇒ >200 và ÷1000 ra số hợp lý = sửa (giá trị sửa hiện ngay trên bảng kiểm, có ⚠ ghi rõ
+          // gốc→sửa, user thấy trước khi bấm Import). ÷1000 vẫn >200 (rác thật) → chỉ cảnh báo.
           const warns: string[] = []
-          if (palletsNum != null && !isNaN(palletsNum) && palletsNum > 200)
-            warns.push(`Pallet ${palletsNum} /xe bất thường (mất dấu thập phân? vd 19112 → 19,112)`)
-          if (tonsNum != null && !isNaN(tonsNum) && tonsNum > 200)
-            warns.push(`Tấn ${tonsNum} /xe bất thường (mất dấu thập phân?)`)
+          const fixLostDecimal = (n: number | null, label: string): number | null => {
+            if (n == null || isNaN(n) || n <= 200) return n
+            if (n / 1000 <= 200) {
+              warns.push(`${label} tự sửa ${n.toLocaleString('vi-VN')} → ${(n / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} (mất dấu thập phân)`)
+              return n / 1000
+            }
+            warns.push(`${label} ${n.toLocaleString('vi-VN')} /xe bất thường — kiểm lại file nguồn`)
+            return n
+          }
+          const palletsFixed = fixLostDecimal(palletsNum != null && !isNaN(palletsNum) ? palletsNum : null, 'Pallet')
+          const tonsFixed    = fixLostDecimal(tonsNum != null && !isNaN(tonsNum) ? tonsNum : null, 'Tấn')
 
           return {
             date, warehouse_id: whId, warehouse_name: whName,
@@ -1289,8 +1298,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             warehouse_type: whType, vehicle_type: vtName,
             ncc_code: nccCode, ncc_id: nccId, order_code: orderCode,
             planned_boxes: boxesNum != null && !isNaN(boxesNum) ? boxesNum : null,
-            planned_pallets: palletsNum != null && !isNaN(palletsNum) ? palletsNum : null,
-            planned_tons: tonsNum != null && !isNaN(tonsNum) ? tonsNum : null,
+            planned_pallets: palletsFixed, planned_tons: tonsFixed,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
             priority: parsePriority(norm.priority),
             valid: errors.length === 0, error: errors.join(', '), warning: warns.join(', '),
@@ -1394,9 +1402,9 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
               )}
               {rows.length > 0 && errorCount === 0 && warnCount > 0 && (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 shrink-0">
-                  ⚠ <b>{warnCount} dòng có số bất thường</b> (Pallet/Tấn vượt sức 1 xe — thường do ô Excel mất dấu
-                  thập phân, vd <span className="font-mono">19112</span> thay vì <span className="font-mono">19,112</span>).
-                  Vẫn import được, nhưng nên kiểm lại file nguồn trước.
+                  ⚠ <b>{warnCount} dòng Pallet/Tấn bị mất dấu thập phân</b> (vd <span className="font-mono">19112</span> thay
+                  vì <span className="font-mono">19,112</span>) — <b>app đã tự sửa</b>, giá trị SAU SỬA đang hiển thị trên
+                  bảng và sẽ được import. Soát cột Lỗi (⚠ gốc → sửa) trước khi bấm Import.
                 </p>
               )}
               {rows.length > 0 && (
@@ -1425,9 +1433,10 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                           <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.ncc_code || '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_tons ?? '—'}</td>
+                          {/* Format vi-VN (phẩy = thập phân): in raw JS "17.103" sẽ bị đọc nhầm 17 nghìn */}
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes?.toLocaleString('vi-VN') ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets?.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_tons?.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) ?? '—'}</td>
                           <td className="px-2 py-0.5 text-red-600 font-semibold">{r.priority ? 'x' : ''}</td>
                           <td className="px-2 py-0.5">
                             {r.error && <span className="text-red-500">{r.error}</span>}

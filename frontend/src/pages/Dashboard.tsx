@@ -131,9 +131,13 @@ export default function Dashboard() {
                     <Icon className={`h-5 w-5 ${color.split(' ')[0]}`} />
                   </div>
                   <div className="min-w-0">
+                    {/* Số 8+ chữ số (vd 15.385.846 sau bê tồn) bị truncate thành "15.385.8…" → đọc SAI
+                        cấp nghìn/triệu. Co cỡ chữ theo độ dài thay vì cắt cụt; tooltip = số đầy đủ. */}
                     {isLoading
                       ? <Skeleton className="h-7 w-16 mb-1" />
-                      : <p className="text-2xl font-bold tabular-nums truncate">{nf(Number(value ?? 0))}</p>}
+                      : (() => { const s = nf(Number(value ?? 0)); return (
+                          <p className={`${s.length >= 10 ? 'text-base' : s.length >= 8 ? 'text-xl' : 'text-2xl'} font-bold tabular-nums`} title={s}>{s}</p>
+                        ) })()}
                     <p className="text-xs text-muted-foreground">{label}</p>
                   </div>
                 </div>

@@ -802,7 +802,8 @@ export default function Outbound() {
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
               onClick={() => setNppOpen(v => !v)}>
               <Building2 className="h-3.5 w-3.5 text-slate-400" />
-              Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} thùng
+              {/* Tổng cross-mã (đủ loại đơn vị) → không gắn "thùng" (từ vựng chốt 26/07, xem QTY_CONVERTED_LABEL) */}
+              <span title={QTY_CONVERTED_TIP}>Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} (SL quy đổi)</span>
               {filterMaterials.length > 0 && <span className="text-blue-600">· lọc {filterMaterials.length} mã hàng</span>}
               <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${nppOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -945,7 +946,7 @@ export default function Outbound() {
       <ListFooter
         page={page} pageSize={pageSize} total={total} unit="chuyến xe"
         onPageSize={n => setOutbound({ pageSize: n, page: 1 })}
-        right={`${fmtTotal(summary.pallets)} pallet · ${fmtTotal(summary.cartons)} thùng`}
+        right={`${fmtTotal(summary.pallets)} pallet · ${fmtTotal(summary.cartons)} SL quy đổi`}
       />
      </div>
 

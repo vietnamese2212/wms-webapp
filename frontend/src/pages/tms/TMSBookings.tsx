@@ -1125,6 +1125,7 @@ type ImportRow = {
   order_code: string
   planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
   gdo_refs: string; notes: string; priority: boolean; valid: boolean; error: string
+  warning: string   // cảnh báo KHÔNG chặn (vd Pallet/Tấn vượt sức xe — thường do ô Excel mất dấu thập phân)
 }
 
 const EXCEL_COL_MAP: Record<string, string> = {
@@ -1273,6 +1274,15 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (tonsNum != null && Math.abs(tonsNum) > 9999999.999)
             errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9.999.999,999)`)
 
+          // CẢNH BÁO không chặn — bắt từ file thật 29/07: 94/118 dòng Pallet kiểu "19112" (= 19,112
+          // pallet bị MẤT DẤU thập phân từ nguồn) → KH ghi 582.167 pallet/53 xe mà không ai hay.
+          // 1 xe không chở nổi >200 pallet hay >200 tấn — vượt là gần chắc lỗi dấu thập phân.
+          const warns: string[] = []
+          if (palletsNum != null && !isNaN(palletsNum) && palletsNum > 200)
+            warns.push(`Pallet ${palletsNum} /xe bất thường (mất dấu thập phân? vd 19112 → 19,112)`)
+          if (tonsNum != null && !isNaN(tonsNum) && tonsNum > 200)
+            warns.push(`Tấn ${tonsNum} /xe bất thường (mất dấu thập phân?)`)
+
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''), direction,
@@ -1283,7 +1293,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
             planned_tons: tonsNum != null && !isNaN(tonsNum) ? tonsNum : null,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
             priority: parsePriority(norm.priority),
-            valid: errors.length === 0, error: errors.join(', '),
+            valid: errors.length === 0, error: errors.join(', '), warning: warns.join(', '),
           }
         })
         setRows(parsed); setErr('')
@@ -1343,6 +1353,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   }
 
   const errorCount = rows.filter(r => !r.valid).length
+  const warnCount  = rows.filter(r => r.warning).length
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
@@ -1381,6 +1392,13 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       File hợp lệ. Bấm <b>Import {rows.length} đơn</b> mới ghi dữ liệu — chưa có gì được ghi.
                     </p>
               )}
+              {rows.length > 0 && errorCount === 0 && warnCount > 0 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 shrink-0">
+                  ⚠ <b>{warnCount} dòng có số bất thường</b> (Pallet/Tấn vượt sức 1 xe — thường do ô Excel mất dấu
+                  thập phân, vd <span className="font-mono">19112</span> thay vì <span className="font-mono">19,112</span>).
+                  Vẫn import được, nhưng nên kiểm lại file nguồn trước.
+                </p>
+              )}
               {rows.length > 0 && (
                 <div className="flex-1 min-h-0 overflow-auto rounded border">
                   <table className="min-w-full text-[10px]">
@@ -1411,7 +1429,11 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                           <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets ?? '—'}</td>
                           <td className="px-2 py-0.5 tabular-nums">{r.planned_tons ?? '—'}</td>
                           <td className="px-2 py-0.5 text-red-600 font-semibold">{r.priority ? 'x' : ''}</td>
-                          <td className="px-2 py-0.5 text-red-500">{r.error}</td>
+                          <td className="px-2 py-0.5">
+                            {r.error && <span className="text-red-500">{r.error}</span>}
+                            {r.error && r.warning && <span className="text-slate-300"> · </span>}
+                            {r.warning && <span className="text-amber-600">⚠ {r.warning}</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

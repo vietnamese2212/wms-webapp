@@ -3,7 +3,7 @@
 -- trước thì đứng trước) → Xuất/Nhập, loại kho, loại xe, ĐVVT trộn lẫn nhau, người đặt giờ phải
 -- nhảy khắp bảng. Nay xếp theo cách người dùng LÀM VIỆC trên trang này:
 --
---   1. Ngày TĂNG dần        — đọc như lịch (hôm nay → mai → mốt), trang KẾ HOẠCH là nhìn về trước
+--   1. Ngày GIẢM dần        — ngày gần nhất (mới nhất) nằm TRÊN, user chốt 29/07
 --   2. Ưu tiên (UT = x)     — việc gấp luôn nằm đầu ngày
 --   3. Hướng: Xuất → Nhập   — 2 luồng khác đội/khác cửa, không xen kẽ
 --   4. Loại kho (A→Z)       — khung giờ ràng theo cargo_type ⇒ đơn cùng loại hàng đứng liền nhau
@@ -88,7 +88,7 @@ BEGIN
   ),
   stt AS (         -- STT tăng dần theo ĐÚNG chiều đọc của lưới
     SELECT p.order_id, p.slot_id,
-           row_number() OVER (ORDER BY k.date, k.pri DESC, k.dir_rank,
+           row_number() OVER (ORDER BY k.date DESC, k.pri DESC, k.dir_rank,
                                        k.warehouse_type NULLS LAST, k.vehicle_type NULLS LAST,
                                        k.dvvt_name NULLS LAST, k.order_code NULLS LAST,
                                        k.created_at, p.order_id, p.slot_idx) AS n
@@ -131,7 +131,7 @@ BEGIN
   ),
   branked AS (     -- cụm xếp theo khóa của ĐƠN CHỦ; ưu tiên tính bool_or cả cụm (đơn gom gấp cũng kéo cụm lên)
     SELECT b.leader_id, count(*) AS n_orders,
-           row_number() OVER (ORDER BY k.date, bool_or(b.pri) DESC, k.dir_rank,
+           row_number() OVER (ORDER BY k.date DESC, bool_or(b.pri) DESC, k.dir_rank,
                                        k.warehouse_type NULLS LAST, k.vehicle_type NULLS LAST,
                                        k.dvvt_name NULLS LAST, k.order_code NULLS LAST,
                                        k.created_at, b.leader_id) AS brank

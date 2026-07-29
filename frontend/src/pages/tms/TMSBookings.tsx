@@ -3809,7 +3809,7 @@ export default function TMSBookings() {
     (facets?.vehicle_types ?? []).map(v => ({ value: v, label: v })), [facets])
 
   // Trang đã được SERVER lọc + sắp xếp — dựng lưới thẳng từ đây (không lọc lại client).
-  // Thứ tự: ngày ↑ · ưu tiên (UT) · Xuất→Nhập · loại kho · loại xe · ĐVVT · mã đơn
+  // Thứ tự: ngày ↓ (gần nhất trên) · ưu tiên (UT) · Xuất→Nhập · loại kho · loại xe · ĐVVT · mã đơn
   // (đổi thứ tự = sửa ORDER BY trong migration 20260729d_tms_orders_page_sort.sql, KHÔNG sort lại ở đây
   //  — client chỉ giữ 1 TRANG nên sort ở client là sort sai trên tập cắt cụt).
   const filteredOrders = orders as TmsOrder[]

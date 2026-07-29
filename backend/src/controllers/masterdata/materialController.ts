@@ -9,6 +9,7 @@ import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../.
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -560,11 +561,20 @@ export async function uploadExcel(req: Request, res: Response) {
     // Trước đây ghi per-row (dòng hợp lệ vẫn vào, dòng lỗi bị loại) → file 3.5k dòng có vài dòng
     // "khai entry mà thiếu số hộp/thùng" ghi vào 2.662 mã dở dang, phải xoá tay rồi up lại.
     // Đồng bộ với upload Tồn kho + Vị trí kho: sửa file rồi up lại, DB không bao giờ nửa vời.
-    if (errors.length) return ok(res, { inserted: 0, updated: 0, skipped, errors })
+    if (errors.length) {
+      if (isPreflight(req)) return ok(res, buildPreflight({ unit: 'mã hàng', total: rows.length, skipped, errors }))
+      return ok(res, { inserted: 0, updated: 0, skipped, errors })
+    }
 
     let inserted = 0, updated = 0
     const insertRecords = [...insertByCode.values()]
     const upsertRecords = [...upsertByCode.values()]
+
+    // KIỂM TRƯỚC: file sạch → báo "sẽ thêm N mã / sẽ cập nhật M mã" rồi dừng (chưa ghi)
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'mã hàng', total: rows.length, skipped,
+      toInsert: insertRecords.length, toUpdate: upsertRecords.length,
+    }))
 
     // INSERT mã mới theo lô 500 (lỗi lô → từng dòng để chỉ đúng mã hỏng)
     for (let i = 0; i < insertRecords.length; i += 500) {

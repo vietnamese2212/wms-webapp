@@ -1218,7 +1218,7 @@ export default function Inventory() {
           hint="Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên."
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadInventoryTemplate}
-          onUpload={file => uploadInventory.mutateAsync({ file })}
+          onUpload={(file, preflight) => uploadInventory.mutateAsync({ file, preflight })}
         />
       )}
 

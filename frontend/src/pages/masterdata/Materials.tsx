@@ -1347,7 +1347,7 @@ export default function Materials() {
               + 'Mã có Entry Unit thì bắt buộc điền "Đv/Thùng"; Loại hàng phải có sẵn trong danh mục Loại kho.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadMaterialTemplate}
-          onUpload={file => uploadMaterials.mutateAsync({ file })}
+          onUpload={(file, preflight) => uploadMaterials.mutateAsync({ file, preflight })}
         />
       )}
     </div>

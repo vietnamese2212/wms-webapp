@@ -16,6 +16,7 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
+import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 
 const now = () => new Date().toISOString()
 
@@ -2371,6 +2372,7 @@ async function processVehicleGroups(
   warehouse_id: string | undefined,
   extraResult?: Record<string, unknown>,
   autoLoosePallet = false,   // true (KHVC/SAP): nhặt lẻ = thùng lẻ < 1 pallet, auto theo cartons_per_pallet
+  preflightExtra?: PreflightExtra[],   // số liệu rủi ro riêng của luồng (KHVC: DO thiếu, chuyến đã có…)
 ): Promise<Response> {
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
@@ -2507,6 +2509,12 @@ async function processVehicleGroups(
     }
 
     if (validationErrors.length > 0) {
+      // KIỂM TRƯỚC: trả 200 + báo cáo chuẩn (dialog hiện bảng vấn đề) thay vì 400 — chưa ghi gì cả.
+      if (isPreflight(req)) return ok(res, buildPreflight({
+        unit: 'chuyến', total: byVehicle.size,
+        errors: validationErrors.flatMap(v => v.errors.map(e => `Số xe ${v.group_code} — ${e}`)),
+        extra: preflightExtra,
+      }))
       return res.status(400).json({
         success: false,
         error: { code: 'VALIDATION_FAILED', message: `File có ${validationErrors.length} chuyến xe lỗi — không upload` },
@@ -2525,6 +2533,7 @@ async function processVehicleGroups(
     // ── Phase 2: build insert lists (all vehicles already validated) ──
 
     const created:  any[] = []
+    let pausedMerges = 0          // chỉ dùng ở nhánh preflight (đếm chuyến TẠM DỪNG sẽ được merge)
     const gdoInserts:  any[] = []
     const doInserts:   any[] = []
     const itemInserts: any[] = []
@@ -2582,6 +2591,9 @@ async function processVehicleGroups(
 
       // PAUSED → merge (strict: scanned items must all exist in new file)
       if (pausedGDOMap.has(group_code)) {
+        // KIỂM TRƯỚC: mergePausedGDO GHI ngay (merge vào chuyến cũ) → nhánh preflight phải nhảy qua,
+        // chỉ đếm để báo "sẽ merge N chuyến tạm dừng". Không có dòng này thì "kiểm trước" lại ghi thật.
+        if (isPreflight(req)) { pausedMerges++; continue }
         const mergeResult = await mergePausedGDO(
           pausedGDOMap.get(group_code)!,
           group_code, delivery_date, planned_date,
@@ -2661,6 +2673,26 @@ async function processVehicleGroups(
       })
       collectDOsAndItems(gdoId)
       created.push({ group_code, id: gdoId, created: true })
+    }
+
+    // ── KIỂM TRƯỚC (preflight): đã build xong mọi thứ, CHƯA ghi 1 dòng nào → trả báo cáo rồi dừng.
+    // Đếm lấy từ chính các mảng sắp ghi: chuyến mới = gdoInserts, ghi đè kế hoạch cũ = toReplace +
+    // toPreserve (chuyến PENDING đã gán người thì giữ phân công), bỏ qua = chuyến đang xuất/đã HT.
+    if (isPreflight(req)) {
+      const skippedTrips = created.filter((c: any) => c.skipped).length
+      const overwrite = toReplaceIds.length + toPreserveIds.length
+      return ok(res, buildPreflight({
+        unit: 'chuyến', total: byVehicle.size,
+        toInsert: gdoInserts.length, toUpdate: overwrite + pausedMerges, skipped: skippedTrips,
+        extra: [
+          ...(preflightExtra ?? []),
+          { label: 'Dòng hàng sẽ ghi', value: itemInserts.length },
+          ...(pausedMerges ? [{ label: 'Chuyến TẠM DỪNG sẽ merge thêm hàng', value: pausedMerges, warn: true }] : []),
+          ...(overwrite ? [{ label: 'Chuyến GHI ĐÈ kế hoạch cũ', value: overwrite, warn: true }] : []),
+          ...(toPreserveIds.length ? [{ label: 'Trong đó giữ phân công đã gán', value: toPreserveIds.length }] : []),
+          ...(skippedTrips ? [{ label: 'Bỏ qua (đang xuất / đã hoàn thành)', value: skippedTrips, warn: true }] : []),
+        ],
+      }))
     }
 
     // ── Delete validated PENDING GDOs ──
@@ -2852,8 +2884,8 @@ export async function uploadVl06o(req: Request, res: Response) {
       }
     }
 
-    // ── v2.7 PREFLIGHT: cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
-    if (req.query.preflight === '1') {
+    // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
+    if (isPreflight(req)) {
       const dos = [...new Set(records.map(r => String(r.od_number)))]
       const found: { gdo_id: string; delivery_code: string | null }[] = []
       for (let i = 0; i < dos.length; i += 40) {
@@ -2878,8 +2910,21 @@ export async function uploadVl06o(req: Request, res: Response) {
         const its = await fetchAllByIdChunks(dvIds, c => supabase.from('OutboundItem').select('cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
         scannedItems = (its ?? []).filter(i => Number(i.cartons_scanned) > 0).length
       }
-      return ok(res, { preflight: true, rows: records.length, deliveries: dos.length,
-        dos_on_trips: dosOnTrips.size, trips_relevant: gdoIds.length, trips_in_progress: tripsInProgress, scanned_items: scannedItems })
+      // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
+      // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
+      return ok(res, buildPreflight({
+        unit: 'dòng', total: rows.length, toInsert: records.length, skipped: skippedNoKey,
+        errors: [...unitErrs.values()].map(u =>
+          `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
+        warnings,
+        extra: [
+          { label: 'Số DO trong file', value: dos.length },
+          ...(sapUnmapped ? [{ label: 'Dòng không map được kho SAP', value: sapUnmapped, warn: true }] : []),
+          ...(dosOnTrips.size ? [{ label: 'DO đã lên chuyến', value: dosOnTrips.size, warn: true }] : []),
+          ...(tripsInProgress ? [{ label: 'Chuyến ĐANG XUẤT bị ảnh hưởng', value: tripsInProgress, warn: true }] : []),
+          ...(scannedItems ? [{ label: 'Dòng đã quét thực tế', value: scannedItems, warn: true }] : []),
+        ],
+      }))
     }
 
     // CHẶN TOÀN BỘ nếu có đơn vị lệch hệ thống — KHÔNG ghi raw, trả bảng để user sửa Mã hàng rồi up lại
@@ -3003,8 +3048,12 @@ export async function uploadKhvc(req: Request, res: Response) {
     }
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
 
-    // ── v2.7 PREFLIGHT: cảnh báo TRƯỚC khi sinh chuyến — ngày/Số xe này đã có chuyến? VL06O đã mới chưa? (KHÔNG ghi gì) ──
-    if (req.query.preflight === '1') {
+    // ── PREFLIGHT: cảnh báo TRƯỚC khi sinh chuyến — ngày/Số xe này đã có chuyến? VL06O đã mới chưa?
+    // KHÔNG return ở đây nữa (29/07): tính số liệu rủi ro rồi CHẠY TIẾP để kiểm luôn từng chuyến/dòng
+    // (processVehicleGroups sẽ trả báo cáo chuẩn). Toàn bộ nhánh preflight KHÔNG ghi gì: tầng raw
+    // khvc_lines bị bỏ qua bên dưới, reshape chỉ ĐỌC erp_outbound_orders + Material.
+    const preflightExtra: PreflightExtra[] = []
+    if (isPreflight(req)) {
       const gcs = [...new Set(khvcRows.map(k => k.group_code))]
       const existGdos = await fetchAllByIdChunks(gcs, chunk => supabase.from('GroupDeliveryOrder')
         .select('status').in('group_code', chunk).order('id')) as { status: string }[]
@@ -3046,9 +3095,18 @@ export async function uploadKhvc(req: Request, res: Response) {
       }
       const crossArr = [...crossTrip]
 
-      return ok(res, { preflight: true, vehicles: gcs.length, dos_total: allDos.size,
-        trips, vl06o_last_synced: lastSynced, missing_dos: missingDos.length, missing_dos_sample: missingDos.slice(0, 10),
-        cross_trip_dos: crossArr.length, cross_trip_sample: crossArr.slice(0, 10) })
+      preflightExtra.push(
+        { label: 'Số DO trong file', value: allDos.size },
+        { label: 'VL06O đồng bộ lúc', value: lastSynced
+            ? new Date(lastSynced).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false })
+            : 'CHƯA có dữ liệu raw', warn: !lastSynced },
+        ...(trips.total ? [{ label: 'Số xe trong file ĐÃ có chuyến', value: trips.total, warn: true }] : []),
+        ...(trips.in_progress ? [{ label: 'Trong đó ĐANG XUẤT (sẽ bỏ qua)', value: trips.in_progress, warn: true }] : []),
+        ...(trips.completed ? [{ label: 'Trong đó ĐÃ HOÀN THÀNH (sẽ bỏ qua)', value: trips.completed, warn: true }] : []),
+        ...(missingDos.length ? [{ label: 'DO chưa có trong VL06O (bỏ)', value: `${missingDos.length}: ${missingDos.slice(0, 5).join(', ')}${missingDos.length > 5 ? '…' : ''}`, warn: true }] : []),
+        ...(crossArr.length ? [{ label: 'DO đang ở Số xe khác', value: `${crossArr.length}: ${crossArr.slice(0, 3).join(' · ')}${crossArr.length > 3 ? '…' : ''}`, warn: true }] : []),
+      )
+      // CHẠY TIẾP (không return) → kiểm tiếp từng chuyến ở processVehicleGroups
     }
 
     // ── SCOPE KHO phải gác TRƯỚC khi ghi tầng raw ──
@@ -3084,9 +3142,13 @@ export async function uploadKhvc(req: Request, res: Response) {
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
       raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))
-    for (let i = 0; i < khvcRecords.length; i += 500) {
-      const { error } = await supabase.from('khvc_lines').upsert(khvcRecords.slice(i, i + 500), { onConflict: 'group_code,do_no' })
-      if (error) throw new Error(error.message)
+    // PREFLIGHT không ghi tầng raw (đây là ghi DUY NHẤT trước processVehicleGroups — bỏ nó là
+    // toàn nhánh kiểm-trước sạch 100%, phần dưới chỉ ĐỌC).
+    if (!isPreflight(req)) {
+      for (let i = 0; i < khvcRecords.length; i += 500) {
+        const { error } = await supabase.from('khvc_lines').upsert(khvcRecords.slice(i, i + 500), { onConflict: 'group_code,do_no' })
+        if (error) throw new Error(error.message)
+      }
     }
 
     // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
@@ -3157,7 +3219,8 @@ export async function uploadKhvc(req: Request, res: Response) {
 
     if (!byVehicle.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
 
-    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true)   // KHVC/SAP → nhặt lẻ auto theo pallet
+    // KHVC/SAP → nhặt lẻ auto theo pallet; preflightExtra = số liệu rủi ro tính ở trên (nếu đang kiểm trước)
+    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 

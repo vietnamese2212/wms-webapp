@@ -12,6 +12,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
@@ -20,7 +21,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG, type UploadPreflight } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -258,9 +259,9 @@ export default function Outbound() {
   const [vl06oUnitErrs, setVl06oUnitErrs] = useState<{ material_code: string; material_name: string; kind: string; file_value: string; system_value: string }[] | null>(null)
   const [vcOk,     setVcOk]     = useState<string | null>(null)
   const [vcErr,    setVcErr]    = useState<string | null>(null)
-  // v2.7 — cảnh báo TRƯỚC khi ghi (preflight): giữ file chờ xác nhận + số liệu cảnh báo
-  const [vl06oWarn, setVl06oWarn] = useState<{ file: File; dos_on_trips: number; trips_in_progress: number; scanned_items: number } | null>(null)
-  const [khvcWarn,  setKhvcWarn]  = useState<{ file: File; trips: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced: string | null; missing_dos: number; missing_dos_sample: string[]; cross_trip_dos: number; cross_trip_sample: string[] } | null>(null)
+  // KIỂM TRƯỚC KHI GHI (chuẩn 29/07) — LUÔN kiểm rồi hiện báo cáo 80% màn hình chờ Xác nhận.
+  // 1 state cho cả 3 luồng (KH xuất / VL06O / KHVC) → 1 dialog dùng chung, không mỗi luồng một kiểu.
+  const [pf, setPf] = useState<{ kind: 'gdo' | 'vl06o' | 'khvc'; file: File; report: UploadPreflight } | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -467,20 +468,21 @@ export default function Outbound() {
   function handleVl06oChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
-    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVl06oWarn(null)
-    // v2.7: preflight — nếu file chứa DO đã lên chuyến → cảnh báo trước, chờ xác nhận. Lỗi preflight → up thẳng.
+    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setPf(null)
+    // LUÔN kiểm trước (không ghi) → hiện báo cáo chờ Xác nhận. Lỗi lúc kiểm = báo lỗi, KHÔNG up ngầm.
     uploadVl06o({ file, preflight: true }, {
-      onSuccess: (pf: { dos_on_trips?: number; trips_in_progress?: number; scanned_items?: number }) => {
-        if (Number(pf?.dos_on_trips) > 0) setVl06oWarn({ file, dos_on_trips: Number(pf.dos_on_trips), trips_in_progress: Number(pf.trips_in_progress ?? 0), scanned_items: Number(pf.scanned_items ?? 0) })
-        else doVl06oUpload(file)
+      onSuccess: (r: UploadPreflight) => setPf({ kind: 'vl06o', file, report: r }),
+      onError: (err) => {
+        const ax = err as AxiosError<{ error?: { message?: string } }>
+        setVl06oErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi kiểm file VL06O'))
       },
-      onError: () => doVl06oUpload(file),
     })
   }
   function doVl06oUpload(file: File) {
-    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVl06oWarn(null)
+    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null)
     uploadVl06o({ file }, {
       onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
+        setPf(null)
         const parts = [`Lưu ${r.rows} dòng · ${r.deliveries} DO`]
         if (r.skipped_no_key) parts.push(`bỏ ${r.skipped_no_key} dòng thiếu Delivery/Item`)
         let msg = parts.join(' · ')
@@ -499,23 +501,22 @@ export default function Outbound() {
   function handleKhvcChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
-    setVcErr(null); setVcOk(null); setKhvcWarn(null)
-    // v2.7: preflight — ngày này đã có chuyến / DO chưa sẵn sàng → cảnh báo trước. Lỗi preflight → up thẳng.
+    setVcErr(null); setVcOk(null); setPf(null)
+    // LUÔN kiểm trước: BE kiểm cả rủi ro (DO thiếu / chuyến đã có) LẪN từng chuyến, KHÔNG ghi gì.
     uploadKhvc({ file, preflight: true }, {
-      onSuccess: (pf: { trips?: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced?: string | null; missing_dos?: number; missing_dos_sample?: string[]; cross_trip_dos?: number; cross_trip_sample?: string[] }) => {
-        const trips = pf?.trips ?? { total: 0, in_progress: 0, completed: 0, paused: 0 }
-        if (trips.total > 0 || Number(pf?.missing_dos) > 0 || Number(pf?.cross_trip_dos) > 0)
-          setKhvcWarn({ file, trips, vl06o_last_synced: pf?.vl06o_last_synced ?? null, missing_dos: Number(pf?.missing_dos ?? 0), missing_dos_sample: pf?.missing_dos_sample ?? [], cross_trip_dos: Number(pf?.cross_trip_dos ?? 0), cross_trip_sample: pf?.cross_trip_sample ?? [] })
-        else doKhvcUpload(file)
+      onSuccess: (r: UploadPreflight) => setPf({ kind: 'khvc', file, report: r }),
+      onError: (err) => {
+        const ax = err as AxiosError<{ error?: { message?: string } }>
+        setVcErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi kiểm file KHVC'))
       },
-      onError: () => doKhvcUpload(file),
     })
   }
   function doKhvcUpload(file: File) {
-    setVcErr(null); setVcOk(null); setKhvcWarn(null)
+    setVcErr(null); setVcOk(null)
     setPostUploadLoading(true)
     uploadKhvc({ file }, {
       onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }> }) => {
+        setPf(null)
         const items = result.created ?? []
         const nCreated = items.filter(r => r.created && !r.merged).length
         const nMerged  = items.filter(r => r.merged).length
@@ -544,13 +545,28 @@ export default function Outbound() {
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
+    setUploadErr(null); setUploadOk(null); setUploadWarn(null); setPf(null)
+    // PHA 1 — kiểm trước, KHÔNG ghi. Lỗi dữ liệu về trong report.errors (BE trả 200 khi preflight).
+    uploadExcel({ file, warehouse_id: user?.warehouse_id || undefined, preflight: true }, {
+      onSuccess: (r: UploadPreflight) => setPf({ kind: 'gdo', file, report: r }),
+      onError: (err) => {
+        const ax = err as AxiosError<{ error?: { message?: string } }>
+        setUploadErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi kiểm file'))
+      },
+    })
+  }
+
+  // PHA 2 — user đã xem báo cáo và bấm Xác nhận → ghi thật
+  function doGdoUpload(file: File) {
     setUploadErr(null); setUploadOk(null); setUploadWarn(null)
     setPostUploadLoading(true)
     uploadExcel(
       { file, warehouse_id: user?.warehouse_id || undefined },
       {
         onSuccess: (result) => {
+          setPf(null)
           const items = (result.created ?? []) as Array<{ group_code: string; created?: boolean; merged?: boolean; skipped?: boolean; reason?: string }>
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length
@@ -609,7 +625,6 @@ export default function Outbound() {
         },
       }
     )
-    e.target.value = ''
   }
 
   const hasDate = f.dateFrom || f.dateTo
@@ -1045,23 +1060,6 @@ export default function Outbound() {
                   {vl06oUploading ? 'Đang xử lý…' : 'Chọn file VL06O'}
                 </Button>
               </div>
-              {vl06oWarn && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-semibold">File có {vl06oWarn.dos_on_trips} DO đã lên chuyến{vl06oWarn.trips_in_progress > 0 ? ` · ${vl06oWarn.trips_in_progress} chuyến đang xuất/tạm dừng` : ''}.</div>
-                      <div>{vl06oWarn.scanned_items > 0
-                        ? `${vl06oWarn.scanned_items} dòng ĐÃ QUÉT sẽ KHÔNG bị tự đè — chuyển sang tab "Cần xử lý" để bạn duyệt.`
-                        : 'Các dòng chưa quét sẽ tự cập nhật theo SAP (an toàn).'}</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => doVl06oUpload(vl06oWarn.file)}>Tiếp tục up VL06O</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setVl06oWarn(null)}>Huỷ</Button>
-                  </div>
-                </div>
-              )}
               {vl06oOk && (
                 <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-start gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oOk}</pre>
@@ -1112,33 +1110,6 @@ export default function Outbound() {
                   {khvcUploading ? 'Đang xử lý…' : 'Chọn file KHVC'}
                 </Button>
               </div>
-              {khvcWarn && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      {khvcWarn.trips.total > 0 && (
-                        <div><span className="font-semibold">Ngày/Số xe này đã có {khvcWarn.trips.total} chuyến</span>
-                          {(khvcWarn.trips.in_progress + khvcWarn.trips.completed + khvcWarn.trips.paused) > 0
-                            ? ` (${khvcWarn.trips.in_progress} đang xuất · ${khvcWarn.trips.completed} đã xong · ${khvcWarn.trips.paused} tạm dừng — được bảo vệ, không tự đè).`
-                            : ' (đều PENDING — sẽ ghi đè).'}
-                        </div>
-                      )}
-                      {khvcWarn.missing_dos > 0 && (
-                        <div className="text-red-700">⚠ {khvcWarn.missing_dos} DO CHƯA có trong VL06O{khvcWarn.missing_dos_sample.length ? ` (${khvcWarn.missing_dos_sample.join(', ')}${khvcWarn.missing_dos > khvcWarn.missing_dos_sample.length ? '…' : ''})` : ''} → hãy Up VL06O mới nhất TRƯỚC (Bước 1).</div>
-                      )}
-                      {khvcWarn.cross_trip_dos > 0 && (
-                        <div className="text-red-700">⚠ {khvcWarn.cross_trip_dos} DO ĐÃ nằm trong chuyến khác Số xe còn sống{khvcWarn.cross_trip_sample.length ? ` (${khvcWarn.cross_trip_sample.join('; ')}${khvcWarn.cross_trip_dos > khvcWarn.cross_trip_sample.length ? '…' : ''})` : ''} — tiếp tục sẽ sinh chuyến TRÙNG DO (kế hoạch double). Đơn rớt ngày: dùng nút Chuyển ngày ở Xuất kho, đừng gửi lại KH dưới Số xe mới.</div>
-                      )}
-                      <div className="text-amber-700">VL06O cập nhật lần cuối: <b>{khvcWarn.vl06o_last_synced ? `${formatTimestampDate(khvcWarn.vl06o_last_synced, true)} ${formatTimestampTime(khvcWarn.vl06o_last_synced)}` : 'chưa có DO nào'}</b>. Đã Up VL06O mới nhất chưa?</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => doKhvcUpload(khvcWarn.file)}>Tiếp tục sinh chuyến</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setKhvcWarn(null)}>Huỷ</Button>
-                  </div>
-                </div>
-              )}
               {vcOk && (
                 <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />{vcOk}
@@ -1154,6 +1125,29 @@ export default function Outbound() {
               VL06O = bản sao dữ liệu SAP (giữ nguyên định dạng, lưu lại đầy đủ). KHVC = kế hoạch điều vận tự soạn (Số xe, DO, NPP…),
               hệ thống ghép theo DO rồi tự tính Thùng + Hộp lẻ theo đơn vị gốc từng mã. Up VL06O trước, rồi Up KHVC.
             </p>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* BÁO CÁO KIỂM TRƯỚC — DÙNG CHUNG cho cả 3 luồng up (KH xuất / VL06O / KHVC), 80% màn hình.
+          Chưa ghi gì cho tới khi bấm Xác nhận; Huỷ = bỏ file, DB nguyên vẹn. */}
+      {pf && (
+        <ModalOverlay onClose={() => setPf(null)}
+          className="sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh]">
+          <div className="px-3 py-2 border-b shrink-0">
+            <span className="text-sm font-semibold text-slate-700">
+              Kiểm file trước khi nhập — {pf.kind === 'gdo' ? 'Kế hoạch xuất' : pf.kind === 'vl06o' ? 'VL06O (raw SAP)' : 'KH điều vận (sinh chuyến)'}
+            </span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden p-3 flex flex-col">
+            <UploadPreflightPanel report={pf.report} fileName={pf.file.name}
+              busy={uploading || vl06oUploading || khvcUploading}
+              onCancel={() => setPf(null)}
+              onConfirm={() => {
+                if (pf.kind === 'gdo') doGdoUpload(pf.file)
+                else if (pf.kind === 'vl06o') doVl06oUpload(pf.file)
+                else doKhvcUpload(pf.file)
+              }} />
           </div>
         </ModalOverlay>
       )}

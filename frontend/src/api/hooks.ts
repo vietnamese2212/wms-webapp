@@ -2371,17 +2371,17 @@ function guardUploadSize(file: File) {
 export function useUploadGDOExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, warehouse_id }: { file: File; warehouse_id?: string }) => {
+    mutationFn: ({ file, warehouse_id, preflight }: { file: File; warehouse_id?: string; preflight?: boolean }) => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
       if (warehouse_id) form.append('warehouse_id', warehouse_id)
-      return apiClient.post('/wms/outbound/upload', form, {
+      return apiClient.post(`/wms/outbound/upload${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 60000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => qc.refetchQueries({ queryKey: ['gdos'] }),
+    onSuccess: (_d, vars) => { if (!vars.preflight) qc.refetchQueries({ queryKey: ['gdos'] }) },
   })
 }
 
@@ -2591,19 +2591,38 @@ export function useResolveReconcileTask() {
 
 export interface UploadResult { inserted: number; updated?: number; skipped?: number; errors: string[] }
 
+// Báo cáo "KIỂM TRƯỚC KHI GHI" (?preflight=1) — khuôn CHUẨN chung mọi upload, khớp
+// backend/src/utils/uploadPreflight.ts. Hiện bằng <UploadPreflightPanel/>.
+export interface UploadPreflight {
+  preflight: true
+  unit: string
+  total: number
+  to_insert: number
+  to_update: number
+  skipped: number
+  will_write: number
+  mode: 'all_or_nothing' | 'per_row'
+  errors: string[]
+  errors_total: number
+  warnings: string[]
+  warnings_total: number
+  extra: { label: string; value: string | number; warn?: boolean }[]
+}
+
 export function useUploadMaterialsExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
-      return apiClient.post('/masterdata/materials/upload', form, {
+      return apiClient.post(`/masterdata/materials/upload${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
       qc.invalidateQueries({ queryKey: ['materials'] })
       qc.invalidateQueries({ queryKey: ['material-categories'] })
     },
@@ -2613,16 +2632,17 @@ export function useUploadMaterialsExcel() {
 export function useUploadLocationsExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
-      return apiClient.post('/masterdata/locations/upload', form, {
+      return apiClient.post(`/masterdata/locations/upload${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
       qc.invalidateQueries({ queryKey: ['locations-real'] })
       qc.invalidateQueries({ queryKey: ['locations'] })
       qc.invalidateQueries({ queryKey: ['sub-groups'] })
@@ -2635,16 +2655,17 @@ export function useUploadLocationsExcel() {
 export function useUploadInventoryExcel() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ file }: { file: File }): Promise<UploadResult> => {
+    mutationFn: ({ file, preflight }: { file: File; preflight?: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
       guardUploadSize(file)
       const form = new FormData()
       form.append('file', file)
-      return apiClient.post('/wms/inventory/upload', form, {
+      return apiClient.post(`/wms/inventory/upload${preflight ? '?preflight=1' : ''}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
       }).then(r => r.data.data)
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
+      if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
       qc.invalidateQueries({ queryKey: ['inventory-facets'] })
       qc.invalidateQueries({ queryKey: ['inventory-summary'] })

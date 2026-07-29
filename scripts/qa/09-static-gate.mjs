@@ -71,7 +71,43 @@ const RULES = [
       [''],   // đường dẫn FILE (không phải thư mục) — walk() nhận qua exts rỗng khớp mọi tên
       l => /\((thùng|Thùng)\)|>\s*Thùng\s*<|['"]Thùng['"]\s*[,:\]]|\{['"]Thùng['"]\}/.test(l), s),
   },
+  {
+    key: 'upload_without_preflight',
+    label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
+           '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',
+    count: (s) => countUploadsMissingPreflight(s),
+  },
 ]
+
+// Soi TỪNG route `upload.single('file'), <ns>.<fn>` → mở controller của <ns> → thân hàm <fn> có
+// `isPreflight` không. Bắt được cả upload MỚI thêm sau này (không phải danh sách cứng).
+function countUploadsMissingPreflight(sampleOut) {
+  let miss = 0
+  for (const routeFile of ['backend/src/routes/wms.ts', 'backend/src/routes/masterdata.ts', 'backend/src/routes/tms.ts', 'backend/src/routes/hr.ts']) {
+    let src
+    try { src = readFileSync(join(ROOT, routeFile), 'utf8') } catch { continue }
+    // \s+ chứ không phải 1 space: masterdata.ts canh cột import bằng nhiều space
+    const imports = new Map([...src.matchAll(/import\s+\*\s+as\s+(\w+)\s+from\s+'([^']+)'/g)].map(m => [m[1], m[2]]))
+    for (const m of src.matchAll(/upload\.single\('file'\),\s*(\w+)\.(\w+)/g)) {
+      const [, ns, fn] = m
+      const rel = imports.get(ns)
+      if (!rel) { miss++; sampleOut?.push(`${routeFile}: không tra được controller của "${ns}"`); continue }
+      let ctrl
+      try { ctrl = readFileSync(join(ROOT, 'backend/src/routes', rel + '.ts'), 'utf8') } catch { miss++; sampleOut?.push(`${routeFile}: không đọc được ${rel}`); continue }
+      // thân hàm = từ "export async function fn(" tới "export " tiếp theo
+      const start = ctrl.indexOf(`export async function ${fn}(`)
+      if (start < 0) { miss++; sampleOut?.push(`${rel}: không thấy hàm ${fn}`); continue }
+      const next = ctrl.indexOf('\nexport ', start + 10)
+      const body = ctrl.slice(start, next < 0 ? undefined : next)
+      // uploadKhvc gọi processVehicleGroups (hàm dùng chung) — nhánh preflight nằm ở đó, chấp nhận cả 2 dấu hiệu
+      if (!/isPreflight\(/.test(body) && !/processVehicleGroups\(/.test(body)) {
+        miss++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel}.${fn} — thiếu isPreflight (route ${routeFile})`)
+      }
+    }
+  }
+  return miss
+}
 
 let baseline = {}
 try { baseline = JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) } catch { /* lần đầu */ }

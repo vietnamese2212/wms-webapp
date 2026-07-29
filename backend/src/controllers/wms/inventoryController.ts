@@ -13,6 +13,7 @@ import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 
 const ENTRY_SELECT = `
@@ -1660,6 +1661,14 @@ export async function uploadExcel(req: Request, res: Response) {
         })
       }
     }
+
+    // KIỂM TRƯỚC (preflight): trả báo cáo từ CHÍNH kết quả PHA 1 — số trên dialog = số sẽ ghi thật.
+    // Kèm số dòng ghi AdjustmentLog (pallet đã có bị đổi số lượng) để user thấy tác động lên tồn.
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'pallet', total: rows.length, errors,
+      toInsert: records.length, toUpdate: updates.length,
+      extra: adjustLogs.length ? [{ label: 'Pallet bị ĐỔI số lượng', value: adjustLogs.length, warn: true }] : [],
+    }))
 
     if (errors.length) return ok(res, { inserted: 0, updated: 0, errors })
     if (!records.length && !updates.length) return ok(res, { inserted: 0, updated: 0, errors: [] })

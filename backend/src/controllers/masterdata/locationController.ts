@@ -7,6 +7,7 @@ import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEG
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -516,7 +517,11 @@ export async function uploadExcel(req: Request, res: Response) {
         row: rowRaw, shelf, max_pallets: max_pallets ?? 1, sub_type: lcStr(r.sub_type) || null,
       })
     }
-    if (errors.length) return ok(res, { inserted: 0, updated: 0, errors })
+    // KIỂM TRƯỚC (preflight): file có lỗi → báo cáo luôn, khỏi phải đếm insert/update
+    if (errors.length) {
+      if (isPreflight(req)) return ok(res, buildPreflight({ unit: 'vị trí', total: rows.length, errors }))
+      return ok(res, { inserted: 0, updated: 0, errors })
+    }
 
     // ── PHA 2: ghi theo LÔ ───────────────────────────────────────────────────
     // Nạp vị trí đã có bằng select('*') → merge FULL RECORD (cột không khai trong file
@@ -548,6 +553,12 @@ export async function uploadExcel(req: Request, res: Response) {
                        max_pallets: p.max_pallets, updated_at: now, updated_by: actor })
       } else inserts.push(buildNew(p))
     }
+
+    // File sạch → báo cáo "sẽ thêm / sẽ cập nhật" rồi DỪNG (chưa ghi gì). Đếm lấy từ chính 2 mảng
+    // sắp ghi nên số trên dialog = số thật sau khi bấm Xác nhận.
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'vị trí', total: rows.length, toInsert: inserts.length, toUpdate: updates.length,
+    }))
 
     let inserted = 0, updated = 0
     for (let i = 0; i < inserts.length; i += 500) {

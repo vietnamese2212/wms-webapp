@@ -1337,9 +1337,12 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Upload kế hoạch từ Excel</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
+      {/* Có preview → 80% màn hình (chuẩn upload 29/07: xem vấn đề của file rồi mới Xác nhận) */}
+      <DialogContent className={rows.length > 0
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-2xl'}>
+        <DialogHeader className="shrink-0"><DialogTitle>{rows.length > 0 ? 'Kiểm file trước khi nhập — Kế hoạch điều vận' : 'Upload kế hoạch từ Excel'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2 flex-1 min-h-0 flex flex-col">
           {result ? (
             <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800">
               <p className="font-medium">Import thành công!</p>
@@ -1361,7 +1364,16 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                 )}
               </div>
               {rows.length > 0 && (
-                <div className="max-h-64 overflow-auto rounded border">
+                errorCount > 0
+                  ? <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 shrink-0">
+                      <b>Kiểu nhập: TẤT CẢ HOẶC KHÔNG GÌ.</b> File còn {errorCount} dòng lỗi nên chưa nhập được — sửa file rồi chọn lại.
+                    </p>
+                  : <p className="text-xs text-green-800 bg-green-50 border border-green-200 rounded-lg px-3 py-2 shrink-0">
+                      File hợp lệ. Bấm <b>Import {rows.length} đơn</b> mới ghi dữ liệu — chưa có gì được ghi.
+                    </p>
+              )}
+              {rows.length > 0 && (
+                <div className="flex-1 min-h-0 overflow-auto rounded border">
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
@@ -1934,11 +1946,14 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
 
   return (
     <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-sm">Upload danh sách hàng</DialogTitle>
+      {/* Có preview → 80% màn hình (chuẩn upload 29/07) */}
+      <DialogContent className={rows.length > 0
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-lg max-h-[80vh] overflow-y-auto'}>
+        <DialogHeader className="shrink-0">
+          <DialogTitle className="text-sm">{rows.length > 0 ? 'Kiểm file trước khi nhập — Danh sách hàng' : 'Upload danh sách hàng'}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3 text-xs">
+        <div className="space-y-3 text-xs flex-1 min-h-0 flex flex-col">
           <p className="text-slate-500">
             File Excel có tiêu đề: <span className="font-mono">Mã hàng</span> · <span className="font-mono">SL thùng</span> · <span className="font-mono">SL pallet</span> (tùy chọn). Nhận diện theo TÊN cột — thứ tự cột tùy ý.
             {warehouseType && <> · Chỉ nhận hàng loại <span className="font-medium text-slate-700">{warehouseType}</span>.</>}
@@ -1947,9 +1962,14 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
           {rows.length > 0 && (
             <>
+              <p className={`text-xs rounded-lg px-3 py-2 shrink-0 border ${errCount > 0
+                ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-green-800 bg-green-50 border-green-200'}`}>
+                Bấm <b>Lưu {validCount} dòng</b> mới ghi dữ liệu — chưa có gì được ghi.
+                {errCount > 0 && <> {errCount} dòng lỗi sẽ bị BỎ QUA (kiểu nhập theo từng dòng).</>}
+              </p>
               <RowFilterChips total={rows.length} okCount={validCount} errCount={errCount}
                 value={rowFilter} onChange={setRowFilter} />
-              <div className="rounded border overflow-auto max-h-52">
+              <div className="rounded border overflow-auto flex-1 min-h-0">
                 <table className="min-w-full">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>

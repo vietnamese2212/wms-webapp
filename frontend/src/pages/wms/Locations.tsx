@@ -749,7 +749,7 @@ export default function Locations() {
               + 'Vị trí đã có sẽ được CẬP NHẬT sức chứa/kiểu. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadLocationTemplate}
-          onUpload={file => uploadLocations.mutateAsync({ file })}
+          onUpload={(file, preflight) => uploadLocations.mutateAsync({ file, preflight })}
         />
       )}
     </div>

@@ -84,28 +84,33 @@ const WT_FALLBACK = '— Chưa rõ loại kho —'
 const VT_FALLBACK = '— Chưa rõ loại xe —'
 
 // Cột bảng đăng ký cổng — số phần tử PHẢI khớp số <TableCell> mỗi dòng (22 cột)
+// Thứ tự cột = MẠCH ĐỌC của người gác cổng (user chốt 30/07), chia 5 cụm trái→phải:
+//   ① lượt nào     : # · Ngày · Hướng
+//   ② việc gì      : Booking → Nội dung          (Booking TRƯỚC Nội dung — user chốt)
+//   ③ xe & người   : ĐVVT → Biển số → Lái xe → SĐT   (ngay SAU Nội dung — user chốt)
+//   ④ chứng từ     : Mã đơn · NPP · GDO
+//   ⑤ diễn biến    : Giờ ĐK → Gọi → Vào → Ra ⇒ TT (kết luận) · Ghi chú · thao tác
+// KHÔNG có cột Kho / Loại kho / Loại xe: cả 3 ĐÃ LÀ tiêu đề nhóm (cây 3 cấp Kho → Loại kho →
+// Loại xe) — in lại trong từng dòng chỉ tốn 310px ngang, thứ mà màn 360px không có để phí.
 const GATE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'num',     label: '#',         w: 40 },
   { id: 'date',    label: 'Ngày',      w: 90 },
   { id: 'dir',     label: 'Hướng',     w: 64 },
-  { id: 'vtype',   label: 'Loại xe',   w: 90 },
-  { id: 'content', label: 'Nội dung',  w: 120 },
   { id: 'booking', label: 'Booking',   w: 110 },
-  { id: 'order',   label: 'Mã đơn',    w: 120 },
-  { id: 'npp',     label: 'NPP',       w: 140 },
-  { id: 'gdo',     label: 'GDO',       w: 110 },
+  { id: 'content', label: 'Nội dung',  w: 120 },
   { id: 'company', label: 'ĐVVT',      w: 120 },
   { id: 'plate',   label: 'Biển số',   w: 100 },
   { id: 'driver',  label: 'Lái xe',    w: 110 },
   { id: 'phone',   label: 'SĐT',       w: 100 },
-  { id: 'notes',   label: 'Ghi chú',   w: 120 },
+  { id: 'order',   label: 'Mã đơn',    w: 120 },
+  { id: 'npp',     label: 'NPP',       w: 140 },
+  { id: 'gdo',     label: 'GDO',       w: 110 },
   { id: 'tReg',    label: 'Giờ ĐK',    w: 60 },
   { id: 'tCall',   label: 'Giờ gọi',   w: 60 },
   { id: 'tIn',     label: 'Giờ vào',   w: 60 },
   { id: 'tOut',    label: 'Giờ ra',    w: 60 },
-  { id: 'wh',      label: 'Kho',       w: 120 },
-  { id: 'whType',  label: 'Loại kho',  w: 100 },
   { id: 'status',  label: 'TT',        w: 90 },
+  { id: 'notes',   label: 'Ghi chú',   w: 120 },
   { id: 'actions', label: '',          w: 160 },
 ]
 
@@ -1072,7 +1077,9 @@ export default function GateRegistration() {
   }, [savedViews, viewSnapshot])
 
   const { widths: gateColW, startResize: gateStartResize, totalWidth: gateTotalWidth } =
-    useColumnResize('gate_col_widths', GATE_COLS.map(c => c.w))
+    // key _v2: bộ cột đổi (bỏ Kho/Loại kho/Loại xe + xếp lại) — độ rộng user kéo theo bộ CŨ
+    // không còn khớp cột nào, giữ lại là lệch cột im lặng. Đổi key = ai cũng bắt đầu từ mặc định mới.
+    useColumnResize('gate_col_widths_v2', GATE_COLS.map(c => c.w))
 
   const renderLeafRow = (reg: GateRegistration) => (
     <TableRow
@@ -1091,14 +1098,7 @@ export default function GateRegistration() {
           ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" />{reg.visit_group_id && <span className="text-red-500 font-bold" title="Xe kết hợp Nhập + Xuất">*</span>}</span>
           : '—'}
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-        <span className="flex items-center gap-1">
-          <span>{reg.content ?? '—'}</span>
-          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
-          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
-        </span>
-      </TableCell>
+      {/* ② việc gì: Booking → Nội dung */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
         <span className="flex items-center gap-1">
           {reg.booking_slot_from
@@ -1107,6 +1107,19 @@ export default function GateRegistration() {
           {bookingIcon(reg)}
         </span>
       </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+        <span className="flex items-center gap-1">
+          <span className="truncate">{reg.content ?? '—'}</span>
+          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
+          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
+        </span>
+      </TableCell>
+      {/* ③ xe & người */}
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
+      {/* ④ chứng từ */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_order_code, true)}
       </TableCell>
@@ -1116,22 +1129,17 @@ export default function GateRegistration() {
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_gdo_refs)}
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
+      {/* ⑤ diễn biến → kết luận */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
           {STATUS_LABEL[reg.status]}
         </span>
       </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
       <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         <ActionButtons reg={reg} />
       </TableCell>
@@ -1209,7 +1217,7 @@ export default function GateRegistration() {
                   <TableRow>
                     {GATE_COLS.map((c, i) => (
                       <TableHead key={c.id}
-                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${i === 21 ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${c.id === 'actions' ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                         {c.label}
                         {i > 0 && c.id !== 'actions' && (
                           <span onPointerDown={e => gateStartResize(i, e)} onClick={e => e.stopPropagation()}

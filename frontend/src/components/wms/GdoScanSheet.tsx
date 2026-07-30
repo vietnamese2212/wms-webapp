@@ -329,12 +329,18 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
 
           <div className="relative flex-1 min-h-0">
             {gunMode ? (
-              // Chữ nằm SÁT TRÊN, KHÔNG canh giữa: nút "Lưu…"/"Đang kiểm tra…" nổi ở chính giữa
-              // vùng này (absolute top-1/2) — canh giữa là bị đè mất chữ (user báo 2 lần, 30/07).
-              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-start gap-1.5 px-4 pt-5">
-                <QrCode className="h-10 w-10 text-sky-400/70" />
-                <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
-                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                {/* Hướng dẫn CHỈ hiện lúc đang chờ bắn tem. Có tem chờ / đang kiểm thì bỏ hẳn:
+                    nút nổi ("Lưu…"/"Đang kiểm tra…") đứng absolute GIỮA vùng này, để chữ lại là đè
+                    mất chữ (user báo 2 lần, 30/07) — màn 360x640 vùng quét chỉ còn ~120px nên canh
+                    kiểu gì cũng đụng; lúc đã có tem thì việc cần làm là bấm Lưu, không phải đọc lại. */}
+                {!checkResult && !checking && (
+                  <>
+                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+                    <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                  </>
+                )}
               </div>
             ) : (
               <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { APP_BUILD_SHA, hasNewVersion, forceUpdateApp, isLocalBuild } from '@/lib/appUpdate'
+import { APP_BUILD_SHA, hasNewVersion, forceUpdateApp, isLocalBuild, clearDeepUpdateFlag } from '@/lib/appUpdate'
 
 /**
  * Nút "lấy bản mới nhất" — đứng CẠNH CHUÔNG trên thanh trên cùng (user chốt 30/07).
@@ -26,6 +26,8 @@ export function AppUpdateButton() {
     const check = async () => {
       if (!alive || document.hidden) return
       const stale = await hasNewVersion()
+      // Đã đúng bản mới ⇒ lần bấm tới lại bắt đầu từ đường nhanh (xem forceUpdateApp)
+      if (!stale) clearDeepUpdateFlag()
       if (alive) setOutdated(stale)
     }
     void check()

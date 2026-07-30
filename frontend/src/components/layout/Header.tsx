@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { MobileNav } from './MobileNav'
 import { Badge } from '@/components/ui/badge'
 import { OfflineQueueHeaderButton } from '@/offline/OfflineQueuePanel'
+import { AppUpdateButton } from '@/components/shared/AppUpdateButton'
 
 const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath?: string }> = {
   '/': { label: 'Dashboard' },
@@ -96,6 +97,9 @@ export function Header() {
       <div className="flex flex-1 lg:flex-none justify-end items-center gap-2">
         {/* Hàng đợi quét offline — chỉ báo lệnh chưa lên, cạnh chuông (bấm mở danh sách) */}
         <OfflineQueueHeaderButton />
+        {/* Cập nhật app — cạnh chuông (user chốt 30/07): PWA giữ bản cũ trong máy, phải có nút
+            ép lấy bản mới; điện thoại không có Ctrl+Shift+R. Sáng lên khi phát hiện bản mới. */}
+        <AppUpdateButton />
         {/* Notifications */}
         <Button variant="ghost" size="icon" className="relative text-slate-300 hover:bg-white/10 hover:text-white">
           <Bell className="h-5 w-5" />

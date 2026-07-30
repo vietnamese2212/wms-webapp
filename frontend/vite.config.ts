@@ -52,6 +52,8 @@ export default defineConfig({
   // ID build — buster cho persist cache React Query (xem vite-env.d.ts)
   define: {
     __BUILD_ID__: JSON.stringify(new Date().toISOString()),
+    // SHA commit của bản build — FE so với GET /api/version để biết máy có đang giữ bản cũ không
+    __BUILD_SHA__: JSON.stringify((process.env.VERCEL_GIT_COMMIT_SHA ?? 'local').slice(0, 8)),
   },
   resolve: {
     alias: {

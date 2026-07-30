@@ -99,20 +99,36 @@ try {
     `select=cartons_remaining,cartons_reserved,status,location_id&id=eq.${id}`))[0]
   const scanCount = async (itemId) => (await restAll('OutboundScanEntry', `select=id&item_id=eq.${itemId}`)).length
 
-  // 1) THIẾU vị trí mà pallet còn dư → 422, không ghi gì
+  // 1) FE bản MỚI (khai leftover_ui) thiếu vị trí → 422, không ghi gì
   {
-    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30 })
+    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30, leftover_ui: true })
     const e = await entryOf(pA)
-    check('thiếu vị trí + pallet còn dư → 422 và KHÔNG ghi gì',
+    check('FE mới thiếu vị trí + pallet còn dư → 422 và KHÔNG ghi gì',
       r.s === 422 && Number(e.cartons_remaining) === 100 && (await scanCount(itPartial)) === 0,
       `HTTP ${r.s} · tồn ${e.cartons_remaining}/100`)
+  }
+
+  // 1b) FE bản CŨ (PWA chưa cập nhật — KHÔNG khai leftover_ui, không gửi vị trí) → vẫn quét được,
+  // pallet dư giữ chỗ cũ. Đây là lỗi thật user gặp 30/07: siết BE mà bundle cũ không có ô chọn ⇒
+  // người quét bị khoá không lưu được gì. Sau khi lưu thì HOÀN NGUYÊN để các bước sau chạy tiếp.
+  {
+    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 10 })
+    const e = await entryOf(pA)
+    check('FE CŨ (không khai cờ) vẫn quét được, pallet dư giữ chỗ cũ',
+      r.s === 200 && Number(e.cartons_remaining) === 90 && e.location_id === locSrc.id,
+      `HTTP ${r.s} · tồn ${e.cartons_remaining}/100 · ${r.j?.error?.message ?? ''}`)
+    // hoàn nguyên: xoá scan entry vừa tạo + trả tồn
+    const sc = await restAll('OutboundScanEntry', `select=id&item_id=eq.${itPartial}`)
+    for (const s of sc) await restWrite('OutboundScanEntry', 'DELETE', `id=eq.${s.id}`)
+    await restWrite('InventoryEntry', 'PATCH', `id=eq.${pA}`, { cartons_remaining: 100, status: 'IN_STOCK', updated_at: nowIso() })
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${itPartial}`, { cartons_scanned: 0, status: 'PENDING', updated_at: nowIso() })
   }
 
   // 2+3) vị trí không hợp lệ / đã đầy → chặn, tồn phải NGUYÊN VẸN (ca 'đầy' là rollback sau khi đã trừ)
   const badLocs = [[randomUUID(), 'không tồn tại'], [locFull.id, 'đã đầy']]
   if (locOther) badLocs.unshift([locOther.id, 'khác kho'])
   for (const [loc, label] of badLocs) {
-    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30, leftover_location_id: loc })
+    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30, leftover_ui: true, leftover_location_id: loc })
     const e = await entryOf(pA)
     check(`vị trí ${label} → chặn, tồn KHÔNG bị trừ`,
       (r.s === 422 || r.s === 409) && Number(e.cartons_remaining) === 100 && (await scanCount(itPartial)) === 0,
@@ -121,7 +137,7 @@ try {
 
   // 4) vị trí mới hợp lệ → xuất OK + pallet dư chuyển chỗ
   {
-    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30, leftover_location_id: locDest.id })
+    const r = await scan(itPartial, { qr_code: `${TAG}-A`, cartons_override: 30, leftover_ui: true, leftover_location_id: locDest.id })
     const e = await entryOf(pA)
     check('chọn vị trí mới → xuất 30, pallet dư 70 CHUYỂN sang vị trí mới',
       r.s === 200 && Number(e.cartons_remaining) === 70 && e.location_id === locDest.id && e.status === 'PARTIAL',
@@ -138,9 +154,9 @@ try {
 
   // 6) nhặt lẻ → luôn đòi vị trí; KEEP giữ chỗ cũ
   {
-    const miss = await scan(itLoose, { qr_code: `${TAG}-C`, cartons_override: 5, loose_picking_mode: true })
+    const miss = await scan(itLoose, { qr_code: `${TAG}-C`, cartons_override: 5, loose_picking_mode: true, leftover_ui: true })
     check('nhặt lẻ thiếu vị trí → 422 (pallet luôn còn hàng)', miss.s === 422, `HTTP ${miss.s}`)
-    const r = await scan(itLoose, { qr_code: `${TAG}-C`, cartons_override: 5, loose_picking_mode: true, leftover_location_id: 'KEEP' })
+    const r = await scan(itLoose, { qr_code: `${TAG}-C`, cartons_override: 5, loose_picking_mode: true, leftover_ui: true, leftover_location_id: 'KEEP' })
     const e = await entryOf(pC)
     check('nhặt lẻ + KEEP → giữ hàng 5, pallet Ở NGUYÊN chỗ cũ',
       r.s === 200 && Number(e.cartons_reserved) === 5 && e.location_id === locSrc.id,

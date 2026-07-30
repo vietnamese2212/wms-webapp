@@ -3774,11 +3774,11 @@ export async function scanItem(req: Request, res: Response) {
       // `leftover_ui` = cờ FE bản mới TỰ KHAI có ô chọn ⇒ chỉ bản mới mới bị siết; bản cũ giữ
       // hành vi cũ (pallet dư ở nguyên chỗ). App tự cập nhật nên cửa sổ này rất ngắn.
       if (!pick && !leftover_ui) {
-        // bản cũ → coi như giữ chỗ cũ, không đổi vị trí, không lỗi
+        // bản cũ (không khai cờ, không gửi vị trí) → GIỮ CHỖ CŨ y như trước, KHÔNG lỗi.
+        // Phải thoát hẳn khối này: pick rỗng mà chạy tiếp sẽ tra Location id='' → 422 "không tồn tại".
       } else if (!pick) {
         return fail(res, `Pallet còn ${qtyLabel(leftoverQty, (shelfMat ?? null) as MatUnitsQ | null)} chưa xuất — phải chọn vị trí để phần còn lại (giữ chỗ cũ hoặc chọn vị trí khác)`, 422)
-      }
-      if (pick !== KEEP_LOCATION && pick !== inv.location_id) {
+      } else if (pick !== KEEP_LOCATION && pick !== inv.location_id) {
         const { data: loc } = await supabase.from('Location')
           .select('id, location_code, is_active, warehouse_id').eq('id', pick).maybeSingle()
         if (!loc)           return fail(res, 'Vị trí đã chọn không tồn tại', 422)

@@ -256,16 +256,16 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
               </button>
             )}
 
-            {checkResult && !saving && (
+            {/* Chưa chọn vị trí đặt lại → KHÔNG hiện pill giữa vùng quét (bấm không được mà lại
+                đè mất dòng hướng dẫn phía sau trên màn 360px) — việc cần làm ở khối vàng bên dưới */}
+            {checkResult && !saving && canSave && (
               <button
-                disabled={!canSave}
-                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all ${
-                  canSave ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
-                          : 'bg-slate-400/90 text-white cursor-not-allowed'}`}
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                           bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                {canSave ? `Lưu ${qtyLabel(qtyToTake, item.material)}` : 'Chọn vị trí đặt lại pallet ↓'}
+                Lưu {qtyLabel(qtyToTake, item.material)}
               </button>
             )}
             {saving && (

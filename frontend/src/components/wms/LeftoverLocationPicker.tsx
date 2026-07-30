@@ -40,9 +40,10 @@ export function LeftoverLocationPicker({
 
   return (
     <div className={`rounded-lg border px-3 py-2.5 ${value ? 'bg-slate-50 border-slate-200' : 'bg-amber-50 border-amber-300'}`}>
-      <p className={`text-sm font-medium flex items-center gap-1.5 ${value ? 'text-slate-700' : 'text-amber-800'}`}>
-        <MapPin className="h-4 w-4 shrink-0" />
-        Còn <strong>{qtyLabel(leftoverQty, mat)}</strong> trên pallet — để ở đâu?
+      {/* 1 dòng gọn: màn 360px trước đây vỡ thành 3 khúc ("Còn" tách khỏi số, "trên pallet" rớt dòng) */}
+      <p className={`text-sm font-medium leading-snug flex items-baseline gap-1.5 ${value ? 'text-slate-700' : 'text-amber-800'}`}>
+        <MapPin className="h-4 w-4 shrink-0 translate-y-0.5" />
+        <span>Còn <strong className="whitespace-nowrap">{qtyLabel(leftoverQty, mat)}</strong> — để ở đâu?</span>
       </p>
 
       <div className="mt-2 grid grid-cols-2 gap-2">

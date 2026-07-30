@@ -102,6 +102,25 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   }
 }
 
+// ── 4b) DASHBOARD by_unit (migration 20260730): card "Tồn theo đơn vị" ⇄ bảng tồn theo kho
+// phải cùng một sự thật — by_unit tách theo ĐVT, inventory tách theo kho×loại, nhưng Σ cả hai
+// chiều (qty quy đổi + pallet) phải BẰNG NHAU. Lệch = 2 CTE trong RPC lọc khác nhau (bug âm thầm).
+{
+  const r = await api('/wms/dashboard')
+  const d = r.j?.data
+  if (r.s !== 200 || !d) chk(false, 'dashboard đọc được', `HTTP ${r.s}`)
+  else if (!Array.isArray(d.by_unit) || d.by_unit.length === 0) {
+    console.log('  ⊘ dashboard by_unit: RPC chưa có khóa by_unit (fallback JS?) — bỏ qua')
+  } else {
+    const sI = (k) => (d.inventory ?? []).reduce((s, x) => s + Number(x[k] ?? 0), 0)
+    const sB = (k) => d.by_unit.reduce((s, x) => s + Number(x[k] ?? 0), 0)
+    const qOk = Math.abs(sI('cartons') - sB('qty')) < 0.01
+    const pOk = sI('pallets') === sB('pallets')
+    chk(qOk && pOk, 'dashboard: Σ "Tồn theo đơn vị" khớp Σ bảng tồn (qty + pallet)',
+      `qty ${sB('qty').toFixed(0)} vs ${sI('cartons').toFixed(0)} · pallet ${sB('pallets')} vs ${sI('pallets')} · ${d.by_unit.length} đơn vị`)
+  }
+}
+
 // ── 5) LƯỚI KẾ HOẠCH VC: thứ tự hiển thị + phân trang theo CỤM (migration 20260729d).
 // Trang này phân trang SERVER theo cụm (rowspan) nên thứ tự do SQL quyết — sai là sai ÂM THẦM.
 // 3 lời hứa với người dùng, kiểm không phụ thuộc collation:

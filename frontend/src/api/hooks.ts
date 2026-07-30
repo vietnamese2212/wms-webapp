@@ -1725,6 +1725,8 @@ export type DashboardStats = {
     warehouse_id: string; warehouse_name: string; inventory_mode: string | null
     category: string; pallets: number; cartons: number; materials: number
   }>
+  // Tồn tách theo ĐVT hiển thị (RPC 20260730) — qty đã quy đổi per-mã; thiếu khi BE chạy fallback JS
+  by_unit?: Array<{ unit: string; pallets: number; qty: number; materials: number }>
   today: {
     inbound_orders: number; inbound_cartons: number
     outbound_gdos: number; outbound_planned: number; outbound_scanned: number

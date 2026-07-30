@@ -12,7 +12,7 @@ import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
-import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
+import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
@@ -55,7 +55,8 @@ export default function Dashboard() {
       w.cats.push({ category: r.category, pallets: Number(r.pallets), cartons: Number(r.cartons), materials: Number(r.materials) })
       pallets += Number(r.pallets); cartons += Number(r.cartons)
     }
-    const list = [...map.values()].sort((a, b) => b.cartons - a.cartons)
+    // Pallet chủ đạo (30/07) → bảng kho xếp theo pallet, không theo số quy đổi trộn đơn vị
+    const list = [...map.values()].sort((a, b) => b.pallets - a.pallets)
     return { byWarehouse: list, totals: { pallets, cartons, warehouses: list.length } }
   }, [stats])
 
@@ -107,9 +108,30 @@ export default function Dashboard() {
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
           ) : (
             <>
-              {/* Tổng gộp MỌI mã (thùng + EA/KG) → nhãn quy đổi, KHÔNG ghi "thùng" (luật 1b CLAUDE.md) */}
-              <StatsCard title="Tồn (quy đổi)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              {/* PALLET = số CHỦ ĐẠO (user chốt 30/07): đơn vị vật lý duy nhất so được giữa mọi
+                  loại hàng (thùng TP / cái POSM / kg NVL). Số theo đơn vị riêng nằm ở card bên. */}
               <StatsCard title="Pallet tồn" value={nf0(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
+              {/* Tồn TÁCH THEO ĐƠN VỊ — thay ô "Tồn (quy đổi)" trộn 6 đơn vị làm một (133tr mà
+                  131tr là CÁI). RPC cũ chưa có by_unit → fallback ô quy đổi như trước. */}
+              {(stats?.by_unit?.length ?? 0) > 0 ? (
+                <Card>
+                  <CardContent className="p-4 sm:p-5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+                      <Boxes className="h-3.5 w-3.5 text-sky-600" />Tồn theo đơn vị
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                      {stats!.by_unit!.map(u => (
+                        <div key={u.unit} className="flex items-baseline justify-between gap-1.5 min-w-0" title={`${nf(u.qty)} ${unitLabel(u.unit)} · ${nf(u.pallets)} pallet · ${nf(u.materials)} mã`}>
+                          <span className="text-[10px] text-muted-foreground truncate">{unitLabel(u.unit)}</span>
+                          <span className="text-[11px] font-bold tabular-nums">{nf0(u.qty)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <StatsCard title="Tồn (quy đổi)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              )}
               <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
               <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'SL quy đổi'} icon={PackageMinus} iconColor="text-blue-600" />
             </>

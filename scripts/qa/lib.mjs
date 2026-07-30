@@ -122,6 +122,21 @@ export async function resolveFixtures() {
   FIX.LOC_QR_CODE = hit.location_code
 }
 
+// Gọi thẳng 1 RPC (Postgres function) — dùng để kiểm ĐÚNG câu lọc dưới DB, không qua controller
+export async function restRpc(fn, args = {}) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  })
+  const t = await r.text()
+  if (!r.ok) throw new Error(`RPC ${fn}: ${r.status} ${t}`)
+  try { return JSON.parse(t) } catch { return null }
+}
+
 export function chunk(arr, n = 300) {
   const out = []
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))

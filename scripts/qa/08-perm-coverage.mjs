@@ -10,7 +10,7 @@
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { restAll, HAS_DB } from './lib.mjs'
+import { restAll, restWrite, restRpc, HAS_DB, FIX } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const STRICT = process.argv.includes('--strict')
@@ -91,6 +91,49 @@ if (!HAS_DB) {
     const label = `${orphan.length} action KHÔNG chức danh nào được cấp → nút tàng hình với mọi nhân viên: ${orphan.join(', ')}`
     if (STRICT) chk(false, label)
     else warn(label + '  (cấp trong Quản lý người dùng → chức danh, hoặc khai ADMIN_ONLY_INTENDED kèm lý do)')
+  }
+}
+
+// ── Tầng 3: CHUYẾN CHỞ LẪN nhiều Loại kho phải LỌT scope loại (bug thật 30/07) ──
+// GDO của chuyến chở lẫn lưu chuỗi GHÉP 'FG01+PM01'; nếu bộ lọc so khớp NGUYÊN CHUỖI thì
+// chuyến biến mất với MỌI user có scope loại — kể cả người có đủ cả hai. Luật user chốt:
+// GIAO ≥1 loại là THẤY. Dựng fixture riêng (loại QAX*, không đụng loại thật) rồi dọn.
+if (!HAS_DB) {
+  warn('bỏ qua tầng 3 (không có key DB trong backend/.env)')
+} else {
+  const GID = 'qa-multicat-gdo-0001'
+  const CODE = 'QA-MULTICAT-0001'
+  const DAY = '2026-12-21'          // ngày tương lai xa, không đụng dữ liệu thật
+  const cleanup = () => restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${GID}`)
+  try {
+    await cleanup()                 // tự hồi phục nếu lần chạy trước chết giữa chừng
+    await restWrite('GroupDeliveryOrder', 'POST', '', [{
+      id: GID, group_code: CODE, planned_date: DAY, delivery_date: DAY, status: 'PENDING',
+      warehouse_id: FIX.WH_QR.id, warehouse_type: 'QAX1+QAX2', dvvt: FIX.DVVT_TAG,
+      updated_at: new Date().toISOString(),
+    }])
+    const idsOf = async (scope) => {
+      const r = await restRpc('outbound_gdos_page', {
+        p_offset: 0, p_limit: 500, p_warehouse_ids: [FIX.WH_QR.id],
+        p_scope_categories: scope, p_date_from: DAY, p_date_to: DAY,
+      })
+      return r?.ids ?? []
+    }
+    chk((await idsOf(['QAX1'])).includes(GID), 'chuyến chở lẫn: user chỉ có loại thứ NHẤT vẫn thấy')
+    chk((await idsOf(['QAX2'])).includes(GID), 'chuyến chở lẫn: user chỉ có loại thứ HAI vẫn thấy')
+    chk((await idsOf(['QAX1', 'QAX2'])).includes(GID), 'chuyến chở lẫn: user có ĐỦ cả hai loại vẫn thấy')
+    chk(!(await idsOf(['QAX9'])).includes(GID), 'chuyến chở lẫn: user KHÔNG có loại nào của chuyến thì KHÔNG thấy')
+
+    const facets = await restRpc('outbound_gdos_facets', {
+      p_warehouse_ids: [FIX.WH_QR.id], p_scope_categories: null, p_date_from: DAY, p_date_to: DAY,
+    })
+    const wt = facets?.warehouse_types ?? []
+    chk(wt.includes('QAX1') && wt.includes('QAX2') && !wt.includes('QAX1+QAX2'),
+      'facet Loại kho tách thành từng loại (không đưa chuỗi ghép làm 1 lựa chọn)', JSON.stringify(wt))
+  } catch (e) {
+    chk(false, 'tầng 3 (chuyến chở lẫn) chạy lỗi', String(e).slice(0, 200))
+  } finally {
+    await cleanup().catch(() => {})
   }
 }
 

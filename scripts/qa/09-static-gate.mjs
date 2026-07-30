@@ -72,6 +72,15 @@ const RULES = [
       l => /\((thùng|Thùng)\)|>\s*Thùng\s*<|['"]Thùng['"]\s*[,:\]]|\{['"]Thùng['"]\}/.test(l), s),
   },
   {
+    key: 'gdo_category_exact_match',
+    label: 'so khớp NGUYÊN CHUỖI Loại kho của CHUYẾN (GroupDeliveryOrder) trong migration — chuyến chở lẫn ' +
+           'lưu "FG01+PM01" nên `g.warehouse_type = ANY(...)` ẨN MẤT chuyến với mọi user có scope loại ' +
+           '(bug 30/07: 67/122 chuyến biến mất). RPC mới phải dùng `wt_cats(g.warehouse_type) && mảng`. ' +
+           'Baseline = số lần còn trong các migration CŨ (file lịch sử, không sửa) — chỉ cấm TĂNG',
+    count: (s) => countMatches(['backend/migrations'], ['.sql'],
+      l => /\b(g|gd)\.warehouse_type\s*=\s*any\s*\(/i.test(l), s),
+  },
+  {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',

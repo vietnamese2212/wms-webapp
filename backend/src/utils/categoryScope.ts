@@ -19,11 +19,31 @@ export function scopeCategoriesOf(req: Request): string[] | null {
   return out.size > 0 ? [...out] : null
 }
 
-/** Loại kho của bản ghi có nằm trong scope user không (không khai loại → không chặn). */
+/**
+ * Loại kho GHÉP trên MỘT bản ghi: 1 chuyến chở lẫn nhiều loại lưu 'FG01+PM01'
+ * (upload KH xuất gom các "Loại kho" của các dòng bằng `join('+')`).
+ * TÁCH Ở ĐÂY — đừng tự `split('+')` rải rác. Bản mirror phía SQL: hàm `wt_cats()`
+ * (migration 20260730b_gdo_multi_category_scope) — sửa quy tắc tách phải sửa CẢ HAI.
+ */
+export function splitCategories(raw: string | null | undefined): string[] {
+  return String(raw ?? '').split('+').map(s => s.trim()).filter(Boolean)
+}
+
+/**
+ * Loại kho của bản ghi có nằm trong scope user không (không khai loại → không chặn).
+ *
+ * Bản ghi chở LẪN nhiều loại: **GIAO ≥1 loại là được** (user chốt 30/07 — "xe ghép chung
+ * thì phải được thấy"). Trước 30/07 so khớp NGUYÊN CHUỖI nên chuyến 'FG01+PM01' biến mất
+ * với MỌI user có scope loại, kể cả người có đủ cả hai — 67/122 chuyến bị ẩn oan.
+ * Chuyến là 1 xe VẬT LÝ không tách được, nên thao tác (bắt đầu/quét/hoàn thành) cũng theo
+ * luật giao ≥1: thấy mà không thao tác được thì xe kẹt tại bãi.
+ */
 export function categoryAllowed(req: Request, warehouseType: string | null | undefined): boolean {
   const scope = scopeCategoriesOf(req)
-  if (scope === null || !warehouseType) return true
-  return scope.includes(warehouseType)
+  if (scope === null) return true
+  const cats = splitCategories(warehouseType)
+  if (cats.length === 0) return true
+  return cats.some(c => scope.includes(c))
 }
 
 /**

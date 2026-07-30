@@ -496,8 +496,9 @@ export async function listGDOs(req: Request, res: Response) {
       let q = supabase.from('GroupDeliveryOrder')
         .select('*, warehouse:Warehouse(id,code,name,inventory_mode), forklift_driver:Employee!forklift_driver_id(id,name)')
         .order('delivery_date', { ascending: false })
-      // Cắt theo Loại hàng được phép (chuyến không khai loại vẫn hiện)
-      if (scopeCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      // Cắt theo Loại hàng được phép: KHÔNG lọc ở SQL nữa — chuyến chở lẫn lưu chuỗi ghép
+      // 'FG01+PM01' nên `in.()` (so khớp nguyên chuỗi) ẨN MẤT chuyến (bug 30/07). Lọc bằng
+      // categoryAllowed() ngay dưới đây (giao ≥1 loại) — dữ liệu vẫn không rời server.
       if (scopeWarehouseIds.length > 0) {
         const effective = warehouse_id ? scopeWarehouseIds.filter(id => id === warehouse_id) : scopeWarehouseIds
         if (effective.length === 0) return null
@@ -518,7 +519,10 @@ export async function listGDOs(req: Request, res: Response) {
     // thì BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
     const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
     if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
-    return ok(res, await enrichGdos(data ?? []))
+    const scoped = scopeCats
+      ? (data ?? []).filter((g: { warehouse_type?: string | null }) => categoryAllowed(req, g.warehouse_type))
+      : (data ?? [])
+    return ok(res, await enrichGdos(scoped))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 

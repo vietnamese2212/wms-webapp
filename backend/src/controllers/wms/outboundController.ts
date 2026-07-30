@@ -3661,7 +3661,7 @@ export async function scanItem(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
-    const { qr_code, employee_id, cartons_override, loose_picking_mode, leftover_location_id } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean; leftover_location_id?: string }
+    const { qr_code, employee_id, cartons_override, loose_picking_mode, leftover_location_id, leftover_ui } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean; leftover_location_id?: string; leftover_ui?: boolean }
     const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
@@ -3768,7 +3768,14 @@ export async function scanItem(req: Request, res: Response) {
     let moveLeftoverTo: string | null = null
     if (leftoverQty > 0) {
       const pick = String(leftover_location_id ?? '').trim()
-      if (!pick) {
+      // ⚠️ KHÔNG chặn bundle CŨ (PWA còn cache bản trước 30/07): giao diện cũ không có ô chọn vị trí
+      // nên người quét KHÔNG CÓ CÁCH NÀO tuân thủ — chặn ở đây là khoá luôn việc quét của họ
+      // (đúng lỗi user gặp 30/07: "không thấy nút chọn vị trí mà lưu thì báo chưa chọn").
+      // `leftover_ui` = cờ FE bản mới TỰ KHAI có ô chọn ⇒ chỉ bản mới mới bị siết; bản cũ giữ
+      // hành vi cũ (pallet dư ở nguyên chỗ). App tự cập nhật nên cửa sổ này rất ngắn.
+      if (!pick && !leftover_ui) {
+        // bản cũ → coi như giữ chỗ cũ, không đổi vị trí, không lỗi
+      } else if (!pick) {
         return fail(res, `Pallet còn ${qtyLabel(leftoverQty, (shelfMat ?? null) as MatUnitsQ | null)} chưa xuất — phải chọn vị trí để phần còn lại (giữ chỗ cũ hoặc chọn vị trí khác)`, 422)
       }
       if (pick !== KEEP_LOCATION && pick !== inv.location_id) {

@@ -23,7 +23,7 @@ import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
-import { LeftoverLocationPicker, KEEP_LOCATION } from '@/components/wms/LeftoverLocationPicker'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -110,6 +110,8 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
   const [pendingCartons, setPendingCartons] = useState('')
   // Nhặt lẻ chỉ GIỮ hàng (không trừ remaining) → pallet luôn còn hàng ⇒ luôn phải khai chỗ đặt lại
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ → báo trong panel, giữ tem để chọn lại rồi Lưu (không bắt quét lại)
+  const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanLoosePickingItem()
 
@@ -139,7 +141,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? Math.min(data.suggested_cartons, remaining) : 1))
-          setLeftoverLoc(null)   // pallet mới → phải chọn lại chỗ đặt lại sau khi nhặt
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt lại sau khi nhặt
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -158,7 +160,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake,
-        ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
       {
         onSuccess: (data: any) => {
           setCheckResult(null)
@@ -171,8 +173,10 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
           }, 1500)
         },
         onError: (err) => {
-          setCheckResult(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+          if (isLeftoverLocError(msg)) { setLocError(msg); setLeftoverLoc(null); return }
+          setCheckResult(null)
           setFeedback({ type: 'error', msg })
         },
       }
@@ -311,14 +315,17 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                 </p>
               )}
               {needLeftoverLoc && (
-                <LeftoverLocationPicker
-                  leftoverQty={leftoverQty}
-                  mat={item.material}
-                  currentLocationCode={checkResult.location_code ?? null}
-                  warehouseId={checkResult.warehouse_id ?? null}
-                  value={leftoverLoc}
-                  onChange={setLeftoverLoc}
-                />
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={item.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>}
+                </div>
               )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>

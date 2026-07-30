@@ -34,7 +34,7 @@ import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQu
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
-import { LeftoverLocationPicker, KEEP_LOCATION } from '@/components/wms/LeftoverLocationPicker'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -106,6 +106,9 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const [pendingCartons, setPendingCartons] = useState('')
   // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ (thiếu / vị trí vừa đầy): hiện NGAY TRONG panel và GIỮ tem đang chờ — user chọn lại
+  // rồi bấm Lưu, KHÔNG phải quét lại pallet (user 30/07: "muốn chọn lại phải quét tiếp, mất thao tác")
+  const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
@@ -127,7 +130,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
       // Offline chưa biết pallet có dư hay không (không hỏi được server) → mặc định GIỮ CHỖ CŨ,
       // đúng bằng hành vi cũ; nếu user đã kịp chọn chỗ thì gửi đúng chỗ đó.
       body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride,
-              leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
+              leftover_ui: true, leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
       pallet_code: norm,
       label: `${item.material?.material_code ?? item.material_code_raw ?? ''} · ${matName}`,
       orderId: gdoId,
@@ -166,7 +169,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
-          setLeftoverLoc(null)   // pallet mới → phải chọn lại chỗ đặt phần dư
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
@@ -191,7 +194,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
-        ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -213,6 +216,9 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onError: (err) => {
           const qr = checkResult.pallet_code
           const cartons = qtyToTake
+          // Lỗi VỊ TRÍ → giữ nguyên tem đang chờ + báo trong panel để chọn lại rồi Lưu tiếp
+          const emsg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? ''
+          if (isLeftoverLocError(emsg)) { setLocError(emsg); setLeftoverLoc(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
           // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
@@ -344,8 +350,10 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
             )}
           </div>
 
+          {/* Panel TỰ CUỘN: mở bàn phím để sửa số lượng làm màn co lại, trước đây ô chọn vị trí bị
+              đẩy khuất dưới bàn phím mà không cuộn tới được ("không thấy nút chọn vị trí đâu"). */}
           {checkResult && !feedback && (
-            <div className="space-y-2">
+            <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
               <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
                 <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
@@ -372,14 +380,21 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
               {needLeftoverLoc && (
-                <LeftoverLocationPicker
-                  leftoverQty={leftoverQty}
-                  mat={item.material}
-                  currentLocationCode={checkResult.location_code ?? null}
-                  warehouseId={checkResult.warehouse_id ?? null}
-                  value={leftoverLoc}
-                  onChange={setLeftoverLoc}
-                />
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={item.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && (
+                    <p className="mt-1.5 text-xs font-medium text-red-600 flex items-start gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{locError}
+                    </p>
+                  )}
+                </div>
               )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>

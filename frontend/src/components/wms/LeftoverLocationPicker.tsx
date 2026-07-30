@@ -7,6 +7,11 @@ import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 /** Sentinel "giữ chỗ cũ" — BE phân biệt với BỎ TRỐNG (bỏ trống = chưa chọn → 422). */
 export const KEEP_LOCATION = 'KEEP'
 
+/** Lỗi thuộc về VỊ TRÍ hàng dư → màn quét giữ nguyên tem để chọn lại, KHÔNG bắt quét lại pallet. */
+export function isLeftoverLocError(msg: string): boolean {
+  return /chọn vị trí|vị trí .*(hết chỗ|ngưng sử dụng|không tồn tại|không thuộc kho)/i.test(msg ?? '')
+}
+
 interface Props {
   /** Số BASE còn lại trên pallet sau lượt xuất này (đã > 0 mới render component) */
   leftoverQty: number

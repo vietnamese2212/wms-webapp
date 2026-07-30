@@ -24,7 +24,7 @@ import { formatTimestampDate } from '@/utils/formatters'
 import { playBeep } from '@/utils/audio'
 import { qtyLabel, qtyBaseLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
-import { LeftoverLocationPicker, KEEP_LOCATION } from '@/components/wms/LeftoverLocationPicker'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
@@ -63,6 +63,8 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const [pendingCartons, setPendingCartons] = useState('')
   // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ → báo NGAY trong panel, GIỮ tem đang chờ để chọn lại rồi Lưu (không bắt quét lại)
+  const [locError,       setLocError]       = useState('')
   const [activeItemId,   setActiveItemId]   = useState<string | null>(null)   // mã hàng vừa nhận từ QR
   const [count,          setCount]          = useState(0)                      // pallet lưu OK trong phiên
   const [cartonFor,      setCartonFor]      = useState<{ scanId: string; palletCode: string } | null>(null)
@@ -105,7 +107,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
       url: `/wms/outbound/${gdo.id}/items/${target.id}/scan`,
       // Offline chưa hỏi được server pallet có dư không → mặc định GIỮ CHỖ CŨ (đúng hành vi cũ)
       body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride,
-              leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
+              leftover_ui: true, leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
       pallet_code: norm,
       label: `${target.material?.material_code ?? target.material_code_raw ?? ''} · ${target.material?.short_name ?? target.material_code_raw ?? ''}`,
       orderId: gdo.id,
@@ -177,7 +179,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           setPendingCartons(String(data.suggested_cartons > 0
             ? (mode === 'loose' ? Math.min(data.suggested_cartons, rem) : data.suggested_cartons)
             : 1))
-          setLeftoverLoc(null)   // pallet mới → phải chọn lại chỗ đặt phần dư
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           if (mode === 'outbound' && isConnectivityError(err)) { queueScanOffline(target, qr_code, undefined, false); return }
@@ -215,13 +217,18 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     if (!checkResult || saving || !activeItem || !canSave) return
     const target = activeItem
     const cartons = qtyToTake
-    const leftoverArg = needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}
+    const leftoverArg = { leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) }
     if (mode === 'loose') {
       scanLoose(
         { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, ...leftoverArg },
         {
           onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
-          onError: (err) => { setCheckResult(null); setFeedback({ type: 'error', msg: apiMsg(err) }) },
+          onError: (err) => {
+            const m = apiMsg(err)
+            // Lỗi VỊ TRÍ → giữ tem, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+            if (isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
+            setCheckResult(null); setFeedback({ type: 'error', msg: m })
+          },
         }
       )
       return
@@ -232,10 +239,13 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
         onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
         onError: (err) => {
           const qr = checkResult.pallet_code
+          // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+          const m = apiMsg(err)
+          if (!isConnectivityError(err) && isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL đã xác nhận; lỗi SAU khi gửi → uncertain
           if (isConnectivityError(err)) { queueScanOffline(target, qr, cartons, !(err instanceof OfflineError), leftoverLoc); return }
-          setFeedback({ type: 'error', msg: apiMsg(err) })
+          setFeedback({ type: 'error', msg: m })
         },
       }
     )
@@ -366,8 +376,9 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
             )}
           </div>
 
+          {/* Panel TỰ CUỘN: bàn phím (sửa số lượng) làm màn co lại, ô chọn vị trí không được khuất */}
           {checkResult && !feedback && (
-            <div className="space-y-2">
+            <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
               <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
                 <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
@@ -396,14 +407,19 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 <span className="text-sm text-slate-400">/ {activeRemaining} {mode === 'loose' ? 'cần chuẩn bị' : 'cần xuất'}</span>
               </div>
               {needLeftoverLoc && (
-                <LeftoverLocationPicker
-                  leftoverQty={leftoverQty}
-                  mat={activeItem?.material}
-                  currentLocationCode={checkResult.location_code ?? null}
-                  warehouseId={checkResult.warehouse_id ?? null}
-                  value={leftoverLoc}
-                  onChange={setLeftoverLoc}
-                />
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={activeItem?.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && (
+                    <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>
+                  )}
+                </div>
               )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>

@@ -2130,7 +2130,7 @@ export function useScanLoosePickingItem() {
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; cartons_override?: number
       // Nhặt lẻ luôn để lại hàng trên pallet → BẮT BUỘC khai chỗ đặt lại ('KEEP' hoặc id vị trí mới)
-      leftover_location_id?: string
+      leftover_location_id?: string; leftover_ui?: boolean
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
       ...body, loose_picking_mode: true,
     }).then(r => r.data.data),
@@ -2685,8 +2685,10 @@ export function useScanOutboundItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; employee_id?: string; cartons_override?: number
-      // Pallet đi không hết → vị trí cho phần dư: 'KEEP' (giữ chỗ cũ) hoặc id vị trí mới
-      leftover_location_id?: string
+      // Pallet đi không hết → vị trí cho phần dư: 'KEEP' (giữ chỗ cũ) hoặc id vị trí mới.
+      // leftover_ui: bản FE này CÓ ô chọn vị trí ⇒ BE được phép siết 422 khi thiếu. Bundle cũ
+      // (PWA chưa cập nhật) không gửi cờ này nên vẫn quét được như trước, không bị khoá.
+      leftover_location_id?: string; leftover_ui?: boolean
       // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {

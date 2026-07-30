@@ -107,6 +107,33 @@ async function adjustInventoryAtomic(
   return false
 }
 
+// VỊ TRÍ CHO PHẦN CÒN LẠI CỦA PALLET (user chốt 30/07) ─────────────────────────────────────────
+// Pallet xuất KHÔNG hết thì hàng dư phải được khai đang nằm ở đâu. Trước đây luồng xuất KHÔNG bao
+// giờ đụng `location_id` → pallet bị "mổ" vẫn ghi ở vị trí cũ dù thực tế công nhân để khu tạm /
+// đầu kệ ⇒ lần sau tới vị trí đó không thấy hàng.
+// Dùng lại RPC `move_pallets_to_location` của Tồn kho (khóa dòng Location → đếm sức chứa DƯỚI LOCK
+// → move trong cùng transaction) để không đẻ đường ghi location thứ hai, và để 2 người cùng dồn vào
+// một vị trí không vượt sức chứa. Trả null = OK, chuỗi = lý do người dùng đọc được.
+const KEEP_LOCATION = 'KEEP'   // sentinel FE gửi khi user chọn "giữ chỗ cũ" (phân biệt với BỎ TRỐNG)
+
+async function moveLeftoverPallet(
+  invId: string, locationId: string, updatedBy: string | null, t: string,
+): Promise<string | null> {
+  const vnDate = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const { data: result, error } = await supabase.rpc('move_pallets_to_location', {
+    p_ids: [invId], p_location_id: locationId, p_updated_by: updatedBy, p_update_date: vnDate, p_now: t,
+  })
+  if (error) return `Không chuyển được vị trí phần còn lại: ${error.message}`
+  const parts = String(result ?? '').split('|')
+  switch (parts[0]) {
+    case 'NO_IDS':    return 'Không xác định được pallet để chuyển vị trí'
+    case 'NOT_FOUND': return 'Không tìm thấy vị trí đã chọn'
+    case 'INACTIVE':  return 'Vị trí đã chọn đang ngưng sử dụng'
+    case 'FULL':      return `Vị trí ${parts[2] ?? ''} vừa hết chỗ (còn ${parts[1] ?? 0} slot) — chọn vị trí khác`
+    default:          return null
+  }
+}
+
 // Trả tồn cho MỌI scan entry của tập ITEM trước khi XÓA item — FK OutboundScanEntry ON DELETE CASCADE
 // xóa mất scan entry, nếu không nhả TRƯỚC thì cartons_reserved/remaining KẸT vĩnh viễn (bug nhặt lẻ
 // pre-start khi xóa/ghi đè chuyến PENDING). 3 công thức KHỚP deleteScanEntry: loose chưa xác nhận → nhả
@@ -3552,7 +3579,7 @@ export async function checkScanItem(req: Request, res: Response) {
     ] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('status, warehouse_id').eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
-      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
+      supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(id, location_code, warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
@@ -3616,6 +3643,13 @@ export async function checkScanItem(req: Request, res: Response) {
         best_available_date,
         available_cartons: available,
         suggested_cartons: Math.min(available, remaining_on_item),
+        // Vị trí phần còn lại: FE cần biết pallet đang ở đâu + còn bao nhiêu để hỏi "để hàng dư ở đâu"
+        // (dư = pallet_remaining − số sắp xuất; nhặt lẻ thì luôn còn vì chỉ giữ hàng, không trừ).
+        inventory_entry_id: inv.id,
+        pallet_remaining:   Number(inv.cartons_remaining ?? inv.cartons_imported),
+        location_id:        inv.location_id ?? null,
+        location_code:      inv.location?.location_code ?? null,
+        warehouse_id:       gdo?.warehouse_id ?? null,
       },
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
@@ -3627,7 +3661,7 @@ export async function scanItem(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
-    const { qr_code, employee_id, cartons_override, loose_picking_mode } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean }
+    const { qr_code, employee_id, cartons_override, loose_picking_mode, leftover_location_id } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean; leftover_location_id?: string }
     const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
@@ -3726,6 +3760,28 @@ export async function scanItem(req: Request, res: Response) {
     }
     const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
 
+    // ── PALLET ĐI KHÔNG HẾT → BẮT KHAI VỊ TRÍ CHO PHẦN CÒN LẠI (user chốt 30/07) ──
+    // Nhặt lẻ chỉ GIỮ hàng (reserve), remaining không đổi ⇒ pallet luôn còn hàng trên đó.
+    // Kiểm vị trí TRƯỚC khi ghi bất cứ thứ gì: sai vị trí thì không được để lại scan entry mồ côi.
+    const palletRemaining = Number(inv.cartons_remaining ?? inv.cartons_imported)
+    const leftoverQty = loose_picking_mode ? palletRemaining : palletRemaining - to_take
+    let moveLeftoverTo: string | null = null
+    if (leftoverQty > 0) {
+      const pick = String(leftover_location_id ?? '').trim()
+      if (!pick) {
+        return fail(res, `Pallet còn ${qtyLabel(leftoverQty, (shelfMat ?? null) as MatUnitsQ | null)} chưa xuất — phải chọn vị trí để phần còn lại (giữ chỗ cũ hoặc chọn vị trí khác)`, 422)
+      }
+      if (pick !== KEEP_LOCATION && pick !== inv.location_id) {
+        const { data: loc } = await supabase.from('Location')
+          .select('id, location_code, is_active, warehouse_id').eq('id', pick).maybeSingle()
+        if (!loc)           return fail(res, 'Vị trí đã chọn không tồn tại', 422)
+        if (!loc.is_active) return fail(res, `Vị trí ${loc.location_code} đang ngưng sử dụng — chọn vị trí khác`, 422)
+        if (loc.warehouse_id !== gdo?.warehouse_id)
+          return fail(res, `Vị trí ${loc.location_code} không thuộc kho của chuyến xe này`, 422)
+        moveLeftoverTo = pick
+      }
+    }
+
     // pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian (dùng lại pctRaw đã tính trên)
     const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
 
@@ -3748,6 +3804,18 @@ export async function scanItem(req: Request, res: Response) {
 
     let new_scanned = Number(item.cartons_scanned) + to_take
 
+    // Chuyển vị trí phần dư NGAY SAU khi trừ/giữ tồn, TRƯỚC khi cộng dồn item: hỏng (vị trí vừa
+    // bị người khác lấp đầy) thì hoàn nguyên đúng thao tác vừa làm + xóa scan entry rồi báo 409 —
+    // không bao giờ để lại trạng thái "đã trừ tồn mà không biết hàng dư nằm đâu".
+    const applyLeftoverMove = async (revert: () => Promise<unknown>): Promise<string | null> => {
+      if (!moveLeftoverTo) return null
+      const err = await moveLeftoverPallet(inv.id, moveLeftoverTo, resolved_employee_id ?? null, t)
+      if (!err) return null
+      await revert()
+      await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
+      return err
+    }
+
     // Loose picking: giữ hàng (reserve) thay vì xuất ngay; item không tự COMPLETE
     let new_item_status: string
     if (loose_picking_mode) {
@@ -3759,6 +3827,8 @@ export async function scanItem(req: Request, res: Response) {
         await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
         return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
       }
+      const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, 0, -to_take))
+      if (moveErr) return fail(res, moveErr, 409)
       const cum = await addItemScanned(itemId, to_take, () => 'IN_PROGRESS')
       if (cum != null) new_scanned = cum
     } else {
@@ -3771,6 +3841,8 @@ export async function scanItem(req: Request, res: Response) {
           ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
           : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
       }
+      const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, to_take, 0))
+      if (moveErr) return fail(res, moveErr, 409)
       // Nhặt lẻ chưa xác nhận → KHÔNG cho complete dù đủ số
       const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
         .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
@@ -3817,6 +3889,7 @@ export async function scanItem(req: Request, res: Response) {
     return ok(res, {
       scan_entry: { id: scanId, pallet_code: qr, cartons_scanned: to_take },
       item: { ...item, cartons_scanned: new_scanned, status: new_item_status },
+      leftover: leftoverQty > 0 ? { qty: leftoverQty, moved: !!moveLeftoverTo } : null,
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }

@@ -2129,6 +2129,8 @@ export function useScanLoosePickingItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; cartons_override?: number
+      // Nhặt lẻ luôn để lại hàng trên pallet → BẮT BUỘC khai chỗ đặt lại ('KEEP' hoặc id vị trí mới)
+      leftover_location_id?: string
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
       ...body, loose_picking_mode: true,
     }).then(r => r.data.data),
@@ -2683,6 +2685,8 @@ export function useScanOutboundItem() {
   return useMutation({
     mutationFn: ({ gdoId, itemId, ...body }: {
       gdoId: string; itemId: string; qr_code: string; employee_id?: string; cartons_override?: number
+      // Pallet đi không hết → vị trí cho phần dư: 'KEEP' (giữ chỗ cũ) hoặc id vị trí mới
+      leftover_location_id?: string
       // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
@@ -2846,6 +2850,12 @@ export type CheckOutboundScanResult = {
   best_available_date: string | null
   available_cartons: number
   suggested_cartons: number
+  // Vị trí phần còn lại (30/07): pallet đi không hết thì phải khai hàng dư nằm ở đâu
+  inventory_entry_id?: string
+  pallet_remaining?:   number
+  location_id?:        string | null
+  location_code?:      string | null
+  warehouse_id?:       string | null
 }
 
 export function useConfirmLoosePickingItem() {

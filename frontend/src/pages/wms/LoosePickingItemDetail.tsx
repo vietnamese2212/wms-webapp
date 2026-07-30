@@ -23,6 +23,7 @@ import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { LeftoverLocationPicker, KEEP_LOCATION } from '@/components/wms/LeftoverLocationPicker'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -107,6 +108,8 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
+  // Nhặt lẻ chỉ GIỮ hàng (không trừ remaining) → pallet luôn còn hàng ⇒ luôn phải khai chỗ đặt lại
+  const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanLoosePickingItem()
 
@@ -136,6 +139,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? Math.min(data.suggested_cartons, remaining) : 1))
+          setLeftoverLoc(null)   // pallet mới → phải chọn lại chỗ đặt lại sau khi nhặt
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -145,10 +149,16 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     )
   }
 
+  const qtyToTake   = Math.max(1, parseInt(pendingCartons) || 1)
+  const leftoverQty = checkResult?.pallet_remaining ?? 0
+  const needLeftoverLoc = !!checkResult && leftoverQty > 0
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc)
+
   function handleSave() {
-    if (!checkResult || saving) return
+    if (!checkResult || saving || !canSave) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake,
+        ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
       {
         onSuccess: (data: any) => {
           setCheckResult(null)
@@ -248,12 +258,14 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
 
             {checkResult && !saving && (
               <button
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
-                           bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
+                disabled={!canSave}
+                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all ${
+                  canSave ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
+                          : 'bg-slate-400/90 text-white cursor-not-allowed'}`}
                 onClick={handleSave}
               >
-                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), item.material)}
+                {canSave ? `Lưu ${qtyLabel(qtyToTake, item.material)}` : 'Chọn vị trí đặt lại pallet ↓'}
               </button>
             )}
             {saving && (
@@ -297,6 +309,16 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                 <p className="text-xs text-slate-500 tabular-nums">
                   = <b>{new Intl.NumberFormat('vi-VN').format(Math.max(0, parseInt(pendingCartons) || 0))}</b> {qtyBaseLabel(item.material)} <span className="text-slate-400">(base — app tự tính)</span>
                 </p>
+              )}
+              {needLeftoverLoc && (
+                <LeftoverLocationPicker
+                  leftoverQty={leftoverQty}
+                  mat={item.material}
+                  currentLocationCode={checkResult.location_code ?? null}
+                  warehouseId={checkResult.warehouse_id ?? null}
+                  value={leftoverLoc}
+                  onChange={setLeftoverLoc}
+                />
               )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>

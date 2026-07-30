@@ -34,6 +34,7 @@ import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQu
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
+import { LeftoverLocationPicker, KEEP_LOCATION } from '@/components/wms/LeftoverLocationPicker'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -103,6 +104,8 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
+  // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
+  const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
@@ -116,12 +119,15 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   // Offline: không check được với server → xếp thẳng vào hàng đợi; SL do server chốt
   // lúc sync (cap = min(tồn pallet, còn cần xuất) — không bao giờ vượt kế hoạch).
   // cartons_override chỉ gửi khi user đã kịp xác nhận số (đường handleSave).
-  function queueScan(qr_code: string, cartonsOverride: number | undefined, uncertain: boolean) {
+  function queueScan(qr_code: string, cartonsOverride: number | undefined, uncertain: boolean, leftoverLocation?: string | null) {
     const norm = normalizeQR(qr_code)
     const { queued, duplicate } = enqueueScan({
       kind: 'outbound',
       url: `/wms/outbound/${gdoId}/items/${item.id}/scan`,
-      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride },
+      // Offline chưa biết pallet có dư hay không (không hỏi được server) → mặc định GIỮ CHỖ CŨ,
+      // đúng bằng hành vi cũ; nếu user đã kịp chọn chỗ thì gửi đúng chỗ đó.
+      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride,
+              leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
       pallet_code: norm,
       label: `${item.material?.material_code ?? item.material_code_raw ?? ''} · ${matName}`,
       orderId: gdoId,
@@ -160,6 +166,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
+          setLeftoverLoc(null)   // pallet mới → phải chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
@@ -174,10 +181,17 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     )
   }
 
+  // Số BASE còn lại trên pallet sau lượt này — >0 thì BẮT BUỘC khai chỗ đặt trước khi Lưu
+  const qtyToTake  = Math.max(1, parseInt(pendingCartons) || 1)
+  const leftoverQty = Math.max(0, (checkResult?.pallet_remaining ?? 0) - qtyToTake)
+  const needLeftoverLoc = !!checkResult && leftoverQty > 0
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc)
+
   function handleSave() {
-    if (!checkResult || saving) return
+    if (!checkResult || saving || !canSave) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1), employee_id: user?.id ?? undefined },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
+        ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -198,12 +212,12 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         },
         onError: (err) => {
           const qr = checkResult.pallet_code
-          const cartons = Math.max(1, parseInt(pendingCartons) || 1)
+          const cartons = qtyToTake
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
           // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
           if (isConnectivityError(err)) {
-            queueScan(qr, cartons, !(err instanceof OfflineError))
+            queueScan(qr, cartons, !(err instanceof OfflineError), leftoverLoc)
             return
           }
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -311,12 +325,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
 
             {checkResult && !saving && (
               <button
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
-                           bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
-                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
+                disabled={!canSave}
+                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
+                           rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all ${
+                  canSave ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
+                          : 'bg-slate-400/90 text-white cursor-not-allowed'}`}
                 onClick={handleSave}
               >
-                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), item.material)}
+                {canSave ? `Lưu ${qtyLabel(qtyToTake, item.material)}` : 'Chọn vị trí hàng dư ↓'}
               </button>
             )}
             {saving && (
@@ -354,6 +370,16 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                 />
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
+              {needLeftoverLoc && (
+                <LeftoverLocationPicker
+                  leftoverQty={leftoverQty}
+                  mat={item.material}
+                  currentLocationCode={checkResult.location_code ?? null}
+                  warehouseId={checkResult.warehouse_id ?? null}
+                  value={leftoverLoc}
+                  onChange={setLeftoverLoc}
+                />
+              )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}

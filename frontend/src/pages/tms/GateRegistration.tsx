@@ -36,19 +36,33 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Render field có thể chứa '\n' (multi-order) thành nhiều dòng riêng biệt
+/**
+ * Field có thể chứa '\n' (1 lượt xe chở NHIỀU đơn) — Mã đơn / NPP / GDO.
+ *
+ * Desktop: xếp CHỒNG từng giá trị, vì dòng thứ i của 3 cột ăn khớp nhau (đơn i ↔ NPP i ↔ GDO i)
+ *          — mất thế xếp chồng là mất luôn quan hệ đó.
+ * Mobile : gộp 1 DÒNG "a · b · c" + cắt đuôi. Xếp chồng trên điện thoại tốn y hệt wrap: đo thật
+ *          30/07 một lượt 6 GDO đẩy ô cao 89px ⇒ CẢ dòng cao 98px, màn 360x800 chỉ còn ~5 dòng.
+ *          Gộp lại còn ~34px/dòng (gấp ~3 lượng dữ liệu thấy được). Giá trị đầy đủ vẫn xem được
+ *          ở tooltip và ở pane chi tiết khi bấm vào dòng.
+ */
 function renderOrderField(value: string | null | undefined, mono = false) {
   if (!value) return <span className="text-slate-300">—</span>
   const parts = value.split('\n')
-  if (parts.length <= 1) return <span className={`block truncate ${mono ? 'font-mono font-semibold' : ''}`} title={value}>{value || <span className="text-slate-300">—</span>}</span>
+  const monoCls = mono ? 'font-mono font-semibold' : ''
+  if (parts.length <= 1) return <span className={`block truncate ${monoCls}`} title={value}>{value || <span className="text-slate-300">—</span>}</span>
+  const full = parts.join(' · ')
   return (
-    <div className={`divide-y divide-slate-100 ${mono ? 'font-mono font-semibold' : ''}`} title={parts.join(', ')}>
-      {parts.map((p, i) => (
-        <div key={i} className={`truncate ${i > 0 ? 'pt-0.5' : ''}`}>
-          {p || <span className="text-slate-300 font-normal">—</span>}
-        </div>
-      ))}
-    </div>
+    <>
+      <span className={`block truncate sm:hidden ${monoCls}`} title={full}>{full}</span>
+      <div className={`hidden sm:block divide-y divide-slate-100 ${monoCls}`} title={full}>
+        {parts.map((p, i) => (
+          <div key={i} className={`truncate ${i > 0 ? 'pt-0.5' : ''}`}>
+            {p || <span className="text-slate-300 font-normal">—</span>}
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 

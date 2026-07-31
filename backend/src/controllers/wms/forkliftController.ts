@@ -485,19 +485,20 @@ function parseRange(req: Request): { from: string; to: string } | string {
   return { from, to }
 }
 
-// GET /wms/forklift-report?from&to&warehouse_id — RPC 1 request trả dòng đã tính hours_run;
-// summary per-xe tính trong JS từ chính các dòng đó (không thêm round-trip).
+// GET /wms/forklift-report?from&to&warehouse_id — RPC 1 request trả
+// { rows (đã tính hours_run), issue_items (top hạng mục lỗi) }; summary per-xe
+// tính trong JS từ chính các dòng đó (không thêm round-trip).
 export async function getReport(req: Request, res: Response) {
   const range = parseRange(req)
   if (typeof range === 'string') return fail(res, range, 400)
   const scope = scopeWhIds(req)
-  if (scope !== null && scope.length === 0) return ok(res, { ...range, rows: [], summary: [] })
+  if (scope !== null && scope.length === 0) return ok(res, { ...range, rows: [], summary: [], issue_items: [] })
 
   // Filter kho từ client: intersect với scope (không tin query thô)
   const qWh = typeof req.query.warehouse_id === 'string' && req.query.warehouse_id ? req.query.warehouse_id : null
   let whIds: string[] | null = scope
   if (qWh) {
-    if (scope !== null && !scope.includes(qWh)) return ok(res, { ...range, rows: [], summary: [] })
+    if (scope !== null && !scope.includes(qWh)) return ok(res, { ...range, rows: [], summary: [], issue_items: [] })
     whIds = [qWh]
   }
 
@@ -512,7 +513,9 @@ export async function getReport(req: Request, res: Response) {
     checked_by: string | null; note: string | null; checked_at: string
     next_meter: number | null; next_date: string | null; hours_run: number | null
   }
-  const rows = (data ?? []) as ReportRow[]
+  const payload = (data ?? {}) as { rows?: ReportRow[]; issue_items?: { label: string; cnt: number }[] }
+  const rows = payload.rows ?? []
+  const issueItems = payload.issue_items ?? []
 
   // Summary per xe: tổng giờ chạy (chỉ dòng đã chốt), ngày chạy/nghỉ, dòng chưa chốt, lỗi
   const byId = new Map<string, {
@@ -540,5 +543,5 @@ export async function getReport(req: Request, res: Response) {
     }
   }
   const summary = [...byId.values()].sort((a, b) => a.code.localeCompare(b.code))
-  return ok(res, { ...range, rows, summary })
+  return ok(res, { ...range, rows, summary, issue_items: issueItems })
 }

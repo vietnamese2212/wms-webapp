@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X } from 'lucide-react'
 import type { AxiosError } from 'axios'
@@ -463,24 +463,90 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
 
 // ─── Tab 2: Báo cáo vận hành ──────────────────────────────────────────────────
 
+// Khối dashboard (card trắng + tiêu đề accent) — cùng ngôn ngữ với Giám sát vận hành
+function DashBlock({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2.5 py-1 flex items-baseline gap-2">
+        <span className="text-[10px] font-semibold uppercase text-slate-600">{title}</span>
+        {sub && <span className="text-[9px] text-slate-400">{sub}</span>}
+      </div>
+      <div className="p-2.5">{children}</div>
+    </div>
+  )
+}
+
 function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
   const { data, isLoading, error } = useForkliftReport({ from: f.from, to: f.to, warehouse_id: f.warehouseId || undefined }, active)
+  const { data: allVehicles = [] } = useForklifts()   // xe active — mẫu số tuân thủ (kể cả xe 0 lần check)
   const del = useDeleteForkliftLog()
   const [viewLogId, setViewLogId] = useState<string | null>(null)
 
   const rows = data?.rows ?? []
   const summary = data?.summary ?? []
+  const issueItems = data?.issue_items ?? []
+  const vehicles = f.warehouseId ? allVehicles.filter(v => v.warehouse_id === f.warehouseId) : allVehicles
+
+  // Trục ngày: từ from → min(to, hôm nay) — ngày tương lai không tính vào tuân thủ
+  const today = todayVN()
+  const endDate = f.to < today ? f.to : today
+  const days = useMemo(() => {
+    const out: string[] = []
+    if (!f.from || f.from > endDate) return out
+    const d = new Date(`${f.from}T00:00:00Z`)
+    for (let i = 0; i < 93 && out[out.length - 1] !== endDate; i++) {
+      out.push(d.toISOString().slice(0, 10))
+      d.setUTCDate(d.getUTCDate() + 1)
+    }
+    return out
+  }, [f.from, endDate])
+
   const totalHours = Math.round(summary.reduce((s, r) => s + r.total_hours, 0) * 10) / 10
+  const closedActiveDays = summary.reduce((s, r) => s + r.active_days - r.open_days, 0)
+  const avgHours = closedActiveDays > 0 ? Math.round((totalHours / closedActiveDays) * 10) / 10 : null
+  const expectedChecks = vehicles.length * days.length
+  const compliance = expectedChecks > 0 ? Math.round((rows.length / expectedChecks) * 100) : null
+  const totalIssues = summary.reduce((s, r) => s + r.issue_count, 0)
+
   const tiles: BandTile[] = [
-    { label: 'Xe có dữ liệu', value: summary.length },
     { label: 'Tổng giờ chạy', value: fmtH(totalHours) ?? 0, accent: true, tip: 'Tổng giờ đã chốt (hiệu số đồng hồ giữa 2 lần ghi liên tiếp)' },
-    { label: 'Ngày chạy', value: summary.reduce((s, r) => s + r.active_days, 0) },
+    { label: 'Giờ TB / ngày chạy', value: avgHours ?? '—', tip: 'Tổng giờ chạy ÷ số ngày chạy đã chốt' },
+    { label: 'Tuân thủ check', value: compliance !== null ? `${compliance}%` : '—', danger: compliance !== null && compliance < 80, tip: `Số lượt đã check ÷ (${vehicles.length} xe × ${days.length} ngày)` },
+    { label: 'Hạng mục lỗi', value: totalIssues, danger: totalIssues > 0 },
     { label: 'Ngày nghỉ', value: summary.reduce((s, r) => s + r.idle_days, 0) },
     { label: 'Chờ chốt', value: summary.reduce((s, r) => s + r.open_days, 0), tip: 'Lần ghi chưa có số kế tiếp — giờ chạy chốt khi có lần ghi sau' },
-    { label: 'Hạng mục lỗi', value: summary.reduce((s, r) => s + r.issue_count, 0), danger: summary.some(r => r.issue_count > 0) },
   ]
+
+  // Dữ liệu chart
+  const byDate = useMemo(() => {
+    const m = new Map<string, { hours: number; checked: number; issues: number }>()
+    for (const r of rows) {
+      const e = m.get(r.log_date) ?? { hours: 0, checked: 0, issues: 0 }
+      e.hours = Math.round((e.hours + (r.hours_run ?? 0)) * 10) / 10
+      e.checked++
+      e.issues += r.issue_count
+      m.set(r.log_date, e)
+    }
+    return m
+  }, [rows])
+  const maxDayHours = Math.max(1, ...days.map(d => byDate.get(d)?.hours ?? 0))
+
+  const byHours = [...summary].sort((a, b) => b.total_hours - a.total_hours)
+  const maxVehHours = Math.max(1, ...byHours.map(s => s.total_hours))
+
+  const checkedDaysByFk = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of rows) m.set(r.forklift_id, (m.get(r.forklift_id) ?? 0) + 1)
+    return m
+  }, [rows])
+  const complianceRows = vehicles
+    .map(v => ({ code: v.code, checked: checkedDaysByFk.get(v.id) ?? 0, pct: days.length ? Math.round(((checkedDaysByFk.get(v.id) ?? 0) / days.length) * 100) : 0 }))
+    .sort((a, b) => a.pct - b.pct || a.code.localeCompare(b.code))
+
+  const issueByVehicle = summary.filter(s => s.issue_count > 0).sort((a, b) => b.issue_count - a.issue_count).slice(0, 5)
+  const maxIssueCnt = Math.max(1, ...issueItems.map(i => i.cnt))
 
   const filterDefs: FilterDef[] = [
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from: f.from, to: f.to, onChange: (from, to) => setF({ from: from || todayVN(), to: to || from || todayVN() }), pinned: true },
@@ -509,7 +575,103 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
             <p className="text-sm">Không có dữ liệu check list trong khoảng ngày này</p>
           </div>
         ) : (
-          <div className="space-y-4 p-3">
+          <div className="space-y-3 p-3">
+            {/* ── DASHBOARD ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {/* 1. Giờ chạy theo ngày */}
+              <DashBlock title="Giờ chạy theo ngày" sub="cột = tổng giờ đã chốt của mọi xe">
+                <div className="overflow-x-auto">
+                  <div className="flex items-end gap-px h-28 min-w-[240px]">
+                    {days.map(d => {
+                      const e = byDate.get(d)
+                      const h = e ? Math.round((e.hours / maxDayHours) * 100) : 0
+                      return (
+                        <div key={d} className="flex-1 min-w-[5px] flex items-end justify-center h-full"
+                          title={`${formatDate(d)} — ${fmtH(e?.hours ?? 0)}h · ${e?.checked ?? 0} xe check${e?.issues ? ` · ${e.issues} lỗi` : ''}`}>
+                          <div className={`w-full max-w-[22px] rounded-t ${e?.issues ? 'bg-amber-500' : 'bg-sky-500'}`}
+                            style={{ height: `${h}%`, minHeight: e?.hours ? 2 : 0 }} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="flex gap-px mt-0.5 min-w-[240px]">
+                    {days.map((d, i) => (
+                      <div key={d} className="flex-1 min-w-[5px] text-center text-[8px] text-slate-400">
+                        {(days.length <= 14 || i % Math.ceil(days.length / 14) === 0) ? d.slice(8) : ''}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 mt-1.5 text-[9px] text-slate-500">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-sky-500 inline-block" /> Giờ chạy</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-500 inline-block" /> Ngày có hạng mục lỗi</span>
+                </div>
+              </DashBlock>
+
+              {/* 2. Giờ chạy theo xe */}
+              <DashBlock title="Giờ chạy theo xe" sub="xếp từ nhiều → ít (giờ đã chốt)">
+                {byHours.length === 0 ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có dữ liệu</p> : (
+                  <div className="space-y-1">
+                    {byHours.slice(0, 12).map(s => (
+                      <div key={s.forklift_id} className="flex items-center gap-2" title={`${s.code} — ${fmtH(s.total_hours)}h / ${s.active_days} ngày chạy${s.open_days ? ` · ${s.open_days} chờ chốt` : ''}`}>
+                        <span className="w-16 shrink-0 text-[10px] font-mono font-semibold text-slate-700 truncate">{s.code}</span>
+                        <div className="flex-1 h-3.5 bg-slate-100 rounded overflow-hidden">
+                          <div className="h-full bg-sky-500 rounded" style={{ width: `${Math.max(1, Math.round((s.total_hours / maxVehHours) * 100))}%` }} />
+                        </div>
+                        <span className="w-14 shrink-0 text-right text-[10px] font-semibold tabular-nums">{fmtH(s.total_hours)}h</span>
+                      </div>
+                    ))}
+                    {byHours.length > 12 && <p className="text-[9px] text-slate-400">+{byHours.length - 12} xe khác (xem bảng dưới)</p>}
+                  </div>
+                )}
+              </DashBlock>
+
+              {/* 3. Tuân thủ check list theo xe */}
+              <DashBlock title="Tuân thủ check list theo xe" sub={`% ngày đã check / ${days.length} ngày · xe kém nhất lên đầu`}>
+                {complianceRows.length === 0 ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có xe nào</p> : (
+                  <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                    {complianceRows.map(c => (
+                      <div key={c.code} className="flex items-center gap-2" title={`${c.code} — đã check ${c.checked}/${days.length} ngày`}>
+                        <span className="w-16 shrink-0 text-[10px] font-mono font-semibold text-slate-700 truncate">{c.code}</span>
+                        <div className="flex-1 h-3.5 bg-slate-100 rounded overflow-hidden">
+                          <div className={`h-full rounded ${c.pct >= 90 ? 'bg-green-500' : c.pct >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
+                            style={{ width: `${Math.max(2, c.pct)}%` }} />
+                        </div>
+                        <span className={`w-20 shrink-0 text-right text-[10px] font-semibold tabular-nums ${c.pct < 60 ? 'text-red-600' : ''}`}>{c.pct}% ({c.checked}/{days.length})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </DashBlock>
+
+              {/* 4. Lỗi an toàn */}
+              <DashBlock title="Lỗi an toàn" sub="hạng mục bị đánh LỖI nhiều nhất trong khoảng ngày">
+                {issueItems.length === 0 ? (
+                  <p className="text-xs text-green-600 py-4 text-center flex items-center justify-center gap-1.5">
+                    <CheckCircle2 className="h-4 w-4" /> Không có hạng mục lỗi nào — đội xe an toàn
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {issueItems.map(it => (
+                      <div key={it.label} className="flex items-center gap-2" title={`${it.label} — ${it.cnt} lượt lỗi`}>
+                        <span className="flex-1 min-w-0 text-[10px] text-slate-700 truncate">{it.label}</span>
+                        <div className="w-28 shrink-0 h-3.5 bg-slate-100 rounded overflow-hidden">
+                          <div className="h-full bg-red-500 rounded" style={{ width: `${Math.max(4, Math.round((it.cnt / maxIssueCnt) * 100))}%` }} />
+                        </div>
+                        <span className="w-7 shrink-0 text-right text-[10px] font-semibold tabular-nums text-red-600">{it.cnt}</span>
+                      </div>
+                    ))}
+                    {issueByVehicle.length > 0 && (
+                      <p className="text-[9px] text-slate-500 pt-1.5 border-t border-slate-100 mt-2">
+                        Xe lỗi nhiều: {issueByVehicle.map(s => `${s.code} (${s.issue_count})`).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </DashBlock>
+            </div>
+
+            {/* ── BẢNG TRA CỨU ── */}
             {/* Tổng hợp theo xe */}
             <div>
               <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 text-[10px] font-semibold uppercase text-slate-600">Tổng hợp theo xe</div>

@@ -4974,7 +4974,10 @@ export function useForkliftReport(params: { from: string; to: string; warehouse_
     enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/forklift-report', { params })
-      return data.data as { from: string; to: string; rows: ForkliftReportRow[]; summary: ForkliftReportSummary[] }
+      return data.data as {
+        from: string; to: string; rows: ForkliftReportRow[]; summary: ForkliftReportSummary[]
+        issue_items: { label: string; cnt: number }[]
+      }
     },
   })
 }

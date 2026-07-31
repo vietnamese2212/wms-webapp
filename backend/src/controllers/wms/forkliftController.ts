@@ -38,6 +38,32 @@ function decodePhotoDataUrl(raw: unknown): { buf: Buffer; contentType: string; e
   return { buf, contentType: `image/${m[1] === 'jpg' ? 'jpeg' : m[1]}`, ext }
 }
 
+// ─── DỌN ẢNH CŨ: giữ 60 NGÀY GẦN NHẤT (user chốt 31/07 — chống phình storage) ─
+// Bản ghi check list GIỮ NGUYÊN (số liệu/lịch sử ai check còn đủ), chỉ gỡ ẢNH.
+// Không pg_cron (free tier không bật) → dọn LƯỜI như error_logs: mỗi lần có người
+// lưu check list, tối đa 1 lần/6h/instance, mỗi lượt 1 lô ≤200 ảnh (chạy dần).
+// Thứ tự an toàn: xóa object storage TRƯỚC, xóa lỗi thì giữ photo_path lại chờ
+// lượt sau (không orphan ảnh); update KHÔNG đụng updated_at (giữ đúng "Lúc check").
+const PHOTO_RETENTION_DAYS = 60
+let _lastPhotoCleanupAt = 0
+
+async function cleanupOldPhotos(): Promise<void> {
+  if (Date.now() - _lastPhotoCleanupAt < 6 * 3600_000) return
+  _lastPhotoCleanupAt = Date.now()
+  const cutoff = new Date(Date.now() - PHOTO_RETENTION_DAYS * 86400_000)
+    .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const { data } = await supabase.from('forklift_daily_logs')
+    .select('id, photo_path')
+    .not('photo_path', 'is', null).lt('log_date', cutoff)
+    .order('log_date').limit(200)
+  const rows = (data ?? []).filter((r): r is { id: string; photo_path: string } => !!r.photo_path)
+  if (!rows.length) return
+  const { error: rmErr } = await supabase.storage.from(PHOTO_BUCKET).remove(rows.map(r => r.photo_path))
+  if (rmErr) { console.error('[forklift] dọn ảnh cũ lỗi:', rmErr.message); return }
+  await supabase.from('forklift_daily_logs').update({ photo_path: null }).in('id', rows.map(r => r.id))
+  console.log(`[forklift] đã dọn ${rows.length} ảnh cũ hơn ${cutoff}`)
+}
+
 // Phát signed URL 1h cho danh sách photo_path (bucket riêng tư — FE không đọc thẳng được)
 async function signPhotoUrls(paths: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>()
@@ -410,6 +436,9 @@ export async function saveLog(req: Request, res: Response) {
   // Chụp lại = dọn ảnh cũ (fire-and-forget — orphan không phá gì, đừng làm hỏng response)
   if (photoPath && existing?.photo_path && existing.photo_path !== photoPath)
     void supabase.storage.from(PHOTO_BUCKET).remove([existing.photo_path]).then(() => {}, () => {})
+  // Job giữ ảnh 60 ngày — chạy AWAIT (Vercel giết promise treo sau response) nhưng có
+  // throttle 6h nên gần như mọi lượt lưu không tốn gì; lỗi dọn không được phá lượt lưu.
+  try { await cleanupOldPhotos() } catch (e) { console.error('[forklift] cleanup lỗi:', e) }
   return ok(res, data, 201)
 }
 

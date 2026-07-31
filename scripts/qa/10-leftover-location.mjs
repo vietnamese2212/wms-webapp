@@ -75,7 +75,9 @@ try {
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
     id: randomUUID(), group_code: `${TAG}-GDO`, warehouse_id: whId, warehouse_type: mat.category,
     delivery_date: vnDate(), planned_date: vnDate(), status: 'IN_PROGRESS',
-    license_plate: `${TAG}-XE`, started_at: nowIso(), created_at: nowIso(), updated_at: nowIso(),
+    // Biển số fixture phải ĐÚNG DẠNG CHUẨN (chỉ chữ+số, in hoa): fixture này ghi thẳng PostgREST,
+    // không qua BE nên không được chuẩn hoá hộ, mà DB có CHECK `^[A-Z0-9]+$` (20260731_plate_format).
+    license_plate: TAG.replace(/[^A-Z0-9]/g, '') + 'XE', started_at: nowIso(), created_at: nowIso(), updated_at: nowIso(),
   })
   created.gdo = gdo.id
   const [dlv] = await restWrite('OutboundDelivery', 'POST', null, {

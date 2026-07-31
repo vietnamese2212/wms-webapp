@@ -22,6 +22,31 @@ function scopeWhIds(req: Request): string[] | null {
 
 type ChecklistResult = { item_id: string; label: string; ok: boolean; note?: string | null }
 
+// ─── Ảnh chụp xe (bucket riêng tư 'forklift-photos', chỉ service role) ───────
+const PHOTO_BUCKET = 'forklift-photos'
+const PHOTO_MAX_BYTES = 4 * 1024 * 1024   // FE đã nén ~200-400KB; đây là chặn cứng
+
+function decodePhotoDataUrl(raw: unknown): { buf: Buffer; contentType: string; ext: string } | string | null {
+  if (raw == null || raw === '') return null
+  if (typeof raw !== 'string') return 'Ảnh không hợp lệ'
+  const m = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(raw)
+  if (!m) return 'Ảnh phải là JPEG/PNG/WebP (data URL base64)'
+  const buf = Buffer.from(m[2], 'base64')
+  if (buf.length === 0) return 'Ảnh rỗng'
+  if (buf.length > PHOTO_MAX_BYTES) return 'Ảnh quá lớn (tối đa 4MB) — chụp lại hoặc giảm chất lượng'
+  const ext = m[1] === 'jpeg' || m[1] === 'jpg' ? 'jpg' : m[1]
+  return { buf, contentType: `image/${m[1] === 'jpg' ? 'jpeg' : m[1]}`, ext }
+}
+
+// Phát signed URL 1h cho danh sách photo_path (bucket riêng tư — FE không đọc thẳng được)
+async function signPhotoUrls(paths: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (!paths.length) return out
+  const { data } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 3600)
+  for (const d of data ?? []) if (d.path && d.signedUrl) out.set(d.path, d.signedUrl)
+  return out
+}
+
 function parseChecklist(raw: unknown): ChecklistResult[] | null {
   if (raw == null) return []
   if (!Array.isArray(raw) || raw.length > 200) return null
@@ -261,10 +286,16 @@ export async function getBoard(req: Request, res: Response) {
   // Log của ngày — chunk 300 (đội xe có thể lớn; luật id-list-url-limits)
   const logs = await fetchAllByIdChunks(ids, chunk =>
     supabase.from('forklift_daily_logs')
-      .select('id, forklift_id, status, hour_meter, checklist, issue_count, note, checked_by, updated_at')
+      .select('id, forklift_id, status, hour_meter, checklist, issue_count, note, checked_by, photo_path, updated_at')
       .eq('log_date', date).in('forklift_id', chunk).order('forklift_id'),
   ).catch((e: Error) => e)
   if (logs instanceof Error) return fail(res, logs.message, 500)
+
+  // Bucket riêng tư → phát signed URL 1h cho ảnh chụp xe (1 lời gọi batch)
+  const photoUrls = await signPhotoUrls((logs as { photo_path?: string | null }[])
+    .map(l => l.photo_path).filter((p): p is string => !!p))
+  for (const l of logs as { photo_path?: string | null; photo_url?: string | null }[])
+    l.photo_url = l.photo_path ? photoUrls.get(l.photo_path) ?? null : null
 
   // Số đồng hồ GẦN NHẤT trước ngày này (mỗi xe 1 dòng) — RPC-less: lấy các log có số
   // trước ngày date, mỗi xe giữ dòng mới nhất. Bounded: chỉ cần 1 dòng/xe → query
@@ -299,9 +330,11 @@ export async function getBoard(req: Request, res: Response) {
 // ─── GHI check list ngày (upsert theo xe+ngày) ────────────────────────────────
 
 // POST /wms/forklift-logs (forklift.check)
-// body: { forklift_id, log_date?, status: 'ACTIVE'|'IDLE', hour_meter?, checklist?, note? }
+// body: { forklift_id, log_date?, status: 'ACTIVE'|'IDLE', hour_meter?, checklist?, note?, photo_data? }
+// Xe HOẠT ĐỘNG bắt buộc có ẢNH CHỤP XE (user chốt 31/07): gửi photo_data (data URL, FE đã nén)
+// hoặc bản ghi cũ đã có ảnh (sửa lại không bắt chụp lại). Xe NGHỈ không cần ảnh/checklist.
 export async function saveLog(req: Request, res: Response) {
-  const { forklift_id, log_date, status, hour_meter, checklist, note } = req.body as Record<string, unknown>
+  const { forklift_id, log_date, status, hour_meter, checklist, note, photo_data } = req.body as Record<string, unknown>
   if (!forklift_id || typeof forklift_id !== 'string') return fail(res, 'Thiếu xe nâng', 400)
   const date = log_date === undefined ? todayVN() : (isValidDate(log_date) ? log_date : null)
   if (!date) return fail(res, 'Ngày không hợp lệ (YYYY-MM-DD)', 400)
@@ -339,6 +372,21 @@ export async function saveLog(req: Request, res: Response) {
   const list = parseChecklist(checklist)
   if (list === null) return fail(res, 'Check list không hợp lệ', 400)
 
+  // ẢNH CHỤP XE — bắt buộc khi xe hoạt động
+  const photo = decodePhotoDataUrl(photo_data)
+  if (typeof photo === 'string') return fail(res, photo, 422)
+  let photoPath: string | null = null
+  if (photo) {
+    photoPath = `${forklift_id}/${date}-${Date.now()}.${photo.ext}`
+    const { error: upErr } = await supabase.storage.from(PHOTO_BUCKET)
+      .upload(photoPath, photo.buf, { contentType: photo.contentType, upsert: true })
+    if (upErr) return fail(res, `Không lưu được ảnh: ${upErr.message}`, 500)
+  }
+  const { data: existing } = await supabase.from('forklift_daily_logs')
+    .select('id, photo_path').eq('forklift_id', forklift_id).eq('log_date', date).maybeSingle()
+  if (status === 'ACTIVE' && !photoPath && !existing?.photo_path)
+    return fail(res, 'Xe hoạt động phải CHỤP ẢNH XE mới được lưu check list', 422)
+
   const record = {
     forklift_id,
     log_date: date,
@@ -347,6 +395,7 @@ export async function saveLog(req: Request, res: Response) {
     checklist: list,
     issue_count: list.filter(c => !c.ok).length,
     note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 1000) : null,
+    photo_path: photoPath ?? existing?.photo_path ?? null,   // không ảnh mới = giữ ảnh cũ (upsert gửi null sẽ ĐÈ)
     checked_by: req.user?.name ?? null,
     checked_by_id: req.user?.sub ?? null,
     updated_at: new Date().toISOString(),
@@ -358,6 +407,9 @@ export async function saveLog(req: Request, res: Response) {
     .upsert(record, { onConflict: 'forklift_id,log_date' })
     .select('id, forklift_id, log_date, status, hour_meter, issue_count').single()
   if (error) return fail(res, error.message, 500)
+  // Chụp lại = dọn ảnh cũ (fire-and-forget — orphan không phá gì, đừng làm hỏng response)
+  if (photoPath && existing?.photo_path && existing.photo_path !== photoPath)
+    void supabase.storage.from(PHOTO_BUCKET).remove([existing.photo_path]).then(() => {}, () => {})
   return ok(res, data, 201)
 }
 
@@ -365,13 +417,14 @@ export async function saveLog(req: Request, res: Response) {
 export async function deleteLog(req: Request, res: Response) {
   const { id } = req.params
   const { data: cur } = await supabase.from('forklift_daily_logs')
-    .select('id, forklift:forklift_vehicles(warehouse_id)').eq('id', id).maybeSingle()
+    .select('id, photo_path, forklift:forklift_vehicles(warehouse_id)').eq('id', id).maybeSingle()
   if (!cur) return fail(res, 'Không tìm thấy bản ghi', 404)
   const scope = scopeWhIds(req)
   const whId = (cur.forklift as unknown as { warehouse_id: string } | null)?.warehouse_id
   if (scope !== null && whId && !scope.includes(whId)) return fail(res, 'Bản ghi ngoài phạm vi kho được gán', 403)
   const { error } = await supabase.from('forklift_daily_logs').delete().eq('id', id)
   if (error) return fail(res, error.message, 500)
+  if (cur.photo_path) void supabase.storage.from(PHOTO_BUCKET).remove([cur.photo_path]).then(() => {}, () => {})
   return ok(res, { id })
 }
 
@@ -379,14 +432,15 @@ export async function deleteLog(req: Request, res: Response) {
 export async function getLog(req: Request, res: Response) {
   const { id } = req.params
   const { data, error } = await supabase.from('forklift_daily_logs')
-    .select('id, forklift_id, log_date, status, hour_meter, checklist, issue_count, note, checked_by, created_at, updated_at, forklift:forklift_vehicles(id, code, name, warehouse_id)')
+    .select('id, forklift_id, log_date, status, hour_meter, checklist, issue_count, note, checked_by, photo_path, created_at, updated_at, forklift:forklift_vehicles(id, code, name, warehouse_id)')
     .eq('id', id).maybeSingle()
   if (error) return fail(res, error.message, 500)
   if (!data) return fail(res, 'Không tìm thấy bản ghi', 404)
   const scope = scopeWhIds(req)
   const whId = (data.forklift as unknown as { warehouse_id: string } | null)?.warehouse_id
   if (scope !== null && whId && !scope.includes(whId)) return fail(res, 'Bản ghi ngoài phạm vi kho được gán', 403)
-  return ok(res, data)
+  const photoUrls = await signPhotoUrls(data.photo_path ? [data.photo_path] : [])
+  return ok(res, { ...data, photo_url: data.photo_path ? photoUrls.get(data.photo_path) ?? null : null })
 }
 
 // ─── LỊCH SỬ + BÁO CÁO ────────────────────────────────────────────────────────

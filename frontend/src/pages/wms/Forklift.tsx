@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye } from 'lucide-react'
+import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -29,6 +29,28 @@ import {
 } from '@/api/hooks'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+// Nén ảnh chụp xe trước khi gửi (camera điện thoại 2-5MB → ~200-400KB JPEG):
+// resize cạnh dài về ≤1280px + JPEG 0.75 qua canvas → data URL base64.
+async function compressPhoto(file: File): Promise<string> {
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image()
+      i.onload = () => resolve(i)
+      i.onerror = () => reject(new Error('Không đọc được ảnh'))
+      i.src = url
+    })
+    const scale = Math.min(1, 1280 / Math.max(img.width, img.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.width * scale)
+    canvas.height = Math.round(img.height * scale)
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.75)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
 const fmtH = (n: number | null | undefined) =>
   n === null || n === undefined ? null : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 1 })
 
@@ -224,6 +246,19 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
   const [note, setNote] = useState(vehicle.log?.note ?? '')
   const [results, setResults] = useState<ForkliftChecklistResult[]>([])
   const [error, setError] = useState('')
+  // Ảnh chụp xe: ảnh MỚI (data URL đã nén) hoặc ảnh ĐÃ CÓ của log cũ (signed URL — sửa lại không bắt chụp lại)
+  const [photoData, setPhotoData] = useState<string | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const existingPhotoUrl = vehicle.log?.photo_url ?? null
+
+  async function handlePickPhoto(file: File | undefined) {
+    if (!file) return
+    setPhotoBusy(true)
+    setError('')
+    try { setPhotoData(await compressPhoto(file)) }
+    catch { setError('Không đọc được ảnh — chụp lại giúp') }
+    finally { setPhotoBusy(false) }
+  }
 
   // Khởi tạo check list: hạng mục active hiện hành, prefill từ log đã có (khớp item_id);
   // hạng mục đã bị xóa khỏi danh mục nhưng có trong log cũ → vẫn giữ (label snapshot).
@@ -249,15 +284,17 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
     setError('')
     if (!idle) {
       const m = Number(meter.replace(',', '.'))
-      if (!meter.trim() || !Number.isFinite(m) || m < 0) { setError('Nhập số đồng hồ giờ (số ≥ 0) — xe nghỉ thì gạt "Xe nghỉ hôm nay"'); return }
+      if (!meter.trim() || !Number.isFinite(m) || m < 0) { setError('Nhập số đồng hồ giờ (số ≥ 0) — xe nghỉ thì tick "Xe nghỉ hôm nay"'); return }
+      if (!photoData && !existingPhotoUrl) { setError('Xe hoạt động phải CHỤP ẢNH XE mới được lưu'); return }
     }
     save.mutate({
       forklift_id: vehicle.id,
       log_date: date,
       status: idle ? 'IDLE' : 'ACTIVE',
       hour_meter: idle ? null : Number(meter.replace(',', '.')),
-      checklist: results,
+      checklist: idle ? [] : results,   // xe nghỉ không cần check an toàn
       note: note.trim() || null,
+      photo_data: idle ? null : photoData,
     }, {
       onSuccess: () => { toast({ title: `Đã ghi check list ${vehicle.code} — ${formatDate(date)}` }); onClose() },
       onError: e => setError(errMsg(e)),
@@ -278,13 +315,23 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
       <div className="space-y-4">
         {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
 
-        {/* Xe nghỉ hôm nay */}
-        <button type="button" onClick={() => setIdle(v => !v)}
-          className={`w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${idle ? 'border-slate-400 bg-slate-100 text-slate-700 font-medium' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-          <MoonStar className="h-4 w-4" />
-          Xe nghỉ hôm nay (không vận hành)
-          <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full ${idle ? 'bg-slate-600 text-white' : 'bg-slate-200 text-slate-500'}`}>{idle ? 'NGHỈ' : 'Chạy'}</span>
-        </button>
+        {/* 2 checkbox loại trừ nhau (user chốt 31/07): Hoạt động = check an toàn + chụp ảnh · Nghỉ = khỏi check */}
+        <div className="grid grid-cols-2 gap-2">
+          <label className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm cursor-pointer transition-colors ${!idle ? 'border-green-400 bg-green-50 text-green-800 font-medium' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+            <input type="checkbox" checked={!idle} onChange={() => setIdle(false)} className="h-4 w-4 accent-green-600" />
+            <span className="flex items-center gap-1.5"><ClipboardCheck className="h-4 w-4" /> Xe hoạt động</span>
+          </label>
+          <label className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm cursor-pointer transition-colors ${idle ? 'border-slate-400 bg-slate-100 text-slate-700 font-medium' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+            <input type="checkbox" checked={idle} onChange={() => setIdle(true)} className="h-4 w-4 accent-slate-600" />
+            <span className="flex items-center gap-1.5"><MoonStar className="h-4 w-4" /> Xe nghỉ hôm nay</span>
+          </label>
+        </div>
+
+        {idle && (
+          <p className="text-xs text-slate-500 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            Xe nghỉ — không cần check an toàn, không cần số đồng hồ. Bấm Lưu để ghi nhận.
+          </p>
+        )}
 
         {!idle && (
           <div className="space-y-1">
@@ -298,7 +345,25 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
           </div>
         )}
 
-        <div className="space-y-1">
+        {/* Ảnh chụp xe — BẮT BUỘC khi hoạt động */}
+        {!idle && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Ảnh chụp xe <span className="text-red-500">*</span></Label>
+            {(photoData || existingPhotoUrl) && (
+              <img src={photoData ?? existingPhotoUrl ?? undefined} alt="Ảnh xe nâng"
+                className="w-full max-h-52 object-contain rounded-lg border border-slate-200 bg-slate-50" />
+            )}
+            <label className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm cursor-pointer transition-colors ${photoData || existingPhotoUrl ? 'border-slate-200 text-slate-500 hover:bg-slate-50' : 'border-sky-400 bg-sky-50 text-sky-700 font-medium'}`}>
+              <Camera className="h-4 w-4" />
+              {photoBusy ? 'Đang xử lý ảnh…' : photoData ? 'Chụp lại ảnh khác' : existingPhotoUrl ? 'Chụp lại (đã có ảnh lần trước)' : 'Chụp ảnh xe'}
+              <input type="file" accept="image/*" capture="environment" className="hidden"
+                onChange={e => { void handlePickPhoto(e.target.files?.[0]); e.target.value = '' }} />
+            </label>
+            <p className="text-[10px] text-slate-400">Ảnh tự nén trước khi gửi · chưa có ảnh thì KHÔNG lưu được</p>
+          </div>
+        )}
+
+        {!idle && (<div className="space-y-1">
           <div className="flex items-center justify-between">
             <Label className="text-xs">Hạng mục kiểm tra an toàn</Label>
             {failCount > 0 && <span className="text-[10px] text-red-600 font-medium">{failCount} hạng mục KHÔNG đạt</span>}
@@ -325,7 +390,7 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
             </div>
           )}
           <p className="text-[10px] text-slate-400">Bấm vào hạng mục để chuyển Đạt ↔ Lỗi (mặc định Đạt)</p>
-        </div>
+        </div>)}
 
         <div className="space-y-1">
           <Label className="text-xs">Ghi chú chung</Label>
@@ -519,6 +584,11 @@ function LogDetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
             )}
             {log.note && <p className="text-slate-600">Ghi chú: {log.note}</p>}
+            {log.photo_url && (
+              <a href={log.photo_url} target="_blank" rel="noreferrer" title="Mở ảnh gốc">
+                <img src={log.photo_url} alt="Ảnh xe lúc check" className="w-full max-h-56 object-contain rounded border border-slate-200 bg-slate-50" />
+              </a>
+            )}
           </div>
         )}
       </DialogContent>

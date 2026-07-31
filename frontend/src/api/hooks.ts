@@ -4833,6 +4833,7 @@ export type ForkliftLog = {
   id: string; forklift_id: string; log_date?: string; status: 'ACTIVE' | 'IDLE'
   hour_meter: number | null; checklist: ForkliftChecklistResult[]; issue_count: number
   note: string | null; checked_by: string | null; updated_at: string
+  photo_url?: string | null   // signed URL 1h (bucket riêng tư) — ảnh chụp xe lúc check
 }
 export type ForkliftBoardVehicle = {
   id: string; code: string; name: string | null; warehouse_id: string
@@ -4938,6 +4939,7 @@ export function useSaveForkliftLog() {
     mutationFn: (body: {
       forklift_id: string; log_date?: string; status: 'ACTIVE' | 'IDLE'
       hour_meter?: number | null; checklist?: ForkliftChecklistResult[]; note?: string | null
+      photo_data?: string | null   // data URL đã nén — bắt buộc khi ACTIVE (trừ khi log cũ đã có ảnh)
     }) => apiClient.post('/wms/forklift-logs', body).then(r => r.data.data),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['forklift-board'] })

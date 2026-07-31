@@ -131,14 +131,35 @@ export async function deleteForklift(req: Request, res: Response) {
   return ok(res, { id })
 }
 
-// ─── Danh mục HẠNG MỤC CHECK LIST ─────────────────────────────────────────────
+// ─── Danh mục HẠNG MỤC CHECK LIST (theo KHO — user chốt 31/07) ────────────────
+// warehouse_id NULL = dùng chung mọi kho; có giá trị = riêng kho đó.
+// Check list 1 xe = hạng mục CHUNG + hạng mục RIÊNG kho của xe (?warehouse_id=).
+// Sửa/xóa hạng mục CHUNG = chỉ user full scope kho (đụng mọi kho — cùng triết lý
+// khung giờ cargo ALL); hạng mục riêng kho = user có kho đó trong scope.
 
-// GET /wms/forklift-items — ?include_inactive=1 cho tab Cài đặt
+function guardItemScope(req: Request, warehouseId: string | null): string | null {
+  const scope = scopeWhIds(req)
+  if (scope === null) return null
+  if (warehouseId === null) return 'Hạng mục DÙNG CHUNG mọi kho — chỉ tài khoản full phạm vi kho được sửa'
+  if (!scope.includes(warehouseId)) return 'Kho ngoài phạm vi được gán'
+  return null
+}
+
+// GET /wms/forklift-items — ?warehouse_id= (check sheet: chung + riêng kho đó)
+// · ?include_inactive=1 (tab Cài đặt: mọi hạng mục trong scope + chung)
 export async function listChecklistItems(req: Request, res: Response) {
+  // id kho đi vào chuỗi .or() → chỉ nhận dạng an toàn (chống filter-injection PostgREST)
+  const rawWh = typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : ''
+  const qWh = /^[A-Za-z0-9_-]+$/.test(rawWh) ? rawWh : null
+  const scope = scopeWhIds(req)
   const rows = await fetchAllRowsParallel(() => {
     let q = supabase.from('forklift_checklist_items')
-      .select('id, label, sort_order, is_active, created_at, updated_at')
+      .select('id, label, sort_order, is_active, warehouse_id, warehouse:Warehouse(id, code, name), created_at, updated_at')
       .order('sort_order').order('created_at')
+    if (qWh) q = q.or(`warehouse_id.is.null,warehouse_id.eq.${qWh}`)
+    else if (scope !== null) q = scope.length > 0
+      ? q.or(`warehouse_id.is.null,warehouse_id.in.(${scope.join(',')})`)   // scope kho ≤ vài chục id
+      : q.is('warehouse_id', null)
     if (req.query.include_inactive !== '1') q = q.eq('is_active', true)
     return q
   }).catch((e: Error) => e)
@@ -146,15 +167,25 @@ export async function listChecklistItems(req: Request, res: Response) {
   return ok(res, rows)
 }
 
+function parseItemWarehouseId(raw: unknown): string | null | undefined {
+  if (raw === undefined) return undefined
+  if (raw === null || raw === '') return null
+  return typeof raw === 'string' ? raw : undefined
+}
+
 // POST /wms/forklift-items (forklift.manage_item)
 export async function createChecklistItem(req: Request, res: Response) {
-  const { label, sort_order } = req.body as Record<string, unknown>
+  const { label, sort_order, warehouse_id } = req.body as Record<string, unknown>
   const labelNorm = typeof label === 'string' ? label.trim().slice(0, 200) : ''
   if (!labelNorm) return fail(res, 'Nội dung hạng mục bắt buộc', 400)
+  const whId = parseItemWarehouseId(warehouse_id) ?? null
+  const scopeErr = guardItemScope(req, whId)
+  if (scopeErr) return fail(res, scopeErr, 403)
   const { data, error } = await supabase.from('forklift_checklist_items').insert({
     id: randomUUID(),
     label: labelNorm,
     sort_order: Number.isFinite(Number(sort_order)) ? Math.trunc(Number(sort_order)) : 0,
+    warehouse_id: whId,
     is_active: true,
     updated_at: new Date().toISOString(),
   }).select('id').single()
@@ -165,7 +196,12 @@ export async function createChecklistItem(req: Request, res: Response) {
 // PATCH /wms/forklift-items/:id
 export async function updateChecklistItem(req: Request, res: Response) {
   const { id } = req.params
-  const { label, sort_order, is_active } = req.body as Record<string, unknown>
+  const { label, sort_order, is_active, warehouse_id } = req.body as Record<string, unknown>
+  const { data: cur } = await supabase.from('forklift_checklist_items').select('id, warehouse_id').eq('id', id).maybeSingle()
+  if (!cur) return fail(res, 'Không tìm thấy hạng mục', 404)
+  const scopeErrCur = guardItemScope(req, cur.warehouse_id ?? null)
+  if (scopeErrCur) return fail(res, scopeErrCur, 403)
+
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (label !== undefined) {
     const labelNorm = typeof label === 'string' ? label.trim().slice(0, 200) : ''
@@ -177,6 +213,12 @@ export async function updateChecklistItem(req: Request, res: Response) {
     patch.sort_order = Math.trunc(Number(sort_order))
   }
   if (is_active !== undefined) patch.is_active = !!is_active
+  const newWh = parseItemWarehouseId(warehouse_id)
+  if (newWh !== undefined) {
+    const scopeErrNew = guardItemScope(req, newWh)
+    if (scopeErrNew) return fail(res, scopeErrNew, 403)
+    patch.warehouse_id = newWh
+  }
   const { error, data } = await supabase.from('forklift_checklist_items').update(patch).eq('id', id).select('id').maybeSingle()
   if (error) return fail(res, error.message, 500)
   if (!data) return fail(res, 'Không tìm thấy hạng mục', 404)
@@ -186,9 +228,12 @@ export async function updateChecklistItem(req: Request, res: Response) {
 // DELETE /wms/forklift-items/:id — xóa hẳn (lịch sử log đã snapshot label nên không vỡ)
 export async function deleteChecklistItem(req: Request, res: Response) {
   const { id } = req.params
-  const { error, data } = await supabase.from('forklift_checklist_items').delete().eq('id', id).select('id').maybeSingle()
+  const { data: cur } = await supabase.from('forklift_checklist_items').select('id, warehouse_id').eq('id', id).maybeSingle()
+  if (!cur) return fail(res, 'Không tìm thấy hạng mục', 404)
+  const scopeErr = guardItemScope(req, cur.warehouse_id ?? null)
+  if (scopeErr) return fail(res, scopeErr, 403)
+  const { error } = await supabase.from('forklift_checklist_items').delete().eq('id', id)
   if (error) return fail(res, error.message, 500)
-  if (!data) return fail(res, 'Không tìm thấy hạng mục', 404)
   return ok(res, { id })
 }
 
@@ -381,7 +426,7 @@ export async function getReport(req: Request, res: Response) {
   type ReportRow = {
     id: string; forklift_id: string; code: string; forklift_name: string | null; warehouse_id: string
     log_date: string; status: string; hour_meter: number | null; issue_count: number
-    checked_by: string | null; note: string | null
+    checked_by: string | null; note: string | null; checked_at: string
     next_meter: number | null; next_date: string | null; hours_run: number | null
   }
   const rows = (data ?? []) as ReportRow[]

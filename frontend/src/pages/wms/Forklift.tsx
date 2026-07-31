@@ -19,7 +19,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
-import { formatDate, formatTimestampTime } from '@/utils/formatters'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
   useForklifts, useCreateForklift, useUpdateForklift, useDeleteForklift,
   useForkliftItems, useCreateForkliftItem, useUpdateForkliftItem, useDeleteForkliftItem,
@@ -107,9 +107,17 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
   const { data: board, isLoading } = useForkliftBoard(f.date)
   const [checking, setChecking] = useState<ForkliftBoardVehicle | null>(null)
 
+  // Xe CHƯA check nổi lên đầu (rồi tới có lỗi, nghỉ, đã check) — người giám sát nhìn phát thấy ngay
+  const STATUS_RANK: Record<string, number> = { none: 0, issue: 1, idle: 2, ok: 3 }
   const vehicles = useMemo(
-    () => (board?.vehicles ?? []).filter(v => !f.warehouseId || v.warehouse_id === f.warehouseId),
-    [board, f.warehouseId],
+    () => (board?.vehicles ?? [])
+      .filter(v => !f.warehouseId || v.warehouse_id === f.warehouseId)
+      .sort((a, b) => {
+        const ra = STATUS_RANK[!a.log ? 'none' : a.log.status === 'IDLE' ? 'idle' : a.log.issue_count > 0 ? 'issue' : 'ok']
+        const rb = STATUS_RANK[!b.log ? 'none' : b.log.status === 'IDLE' ? 'idle' : b.log.issue_count > 0 ? 'issue' : 'ok']
+        return ra !== rb ? ra - rb : a.code.localeCompare(b.code)
+      }),
+    [board, f.warehouseId],  // eslint-disable-line react-hooks/exhaustive-deps
   )
   const checked = vehicles.filter(v => v.log)
   const idle = checked.filter(v => v.log!.status === 'IDLE')
@@ -208,7 +216,8 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
 // ─── FormSheet check list 1 xe / 1 ngày ───────────────────────────────────────
 
 function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle; date: string; onClose: () => void }) {
-  const { data: items = [] } = useForkliftItems()
+  // Hạng mục = bộ DÙNG CHUNG + bộ RIÊNG của kho xe này (user chốt 31/07: cài đặt theo kho)
+  const { data: items = [] } = useForkliftItems({ warehouseId: vehicle.warehouse_id })
   const save = useSaveForkliftLog()
   const [idle, setIdle] = useState(vehicle.log?.status === 'IDLE')
   const [meter, setMeter] = useState(vehicle.log?.hour_meter != null ? String(vehicle.log.hour_meter) : '')
@@ -424,6 +433,7 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
                     <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Giờ chạy</TableHead>
                     <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Lỗi</TableHead>
                     <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người check</TableHead>
+                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc check</TableHead>
                     <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
                     <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-20" />
                   </TableRow>
@@ -444,6 +454,9 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.issue_count > 0 ? <span className="text-red-600 font-semibold">{r.issue_count}</span> : 0}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.checked_by || <span className="text-slate-300">—</span>}</TableCell>
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
+                        {r.checked_at ? <>{formatTimestampDate(r.checked_at, true)} <span className="text-slate-400">{formatTimestampTime(r.checked_at)}</span></> : <span className="text-slate-300">—</span>}
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[200px] truncate" title={r.note ?? ''}>{r.note || <span className="text-slate-300">—</span>}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <div className="flex items-center gap-0.5">
@@ -488,6 +501,7 @@ function LogDetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
               <span>Trạng thái: <b>{log.status === 'IDLE' ? 'Xe nghỉ' : 'Chạy'}</b></span>
               {log.hour_meter != null && <span>Số đồng hồ: <b className="tabular-nums">{fmtH(log.hour_meter)}</b></span>}
               {log.checked_by && <span>Người check: <b>{log.checked_by}</b></span>}
+              {log.updated_at && <span>Lúc: <b className="tabular-nums">{formatTimestampDate(log.updated_at, true)} {formatTimestampTime(log.updated_at)}</b></span>}
             </div>
             {(log.checklist ?? []).length === 0 ? (
               <p className="text-slate-400">Không có hạng mục nào được ghi</p>
@@ -515,18 +529,31 @@ function LogDetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
 // ─── Tab 3: Cài đặt (danh mục Xe nâng + Hạng mục check list) ─────────────────
 
 function SettingsTab({ canVehicle, canItem, whOpts }: { canVehicle: boolean; canItem: boolean; whOpts: { value: string; label: string; sub?: string }[] }) {
+  const f = useWmsFilterStore(s => s.forklift)
+  const setF = useWmsFilterStore(s => s.setForklift)
+  const filterDefs: FilterDef[] = [
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v }), pinned: true },
+  ]
   return (
-    <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-      <div className="space-y-4 p-3">
-        {canVehicle && <VehicleSection whOpts={whOpts} />}
-        {canItem && <ItemSection />}
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <FilterBar defs={filterDefs} />
+        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+        <p className="text-xs text-slate-500 ml-auto hidden sm:block">Hạng mục "Dùng chung" áp mọi kho · hạng mục gắn kho chỉ áp xe kho đó</p>
       </div>
-    </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        <div className="space-y-4 p-3">
+          {canVehicle && <VehicleSection whOpts={whOpts} warehouseId={f.warehouseId} />}
+          {canItem && <ItemSection whOpts={whOpts} warehouseId={f.warehouseId} />}
+        </div>
+      </div>
+    </>
   )
 }
 
-function VehicleSection({ whOpts }: { whOpts: { value: string; label: string; sub?: string }[] }) {
-  const { data: vehicles = [], isLoading } = useForklifts(true)
+function VehicleSection({ whOpts, warehouseId }: { whOpts: { value: string; label: string; sub?: string }[]; warehouseId: string }) {
+  const { data: allVehicles = [], isLoading } = useForklifts(true)
+  const vehicles = warehouseId ? allVehicles.filter(v => v.warehouse_id === warehouseId) : allVehicles
   const del = useDeleteForklift()
   const [editing, setEditing] = useState<ForkliftVehicle | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -648,8 +675,10 @@ function VehicleSheet({ vehicle, whOpts, onClose }: { vehicle: ForkliftVehicle |
   )
 }
 
-function ItemSection() {
-  const { data: items = [], isLoading } = useForkliftItems(true)
+function ItemSection({ whOpts, warehouseId }: { whOpts: { value: string; label: string; sub?: string }[]; warehouseId: string }) {
+  const { data: allItems = [], isLoading } = useForkliftItems({ includeInactive: true })
+  // Lọc theo kho: hạng mục DÙNG CHUNG (null) luôn hiện vì áp cả kho đang lọc
+  const items = warehouseId ? allItems.filter(it => !it.warehouse_id || it.warehouse_id === warehouseId) : allItems
   const del = useDeleteForkliftItem()
   const [editing, setEditing] = useState<ForkliftItem | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -662,7 +691,7 @@ function ItemSection() {
   return (
     <div>
       <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 flex items-center gap-2">
-        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Hạng mục check list ({items.length}) — áp chung mọi xe</span>
+        <span className="text-[10px] font-semibold uppercase text-slate-600 flex-1">Hạng mục check list ({items.length}) — theo kho hoặc dùng chung</span>
         <ActionCluster items={[{
           key: 'add', icon: Plus, label: 'Thêm hạng mục', tip: 'Thêm nội dung kiểm tra mới',
           primary: true, variant: 'default', onClick: () => { setEditing(null); setShowForm(true) },
@@ -674,6 +703,7 @@ function ItemSection() {
             <TableRow>
               <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-14 text-right">Thứ tự</TableHead>
               <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nội dung kiểm tra</TableHead>
+              <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Kho áp dụng</TableHead>
               <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
               <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-16" />
             </TableRow>
@@ -683,6 +713,11 @@ function ItemSection() {
               <TableRow key={it.id} className={!it.is_active ? 'opacity-50' : ''}>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-500">{it.sort_order}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[420px] truncate" title={it.label}>{it.label}</TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  {it.warehouse_id
+                    ? <span className="text-[10px] font-medium text-slate-700">{it.warehouse?.name ?? it.warehouse_id}</span>
+                    : <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700">Dùng chung</span>}
+                </TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <Badge variant="outline" className={`text-[10px] ${it.is_active ? 'border-green-200 text-green-700' : 'border-slate-200 text-slate-400'}`}>
                     {it.is_active ? 'Đang dùng' : 'Tắt'}
@@ -703,30 +738,41 @@ function ItemSection() {
           </TableBody>
         </Table>
       )}
-      {showForm && <ItemSheet item={editing} onClose={() => setShowForm(false)} />}
+      {showForm && <ItemSheet item={editing} whOpts={whOpts} defaultWarehouseId={warehouseId} onClose={() => setShowForm(false)} />}
     </div>
   )
 }
 
-function ItemSheet({ item, onClose }: { item: ForkliftItem | null; onClose: () => void }) {
+const ITEM_SHARED = '__shared__'   // sentinel "Dùng chung mọi kho" (SingleSelect không hiện nhãn cho value '')
+
+function ItemSheet({ item, whOpts, defaultWarehouseId, onClose }: {
+  item: ForkliftItem | null
+  whOpts: { value: string; label: string; sub?: string }[]
+  defaultWarehouseId: string
+  onClose: () => void
+}) {
   const create = useCreateForkliftItem()
   const update = useUpdateForkliftItem()
   const [label, setLabel] = useState(item?.label ?? '')
   const [sortOrder, setSortOrder] = useState(String(item?.sort_order ?? 0))
   const [active, setActive] = useState(item?.is_active ?? true)
+  // Thêm mới khi đang lọc 1 kho → mặc định gắn kho đó (đúng ngữ cảnh "cài đặt riêng kho")
+  const [whId, setWhId] = useState(item ? (item.warehouse_id ?? ITEM_SHARED) : (defaultWarehouseId || ITEM_SHARED))
   const [error, setError] = useState('')
   const saving = create.isPending || update.isPending
+  const whSelectOpts = [{ value: ITEM_SHARED, label: 'Dùng chung mọi kho' }, ...whOpts]
 
   function handleSave() {
     setError('')
     if (!label.trim()) { setError('Nội dung hạng mục bắt buộc'); return }
     const so = Number(sortOrder)
+    const warehouse_id = whId === ITEM_SHARED ? null : whId
     const opts = {
       onSuccess: () => { toast({ title: item ? 'Đã cập nhật hạng mục' : 'Đã thêm hạng mục' }); onClose() },
       onError: (e: unknown) => setError(errMsg(e)),
     }
-    if (item) update.mutate({ id: item.id, label: label.trim(), sort_order: Number.isFinite(so) ? so : 0, is_active: active }, opts)
-    else create.mutate({ label: label.trim(), sort_order: Number.isFinite(so) ? so : 0 }, opts)
+    if (item) update.mutate({ id: item.id, label: label.trim(), sort_order: Number.isFinite(so) ? so : 0, is_active: active, warehouse_id }, opts)
+    else create.mutate({ label: label.trim(), sort_order: Number.isFinite(so) ? so : 0, warehouse_id }, opts)
   }
 
   return (
@@ -741,6 +787,11 @@ function ItemSheet({ item, onClose }: { item: ForkliftItem | null; onClose: () =
         <div className="space-y-1">
           <Label className="text-xs">Nội dung kiểm tra <span className="text-red-500">*</span></Label>
           <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="vd Phanh (thắng) hoạt động tốt" className="h-9" maxLength={200} />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Kho áp dụng</Label>
+          <SingleSelect options={whSelectOpts} value={whId} onChange={setWhId} placeholder="Chọn kho…" triggerClassName="w-full" />
+          <p className="text-[10px] text-slate-400">"Dùng chung mọi kho" = xe kho nào cũng check mục này; chọn 1 kho = chỉ xe kho đó</p>
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Thứ tự hiển thị</Label>

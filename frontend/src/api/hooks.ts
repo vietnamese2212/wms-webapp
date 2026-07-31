@@ -4823,7 +4823,11 @@ export type ForkliftVehicle = {
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string
   warehouse?: { id: string; code: string; name: string } | null
 }
-export type ForkliftItem = { id: string; label: string; sort_order: number; is_active: boolean }
+export type ForkliftItem = {
+  id: string; label: string; sort_order: number; is_active: boolean
+  warehouse_id: string | null   // null = hạng mục DÙNG CHUNG mọi kho
+  warehouse?: { id: string; code: string; name: string } | null
+}
 export type ForkliftChecklistResult = { item_id: string; label: string; ok: boolean; note?: string | null }
 export type ForkliftLog = {
   id: string; forklift_id: string; log_date?: string; status: 'ACTIVE' | 'IDLE'
@@ -4839,7 +4843,7 @@ export type ForkliftBoardVehicle = {
 export type ForkliftReportRow = {
   id: string; forklift_id: string; code: string; forklift_name: string | null; warehouse_id: string
   log_date: string; status: 'ACTIVE' | 'IDLE'; hour_meter: number | null; issue_count: number
-  checked_by: string | null; note: string | null
+  checked_by: string | null; note: string | null; checked_at: string
   next_meter: number | null; next_date: string | null; hours_run: number | null
 }
 export type ForkliftReportSummary = {
@@ -4881,11 +4885,16 @@ export function useDeleteForklift() {
   })
 }
 
-export function useForkliftItems(includeInactive = false) {
+export function useForkliftItems(opts: { includeInactive?: boolean; warehouseId?: string } = {}) {
   return useQuery({
-    queryKey: ['forklift-items', includeInactive],
+    queryKey: ['forklift-items', opts],
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/forklift-items', { params: includeInactive ? { include_inactive: '1' } : undefined })
+      const { data } = await apiClient.get('/wms/forklift-items', {
+        params: {
+          include_inactive: opts.includeInactive ? '1' : undefined,
+          warehouse_id: opts.warehouseId || undefined,
+        },
+      })
       return data.data as ForkliftItem[]
     },
   })
@@ -4893,7 +4902,7 @@ export function useForkliftItems(includeInactive = false) {
 export function useCreateForkliftItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { label: string; sort_order?: number }) =>
+    mutationFn: (body: { label: string; sort_order?: number; warehouse_id?: string | null }) =>
       apiClient.post('/wms/forklift-items', body).then(r => r.data.data),
     onSettled: () => qc.invalidateQueries({ queryKey: ['forklift-items'] }),
   })
@@ -4901,7 +4910,7 @@ export function useCreateForkliftItem() {
 export function useUpdateForkliftItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; sort_order?: number; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; sort_order?: number; is_active?: boolean; warehouse_id?: string | null }) =>
       apiClient.patch(`/wms/forklift-items/${id}`, body).then(r => r.data.data),
     onSettled: () => qc.invalidateQueries({ queryKey: ['forklift-items'] }),
   })

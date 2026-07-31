@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -67,6 +68,29 @@ async function compressPhoto(file: File): Promise<string> {
 }
 const fmtH = (n: number | null | undefined) =>
   n === null || n === undefined ? null : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+
+// Xem ảnh FULL MÀN HÌNH — portal ra body (thoát overflow/transform của Sheet/Dialog);
+// pointer-events-auto BẮT BUỘC (Radix modal set pointer-events:none lên body);
+// Escape bắt ở capture-phase + stopPropagation để KHÔNG đóng luôn Sheet/Dialog phía dưới.
+function PhotoLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', h, true)
+    return () => window.removeEventListener('keydown', h, true)
+  }, [onClose])
+  return createPortal(
+    <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center pointer-events-auto"
+      onClick={onClose} onPointerDown={e => e.stopPropagation()}>
+      <img src={url} alt="Ảnh xe nâng" className="max-w-full max-h-full object-contain" onClick={e => e.stopPropagation()} />
+      <button type="button" onClick={onClose} aria-label="Đóng"
+        className="absolute top-3 right-3 rounded-full bg-white/10 hover:bg-white/25 text-white p-2.5 transition-colors">
+        <X className="h-6 w-6" />
+      </button>
+      <p className="absolute bottom-3 left-0 right-0 text-center text-[11px] text-white/60">Bấm ra ngoài hoặc ✕ để đóng</p>
+    </div>,
+    document.body,
+  )
+}
 
 function errMsg(e: unknown): string {
   const ax = e as AxiosError<{ error?: { message?: string } }>
@@ -142,6 +166,7 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
   const setF = useWmsFilterStore(s => s.setForklift)
   const { data: board, isLoading } = useForkliftBoard(f.date)
   const [checking, setChecking] = useState<ForkliftBoardVehicle | null>(null)
+  const [viewLogId, setViewLogId] = useState<string | null>(null)   // bấm dòng = XEM; Sửa là nút riêng (user chốt)
 
   // Xe CHƯA check nổi lên đầu (rồi tới có lỗi, nghỉ, đã check) — người giám sát nhìn phát thấy ngay
   const STATUS_RANK: Record<string, number> = { none: 0, issue: 1, idle: 2, ok: 3 }
@@ -201,15 +226,15 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người check</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
-                  {canCheck && <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-20" />}
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-24" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {vehicles.map(v => {
                   const badge = boardBadge(v)
                   return (
-                    <TableRow key={v.id} className={`${canCheck ? 'cursor-pointer' : ''} ${rowText(boardKey(v))}`}
-                      onClick={() => { if (canCheck) setChecking(v) }}>
+                    <TableRow key={v.id} className={`${v.log || canCheck ? 'cursor-pointer' : ''} ${rowText(boardKey(v))}`}
+                      onClick={() => { if (v.log) setViewLogId(v.log.id); else if (canCheck) setChecking(v) }}>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold sticky left-0 z-10 bg-white">{v.code}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
@@ -228,14 +253,23 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{v.log?.checked_by || <span className="text-slate-300">—</span>}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{v.log ? formatTimestampTime(v.log.updated_at) : <span className="text-slate-300">—</span>}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[220px] truncate" title={v.log?.note ?? ''}>{v.log?.note || <span className="text-slate-300">—</span>}</TableCell>
-                      {canCheck && (
-                        <TableCell className="px-2 py-1 whitespace-nowrap">
-                          <button className="text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded text-[10px] font-medium inline-flex items-center gap-1"
-                            onClick={e => { e.stopPropagation(); setChecking(v) }}>
-                            <ClipboardCheck className="h-3.5 w-3.5" /> {v.log ? 'Sửa' : 'Check'}
-                          </button>
-                        </TableCell>
-                      )}
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                        <div className="flex items-center gap-0.5">
+                          {v.log && (
+                            <button className="text-slate-400 hover:text-sky-600 px-1.5 py-1 rounded" title="Xem chi tiết check list + ảnh"
+                              onClick={e => { e.stopPropagation(); setViewLogId(v.log!.id) }}>
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {canCheck && (
+                            <button className="text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded text-[10px] font-medium inline-flex items-center gap-1"
+                              title={v.log ? 'Sửa check list hôm nay' : 'Check list xe này'}
+                              onClick={e => { e.stopPropagation(); setChecking(v) }}>
+                              {v.log ? <><Pencil className="h-3.5 w-3.5" /> Sửa</> : <><ClipboardCheck className="h-3.5 w-3.5" /> Check</>}
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
                     </TableRow>
                   )
                 })}
@@ -243,8 +277,9 @@ function BoardTab({ canCheck, whOpts }: { canCheck: boolean; whOpts: { value: st
             </Table>
           )}
       </div>
-      <div className="border-t px-3 py-1 text-[10px] text-slate-400 shrink-0">{vehicles.length} xe · ngày {formatDate(f.date)}</div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-400 shrink-0">{vehicles.length} xe · ngày {formatDate(f.date)} · bấm dòng để XEM, nút Sửa để ghi lại</div>
       {checking && <CheckSheet vehicle={checking} date={f.date} onClose={() => setChecking(null)} />}
+      {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
     </>
   )
 }
@@ -263,6 +298,7 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
   // Ảnh chụp xe: ảnh MỚI (data URL đã nén) hoặc ảnh ĐÃ CÓ của log cũ (signed URL — sửa lại không bắt chụp lại)
   const [photoData, setPhotoData] = useState<string | null>(null)
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [photoFull, setPhotoFull] = useState(false)
   const existingPhotoUrl = vehicle.log?.photo_url ?? null
 
   async function handlePickPhoto(file: File | undefined) {
@@ -364,8 +400,18 @@ function CheckSheet({ vehicle, date, onClose }: { vehicle: ForkliftBoardVehicle;
           <div className="space-y-1.5">
             <Label className="text-xs">Ảnh chụp xe <span className="text-red-500">*</span></Label>
             {(photoData || existingPhotoUrl) && (
-              <img src={photoData ?? existingPhotoUrl ?? undefined} alt="Ảnh xe nâng"
-                className="w-full max-h-52 object-contain rounded-lg border border-slate-200 bg-slate-50" />
+              <div className="relative">
+                <img src={photoData ?? existingPhotoUrl ?? undefined} alt="Ảnh xe nâng"
+                  className="w-full max-h-52 object-contain rounded-lg border border-slate-200 bg-slate-50 cursor-zoom-in"
+                  onClick={() => setPhotoFull(true)} />
+                <button type="button" title="Xem full màn hình" onClick={() => setPhotoFull(true)}
+                  className="absolute top-1.5 right-1.5 rounded-md bg-slate-900/60 hover:bg-slate-900/80 text-white p-1.5 transition-colors">
+                  <Maximize2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {photoFull && (photoData || existingPhotoUrl) && (
+              <PhotoLightbox url={(photoData ?? existingPhotoUrl)!} onClose={() => setPhotoFull(false)} />
             )}
             <label className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm cursor-pointer transition-colors ${photoData || existingPhotoUrl ? 'border-slate-200 text-slate-500 hover:bg-slate-50' : 'border-sky-400 bg-sky-50 text-sky-700 font-medium'}`}>
               <Camera className="h-4 w-4" />
@@ -566,6 +612,7 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
 
 function LogDetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: log, isLoading } = useForkliftLog(id)
+  const [photoFull, setPhotoFull] = useState(false)
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="max-w-md">
@@ -599,10 +646,16 @@ function LogDetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
             )}
             {log.note && <p className="text-slate-600">Ghi chú: {log.note}</p>}
             {log.photo_url && (
-              <a href={log.photo_url} target="_blank" rel="noreferrer" title="Mở ảnh gốc">
-                <img src={log.photo_url} alt="Ảnh xe lúc check" className="w-full max-h-56 object-contain rounded border border-slate-200 bg-slate-50" />
-              </a>
+              <div className="relative">
+                <img src={log.photo_url} alt="Ảnh xe lúc check" onClick={() => setPhotoFull(true)}
+                  className="w-full max-h-56 object-contain rounded border border-slate-200 bg-slate-50 cursor-zoom-in" />
+                <button type="button" title="Xem full màn hình" onClick={() => setPhotoFull(true)}
+                  className="absolute top-1.5 right-1.5 rounded-md bg-slate-900/60 hover:bg-slate-900/80 text-white p-1.5 transition-colors">
+                  <Maximize2 className="h-4 w-4" />
+                </button>
+              </div>
             )}
+            {photoFull && log.photo_url && <PhotoLightbox url={log.photo_url} onClose={() => setPhotoFull(false)} />}
           </div>
         )}
       </DialogContent>

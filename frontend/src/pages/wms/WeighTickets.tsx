@@ -19,7 +19,18 @@ import { useWeighTickets, useWeighTicketWarehouses, useMatchWeighTicket, useGDOs
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { formatDate, formatTimestampTime } from '@/utils/formatters'
+import { formatDate, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+
+/**
+ * Biển số HIỂN THỊ — dạng dùng chung toàn app: IN HOA, không gạch/space (user chốt 30/07).
+ * PM cân in ra "89G-00451" còn Đăng ký cổng / Xuất kho / danh mục Xe đều là "89G00451";
+ * để hai kiểu cạnh nhau thì mắt đọc ra hai xe khác nhau, đối chiếu bằng mắt rất dễ sai.
+ * `license_plate_norm` do BE tính sẵn khi nhận từ trạm cân (đã dùng để khớp chuyến + tìm kiếm);
+ * fallback tự chuẩn hoá phòng dòng cũ chưa có cột norm. Giá trị NGUYÊN VĂN vẫn giữ ở
+ * `license_plate` để đối chiếu với phiếu cân giấy — chỉ đổi chỗ NHÌN, không đụng dữ liệu gốc.
+ */
+const plateOf = (t: { license_plate?: string | null; license_plate_norm?: string | null }): string =>
+  t.license_plate_norm || normalizeLicensePlate(t.license_plate ?? '')
 
 
 
@@ -156,7 +167,7 @@ export default function WeighTickets() {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{r.weigh_date ? formatDate(r.weigh_date) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.warehouse_name ?? undefined}>{r.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{r.ticket_no ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{r.license_plate ?? '—'}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap" title={r.license_plate ?? undefined}>{plateOf(r) || '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.direction ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right whitespace-nowrap">{kg(r.tare_kg) ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{r.tare_at ? formatTimestampTime(r.tare_at) : <span className="text-slate-300">—</span>}</TableCell>
@@ -216,14 +227,15 @@ function MatchDialog({ ticket, onClose }: { ticket: WeighTicket; onClose: () => 
   const { mutate: doMatch, isPending } = useMatchWeighTicket()
   const day = ticket.weigh_date ?? undefined
   const { data: gdos = [], isLoading } = useGDOs(day ? { date_from: day, date_to: day } : undefined)
-  const norm = (s: string | null | undefined) => String(s ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
-  const plateNorm = norm(ticket.license_plate)
+  // Chuẩn hoá biển số dùng CHUNG hàm của app (trước đây chép lại luật ngay tại đây — 2 bản
+  // rời nhau thì sửa 1 chỗ là lệch chỗ kia; nay chỉ còn utils/formatters là nguồn duy nhất).
+  const plateNorm = normalizeLicensePlate(ticket.license_plate ?? '')
   const sorted = useMemo(() => {
     const list = (gdos as { id: string; group_code?: string | null; license_plate?: string | null; status?: string | null; customer_name?: string | null }[])
       .filter(g => g.status !== 'CANCELLED')
     return [...list].sort((a, b) => {
-      const ma = plateNorm && norm(a.license_plate) === plateNorm ? 0 : 1
-      const mb = plateNorm && norm(b.license_plate) === plateNorm ? 0 : 1
+      const ma = plateNorm && normalizeLicensePlate(a.license_plate ?? '') === plateNorm ? 0 : 1
+      const mb = plateNorm && normalizeLicensePlate(b.license_plate ?? '') === plateNorm ? 0 : 1
       if (ma !== mb) return ma - mb
       return (a.group_code ?? '').localeCompare(b.group_code ?? '')
     })
@@ -244,7 +256,7 @@ function MatchDialog({ ticket, onClose }: { ticket: WeighTicket; onClose: () => 
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="text-sm">
-            {ticket.gdo_id ? 'Gỡ / đổi chuyến' : 'Gắn chuyến'} — phiếu <span className="font-mono">{ticket.ticket_no ?? ticket.source_id}</span> · xe <span className="font-mono">{ticket.license_plate}</span>
+            {ticket.gdo_id ? 'Gỡ / đổi chuyến' : 'Gắn chuyến'} — phiếu <span className="font-mono">{ticket.ticket_no ?? ticket.source_id}</span> · xe <span className="font-mono" title={ticket.license_plate ?? undefined}>{plateOf(ticket)}</span>
           </DialogTitle>
         </DialogHeader>
         {isLoading ? (
@@ -254,14 +266,14 @@ function MatchDialog({ ticket, onClose }: { ticket: WeighTicket; onClose: () => 
         ) : (
           <div className="max-h-[45vh] overflow-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
             {sorted.slice(0, 200).map(g => {
-              const hit = plateNorm && norm(g.license_plate) === plateNorm
+              const hit = plateNorm && normalizeLicensePlate(g.license_plate ?? '') === plateNorm
               const isCurrent = g.id === ticket.gdo_id
               return (
                 <button key={g.id} disabled={isPending}
                   className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-sky-50 !min-h-0 ${isCurrent ? 'bg-sky-50' : ''}`}
                   onClick={() => apply(g.id)}>
                   <span className="font-mono text-[10px] font-semibold text-slate-700">{g.group_code}</span>
-                  <span className="text-[10px] text-slate-500 font-mono">{g.license_plate ?? '—'}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">{normalizeLicensePlate(g.license_plate ?? '') || '—'}</span>
                   {hit && <span className="text-[8px] px-1 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold shrink-0">khớp biển số</span>}
                   {isCurrent && <span className="ml-auto text-[8px] text-sky-600 font-semibold shrink-0">đang gắn</span>}
                 </button>

@@ -3230,7 +3230,8 @@ export interface WeighTicket {
   source_id: number
   ticket_no: string | null
   weigh_date: string | null
-  license_plate: string | null
+  license_plate: string | null      // NGUYÊN VĂN phần mềm cân in ra ("89G-00451") — giữ để đối chiếu phiếu giấy
+  license_plate_norm: string | null // bỏ gạch/space + IN HOA ("89G00451") — dạng DÙNG CHUNG toàn app, ưu tiên hiển thị
   direction: string | null          // 'Cân Xuất' / 'Cân Nhập' (nguyên văn PM cân)
   goods_name: string | null
   trans_company: string | null

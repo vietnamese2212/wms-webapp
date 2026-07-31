@@ -16,6 +16,7 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 
 const now = () => new Date().toISOString()
@@ -1108,7 +1109,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
-      started_at: t, license_plate: license_plate?.trim() || null,
+      started_at: t, license_plate: normalizePlate(license_plate),
       created_by: actor, updated_by: actor, updated_at: t,
     })
     if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
@@ -1294,7 +1295,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const t = now()
     await supabase.from('GroupDeliveryOrder').update({
       status: 'IN_PROGRESS',
-      ...(license_plate?.trim() ? { license_plate: license_plate.trim() } : {}),
+      ...(normalizePlate(license_plate) ? { license_plate: normalizePlate(license_plate) } : {}),
       ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
       ...(gdo.started_at  ? {} : { started_at: t }),
       updated_by: actor, updated_at: t,
@@ -1976,7 +1977,7 @@ export async function startGDO(req: Request, res: Response) {
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: now(),
-        license_plate: license_plate?.trim() || null,
+        license_plate: normalizePlate(license_plate),
         container_number:       container_number       ?? null,
         exporter_name:          exporter_name          ?? null,
         loader_name:            loader_name            ?? null,
@@ -2028,7 +2029,7 @@ export async function updateTransport(req: Request, res: Response) {
 
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
-        license_plate:         license_plate.trim(),
+        license_plate:         normalizePlate(license_plate),
         container_number:      container_number?.trim()      || null,
         exporter_name:         exporter_name?.trim()         || null,
         loader_name:           loader_name?.trim()           || null,

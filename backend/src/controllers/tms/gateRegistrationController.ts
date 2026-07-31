@@ -5,6 +5,7 @@ import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -417,7 +418,7 @@ export async function createGateRegistration(req: Request, res: Response) {
     driver_name:        driver_name ?? null,
     phone:              phone ?? null,
     vehicle_id:         vehicle_id ?? null,
-    license_plate:      license_plate ?? null,
+    license_plate:      normalizePlate(license_plate as string | null | undefined),
     warehouse_id,
     warehouse_type:     warehouse_type ?? null,
     status:             'REGISTERED',
@@ -551,7 +552,7 @@ export async function updateGateRegistration(req: Request, res: Response) {
   if (company_id !== undefined)       patch.company_id = company_id
   if (company_name_raw !== undefined) patch.company_name_raw = company_name_raw
   if (vehicle_id !== undefined)       patch.vehicle_id = vehicle_id
-  if (license_plate !== undefined)    patch.license_plate = license_plate
+  if (license_plate !== undefined)    patch.license_plate = normalizePlate(license_plate)
   if (direction !== undefined)        patch.direction = direction
   if (warehouse_id !== undefined)     patch.warehouse_id = warehouse_id
   if (warehouse_type !== undefined)   patch.warehouse_type = warehouse_type

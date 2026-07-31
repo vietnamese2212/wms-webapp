@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -20,11 +21,10 @@ function fail(res: Response, message: string, status = 500, code = 'ERROR') {
   return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 
-// Biển số về dạng khớp: bỏ mọi ký tự không phải chữ/số + upper ("29K-06037" → "29K06037")
-export function normPlate(s: string | null | undefined): string | null {
-  const n = String(s ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
-  return n || null
-}
+// Biển số về dạng khớp ("29K-06037" → "29K06037") — dùng CHUNG helper của app (utils/plate),
+// trước đây chép lại luật ngay tại đây nên có 2 bản rời nhau.
+// LƯU Ý: chỉ dùng cho cột `license_plate_norm`; cột `license_plate` GIỮ NGUYÊN VĂN phiếu cân giấy.
+export const normPlate = normalizePlate
 
 // PM cân lưu giờ dạng "HH:mm:ss-dd/MM/yyyy" (WChar) → ISO UTC (giờ VN +07:00)
 function parseKbTime(s: string | null | undefined): string | null {

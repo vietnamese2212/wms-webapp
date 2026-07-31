@@ -54,4 +54,21 @@ const withOrder = new Set(tOrders.map(o => o.transfer_gdo_id))
 const missing = doneGdos.filter(g => !withOrder.has(g.id))
 check('GDO đang IN_TRANSIT đều có lệnh chuyển kho', missing.length === 0, missing.length ? `vd ${missing[0].group_code}` : `soi ${doneGdos.length} GDO`)
 
+// 7. BIỂN SỐ đúng dạng chuẩn ^[A-Z0-9]+$ (user chốt 31/07) — DB đã có CHECK, đây là lưới thứ hai:
+//    CHECK có thể bị DROP nhầm khi sửa bảng, và migration production có thể chưa apply.
+//    CỐ Ý bỏ qua WeighTicket.license_plate + erp_outbound_orders.license_plate: 2 cột đó lưu
+//    NGUYÊN VĂN chứng từ nguồn (dạng chuẩn của phiếu cân nằm ở license_plate_norm).
+const BAD_PLATE = /[^A-Z0-9]/
+for (const [table, label] of [
+  ['Vehicle', 'danh mục Xe'],
+  ['gate_registrations', 'Đăng ký cổng'],
+  ['GroupDeliveryOrder', 'chuyến xuất'],
+  ['TmsVehicleSlot', 'slot xe TMS'],
+]) {
+  const rows = await restAll(table, 'select=id,license_plate&license_plate=not.is.null')
+  const bad = rows.filter(r => BAD_PLATE.test(r.license_plate))
+  check(`Biển số ${label} đúng dạng (chỉ chữ+số, in hoa)`, bad.length === 0,
+    bad.length ? `${bad.length} dòng sai, vd "${bad[0].license_plate}"` : `soi ${rows.length} dòng`)
+}
+
 finish('INVARIANT')

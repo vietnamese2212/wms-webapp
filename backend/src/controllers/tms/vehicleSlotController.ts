@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { relinkAfterDelete } from './gateRegistrationController'
+import { normalizePlate } from '../../utils/plate'
 
 // ── Scope-write: user ASSIGNED chỉ thao tác xe của lệnh thuộc kho mình (nguồn hoặc đích).
 // NATIONAL → null (toàn quyền). ĐVVT (ncc_id) → null vì scope theo CÔNG TY (book xe liên kho là hợp lệ).
@@ -122,7 +123,8 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
     const newSlotId = slot_id !== undefined ? slot_id : existing.slot_id
     const isChangingSlot = newSlotId !== existing.slot_id
-    const newPlate = license_plate !== undefined ? (license_plate || null) : ((existing.license_plate as string | null) ?? null)
+    // Biển số về dạng chuẩn NGAY tại rìa (chỉ chữ+số, in hoa) — DB có CHECK chặn dạng khác
+    const newPlate = license_plate !== undefined ? normalizePlate(license_plate) : ((existing.license_plate as string | null) ?? null)
     const isChangingPlate = license_plate !== undefined && newPlate !== ((existing.license_plate as string | null) ?? null)
 
     // Gác giờ (chỉ đọc) khi đổi khung giờ — làm TRƯỚC khi đụng kế toán

@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
 import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -186,7 +187,10 @@ export async function createVehicle(req: Request, res: Response) {
     if (!effectiveNccId || !license_plate || !vehicle_type_id)
       return fail(res, 'ncc_id, license_plate, vehicle_type_id là bắt buộc', 400)
     const now = new Date().toISOString()
-    const plate = license_plate.toUpperCase().replace(/\s+/g, '')
+    // normalizePlate: bỏ MỌI ký tự ngăn cách, không chỉ khoảng trắng — bản cũ `replace(/\s+/g,'')`
+    // giữ nguyên dấu gạch nên chính nó đẻ ra "29E-09404", "98C-06739" trong danh mục (đo 30/07)
+    const plate = normalizePlate(license_plate)
+    if (!plate) return fail(res, 'Biển số phải có ít nhất 1 chữ hoặc số', 400)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
       .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })

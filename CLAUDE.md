@@ -124,6 +124,13 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 - **Quét nhặt lẻ HỘP = quét QR PALLET (đã có) + trừ số hộp khỏi tồn base** — KHÔNG cần QR tới hộp (QR nhỏ nhất = pallet/thùng). Thùng lẻ = quét; hộp lẻ = nhập tay/đếm.
 - **BẮT BUỘC CHÍNH XÁC + fix MỌI lỗi hiển thị/tính toán liên quan.** Rà kỹ mọi điểm đọc `cartons_*`/`loose_picking` (nhất là **tổng ở list/detail** + **Nhặt lẻ** — hay sót). **Luôn VERIFY SỐNG số hiển thị, đừng tin "đã kiểm OK".** Chi tiết + tiến độ: memory `base-unit-campaign` + `docs/plans/BASE_UNIT_EXECUTION_PLAN.md`.
 
+**BIỂN SỐ XE — chỉ CHỮ và SỐ, viết HOA, không ngăn cách (`^[A-Z0-9]+$`, user chốt 31/07):**
+- Chuẩn hoá bằng helper TẬP TRUNG, đừng tự `replace` rải rác: BE `utils/plate.ts` (`normalizePlate`) ↔ FE `utils/formatters.ts` (`normalizeLicensePlate`) — 2 bản MIRROR, sửa luật phải sửa cả hai.
+- **Chuẩn hoá ở BACKEND, không chỉ ở ô nhập.** Form FE chuẩn hoá từ lâu mà dữ liệu vẫn bẩn (đo 30/07: Vehicle 11 dòng, gate 2 dòng) vì còn đường ghi KHÔNG qua form (API tích hợp, upload Excel, script import) — và `vehicleController` cũ chỉ bỏ khoảng trắng, GIỮ dấu gạch nên tự đẻ ra `29E-09404`. Thêm đường ghi biển số mới → gọi `normalizePlate` tại rìa.
+- **DB có CHECK `^[A-Z0-9]+$`** trên `Vehicle` · `gate_registrations` · `GroupDeliveryOrder` · `TmsVehicleSlot` (migration `20260731_plate_format`) — ghi sai dạng là **23514**, không âm thầm.
+- **NGOẠI LỆ — 2 cột lưu NGUYÊN VĂN nguồn ngoài, KHÔNG chuẩn hoá:** `WeighTicket.license_plate` (bản sao phiếu cân giấy; dạng chuẩn nằm ở cột `license_plate_norm`, FE hiển thị cột này) và `erp_outbound_orders.license_plate` (raw SAP). Sửa 2 cột đó = mất khả năng đối chiếu chứng từ gốc.
+- So khớp biển giữa các module (phiếu cân ↔ chuyến ↔ cổng) luôn so trên dạng CHUẨN, đừng so chuỗi thô.
+
 **Timezone — Asia/Ho_Chi_Minh (UTC+7):**
 - Business date (`import_date`…): lưu ngày VN `new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })`. System timestamp (`created_at`…): UTC `toISOString()`. Query khoảng ngày VN: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`.
 - Hiển thị: date-only → `formatDate()`; timestamp → `formatDateTime()`/`formatTimestampDate()`/`formatTimestampTime()` (dùng `Intl` + timezone VN, không phụ thuộc OS). Cell hẹp: `formatTimestampDate(s, true)` → `dd-MM-yy`. Tất cả từ `utils/formatters.ts`.

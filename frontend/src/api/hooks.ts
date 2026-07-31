@@ -4816,3 +4816,154 @@ export function useAttendanceReport(params: { warehouse_id?: string; department_
     },
   })
 }
+
+// ─── XE NÂNG (forklift) — check list an toàn hàng ngày + giờ vận hành ────────
+export type ForkliftVehicle = {
+  id: string; code: string; name: string | null; warehouse_id: string; is_active: boolean
+  created_by: string | null; updated_by: string | null; created_at: string; updated_at: string
+  warehouse?: { id: string; code: string; name: string } | null
+}
+export type ForkliftItem = { id: string; label: string; sort_order: number; is_active: boolean }
+export type ForkliftChecklistResult = { item_id: string; label: string; ok: boolean; note?: string | null }
+export type ForkliftLog = {
+  id: string; forklift_id: string; log_date?: string; status: 'ACTIVE' | 'IDLE'
+  hour_meter: number | null; checklist: ForkliftChecklistResult[]; issue_count: number
+  note: string | null; checked_by: string | null; updated_at: string
+}
+export type ForkliftBoardVehicle = {
+  id: string; code: string; name: string | null; warehouse_id: string
+  warehouse?: { id: string; code: string; name: string } | null
+  log: ForkliftLog | null
+  prev: { log_date: string; hour_meter: number } | null
+}
+export type ForkliftReportRow = {
+  id: string; forklift_id: string; code: string; forklift_name: string | null; warehouse_id: string
+  log_date: string; status: 'ACTIVE' | 'IDLE'; hour_meter: number | null; issue_count: number
+  checked_by: string | null; note: string | null
+  next_meter: number | null; next_date: string | null; hours_run: number | null
+}
+export type ForkliftReportSummary = {
+  forklift_id: string; code: string; forklift_name: string | null; warehouse_id: string
+  total_hours: number; active_days: number; idle_days: number; open_days: number; issue_count: number
+  last_meter: number | null; last_date: string | null
+}
+
+export function useForklifts(includeInactive = false) {
+  return useQuery({
+    queryKey: ['forklifts', includeInactive],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/forklifts', { params: includeInactive ? { include_inactive: '1' } : undefined })
+      return data.data as ForkliftVehicle[]
+    },
+  })
+}
+export function useCreateForklift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name?: string | null; warehouse_id: string }) =>
+      apiClient.post('/wms/forklifts', body).then(r => r.data.data),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['forklifts'] }); qc.invalidateQueries({ queryKey: ['forklift-board'] }) },
+  })
+}
+export function useUpdateForklift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string | null; warehouse_id?: string; is_active?: boolean }) =>
+      apiClient.patch(`/wms/forklifts/${id}`, body).then(r => r.data.data),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['forklifts'] }); qc.invalidateQueries({ queryKey: ['forklift-board'] }) },
+  })
+}
+export function useDeleteForklift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/forklifts/${id}`).then(r => r.data.data),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ['forklifts'] }); qc.invalidateQueries({ queryKey: ['forklift-board'] }) },
+  })
+}
+
+export function useForkliftItems(includeInactive = false) {
+  return useQuery({
+    queryKey: ['forklift-items', includeInactive],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/forklift-items', { params: includeInactive ? { include_inactive: '1' } : undefined })
+      return data.data as ForkliftItem[]
+    },
+  })
+}
+export function useCreateForkliftItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { label: string; sort_order?: number }) =>
+      apiClient.post('/wms/forklift-items', body).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['forklift-items'] }),
+  })
+}
+export function useUpdateForkliftItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; label?: string; sort_order?: number; is_active?: boolean }) =>
+      apiClient.patch(`/wms/forklift-items/${id}`, body).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['forklift-items'] }),
+  })
+}
+export function useDeleteForkliftItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/forklift-items/${id}`).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['forklift-items'] }),
+  })
+}
+
+export function useForkliftBoard(date: string) {
+  return useQuery({
+    queryKey: ['forklift-board', date],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/forklift-board', { params: { date } })
+      return data.data as { date: string; vehicles: ForkliftBoardVehicle[] }
+    },
+  })
+}
+export function useSaveForkliftLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      forklift_id: string; log_date?: string; status: 'ACTIVE' | 'IDLE'
+      hour_meter?: number | null; checklist?: ForkliftChecklistResult[]; note?: string | null
+    }) => apiClient.post('/wms/forklift-logs', body).then(r => r.data.data),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['forklift-board'] })
+      qc.invalidateQueries({ queryKey: ['forklift-report'] })
+      qc.invalidateQueries({ queryKey: ['forklift-log'] })
+    },
+  })
+}
+export function useDeleteForkliftLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/forklift-logs/${id}`).then(r => r.data.data),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['forklift-board'] })
+      qc.invalidateQueries({ queryKey: ['forklift-report'] })
+    },
+  })
+}
+export function useForkliftLog(id: string | undefined) {
+  return useQuery({
+    queryKey: ['forklift-log', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/forklift-logs/${id}`)
+      return data.data as ForkliftLog & { log_date: string; forklift: { id: string; code: string; name: string | null } | null }
+    },
+  })
+}
+export function useForkliftReport(params: { from: string; to: string; warehouse_id?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['forklift-report', params],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/forklift-report', { params })
+      return data.data as { from: string; to: string; rows: ForkliftReportRow[]; summary: ForkliftReportSummary[] }
+    },
+  })
+}

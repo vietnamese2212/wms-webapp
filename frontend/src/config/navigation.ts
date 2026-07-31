@@ -5,7 +5,7 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -44,6 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
       { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
       { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
+      { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
       { to: '/wms/multi-scan',    icon: ScanLine,       label: 'Quét loạt (test)',  adminOnly: true },
     ],
   },

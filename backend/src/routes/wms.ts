@@ -12,6 +12,7 @@ import * as palletOps from '../controllers/wms/palletOpsController'
 import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
+import * as forklift from '../controllers/wms/forkliftController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -178,6 +179,21 @@ router.patch('/slotting/plans/:id',                           requirePerm('slott
 router.post('/slotting/plans/:id/scan-move',                  requirePerm('inventory', 'move_location'), slotting.scanMovePlanPallet)
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
+
+// ─── Xe nâng: check list an toàn hàng ngày + đồng hồ giờ vận hành ───────────
+router.get('/forklifts',            requirePerm('forklift', 'view'),           forklift.listForklifts)
+router.post('/forklifts',           requirePerm('forklift', 'manage_vehicle'), forklift.createForklift)
+router.patch('/forklifts/:id',      requirePerm('forklift', 'manage_vehicle'), forklift.updateForklift)
+router.delete('/forklifts/:id',     requirePerm('forklift', 'manage_vehicle'), forklift.deleteForklift)
+router.get('/forklift-items',       requirePerm('forklift', 'view'),           forklift.listChecklistItems)
+router.post('/forklift-items',      requirePerm('forklift', 'manage_item'),    forklift.createChecklistItem)
+router.patch('/forklift-items/:id', requirePerm('forklift', 'manage_item'),    forklift.updateChecklistItem)
+router.delete('/forklift-items/:id',requirePerm('forklift', 'manage_item'),    forklift.deleteChecklistItem)
+router.get('/forklift-board',       requirePerm('forklift', 'view'),           forklift.getBoard)
+router.post('/forklift-logs',       requirePerm('forklift', 'check'),          forklift.saveLog)
+router.get('/forklift-logs/:id',    requirePerm('forklift', 'view'),           forklift.getLog)
+router.delete('/forklift-logs/:id', requirePerm('forklift', 'check'),          forklift.deleteLog)
+router.get('/forklift-report',      requirePerm('forklift', 'view'),           forklift.getReport)
 router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)

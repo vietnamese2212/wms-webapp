@@ -39,6 +39,7 @@ const weighTickets       = () => import('@/pages/wms/WeighTickets')
 const controlTower       = () => import('@/pages/wms/ControlTower')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
+const forklift           = () => import('@/pages/wms/Forklift')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
@@ -78,6 +79,7 @@ export const Pages = {
   ControlTower: lazyRetry(controlTower),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
+  Forklift: lazyRetry(forklift),
   LoosePicking: lazyRetry(loosePicking),
   LoosePickingDetail: lazyRetry(loosePickingDetail),
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
@@ -120,6 +122,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/locations': locations,
   '/wms/stocktake': stocktake,
   '/wms/slotting': slotting,
+  '/wms/forklift': forklift,
   '/wms/stocktake/summary': stocktakeDashboard,
   '/wms/stocktake/history': stocktakeHistory,
   '/wms/settings': wmsSettings,

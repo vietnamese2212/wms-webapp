@@ -238,6 +238,15 @@ export const MODULES = {
       configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
     },
   },
+  forklift: {
+    page: 'Xe nâng',
+    actions: {
+      view:           'Xem board check list + lịch sử + báo cáo vận hành',
+      check:          'Ghi / sửa / xóa check list ngày (kèm số đồng hồ giờ)',
+      manage_vehicle: 'Quản lý danh mục Xe nâng (tab Cài đặt)',
+      manage_item:    'Quản lý Hạng mục check list (tab Cài đặt)',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

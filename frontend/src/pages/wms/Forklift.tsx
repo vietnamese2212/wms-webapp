@@ -30,8 +30,11 @@ import {
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-// Nén ảnh chụp xe trước khi gửi (camera điện thoại 2-5MB → ~200-400KB JPEG):
-// resize cạnh dài về ≤1280px + JPEG 0.75 qua canvas → data URL base64.
+// Nén ảnh chụp xe trước khi gửi (camera điện thoại 2-5MB → mục tiêu ≤ ~180KB):
+// cạnh dài ≤1024px, JPEG hạ chất lượng DẦN 0.7→0.5 tới khi đạt mục tiêu; ảnh
+// chi tiết quá thì hạ tiếp về 800px. Ảnh bằng chứng check xe không cần nét cao —
+// 1024px xem trên điện thoại/PC vẫn rõ tình trạng xe.
+const PHOTO_TARGET_BYTES = 180 * 1024
 async function compressPhoto(file: File): Promise<string> {
   const url = URL.createObjectURL(file)
   try {
@@ -41,12 +44,23 @@ async function compressPhoto(file: File): Promise<string> {
       i.onerror = () => reject(new Error('Không đọc được ảnh'))
       i.src = url
     })
-    const scale = Math.min(1, 1280 / Math.max(img.width, img.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(img.width * scale)
-    canvas.height = Math.round(img.height * scale)
-    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
-    return canvas.toDataURL('image/jpeg', 0.75)
+    const draw = (maxEdge: number) => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+      return canvas
+    }
+    const bytesOf = (dataUrl: string) => Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4)
+    const canvas = draw(1024)
+    let out = canvas.toDataURL('image/jpeg', 0.7)
+    for (const q of [0.6, 0.5]) {
+      if (bytesOf(out) <= PHOTO_TARGET_BYTES) break
+      out = canvas.toDataURL('image/jpeg', q)
+    }
+    if (bytesOf(out) > PHOTO_TARGET_BYTES) out = draw(800).toDataURL('image/jpeg', 0.55)
+    return out
   } finally {
     URL.revokeObjectURL(url)
   }

@@ -24,7 +24,7 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import {
   useForklifts, useCreateForklift, useUpdateForklift, useDeleteForklift,
   useForkliftItems, useCreateForkliftItem, useUpdateForkliftItem, useDeleteForkliftItem,
-  useForkliftBoard, useSaveForkliftLog, useDeleteForkliftLog, useForkliftLog, useForkliftReport,
+  useForkliftBoard, useSaveForkliftLog, useDeleteForkliftLog, useForkliftLog, useForkliftLogs, useForkliftReport,
   type ForkliftVehicle, type ForkliftItem, type ForkliftBoardVehicle, type ForkliftChecklistResult,
   type ForkliftReportRow,
 } from '@/api/hooks'
@@ -671,6 +671,9 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
               </DashBlock>
             </div>
 
+            {/* ── MA TRẬN CHECK LIST: ngày × hạng mục, filter theo XE (user chốt 31/07) ── */}
+            <ChecklistMatrix vehicles={vehicles} days={days} from={f.from} to={f.to} />
+
             {/* ── BẢNG TRA CỨU ── */}
             {/* Tổng hợp theo xe */}
             <div>
@@ -769,6 +772,112 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
       </div>
       {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
     </>
+  )
+}
+
+// ─── Ma trận check list: DÒNG = ngày · CỘT = hạng mục · filter = XE ──────────
+function ChecklistMatrix({ vehicles, days, from, to }: {
+  vehicles: { id: string; code: string; name: string | null }[]
+  days: string[]   // trục ngày (asc, đã cắt tới hôm nay)
+  from: string; to: string
+}) {
+  const f = useWmsFilterStore(s => s.forklift)
+  const setF = useWmsFilterStore(s => s.setForklift)
+  const sorted = useMemo(() => [...vehicles].sort((a, b) => a.code.localeCompare(b.code)), [vehicles])
+  // xe đã chọn không còn trong danh sách (đổi filter kho / xe ngừng dùng) → tự về xe đầu
+  const effectiveFk = sorted.some(v => v.id === f.matrixFk) ? f.matrixFk : (sorted[0]?.id ?? '')
+  const { data: logs = [], isLoading } = useForkliftLogs({ forklift_id: effectiveFk, from, to }, !!effectiveFk)
+  const [viewLogId, setViewLogId] = useState<string | null>(null)
+
+  // Cột = hạng mục theo thứ tự xuất hiện ở log MỚI NHẤT trước (phản ánh cấu hình hiện tại),
+  // hạng mục cũ đã gỡ vẫn thành cột riêng (label snapshot) — lịch sử không mất
+  const labels = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const log of logs) for (const c of log.checklist ?? []) if (!seen.has(c.label)) { seen.add(c.label); out.push(c.label) }
+    return out
+  }, [logs])
+  const byDate = useMemo(() => new Map(logs.map(l => [l.log_date, l])), [logs])
+  const daysDesc = useMemo(() => [...days].reverse(), [days])
+  const vehicle = sorted.find(v => v.id === effectiveFk)
+
+  return (
+    <DashBlock title="Ma trận check list theo ngày" sub="dòng = ngày · cột = hạng mục · bấm dòng xem chi tiết + ảnh">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-[10px] text-slate-500 shrink-0">Xe nâng:</span>
+        <SingleSelect
+          options={sorted.map(v => ({ value: v.id, label: v.code, sub: v.name ?? undefined }))}
+          value={effectiveFk} onChange={v => setF({ matrixFk: v })}
+          placeholder="Chọn xe…" triggerClassName="w-44" />
+        <div className="flex items-center gap-3 text-[9px] text-slate-500 ml-auto">
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Đạt</span>
+          <span className="flex items-center gap-1"><XCircle className="h-3 w-3 text-red-500" /> Lỗi (rê chuột xem ghi chú)</span>
+          <span className="flex items-center gap-1"><span className="text-[9px] px-1 rounded-full bg-slate-200 text-slate-600">Nghỉ</span></span>
+          <span className="flex items-center gap-1"><span className="text-[9px] px-1 rounded-full bg-amber-100 text-amber-700">Chưa check</span></span>
+        </div>
+      </div>
+      {!effectiveFk ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có xe nâng nào trong phạm vi lọc</p> :
+       isLoading ? <p className="text-xs text-slate-400 py-4 text-center">Đang tải…</p> : (
+        <div className="overflow-auto max-h-[420px] border border-slate-200 rounded">
+          <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Ngày</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                {labels.map(lb => (
+                  <TableHead key={lb} className="px-1.5 py-1.5 text-[9px] whitespace-nowrap text-center">
+                    <div className="max-w-[110px] truncate" title={lb}>{lb}</div>
+                  </TableHead>
+                ))}
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Số đồng hồ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người check</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {daysDesc.map(d => {
+                const log = byDate.get(d)
+                const cells = new Map((log?.checklist ?? []).map(c => [c.label, c]))
+                return (
+                  <TableRow key={d} className={log ? 'cursor-pointer' : ''}
+                    onClick={() => { if (log) setViewLogId(log.id) }}>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums sticky left-0 z-10 bg-white">{formatDate(d)}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {!log ? <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Chưa check</span>
+                        : log.status === 'IDLE' ? <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">Nghỉ</span>
+                        : log.issue_count > 0 ? <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">Có lỗi</span>
+                        : <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Chạy</span>}
+                    </TableCell>
+                    {labels.map(lb => {
+                      const c = cells.get(lb)
+                      return (
+                        <TableCell key={lb} className="px-1.5 py-1 whitespace-nowrap text-center"
+                          title={log && c && !c.ok ? `${lb}: LỖI${c.note ? ` — ${c.note}` : ''}` : undefined}>
+                          {!log || log.status === 'IDLE' || !c
+                            ? <span className="text-slate-300">—</span>
+                            : c.ok
+                              ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500 inline" />
+                              : <XCircle className="h-3.5 w-3.5 text-red-500 inline" />}
+                        </TableCell>
+                      )
+                    })}
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
+                      {log?.hour_meter != null ? fmtH(log.hour_meter) : <span className="text-slate-300 font-normal">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{log?.checked_by || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{log ? formatTimestampTime(log.updated_at) : <span className="text-slate-300">—</span>}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {effectiveFk && vehicle && (
+        <p className="text-[9px] text-slate-400 mt-1">{vehicle.code}{vehicle.name ? ` · ${vehicle.name}` : ''} — {daysDesc.length} ngày · {logs.length} ngày đã check</p>
+      )}
+      {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
+    </DashBlock>
   )
 }
 

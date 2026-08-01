@@ -4958,6 +4958,17 @@ export function useDeleteForkliftLog() {
     },
   })
 }
+/** Ma trận check list 1 xe: log đầy đủ checklist theo từng ngày trong khoảng (≤92 ngày). */
+export function useForkliftLogs(params: { forklift_id: string; from: string; to: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['forklift-logs-matrix', params],
+    enabled: enabled && !!params.forklift_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/forklift-logs', { params })
+      return data.data as (ForkliftLog & { log_date: string })[]
+    },
+  })
+}
 export function useForkliftLog(id: string | undefined) {
   return useQuery({
     queryKey: ['forklift-log', id],

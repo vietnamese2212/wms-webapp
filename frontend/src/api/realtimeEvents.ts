@@ -50,7 +50,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
   forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],
   forklift_checklist_items: [['forklift-items']],
-  forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log']],
+  forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log'], ['forklift-logs-matrix']],
   Employee:             [['employees'], ['employee-records'], ['employee-records-paged'], ['employee-record'], ['warehouse-employees'], ['hr-attendance-matrix']],
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],

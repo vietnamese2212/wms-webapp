@@ -457,6 +457,28 @@ export async function deleteLog(req: Request, res: Response) {
   return ok(res, { id })
 }
 
+// GET /wms/forklift-logs?forklift_id&from&to — MA TRẬN check list 1 xe (user chốt 31/07):
+// trả đủ checklist jsonb theo từng ngày để FE dựng bảng ngày × hạng mục.
+// Bounded: 1 xe × ≤92 ngày (parseRange chặn) — không cần phân trang.
+export async function listLogs(req: Request, res: Response) {
+  const fkId = typeof req.query.forklift_id === 'string' ? req.query.forklift_id : ''
+  if (!fkId) return fail(res, 'Thiếu forklift_id', 400)
+  const range = parseRange(req)
+  if (typeof range === 'string') return fail(res, range, 400)
+  const { data: fk } = await supabase.from('forklift_vehicles').select('id, warehouse_id').eq('id', fkId).maybeSingle()
+  if (!fk) return fail(res, 'Không tìm thấy xe nâng', 404)
+  const scope = scopeWhIds(req)
+  if (scope !== null && !scope.includes(fk.warehouse_id)) return fail(res, 'Xe ngoài phạm vi kho được gán', 403)
+  const rows = await fetchAllRowsParallel(() =>
+    supabase.from('forklift_daily_logs')
+      .select('id, log_date, status, hour_meter, checklist, issue_count, note, checked_by, updated_at')
+      .eq('forklift_id', fkId).gte('log_date', range.from).lte('log_date', range.to)
+      .order('log_date', { ascending: false }),
+  ).catch((e: Error) => e)
+  if (rows instanceof Error) return fail(res, rows.message, 500)
+  return ok(res, rows)
+}
+
 // GET /wms/forklift-logs/:id — chi tiết 1 bản ghi (dialog xem hạng mục đạt/lỗi)
 export async function getLog(req: Request, res: Response) {
   const { id } = req.params

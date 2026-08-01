@@ -191,6 +191,7 @@ router.patch('/forklift-items/:id', requirePerm('forklift', 'manage_item'),    f
 router.delete('/forklift-items/:id',requirePerm('forklift', 'manage_item'),    forklift.deleteChecklistItem)
 router.get('/forklift-board',       requirePerm('forklift', 'view'),           forklift.getBoard)
 router.post('/forklift-logs',       requirePerm('forklift', 'check'),          forklift.saveLog)
+router.get('/forklift-logs',        requirePerm('forklift', 'view'),           forklift.listLogs)   // ma trận 1 xe (ĐẶT TRƯỚC /:id)
 router.get('/forklift-logs/:id',    requirePerm('forklift', 'view'),           forklift.getLog)
 router.delete('/forklift-logs/:id', requirePerm('forklift', 'check'),          forklift.deleteLog)
 router.get('/forklift-report',      requirePerm('forklift', 'view'),           forklift.getReport)

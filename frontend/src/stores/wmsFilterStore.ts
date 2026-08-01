@@ -236,6 +236,7 @@ interface ForkliftFilters {
   warehouseId: string   // '' = mọi kho trong scope
   from: string          // báo cáo vận hành: khoảng ngày (tối đa 92 ngày — BE chặn)
   to: string
+  matrixFk: string      // xe đang soi ở Ma trận check list ('' = tự chọn xe đầu)
 }
 interface DoSapFilters {
   search: string
@@ -376,7 +377,7 @@ function initialFilters() {
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
-    forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today() },
+    forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '' },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },

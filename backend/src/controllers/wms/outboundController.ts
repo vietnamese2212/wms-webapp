@@ -2106,7 +2106,8 @@ export async function startGDO(req: Request, res: Response) {
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
 
     // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ (xe nâng/đẩy tay trong site)
-    if (!license_plate?.trim() &&
+    // và GIAO LẺ (nhân viên tự nhận không có xe — biển số tùy chọn)
+    if (!license_plate?.trim() && small_delivery !== true &&
         !(await isInternalPair((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party)))
       return fail(res, 'Biển số xe là bắt buộc', 400)
 

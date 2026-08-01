@@ -406,7 +406,8 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit(waive = false) {
-    if (!effectivePlate.trim() && !internalPair) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
+    // Giao lẻ: biển số tùy chọn (nhân viên nhận không có xe); còn lại bắt buộc như cũ
+    if (!smallDelivery && !effectivePlate.trim() && !internalPair) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null); setErrCode(null)
     startGDO(
       {
@@ -447,34 +448,51 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
       </>}
     >
         <div className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Chuyến xe / Biển số *</Label>
-            <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
-              onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
-              freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
-              special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
-              takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
-          </div>
+          {/* Kho quy trình chặt: chọn LOẠI CHUYẾN trước — 1 lựa chọn duy nhất, tránh 2 ô tick gây rối
+              (tick trong picker = xem xe đã ra/vãng lai của luồng XE TẢI; giao lẻ là loại chuyến khác hẳn) */}
+          {strictGate && (
+            <div className="space-y-1">
+              <Label className="text-xs">Loại chuyến</Label>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button type="button" onClick={() => setSmallDelivery(false)}
+                  className={`h-9 rounded-md border text-xs font-medium transition-colors ${!smallDelivery ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                  🚛 Xe tải (qua cổng-cân)
+                </button>
+                <button type="button" onClick={() => { setSmallDelivery(true); setGateRegId(''); setErr(null); setErrCode(null) }}
+                  className={`h-9 rounded-md border text-xs font-medium transition-colors ${smallDelivery ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                  🛵 Giao lẻ — xe máy/NV nhận
+                </button>
+              </div>
+              {smallDelivery && (
+                <p className="text-[10px] text-slate-400">Không qua đăng ký cổng + cân. Chuyến sẽ ghi rõ <b>người khai</b> để đối soát — chỉ dùng khi KHÔNG phải xe tải chở hàng.</p>
+              )}
+            </div>
+          )}
 
-          {special && !gateRegId && licPlate.trim() && (
-            strictGate && !smallDelivery ? (
-              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: xe tải biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại. Giao lẻ (xe máy/nhân viên nhận) thì tích ô bên dưới.</p>
+          {!smallDelivery && (
+            <div className="space-y-1">
+              <Label className="text-xs">Chuyến xe / Biển số *</Label>
+              <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
+                onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
+                freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
+                special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
+                takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
+            </div>
+          )}
+          {smallDelivery && (
+            <div className="space-y-1">
+              <Label className="text-xs">Biển số (nếu có)</Label>
+              <Input className="text-sm h-9 font-mono uppercase" placeholder="VD: 29X1-123.45 — nhân viên nhận thì để trống"
+                value={licPlate} onChange={e => { setLicPlate(e.target.value); setGateRegId('') }} />
+            </div>
+          )}
+
+          {!smallDelivery && special && !gateRegId && licPlate.trim() && (
+            strictGate ? (
+              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: xe tải biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại. Xe máy/nhân viên nhận thì chọn "Giao lẻ" ở trên.</p>
             ) : (
               <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
             )
-          )}
-
-          {/* GIAO LẺ — chỉ kho quy trình chặt: tự khai miễn gate cổng/cân, có ghi vết + badge trên chuyến */}
-          {strictGate && (
-            <label htmlFor="start-smalldelivery" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-              <input id="start-smalldelivery" type="checkbox" checked={smallDelivery}
-                onChange={e => setSmallDelivery(e.target.checked)}
-                className="h-4 w-4 mt-0.5 rounded accent-amber-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Giao lẻ / xe máy / nhân viên nhận — không qua cổng-cân</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Chỉ tích khi KHÔNG phải xe tải chở hàng (xe máy, nhân viên tự nhận…). Chuyến sẽ ghi rõ người khai để đối soát.</span>
-              </span>
-            </label>
           )}
 
           {isContainer && (
@@ -1722,7 +1740,7 @@ export default function OutboundDetail() {
         <Card className="px-2 py-1 bg-blue-50 border-blue-200">
           <div className="flex items-start justify-between gap-1">
             <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-slate-700">
-              <span><strong>Biển số:</strong> {gdo.license_plate}</span>
+              <span><strong>Biển số:</strong> {gdo.license_plate ?? '—'}</span>
               {gdo.container_number && <span><strong>Cont:</strong> {gdo.container_number}</span>}
               {gdo.exporter_name    && <span><strong>Xuất:</strong> {gdo.exporter_name}</span>}
               {gdo.loader_name      && <span><strong>Bốc:</strong> {gdo.loader_name}</span>}

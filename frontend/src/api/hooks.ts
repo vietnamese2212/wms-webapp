@@ -3051,7 +3051,7 @@ export function useUpdateTransport() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; license_plate: string; container_number?: string
+      id: string; license_plate?: string; container_number?: string   // biển TÙY CHỌN khi chuyến đã duyệt bỏ qua cổng (giao lẻ)
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
@@ -5000,6 +5000,7 @@ export function useSaveForkliftLog() {
       qc.invalidateQueries({ queryKey: ['forklift-board'] })
       qc.invalidateQueries({ queryKey: ['forklift-report'] })
       qc.invalidateQueries({ queryKey: ['forklift-log'] })
+      qc.invalidateQueries({ queryKey: ['forklift-logs-matrix'] })   // tab Ma trận cùng dữ liệu log
     },
   })
 }
@@ -5010,6 +5011,8 @@ export function useDeleteForkliftLog() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['forklift-board'] })
       qc.invalidateQueries({ queryKey: ['forklift-report'] })
+      qc.invalidateQueries({ queryKey: ['forklift-log'] })           // dialog chi tiết đang mở
+      qc.invalidateQueries({ queryKey: ['forklift-logs-matrix'] })
     },
   })
 }

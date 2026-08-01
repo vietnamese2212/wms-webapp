@@ -203,6 +203,9 @@ export async function listChecklistItems(req: Request, res: Response) {
   const rawWh = typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : ''
   const qWh = /^[A-Za-z0-9_-]+$/.test(rawWh) ? rawWh : null
   const scope = scopeWhIds(req)
+  // warehouse_id từ client phải NẰM TRONG scope kho — không thì user kho A đọc được hạng mục riêng kho B
+  if (qWh && scope !== null && !scope.includes(qWh))
+    return fail(res, 'Kho ngoài phạm vi được gán', 403)
   const rows = await fetchAllRowsParallel(() => {
     let q = supabase.from('forklift_checklist_items')
       .select('id, label, sort_order, is_active, warehouse_id, warehouse:Warehouse(id, code, name), created_at, updated_at')
@@ -333,7 +336,8 @@ export async function getBoard(req: Request, res: Response) {
     supabase.from('forklift_daily_logs')
       .select('forklift_id, log_date, hour_meter')
       .lt('log_date', date).gte('log_date', sinceIso).not('hour_meter', 'is', null)
-      .in('forklift_id', chunk).order('log_date', { ascending: false }),
+      // order phải DUY NHẤT cho phân trang .range() — (forklift_id, log_date) là unique key
+      .in('forklift_id', chunk).order('log_date', { ascending: false }).order('forklift_id'),
   ).catch((e: Error) => e)
   if (prevRows instanceof Error) return fail(res, prevRows.message, 500)
 
@@ -393,6 +397,15 @@ export async function saveLog(req: Request, res: Response) {
       return fail(res, `Số đồng hồ (${meter}) nhỏ hơn lần ghi trước (${prev.hour_meter} — ngày ${prev.log_date}). Đồng hồ giờ chỉ tăng, kiểm tra lại.`, 422)
     if (next && meter > Number(next.hour_meter))
       return fail(res, `Số đồng hồ (${meter}) lớn hơn lần ghi sau (${next.hour_meter} — ngày ${next.log_date}). Kiểm tra lại.`, 422)
+    // Trần VẬT LÝ 24h/ngày: chặn lỗi gõ thừa số 0 (15000 thay 1500) — không thì số ảo lọt vào,
+    // hôm sau nhập số thật bị 422 "nhỏ hơn lần ghi trước" và kẹt tới khi có người sửa bản ghi cũ
+    if (prev) {
+      const gapDays = Math.max(1, Math.round(
+        (new Date(`${date}T00:00:00Z`).getTime() - new Date(`${prev.log_date}T00:00:00Z`).getTime()) / 86400_000))
+      const delta = meter - Number(prev.hour_meter)
+      if (delta > gapDays * 24)
+        return fail(res, `Số đồng hồ tăng ${delta} giờ so với lần ghi trước (${prev.hour_meter} — ngày ${prev.log_date}), vượt trần vật lý ${gapDays * 24} giờ (24h/ngày). Kiểm tra lại số vừa nhập; nếu lần ghi TRƯỚC bị nhập sai thì sửa bản ghi ngày đó trước.`, 422)
+    }
   }
 
   const list = parseChecklist(checklist)

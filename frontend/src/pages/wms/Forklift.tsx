@@ -518,7 +518,11 @@ function ReportTab({ whOpts, active }: { whOpts: { value: string; label: string;
   const closedActiveDays = summary.reduce((s, r) => s + r.active_days - r.open_days, 0)
   const avgHours = closedActiveDays > 0 ? Math.round((totalHours / closedActiveDays) * 10) / 10 : null
   const expectedChecks = vehicles.length * days.length
-  const compliance = expectedChecks > 0 ? Math.round((rows.length / expectedChecks) * 100) : null
+  // Tử số chỉ đếm log của xe ĐANG hoạt động (khớp mẫu số) — xe "Ngừng dùng" giữa kỳ còn log
+  // trong rows nhưng không còn trong vehicles → không lọc thì % tuân thủ vượt 100%
+  const vehicleIdSet = new Set(vehicles.map(v => v.id))
+  const checkedCount = rows.filter(r => vehicleIdSet.has(r.forklift_id)).length
+  const compliance = expectedChecks > 0 ? Math.round((checkedCount / expectedChecks) * 100) : null
   const totalIssues = summary.reduce((s, r) => s + r.issue_count, 0)
 
   const tiles: BandTile[] = [
@@ -700,7 +704,7 @@ function MatrixTab({ whOpts, active }: { whOpts: { value: string; label: string;
   const vehicles = useScopedFkVehicles(f.warehouseId)
   // xe đã chọn không còn trong scope (đổi filter kho / xe ngừng dùng) → tự về xe đầu
   const effectiveFk = vehicles.some(v => v.id === f.matrixFk) ? f.matrixFk : (vehicles[0]?.id ?? '')
-  const { data: logs = [], isLoading } = useForkliftLogs({ forklift_id: effectiveFk, from: f.from, to: f.to }, active && !!effectiveFk)
+  const { data: logs = [], isLoading, error } = useForkliftLogs({ forklift_id: effectiveFk, from: f.from, to: f.to }, active && !!effectiveFk)
   const [viewLogId, setViewLogId] = useState<string | null>(null)
 
   const filterDefs: FilterDef[] = [
@@ -735,6 +739,7 @@ function MatrixTab({ whOpts, active }: { whOpts: { value: string; label: string;
       </div>
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {!effectiveFk ? <p className="text-xs text-slate-400 py-8 text-center">Chưa có xe nâng nào trong phạm vi lọc</p> :
+         error ? <div className="m-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{errMsg(error)}</div> :
          isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p> : (
           <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
             <TableHeader>
@@ -1077,7 +1082,7 @@ function VehicleSection({ whOpts, warehouseId }: { whOpts: { value: string; labe
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <div className="leading-tight">
                     <div className="text-[10px] text-slate-600">{v.created_by ?? <span className="text-slate-300">—</span>}</div>
-                    <div className="text-[9px] text-slate-400">{formatDate(v.created_at.slice(0, 10))}</div>
+                    <div className="text-[9px] text-slate-400">{formatTimestampDate(v.created_at, true)}</div>
                   </div>
                 </TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">

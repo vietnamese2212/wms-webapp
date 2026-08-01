@@ -355,8 +355,8 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const { mutate: startGDO, isPending } = useStartGDO()
   const [err, setErr] = useState<string | null>(null)
   // Gate cổng/cân: BE trả 422 GATE_REQUIRED (chưa đăng ký cổng — vãng lai bị khóa ở kho chặt)
-  // hoặc WEIGH_REQUIRED (chưa cân bì hôm nay). Người có quyền weigh_waive được duyệt bỏ qua
-  // NGAY tại đây (gửi lại kèm weigh_waive=true).
+  // hoặc WEIGH_REQUIRED (chưa cân bì hôm nay). Miễn trừ DUY NHẤT = nút "Bỏ qua cổng"/"Bỏ qua cân"
+  // trên trang chuyến (2 quyền riêng) — KHÔNG còn cờ bypass nào gửi từ dialog này.
   const [errCode, setErrCode] = useState<string | null>(null)
   const gateBlocked = errCode === 'WEIGH_REQUIRED' || errCode === 'GATE_REQUIRED'
   // 2 RULE per kho + 2 VẾT DUYỆT RIÊNG (user chốt 01/08): rule 1 đăng ký cổng (miễn = gate_waived) ·
@@ -563,6 +563,11 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   )
   const [gateRegId,       setGateRegId]       = useState(gdo.gate_registration_id ?? '')
   const [special,         setSpecial]         = useState(false)   // mặc định CHỈ xe đang trong cổng; muốn xe đã ra/vãng lai phải tự tích
+  // Sửa xe cũng CHẤP HÀNH 2 rule như Bắt đầu (BE re-check — không thì start hợp lệ rồi sửa
+  // sang biển bất kỳ là lách rule): kho rule cổng → không nhập biển tay; duyệt cổng → biển tùy chọn
+  const etRuleGate   = gdo.warehouse?.require_gate_on_start === true
+  const etGateWaived = !!gdo.gate_waived_at
+  const etAllowFreePlate = !etRuleGate || etGateWaived
 
   // ── Chuyến xe ở Đăng ký cổng (giống StartDialog) — đổi link gate theo đúng chuyến
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -586,12 +591,13 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit() {
-    if (!effectivePlate.trim()) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
+    // Chuyến đã duyệt bỏ qua cổng (giao lẻ/xe máy/NV nhận) → biển số TÙY CHỌN như lúc Bắt đầu
+    if (!effectivePlate.trim() && !etGateWaived) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
     setErr(null)
     updateTransport(
       {
         id:                    gdo.id,
-        license_plate:         effectivePlate.trim(),
+        license_plate:         effectivePlate.trim() || undefined,
         container_number:      containerNum  || undefined,
         exporter_name:         exporterNames.join(', ') || undefined,
         loader_name:           loaderName    || undefined,
@@ -625,12 +631,13 @@ function EditTransportDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; 
     >
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs">Chuyến xe / Biển số *</Label>
+            <Label className="text-xs">Chuyến xe / Biển số {etGateWaived ? <span className="text-slate-400">(tùy chọn — đã duyệt bỏ qua cổng)</span> : '*'}</Label>
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
               special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
-              takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
+              takenGateIds={takenGateIds} outDate={gdo.delivery_date}
+              allowFreePlate={etAllowFreePlate} />
           </div>
 
           {special && !gateRegId && licPlate.trim() && (
@@ -1874,7 +1881,7 @@ export default function OutboundDetail() {
           <div className="space-y-3 py-1">
             <p className="text-xs text-slate-600">Ghi nhận xuất toàn bộ mã theo kế hoạch, trừ tồn ngay và hoàn thành chuyến {gdo.group_code}. Nhập biển số xe:</p>
             <div className="space-y-1">
-              <Label className="text-xs">Biển số xe <span className="text-red-500">*</span></Label>
+              <Label className="text-xs">Biển số xe {gdo.gate_waived_at ? <span className="text-slate-400">(tùy chọn — đã duyệt bỏ qua cổng)</span> : <span className="text-red-500">*</span>}</Label>
               <Input value={quickPlate} onChange={e => { setQuickPlate(e.target.value); setQuickErr(null) }}
                 placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
             </div>
@@ -1886,7 +1893,7 @@ export default function OutboundDetail() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowQuickExport(false); setQuickErr(null); setQuickErrCode(null) }} disabled={quickExporting}>Hủy</Button>
-            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || !quickPlate.trim()} onClick={() => doQuickExport()}>
+            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || (!quickPlate.trim() && !gdo.gate_waived_at)} onClick={() => doQuickExport()}>
               {quickExporting ? 'Đang xuất…' : 'Xuất luôn'}
             </Button>
           </DialogFooter>

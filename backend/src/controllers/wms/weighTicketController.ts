@@ -331,10 +331,23 @@ export async function matchWeighTicket(req: Request, res: Response) {
   try {
     const { gdo_id } = req.body as { gdo_id?: string | null }
     const t = now()
+    // Scope kho (chống IDOR gắn/gỡ chéo kho) + không CƯỚP phiếu đang gắn chuyến khác âm thầm
+    const scopeIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    const { data: tk } = await supabase.from('WeighTicket')
+      .select('id, gdo_id, warehouse_id').eq('id', req.params.id).maybeSingle()
+    if (!tk) return fail(res, 'Không tìm thấy phiếu cân', 404, 'NOT_FOUND')
+    const tkRow = tk as { gdo_id: string | null; warehouse_id: string | null }
+    if (scopeIds && tkRow.warehouse_id && !scopeIds.includes(tkRow.warehouse_id))
+      return fail(res, 'Phiếu cân không thuộc kho trong phạm vi của bạn', 403, 'FORBIDDEN')
+    if (gdo_id && tkRow.gdo_id && tkRow.gdo_id !== gdo_id)
+      return fail(res, 'Phiếu cân đang gắn chuyến khác — gỡ khỏi chuyến đó trước rồi mới gắn lại', 409, 'CONFLICT')
     if (gdo_id) {
       const { data: g } = await supabase.from('GroupDeliveryOrder')
-        .select('id, group_code').eq('id', gdo_id).maybeSingle()
+        .select('id, group_code, warehouse_id').eq('id', gdo_id).maybeSingle()
       if (!g) return fail(res, 'Không tìm thấy chuyến xe', 404, 'NOT_FOUND')
+      const gWh = (g as { warehouse_id?: string | null }).warehouse_id
+      if (scopeIds && gWh && !scopeIds.includes(gWh))
+        return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403, 'FORBIDDEN')
     }
     const { data, error } = await supabase.from('WeighTicket')
       .update({

@@ -118,6 +118,36 @@ async function checkWeighGate(
   return { ok: true, ticketId: usable.find(t => !t.gdo_id)?.id ?? null }
 }
 
+// GATE CỔNG (bổ sung theo user 01/08 — "điều kiện là phải có xe đăng ký cổng VÀ xe cân"):
+// kho bật cờ cân = kho quy trình chặt → chuyến phải gắn ĐĂNG KÝ CỔNG thật (đúng kho, chiều XUẤT,
+// đã VÀO cổng, biển khớp) — khóa đường nhập biển VÃNG LAI không có đăng ký. Xe ĐÃ RA vẫn hợp lệ
+// (user chốt: có đăng ký cổng thật, chỉ là nhập liệu muộn / bốc thêm đơn cùng chuyến).
+// Xe vãng lai thật → bảo vệ tạo Đăng ký cổng rồi đi luồng thường; không làm được → Duyệt bỏ qua.
+// Trả null = qua cổng; chuỗi = lý do chặn (422 GATE_REQUIRED). Chỉ áp ở startGDO — 2 đường
+// "Xuất luôn" (kho QTY/NONE, không có UI chọn cổng) giữ nguyên chỉ gate CÂN.
+async function gateRegError(
+  gateRegId: string | null | undefined, warehouseId: string | null | undefined, licensePlate: string | null | undefined,
+): Promise<string | null> {
+  const plate = normalizePlate(licensePlate)
+  const MSG = `Xe ${plate ?? ''} chưa gắn Đăng ký cổng — kho này yêu cầu xe phải ĐĂNG KÝ CỔNG (đã vào) và CÂN BÌ trước khi bắt đầu làm hàng. Xe vãng lai: báo bảo vệ tạo Đăng ký cổng rồi chọn lại; trường hợp đặc biệt cần người có quyền "Duyệt bỏ qua cổng/cân".`
+  if (!gateRegId) return MSG
+  const { data: g, error } = await supabase.from('gate_registrations')
+    .select('id, warehouse_id, direction, entry_at, license_plate').eq('id', gateRegId).maybeSingle()
+  if (error) return null   // bảng lỗi bất thường — fail-open như checkWeighGate (không chặn vận hành)
+  if (!g) return MSG
+  const gg = g as { warehouse_id: string | null; direction: string | null; entry_at: string | null; license_plate: string | null }
+  if (gg.warehouse_id && warehouseId && gg.warehouse_id !== warehouseId)
+    return 'Đăng ký cổng đã chọn thuộc KHO KHÁC — chọn đúng chuyến xe của kho này'
+  if ((gg.direction ?? 'OUTBOUND') !== 'OUTBOUND')
+    return 'Đăng ký cổng đã chọn không phải chiều XUẤT'
+  if (!gg.entry_at)
+    return 'Xe chưa VÀO cổng (bảo vệ chưa xác nhận vào) — cho xe vào cổng rồi bấm lại'
+  const gPlate = normalizePlate(gg.license_plate)
+  if (plate && gPlate && gPlate !== plate)
+    return 'Biển số không khớp với Đăng ký cổng đã chọn'
+  return null
+}
+
 // Gắn phiếu cân ↔ chuyến sau khi Bắt đầu thành công (chỉ phiếu chưa gắn — không đè match tay)
 async function linkWeighTicket(ticketId: string | null, gdoId: string) {
   if (!ticketId) return
@@ -2064,7 +2094,7 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at, status, warehouse_id, shipto_party, weigh_waived_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+      .select('assigned_at, started_at, status, warehouse_id, shipto_party, weigh_waived_at, warehouse:Warehouse(inventory_mode,require_weigh_on_start)').eq('id', req.params.id).maybeSingle()
     // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
     // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
     const curStatus = (cur as { status?: string } | null)?.status
@@ -2079,15 +2109,22 @@ export async function startGDO(req: Request, res: Response) {
         !(await isInternalPair((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party)))
       return fail(res, 'Biển số xe là bắt buộc', 400)
 
-    // GATE CÂN XE: kho bật cờ → biển số phải khớp phiếu cân CHƯA hoàn thành hôm nay. Miễn khi
-    // chuyến ĐÃ được duyệt bỏ qua, hoặc người có quyền weigh_waive duyệt ngay lúc bấm (body flag).
+    // GATE CỔNG + CÂN (kho bật cờ = quy trình chặt: đăng ký cổng → vào cổng → cân bì → bốc hàng):
+    // (1) chuyến phải gắn ĐĂNG KÝ CỔNG hợp lệ (khóa đường biển vãng lai không đăng ký);
+    // (2) biển số phải khớp phiếu cân CHƯA hoàn thành hôm nay.
+    // Miễn khi chuyến ĐÃ duyệt bỏ qua, hoặc người có quyền weigh_waive duyệt ngay lúc bấm (body flag).
     const alreadyWaived = !!(cur as { weigh_waived_at?: string | null } | null)?.weigh_waived_at
+    const strictWeigh = ((cur as { warehouse?: { require_weigh_on_start?: boolean } | null } | null)?.warehouse)?.require_weigh_on_start === true
     let weighTicketId: string | null = null
     if (!alreadyWaived) {
       if (weigh_waive === true) {
         if (!userHasPerm(req, 'outbound', 'weigh_waive'))
-          return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cân — nhờ người được phân quyền duyệt trên chuyến')
+          return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cổng/cân — nhờ người được phân quyền duyệt trên chuyến')
       } else {
+        if (strictWeigh && license_plate?.trim()) {   // nội bộ không biển số đã miễn ở guard trên
+          const gErr = await gateRegError(gate_registration_id, (cur as { warehouse_id?: string | null } | null)?.warehouse_id, license_plate)
+          if (gErr) return fail(res, 422, 'GATE_REQUIRED', gErr)
+        }
         const gate = await checkWeighGate((cur as { warehouse_id?: string | null } | null)?.warehouse_id, license_plate, req.params.id)
         if (!gate.ok) return fail(res, 422, 'WEIGH_REQUIRED', gate.message)
         weighTicketId = gate.ticketId

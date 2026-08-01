@@ -346,11 +346,14 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
   const { mutate: startGDO, isPending } = useStartGDO()
   const [err, setErr] = useState<string | null>(null)
-  // Gate cân: BE trả 422 WEIGH_REQUIRED khi kho bắt cân mà xe chưa có phiếu cân hôm nay.
-  // Người có quyền weigh_waive được duyệt bỏ qua NGAY tại đây (gửi lại kèm weigh_waive=true).
+  // Gate cổng/cân: BE trả 422 GATE_REQUIRED (chưa đăng ký cổng — vãng lai bị khóa ở kho chặt)
+  // hoặc WEIGH_REQUIRED (chưa cân bì hôm nay). Người có quyền weigh_waive được duyệt bỏ qua
+  // NGAY tại đây (gửi lại kèm weigh_waive=true).
   const [errCode, setErrCode] = useState<string | null>(null)
   const [waiveReason, setWaiveReason] = useState('')
   const canWaive = can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'weigh_waive')
+  const strictGate = gdo.warehouse?.require_weigh_on_start === true
+  const gateBlocked = errCode === 'WEIGH_REQUIRED' || errCode === 'GATE_REQUIRED'
 
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
@@ -451,7 +454,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           </div>
 
           {special && !gateRegId && licPlate.trim() && (
-            <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+            strictGate ? (
+              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại, hoặc cần người có quyền Duyệt bỏ qua cổng/cân.</p>
+            ) : (
+              <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
+            )
           )}
 
           {isContainer && (
@@ -492,24 +499,24 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           {err && (
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
-          {/* Gate cân: xe chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
-          {errCode === 'WEIGH_REQUIRED' && canWaive && (
+          {/* Gate cổng/cân: xe chưa đăng ký cổng / chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
+          {gateBlocked && canWaive && (
             <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 space-y-2">
               <p className="text-xs text-amber-800 flex items-center gap-1.5">
                 <Scale className="h-3.5 w-3.5 shrink-0" />
-                Xe không cân được (hỏng cân…)? Bạn có quyền duyệt bỏ qua cân cho chuyến này.
+                Trường hợp đặc biệt (hỏng cân, nhập bù…)? Bạn có quyền duyệt bỏ qua cổng/cân cho chuyến này.
               </p>
-              <Input className="h-8 text-xs" placeholder="Lý do bỏ qua cân (không bắt buộc)"
+              <Input className="h-8 text-xs" placeholder="Lý do bỏ qua (không bắt buộc)"
                 value={waiveReason} onChange={e => setWaiveReason(e.target.value)} />
               <Button size="sm" variant="outline" disabled={isPending}
                 className="w-full border-amber-400 text-amber-800 hover:bg-amber-100"
                 onClick={() => handleSubmit(true)}>
-                {isPending ? 'Đang lưu…' : 'Duyệt bỏ qua cân & Bắt đầu'}
+                {isPending ? 'Đang lưu…' : 'Duyệt bỏ qua cổng/cân & Bắt đầu'}
               </Button>
             </div>
           )}
-          {errCode === 'WEIGH_REQUIRED' && !canWaive && (
-            <p className="text-[11px] text-amber-700">Trường hợp xe không cân được (hỏng cân…): nhờ người có quyền <b>Duyệt bỏ qua cân</b> duyệt trên chuyến rồi bấm Bắt đầu lại.</p>
+          {gateBlocked && !canWaive && (
+            <p className="text-[11px] text-amber-700">Trường hợp đặc biệt (hỏng cân, nhập bù…): nhờ người có quyền <b>Duyệt bỏ qua cổng/cân</b> duyệt trên chuyến rồi bấm Bắt đầu lại.</p>
           )}
         </div>
     </FormSheet>
@@ -1589,19 +1596,19 @@ export default function OutboundDetail() {
   if (gdo.warehouse?.require_weigh_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
     if (!gdo.weigh_waived_at)
       actionItems.push({
-        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cân',
-        tip: 'Duyệt bỏ qua cân — chuyến được Bắt đầu dù xe chưa có phiếu cân hôm nay (xe không cân được: hỏng cân…)',
+        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cổng/cân',
+        tip: 'Duyệt bỏ qua cổng/cân — chuyến được Bắt đầu dù xe chưa đăng ký cổng / chưa có phiếu cân hôm nay (hỏng cân, nhập bù…)',
         className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: waiving,
         onClick: () => setPendingConfirm({
-          title: 'Duyệt bỏ qua cân',
-          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần phiếu cân (ghi vết người duyệt). Xác nhận?`,
+          title: 'Duyệt bỏ qua cổng/cân',
+          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần đăng ký cổng/phiếu cân (ghi vết người duyệt). Xác nhận?`,
           onConfirm: () => waiveWeigh({ id: gdo.id }),
         }),
       })
     else
       actionItems.push({
-        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cân',
-        tip: `Đã duyệt bỏ qua cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu cân lại`,
+        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cổng/cân',
+        tip: `Đã duyệt bỏ qua cổng/cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu đủ cổng + cân`,
         className: 'border-slate-300 text-slate-500', busy: unwaiving,
         onClick: () => unwaiveWeigh(gdo.id),
       })
@@ -1729,7 +1736,7 @@ export default function OutboundDetail() {
               </span>
             )}
             {weighTickets.length === 0 && !gdo.weigh_waived_at && (
-              <span className="text-amber-600">Kho yêu cầu CÂN XE trước khi Bắt đầu — chưa có phiếu cân gắn chuyến</span>
+              <span className="text-amber-600">Kho yêu cầu ĐĂNG KÝ CỔNG + CÂN XE trước khi Bắt đầu — chưa có phiếu cân gắn chuyến</span>
             )}
           </div>
           {weighTickets.map(t => (

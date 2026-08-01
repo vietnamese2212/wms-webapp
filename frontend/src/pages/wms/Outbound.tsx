@@ -2177,10 +2177,6 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const modalPerms = (modalUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuick = can(modalPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate]   = useState('')
-  // Gate cân (01/08): BE trả 422 WEIGH_REQUIRED khi kho bắt cân mà xe chưa cân bì hôm nay —
-  // người có quyền weigh_waive được duyệt bỏ qua ngay tại nút.
-  const [weighBlocked, setWeighBlocked] = useState(false)
-  const canWaiveCreate = can(modalPerms, 'outbound', 'weigh_waive')
   const quickWhMode: string | null = (warehousesForCreate as WarehouseLite[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   // "Tạo & Xuất luôn" CHỈ cho kho QTY/QTY_DATE/NONE (kho QR đi luồng quét tem) — không phụ thuộc mã hàng.
   const isQtyOrNone = isQtyLike(quickWhMode) || quickWhMode === 'NONE'
@@ -2204,7 +2200,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     [allVehicles],
   )
 
-  function handleSubmit(quick = false, waive = false) {
+  function handleSubmit(quick = false) {
     if (!date)         return setError('Chọn ngày xuất')
     if (!deliveryCode.trim()) return setError('Nhập Số DO')
     if (!warehouseType) return setError('Chọn loại kho')
@@ -2240,13 +2236,12 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     const handlers = {
       onSuccess: () => onClose(),
       onError: (e: unknown) => {
-        const errBody = (e as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
-        setError(errBody?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn'))
-        setWeighBlocked(errBody?.code === 'WEIGH_REQUIRED')   // gate cân → hiện nút duyệt bỏ qua (nếu có quyền)
+        // Rule cân chặn (WEIGH_REQUIRED): BE đã kèm hướng dẫn "Lưu đơn thường → nhờ duyệt trên chuyến"
+        const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn')
+        setError(msg)
       },
     }
-    setWeighBlocked(false)
-    if (isQuick) quickExportGDO({ ...payload, license_plate: quickPlate.trim(), ...(waive ? { weigh_waive: true } : {}) }, handlers)
+    if (isQuick) quickExportGDO({ ...payload, license_plate: quickPlate.trim() }, handlers)
     else createGDO(payload, handlers)
   }
 
@@ -2272,26 +2267,15 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
           </div>
         ) : undefined}
         quickAction={quickReady ? (
-          <>
-            {/* Gate cân: xe chưa cân bì hôm nay → người có quyền duyệt bỏ qua ngay tại đây */}
-            {weighBlocked && canWaiveCreate && (
-              <Button size="sm" variant="outline" disabled={isPending || quickPending}
-                className="border-amber-400 text-amber-800 hover:bg-amber-100"
-                onClick={() => handleSubmit(true, true)}
-                title="Xe không cân được (hỏng cân…) — duyệt bỏ qua cân và xuất luôn (ghi vết người duyệt)">
-                Duyệt bỏ qua cân & Xuất
-              </Button>
-            )}
-            <Button
-              size="sm"
-              disabled={isPending || quickPending}
-              onClick={() => handleSubmit(true)}
-              className="bg-green-600 hover:bg-green-700 min-w-[120px]"
-              title="Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
-            >
-              {quickPending ? 'Đang xuất…' : 'Tạo & Xuất luôn'}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            disabled={isPending || quickPending}
+            onClick={() => handleSubmit(true)}
+            className="bg-green-600 hover:bg-green-700 min-w-[120px]"
+            title="Tạo đơn + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
+          >
+            {quickPending ? 'Đang xuất…' : 'Tạo & Xuất luôn'}
+          </Button>
         ) : undefined}
       />
     </ModalOverlay>
@@ -2326,9 +2310,6 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const editPerms = (editUser?.module_permissions ?? null) as ModulePermissions | null
   const canQuickEdit = can(editPerms, 'outbound', 'quick_export')
   const [quickPlate, setQuickPlate] = useState('')
-  // Gate cân (01/08): 422 WEIGH_REQUIRED khi kho bắt cân mà xe chưa cân bì hôm nay
-  const [weighBlockedEdit, setWeighBlockedEdit] = useState(false)
-  const canWaiveEdit = can(editPerms, 'outbound', 'weigh_waive')
   const editWhMode: string | null = (warehousesForEdit as WarehouseLite[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   const isQtyOrNoneEdit = isQtyLike(editWhMode) || editWhMode === 'NONE'
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
@@ -2392,7 +2373,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
 
   const isNPPEdit = (warehousesForEdit as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
 
-  function handleSubmit(quick = false, waive = false) {
+  function handleSubmit(quick = false) {
     // Đa-NPP (chuẩn 04/07) — DO chỉ là tham khảo, không dùng làm tiêu chí
     const isMultiNpp = new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean)).size > 1
     if (!date) return setError('Chọn ngày xuất')
@@ -2407,7 +2388,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
     }
     const isQuick = quick && showQuickEdit
     if (isQuick && !quickPlate.trim() && !internalPairEdit) return setError('Nhập biển số xe để Xuất luôn')
-    setError(''); setWeighBlockedEdit(false)
+    setError('')
     updateGDO(
       {
         id: gdoId,
@@ -2427,13 +2408,13 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
         onSuccess: () => {
           if (!isQuick) return onClose()
           quickExportExisting(
-            { gdoId, license_plate: quickPlate.trim(), ...(waive ? { weigh_waive: true } : {}) },
+            { gdoId, license_plate: quickPlate.trim() },
             {
               onSuccess: () => onClose(),
               onError: (e: unknown) => {
-                const errBody = (e as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
-                setError(errBody?.message ?? 'Đã lưu nhưng chưa xuất được')
-                setWeighBlockedEdit(errBody?.code === 'WEIGH_REQUIRED')   // gate cân → hiện nút duyệt bỏ qua
+                // Rule cân chặn: miễn trừ = nhờ người có quyền bấm "Bỏ qua cổng/cân" trên trang chuyến
+                const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Đã lưu nhưng chưa xuất được'
+                setError(msg)
               },
             }
           )
@@ -2474,26 +2455,15 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
             </div>
           ) : undefined}
           quickAction={quickReadyEdit ? (
-            <>
-              {/* Gate cân: xe chưa cân bì hôm nay → người có quyền duyệt bỏ qua ngay tại đây */}
-              {weighBlockedEdit && canWaiveEdit && (
-                <Button size="sm" variant="outline" disabled={isPending || quickPending}
-                  className="border-amber-400 text-amber-800 hover:bg-amber-100"
-                  onClick={() => handleSubmit(true, true)}
-                  title="Xe không cân được (hỏng cân…) — duyệt bỏ qua cân và xuất luôn (ghi vết người duyệt)">
-                  Duyệt bỏ qua cân & Xuất
-                </Button>
-              )}
-              <Button
-                size="sm"
-                disabled={isPending || quickPending}
-                onClick={() => handleSubmit(true)}
-                className="bg-green-600 hover:bg-green-700 min-w-[120px]"
-                title="Lưu thay đổi + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
-              >
-                {quickPending ? 'Đang xuất…' : 'Lưu & Xuất luôn'}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              disabled={isPending || quickPending}
+              onClick={() => handleSubmit(true)}
+              className="bg-green-600 hover:bg-green-700 min-w-[120px]"
+              title="Lưu thay đổi + ghi nhận số lượng + Hoàn thành + trừ tồn trong 1 bước (kho QTY/NONE)"
+            >
+              {quickPending ? 'Đang xuất…' : 'Lưu & Xuất luôn'}
+            </Button>
           ) : undefined}
         />
       )}

@@ -502,7 +502,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -511,7 +511,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -2179,7 +2179,7 @@ export function useCreateGDO() {
 export function useQuickExportGDO() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (body: GDOFormPayload & { license_plate: string; weigh_waive?: boolean; weigh_waive_reason?: string }) => {
+    mutationFn: async (body: GDOFormPayload & { license_plate: string }) => {
       const { data } = await apiClient.post('/wms/outbound/quick-export', body)
       return data.data as GDO
     },
@@ -2199,7 +2199,7 @@ export function useQuickExportGDO() {
 export function useQuickExportExistingGDO() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ gdoId, ...body }: { gdoId: string; license_plate: string; weigh_waive?: boolean; weigh_waive_reason?: string }) => {
+    mutationFn: async ({ gdoId, ...body }: { gdoId: string; license_plate: string }) => {
       const { data } = await apiClient.post(`/wms/outbound/${gdoId}/quick-export`, body)
       return data.data as GDO
     },
@@ -3030,10 +3030,8 @@ export function useStartGDO() {
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
-      // Gate cổng/cân: duyệt bỏ qua ngay lúc bấm (BE kiểm quyền outbound.weigh_waive)
-      weigh_waive?: boolean; weigh_waive_reason?: string
-      // Giao lẻ (xe máy/nhân viên nhận) — tự khai, miễn gate cổng/cân, BE ghi vết ai khai
-      small_delivery?: boolean
+      // 2 rule cổng/cân per kho: KHÔNG có cờ bỏ qua nào ở đây — miễn trừ duy nhất là duyệt
+      // trước trên chuyến (useWaiveWeighGDO, quyền outbound.weigh_waive)
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
     onMutate: async ({ id }) => {
       await qc.cancelQueries({ queryKey: ['gdo', id] })

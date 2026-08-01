@@ -56,7 +56,7 @@ export const MODULES = {
       uncomplete: 'Bỏ hoàn thành',
       cancel:     'Huỷ đơn',
       reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
-      weigh_waive: 'Duyệt bỏ qua cổng/cân — cho Bắt đầu khi xe chưa đăng ký cổng / không cân được (kho bật gate cân)',
+      weigh_waive: 'Duyệt bỏ qua cổng/cân — miễn trừ 2 rule Bắt đầu (giao lẻ/xe máy/NV nhận, hỏng cân…), duyệt TRÊN CHUYẾN',
     },
   },
   scanlog: {

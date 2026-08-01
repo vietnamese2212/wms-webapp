@@ -222,13 +222,17 @@ function NamePicker({
 // ─── Picker chọn CHUYẾN (nút mở dialog thẻ, giống bên Nhập) — dùng chung Start + Sửa thông tin xe ───
 type GateRegOpt = { id: string; registration_number: number; license_plate: string | null; company_name_raw?: string | null; warehouse_id?: string | null; vehicle_type?: string | null; status: string; entry_at: string | null; exit_at: string | null; date: string }
 
-function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds, outDate }: {
+function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, onSpecialChange, takenGateIds, outDate, allowFreePlate = true }: {
   gates: GateRegOpt[]                          // chỉ chuyến đã vào cổng (entry_at) — CHƯA lọc theo special
   value: string; onPick: (id: string) => void
   freePlate: string; onFreeText: (plate: string) => void
   special: boolean; onSpecialChange: (v: boolean) => void
   takenGateIds: Set<string>
   outDate: string                             // ngày xuất của đơn — highlight đỏ nếu ngày xe khác ngày này
+  // Kho bật rule ĐĂNG KÝ CỔNG (user chốt 01/08): KHÔNG nhập biển tay — "xe vãng lai" chính là "không có
+  // đăng ký" (vi phạm rule 1), muốn đi phải được DUYỆT trên chuyến. Tick đặc biệt khi đó chỉ còn 2 nghĩa:
+  // chọn lại XE ĐÃ RA + chọn xe BỐC NHIỀU ĐƠN (gate đã gắn chuyến khác).
+  allowFreePlate?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [walk, setWalk] = useState('')
@@ -285,14 +289,15 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
                   <input type="checkbox" checked={special}
                     onChange={e => onSpecialChange(e.target.checked)}
                     className="h-3 w-3 rounded accent-amber-600" />
-                  <span>Trường hợp đặc biệt (xe đã ra / vãng lai)</span>
+                  <span>{allowFreePlate ? 'Trường hợp đặc biệt (xe đã ra / bốc nhiều đơn / vãng lai)' : 'Trường hợp đặc biệt (xe đã ra / bốc nhiều đơn)'}</span>
                 </label>
               </div>
             </div>
           </DialogHeader>
 
-          {/* Nhập biển số xe vãng lai — chỉ khi đặc biệt */}
-          {special && (
+          {/* Nhập biển số xe vãng lai — chỉ khi đặc biệt VÀ kho không bật rule đăng ký cổng
+              (kho bật rule: xe không đăng ký phải được DUYỆT trên chuyến, không có đường nhập tay) */}
+          {special && allowFreePlate && (
             <div className="space-y-1">
               <div className="flex gap-1">
                 <Input className="h-8 text-xs" placeholder="Nhập biển số xe vãng lai…"
@@ -302,6 +307,9 @@ function ChuyenPicker({ gates, value, onPick, freePlate, onFreeText, special, on
               </div>
               {freeVal && <p className="text-[10px] text-amber-600">✎ Dùng biển số vãng lai: «{freeVal}»</p>}
             </div>
+          )}
+          {special && !allowFreePlate && (
+            <p className="text-[10px] text-slate-400">Kho này yêu cầu Đăng ký cổng — xe chưa đăng ký: báo bảo vệ tạo Đăng ký cổng; giao lẻ/xe máy/nhân viên nhận: người có quyền bấm "Bỏ qua cổng/cân" trên chuyến.</p>
           )}
 
           <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-0.5">
@@ -350,12 +358,15 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   // hoặc WEIGH_REQUIRED (chưa cân bì hôm nay). Người có quyền weigh_waive được duyệt bỏ qua
   // NGAY tại đây (gửi lại kèm weigh_waive=true).
   const [errCode, setErrCode] = useState<string | null>(null)
-  const [waiveReason, setWaiveReason] = useState('')
-  const canWaive = can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'weigh_waive')
-  const strictGate = gdo.warehouse?.require_weigh_on_start === true
   const gateBlocked = errCode === 'WEIGH_REQUIRED' || errCode === 'GATE_REQUIRED'
-  // GIAO LẺ (xe máy/nhân viên nhận — user chốt 01/08): tự khai, miễn gate cổng/cân, ghi vết ai khai
-  const [smallDelivery, setSmallDelivery] = useState(false)
+  // 2 RULE per kho (user chốt 01/08): rule 1 đăng ký cổng · rule 2 cân — độc lập, bật cái nào chấp
+  // hành cái đó. Miễn trừ DUY NHẤT = duyệt trước trên chuyến (weigh_waived) — KHÔNG có lựa chọn nào
+  // ở dialog này ("bắt đầu và chọn là rủi ro").
+  const ruleGate  = gdo.warehouse?.require_gate_on_start === true
+  const waived    = !!gdo.weigh_waived_at
+  // Kho bật rule cổng: KHÔNG cho nhập biển tay (xe không đăng ký = vi phạm rule 1, phải được duyệt);
+  // chuyến đã duyệt → nhập tay lại được (giao lẻ xe máy/NV nhận, biển tùy chọn).
+  const allowFreePlate = !ruleGate || waived
 
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
@@ -405,9 +416,14 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     .filter(Boolean).join(', ')
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
-  function handleSubmit(waive = false) {
-    // Giao lẻ: biển số tùy chọn (nhân viên nhận không có xe); còn lại bắt buộc như cũ
-    if (!smallDelivery && !effectivePlate.trim() && !internalPair) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
+  function handleSubmit() {
+    // Chuyến đã được DUYỆT bỏ qua cổng/cân: biển số tùy chọn (giao lẻ NV nhận không có xe)
+    if (!effectivePlate.trim() && !internalPair && !waived) {
+      setErr(allowFreePlate
+        ? 'Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'
+        : 'Vui lòng chọn chuyến xe đã vào cổng — kho này yêu cầu xe phải có Đăng ký cổng')
+      return
+    }
     setErr(null); setErrCode(null)
     startGDO(
       {
@@ -420,8 +436,6 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         forklift_driver_names: forklifterNames || undefined,
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
-        ...(waive ? { weigh_waive: true, weigh_waive_reason: waiveReason.trim() || undefined } : {}),
-        ...(smallDelivery ? { small_delivery: true } : {}),
       },
       {
         onSuccess: onClose,
@@ -448,51 +462,26 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
       </>}
     >
         <div className="space-y-3">
-          {/* Kho quy trình chặt: chọn LOẠI CHUYẾN trước — 1 lựa chọn duy nhất, tránh 2 ô tick gây rối
-              (tick trong picker = xem xe đã ra/vãng lai của luồng XE TẢI; giao lẻ là loại chuyến khác hẳn) */}
-          {strictGate && (
-            <div className="space-y-1">
-              <Label className="text-xs">Loại chuyến</Label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button type="button" onClick={() => setSmallDelivery(false)}
-                  className={`h-9 rounded-md border text-xs font-medium transition-colors ${!smallDelivery ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                  🚛 Xe tải (qua cổng-cân)
-                </button>
-                <button type="button" onClick={() => { setSmallDelivery(true); setGateRegId(''); setErr(null); setErrCode(null) }}
-                  className={`h-9 rounded-md border text-xs font-medium transition-colors ${smallDelivery ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-                  🛵 Giao lẻ — xe máy/NV nhận
-                </button>
-              </div>
-              {smallDelivery && (
-                <p className="text-[10px] text-slate-400">Không qua đăng ký cổng + cân. Chuyến sẽ ghi rõ <b>người khai</b> để đối soát — chỉ dùng khi KHÔNG phải xe tải chở hàng.</p>
-              )}
+          {/* Chuyến đã được DUYỆT bỏ qua cổng/cân (giao lẻ, hỏng cân…) — thông báo + biển số tùy chọn */}
+          {waived && (
+            <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 flex items-start gap-1.5">
+              <Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>Chuyến đã được <b>duyệt bỏ qua cổng/cân</b> bởi {gdo.weigh_waived_by ?? '?'}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''} — biển số tùy chọn (giao lẻ/nhân viên nhận thì để trống).</span>
             </div>
           )}
 
-          {!smallDelivery && (
-            <div className="space-y-1">
-              <Label className="text-xs">Chuyến xe / Biển số *</Label>
-              <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
-                onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
-                freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
-                special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
-                takenGateIds={takenGateIds} outDate={gdo.delivery_date} />
-            </div>
-          )}
-          {smallDelivery && (
-            <div className="space-y-1">
-              <Label className="text-xs">Biển số (nếu có)</Label>
-              <Input className="text-sm h-9 font-mono uppercase" placeholder="VD: 29X1-123.45 — nhân viên nhận thì để trống"
-                value={licPlate} onChange={e => { setLicPlate(e.target.value); setGateRegId('') }} />
-            </div>
-          )}
+          <div className="space-y-1">
+            <Label className="text-xs">Chuyến xe / Biển số {waived ? '' : '*'}</Label>
+            <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
+              onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
+              freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
+              special={special} onSpecialChange={v => { setSpecial(v); if (!v) setLicPlate('') }}
+              takenGateIds={takenGateIds} outDate={gdo.delivery_date}
+              allowFreePlate={allowFreePlate} />
+          </div>
 
-          {!smallDelivery && special && !gateRegId && licPlate.trim() && (
-            strictGate ? (
-              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: xe tải biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại. Xe máy/nhân viên nhận thì chọn "Giao lẻ" ở trên.</p>
-            ) : (
-              <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
-            )
+          {special && !gateRegId && licPlate.trim() && allowFreePlate && !waived && (
+            <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
           )}
 
           {isContainer && (
@@ -533,24 +522,10 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           {err && (
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
-          {/* Gate cổng/cân: xe chưa đăng ký cổng / chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
-          {gateBlocked && canWaive && (
-            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 space-y-2">
-              <p className="text-xs text-amber-800 flex items-center gap-1.5">
-                <Scale className="h-3.5 w-3.5 shrink-0" />
-                Trường hợp đặc biệt (hỏng cân, nhập bù…)? Bạn có quyền duyệt bỏ qua cổng/cân cho chuyến này.
-              </p>
-              <Input className="h-8 text-xs" placeholder="Lý do bỏ qua (không bắt buộc)"
-                value={waiveReason} onChange={e => setWaiveReason(e.target.value)} />
-              <Button size="sm" variant="outline" disabled={isPending}
-                className="w-full border-amber-400 text-amber-800 hover:bg-amber-100"
-                onClick={() => handleSubmit(true)}>
-                {isPending ? 'Đang lưu…' : 'Duyệt bỏ qua cổng/cân & Bắt đầu'}
-              </Button>
-            </div>
-          )}
-          {gateBlocked && !canWaive && (
-            <p className="text-[11px] text-amber-700">Trường hợp đặc biệt (hỏng cân, nhập bù…): nhờ người có quyền <b>Duyệt bỏ qua cổng/cân</b> duyệt trên chuyến rồi bấm Bắt đầu lại.</p>
+          {/* Bị chặn bởi rule cổng/cân: KHÔNG có đường tắt ở đây (chọn-lúc-bắt-đầu là rủi ro) —
+              miễn trừ duy nhất là nút "Bỏ qua cổng/cân" TRÊN CHUYẾN của người có quyền */}
+          {gateBlocked && (
+            <p className="text-[11px] text-amber-700">Trường hợp đặc biệt (giao lẻ/xe máy/nhân viên nhận, hỏng cân, nhập bù…): người có quyền bấm <b>"Bỏ qua cổng/cân"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
           )}
         </div>
     </FormSheet>
@@ -1378,7 +1353,7 @@ export default function OutboundDetail() {
   const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
   const [quickPlate, setQuickPlate] = useState('')
   const [quickErr, setQuickErr] = useState<string | null>(null)
-  const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED → hiện nút duyệt bỏ qua cân
+  const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED → hiện hướng dẫn nhờ duyệt trên chuyến
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
@@ -1489,9 +1464,9 @@ export default function OutboundDetail() {
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
   const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'quick_export')
-  function doQuickExport(waive = false) {
+  function doQuickExport() {
     setQuickErr(null); setQuickErrCode(null)
-    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim(), ...(waive ? { weigh_waive: true } : {}) }, {
+    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim() }, {
       onSuccess: () => setShowQuickExport(false),
       onError: (e) => {
         const errBody = (e as AxiosError<{ error?: { message?: string; code?: string } }>)?.response?.data?.error
@@ -1625,13 +1600,13 @@ export default function OutboundDetail() {
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,
     })
-  // Gate cân xe: kho bật cờ + chuyến CHƯA bắt đầu → người có quyền duyệt bỏ qua cân (hỏng cân…)
-  // duyệt TRƯỚC trên chuyến để công nhân bấm Bắt đầu bình thường. Đã duyệt → cho hủy duyệt.
-  if (gdo.warehouse?.require_weigh_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
+  // 2 rule cổng/cân: kho bật rule nào + chuyến CHƯA bắt đầu → người có quyền duyệt bỏ qua TRƯỚC
+  // trên chuyến (miễn trừ DUY NHẤT — không có lựa chọn nào lúc bấm Bắt đầu). Đã duyệt → cho hủy duyệt.
+  if ((gdo.warehouse?.require_weigh_on_start || gdo.warehouse?.require_gate_on_start) && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
     if (!gdo.weigh_waived_at)
       actionItems.push({
         key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cổng/cân',
-        tip: 'Duyệt bỏ qua cổng/cân — chuyến được Bắt đầu dù xe chưa đăng ký cổng / chưa có phiếu cân hôm nay (hỏng cân, nhập bù…)',
+        tip: 'Duyệt bỏ qua rule cổng/cân — chuyến được Bắt đầu dù xe chưa đăng ký cổng / chưa có phiếu cân hôm nay (giao lẻ, xe máy, nhân viên nhận, hỏng cân, nhập bù…)',
         className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: waiving,
         onClick: () => setPendingConfirm({
           title: 'Duyệt bỏ qua cổng/cân',
@@ -1759,8 +1734,8 @@ export default function OutboundDetail() {
         </Card>
       )}
 
-      {/* CÂN XE (gate cân 01/08): phiếu cân gắn chuyến + đối chiếu KL hàng (tính từ KL/thùng) với KL cân thực */}
-      {(weighTickets.length > 0 || gdo.weigh_waived_at || gdo.small_delivery_at || (gdo.warehouse?.require_weigh_on_start && !gdo.started_at)) && (
+      {/* CÂN XE (2 rule cổng/cân 01/08): phiếu cân gắn chuyến + đối chiếu KL hàng (tính từ KL/thùng) với KL cân thực */}
+      {(weighTickets.length > 0 || gdo.weigh_waived_at || ((gdo.warehouse?.require_weigh_on_start || gdo.warehouse?.require_gate_on_start) && !gdo.started_at)) && (
         <Card className="px-2 py-1 bg-slate-50 border-slate-200 space-y-0.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700">
             <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cân xe</span>
@@ -1769,13 +1744,10 @@ export default function OutboundDetail() {
                 Đã duyệt BỎ QUA cổng/cân — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
               </span>
             )}
-            {gdo.small_delivery_at && (
-              <span className="text-sky-700 font-medium">
-                GIAO LẺ (xe máy/nhân viên nhận — không qua cổng-cân) — khai bởi {gdo.small_delivery_by ?? '?'} · {formatDateTime(gdo.small_delivery_at)}
+            {weighTickets.length === 0 && !gdo.weigh_waived_at && (
+              <span className="text-amber-600">
+                Kho yêu cầu {[gdo.warehouse?.require_gate_on_start ? 'ĐĂNG KÝ CỔNG' : null, gdo.warehouse?.require_weigh_on_start ? 'CÂN XE' : null].filter(Boolean).join(' + ')} trước khi Bắt đầu{gdo.warehouse?.require_weigh_on_start ? ' — chưa có phiếu cân gắn chuyến' : ''}
               </span>
-            )}
-            {weighTickets.length === 0 && !gdo.weigh_waived_at && !gdo.small_delivery_at && (
-              <span className="text-amber-600">Kho yêu cầu ĐĂNG KÝ CỔNG + CÂN XE trước khi Bắt đầu — chưa có phiếu cân gắn chuyến</span>
             )}
           </div>
           {weighTickets.map(t => (
@@ -1870,16 +1842,9 @@ export default function OutboundDetail() {
                 placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
             </div>
             {quickErr && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{quickErr}</p>}
-            {/* Gate cân: xe chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
-            {quickErrCode === 'WEIGH_REQUIRED' && can(perms, 'outbound', 'weigh_waive') && (
-              <Button size="sm" variant="outline" disabled={quickExporting}
-                className="w-full border-amber-400 text-amber-800 hover:bg-amber-100"
-                onClick={() => doQuickExport(true)}>
-                {quickExporting ? 'Đang xuất…' : 'Duyệt bỏ qua cân & Xuất luôn'}
-              </Button>
-            )}
-            {quickErrCode === 'WEIGH_REQUIRED' && !can(perms, 'outbound', 'weigh_waive') && (
-              <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân…)? Nhờ người có quyền <b>Duyệt bỏ qua cân</b> duyệt trên chuyến rồi bấm lại.</p>
+            {/* Bị chặn rule cân: miễn trừ DUY NHẤT = người có quyền bấm "Bỏ qua cổng/cân" trên chuyến */}
+            {quickErrCode === 'WEIGH_REQUIRED' && (
+              <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, giao lẻ…)? Người có quyền bấm <b>"Bỏ qua cổng/cân"</b> trên trang chuyến để duyệt, rồi bấm Xuất luôn lại.</p>
             )}
           </div>
           <DialogFooter className="gap-2">

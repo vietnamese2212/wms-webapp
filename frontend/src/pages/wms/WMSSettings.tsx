@@ -192,7 +192,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -221,7 +221,9 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
   const [sapSlocs,      setSapSlocs]      = useState((wh?.sap_storage_locations ?? []).join(', '))
-  // Gate cân xe khi Bắt đầu chuyến xuất (01/08) — chỉ bật ở kho CÓ trạm cân
+  // 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08): rule 1 đăng ký cổng · rule 2 cân — độc lập,
+  // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
+  const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
@@ -255,12 +257,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -345,14 +347,22 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             </div>
             <p className="text-[10px] text-slate-400">Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</p>
           </div>
-          {/* Gate cân xe (01/08): kho có TRẠM CÂN → xe phải cân bì (phiếu cân chưa hoàn thành hôm nay,
-              biển số khớp) mới được Bắt đầu chuyến xuất. Bỏ qua = quyền outbound.weigh_waive. */}
-          <div className="space-y-1.5">
-            <label htmlFor="wh-requireweigh" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+          {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
+              rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
+          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Rule khi Bắt đầu chuyến xuất</Label>
+            <label htmlFor="wh-requiregate" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</span>
+              </span>
+            </label>
+            <label htmlFor="wh-requireweigh" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
               <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
               <span className="text-xs">
-                <span className="font-medium">Bắt buộc CÂN XE trước khi Bắt đầu chuyến xuất</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Chỉ bật ở kho có trạm cân. Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay (xe đã cân bì) mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → người có quyền <b>Duyệt bỏ qua cân</b> duyệt trên chuyến.</span>
+                <span className="font-medium">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</span>
               </span>
             </label>
           </div>

@@ -540,6 +540,24 @@ export async function updateGateRegistration(req: Request, res: Response) {
   if (uCats && warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !uCats.includes(warehouse_type))
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể đổi sang loại kho này', 403)
 
+  // Đang được CHUYẾN XUẤT trỏ tới → khóa các trường ĐỊNH DANH (biển số/chiều/kho/ngày) — đổi là
+  // thông tin cổng lệch với xe của chuyến, mất giá trị đối soát rule 1 (user chốt 01/08: muốn sửa
+  // phải gỡ khỏi chuyến trước). Các trường phụ (SĐT, ghi chú, seal…) vẫn sửa bình thường.
+  {
+    const wantsIdentityChange =
+      (license_plate !== undefined && normalizePlate(license_plate) !== normalizePlate(before?.license_plate)) ||
+      (direction !== undefined && direction !== before?.direction) ||
+      (warehouse_id !== undefined && warehouse_id !== before?.warehouse_id) ||
+      (date !== undefined && date !== before?.date)
+    if (wantsIdentityChange) {
+      const { data: linked } = await supabase.from('GroupDeliveryOrder')
+        .select('group_code').eq('gate_registration_id', id).neq('status', 'CANCELLED').limit(3)
+      if (linked && linked.length > 0)
+        return apiErr(res, 'GATE_IN_USE',
+          `Đăng ký cổng đang gắn với chuyến xuất ${linked.map(g => g.group_code).join(', ')} — không đổi được Biển số/Chiều/Kho/Ngày. Gỡ khỏi chuyến (Sửa thông tin xe / Gỡ bắt đầu) trước rồi sửa.`, 422)
+    }
+  }
+
   const patch: Record<string, unknown> = {
     updated_by: userName,
     updated_at: new Date().toISOString(),
@@ -1062,6 +1080,16 @@ export async function relinkAfterDelete(
 export async function deleteGateRegistration(req: Request, res: Response) {
   const { id } = req.params
   if (!(await guardGateScope(req, res, id))) return
+
+  // Đăng ký cổng đang được CHUYẾN XUẤT trỏ tới = bằng chứng "đã qua cổng" (rule 1) — xóa là mất
+  // vết đối soát ÂM THẦM (FK SET NULL). User chốt 01/08: chặn, muốn xóa phải gỡ khỏi chuyến trước.
+  {
+    const { data: linked } = await supabase.from('GroupDeliveryOrder')
+      .select('group_code').eq('gate_registration_id', id).neq('status', 'CANCELLED').limit(3)
+    if (linked && linked.length > 0)
+      return apiErr(res, 'GATE_IN_USE',
+        `Đăng ký cổng đang gắn với chuyến xuất ${linked.map(g => g.group_code).join(', ')} — gỡ khỏi chuyến (Sửa thông tin xe / Gỡ bắt đầu) trước rồi mới xóa được`, 422)
+  }
 
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase

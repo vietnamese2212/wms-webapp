@@ -110,6 +110,31 @@ const whBoth  = await mkWh('QAGRUL_B', true, true)
     `${r.s} plate=${cur?.license_plate}`)
 }
 
+// ── 5b. "Xuất luôn" cũng chấp hành rule CỔNG (user chốt 01/08 vòng 2) ──
+{
+  const g = await mkGdo('X1', whGate)
+  const doId = randomUUID(), itemId = randomUUID()
+  await restWrite('OutboundDelivery', 'POST', null, { id: doId, gdo_id: g, delivery_code: 'QAGRUL_DOX', distributor_name: 'QAGRUL NPP', status: 'PENDING', updated_at: now() })
+  await restWrite('OutboundItem', 'POST', null, { id: itemId, do_id: doId, material_code_raw: 'QAGRUL_MATX', material_type: 'Thành phẩm', cartons_ordered: 2, cartons_scanned: 0, status: 'PENDING', updated_at: now() })
+  let r = await api(`/wms/outbound/${g}/quick-export`, 'POST', { license_plate: 'QAGR-7777' })
+  check('"Xuất luôn" thiếu đăng ký cổng → 422 GATE_REQUIRED', r.s === 422 && r.j?.error?.code === 'GATE_REQUIRED', `${r.s} ${r.j?.error?.code}`)
+  await api(`/wms/outbound/${g}/gate-waive`, 'POST', { reason: 'QA' })
+  r = await api(`/wms/outbound/${g}/quick-export`, 'POST', { license_plate: 'QAGR-7777' })
+  check('duyệt bỏ qua cổng → "Xuất luôn" chạy', r.s === 200, `${r.s} ${JSON.stringify(r.j?.error)}`)
+}
+
+// ── 5c. Đăng ký cổng đang gắn chuyến: KHÔNG xóa / KHÔNG đổi định danh (user chốt 01/08) ──
+{
+  const g = await mkGdo('GK1', whGate)
+  const gate = await mkGateReg(whGate, 'QAGR5555')
+  await api(`/wms/outbound/${g}/start`, 'POST', { license_plate: 'QAGR-5555', gate_registration_id: gate })
+  const rDel = await api(`/tms/gate-registrations/${gate}`, 'DELETE')
+  const rPlate = await api(`/tms/gate-registrations/${gate}`, 'PATCH', { license_plate: 'QAGR-8888' })
+  const rNote = await api(`/tms/gate-registrations/${gate}`, 'PATCH', { notes: 'QA ghi chú' })
+  check('gate đang gắn chuyến: chặn xóa + chặn đổi biển, vẫn sửa được ghi chú',
+    rDel.s === 422 && rPlate.s === 422 && rNote.s === 200, `del=${rDel.s} plate=${rPlate.s} note=${rNote.s}`)
+}
+
 // ── 6. Quét khi CHƯA Bắt đầu phải bị chặn (không lật IN_PROGRESS, không trừ tồn) ──
 {
   const g = await mkGdo('Q1', whBoth)

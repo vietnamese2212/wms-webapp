@@ -1126,9 +1126,10 @@ export async function createGDO(req: Request, res: Response) {
 export async function quickExportGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, gate_registration_id, items } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
+      gate_registration_id?: string | null
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
@@ -1142,14 +1143,15 @@ export async function quickExportGDO(req: Request, res: Response) {
     const orbitErr = await internalOrbitError(warehouse_id, shipto_party)
     if (orbitErr) return fail(res, orbitErr, 400)
     // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ (xe nâng/đẩy tay trong site)
-    if (!license_plate?.trim() && !(await isInternalPair(warehouse_id, shipto_party)))
+    const qxInternal = !license_plate?.trim() && (await isInternalPair(warehouse_id, shipto_party))
+    if (!license_plate?.trim() && !qxInternal)
       return fail(res, 'Biển số xe là bắt buộc', 400)
 
     // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)
     const dvvtRes = (await buildDvvtResolver())(dvvt)
     const dvvtName = dvvtRes.ok ? dvvtRes.name : (String(dvvt ?? '').trim() || null)
 
-    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start').eq('id', warehouse_id).maybeSingle()
+    const { data: wh } = await supabase.from('Warehouse').select('code, inventory_mode, require_weigh_on_start, require_gate_on_start').eq('id', warehouse_id).maybeSingle()
     if (!wh) return fail(res, 'Không tìm thấy kho xuất', 404)
     const whMode = (wh as { inventory_mode?: string | null }).inventory_mode ?? null
 
@@ -1159,11 +1161,16 @@ export async function quickExportGDO(req: Request, res: Response) {
       return fail(res, 422, 'NOT_QTY_NONE', 'Chỉ kho quản lý theo số lượng (QTY) hoặc không theo dõi tồn (NONE) mới dùng được "Tạo & Xuất luôn". Kho QR hãy dùng luồng quét tem.')
     }
 
-    // GATE CÂN XE (rule 2 — như startGDO; rule 1 cổng không áp: "Xuất luôn" không có UI chọn cổng,
-    // kho QTY/NONE). GDO chưa tồn tại nên KHÔNG có đường duyệt trước — kho bật rule mà xe không cân
-    // được thì tạo đơn thường (Lưu) → nhờ duyệt trên chuyến → Xuất luôn (không còn lựa chọn lúc bấm).
+    // 2 RULE như startGDO (user chốt 01/08 vòng 2: "Xuất luôn cũng chấp hành như Bắt đầu").
+    // GDO chưa tồn tại nên KHÔNG có đường duyệt trước — kho bật rule mà xe không đáp ứng được
+    // thì tạo đơn thường (Lưu) → nhờ duyệt trên chuyến → Xuất luôn (không còn lựa chọn lúc bấm).
+    if (!qxInternal && (wh as { require_gate_on_start?: boolean }).require_gate_on_start === true) {
+      const qxGateErr = await gateRegError(gate_registration_id, warehouse_id, license_plate)
+      if (qxGateErr) return fail(res, 422, 'GATE_REQUIRED',
+        `${qxGateErr} Với "Tạo & Xuất luôn": Lưu đơn thường → gắn Đăng ký cổng khi Bắt đầu hoặc nhờ duyệt "Bỏ qua cổng" trên chuyến → bấm Xuất luôn.`)
+    }
     let qxWeighTicketId: string | null = null
-    if ((wh as { require_weigh_on_start?: boolean }).require_weigh_on_start === true) {
+    if (!qxInternal && (wh as { require_weigh_on_start?: boolean }).require_weigh_on_start === true) {
       const qxGate = await checkWeighGate(warehouse_id, license_plate)
       if (!qxGate.ok) return fail(res, 422, 'WEIGH_REQUIRED', `${qxGate.message} Với "Tạo & Xuất luôn": Lưu đơn thường rồi nhờ duyệt trên chuyến, sau đó bấm Xuất luôn.`)
       qxWeighTicketId = qxGate.ticketId
@@ -1216,6 +1223,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
       started_at: t, license_plate: normalizePlate(license_plate),
+      gate_registration_id: gate_registration_id ?? null,   // vết "đã qua cổng" nếu client gửi
       created_by: actor, updated_by: actor, updated_at: t,
     })
     if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
@@ -1317,7 +1325,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, weigh_waived_at, gate_waived_at, warehouse:Warehouse(inventory_mode,require_weigh_on_start)')
+      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, weigh_waived_at, gate_waived_at, gate_registration_id, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)')
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
@@ -1334,6 +1342,16 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       (await isInternalPair(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party))
     if (!license_plate?.trim() && !qxeGateWaived && !qxeInternal)
       return fail(res, 'Biển số xe là bắt buộc', 400)
+
+    // RULE 1 CỔNG (user chốt 01/08 vòng 2: "Xuất luôn" cũng chấp hành như nút Bắt đầu — không còn
+    // cửa lách). Chỉ khi lượt này chính là lượt Bắt đầu; miễn = gate_waived_at / chuyển nội bộ.
+    if (!gdo.started_at && !qxeGateWaived && !qxeInternal &&
+        (gdo as { warehouse?: { require_gate_on_start?: boolean } | null }).warehouse?.require_gate_on_start === true) {
+      const qxeGateErr = await gateRegError(
+        (gdo as { gate_registration_id?: string | null }).gate_registration_id, gdo.warehouse_id as string, license_plate)
+      if (qxeGateErr) return fail(res, 422, 'GATE_REQUIRED',
+        `${qxeGateErr} Với "Xuất luôn": gắn Đăng ký cổng vào chuyến (nút Bắt đầu / form Sửa) hoặc nhờ duyệt "Bỏ qua cổng" trên chuyến rồi bấm lại.`)
+    }
 
     // GATE CÂN XE (rule 2) — chỉ khi chuyến CHƯA bắt đầu ("Xuất luôn" lần này chính là lượt Bắt đầu).
     // Miễn = weigh_waived_at (duyệt riêng rule cân — duyệt cổng KHÔNG thoát rule cân).

@@ -225,6 +225,9 @@ router.post('/outbound/:id/unassign',                         requirePerm('outbo
 router.post('/outbound/:id/start',                            requirePerm('outbound', 'start'), outbound.startGDO)
 router.patch('/outbound/:id/transport',                       requirePerm('outbound', 'edit'), outbound.updateTransport)
 router.post('/outbound/:id/unstart',                          requirePerm('outbound', 'unstart'), outbound.unstartGDO)
+// Duyệt bỏ qua cân (kho bật gate cân mà xe không cân được — hỏng cân…) — quyền RIÊNG, không đi ké start/edit
+router.post('/outbound/:gdoId/weigh-waive',                   requirePerm('outbound', 'weigh_waive'), outbound.waiveWeighGDO)
+router.delete('/outbound/:gdoId/weigh-waive',                 requirePerm('outbound', 'weigh_waive'), outbound.unwaiveWeighGDO)
 router.post('/outbound/:id/uncomplete',                       requirePerm('outbound', 'uncomplete'), outbound.uncompleteGDO)
 router.post('/outbound/:gdoId/items/:itemId/check-scan',      requireAnyPerm(['outbound', 'scan'], ['loosepicking', 'scan']), outbound.checkScanItem)
 // Scan/xóa-scan dùng chung cho trang Xuất kho VÀ Nhặt lẻ → chấp nhận quyền của cả 2 module

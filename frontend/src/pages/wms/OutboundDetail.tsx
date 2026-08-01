@@ -10,7 +10,7 @@ import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEnt
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -27,6 +27,7 @@ import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
+  useWaiveWeighGDO, useUnwaiveWeighGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
   useGdoPickSuggestions,
@@ -345,6 +346,11 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const { data: employees = [] } = useWarehouseEmployees(gdo.warehouse_id)
   const { mutate: startGDO, isPending } = useStartGDO()
   const [err, setErr] = useState<string | null>(null)
+  // Gate cân: BE trả 422 WEIGH_REQUIRED khi kho bắt cân mà xe chưa có phiếu cân hôm nay.
+  // Người có quyền weigh_waive được duyệt bỏ qua NGAY tại đây (gửi lại kèm weigh_waive=true).
+  const [errCode, setErrCode] = useState<string | null>(null)
+  const [waiveReason, setWaiveReason] = useState('')
+  const canWaive = can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'weigh_waive')
 
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
@@ -394,9 +400,9 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
     .filter(Boolean).join(', ')
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
-  function handleSubmit() {
+  function handleSubmit(waive = false) {
     if (!effectivePlate.trim() && !internalPair) { setErr('Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'); return }
-    setErr(null)
+    setErr(null); setErrCode(null)
     startGDO(
       {
         id:                   gdo.id,
@@ -408,12 +414,14 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         forklift_driver_names: forklifterNames || undefined,
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
+        ...(waive ? { weigh_waive: true, weigh_waive_reason: waiveReason.trim() || undefined } : {}),
       },
       {
         onSuccess: onClose,
         onError: (e) => {
-          const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
-          setErr(msg)
+          const errBody = (e as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+          setErr(errBody?.message ?? 'Lỗi không xác định')
+          setErrCode(errBody?.code ?? null)
         },
       }
     )
@@ -427,7 +435,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
       widthClass="sm:max-w-lg"
       footer={<>
         <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
-        <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+        <Button size="sm" onClick={() => handleSubmit()} disabled={isPending}>
           {isPending ? 'Đang lưu…' : 'Bắt đầu'}
         </Button>
       </>}
@@ -483,6 +491,25 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
 
           {err && (
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
+          )}
+          {/* Gate cân: xe chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
+          {errCode === 'WEIGH_REQUIRED' && canWaive && (
+            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 space-y-2">
+              <p className="text-xs text-amber-800 flex items-center gap-1.5">
+                <Scale className="h-3.5 w-3.5 shrink-0" />
+                Xe không cân được (hỏng cân…)? Bạn có quyền duyệt bỏ qua cân cho chuyến này.
+              </p>
+              <Input className="h-8 text-xs" placeholder="Lý do bỏ qua cân (không bắt buộc)"
+                value={waiveReason} onChange={e => setWaiveReason(e.target.value)} />
+              <Button size="sm" variant="outline" disabled={isPending}
+                className="w-full border-amber-400 text-amber-800 hover:bg-amber-100"
+                onClick={() => handleSubmit(true)}>
+                {isPending ? 'Đang lưu…' : 'Duyệt bỏ qua cân & Bắt đầu'}
+              </Button>
+            </div>
+          )}
+          {errCode === 'WEIGH_REQUIRED' && !canWaive && (
+            <p className="text-[11px] text-amber-700">Trường hợp xe không cân được (hỏng cân…): nhờ người có quyền <b>Duyệt bỏ qua cân</b> duyệt trên chuyến rồi bấm Bắt đầu lại.</p>
           )}
         </div>
     </FormSheet>
@@ -1303,11 +1330,14 @@ export default function OutboundDetail() {
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
   const manualCompleteMulti = useManualCompleteItem()   // "Lưu tất cả theo KH" — bulk hàng không tem
   const { mutate: quickExportExisting, isPending: quickExporting } = useQuickExportExistingGDO()
+  const { mutate: waiveWeigh,   isPending: waiving }   = useWaiveWeighGDO()     // duyệt bỏ qua cân (gate cân xe)
+  const { mutate: unwaiveWeigh, isPending: unwaiving } = useUnwaiveWeighGDO()
   const [bulkErr, setBulkErr] = useState<string | null>(null)
   const [bulkSaving, setBulkSaving] = useState(false)
   const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
   const [quickPlate, setQuickPlate] = useState('')
   const [quickErr, setQuickErr] = useState<string | null>(null)
+  const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED → hiện nút duyệt bỏ qua cân
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
@@ -1418,11 +1448,15 @@ export default function OutboundDetail() {
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
   const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'quick_export')
-  function doQuickExport() {
-    setQuickErr(null)
-    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim() }, {
+  function doQuickExport(waive = false) {
+    setQuickErr(null); setQuickErrCode(null)
+    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim(), ...(waive ? { weigh_waive: true } : {}) }, {
       onSuccess: () => setShowQuickExport(false),
-      onError: (e) => setQuickErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi khi xuất luôn'),
+      onError: (e) => {
+        const errBody = (e as AxiosError<{ error?: { message?: string; code?: string } }>)?.response?.data?.error
+        setQuickErr(errBody?.message ?? 'Lỗi khi xuất luôn')
+        setQuickErrCode(errBody?.code ?? null)
+      },
     })
   }
 
@@ -1478,7 +1512,7 @@ export default function OutboundDetail() {
       key: 'quick-export', icon: Play, label: 'Xuất luôn',
       tip: 'Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay',
       primary: true, variant: 'success', busy: quickExporting,
-      onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setShowQuickExport(true) },
+      onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setQuickErrCode(null); setShowQuickExport(true) },
     })
   if (!gdo.assigned_at && can(perms, 'outbound', 'assign'))
     actionItems.push({
@@ -1550,6 +1584,28 @@ export default function OutboundDetail() {
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,
     })
+  // Gate cân xe: kho bật cờ + chuyến CHƯA bắt đầu → người có quyền duyệt bỏ qua cân (hỏng cân…)
+  // duyệt TRƯỚC trên chuyến để công nhân bấm Bắt đầu bình thường. Đã duyệt → cho hủy duyệt.
+  if (gdo.warehouse?.require_weigh_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
+    if (!gdo.weigh_waived_at)
+      actionItems.push({
+        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cân',
+        tip: 'Duyệt bỏ qua cân — chuyến được Bắt đầu dù xe chưa có phiếu cân hôm nay (xe không cân được: hỏng cân…)',
+        className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: waiving,
+        onClick: () => setPendingConfirm({
+          title: 'Duyệt bỏ qua cân',
+          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần phiếu cân (ghi vết người duyệt). Xác nhận?`,
+          onConfirm: () => waiveWeigh({ id: gdo.id }),
+        }),
+      })
+    else
+      actionItems.push({
+        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cân',
+        tip: `Đã duyệt bỏ qua cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu cân lại`,
+        className: 'border-slate-300 text-slate-500', busy: unwaiving,
+        onClick: () => unwaiveWeigh(gdo.id),
+      })
+  }
   // Sơ đồ xếp xe 3D — chỉ đọc, hướng dẫn thứ tự xếp thùng lên xe theo số lượng đơn
   actionItems.push({
     key: 'load-plan', icon: Boxes, label: 'Xếp xe 3D', tip: 'Sơ đồ 3D xếp thùng lên xe theo số lượng đơn (hướng dẫn thứ tự xếp)',
@@ -1596,6 +1652,16 @@ export default function OutboundDetail() {
       className: 'border-slate-300 text-slate-500', busy: unassigning,
       onClick: () => doUndo((id, opts) => unassignGDO(id, opts)),
     })
+
+  // ── Cân xe (gate cân 01/08): phiếu cân gắn chuyến + KL hàng ước tính để đối chiếu ──
+  const weighTickets = gdo.weigh_tickets ?? []
+  const fmtKg = (v: number | null | undefined) => v == null ? '—' : Number(v).toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+  // KL hàng ước tính: ưu tiên THỰC XUẤT (đã quét/ghi nhận); chưa xuất gì → theo kế hoạch
+  const weighEst: number | null = (gdo.weight_estimate?.kg_actual ?? 0) > 0
+    ? gdo.weight_estimate!.kg_actual
+    : (gdo.weight_estimate?.kg_planned ?? null)
+  const weighEstSrc = (gdo.weight_estimate?.kg_actual ?? 0) > 0 ? 'thực xuất' : 'theo KH'
+  const weighNet = weighTickets.find(t => t.is_complete && t.net_kg != null)?.net_kg ?? null
 
   // Khối thông tin đơn — dùng CHUNG: desktop hiện inline; mobile mở trong POPUP (nút info trên thanh mảnh).
   const bandTiles = [
@@ -1649,6 +1715,47 @@ export default function OutboundDetail() {
               </button>
             )}
           </div>
+        </Card>
+      )}
+
+      {/* CÂN XE (gate cân 01/08): phiếu cân gắn chuyến + đối chiếu KL hàng (tính từ KL/thùng) với KL cân thực */}
+      {(weighTickets.length > 0 || gdo.weigh_waived_at || (gdo.warehouse?.require_weigh_on_start && !gdo.started_at)) && (
+        <Card className="px-2 py-1 bg-slate-50 border-slate-200 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700">
+            <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cân xe</span>
+            {gdo.weigh_waived_at && (
+              <span className="text-amber-700 font-medium" title={gdo.weigh_waive_reason ?? undefined}>
+                Đã duyệt BỎ QUA cân — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
+              </span>
+            )}
+            {weighTickets.length === 0 && !gdo.weigh_waived_at && (
+              <span className="text-amber-600">Kho yêu cầu CÂN XE trước khi Bắt đầu — chưa có phiếu cân gắn chuyến</span>
+            )}
+          </div>
+          {weighTickets.map(t => (
+            <div key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-0 text-xs text-slate-700">
+              <span className="font-mono">Phiếu {t.ticket_no ?? '—'}</span>
+              <span>Bì: <b className="tabular-nums">{fmtKg(t.tare_kg)}</b> kg</span>
+              <span>Tổng: <b className="tabular-nums">{fmtKg(t.gross_kg)}</b> kg</span>
+              <span>Hàng (cân): <b className="tabular-nums">{fmtKg(t.net_kg)}</b> kg</span>
+              {!t.is_complete
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">Chưa cân ra</span>
+                : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Cân xong</span>}
+            </div>
+          ))}
+          {weighEst != null && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0 text-xs text-slate-700">
+              <span>KL hàng (tính): <b className="tabular-nums">{fmtKg(weighEst)}</b> kg <span className="text-slate-400">({weighEstSrc})</span></span>
+              {(gdo.weight_estimate?.items_missing ?? 0) > 0 && (
+                <span className="text-amber-600">thiếu KL {gdo.weight_estimate!.items_missing}/{gdo.weight_estimate!.items_total} mã</span>
+              )}
+              {weighNet != null && (
+                <span>Lệch cân−tính: <b className={`tabular-nums ${Math.abs(weighNet - weighEst) / Math.max(weighEst, 1) > 0.05 ? 'text-red-600' : 'text-green-700'}`}>
+                  {(weighNet - weighEst) >= 0 ? '+' : ''}{fmtKg(weighNet - weighEst)} kg ({weighEst > 0 ? `${(((weighNet - weighEst) / weighEst) * 100).toFixed(1)}%` : '—'})
+                </b></span>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
@@ -1717,10 +1824,21 @@ export default function OutboundDetail() {
                 placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
             </div>
             {quickErr && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{quickErr}</p>}
+            {/* Gate cân: xe chưa cân bì hôm nay — người có quyền duyệt bỏ qua ngay tại đây */}
+            {quickErrCode === 'WEIGH_REQUIRED' && can(perms, 'outbound', 'weigh_waive') && (
+              <Button size="sm" variant="outline" disabled={quickExporting}
+                className="w-full border-amber-400 text-amber-800 hover:bg-amber-100"
+                onClick={() => doQuickExport(true)}>
+                {quickExporting ? 'Đang xuất…' : 'Duyệt bỏ qua cân & Xuất luôn'}
+              </Button>
+            )}
+            {quickErrCode === 'WEIGH_REQUIRED' && !can(perms, 'outbound', 'weigh_waive') && (
+              <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân…)? Nhờ người có quyền <b>Duyệt bỏ qua cân</b> duyệt trên chuyến rồi bấm lại.</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setShowQuickExport(false); setQuickErr(null) }} disabled={quickExporting}>Hủy</Button>
-            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || !quickPlate.trim()} onClick={doQuickExport}>
+            <Button variant="outline" size="sm" onClick={() => { setShowQuickExport(false); setQuickErr(null); setQuickErrCode(null) }} disabled={quickExporting}>Hủy</Button>
+            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || !quickPlate.trim()} onClick={() => doQuickExport()}>
               {quickExporting ? 'Đang xuất…' : 'Xuất luôn'}
             </Button>
           </DialogFooter>

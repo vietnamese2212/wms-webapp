@@ -686,7 +686,7 @@ export interface GDO {
   delivery_date:    string
   warehouse_id:     string | null
   warehouse_type:   string | null
-  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null } | null
+  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; require_weigh_on_start?: boolean } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null
@@ -734,4 +734,14 @@ export interface GDO {
   carton_scan_enabled?: boolean
   // Kho chọn "Bắt buộc quét đủ thùng" → BE chặn Hoàn thành chuyến khi pallet thiếu tem (15/07)
   carton_scan_require_full?: boolean
+  // Gate cân xe (01/08): duyệt bỏ qua cân + phiếu cân gắn chuyến + ước tính KL hàng (đối chiếu net cân)
+  weigh_waived_at?:     string | null
+  weigh_waived_by?:     string | null
+  weigh_waive_reason?:  string | null
+  weigh_tickets?: {
+    id: string; ticket_no: string | null; weigh_date: string | null; license_plate: string | null
+    tare_kg: number | null; gross_kg: number | null; net_kg: number | null
+    is_complete: boolean; in_time: string | null; out_time: string | null
+  }[]
+  weight_estimate?: { gdo_id: string; kg_planned: number | null; kg_actual: number | null; items_total: number; items_missing: number } | null
 }

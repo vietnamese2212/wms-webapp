@@ -45,13 +45,16 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'gross',       label: 'KL tổng (kg)', align: 'right' },
   { id: 'gross_at',    label: 'Giờ tổng' },
   { id: 'net',         label: 'KL hàng (kg)', align: 'right' },
+  // Đối chiếu KL (01/08): KL hàng của CHUYẾN ĐÃ GẮN tính từ Material.weight_kg (kg/thùng) vs KL cân thực
+  { id: 'est',         label: 'KL tính (kg)', align: 'right' },
+  { id: 'diff',        label: 'Lệch cân−tính', align: 'right' },
   { id: 'goods',       label: 'Hàng' },
   { id: 'status',      label: 'Trạng thái' },
   { id: 'gdo',         label: 'Chuyến gắn' },
   { id: 'trans',       label: 'ĐVVT' },
   { id: 'action',      label: '' },
 ]
-const COL_DEFAULTS = [80, 90, 70, 95, 78, 90, 70, 95, 70, 100, 90, 105, 150, 110, 60]
+const COL_DEFAULTS = [80, 90, 70, 95, 78, 90, 70, 95, 70, 100, 95, 110, 90, 105, 150, 110, 60]
 
 const nf = new Intl.NumberFormat('vi-VN')
 function kg(v: number | null | undefined) {
@@ -69,7 +72,8 @@ export default function WeighTickets() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(500)
   const [matchFor, setMatchFor] = useState<WeighTicket | null>(null)
-  const { widths: colW, startResize, totalWidth } = useColumnResize('weigh_col_widths', COL_DEFAULTS)
+  // _v2: thêm 2 cột KL tính/Lệch (01/08) — đổi key để width cũ 15 cột không làm lệch 17 cột mới
+  const { widths: colW, startResize, totalWidth } = useColumnResize('weigh_col_widths_v2', COL_DEFAULTS)
 
   const { data: warehouses = [] } = useWeighTicketWarehouses()  // chỉ kho THỰC CÓ phiếu cân
 
@@ -162,6 +166,10 @@ export default function WeighTickets() {
             <TableBody>
               {rows.map(r => {
                 const rowCls = !r.is_complete ? 'text-amber-600' : r.gdo_id ? 'text-green-700' : 'text-slate-700'
+                // Đối chiếu KL: ưu tiên KL theo THỰC XUẤT, chuyến chưa xuất gì → theo kế hoạch
+                const est = (r.est_kg_actual ?? 0) > 0 ? r.est_kg_actual : (r.est_kg_planned ?? null)
+                const diff = r.is_complete && r.net_kg != null && est != null && est > 0 ? r.net_kg - est : null
+                const diffPct = diff != null && est ? (diff / est) * 100 : null
                 return (
                   <TableRow key={r.id} className={rowCls}>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{r.weigh_date ? formatDate(r.weigh_date) : <span className="text-slate-300">—</span>}</TableCell>
@@ -174,6 +182,16 @@ export default function WeighTickets() {
                     <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right whitespace-nowrap">{r.gross_kg && r.gross_kg > 0 ? kg(r.gross_kg) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] tabular-nums whitespace-nowrap">{r.gross_kg && r.gross_kg > 0 && r.gross_at ? formatTimestampTime(r.gross_at) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[11px] font-bold tabular-nums text-right whitespace-nowrap">{r.is_complete ? kg(r.net_kg) : <span className="text-slate-300">—</span>}</TableCell>
+                    {/* KL hàng của chuyến gắn TÍNH từ Material.weight_kg — chỉ có khi phiếu đã gắn chuyến */}
+                    <TableCell className="px-2 py-1 text-[10px] tabular-nums text-right whitespace-nowrap"
+                      title={(r.est_items_missing ?? 0) > 0 ? `Thiếu KL (kg/thùng) ${r.est_items_missing}/${r.est_items_total} mã — số tính chưa trọn` : undefined}>
+                      {est != null ? <>{kg(est)}{(r.est_items_missing ?? 0) > 0 && <span className="text-amber-500">*</span>}</> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className={`px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap ${diff != null ? (Math.abs(diffPct ?? 0) > 5 ? 'text-red-600' : 'text-green-700') : ''}`}>
+                      {diff != null
+                        ? `${diff >= 0 ? '+' : ''}${kg(Math.round(diff * 10) / 10)} (${diffPct!.toFixed(1)}%)`
+                        : <span className="text-slate-300">—</span>}
+                    </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.goods_name ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       {r.is_complete
@@ -183,12 +201,12 @@ export default function WeighTickets() {
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                       {r.gdo_id ? (
                         <button className="font-mono font-semibold text-sky-700 hover:underline !min-h-0 !min-w-0"
-                          title={`Mở chuyến (gắn bởi: ${r.matched_by === 'auto' ? 'tự động' : r.matched_by ?? '?'})`}
+                          title={`Mở chuyến (gắn bởi: ${r.matched_by === 'auto' ? 'tự động' : r.matched_by === 'auto-start' ? 'tự động khi Bắt đầu chuyến' : r.matched_by ?? '?'})`}
                           onClick={() => navigate(`/wms/outbound/${r.gdo_id}`)}>
                           {r.gdo_group_code ?? r.gdo_id.slice(0, 8)}
                         </button>
                       ) : <span className="text-slate-300">—</span>}
-                      {r.gdo_id && r.matched_by === 'auto' && <span className="ml-1 text-[8px] text-slate-400">auto</span>}
+                      {r.gdo_id && (r.matched_by === 'auto' || r.matched_by === 'auto-start') && <span className="ml-1 text-[8px] text-slate-400">auto</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.trans_company || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-1 py-1 whitespace-nowrap">

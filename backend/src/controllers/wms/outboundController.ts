@@ -73,6 +73,59 @@ function guardWhCreate(req: Request, res: Response, whId: string | null | undefi
   return true
 }
 
+// ─── GATE CÂN XE khi Bắt đầu chuyến xuất (user chốt 01/08 — migration 20260801_weigh_gate) ───
+// Kho bật `Warehouse.require_weigh_on_start` → biển số xe phải khớp 1 phiếu cân CHƯA hoàn thành
+// (is_complete=false: xe đã cân bì, chưa cân ra) của HÔM NAY (giờ VN) mới được Bắt đầu — chống
+// quên cân trước khi làm hàng. Qua cổng thì tự GẮN phiếu ↔ chuyến (đối chiếu KL sau khi cân ra).
+// Xe không cân được (hỏng cân…) → duyệt bỏ qua: quyền `outbound.weigh_waive` (route riêng hoặc
+// body weigh_waive=true ngay lúc bấm). Áp cả 3 đường set started_at: startGDO + 2 đường Xuất luôn.
+
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+// Kiểm quyền TRONG controller (mirror requirePerm: superadmin bypass) — cho cờ body weigh_waive,
+// vì route đã gate bằng quyền khác (start/quick_export) nên không chặn thêm bằng middleware được.
+function userHasPerm(req: Request, module: string, action: string): boolean {
+  if (req.user?.is_superadmin === true || req.user?.name === 'Admin') return true
+  return !!req.user?.module_permissions?.[module]?.includes(action)
+}
+
+type WeighGate = { ok: true; ticketId: string | null } | { ok: false; message: string }
+
+async function checkWeighGate(
+  warehouseId: string | null | undefined, licensePlate: string | null | undefined, currentGdoId?: string,
+): Promise<WeighGate> {
+  if (!warehouseId) return { ok: true, ticketId: null }
+  const { data: wh, error: whErr } = await supabase.from('Warehouse')
+    .select('require_weigh_on_start').eq('id', warehouseId).maybeSingle()
+  // Cột chưa có (cửa sổ deploy trước khi apply migration) → coi như cờ tắt, không chặn vận hành
+  if (whErr || !(wh as { require_weigh_on_start?: boolean } | null)?.require_weigh_on_start)
+    return { ok: true, ticketId: null }
+  const plate = normalizePlate(licensePlate)
+  if (!plate) return { ok: true, ticketId: null }   // chuyển nội bộ không biển số — đã có guard biển số riêng
+  const { data: tks, error } = await supabase.from('WeighTicket')
+    .select('id, gdo_id, warehouse_id')
+    .eq('weigh_date', todayVN()).eq('license_plate_norm', plate).eq('is_complete', false)
+    .order('in_time', { ascending: false, nullsFirst: false }).limit(10)
+  if (error) return { ok: true, ticketId: null }    // bảng chưa có → như trên, fail-open cửa sổ deploy
+  // Phiếu thuộc kho này (phiếu chưa gắn kho vẫn tính — null-inclusive) + chưa gắn CHUYẾN KHÁC
+  const usable = ((tks ?? []) as { id: string; gdo_id: string | null; warehouse_id: string | null }[])
+    .filter(t => (!t.warehouse_id || t.warehouse_id === warehouseId) && (!t.gdo_id || t.gdo_id === currentGdoId))
+  if (!usable.length) return {
+    ok: false,
+    message: `Xe ${plate} chưa có phiếu cân hôm nay (xe phải CÂN BÌ trước khi bắt đầu làm hàng). Cho xe lên cân rồi thử lại — trường hợp không cân được (hỏng cân…) cần người có quyền "Duyệt bỏ qua cân".`,
+  }
+  // Ưu tiên gắn phiếu CHƯA gắn chuyến, mới nhất trước (phiếu đã gắn đúng chuyến này thì khỏi gắn lại)
+  return { ok: true, ticketId: usable.find(t => !t.gdo_id)?.id ?? null }
+}
+
+// Gắn phiếu cân ↔ chuyến sau khi Bắt đầu thành công (chỉ phiếu chưa gắn — không đè match tay)
+async function linkWeighTicket(ticketId: string | null, gdoId: string) {
+  if (!ticketId) return
+  await supabase.from('WeighTicket')
+    .update({ gdo_id: gdoId, matched_at: now(), matched_by: 'auto-start', updated_at: now() })
+    .eq('id', ticketId).is('gdo_id', null)
+}
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 // Điều chỉnh remaining/reserved của 1 InventoryEntry AN TOÀN ĐUA (optimistic-lock + retry + JITTER).
@@ -287,9 +340,19 @@ function isExcludedFromCount(item: any): boolean {
 
 async function fetchGDOFull(id: string) {
   const { data: gdo, error } = await supabase.from('GroupDeliveryOrder')
-    .select('*, warehouse:Warehouse(id,code,name,inventory_mode), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,require_weigh_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at)')
     .eq('id', id).single()
   if (error || !gdo) return null
+
+  // Phiếu cân gắn chuyến + ước tính KL hàng (kg) — đối chiếu KL cân thực với KL tính từ
+  // Material.weight_kg (migration 20260801_weigh_gate). 2 truy vấn nhẹ chạy song song.
+  const [wtRes, westRes] = await Promise.all([
+    supabase.from('WeighTicket')
+      .select('id, ticket_no, weigh_date, license_plate, tare_kg, gross_kg, net_kg, is_complete, in_time, out_time')
+      .eq('gdo_id', id).order('in_time', { ascending: true, nullsFirst: false }),
+    supabase.rpc('gdo_weight_estimates', { p_gdo_ids: [id] }),
+  ])
+  const weightEstimate = (Array.isArray(westRes.data) ? westRes.data : [])[0] ?? null
 
   const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
     .select('*').eq('gdo_id', id).order('delivery_code').order('id'))
@@ -352,6 +415,8 @@ async function fetchGDOFull(id: string) {
 
   return {
     ...gdo,
+    weigh_tickets: wtRes.data ?? [],
+    weight_estimate: weightEstimate,
     delivery_orders: (dos ?? []).map((d: any) => ({
       ...d,
       items: itemsByDO.get(d.id) ?? [],
@@ -1030,10 +1095,11 @@ export async function createGDO(req: Request, res: Response) {
 export async function quickExportGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
-    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, items } = req.body as {
+    const { delivery_date, warehouse_id, dvvt, customer_name, delivery_code, export_type, warehouse_type, shipto_party, license_plate, items, weigh_waive, weigh_waive_reason } = req.body as {
       delivery_date: string; warehouse_id?: string; dvvt?: string
       customer_name?: string; delivery_code?: string; export_type?: string; warehouse_type?: string; shipto_party?: string; license_plate?: string
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
+      weigh_waive?: boolean; weigh_waive_reason?: string
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
     if (!delivery_code?.trim())     return fail(res, 'Số DO là bắt buộc', 400)
@@ -1061,6 +1127,18 @@ export async function quickExportGDO(req: Request, res: Response) {
     // Kho QR phải đi luồng quét tem — không dùng được xuất luôn.
     if (!isQtyLike(whMode) && whMode !== 'NONE') {
       return fail(res, 422, 'NOT_QTY_NONE', 'Chỉ kho quản lý theo số lượng (QTY) hoặc không theo dõi tồn (NONE) mới dùng được "Tạo & Xuất luôn". Kho QR hãy dùng luồng quét tem.')
+    }
+
+    // GATE CÂN XE (như startGDO — đây cũng là 1 đường Bắt đầu). GDO chưa tồn tại nên duyệt bỏ qua
+    // chỉ có đường body flag; vết duyệt ghi ngay vào record tạo mới bên dưới.
+    let qxWeighTicketId: string | null = null
+    if (weigh_waive === true) {
+      if (!userHasPerm(req, 'outbound', 'weigh_waive'))
+        return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cân — nhờ người được phân quyền duyệt')
+    } else {
+      const qxGate = await checkWeighGate(warehouse_id, license_plate)
+      if (!qxGate.ok) return fail(res, 422, 'WEIGH_REQUIRED', qxGate.message)
+      qxWeighTicketId = qxGate.ticketId
     }
 
     const allCodes = [...new Set(items.map(i => i.material_code))]
@@ -1110,10 +1188,14 @@ export async function quickExportGDO(req: Request, res: Response) {
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
       started_at: t, license_plate: normalizePlate(license_plate),
+      ...(weigh_waive === true
+        ? { weigh_waived_at: t, weigh_waived_by: actor, weigh_waive_reason: String(weigh_waive_reason ?? '').trim() || null }
+        : {}),
       created_by: actor, updated_by: actor, updated_at: t,
     })
     if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
     const group_code = ins.group_code
+    await linkWeighTicket(qxWeighTicketId, gdoId)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
 
     const doId = randomUUID()
     const { error: doErr } = await supabase.from('OutboundDelivery').insert({
@@ -1206,11 +1288,13 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId } = req.params
-    const { license_plate } = req.body as { license_plate?: string }
+    const { license_plate, weigh_waive, weigh_waive_reason } = req.body as {
+      license_plate?: string; weigh_waive?: boolean; weigh_waive_reason?: string
+    }
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, warehouse:Warehouse(inventory_mode)')
+      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, weigh_waived_at, warehouse:Warehouse(inventory_mode)')
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
@@ -1223,6 +1307,22 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!license_plate?.trim() &&
         !(await isInternalPair(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party)))
       return fail(res, 'Biển số xe là bắt buộc', 400)
+
+    // GATE CÂN XE — chỉ khi chuyến CHƯA bắt đầu ("Xuất luôn" lần này chính là lượt Bắt đầu).
+    // Chuyến đã started (xuất dở, bấm lại) thì đã qua cổng từ lượt trước, không chặn giữa chừng.
+    const qxeWaived = !!(gdo as { weigh_waived_at?: string | null }).weigh_waived_at
+    let qxeWeighTicketId: string | null = null
+    const qxeWaiveNow = weigh_waive === true && !qxeWaived && !gdo.started_at
+    if (!gdo.started_at && !qxeWaived) {
+      if (weigh_waive === true) {
+        if (!userHasPerm(req, 'outbound', 'weigh_waive'))
+          return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cân — nhờ người được phân quyền duyệt trên chuyến')
+      } else {
+        const qxeGate = await checkWeighGate(gdo.warehouse_id as string, license_plate, gdoId)
+        if (!qxeGate.ok) return fail(res, 422, 'WEIGH_REQUIRED', qxeGate.message)
+        qxeWeighTicketId = qxeGate.ticketId
+      }
+    }
 
     const { data: dos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
     const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
@@ -1298,8 +1398,12 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       ...(normalizePlate(license_plate) ? { license_plate: normalizePlate(license_plate) } : {}),
       ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
       ...(gdo.started_at  ? {} : { started_at: t }),
+      ...(qxeWaiveNow
+        ? { weigh_waived_at: t, weigh_waived_by: actor, weigh_waive_reason: String(weigh_waive_reason ?? '').trim() || null }
+        : {}),
       updated_by: actor, updated_at: t,
     }).eq('id', gdoId).neq('status', 'COMPLETED')
+    await linkWeighTicket(qxeWeighTicketId, gdoId)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
 
     // Còn mã thiếu tồn → đơn IN_PROGRESS (đã xuất một phần), user xử tiếp trên trang chuyến.
     if (failed.length) {
@@ -1937,11 +2041,12 @@ export async function startGDO(req: Request, res: Response) {
     const {
       license_plate, container_number, exporter_name,
       loader_name, forklift_driver_id, forklift_driver_names,
-      gate_registration_id, allow_shared_gate,
+      gate_registration_id, allow_shared_gate, weigh_waive, weigh_waive_reason,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
+      weigh_waive?: boolean; weigh_waive_reason?: string
     }
     if (!(await guardGdoScope(req, res, req.params.id))) return
 
@@ -1959,7 +2064,7 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at, status, warehouse_id, shipto_party, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
+      .select('assigned_at, started_at, status, warehouse_id, shipto_party, weigh_waived_at, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
     // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
     // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
     const curStatus = (cur as { status?: string } | null)?.status
@@ -1974,6 +2079,21 @@ export async function startGDO(req: Request, res: Response) {
         !(await isInternalPair((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party)))
       return fail(res, 'Biển số xe là bắt buộc', 400)
 
+    // GATE CÂN XE: kho bật cờ → biển số phải khớp phiếu cân CHƯA hoàn thành hôm nay. Miễn khi
+    // chuyến ĐÃ được duyệt bỏ qua, hoặc người có quyền weigh_waive duyệt ngay lúc bấm (body flag).
+    const alreadyWaived = !!(cur as { weigh_waived_at?: string | null } | null)?.weigh_waived_at
+    let weighTicketId: string | null = null
+    if (!alreadyWaived) {
+      if (weigh_waive === true) {
+        if (!userHasPerm(req, 'outbound', 'weigh_waive'))
+          return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cân — nhờ người được phân quyền duyệt trên chuyến')
+      } else {
+        const gate = await checkWeighGate((cur as { warehouse_id?: string | null } | null)?.warehouse_id, license_plate, req.params.id)
+        if (!gate.ok) return fail(res, 422, 'WEIGH_REQUIRED', gate.message)
+        weighTicketId = gate.ticketId
+      }
+    }
+
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({
         started_at: now(),
@@ -1985,14 +2105,52 @@ export async function startGDO(req: Request, res: Response) {
         forklift_driver_names:  forklift_driver_names  ?? null,
         gate_registration_id:   gate_registration_id   ?? null,
         ...(autoAssign ? { assigned_at: now(), assigned_by: req.user?.name ?? null } : {}),
+        // Duyệt bỏ qua cân ngay lúc bấm (đã kiểm quyền ở trên) → ghi vết ai duyệt
+        ...(weigh_waive === true && !alreadyWaived
+          ? { weigh_waived_at: now(), weigh_waived_by: req.user?.name ?? null, weigh_waive_reason: String(weigh_waive_reason ?? '').trim() || null }
+          : {}),
         status:     'IN_PROGRESS',
         updated_at: now(),
       })
       .eq('id', req.params.id)
     if (error) return fail(res, error.message)
+    await linkWeighTicket(weighTicketId, req.params.id)   // gắn phiếu cân ↔ chuyến (đối chiếu KL)
     const result = await fetchGDOFull(req.params.id)
     return ok(res, result)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+}
+
+// ─── Duyệt bỏ qua cân (xe không cân được: hỏng cân…) — quyền outbound.weigh_waive ───
+// Người duyệt có thể KHÁC người bấm Bắt đầu: duyệt trước trên chuyến → công nhân start bình thường.
+
+// POST /outbound/:gdoId/weigh-waive  { reason? }
+export async function waiveWeighGDO(req: Request, res: Response) {
+  try {
+    const { reason } = req.body as { reason?: string }
+    if (!(await guardGdoScope(req, res, req.params.gdoId))) return
+    const { data, error } = await supabase.from('GroupDeliveryOrder')
+      .update({
+        weigh_waived_at: now(), weigh_waived_by: req.user?.name ?? null,
+        weigh_waive_reason: String(reason ?? '').trim() || null, updated_at: now(),
+      })
+      .eq('id', req.params.gdoId).select('id').maybeSingle()
+    if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
+    return ok(res, await fetchGDOFull(req.params.gdoId))
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// DELETE /outbound/:gdoId/weigh-waive — hủy duyệt (bấm nhầm; chuyến chưa bắt đầu mới có ý nghĩa)
+export async function unwaiveWeighGDO(req: Request, res: Response) {
+  try {
+    if (!(await guardGdoScope(req, res, req.params.gdoId))) return
+    const { data, error } = await supabase.from('GroupDeliveryOrder')
+      .update({ weigh_waived_at: null, weigh_waived_by: null, weigh_waive_reason: null, updated_at: now() })
+      .eq('id', req.params.gdoId).select('id').maybeSingle()
+    if (error) return fail(res, error.message)
+    if (!data) return fail(res, 'Không tìm thấy chuyến', 404)
+    return ok(res, await fetchGDOFull(req.params.gdoId))
+  } catch (e) { return fail(res, String(e)) }
 }
 
 // ─── Update transport info (Sửa thông tin xe) ────────────────

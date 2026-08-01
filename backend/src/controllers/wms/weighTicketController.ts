@@ -158,6 +158,24 @@ export async function ingestWeighTickets(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// Đắp ước tính KL HÀNG (kg) của chuyến đã gắn vào từng phiếu — đối chiếu với net_kg cân thực
+// (RPC gdo_weight_estimates, migration 20260801_weigh_gate: Σ SL÷đv/thùng×Material.weight_kg).
+// 1 lời gọi POST-body cho cả trang (không dính trần URL); RPC chưa apply → trả nguyên trạng.
+type WeightEst = { gdo_id: string; kg_planned: number | null; kg_actual: number | null; items_total: number; items_missing: number }
+async function attachWeightEstimates<T extends { gdo_id?: string | null }>(rows: T[]): Promise<T[]> {
+  const ids = [...new Set(rows.map(r => r.gdo_id).filter((v): v is string => !!v))]
+  if (!ids.length) return rows
+  const { data } = await supabase.rpc('gdo_weight_estimates', { p_gdo_ids: ids })
+  const ests = (Array.isArray(data) ? data : []) as WeightEst[]
+  const map = new Map(ests.map(e => [e.gdo_id, e]))
+  return rows.map(r => {
+    const e = r.gdo_id ? map.get(r.gdo_id) : undefined
+    return e
+      ? { ...r, est_kg_planned: e.kg_planned, est_kg_actual: e.kg_actual, est_items_missing: e.items_missing, est_items_total: e.items_total }
+      : r
+  })
+}
+
 // ─── API cho trang Phiếu cân (WMS UI) ─────────────────────────────────────────
 
 // GET /wms/weigh-tickets?from_date&to_date&q&direction&match_state&warehouse_ids&page&limit
@@ -206,9 +224,9 @@ export async function listWeighTickets(req: Request, res: Response) {
         p_limit:     limitNum,
       })
       if (!rpErr && rp) {
-        const d = rp as { rows?: unknown[]; total?: number; done?: number; matched?: number }
+        const d = rp as { rows?: { gdo_id?: string | null }[]; total?: number; done?: number; matched?: number }
         return ok(res, {
-          rows: d.rows ?? [], total: d.total ?? 0,
+          rows: await attachWeightEstimates(d.rows ?? []), total: d.total ?? 0,
           done: d.done ?? 0, matched: d.matched ?? 0,
           page: pageNum, limit: limitNum,
         })
@@ -275,12 +293,12 @@ export async function listWeighTickets(req: Request, res: Response) {
       for (const g of (gs ?? []) as { id: string; group_code: string | null; status: string | null }[])
         gdoMap.set(g.id, { group_code: g.group_code, status: g.status })
     }
-    const out = rows.map(r => ({
+    const out = await attachWeightEstimates(rows.map(r => ({
       ...r,
       warehouse_name: r.warehouse_id ? (whMap.get(r.warehouse_id) ?? null) : null,
       gdo_group_code: r.gdo_id ? (gdoMap.get(r.gdo_id)?.group_code ?? null) : null,
       gdo_status:     r.gdo_id ? (gdoMap.get(r.gdo_id)?.status ?? null) : null,
-    }))
+    })))
     return ok(res, {
       rows: out, total: count ?? 0,
       done: doneRes?.count ?? 0, matched: matchRes?.count ?? 0,

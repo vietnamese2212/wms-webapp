@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X } from 'lucide-react'
+import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X, Grid3X3, Table as TableIcon, ListChecks } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -138,6 +138,9 @@ export default function Forklift() {
             <TabsList className="h-8 max-w-full overflow-x-auto">
               <TabsTrigger value="board" className="gap-1.5 text-xs"><ClipboardCheck className="h-3.5 w-3.5" /> Check list ngày</TabsTrigger>
               <TabsTrigger value="report" className="gap-1.5 text-xs"><BarChart2 className="h-3.5 w-3.5" /> Báo cáo vận hành</TabsTrigger>
+              <TabsTrigger value="matrix" className="gap-1.5 text-xs"><Grid3X3 className="h-3.5 w-3.5" /> Ma trận check</TabsTrigger>
+              <TabsTrigger value="summary" className="gap-1.5 text-xs"><TableIcon className="h-3.5 w-3.5" /> Tổng hợp xe</TabsTrigger>
+              <TabsTrigger value="detail" className="gap-1.5 text-xs"><ListChecks className="h-3.5 w-3.5" /> Chi tiết ngày</TabsTrigger>
               {showSettings && <TabsTrigger value="settings" className="gap-1.5 text-xs"><Settings2 className="h-3.5 w-3.5" /> Cài đặt</TabsTrigger>}
             </TabsList>
           </div>
@@ -146,7 +149,16 @@ export default function Forklift() {
             <BoardTab canCheck={canCheck} whOpts={whOpts} />
           </TabsContent>
           <TabsContent value="report" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-            <ReportTab canCheck={canCheck} whOpts={whOpts} active={f.tab === 'report'} />
+            <ReportTab whOpts={whOpts} active={f.tab === 'report'} />
+          </TabsContent>
+          <TabsContent value="matrix" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+            <MatrixTab whOpts={whOpts} active={f.tab === 'matrix'} />
+          </TabsContent>
+          <TabsContent value="summary" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+            <SummaryTab whOpts={whOpts} active={f.tab === 'summary'} />
+          </TabsContent>
+          <TabsContent value="detail" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+            <DetailTab canCheck={canCheck} whOpts={whOpts} active={f.tab === 'detail'} />
           </TabsContent>
           {showSettings && (
             <TabsContent value="settings" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
@@ -476,32 +488,31 @@ function DashBlock({ title, sub, children }: { title: string; sub?: string; chil
   )
 }
 
-function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
+// Trục ngày from → min(to, hôm nay) — ngày tương lai không tính (dùng chung các tab)
+function buildDays(from: string, to: string): string[] {
+  const today = todayVN()
+  const end = to < today ? to : today
+  const out: string[] = []
+  if (!from || from > end) return out
+  const d = new Date(`${from}T00:00:00Z`)
+  for (let i = 0; i < 93 && out[out.length - 1] !== end; i++) {
+    out.push(d.toISOString().slice(0, 10))
+    d.setUTCDate(d.getUTCDate() + 1)
+  }
+  return out
+}
+
+function ReportTab({ whOpts, active }: { whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
   const { data, isLoading, error } = useForkliftReport({ from: f.from, to: f.to, warehouse_id: f.warehouseId || undefined }, active)
   const { data: allVehicles = [] } = useForklifts()   // xe active — mẫu số tuân thủ (kể cả xe 0 lần check)
-  const del = useDeleteForkliftLog()
-  const [viewLogId, setViewLogId] = useState<string | null>(null)
 
   const rows = data?.rows ?? []
   const summary = data?.summary ?? []
   const issueItems = data?.issue_items ?? []
   const vehicles = f.warehouseId ? allVehicles.filter(v => v.warehouse_id === f.warehouseId) : allVehicles
-
-  // Trục ngày: từ from → min(to, hôm nay) — ngày tương lai không tính vào tuân thủ
-  const today = todayVN()
-  const endDate = f.to < today ? f.to : today
-  const days = useMemo(() => {
-    const out: string[] = []
-    if (!f.from || f.from > endDate) return out
-    const d = new Date(`${f.from}T00:00:00Z`)
-    for (let i = 0; i < 93 && out[out.length - 1] !== endDate; i++) {
-      out.push(d.toISOString().slice(0, 10))
-      d.setUTCDate(d.getUTCDate() + 1)
-    }
-    return out
-  }, [f.from, endDate])
+  const days = useMemo(() => buildDays(f.from, f.to), [f.from, f.to])
 
   const totalHours = Math.round(summary.reduce((s, r) => s + r.total_hours, 0) * 10) / 10
   const closedActiveDays = summary.reduce((s, r) => s + r.active_days - r.open_days, 0)
@@ -552,11 +563,6 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
     { key: 'range', label: 'Khoảng ngày', type: 'daterange', from: f.from, to: f.to, onChange: (from, to) => setF({ from: from || todayVN(), to: to || from || todayVN() }), pinned: true },
     { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v }), pinned: true },
   ]
-
-  function handleDelete(r: ForkliftReportRow) {
-    if (!confirm(`Xóa bản ghi ${r.code} ngày ${formatDate(r.log_date)}? (ghi nhầm xe/ngày)`)) return
-    del.mutate(r.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được', description: errMsg(e) }) })
-  }
 
   return (
     <>
@@ -609,10 +615,10 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
               </DashBlock>
 
               {/* 2. Giờ chạy theo xe */}
-              <DashBlock title="Giờ chạy theo xe" sub="xếp từ nhiều → ít (giờ đã chốt)">
+              <DashBlock title="Giờ chạy theo xe" sub="xếp từ nhiều → ít (giờ đã chốt) — đủ mọi xe">
                 {byHours.length === 0 ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có dữ liệu</p> : (
                   <div className="space-y-1">
-                    {byHours.slice(0, 12).map(s => (
+                    {byHours.map(s => (
                       <div key={s.forklift_id} className="flex items-center gap-2" title={`${s.code} — ${fmtH(s.total_hours)}h / ${s.active_days} ngày chạy${s.open_days ? ` · ${s.open_days} chờ chốt` : ''}`}>
                         <span className="w-16 shrink-0 text-[10px] font-mono font-semibold text-slate-700 truncate">{s.code}</span>
                         <div className="flex-1 h-3.5 bg-slate-100 rounded overflow-hidden">
@@ -621,15 +627,14 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
                         <span className="w-14 shrink-0 text-right text-[10px] font-semibold tabular-nums">{fmtH(s.total_hours)}h</span>
                       </div>
                     ))}
-                    {byHours.length > 12 && <p className="text-[9px] text-slate-400">+{byHours.length - 12} xe khác (xem bảng dưới)</p>}
                   </div>
                 )}
               </DashBlock>
 
               {/* 3. Tuân thủ check list theo xe */}
-              <DashBlock title="Tuân thủ check list theo xe" sub={`% ngày đã check / ${days.length} ngày · xe kém nhất lên đầu`}>
+              <DashBlock title="Tuân thủ check list theo xe" sub={`% ngày đã check / ${days.length} ngày · xe kém nhất lên đầu — đủ mọi xe`}>
                 {complianceRows.length === 0 ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có xe nào</p> : (
-                  <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                  <div className="space-y-1">
                     {complianceRows.map(c => (
                       <div key={c.code} className="flex items-center gap-2" title={`${c.code} — đã check ${c.checked}/${days.length} ngày`}>
                         <span className="w-16 shrink-0 text-[10px] font-mono font-semibold text-slate-700 truncate">{c.code}</span>
@@ -671,123 +676,38 @@ function ReportTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
               </DashBlock>
             </div>
 
-            {/* ── MA TRẬN CHECK LIST: ngày × hạng mục, filter theo XE (user chốt 31/07) ── */}
-            <ChecklistMatrix vehicles={vehicles} days={days} from={f.from} to={f.to} />
-
-            {/* ── BẢNG TRA CỨU ── */}
-            {/* Tổng hợp theo xe */}
-            <div>
-              <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 text-[10px] font-semibold uppercase text-slate-600">Tổng hợp theo xe</div>
-              <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã xe</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên xe</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Giờ chạy</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Ngày chạy</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Ngày nghỉ</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Chờ chốt</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Hạng mục lỗi</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Đồng hồ mới nhất</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {summary.map(s => (
-                    <TableRow key={s.forklift_id}>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{s.code}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[180px] truncate" title={s.forklift_name ?? ''}>{s.forklift_name || <span className="text-slate-300">—</span>}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">{fmtH(s.total_hours)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.active_days}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.idle_days}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.open_days > 0 ? s.open_days : <span className="text-slate-300">0</span>}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.issue_count > 0 ? <span className="text-red-600 font-semibold">{s.issue_count}</span> : 0}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
-                        {s.last_meter != null ? <>{fmtH(s.last_meter)} <span className="text-slate-400">({formatDate(s.last_date!)})</span></> : <span className="text-slate-300">—</span>}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Chi tiết từng ngày */}
-            <div>
-              <div className="bg-slate-100 border-b border-l-2 border-l-sky-500 px-2 py-1 text-[10px] font-semibold uppercase text-slate-600">Chi tiết theo ngày ({rows.length} dòng)</div>
-              <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã xe</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Số đồng hồ</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Giờ chạy</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Lỗi</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người check</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc check</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
-                    <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-20" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map(r => (
-                    <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewLogId(r.id)}>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{formatDate(r.log_date)}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.code}</TableCell>
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
-                        {r.status === 'IDLE'
-                          ? <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">Nghỉ</span>
-                          : <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Chạy</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.hour_meter != null ? fmtH(r.hour_meter) : <span className="text-slate-300">—</span>}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
-                        {r.hours_run != null ? fmtH(r.hours_run) : r.status === 'IDLE' ? 0 : <span className="text-slate-400 font-normal" title="Chưa có lần ghi kế tiếp">chờ chốt</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.issue_count > 0 ? <span className="text-red-600 font-semibold">{r.issue_count}</span> : 0}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.checked_by || <span className="text-slate-300">—</span>}</TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
-                        {r.checked_at ? <>{formatTimestampDate(r.checked_at, true)} <span className="text-slate-400">{formatTimestampTime(r.checked_at)}</span></> : <span className="text-slate-300">—</span>}
-                      </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[200px] truncate" title={r.note ?? ''}>{r.note || <span className="text-slate-300">—</span>}</TableCell>
-                      <TableCell className="px-2 py-1 whitespace-nowrap">
-                        <div className="flex items-center gap-0.5">
-                          <button className="text-slate-400 hover:text-sky-600 p-1" title="Xem chi tiết check list"
-                            onClick={e => { e.stopPropagation(); setViewLogId(r.id) }}>
-                            <Eye className="h-3.5 w-3.5" />
-                          </button>
-                          {canCheck && (
-                            <button className="text-slate-400 hover:text-red-500 p-1" title="Xóa bản ghi (ghi nhầm)" disabled={del.isPending}
-                              onClick={e => { e.stopPropagation(); handleDelete(r) }}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
           </div>
         )}
       </div>
-      {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
     </>
   )
 }
 
-// ─── Ma trận check list: DÒNG = ngày · CỘT = hạng mục · filter = XE ──────────
-function ChecklistMatrix({ vehicles, days, from, to }: {
-  vehicles: { id: string; code: string; name: string | null }[]
-  days: string[]   // trục ngày (asc, đã cắt tới hôm nay)
-  from: string; to: string
-}) {
+// Xe trong scope filter Kho (dùng chung 3 tab Ma trận / Tổng hợp / Chi tiết)
+function useScopedFkVehicles(warehouseId: string) {
+  const { data: allVehicles = [] } = useForklifts()
+  return useMemo(
+    () => (warehouseId ? allVehicles.filter(v => v.warehouse_id === warehouseId) : allVehicles)
+      .slice().sort((a, b) => a.code.localeCompare(b.code)),
+    [allVehicles, warehouseId],
+  )
+}
+
+// ─── Tab MA TRẬN: DÒNG = ngày · CỘT = hạng mục · filter Kho + Xe ─────────────
+function MatrixTab({ whOpts, active }: { whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
-  const sorted = useMemo(() => [...vehicles].sort((a, b) => a.code.localeCompare(b.code)), [vehicles])
-  // xe đã chọn không còn trong danh sách (đổi filter kho / xe ngừng dùng) → tự về xe đầu
-  const effectiveFk = sorted.some(v => v.id === f.matrixFk) ? f.matrixFk : (sorted[0]?.id ?? '')
-  const { data: logs = [], isLoading } = useForkliftLogs({ forklift_id: effectiveFk, from, to }, !!effectiveFk)
+  const vehicles = useScopedFkVehicles(f.warehouseId)
+  // xe đã chọn không còn trong scope (đổi filter kho / xe ngừng dùng) → tự về xe đầu
+  const effectiveFk = vehicles.some(v => v.id === f.matrixFk) ? f.matrixFk : (vehicles[0]?.id ?? '')
+  const { data: logs = [], isLoading } = useForkliftLogs({ forklift_id: effectiveFk, from: f.from, to: f.to }, active && !!effectiveFk)
   const [viewLogId, setViewLogId] = useState<string | null>(null)
+
+  const filterDefs: FilterDef[] = [
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from: f.from, to: f.to, onChange: (from, to) => setF({ from: from || todayVN(), to: to || from || todayVN() }), pinned: true },
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v }), pinned: true },
+    { key: 'fk', label: 'Xe nâng', type: 'single', options: vehicles.map(v => ({ value: v.id, label: v.code, sub: v.name ?? undefined })), value: effectiveFk, onChange: v => setF({ matrixFk: v }), pinned: true },
+  ]
 
   // Cột = hạng mục theo thứ tự xuất hiện ở log MỚI NHẤT trước (phản ánh cấu hình hiện tại),
   // hạng mục cũ đã gỡ vẫn thành cột riêng (label snapshot) — lịch sử không mất
@@ -798,35 +718,33 @@ function ChecklistMatrix({ vehicles, days, from, to }: {
     return out
   }, [logs])
   const byDate = useMemo(() => new Map(logs.map(l => [l.log_date, l])), [logs])
-  const daysDesc = useMemo(() => [...days].reverse(), [days])
-  const vehicle = sorted.find(v => v.id === effectiveFk)
+  const daysDesc = useMemo(() => buildDays(f.from, f.to).reverse(), [f.from, f.to])
+  const vehicle = vehicles.find(v => v.id === effectiveFk)
 
   return (
-    <DashBlock title="Ma trận check list theo ngày" sub="dòng = ngày · cột = hạng mục · bấm dòng xem chi tiết + ảnh">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className="text-[10px] text-slate-500 shrink-0">Xe nâng:</span>
-        <SingleSelect
-          options={sorted.map(v => ({ value: v.id, label: v.code, sub: v.name ?? undefined }))}
-          value={effectiveFk} onChange={v => setF({ matrixFk: v })}
-          placeholder="Chọn xe…" triggerClassName="w-44" />
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <FilterBar defs={filterDefs} />
+        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
         <div className="flex items-center gap-3 text-[9px] text-slate-500 ml-auto">
           <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Đạt</span>
           <span className="flex items-center gap-1"><XCircle className="h-3 w-3 text-red-500" /> Lỗi (rê chuột xem ghi chú)</span>
-          <span className="flex items-center gap-1"><span className="text-[9px] px-1 rounded-full bg-slate-200 text-slate-600">Nghỉ</span></span>
-          <span className="flex items-center gap-1"><span className="text-[9px] px-1 rounded-full bg-amber-100 text-amber-700">Chưa check</span></span>
+          <span className="text-[9px] px-1 rounded-full bg-slate-200 text-slate-600">Nghỉ</span>
+          <span className="text-[9px] px-1 rounded-full bg-amber-100 text-amber-700">Chưa check</span>
         </div>
       </div>
-      {!effectiveFk ? <p className="text-xs text-slate-400 py-4 text-center">Chưa có xe nâng nào trong phạm vi lọc</p> :
-       isLoading ? <p className="text-xs text-slate-400 py-4 text-center">Đang tải…</p> : (
-        <div className="overflow-auto max-h-[420px] border border-slate-200 rounded">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {!effectiveFk ? <p className="text-xs text-slate-400 py-8 text-center">Chưa có xe nâng nào trong phạm vi lọc</p> :
+         isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p> : (
           <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
             <TableHeader>
               <TableRow>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Ngày</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
                 {labels.map(lb => (
-                  <TableHead key={lb} className="px-1.5 py-1.5 text-[9px] whitespace-nowrap text-center">
-                    <div className="max-w-[110px] truncate" title={lb}>{lb}</div>
+                  // WRAP TEXT (user chốt 01/08): tiêu đề hạng mục xuống dòng, đọc đủ không cần rê chuột
+                  <TableHead key={lb} className="px-1.5 py-1.5 text-[9px] text-center align-bottom whitespace-normal break-words leading-tight min-w-[76px] max-w-[110px]">
+                    {lb}
                   </TableHead>
                 ))}
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Số đồng hồ</TableHead>
@@ -871,13 +789,166 @@ function ChecklistMatrix({ vehicles, days, from, to }: {
               })}
             </TableBody>
           </Table>
-        </div>
-      )}
-      {effectiveFk && vehicle && (
-        <p className="text-[9px] text-slate-400 mt-1">{vehicle.code}{vehicle.name ? ` · ${vehicle.name}` : ''} — {daysDesc.length} ngày · {logs.length} ngày đã check</p>
-      )}
+        )}
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-400 shrink-0">
+        {vehicle ? <>{vehicle.code}{vehicle.name ? ` · ${vehicle.name}` : ''} — {daysDesc.length} ngày · {logs.length} ngày đã check · bấm dòng xem chi tiết + ảnh</> : '—'}
+      </div>
       {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
-    </DashBlock>
+    </>
+  )
+}
+
+// ─── Tab TỔNG HỢP THEO XE — filter Kho + Xe + khoảng ngày ────────────────────
+function SummaryTab({ whOpts, active }: { whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
+  const f = useWmsFilterStore(s => s.forklift)
+  const setF = useWmsFilterStore(s => s.setForklift)
+  const vehicles = useScopedFkVehicles(f.warehouseId)
+  const { data, isLoading, error } = useForkliftReport({ from: f.from, to: f.to, warehouse_id: f.warehouseId || undefined }, active)
+  const summary = (data?.summary ?? []).filter(s => !f.vehicleId || s.forklift_id === f.vehicleId)
+
+  const filterDefs: FilterDef[] = [
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from: f.from, to: f.to, onChange: (from, to) => setF({ from: from || todayVN(), to: to || from || todayVN() }), pinned: true },
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v }), pinned: true },
+    { key: 'fk', label: 'Xe nâng', type: 'single', options: vehicles.map(v => ({ value: v.id, label: v.code, sub: v.name ?? undefined })), value: f.vehicleId, onChange: v => setF({ vehicleId: v }), pinned: true },
+  ]
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <FilterBar defs={filterDefs} />
+        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {error ? <div className="m-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{errMsg(error)}</div> :
+         isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+         summary.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Không có dữ liệu trong khoảng ngày / bộ lọc này</p> : (
+          <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Mã xe</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên xe</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Giờ chạy</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Ngày chạy</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Ngày nghỉ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Chờ chốt</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Hạng mục lỗi</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Đồng hồ mới nhất</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {summary.map(s => (
+                <TableRow key={s.forklift_id}>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold sticky left-0 z-10 bg-white">{s.code}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[180px] truncate" title={s.forklift_name ?? ''}>{s.forklift_name || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">{fmtH(s.total_hours)}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.active_days}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.idle_days}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.open_days > 0 ? s.open_days : <span className="text-slate-300">0</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{s.issue_count > 0 ? <span className="text-red-600 font-semibold">{s.issue_count}</span> : 0}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">
+                    {s.last_meter != null ? <>{fmtH(s.last_meter)} <span className="text-slate-400">({formatDate(s.last_date!)})</span></> : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-400 shrink-0">{summary.length} xe · {formatDate(f.from)} → {formatDate(f.to)}</div>
+    </>
+  )
+}
+
+// ─── Tab CHI TIẾT THEO NGÀY — filter Kho + Xe + khoảng ngày ──────────────────
+function DetailTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
+  const f = useWmsFilterStore(s => s.forklift)
+  const setF = useWmsFilterStore(s => s.setForklift)
+  const vehicles = useScopedFkVehicles(f.warehouseId)
+  const { data, isLoading, error } = useForkliftReport({ from: f.from, to: f.to, warehouse_id: f.warehouseId || undefined }, active)
+  const rows = (data?.rows ?? []).filter(r => !f.vehicleId || r.forklift_id === f.vehicleId)
+  const del = useDeleteForkliftLog()
+  const [viewLogId, setViewLogId] = useState<string | null>(null)
+
+  const filterDefs: FilterDef[] = [
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from: f.from, to: f.to, onChange: (from, to) => setF({ from: from || todayVN(), to: to || from || todayVN() }), pinned: true },
+    { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v }), pinned: true },
+    { key: 'fk', label: 'Xe nâng', type: 'single', options: vehicles.map(v => ({ value: v.id, label: v.code, sub: v.name ?? undefined })), value: f.vehicleId, onChange: v => setF({ vehicleId: v }), pinned: true },
+  ]
+
+  function handleDelete(r: ForkliftReportRow) {
+    if (!confirm(`Xóa bản ghi ${r.code} ngày ${formatDate(r.log_date)}? (ghi nhầm xe/ngày)`)) return
+    del.mutate(r.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được', description: errMsg(e) }) })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <FilterBar defs={filterDefs} />
+        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {error ? <div className="m-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{errMsg(error)}</div> :
+         isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> :
+         rows.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Không có dữ liệu trong khoảng ngày / bộ lọc này</p> : (
+          <Table className="min-w-max [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap sticky left-0 z-20 bg-slate-50">Ngày</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã xe</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Số đồng hồ</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Giờ chạy</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap text-right">Lỗi</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người check</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Lúc check</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-20" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map(r => (
+                <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewLogId(r.id)}>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums sticky left-0 z-10 bg-white">{formatDate(r.log_date)}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.code}</TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {r.status === 'IDLE'
+                      ? <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">Nghỉ</span>
+                      : <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Chạy</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.hour_meter != null ? fmtH(r.hour_meter) : <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
+                    {r.hours_run != null ? fmtH(r.hours_run) : r.status === 'IDLE' ? 0 : <span className="text-slate-400 font-normal" title="Chưa có lần ghi kế tiếp">chờ chốt</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums">{r.issue_count > 0 ? <span className="text-red-600 font-semibold">{r.issue_count}</span> : 0}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.checked_by || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
+                    {r.checked_at ? <>{formatTimestampDate(r.checked_at, true)} <span className="text-slate-400">{formatTimestampTime(r.checked_at)}</span></> : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[200px] truncate" title={r.note ?? ''}>{r.note || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <div className="flex items-center gap-0.5">
+                      <button className="text-slate-400 hover:text-sky-600 p-1" title="Xem chi tiết check list"
+                        onClick={e => { e.stopPropagation(); setViewLogId(r.id) }}>
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                      {canCheck && (
+                        <button className="text-slate-400 hover:text-red-500 p-1" title="Xóa bản ghi (ghi nhầm)" disabled={del.isPending}
+                          onClick={e => { e.stopPropagation(); handleDelete(r) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-400 shrink-0">{rows.length} dòng · {formatDate(f.from)} → {formatDate(f.to)}</div>
+      {viewLogId && <LogDetailDialog id={viewLogId} onClose={() => setViewLogId(null)} />}
+    </>
   )
 }
 

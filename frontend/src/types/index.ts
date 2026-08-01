@@ -735,9 +735,12 @@ export interface GDO {
   // Kho chọn "Bắt buộc quét đủ thùng" → BE chặn Hoàn thành chuyến khi pallet thiếu tem (15/07)
   carton_scan_require_full?: boolean
   // Gate cân xe (01/08): duyệt bỏ qua cân + phiếu cân gắn chuyến + ước tính KL hàng (đối chiếu net cân)
-  weigh_waived_at?:     string | null
+  weigh_waived_at?:     string | null   // duyệt bỏ qua RULE 2 (cân)
   weigh_waived_by?:     string | null
   weigh_waive_reason?:  string | null
+  gate_waived_at?:      string | null   // duyệt bỏ qua RULE 1 (đăng ký cổng) — biển số thành tùy chọn
+  gate_waived_by?:      string | null
+  gate_waive_reason?:   string | null
   weigh_tickets?: {
     id: string; ticket_no: string | null; weigh_date: string | null; license_plate: string | null
     tare_kg: number | null; gross_kg: number | null; net_kg: number | null

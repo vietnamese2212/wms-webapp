@@ -10,7 +10,7 @@ import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEnt
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale,
+  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -27,7 +27,7 @@ import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
   useGDO, useAssignGDO, useStartGDO, useWarehouseEmployees, usePatchGDO, useWarehouses,
   useUnassignGDO, useUnstartGDO, useUncompleteGDO, useUpdateTransport,
-  useWaiveWeighGDO, useUnwaiveWeighGDO,
+  useWaiveWeighGDO, useUnwaiveWeighGDO, useWaiveGateGDO, useUnwaiveGateGDO,
   useItemInventory, useManualItemStock, useDeleteGDO, useManualCompleteItem, type ItemInventoryEntry,
   useActiveGateRegistrations, useGDOs, useOutboundShortages, useQuickExportExistingGDO,
   useGdoPickSuggestions,
@@ -359,14 +359,15 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   // NGAY tại đây (gửi lại kèm weigh_waive=true).
   const [errCode, setErrCode] = useState<string | null>(null)
   const gateBlocked = errCode === 'WEIGH_REQUIRED' || errCode === 'GATE_REQUIRED'
-  // 2 RULE per kho (user chốt 01/08): rule 1 đăng ký cổng · rule 2 cân — độc lập, bật cái nào chấp
-  // hành cái đó. Miễn trừ DUY NHẤT = duyệt trước trên chuyến (weigh_waived) — KHÔNG có lựa chọn nào
-  // ở dialog này ("bắt đầu và chọn là rủi ro").
-  const ruleGate  = gdo.warehouse?.require_gate_on_start === true
-  const waived    = !!gdo.weigh_waived_at
+  // 2 RULE per kho + 2 VẾT DUYỆT RIÊNG (user chốt 01/08): rule 1 đăng ký cổng (miễn = gate_waived) ·
+  // rule 2 cân (miễn = weigh_waived) — duyệt rule nào thoát rule đó, duyệt TRƯỚC trên chuyến,
+  // KHÔNG có lựa chọn nào ở dialog này ("bắt đầu và chọn là rủi ro").
+  const ruleGate    = gdo.warehouse?.require_gate_on_start === true
+  const gateWaived  = !!gdo.gate_waived_at
+  const weighWaived = !!gdo.weigh_waived_at
   // Kho bật rule cổng: KHÔNG cho nhập biển tay (xe không đăng ký = vi phạm rule 1, phải được duyệt);
-  // chuyến đã duyệt → nhập tay lại được (giao lẻ xe máy/NV nhận, biển tùy chọn).
-  const allowFreePlate = !ruleGate || waived
+  // chuyến đã duyệt CỔNG → nhập tay lại được (giao lẻ xe máy/NV nhận, biển tùy chọn).
+  const allowFreePlate = !ruleGate || gateWaived
 
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
@@ -417,8 +418,8 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const forklifterNames = forklifterIds.map(id => empMap.get(id) ?? id).filter(Boolean).join(', ')
 
   function handleSubmit() {
-    // Chuyến đã được DUYỆT bỏ qua cổng/cân: biển số tùy chọn (giao lẻ NV nhận không có xe)
-    if (!effectivePlate.trim() && !internalPair && !waived) {
+    // Chuyến đã được DUYỆT bỏ qua CỔNG: biển số tùy chọn (giao lẻ NV nhận không có xe)
+    if (!effectivePlate.trim() && !internalPair && !gateWaived) {
       setErr(allowFreePlate
         ? 'Vui lòng chọn chuyến xe đã vào cổng (hoặc nhập biển số ở Trường hợp đặc biệt)'
         : 'Vui lòng chọn chuyến xe đã vào cổng — kho này yêu cầu xe phải có Đăng ký cổng')
@@ -462,16 +463,22 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
       </>}
     >
         <div className="space-y-3">
-          {/* Chuyến đã được DUYỆT bỏ qua cổng/cân (giao lẻ, hỏng cân…) — thông báo + biển số tùy chọn */}
-          {waived && (
-            <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 flex items-start gap-1.5">
-              <Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <span>Chuyến đã được <b>duyệt bỏ qua cổng/cân</b> bởi {gdo.weigh_waived_by ?? '?'}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''} — biển số tùy chọn (giao lẻ/nhân viên nhận thì để trống).</span>
+          {/* Chuyến đã được duyệt bỏ qua rule nào thì báo rule đó (2 vết riêng) */}
+          {(gateWaived || weighWaived) && (
+            <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 space-y-0.5">
+              {gateWaived && (
+                <p className="flex items-start gap-1.5"><Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>Đã duyệt <b>bỏ qua ĐĂNG KÝ CỔNG</b> bởi {gdo.gate_waived_by ?? '?'}{gdo.gate_waive_reason ? ` (${gdo.gate_waive_reason})` : ''} — biển số tùy chọn (giao lẻ/nhân viên nhận thì để trống).</span></p>
+              )}
+              {weighWaived && (
+                <p className="flex items-start gap-1.5"><Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>Đã duyệt <b>bỏ qua CÂN</b> bởi {gdo.weigh_waived_by ?? '?'}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}.</span></p>
+              )}
             </div>
           )}
 
           <div className="space-y-1">
-            <Label className="text-xs">Chuyến xe / Biển số {waived ? '' : '*'}</Label>
+            <Label className="text-xs">Chuyến xe / Biển số {gateWaived ? '' : '*'}</Label>
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
@@ -480,7 +487,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
               allowFreePlate={allowFreePlate} />
           </div>
 
-          {special && !gateRegId && licPlate.trim() && allowFreePlate && !waived && (
+          {special && !gateRegId && licPlate.trim() && allowFreePlate && !gateWaived && (
             <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
           )}
 
@@ -523,9 +530,12 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
             <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
           {/* Bị chặn bởi rule cổng/cân: KHÔNG có đường tắt ở đây (chọn-lúc-bắt-đầu là rủi ro) —
-              miễn trừ duy nhất là nút "Bỏ qua cổng/cân" TRÊN CHUYẾN của người có quyền */}
-          {gateBlocked && (
-            <p className="text-[11px] text-amber-700">Trường hợp đặc biệt (giao lẻ/xe máy/nhân viên nhận, hỏng cân, nhập bù…): người có quyền bấm <b>"Bỏ qua cổng/cân"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
+              miễn trừ = nút duyệt TỪNG RULE trên chuyến của người có quyền tương ứng */}
+          {errCode === 'GATE_REQUIRED' && (
+            <p className="text-[11px] text-amber-700">Xe không đăng ký được (giao lẻ/xe máy/nhân viên nhận…): người có quyền bấm <b>"Bỏ qua cổng"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
+          )}
+          {errCode === 'WEIGH_REQUIRED' && (
+            <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, không có xe…): người có quyền bấm <b>"Bỏ qua cân"</b> trên trang chuyến để duyệt, sau đó bấm Bắt đầu lại.</p>
           )}
         </div>
     </FormSheet>
@@ -1346,8 +1356,10 @@ export default function OutboundDetail() {
   const { mutate: uncompleteGDO, isPending: uncompleting } = useUncompleteGDO()
   const manualCompleteMulti = useManualCompleteItem()   // "Lưu tất cả theo KH" — bulk hàng không tem
   const { mutate: quickExportExisting, isPending: quickExporting } = useQuickExportExistingGDO()
-  const { mutate: waiveWeigh,   isPending: waiving }   = useWaiveWeighGDO()     // duyệt bỏ qua cân (gate cân xe)
-  const { mutate: unwaiveWeigh, isPending: unwaiving } = useUnwaiveWeighGDO()
+  const { mutate: waiveWeigh,   isPending: waiving }     = useWaiveWeighGDO()   // duyệt bỏ qua RULE 2 (cân)
+  const { mutate: unwaiveWeigh, isPending: unwaiving }   = useUnwaiveWeighGDO()
+  const { mutate: waiveGate,    isPending: gWaiving }    = useWaiveGateGDO()    // duyệt bỏ qua RULE 1 (đăng ký cổng)
+  const { mutate: unwaiveGate,  isPending: gUnwaiving }  = useUnwaiveGateGDO()
   const [bulkErr, setBulkErr] = useState<string | null>(null)
   const [bulkSaving, setBulkSaving] = useState(false)
   const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
@@ -1600,24 +1612,44 @@ export default function OutboundDetail() {
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,
     })
-  // 2 rule cổng/cân: kho bật rule nào + chuyến CHƯA bắt đầu → người có quyền duyệt bỏ qua TRƯỚC
-  // trên chuyến (miễn trừ DUY NHẤT — không có lựa chọn nào lúc bấm Bắt đầu). Đã duyệt → cho hủy duyệt.
-  if ((gdo.warehouse?.require_weigh_on_start || gdo.warehouse?.require_gate_on_start) && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
+  // 2 rule cổng/cân = 2 ACTION DUYỆT RIÊNG (user chốt 01/08: "có khi đăng ký cổng nhưng không cân
+  // hoặc ngược lại") — kho bật rule nào hiện nút rule đó, mỗi nút 1 quyền, duyệt TRƯỚC trên chuyến.
+  if (gdo.warehouse?.require_gate_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'gate_waive')) {
+    if (!gdo.gate_waived_at)
+      actionItems.push({
+        key: 'gate-waive', icon: DoorOpen, label: 'Bỏ qua cổng',
+        tip: 'Duyệt bỏ qua RULE 1 (đăng ký cổng) — xe không đăng ký được: giao lẻ, xe máy, nhân viên nhận… Duyệt xong biển số thành tùy chọn; rule CÂN (nếu kho bật) vẫn phải chấp hành',
+        className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: gWaiving,
+        onClick: () => setPendingConfirm({
+          title: 'Duyệt bỏ qua ĐĂNG KÝ CỔNG',
+          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần Đăng ký cổng (ghi vết người duyệt). Rule cân — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
+          onConfirm: () => waiveGate({ id: gdo.id }),
+        }),
+      })
+    else
+      actionItems.push({
+        key: 'gate-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cổng',
+        tip: `Đã duyệt bỏ qua đăng ký cổng bởi ${gdo.gate_waived_by ?? '?'} — hủy duyệt để yêu cầu lại`,
+        className: 'border-slate-300 text-slate-500', busy: gUnwaiving,
+        onClick: () => unwaiveGate(gdo.id),
+      })
+  }
+  if (gdo.warehouse?.require_weigh_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
     if (!gdo.weigh_waived_at)
       actionItems.push({
-        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cổng/cân',
-        tip: 'Duyệt bỏ qua rule cổng/cân — chuyến được Bắt đầu dù xe chưa đăng ký cổng / chưa có phiếu cân hôm nay (giao lẻ, xe máy, nhân viên nhận, hỏng cân, nhập bù…)',
+        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cân',
+        tip: 'Duyệt bỏ qua RULE 2 (cân) — xe không cân được: hỏng cân, giao lẻ không có xe… Rule ĐĂNG KÝ CỔNG (nếu kho bật) vẫn phải chấp hành',
         className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: waiving,
         onClick: () => setPendingConfirm({
-          title: 'Duyệt bỏ qua cổng/cân',
-          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần đăng ký cổng/phiếu cân (ghi vết người duyệt). Xác nhận?`,
+          title: 'Duyệt bỏ qua CÂN',
+          message: `Chuyến ${gdo.group_code} sẽ được Bắt đầu mà KHÔNG cần phiếu cân (ghi vết người duyệt). Rule đăng ký cổng — nếu kho bật — vẫn phải chấp hành. Xác nhận?`,
           onConfirm: () => waiveWeigh({ id: gdo.id }),
         }),
       })
     else
       actionItems.push({
-        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cổng/cân',
-        tip: `Đã duyệt bỏ qua cổng/cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu đủ cổng + cân`,
+        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cân',
+        tip: `Đã duyệt bỏ qua cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu cân lại`,
         className: 'border-slate-300 text-slate-500', busy: unwaiving,
         onClick: () => unwaiveWeigh(gdo.id),
       })
@@ -1735,18 +1767,23 @@ export default function OutboundDetail() {
       )}
 
       {/* CÂN XE (2 rule cổng/cân 01/08): phiếu cân gắn chuyến + đối chiếu KL hàng (tính từ KL/thùng) với KL cân thực */}
-      {(weighTickets.length > 0 || gdo.weigh_waived_at || ((gdo.warehouse?.require_weigh_on_start || gdo.warehouse?.require_gate_on_start) && !gdo.started_at)) && (
+      {(weighTickets.length > 0 || gdo.weigh_waived_at || gdo.gate_waived_at || ((gdo.warehouse?.require_weigh_on_start || gdo.warehouse?.require_gate_on_start) && !gdo.started_at)) && (
         <Card className="px-2 py-1 bg-slate-50 border-slate-200 space-y-0.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700">
-            <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cân xe</span>
-            {gdo.weigh_waived_at && (
-              <span className="text-amber-700 font-medium" title={gdo.weigh_waive_reason ?? undefined}>
-                Đã duyệt BỎ QUA cổng/cân — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
+            <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cổng / Cân</span>
+            {gdo.gate_waived_at && (
+              <span className="text-amber-700 font-medium" title={gdo.gate_waive_reason ?? undefined}>
+                Đã duyệt BỎ QUA CỔNG — {gdo.gate_waived_by ?? '?'} · {formatDateTime(gdo.gate_waived_at)}{gdo.gate_waive_reason ? ` (${gdo.gate_waive_reason})` : ''}
               </span>
             )}
-            {weighTickets.length === 0 && !gdo.weigh_waived_at && (
+            {gdo.weigh_waived_at && (
+              <span className="text-amber-700 font-medium" title={gdo.weigh_waive_reason ?? undefined}>
+                Đã duyệt BỎ QUA CÂN — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
+              </span>
+            )}
+            {weighTickets.length === 0 && !gdo.started_at && (gdo.warehouse?.require_gate_on_start && !gdo.gate_waived_at || gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at) && (
               <span className="text-amber-600">
-                Kho yêu cầu {[gdo.warehouse?.require_gate_on_start ? 'ĐĂNG KÝ CỔNG' : null, gdo.warehouse?.require_weigh_on_start ? 'CÂN XE' : null].filter(Boolean).join(' + ')} trước khi Bắt đầu{gdo.warehouse?.require_weigh_on_start ? ' — chưa có phiếu cân gắn chuyến' : ''}
+                Kho yêu cầu {[gdo.warehouse?.require_gate_on_start && !gdo.gate_waived_at ? 'ĐĂNG KÝ CỔNG' : null, gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at ? 'CÂN XE' : null].filter(Boolean).join(' + ')} trước khi Bắt đầu{gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at ? ' — chưa có phiếu cân gắn chuyến' : ''}
               </span>
             )}
           </div>

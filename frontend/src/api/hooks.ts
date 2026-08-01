@@ -3108,6 +3108,29 @@ export function useUnwaiveWeighGDO() {
     },
   })
 }
+// Rule 1 — đăng ký cổng (quyền outbound.gate_waive): duyệt cổng ⇒ biển số tùy chọn (giao lẻ/NV nhận)
+export function useWaiveGateGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      apiClient.post(`/wms/outbound/${id}/gate-waive`, { reason }).then(r => r.data.data),
+    onSettled: (_, __, { id }) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
+    },
+  })
+}
+export function useUnwaiveGateGDO() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/wms/outbound/${id}/gate-waive`).then(r => r.data.data),
+    onSettled: (_, __, id) => {
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo', id] })
+    },
+  })
+}
 
 export const useUnassignGDO   = makeUndoGDOMutation('unassign',
   old => ({ ...old, assigned_at: null, assigned_by: null, status: 'PENDING' }))

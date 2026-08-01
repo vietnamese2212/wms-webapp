@@ -354,6 +354,8 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
   const canWaive = can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'weigh_waive')
   const strictGate = gdo.warehouse?.require_weigh_on_start === true
   const gateBlocked = errCode === 'WEIGH_REQUIRED' || errCode === 'GATE_REQUIRED'
+  // GIAO LẺ (xe máy/nhân viên nhận — user chốt 01/08): tự khai, miễn gate cổng/cân, ghi vết ai khai
+  const [smallDelivery, setSmallDelivery] = useState(false)
 
   const allItems    = (gdo.delivery_orders ?? []).flatMap(d => d.items)
   const isContainer = allItems.some(i => i.export_type?.toLowerCase().includes('cont'))
@@ -418,6 +420,7 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
         gate_registration_id: gateRegId || undefined,
         allow_shared_gate:    special || undefined,
         ...(waive ? { weigh_waive: true, weigh_waive_reason: waiveReason.trim() || undefined } : {}),
+        ...(smallDelivery ? { small_delivery: true } : {}),
       },
       {
         onSuccess: onClose,
@@ -454,11 +457,24 @@ function StartDialog({ open, gdo, onClose }: { open: boolean; gdo: GDO; onClose:
           </div>
 
           {special && !gateRegId && licPlate.trim() && (
-            strictGate ? (
-              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại, hoặc cần người có quyền Duyệt bỏ qua cổng/cân.</p>
+            strictGate && !smallDelivery ? (
+              <p className="text-[11px] text-amber-700 font-medium">⚠ Kho này yêu cầu ĐĂNG KÝ CỔNG + CÂN XE: xe tải biển vãng lai sẽ bị chặn khi Bắt đầu — báo bảo vệ tạo Đăng ký cổng rồi chọn lại. Giao lẻ (xe máy/nhân viên nhận) thì tích ô bên dưới.</p>
             ) : (
               <p className="text-[11px] text-amber-600">⚠ Biển số chưa gắn đăng ký cổng (xe vãng lai / giao đêm).</p>
             )
+          )}
+
+          {/* GIAO LẺ — chỉ kho quy trình chặt: tự khai miễn gate cổng/cân, có ghi vết + badge trên chuyến */}
+          {strictGate && (
+            <label htmlFor="start-smalldelivery" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+              <input id="start-smalldelivery" type="checkbox" checked={smallDelivery}
+                onChange={e => setSmallDelivery(e.target.checked)}
+                className="h-4 w-4 mt-0.5 rounded accent-amber-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Giao lẻ / xe máy / nhân viên nhận — không qua cổng-cân</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Chỉ tích khi KHÔNG phải xe tải chở hàng (xe máy, nhân viên tự nhận…). Chuyến sẽ ghi rõ người khai để đối soát.</span>
+              </span>
+            </label>
           )}
 
           {isContainer && (
@@ -1726,16 +1742,21 @@ export default function OutboundDetail() {
       )}
 
       {/* CÂN XE (gate cân 01/08): phiếu cân gắn chuyến + đối chiếu KL hàng (tính từ KL/thùng) với KL cân thực */}
-      {(weighTickets.length > 0 || gdo.weigh_waived_at || (gdo.warehouse?.require_weigh_on_start && !gdo.started_at)) && (
+      {(weighTickets.length > 0 || gdo.weigh_waived_at || gdo.small_delivery_at || (gdo.warehouse?.require_weigh_on_start && !gdo.started_at)) && (
         <Card className="px-2 py-1 bg-slate-50 border-slate-200 space-y-0.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700">
             <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cân xe</span>
             {gdo.weigh_waived_at && (
               <span className="text-amber-700 font-medium" title={gdo.weigh_waive_reason ?? undefined}>
-                Đã duyệt BỎ QUA cân — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
+                Đã duyệt BỎ QUA cổng/cân — {gdo.weigh_waived_by ?? '?'} · {formatDateTime(gdo.weigh_waived_at)}{gdo.weigh_waive_reason ? ` (${gdo.weigh_waive_reason})` : ''}
               </span>
             )}
-            {weighTickets.length === 0 && !gdo.weigh_waived_at && (
+            {gdo.small_delivery_at && (
+              <span className="text-sky-700 font-medium">
+                GIAO LẺ (xe máy/nhân viên nhận — không qua cổng-cân) — khai bởi {gdo.small_delivery_by ?? '?'} · {formatDateTime(gdo.small_delivery_at)}
+              </span>
+            )}
+            {weighTickets.length === 0 && !gdo.weigh_waived_at && !gdo.small_delivery_at && (
               <span className="text-amber-600">Kho yêu cầu ĐĂNG KÝ CỔNG + CÂN XE trước khi Bắt đầu — chưa có phiếu cân gắn chuyến</span>
             )}
           </div>

@@ -3030,8 +3030,10 @@ export function useStartGDO() {
       exporter_name?: string; loader_name?: string
       forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
-      // Gate cân: duyệt bỏ qua ngay lúc bấm (BE kiểm quyền outbound.weigh_waive)
+      // Gate cổng/cân: duyệt bỏ qua ngay lúc bấm (BE kiểm quyền outbound.weigh_waive)
       weigh_waive?: boolean; weigh_waive_reason?: string
+      // Giao lẻ (xe máy/nhân viên nhận) — tự khai, miễn gate cổng/cân, BE ghi vết ai khai
+      small_delivery?: boolean
     }) => apiClient.post(`/wms/outbound/${id}/start`, body).then(r => r.data.data),
     onMutate: async ({ id }) => {
       await qc.cancelQueries({ queryKey: ['gdo', id] })

@@ -738,6 +738,9 @@ export interface GDO {
   weigh_waived_at?:     string | null
   weigh_waived_by?:     string | null
   weigh_waive_reason?:  string | null
+  // Giao lẻ tự khai (xe máy/nhân viên nhận — miễn gate cổng/cân, ghi vết ai khai)
+  small_delivery_at?:   string | null
+  small_delivery_by?:   string | null
   weigh_tickets?: {
     id: string; ticket_no: string | null; weigh_date: string | null; license_plate: string | null
     tare_kg: number | null; gross_kg: number | null; net_kg: number | null

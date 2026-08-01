@@ -2071,12 +2071,13 @@ export async function startGDO(req: Request, res: Response) {
     const {
       license_plate, container_number, exporter_name,
       loader_name, forklift_driver_id, forklift_driver_names,
-      gate_registration_id, allow_shared_gate, weigh_waive, weigh_waive_reason,
+      gate_registration_id, allow_shared_gate, weigh_waive, weigh_waive_reason, small_delivery,
     } = req.body as {
       license_plate?: string; container_number?: string; exporter_name?: string
       loader_name?: string; forklift_driver_id?: string; forklift_driver_names?: string
       gate_registration_id?: string | null; allow_shared_gate?: boolean
       weigh_waive?: boolean; weigh_waive_reason?: string
+      small_delivery?: boolean   // GIAO LẺ (xe máy/nhân viên nhận) — tự khai, miễn gate cổng/cân, ghi vết
     }
     if (!(await guardGdoScope(req, res, req.params.id))) return
 
@@ -2112,11 +2113,13 @@ export async function startGDO(req: Request, res: Response) {
     // GATE CỔNG + CÂN (kho bật cờ = quy trình chặt: đăng ký cổng → vào cổng → cân bì → bốc hàng):
     // (1) chuyến phải gắn ĐĂNG KÝ CỔNG hợp lệ (khóa đường biển vãng lai không đăng ký);
     // (2) biển số phải khớp phiếu cân CHƯA hoàn thành hôm nay.
-    // Miễn khi chuyến ĐÃ duyệt bỏ qua, hoặc người có quyền weigh_waive duyệt ngay lúc bấm (body flag).
+    // Miễn khi: chuyến ĐÃ duyệt bỏ qua · người có quyền weigh_waive duyệt ngay lúc bấm (body flag)
+    // · hoặc TỰ KHAI GIAO LẺ (small_delivery — xe máy/nhân viên nhận, không qua cổng-cân; không cần
+    //   quyền nhưng ghi vết ai khai, user chốt 01/08).
     const alreadyWaived = !!(cur as { weigh_waived_at?: string | null } | null)?.weigh_waived_at
     const strictWeigh = ((cur as { warehouse?: { require_weigh_on_start?: boolean } | null } | null)?.warehouse)?.require_weigh_on_start === true
     let weighTicketId: string | null = null
-    if (!alreadyWaived) {
+    if (!alreadyWaived && small_delivery !== true) {
       if (weigh_waive === true) {
         if (!userHasPerm(req, 'outbound', 'weigh_waive'))
           return fail(res, 403, 'FORBIDDEN', 'Bạn không có quyền Duyệt bỏ qua cổng/cân — nhờ người được phân quyền duyệt trên chuyến')
@@ -2143,8 +2146,12 @@ export async function startGDO(req: Request, res: Response) {
         gate_registration_id:   gate_registration_id   ?? null,
         ...(autoAssign ? { assigned_at: now(), assigned_by: req.user?.name ?? null } : {}),
         // Duyệt bỏ qua cân ngay lúc bấm (đã kiểm quyền ở trên) → ghi vết ai duyệt
-        ...(weigh_waive === true && !alreadyWaived
+        ...(weigh_waive === true && !alreadyWaived && small_delivery !== true
           ? { weigh_waived_at: now(), weigh_waived_by: req.user?.name ?? null, weigh_waive_reason: String(weigh_waive_reason ?? '').trim() || null }
+          : {}),
+        // Giao lẻ tự khai (xe máy/nhân viên nhận) → ghi vết ai khai — badge trên chuyến để quản lý soi
+        ...(small_delivery === true
+          ? { small_delivery_at: now(), small_delivery_by: req.user?.name ?? null }
           : {}),
         status:     'IN_PROGRESS',
         updated_at: now(),
@@ -2280,6 +2287,7 @@ export async function unstartGDO(req: Request, res: Response) {
         started_at: null, license_plate: null, container_number: null,
         exporter_name: null, loader_name: null,
         forklift_driver_id: null, forklift_driver_names: null,
+        small_delivery_at: null, small_delivery_by: null,   // giao lẻ khai theo LƯỢT bắt đầu — gỡ là khai lại
         status: 'PENDING', updated_at: t,
       })
       .eq('id', req.params.id)

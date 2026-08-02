@@ -7,8 +7,25 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
+import { replanKhvcGroups } from '../wms/outboundController'
 
 const now = () => new Date().toISOString()
+
+// REPLAN sau CRUD (user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT của Kế hoạch xuất — sửa/xóa/thêm dòng
+// tại đây phải TỰ DỘI xuống chuyến. AUGMENT: lỗi replan không làm hỏng thao tác CRUD gốc (đã ghi raw);
+// trả kèm `replan` (hoặc `replan_error`) để FE hiện kết quả.
+async function replanAfterCrud(req: Request, groupCodes: string[]): Promise<{ replan?: Record<string, unknown>; replan_error?: string }> {
+  try { return { replan: await replanKhvcGroups(req, groupCodes) } }
+  catch (e) { console.error('[khvc replan]', e); return { replan_error: String(e) } }
+}
+
+// DO bắt buộc có trong VL06O (raw, không OBSOLETE) — cùng luật uploadKhvc "DO LUÔN bắt buộc".
+// Thiếu raw thì dòng kế hoạch không derive được chuyến → chặn ngay lúc nhập cho khỏi lệch.
+async function doMissingInRaw(doNo: string): Promise<boolean> {
+  const { data } = await supabase.from('erp_outbound_orders')
+    .select('id').eq('od_number', doNo).neq('sync_status', 'OBSOLETE').limit(1)
+  return !(data ?? []).length
+}
 
 // Cap an toàn cho filter chéo "Trong DO SAP" (đối xứng erpOrderController): tập DO của cửa sổ đưa vào .in()
 // không được quá lớn → vượt thì bỏ filter + trả cảnh báo (không cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
@@ -209,6 +226,8 @@ export async function createKhvc(req: Request, res: Response) {
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
+    if (await doMissingInRaw(String(fields.do_no)))
+      return fail(res, `DO ${fields.do_no} chưa có trong VL06O — Up VL06O trước rồi thêm dòng kế hoạch (DO luôn bắt buộc).`, 400)
     const row = {
       id: randomUUID(), ...fields,
       warehouse_code: fields.warehouse_code ?? String(fields.group_code).split('_')[0] ?? null,
@@ -217,7 +236,8 @@ export async function createKhvc(req: Request, res: Response) {
     }
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
     if (error) throw new Error(error.message)
-    return ok(res, data, 201)
+    const extra = await replanAfterCrud(req, [String(fields.group_code)])
+    return ok(res, { ...(data as Record<string, unknown>), ...extra }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -226,8 +246,10 @@ export async function updateKhvc(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
+    // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
+    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no').eq('id', req.params.id).maybeSingle()
+    if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
     if ('group_code' in fields || 'do_no' in fields) {
-      const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no').eq('id', req.params.id).maybeSingle()
       const gc = (fields.group_code ?? cur?.group_code) as string | null
       const dn = (fields.do_no ?? cur?.do_no) as string | null
       if (gc && dn) {
@@ -235,13 +257,17 @@ export async function updateKhvc(req: Request, res: Response) {
           .eq('group_code', gc).eq('do_no', dn).neq('id', req.params.id).maybeSingle()
         if (dup) return fail(res, `Đã tồn tại dòng Số xe ${gc} / DO ${dn}`, 409)
       }
+      if ('do_no' in fields && dn && (await doMissingInRaw(dn)))
+        return fail(res, `DO ${dn} chưa có trong VL06O — Up VL06O trước (DO luôn bắt buộc).`, 400)
     }
     const { data, error } = await supabase.from('khvc_lines')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
-    return ok(res, data)
+    const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
+    const extra = await replanAfterCrud(req, gcs)
+    return ok(res, { ...(data as Record<string, unknown>), ...extra })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -256,7 +282,8 @@ export async function deleteKhvc(req: Request, res: Response) {
     if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
     const { error } = await supabase.from('khvc_lines').delete().eq('id', req.params.id)
     if (error) throw new Error(error.message)
-    return ok(res, { deleted: 1, blocked })
+    const extra = await replanAfterCrud(req, [dr.group_code])
+    return ok(res, { deleted: 1, blocked, ...extra })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -278,6 +305,7 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
       const { error } = await supabase.from('khvc_lines').delete().in('id', delIds.slice(i, i + 300))
       if (error) throw new Error(error.message)
     }
-    return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut })
+    const extra = await replanAfterCrud(req, [...new Set(deletable.map(d => d.group_code))])
+    return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut, ...extra })
   } catch (e) { return fail(res, String(e)) }
 }

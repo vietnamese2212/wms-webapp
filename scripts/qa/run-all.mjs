@@ -17,6 +17,7 @@ const steps = [
   ['07-params-fuzz.mjs'],         // fuzz tham số rỗng/lạ mọi API list (read-only) — bắt 500/dump danh mục/quá 4MB
   ['10-leftover-location.mjs'],   // pallet xuất không hết PHẢI khai vị trí phần dư (+ rollback khi vị trí đầy)
   ['11-gate-rules.mjs'],          // 2 rule cổng/cân khi Bắt đầu + các đường lách đã vá (unstart/PATCH status/sửa xe/quét trước start)
+  ['12-derived-lock.mjs'],        // Xuất = dẫn xuất VL06O+KH xuất: khóa sửa kế hoạch chuyến SAP + CRUD KH tự dội xuống chuyến (02/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

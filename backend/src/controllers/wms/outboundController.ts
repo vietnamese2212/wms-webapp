@@ -1110,6 +1110,7 @@ export async function createGDO(req: Request, res: Response) {
       id: gdoId, planned_date: delivery_date, delivery_date,
       warehouse_id: warehouse_id ?? null, dvvt: dvvtName,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null, status: 'PENDING',
+      origin: 'MANUAL',   // tạo tay — không có nguồn raw, sửa đơn như cũ
       created_by: actor, updated_by: actor, updated_at: now(),
     })
     if (ins.error) return fail(res, ins.conflict ? 409 : 500, ins.conflict ? 'CREATE_CONFLICT' : 'ERROR', ins.error)
@@ -1252,6 +1253,7 @@ export async function quickExportGDO(req: Request, res: Response) {
       id: gdoId, planned_date: delivery_date, delivery_date,
       warehouse_id, dvvt: dvvtName,
       warehouse_type: warehouse_type ?? null, shipto_party: shipto_party ?? null,
+      origin: 'MANUAL',   // Tạo & Xuất luôn — không có nguồn raw
       status: 'IN_PROGRESS',
       assigned_at: t, assigned_by: actor,               // tự gán người tạo phụ trách
       started_at: t, license_plate: normalizePlate(license_plate),
@@ -1729,9 +1731,31 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status, shipto_party, warehouse_id').eq('id', req.params.id).single()
+      .select('status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
+
+    // ── CHUYẾN SINH TỪ SAP (origin='SAP', user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT của
+    // VL06O + Kế hoạch xuất — phần KẾ HOẠCH khóa trên đơn, sửa Ở NGUỒN rồi hệ thống tự dội xuống:
+    //   SL/dòng hàng → tab DO SAP (VL06O) · ngày/kho/NPP/ĐVVT/loại xe → tab Kế hoạch xuất.
+    // Chỉ so GIÁ TRỊ ĐỔI (FE gửi kèm giá trị hiện tại là bình thường, không chặn oan).
+    // Chuyến EXCEL/MANUAL/LEGACY (kho không làm SAP) giữ nguyên sửa tự do.
+    const gdoCur = gdo as { status: string; shipto_party?: string | null; warehouse_id?: string | null; origin?: string | null; delivery_date?: string | null; dvvt?: string | null; warehouse_type?: string | null }
+    if (gdoCur.origin === 'SAP') {
+      const KHVC_HINT = 'sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài) — chuyến tự cập nhật theo'
+      const sapTripLock = (label: string) =>
+        fail(res, 422, 'SAP_PLAN_LOCKED', `Chuyến sinh từ SAP — không đổi ${label} tại đây, ${KHVC_HINT}.`)
+      const norm = (v: unknown) => String(v ?? '').trim()
+      if (delivery_date !== undefined && norm(delivery_date) !== norm(gdoCur.delivery_date)) return sapTripLock('Ngày xuất')
+      if (warehouse_id !== undefined && norm(warehouse_id) !== norm(gdoCur.warehouse_id)) return sapTripLock('Kho')
+      if ('shipto_party' in req.body && norm(shipto_party) !== norm(gdoCur.shipto_party)) return sapTripLock('Ship-to')
+      if ('warehouse_type' in req.body && norm(warehouse_type) !== norm(gdoCur.warehouse_type)) return sapTripLock('Loại kho')
+      if (dvvt !== undefined && norm(dvvt) !== norm(gdoCur.dvvt)) return sapTripLock('Đơn vị vận tải')
+      // Dòng hàng THÊM TAY (không db_id) = xuất ngoài SAP → lệch đối soát. Thêm ở nguồn:
+      // DO mới → up VL06O + Kế hoạch xuất; item của DO đã có → tự hiện khi up lại VL06O.
+      if (items?.some(i => !i.db_id))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không thêm dòng hàng tay tại đây (xuất ngoài SAP sẽ lệch đối soát). Thêm DO/dòng ở tab DO SAP rồi cập nhật Kế hoạch xuất.')
+    }
 
     // Luật quỹ đạo kho phụ — kiểm theo shipto HIỆU LỰC sau update (body có gửi thì lấy body, không thì giữ cũ)
     const effShipto = 'shipto_party' in req.body ? (shipto_party ?? null) : ((gdo as { shipto_party?: string | null }).shipto_party ?? null)
@@ -1755,17 +1779,27 @@ export async function updateGDO(req: Request, res: Response) {
       .eq('id', req.params.id)
 
     const { data: dos } = await supabase.from('OutboundDelivery')
-      .select('id, distributor_name').eq('gdo_id', req.params.id)
+      .select('id, distributor_name, delivery_code').eq('gdo_id', req.params.id)
     const doList = dos ?? []
     const isMultiDO = doList.length > 1
 
     // Update customer_name / delivery_code chỉ cho single-DO (multi-DO có distributor_name riêng mỗi OD)
     if (!isMultiDO && doList.length === 1) {
-      const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
-      if ('delivery_code' in req.body && delivery_code !== undefined)
-        singleDOPatch.delivery_code = delivery_code.trim() || null
-      await supabase.from('OutboundDelivery')
-        .update(singleDOPatch).eq('id', doList[0].id)
+      // Chuyến SAP: NPP/Số DO cũng là dữ liệu nguồn — đổi thì 422 chỉ đường, không ghi đè âm thầm
+      if (gdoCur.origin === 'SAP') {
+        const d0 = doList[0] as { distributor_name?: string | null; delivery_code?: string | null }
+        const norm = (v: unknown) => String(v ?? '').trim()
+        if (customer_name !== undefined && norm(customer_name) !== norm(d0.distributor_name))
+          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi tên NPP tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+        if ('delivery_code' in req.body && delivery_code !== undefined && norm(delivery_code) !== norm(d0.delivery_code))
+          return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Số DO tại đây, sửa ở tab DO SAP (Dữ liệu bên ngoài).')
+      } else {
+        const singleDOPatch: Record<string, unknown> = { distributor_name: customer_name ?? null, updated_at: t }
+        if ('delivery_code' in req.body && delivery_code !== undefined)
+          singleDOPatch.delivery_code = delivery_code.trim() || null
+        await supabase.from('OutboundDelivery')
+          .update(singleDOPatch).eq('id', doList[0].id)
+      }
     }
 
     if (!items) return ok(res, await fetchGDOFull(req.params.id))
@@ -1791,8 +1825,17 @@ export async function updateGDO(req: Request, res: Response) {
     const doIds = doList.map((d: any) => d.id as string)
     const { data: existingItems } = doIds.length
       ? await supabase.from('OutboundItem')
-          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
+          .select('id, do_id, material_code_raw, cartons_ordered, cartons_scanned, od_refs, export_type, material:Material!material_id(base_unit, entry_unit, units_per_carton)').in('do_id', doIds)
       : { data: [] }
+
+    // Chuyến SAP: Loại xe (export_type) cũng từ Kế hoạch xuất — update ghi đè per-item nên phải chặn ở đây.
+    // So khớp BỎ DẤU + hoa/thường: FE canonical hóa ("xe container"→"Xe Container") nên so thô sẽ chặn oan.
+    if (gdoCur.origin === 'SAP' && export_type !== undefined) {
+      const laxEt = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
+      const curEt = ((existingItems ?? []) as { export_type?: string | null }[]).find(i => i.export_type)?.export_type ?? ''
+      if (laxEt(export_type) !== laxEt(curEt))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Loại xe tại đây, sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài).')
+    }
 
     // Đơn UPLOAD từ SAP (item có od_refs liên kết DO SAP) → KHÓA sửa số lượng ở form Xuất (user chốt 22/07):
     // raw là nguồn sự thật — sửa ở đây sẽ lệch raw và bị engine đè lại khi SAP đổi. Sửa SL ở tab DO SAP.
@@ -2028,7 +2071,10 @@ export async function patchGDO(req: Request, res: Response) {
     }
 
     // Gác hoàn thành: thực quét phải KHỚP kế hoạch — mọi item cartons_scanned >= cartons_ordered.
-    // Xuất thiếu (hết tồn/NPP giao thiếu) → sửa SL đơn xuống = thực xuất rồi mới hoàn thành.
+    // Xuất thiếu (hết tồn/NPP giao thiếu): chuyến tay → sửa SL đơn xuống = thực xuất; chuyến SAP
+    // (user chốt 02/08 "bắt buộc SAP và thực xuất khớp nhau, muốn sửa thì sửa ở nguồn trước") →
+    // SL khóa trên đơn, sửa DO ở tab DO SAP → engine reconcile dội xuống (đã quét thì qua hàng chờ
+    // "Cần xử lý" bấm Áp SAP) → khớp → hoàn thành.
     if (status === 'COMPLETED') {
       const { data: dos } = await supabase.from('OutboundDelivery')
         .select('id').eq('gdo_id', req.params.id)
@@ -2040,7 +2086,11 @@ export async function patchGDO(req: Request, res: Response) {
         const short = itemRows.filter(i => Number(i.cartons_scanned) < Number(i.cartons_ordered))
         if (short.length) {
           const e = short[0]
-          return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${qtyLabel(Number(e.cartons_scanned), e.material ?? null)}/${qtyLabel(Number(e.cartons_ordered), e.material ?? null)}). Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.`, 400)
+          const { data: og } = await supabase.from('GroupDeliveryOrder').select('origin').eq('id', req.params.id).maybeSingle()
+          const fixHint = (og as { origin?: string | null } | null)?.origin === 'SAP'
+            ? 'Chuyến sinh từ SAP: sửa Số lượng DO ở tab DO SAP (Dữ liệu bên ngoài) → hệ thống dội xuống đơn (dòng đã quét sẽ vào "Cần xử lý" — bấm Áp SAP) → khớp rồi hoàn thành.'
+            : 'Sửa số lượng đơn xuống bằng thực xuất rồi hoàn thành.'
+          return fail(res, `Chưa thể hoàn thành — còn ${short.length} mã chưa xuất đủ kế hoạch (vd ${e.material_code_raw ?? '?'}: ${qtyLabel(Number(e.cartons_scanned), e.material ?? null)}/${qtyLabel(Number(e.cartons_ordered), e.material ?? null)}). ${fixHint}`, 400)
         }
 
         // Gác QUÉT ĐỦ TEM THÙNG (kho chọn "Bắt buộc" trong Cài đặt Kho, user chốt 15/07):
@@ -2741,6 +2791,11 @@ async function processVehicleGroups(
   autoLoosePallet = false,   // true (KHVC/SAP): nhặt lẻ = thùng lẻ < 1 pallet, auto theo cartons_per_pallet
   preflightExtra?: PreflightExtra[],   // số liệu rủi ro riêng của luồng (KHVC: DO thiếu, chuyến đã có…)
 ): Promise<Response> {
+    // NGUỒN chuyến (user chốt 02/08): KHVC (autoLoosePallet=true) = 'SAP' → khóa sửa phần kế hoạch
+    // trên đơn, mọi đổi đi qua VL06O/Kế hoạch xuất; upload kiểu cũ = 'EXCEL' → sửa như cũ (kho không SAP).
+    // Re-upload cũng ĐÓNG DẤU LẠI: chuyến LEGACY được up lại qua KHVC sẽ thành SAP (và ngược lại không xảy ra
+    // vì 2 luồng upload khác file — cùng group_code up kiểu khác là chủ đích của user).
+    const gdoOrigin = autoLoosePallet ? 'SAP' : 'EXCEL'
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
     const allGroupCodes = [...byVehicle.keys()]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingGdos, allMaterials] = await Promise.all([
@@ -3017,7 +3072,7 @@ async function processVehicleGroups(
         toPreserveIds.push(gdoId)
         preserveGDOUpdates.push({
           id: gdoId,
-          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, updated_at: now() },
+          fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, origin: gdoOrigin, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
         created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
@@ -3036,6 +3091,7 @@ async function processVehicleGroups(
         shipto_party: resolvedShipto,   // cột > khớp Tên NPP > ship-to đã gán tay (upload đè không làm mất)
         priority,                       // ĐỢT 3: ưu tiên chuyến (null = không đặt)
         transport_note,                 // ĐỢT 3: ghi chú điều vận (null = không có)
+        origin: gdoOrigin,              // 'SAP' (KHVC) khóa sửa kế hoạch trên đơn · 'EXCEL' như cũ
         status: 'PENDING', created_by: actor, updated_by: actor, updated_at: now(),
       })
       collectDOsAndItems(gdoId)
@@ -3383,6 +3439,177 @@ export async function uploadVl06o(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
+// ── Reshape dòng Kế hoạch xuất → byVehicle (row-shape file gộp) — DÙNG CHUNG 2 đường:
+// uploadKhvc (upload file) + replanKhvcGroups (CRUD tab Kế hoạch xuất tự dội xuống chuyến, 02/08).
+// Số BASE từ VL06O.Actual, tách Thùng+Hộp qua qtySplit. Dòng raw OBSOLETE bị BỎ (luật v2.3 —
+// trước 02/08 uploadKhvc quên lọc: DO line SAP đã bỏ vẫn bị cộng lại vào chuyến khi re-up KHVC).
+type KhvcPlanRow = {
+  group_code: string; do_no: string; npp: string; export_date: unknown
+  veh_type: string; dvvt: string; priority: string; cs: string; note: string
+}
+async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle: Map<string, Record<string, any>[]>; missingDos: Set<string> }> {
+  const allDos = [...new Set(khvcRows.map(k => k.do_no))]
+  // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
+  const raws = (await fetchAllByIdChunks(allDos, chunk => supabase.from('erp_outbound_orders')
+    .select('od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, batch, pct_date_req, note_delivery, note_invoice, sync_status')
+    .in('od_number', chunk).order('od_number')) as (ErpRawLine & { sync_status?: string | null })[])
+    .filter(r => r.sync_status !== 'OBSOLETE')
+  const rawByDo = new Map<string, ErpRawLine[]>()
+  for (const r of raws) { const l = rawByDo.get(r.od_number) ?? []; l.push(r); rawByDo.set(r.od_number, l) }
+
+  const allMats = await fetchAllRowsParallel(() => supabase.from('Material')
+    .select('id, material_code, category, base_unit, entry_unit, units_per_carton')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+  const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
+
+  const byVehicle = new Map<string, Record<string, any>[]>()
+  const missingDos = new Set<string>()
+  for (const k of khvcRows) {
+    const lines = rawByDo.get(k.do_no)
+    if (!lines || !lines.length) { missingDos.add(k.do_no); continue }
+    const list = byVehicle.get(k.group_code) ?? []
+    const whCode = k.group_code.split('_')[0]     // Mãkho = đoạn đầu Số xe (Mãkho_X_ddmmyy_stt)
+    for (const ln of lines) {
+      const mc = String(ln.material_code ?? '').trim()
+      if (!mc) continue                            // dòng raw không có mã → bỏ (không thể thành item)
+      const mat = mc ? matByCode.get(mc) : undefined
+      const qtyBase = Number(ln.qty_base ?? 0)
+      const sp = qtySplit(qtyBase, mat)            // base → thùng + hộp lẻ
+      const header = [ln.note_delivery, ln.note_invoice].map(x => String(x ?? '').trim()).filter(Boolean).join(' | ')
+      list.push({
+        'Số xe': k.group_code,
+        'Ngày xuất': k.export_date,
+        'Kho xuất': whCode,
+        'Loại kho': mat?.category ?? '',
+        'DVVT': k.dvvt,
+        'Delivery': k.do_no,
+        'Tên NPP': k.npp || ln.ship_to_name || ln.ship_to_code || '',
+        'Material': mc,
+        // cartons_ordered = qty_base: mã có entry → Thùng×hệ_số + Hộp; mã không entry → chỉ Thùng
+        'Thùng':   hasEntry(mat) ? sp.entry : qtyBase,
+        'Hộp':     hasEntry(mat) ? sp.base  : 0,
+        'Nhặt lẻ': 0,   // loose TÍNH AUTO theo pallet ở processVehicleGroups (trên qty base ĐÃ GỘP, chống thổi khi 1 mã nhiều dòng)
+        'Loại xuất': k.veh_type,
+        'Ưu tiên': k.priority,
+        'CS phụ trách': k.cs,
+        'Note': k.note,
+        'Shipto party': ln.ship_to_code ?? '',
+        'HEADER TEXT': header,
+        'Batch_Yêu cầu': ln.batch ?? '',
+        '%Date_Yêu cầu': ln.pct_date_req ?? '',
+        // Liên kết ngược dòng OD (Đợt 1): mỗi dòng raw = 1 od_ref; mergeNppRows gộp thành mảng cho od_refs của item
+        __od_refs: [{ od_number: k.do_no, od_item: ln.od_item, qty_base: qtyBase }],
+      })
+    }
+    byVehicle.set(k.group_code, list)
+  }
+  // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
+  for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
+  return { byVehicle, missingDos }
+}
+
+// ── REPLAN từ tab Kế hoạch xuất (user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT — sửa/xóa/thêm dòng
+// khvc_lines phải TỰ DỘI xuống chuyến, không bắt user up lại file. Gọi từ khvcController sau khi ghi raw.
+// Tái dùng NGUYÊN derivation processVehicleGroups (res-facade bắt kết quả thay vì trả HTTP) — không
+// chép lại luật gộp NPP/loose/merge-PAUSED. Hành xử per trạng thái chuyến (khớp 5 vùng):
+//   PENDING/PAUSED chưa quét → ghi đè/merge như re-upload · ĐANG XUẤT/ĐÃ HT → skip + reconcile_task
+//   (không tự đụng chuyến đang chạy — luật "auto chỉ khi chưa đụng") · group hết dòng → xóa chuyến
+//   PENDING chưa quét, còn lại → task. Lỗi replan KHÔNG làm hỏng thao tác CRUD gốc (caller bọc try/catch).
+export async function replanKhvcGroups(req: Request, groupCodes: string[]): Promise<Record<string, unknown>> {
+  const gcs = [...new Set(groupCodes.map(g => String(g ?? '').trim()).filter(Boolean))]
+  if (!gcs.length) return { replanned: 0 }
+  const actor = req.user?.name || 'KHVC-EDIT'
+  const t = now()
+
+  type KLine = { group_code: string; do_no: string; npp: string | null; veh_type: string | null; dvvt: string | null; priority: string | null; cs: string | null; note: string | null; export_date: string | null; sync_status: string | null }
+  const lines = (await fetchAllByIdChunks(gcs, chunk => supabase.from('khvc_lines')
+    .select('group_code, do_no, npp, veh_type, dvvt, priority, cs, note, export_date, sync_status')
+    .in('group_code', chunk).order('id')) as KLine[])
+    .filter(l => (l.sync_status ?? 'ACTIVE') !== 'OBSOLETE')
+  const gcWithLines = new Set(lines.map(l => l.group_code))
+
+  const report: Record<string, unknown>[] = []
+  const tasks: Record<string, unknown>[] = []
+  const mkTask = (gdo: { id: string; group_code: string }, detail: string) => tasks.push({
+    id: randomUUID(), gdo_id: gdo.id, group_code: gdo.group_code,
+    change_type: 'KHVC_CHANGED', zone: 'Z3', action: 'NEEDS_REVIEW', status: 'OPEN',
+    detail, actor, created_at: t, updated_at: t,
+  })
+
+  // (a) Group HẾT dòng kế hoạch → chuyến PENDING/PAUSED chưa quét = xóa (kế hoạch không còn);
+  //     chuyến đang chạy/đã đóng = task (classifyKhvcDelete bên khvcController đã chặn xóa dòng
+  //     của chuyến đã quét, nhánh này chỉ còn dính khi trạng thái đổi giữa chừng — vẫn phải gác).
+  const emptyGcs = gcs.filter(gc => !gcWithLines.has(gc))
+  if (emptyGcs.length) {
+    const gdos = await fetchAllByIdChunks(emptyGcs, c => supabase.from('GroupDeliveryOrder')
+      .select('id, group_code, status, started_at').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null }[]
+    for (const g of gdos) {
+      if (g.status === 'PENDING' || g.status === 'PAUSED') {
+        const { data: gDos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', g.id)
+        const doIds = ((gDos ?? []) as { id: string }[]).map(d => d.id)
+        const scans = doIds.length
+          ? await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem').select('id, cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
+          : []
+        if (scans.some(s => Number(s.cartons_scanned) > 0)) {
+          mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐÃ CÓ HÀNG QUÉT — xác nhận trả hàng rồi xử tay (chuyến không tự xóa).')
+          report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
+          continue
+        }
+        await deleteTransferOrdersOf([g.id])
+        await releaseScansForDOs(doIds)
+        for (let i = 0; i < doIds.length; i += 300) {
+          const c = doIds.slice(i, i + 300)
+          await supabase.from('OutboundItem').delete().in('do_id', c)
+          await supabase.from('OutboundDelivery').delete().in('id', c)
+        }
+        await supabase.from('GroupDeliveryOrder').delete().eq('id', g.id)
+        report.push({ group_code: g.group_code, action: 'deleted', reason: 'kế hoạch không còn dòng nào' })
+      } else {
+        mkTask(g, `Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến đang ${g.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT'} — chỉ đối soát/xử tay.`)
+        report.push({ group_code: g.group_code, action: 'task', reason: g.status })
+      }
+    }
+  }
+
+  // (b) Group còn dòng → re-derive nguyên bộ luật upload (ghi đè PENDING, merge PAUSED, skip đang chạy)
+  let derive: Record<string, unknown> | null = null
+  const replanGcs = gcs.filter(gc => gcWithLines.has(gc))
+  if (replanGcs.length) {
+    const khvcRows: KhvcPlanRow[] = lines.filter(l => replanGcs.includes(l.group_code)).map(l => ({
+      group_code: l.group_code, do_no: l.do_no, npp: l.npp ?? '', export_date: l.export_date,
+      veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '',
+    }))
+    const { byVehicle, missingDos } = await buildKhvcByVehicle(khvcRows)
+    if (missingDos.size) {
+      // DO chưa có trong VL06O: loại NGUYÊN group dính DO đó (giữ all-or-nothing per chuyến như upload)
+      const badGcs = new Set(khvcRows.filter(k => missingDos.has(k.do_no)).map(k => k.group_code))
+      for (const gc of badGcs) byVehicle.delete(gc)
+      report.push({ action: 'skipped_missing_do', groups: [...badGcs], missing_dos: [...missingDos] })
+    }
+    if (byVehicle.size) {
+      // res-facade: bắt status+payload của processVehicleGroups thay vì trả thẳng HTTP.
+      // req truyền NGUYÊN (cần req.user cho scope guard); các route CRUD không có ?preflight nên chạy thật.
+      const facade = { statusCode: 200, payload: null as unknown, status(c: number) { this.statusCode = c; return this }, json(p: unknown) { this.payload = p; return this } }
+      await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true)
+      derive = { status: facade.statusCode, ...(typeof facade.payload === 'object' && facade.payload ? facade.payload as Record<string, unknown> : { raw: facade.payload }) }
+      // Chuyến bị skip (đang xuất/đã hoàn thành) → kế hoạch đổi mà chuyến không nhận được → task.
+      // ok() bọc payload {success,data} → created nằm ở data.created
+      const pl = facade.payload as { created?: unknown; data?: { created?: unknown } } | null
+      const createdArr = ((pl?.data?.created ?? pl?.created ?? []) as { group_code: string; id?: string; skipped?: boolean; reason?: string }[])
+      for (const c of createdArr) {
+        if (!c.skipped || !c.reason || /phi hàng hóa/.test(c.reason)) continue
+        const { data: g } = await supabase.from('GroupDeliveryOrder').select('id, group_code').eq('group_code', c.group_code).maybeSingle()
+        if (g) mkTask(g as { id: string; group_code: string }, `Kế hoạch xuất đổi nhưng chuyến ${c.reason} — không tự áp; đối chiếu rồi xử tay (Tạm dừng chuyến rồi sửa lại kế hoạch nếu cần áp).`)
+      }
+    }
+  }
+
+  if (tasks.length) {
+    const { error } = await supabase.from('reconcile_tasks').insert(tasks)
+    if (error) console.error('[replanKhvcGroups] ghi reconcile_tasks:', error.message)
+  }
+  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length }
+}
+
 // Upload KHVC (kế hoạch điều vận, tự soạn) → JOIN raw VL06O theo DO → reshape về row-shape file gộp
 // → processVehicleGroups (tái dùng nguyên logic re-upload). Số lượng = BASE từ VL06O.Actual.
 export async function uploadKhvc(req: Request, res: Response) {
@@ -3518,61 +3745,7 @@ export async function uploadKhvc(req: Request, res: Response) {
       }
     }
 
-    // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
-    const raws = await fetchAllByIdChunks([...allDos], chunk => supabase.from('erp_outbound_orders')
-      .select('od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, batch, pct_date_req, note_delivery, note_invoice')
-      .in('od_number', chunk).order('od_number')) as ErpRawLine[]
-    const rawByDo = new Map<string, ErpRawLine[]>()
-    for (const r of raws) { const l = rawByDo.get(r.od_number) ?? []; l.push(r); rawByDo.set(r.od_number, l) }
-
-    const allMats = await fetchAllRowsParallel(() => supabase.from('Material')
-      .select('id, material_code, category, base_unit, entry_unit, units_per_carton')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
-    const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
-
-    // Reshape → byVehicle (row-shape file gộp): số BASE từ Actual, tách Thùng+Hộp qua qtySplit
-    const byVehicle = new Map<string, Record<string, any>[]>()
-    const missingDos = new Set<string>()
-    for (const k of khvcRows) {
-      const lines = rawByDo.get(k.do_no)
-      if (!lines || !lines.length) { missingDos.add(k.do_no); continue }
-      const list = byVehicle.get(k.group_code) ?? []
-      const whCode = k.group_code.split('_')[0]     // Mãkho = đoạn đầu Số xe (Mãkho_X_ddmmyy_stt)
-      for (const ln of lines) {
-        const mc = String(ln.material_code ?? '').trim()
-        if (!mc) continue                            // dòng raw không có mã → bỏ (không thể thành item)
-        const mat = mc ? matByCode.get(mc) : undefined
-        const qtyBase = Number(ln.qty_base ?? 0)
-        const sp = qtySplit(qtyBase, mat)            // base → thùng + hộp lẻ
-        const header = [ln.note_delivery, ln.note_invoice].map(x => String(x ?? '').trim()).filter(Boolean).join(' | ')
-        list.push({
-          'Số xe': k.group_code,
-          'Ngày xuất': k.export_date,
-          'Kho xuất': whCode,
-          'Loại kho': mat?.category ?? '',
-          'DVVT': k.dvvt,
-          'Delivery': k.do_no,
-          'Tên NPP': k.npp || ln.ship_to_name || ln.ship_to_code || '',
-          'Material': mc,
-          // cartons_ordered = qty_base: mã có entry → Thùng×hệ_số + Hộp; mã không entry → chỉ Thùng
-          'Thùng':   hasEntry(mat) ? sp.entry : qtyBase,
-          'Hộp':     hasEntry(mat) ? sp.base  : 0,
-          'Nhặt lẻ': 0,   // loose TÍNH AUTO theo pallet ở processVehicleGroups (trên qty base ĐÃ GỘP, chống thổi khi 1 mã nhiều dòng)
-          'Loại xuất': k.veh_type,
-          'Ưu tiên': k.priority,
-          'CS phụ trách': k.cs,
-          'Note': k.note,
-          'Shipto party': ln.ship_to_code ?? '',
-          'HEADER TEXT': header,
-          'Batch_Yêu cầu': ln.batch ?? '',
-          '%Date_Yêu cầu': ln.pct_date_req ?? '',
-          // Liên kết ngược dòng OD (Đợt 1): mỗi dòng raw = 1 od_ref; mergeNppRows gộp thành mảng cho od_refs của item
-          __od_refs: [{ od_number: k.do_no, od_item: ln.od_item, qty_base: qtyBase }],
-        })
-      }
-      byVehicle.set(k.group_code, list)
-    }
-    // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
-    for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
+    const { byVehicle, missingDos } = await buildKhvcByVehicle(khvcRows)
 
     // DO LUÔN bắt buộc: thiếu DO trong VL06O → CHẶN TOÀN BỘ, bắt sửa (thêm DO vào VL06O hoặc bỏ khỏi KHVC).
     // Xuất tay/không DO: dùng nút "Tạo đơn" thủ công (user chốt — không làm switch bỏ qua DO).

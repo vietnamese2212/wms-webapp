@@ -690,6 +690,9 @@ export interface GDO {
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null
+  // Nguồn chuyến (02/08): 'SAP' = sinh từ VL06O+Kế hoạch xuất → phần KẾ HOẠCH khóa trên đơn,
+  // sửa ở 2 tab nguồn; 'EXCEL'/'MANUAL'/'LEGACY' = sửa như cũ (kho không làm SAP)
+  origin?:          string | null
   status:           OutboundStatus
   created_at:       string
   // List aggregates

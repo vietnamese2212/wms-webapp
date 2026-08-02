@@ -1671,6 +1671,14 @@ function GDOFormBody({
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
   const isMultiNpp = nppOptions.length > 1
 
+  // Chuyến sinh từ SAP (origin='SAP', user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT — phần KẾ HOẠCH
+  // (ngày/kho/NPP/Số DO/Loại xe/thêm dòng) khóa trên form, sửa ở tab nguồn (DO SAP / Kế hoạch xuất).
+  // Batch/%Date/CS/ghi chú vẫn sửa được (yêu cầu phía kho, không phải dữ liệu nguồn).
+  const sapLocked = mode === 'edit' && gdo?.origin === 'SAP'
+  const lockedVal = (v: string) => (
+    <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-slate-50 text-slate-500 truncate" title="Chuyến sinh từ SAP — sửa ở tab nguồn (Dữ liệu bên ngoài)">{v || '—'}</div>
+  )
+
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
   const codePreview = mode === 'create' ? `Mãkho_X_${dy}${mo}${yr.slice(2)}_01` : gdo?.group_code ?? ''
@@ -1830,34 +1838,47 @@ function GDOFormBody({
         </button>
       </div>
 
+      {sapLocked && (
+        <div className="shrink-0 flex items-start gap-1.5 bg-sky-50 border-b border-sky-200 px-4 py-1.5 text-[11px] text-sky-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>Đơn sinh từ <b>SAP</b> — Số lượng/dòng hàng sửa ở tab <b>DO SAP</b>; Ngày/Kho/NPP/Loại xe sửa ở tab <b>Kế hoạch xuất</b> (menu Dữ liệu bên ngoài), chuyến tự cập nhật theo. Batch/%Date/CS vẫn sửa tại đây.</span>
+        </div>
+      )}
+
       {/* Metadata fields — compact strip, no scroll */}
       <div className="shrink-0 border-b bg-slate-50/50 px-4 py-2.5">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
-            <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
+            {sapLocked ? lockedVal(date) : (
+              <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
+            )}
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
-            <WarehouseSingleSelect
-              warehouses={(warehouses as WarehouseLite[]).filter(w => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
-              value={warehouseId}
-              onChange={setWarehouseId}
-              placeholder="Chọn kho…"
-              triggerClassName="h-7"
-            />
+            {sapLocked ? lockedVal((warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.name ?? warehouseId) : (
+              <WarehouseSingleSelect
+                warehouses={(warehouses as WarehouseLite[]).filter(w => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
+                value={warehouseId}
+                onChange={setWarehouseId}
+                placeholder="Chọn kho…"
+                triggerClassName="h-7"
+              />
+            )}
           </div>
           {setWarehouseType !== undefined ? (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại kho <span className="text-red-500">*</span></label>
-              <SingleSelect
-                options={[{ value: '', label: '— Chọn loại kho' }, ...whTypesInForm.map(t => ({ value: t.value, label: t.value }))]}
-                value={warehouseType ?? ''}
-                onChange={setWarehouseType}
-                placeholder="Loại kho…"
-                searchable={false}
-                triggerClassName="h-7"
-              />
+              {sapLocked ? lockedVal(warehouseType ?? '') : (
+                <SingleSelect
+                  options={[{ value: '', label: '— Chọn loại kho' }, ...whTypesInForm.map(t => ({ value: t.value, label: t.value }))]}
+                  value={warehouseType ?? ''}
+                  onChange={setWarehouseType}
+                  placeholder="Loại kho…"
+                  searchable={false}
+                  triggerClassName="h-7"
+                />
+              )}
             </div>
           ) : <div />}
           <div className="space-y-1">
@@ -1868,7 +1889,7 @@ function GDOFormBody({
               <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 truncate">
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
-            ) : (
+            ) : sapLocked ? lockedVal(customerName) : (
               // Kho NPP: gợi ý khách hàng CHỈ gồm kho tổng (trả hàng về tổng) — không hiện NPP khác; khách lẻ gõ tay.
               // Luật quỹ đạo kho phụ: kho phụ chỉ gợi ý cho kho parent của nó; kho xuất là kho phụ → chỉ gợi ý parent (xuất trả).
               <CustomerCombobox
@@ -1908,13 +1929,15 @@ function GDOFormBody({
           {!isMultiNpp && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Số DO *</label>
-              <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
+              {sapLocked ? lockedVal(deliveryCode) : (
+                <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
+              )}
             </div>
           )}
           {!noVehicle && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
-              {exportTypeOptions.length === 0 ? (
+              {sapLocked ? lockedVal(exportType) : exportTypeOptions.length === 0 ? (
                 <p className="text-[10px] text-slate-400 italic leading-7">
                   {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
                 </p>
@@ -2114,12 +2137,15 @@ function GDOFormBody({
           </table>
         </div>
 
-        <button
-          onClick={() => setItems(rows => [...rows, { ...makeItem(), npp: isMultiNpp ? '' : (nppOptions[0] ?? '') }])}
-          className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
-        >
-          <Plus className="h-3 w-3" /> Thêm dòng
-        </button>
+        {/* Chuyến SAP: thêm dòng tay = xuất ngoài SAP → khóa (thêm DO ở tab nguồn) */}
+        {!sapLocked && (
+          <button
+            onClick={() => setItems(rows => [...rows, { ...makeItem(), npp: isMultiNpp ? '' : (nppOptions[0] ?? '') }])}
+            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
+          >
+            <Plus className="h-3 w-3" /> Thêm dòng
+          </button>
+        )}
         {duplicateCodes.size > 0 && (
           <p className="text-[11px] text-red-600 mt-2">Mã hàng bị trùng trong cùng NPP: {[...duplicateCodes].map(k => k.split('||')[1]).join(', ')}</p>
         )}

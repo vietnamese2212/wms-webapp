@@ -35,7 +35,7 @@ console.log(`  pool ${FIX.MAT_POOL}@${FIX.WH_QTY.name} baseline = ${pool0}`)
 
 async function createPending(cartons) {
   const c = await api('/wms/outbound', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,   // sẽ Xuất luôn → phải ngày hôm nay (luật FUTURE_DATE 02/08)
     customer_name: 'An Sơn', shipto_party: FIX.WH_NONE.code,
     delivery_code: 'RACE-' + Math.floor(Math.random() * 1e9),
     items: [{ material_code: FIX.MAT_POOL, cartons_ordered: cartons }],

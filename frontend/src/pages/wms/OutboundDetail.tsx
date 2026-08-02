@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -1498,6 +1498,11 @@ export default function OutboundDetail() {
   // Kho QTY/NONE: không bắt buộc Phân công trước — BE tự gán người bấm Bắt đầu (kho QR giữ nghi thức)
   const whInvMode = gdo.warehouse?.inventory_mode ?? null
   const canStart       = (!!gdo.assigned_at || (whInvMode !== null && whInvMode !== 'QR')) && !gdo.started_at && can(perms, 'outbound', 'start')
+  // Chặn xuất sớm (user chốt 02/08): đơn Ngày xuất TƯƠNG LAI → hôm nay chưa Bắt đầu/Xuất luôn được
+  // (BE cũng chặn 422 FUTURE_DATE — đây chỉ là lớp UX cho biết sớm lý do)
+  const isFutureTrip = !!gdo.delivery_date &&
+    String(gdo.delivery_date).slice(0, 10) > new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const futureTip = `Đơn Ngày xuất ${formatDate(gdo.delivery_date)} (tương lai) — hôm nay chưa được xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn.`
   // "Xuất luôn" (1 bước) cho kho QTY/NONE: bỏ nghi thức Giao/Bắt đầu — nhập biển số là post + trừ tồn luôn.
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
@@ -1573,8 +1578,8 @@ export default function OutboundDetail() {
   if (canQuickExportHere)
     actionItems.push({
       key: 'quick-export', icon: Play, label: 'Xuất luôn',
-      tip: 'Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay',
-      primary: true, variant: 'success', busy: quickExporting,
+      tip: isFutureTrip ? futureTip : 'Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay',
+      primary: true, variant: 'success', busy: quickExporting, disabled: isFutureTrip,
       onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setQuickErrCode(null); setShowQuickExport(true) },
     })
   if (!gdo.assigned_at && can(perms, 'outbound', 'assign'))
@@ -1589,8 +1594,9 @@ export default function OutboundDetail() {
     })
   if (canStart)
     actionItems.push({
-      key: 'start', icon: Play, label: 'Bắt đầu', tip: 'Bắt đầu xuất hàng (nhập biển số, người xuất)',
-      primary: true, variant: 'default',
+      key: 'start', icon: Play, label: 'Bắt đầu',
+      tip: isFutureTrip ? futureTip : 'Bắt đầu xuất hàng (nhập biển số, người xuất)',
+      primary: true, variant: 'default', disabled: isFutureTrip,
       onClick: () => setShowStart(true),
     })
   // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.

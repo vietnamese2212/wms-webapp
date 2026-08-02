@@ -55,7 +55,7 @@ const biz  = []   // 4xx = nghiệp vụ chặn đúng (hết tồn, đua nhau�
 // A. tạo & xuất luôn ở kho NONE (không đụng pool)
 const groupA = Array.from({ length: 20 }, (_, k) => async () => {
   const q = await api('/wms/outbound/quick-export', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,   // xuất luôn = ngày hôm nay (luật FUTURE_DATE 02/08)
     delivery_code: `RL-A${k}-` + Math.floor(Math.random() * 1e6), license_plate: '88A-' + (100 + k % 90),
     customer_name: 'RL KH ' + k, items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 1 + (k % 3) }],
   })
@@ -84,7 +84,7 @@ const groupB = Array.from({ length: 12 }, (_, k) => async () => {
 // C. TRANH CHẤP: nhiều người cùng xuất/gỡ/xuất lại trên pool của ĐÚNG 1 mã ở kho QTY
 const groupC = Array.from({ length: 10 }, (_, k) => async () => {
   const c = await api('/wms/outbound', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,   // sẽ Xuất luôn → ngày hôm nay
     customer_name: 'An Sơn', shipto_party: FIX.WH_NONE.code,
     delivery_code: `RL-C${k}-` + Math.floor(Math.random() * 1e6),
     items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 2 }],

@@ -86,6 +86,17 @@ const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/H
 const hhmmVN = (ts: string | null | undefined) =>
   ts ? new Date(ts).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }) : '—'
 
+// CHẶN XUẤT SỚM (user chốt 02/08): hôm nay KHÔNG được quét/xuất cho đơn có Ngày xuất ở TƯƠNG LAI
+// (ngày VN). Áp mọi đường THỰC THI: Bắt đầu + 2 đường Xuất luôn + quét/Lưu thủ công (phòng chuyến
+// đổi ngày sau khi start). NGOẠI LỆ: nhặt lẻ (loose_picking_mode) = SOẠN HÀNG TRƯỚC, chủ đích cho
+// làm sớm (chỉ giữ hàng, chưa trừ xuất). Ngày quá khứ vẫn xuất được (xuất trễ là thực tế).
+function futureDateError(deliveryDate?: string | null): string | null {
+  const d = String(deliveryDate ?? '').slice(0, 10)
+  if (!d || d <= todayVN()) return null
+  const [y, m, dd] = d.split('-')
+  return `Đơn có Ngày xuất ${dd}/${m}/${y} (tương lai) — hôm nay chưa được quét/xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn (chuyến SAP: tab Kế hoạch xuất · chuyến thường: Sửa đơn/Chuyển ngày).`
+}
+
 type WeighGate = { ok: true; ticketId: string | null } | { ok: false; message: string }
 
 // NỚI rule CÂN đúng MỘT tình huống (user chốt 02/08): chuyến gắn ĐĂNG KÝ CỔNG của xe **ĐÃ RA**
@@ -1166,6 +1177,8 @@ export async function quickExportGDO(req: Request, res: Response) {
       items?: Array<{ material_code: string; cartons_ordered: number; loose_picking?: number; header_text?: string; batch_required?: string; date_required?: number; cs_responsible?: string }>
     }
     if (!delivery_date)             return fail(res, 'delivery_date là bắt buộc', 400)
+    const qxFutErr = futureDateError(delivery_date)   // Xuất luôn = xuất NGAY hôm nay — không nhận ngày tương lai
+    if (qxFutErr)                   return fail(res, 422, 'FUTURE_DATE', qxFutErr)
     if (!delivery_code?.trim())     return fail(res, 'Số DO là bắt buộc', 400)
     if (!items?.length)             return fail(res, 'Phải có ít nhất 1 mặt hàng', 400)
     const qxQtyErr = invalidItemQty(items)
@@ -1361,11 +1374,13 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, weigh_waived_at, gate_waived_at, gate_registration_id, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)')
+      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)')
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
     if (gdo.status === 'CANCELLED')  return fail(res, 'Chuyến đã hủy', 400)
+    const qxeFutErr = futureDateError((gdo as { delivery_date?: string | null }).delivery_date)
+    if (qxeFutErr)                   return fail(res, 422, 'FUTURE_DATE', qxeFutErr)
     // PAUSED vẫn cho: user tạm dừng để sửa kế hoạch → "Xuất luôn" = ngầm Tiếp tục + chốt chuyến.
     const whMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null })?.warehouse?.inventory_mode ?? null
     if (!isQtyLike(whMode) && whMode !== 'NONE')
@@ -2219,13 +2234,15 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at, status, warehouse_id, shipto_party, weigh_waived_at, gate_waived_at, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)').eq('id', req.params.id).maybeSingle()
+      .select('assigned_at, started_at, status, warehouse_id, shipto_party, delivery_date, weigh_waived_at, gate_waived_at, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)').eq('id', req.params.id).maybeSingle()
     // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
     // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
     const curStatus = (cur as { status?: string } | null)?.status
     if ((cur as { started_at?: string | null } | null)?.started_at || curStatus === 'COMPLETED' || curStatus === 'CANCELLED') {
       return fail(res, 'Chuyến đã bắt đầu hoặc đã kết thúc — dùng "Sửa thông tin xe" nếu cần đổi biển số', 400)
     }
+    const startFutErr = futureDateError((cur as { delivery_date?: string | null } | null)?.delivery_date)
+    if (startFutErr) return fail(res, 422, 'FUTURE_DATE', startFutErr)
     const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
 
@@ -4101,7 +4118,7 @@ export async function checkScanItem(req: Request, res: Response) {
       { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(id, location_code, warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -4113,6 +4130,11 @@ export async function checkScanItem(req: Request, res: Response) {
     // Mirror guard của scanItem: preview cũng chặn sớm để người quét biết ngay lý do
     if (!loose_picking_mode && !(gdo as { started_at?: string | null } | null)?.started_at)
       return fail(res, 'Chuyến chưa Bắt đầu — bấm "Bắt đầu" chuyến (qua kiểm tra cổng/cân nếu kho yêu cầu) rồi mới quét xuất', 400)
+    {
+      // Chặn xuất sớm (đơn ngày tương lai) — nhặt lẻ được miễn (soạn hàng trước là chủ đích)
+      const futErr = loose_picking_mode ? null : futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
+      if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
+    }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
@@ -4199,7 +4221,7 @@ export async function scanItem(req: Request, res: Response) {
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -4215,6 +4237,11 @@ export async function scanItem(req: Request, res: Response) {
     // Nhặt lẻ pre-start (xe chưa tới) là chủ đích → miễn.
     if (!loose_picking_mode && !gdo?.started_at)
       return fail(res, 'Chuyến chưa Bắt đầu — bấm "Bắt đầu" chuyến (qua kiểm tra cổng/cân nếu kho yêu cầu) rồi mới quét xuất', 400)
+    {
+      // Chặn xuất sớm (đơn ngày tương lai — chuyến có thể bị đổi ngày SAU khi start) — nhặt lẻ miễn
+      const futErr = loose_picking_mode ? null : futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
+      if (futErr) return fail(res, 422, 'FUTURE_DATE', futErr)
+    }
     if (itemErr || !item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     if (item.status === 'COMPLETED') return fail(res, 'Mặt hàng này đã xuất đủ số lượng', 400)
     if (!inv) return palletUnavailableFail(res, qr, gdo?.warehouse_id)
@@ -4983,7 +5010,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
     }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
       supabase.from('OutboundItem')
         .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
         .eq('id', itemId).single(),
@@ -4994,6 +5021,8 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // lách rule cổng/cân — kho QTY/NONE dùng đường này là chính nên lỗ càng rộng)
     if (!(gdo as { started_at?: string | null } | null)?.started_at)
       return fail(res, 'Chuyến chưa Bắt đầu — bấm "Bắt đầu" chuyến (qua kiểm tra cổng/cân nếu kho yêu cầu) rồi mới ghi nhận số lượng', 400)
+    const mcFutErr = futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
+    if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên

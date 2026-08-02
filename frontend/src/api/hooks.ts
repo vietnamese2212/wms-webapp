@@ -2565,6 +2565,16 @@ export function useBulkDeleteKhvc() {
     onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
+// Đổi Ngày xuất HÀNG LOẠT theo Số xe (tick dòng nào → đổi CẢ XE đó); xe có chuyến đang xuất/đã HT bị chặn per-xe
+export interface BulkDateKhvcResult { updated_groups: number; updated_lines: number; blocked: { group_code: string; reason: string }[] }
+export function useBulkDateKhvc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids: string[]; export_date: string }) =>
+      apiClient.post('/external/khvc/bulk-date', body).then(r => r.data.data as BulkDateKhvcResult),
+    onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
+  })
+}
 
 // ─── Đối chiếu SAP↔WMS → hàng chờ "Cần xử lý" (reconcile_tasks) ───────────────
 export interface ReconcileTask {

@@ -3,7 +3,7 @@
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, CalendarDays } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -20,7 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
-  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc,
+  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc, useBulkDateKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
   type DoSapRow, type KhvcRow, type ReconcileTask,
 } from '@/api/hooks'
@@ -910,6 +910,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
   const [groupEditor, setGroupEditor] = useState<string[] | null>(null)   // sửa cả Số xe — danh sách group_code (bảng gom mọi DO cùng xe)
+  const [dateDialog, setDateDialog] = useState(false)                      // đổi Ngày xuất hàng loạt (theo Số xe)
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
@@ -1005,6 +1006,13 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             <button type="button" onClick={() => setGroupEditor(selectedGroups)}
               className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
               <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
+            </button>
+          )}
+          {selected.size > 0 && canEdit && selectedGroups.length > 0 && (
+            <button type="button" onClick={() => setDateDialog(true)}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-blue-300 bg-blue-50 text-xs text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+              title="Đổi Ngày xuất cho CẢ các xe đã tick (1 xe chạy 1 ngày) — chuyến đang xuất/đã hoàn thành sẽ bị chặn">
+              <CalendarDays className="h-3.5 w-3.5" /> Đổi ngày ({selectedGroups.length} xe)
             </button>
           )}
           {selected.size > 0 && (
@@ -1121,7 +1129,86 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
         />
       )}
+      {dateDialog && (
+        <KhvcBulkDateDialog
+          ids={[...selected]}
+          groups={selectedGroups}
+          onClose={done => { setDateDialog(false); if (done) setSelected(new Set()) }}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── Đổi Ngày xuất HÀNG LOẠT theo Số xe (user chốt 02/08) ─────────────────────
+// Đơn vị đổi = CẢ XE (mọi dòng của group_code — 1 xe chạy 1 ngày). BE chặn per-xe khi chuyến
+// bên Xuất ĐANG XUẤT/ĐÃ HOÀN THÀNH → hiện danh sách xe bị chặn ngay trong dialog.
+function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: string[]; onClose: (done: boolean) => void }) {
+  const bulkDate = useBulkDateKhvc()
+  const [date, setDate] = useState('')
+  const [errMsg, setErrMsg] = useState('')
+  const [result, setResult] = useState<{ updated_groups: number; updated_lines: number; blocked: { group_code: string; reason: string }[] } | null>(null)
+
+  async function submit() {
+    if (!date) { setErrMsg('Chọn Ngày xuất mới'); return }
+    setErrMsg('')
+    try {
+      const r = await bulkDate.mutateAsync({ ids, export_date: date })
+      if (!r.blocked.length) { onClose(true); return }
+      setResult(r)   // có xe bị chặn → giữ dialog cho user đọc lý do từng xe
+    } catch (err) {
+      setErrMsg(apiError(err, 'Không đổi được ngày — thử lại.'))
+    }
+  }
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(!!result) }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-base">Đổi Ngày xuất — {groups.length} Số xe</DialogTitle>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-2 text-sm">
+            <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+              Đã đổi ngày {result.updated_groups} xe ({result.updated_lines} dòng) — chuyến bên Xuất đã cập nhật theo.
+            </div>
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 space-y-1">
+              <div className="font-semibold">{result.blocked.length} xe KHÔNG đổi được:</div>
+              {result.blocked.map(b => (
+                <div key={b.group_code}><span className="font-mono font-semibold">{b.group_code}</span> — {b.reason}</div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Đổi Ngày xuất cho <b>CẢ XE</b> đã tick (mọi DO của xe — 1 xe chạy 1 ngày), chuyến bên Xuất tự cập nhật theo.
+              Xe có chuyến <b>đang xuất / đã hoàn thành</b> sẽ bị chặn.
+            </p>
+            <div className="max-h-24 overflow-auto rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-mono text-slate-600">
+              {groups.join(' · ')}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600">Ngày xuất mới</label>
+              <input type="date" value={date} min={TODAY_VN()} onChange={e => setDate(e.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-slate-200 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+            {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
+          </div>
+        )}
+        <DialogFooter>
+          {result ? (
+            <Button size="sm" onClick={() => onClose(true)}>Đóng</Button>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={() => onClose(false)} disabled={bulkDate.isPending}>Huỷ</Button>
+              <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={submit} disabled={bulkDate.isPending || !date}>
+                {bulkDate.isPending ? 'Đang đổi…' : 'Đổi ngày'}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

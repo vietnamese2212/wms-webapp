@@ -19,6 +19,7 @@ router.get('/khvc',              requirePerm('external_khvc', 'view'),   khvc.li
 router.get('/khvc/facets',       requirePerm('external_khvc', 'view'),   khvc.khvcFacets)
 router.post('/khvc',             requirePerm('external_khvc', 'create'), khvc.createKhvc)
 router.put('/khvc/:id',          requirePerm('external_khvc', 'edit'),   khvc.updateKhvc)
+router.post('/khvc/bulk-date',   requirePerm('external_khvc', 'edit'),   khvc.bulkDateKhvc)   // đổi Ngày xuất hàng loạt (theo Số xe)
 router.delete('/khvc/:id',       requirePerm('external_khvc', 'delete'), khvc.deleteKhvc)
 router.post('/khvc/bulk-delete', requirePerm('external_khvc', 'delete'), khvc.bulkDeleteKhvc)
 

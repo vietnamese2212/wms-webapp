@@ -45,6 +45,22 @@ async function khvcScopeError(req: Request, groupCodes: (string | null | undefin
   return outside.length ? `Ngoài phạm vi kho — Số xe thuộc kho: ${outside.join(', ')}` : null
 }
 
+// SỬA NGÀY XUẤT phụ thuộc TÌNH TRẠNG chuyến (user chốt 02/08): chuyến ĐANG XUẤT / ĐÃ HOÀN THÀNH
+// → ngày là sự thật vận hành, KHÔNG đổi từ KH (replan vốn skip chuyến bận ⇒ đổi được raw thì
+// KH lệch chuyến vĩnh viễn). PENDING/PAUSED/chưa sinh chuyến → đổi tự do, replan dội xuống.
+async function dateLockedGroups(groupCodes: string[]): Promise<Map<string, string>> {
+  const locked = new Map<string, string>()
+  for (let i = 0; i < groupCodes.length; i += 300) {
+    const { data } = await supabase.from('GroupDeliveryOrder').select('group_code, status')
+      .in('group_code', groupCodes.slice(i, i + 300)).in('status', ['IN_PROGRESS', 'COMPLETED'])
+    for (const g of ((data ?? []) as { group_code: string; status: string }[]))
+      locked.set(g.group_code, g.status === 'COMPLETED'
+        ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — ngày không đổi được nữa'
+        : 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới đổi ngày')
+  }
+  return locked
+}
+
 // Cap an toàn cho filter chéo "Trong DO SAP" (đối xứng erpOrderController): tập DO của cửa sổ đưa vào .in()
 // không được quá lớn → vượt thì bỏ filter + trả cảnh báo (không cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
 // 800 ≈ 9KB URL. ĐO 27/07 trên PostgREST staging: 1000 giá trị 9 ký tự = 9,8KB → 200; 1300 = 12,7KB
@@ -267,11 +283,18 @@ export async function updateKhvc(req: Request, res: Response) {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
     // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
-    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no').eq('id', req.params.id).maybeSingle()
+    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
     // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
     const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
     if (scopeErr) return fail(res, scopeErr, 403)
+    // Đổi Ngày xuất phụ thuộc tình trạng chuyến — gác trên xe ĐÍCH (đổi cả Số xe thì dòng theo xe mới)
+    if ('export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')) {
+      const targetGc = String((fields.group_code ?? cur.group_code) ?? '')
+      const locked = targetGc ? await dateLockedGroups([targetGc]) : new Map<string, string>()
+      const lockMsg = locked.get(targetGc)
+      if (lockMsg) return fail(res, 422, 'GDO_STATUS_LOCKED', `${lockMsg} (xe ${targetGc}).`)
+    }
     if ('group_code' in fields || 'do_no' in fields) {
       const gc = (fields.group_code ?? cur?.group_code) as string | null
       const dn = (fields.do_no ?? cur?.do_no) as string | null
@@ -321,6 +344,40 @@ export async function deleteKhvc(req: Request, res: Response) {
     if (error) throw new Error(error.message)
     const extra = await replanAfterCrud(req, [dr.group_code])
     return ok(res, { deleted: 1, blocked, ...extra })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// POST /external/khvc/bulk-date { ids, export_date } — ĐỔI NGÀY XUẤT HÀNG LOẠT (user chốt 02/08:
+// "cần có nút sửa ngày xuất hàng loạt, phụ thuộc tình trạng đơn bên Xuất mà cho sửa hay không").
+// Đơn vị đổi = CẢ XE (mọi dòng sống của group_code — 1 xe chạy 1 ngày), tick dòng nào cũng tính theo xe đó.
+// Xe có chuyến ĐANG XUẤT/ĐÃ HOÀN THÀNH → bị chặn per-xe (trả blocked, các xe còn lại vẫn đổi).
+export async function bulkDateKhvc(req: Request, res: Response) {
+  try {
+    const { ids, export_date } = req.body as { ids?: string[]; export_date?: string }
+    if (!Array.isArray(ids) || !ids.length) return fail(res, 'Không có dòng nào được chọn', 400)
+    if (!export_date || !/^\d{4}-\d{2}-\d{2}$/.test(export_date)) return fail(res, 'Ngày xuất không hợp lệ (YYYY-MM-DD)', 400)
+    const gcSet = new Set<string>()
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('khvc_lines').select('group_code').in('id', ids.slice(i, i + 300))
+      for (const r of ((data ?? []) as { group_code: string | null }[])) if (r.group_code) gcSet.add(String(r.group_code))
+    }
+    const groupCodes = [...gcSet]
+    if (!groupCodes.length) return fail(res, 'Không tìm thấy dòng', 404)
+    const scopeErr = await khvcScopeError(req, groupCodes)
+    if (scopeErr) return fail(res, scopeErr, 403)
+    const locked = await dateLockedGroups(groupCodes)
+    const allowed = groupCodes.filter(g => !locked.has(g))
+    const blocked = [...locked].map(([group_code, reason]) => ({ group_code, reason }))
+    let updatedLines = 0
+    for (let i = 0; i < allowed.length; i += 300) {
+      const { data: upd, error } = await supabase.from('khvc_lines')
+        .update({ export_date, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
+        .in('group_code', allowed.slice(i, i + 300)).neq('sync_status', 'OBSOLETE').select('id')
+      if (error) throw new Error(error.message)
+      updatedLines += (upd ?? []).length
+    }
+    const extra = allowed.length ? await replanAfterCrud(req, allowed) : {}
+    return ok(res, { updated_groups: allowed.length, updated_lines: updatedLines, blocked, ...extra })
   } catch (e) { return fail(res, String(e)) }
 }
 

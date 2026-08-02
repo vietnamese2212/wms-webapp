@@ -20,7 +20,10 @@ export const FIX = {
   WH_QR:   { id: '56cf7a64-d3aa-4fd2-948d-490ec487acb9', code: '20000016', name: 'Kho Ba Vì' },// kho QR
   MAT_POOL: '510000306',   // mã có dòng tồn pool tại WH_QTY
   DVVT_TAG: 'QA-SUITE',    // mọi GDO test gắn dvvt này để nhận diện + dọn
-  DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật)
+  DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật) — CHỈ cho đơn nằm im (create/sửa/xóa PENDING)
+  // Chuyến sẽ THỰC THI (start / quick-export / manual-complete) phải dùng NGÀY HÔM NAY —
+  // luật 02/08: đơn Ngày xuất tương lai bị chặn 422 FUTURE_DATE ở mọi đường xuất.
+  EXEC_DATE: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }),
 }
 
 // ── App API ──
@@ -178,11 +181,16 @@ export async function teardownGdo(id, status) {
   return (await api(`/wms/outbound/${id}`, 'DELETE')).s === 200
 }
 
-// Dọn MỌI GDO gắn tag QA (an toàn: chỉ đụng dvvt = FIX.DVVT_TAG)
+// Dọn MỌI GDO gắn tag QA (an toàn: chỉ đụng dvvt = FIX.DVVT_TAG) — quét CẢ 2 cửa sổ ngày
+// (DATE tương lai cho đơn nằm im + EXEC_DATE hôm nay cho chuyến đã thực thi)
 export async function cleanupTagged() {
-  const list = await api(`/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`, 'GET')
-  const gdos = (list.j?.data?.items ?? list.j?.data ?? []).filter(g => g.dvvt === FIX.DVVT_TAG)
-  if (!gdos.length) return 0
-  const rs = await pool(gdos.map(g => () => teardownGdo(g.id, g.status)), 15)
-  return rs.filter(Boolean).length
+  let total = 0
+  for (const d of [...new Set([FIX.DATE, FIX.EXEC_DATE])]) {
+    const list = await api(`/wms/outbound?date_from=${d}&date_to=${d}`, 'GET')
+    const gdos = (list.j?.data?.items ?? list.j?.data ?? []).filter(g => g.dvvt === FIX.DVVT_TAG)
+    if (!gdos.length) continue
+    const rs = await pool(gdos.map(g => () => teardownGdo(g.id, g.status)), 15)
+    total += rs.filter(Boolean).length
+  }
+  return total
 }

@@ -103,6 +103,29 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
     `create=${r.s} origin=${g?.origin} edit=${r2.s} date=${gAfter?.delivery_date}`)
 }
 
+// ── 3b. CHẶN XUẤT SỚM (user chốt 02/08): đơn Ngày xuất TƯƠNG LAI → hôm nay không Bắt đầu /
+// Xuất luôn / ghi nhận số lượng được (422 FUTURE_DATE); đổi ngày về hôm nay thì đi tiếp bình thường ──
+{
+  const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const g = (await restAll('GroupDeliveryOrder', `select=id&group_code=like.${WH_CODE}*&origin=eq.MANUAL`))[0]   // case 3 đã đưa về ngày 2026-12-26 (tương lai)
+  const rStart = await api(`/wms/outbound/${g.id}/start`, 'POST', { license_plate: 'QADRV1234' })
+  const rQx = await api(`/wms/outbound/${g.id}/quick-export`, 'POST', { license_plate: 'QADRV1234', qty_semantics: 'base' })
+  // Chuyến TAY đổi ngày về hôm nay được → Bắt đầu phải qua
+  const rDate = await api(`/wms/outbound/${g.id}`, 'PATCH', { delivery_date: today })
+  const rStart2 = await api(`/wms/outbound/${g.id}/start`, 'POST', { license_plate: 'QADRV1234' })
+  // Edge: chuyến ĐÃ bắt đầu mà bị đổi ngày lên tương lai → ghi nhận số lượng vẫn bị chặn
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g.id}`, { delivery_date: tomorrow, updated_at: now() })
+  const doTay = (await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`))[0]
+  const itTay = (await restAll('OutboundItem', `select=id&do_id=eq.${doTay.id}`))[0]
+  const rMc = await api(`/wms/outbound/${g.id}/items/${itTay.id}/manual-complete`, 'POST', { cartons: 1, qty_semantics: 'base' })
+  check('đơn ngày TƯƠNG LAI: 422 FUTURE_DATE cả Bắt đầu + Xuất luôn + Lưu thủ công; về hôm nay thì Bắt đầu 200',
+    rStart.s === 422 && rStart.j?.error?.code === 'FUTURE_DATE'
+    && rQx.s === 422 && rQx.j?.error?.code === 'FUTURE_DATE'
+    && rDate.s === 200 && rStart2.s === 200
+    && rMc.s === 422 && rMc.j?.error?.code === 'FUTURE_DATE',
+    `start=${rStart.s}/${rStart.j?.error?.code} qx=${rQx.s} date=${rDate.s} start2=${rStart2.s} mc=${rMc.s}/${rMc.j?.error?.code}`)
+}
+
 // ── 4. Sửa dòng Kế hoạch xuất → chuyến PENDING tự cập nhật (Ngày xuất + thêm DO thứ 2 vào cùng xe) ──
 {
   const line1 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('01')}`))[0]
@@ -218,6 +241,27 @@ check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.te
   await restWrite('Employee', 'DELETE', `id=eq.${empId}`)
   await restWrite('JobTitle', 'DELETE', `id=eq.${jobId}`)
   await restWrite('Warehouse', 'DELETE', `code=eq.QADRV2`)
+}
+
+// ── 11. ĐỔI NGÀY HÀNG LOẠT theo Số xe (user chốt 02/08) — xe PENDING đổi CẢ XE + chuyến theo;
+// xe có chuyến ĐANG XUẤT bị chặn per-xe; sửa lẻ dòng của xe đang xuất cũng 422 ──
+{
+  const day3 = new Date(Date.now() + 3 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const linesBusy = await restAll('khvc_lines', `select=id&group_code=eq.${GC('01')}&sync_status=neq.OBSOLETE`)   // GC01 đang IN_PROGRESS (case 6)
+  const linesFree = await restAll('khvc_lines', `select=id&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE`)   // GC06 PENDING sạch (case 8b)
+  const r = await api('/external/khvc/bulk-date', 'POST', { ids: [linesBusy[0].id, linesFree[0].id], export_date: day3 })
+  const freeAfter = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE`)
+  const busyAfter = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('01')}&sync_status=neq.OBSOLETE`)
+  const gFree = (await restAll('GroupDeliveryOrder', `select=delivery_date&group_code=eq.${GC('06')}`))[0]
+  const d = r.j?.data ?? {}
+  check('bulk-date: xe PENDING đổi CẢ XE + chuyến nhận ngày mới; xe ĐANG XUẤT bị chặn per-xe (dòng không đổi)',
+    r.s === 200 && d.updated_groups === 1 && (d.blocked ?? []).some(b => b.group_code === GC('01'))
+    && freeAfter.length >= 2 && freeAfter.every(l => l.export_date === day3)
+    && busyAfter.every(l => l.export_date !== day3) && gFree?.delivery_date === day3,
+    `s=${r.s} upd=${d.updated_groups} blocked=${(d.blocked ?? []).map(b => b.group_code).join(',')} free=${[...new Set(freeAfter.map(l => l.export_date))]} gdo=${gFree?.delivery_date}`)
+  const r2 = await api(`/external/khvc/${linesBusy[0].id}`, 'PUT', { export_date: day3 })
+  check('sửa lẻ Ngày xuất dòng của xe ĐANG XUẤT → 422 GDO_STATUS_LOCKED',
+    r2.s === 422 && r2.j?.error?.code === 'GDO_STATUS_LOCKED', `${r2.s} ${r2.j?.error?.code}`)
 }
 
 // ── Dọn 0 sót ──

@@ -1745,6 +1745,11 @@ export default function OutboundDetail() {
     : (gdo.weight_estimate?.kg_planned ?? null)
   const weighEstSrc = (gdo.weight_estimate?.kg_actual ?? 0) > 0 ? 'thực xuất' : 'theo KH'
   const weighEstIncomplete = (gdo.weight_estimate?.items_missing ?? 0) > 0
+  // Rule còn PHẢI chấp hành (chưa duyệt) — dùng cho dòng cảnh báo luôn-hiện trên mobile
+  const gateRuleLabel = [
+    gdo.warehouse?.require_gate_on_start && !gdo.gate_waived_at ? 'ĐĂNG KÝ CỔNG' : null,
+    gdo.warehouse?.require_weigh_on_start && !gdo.weigh_waived_at ? 'CÂN XE' : null,
+  ].filter(Boolean).join(' + ')
   const weighNet = weighTickets.find(t => t.is_complete && t.net_kg != null)?.net_kg ?? null
 
   // Khối thông tin đơn — dùng CHUNG: desktop hiện inline; mobile mở trong POPUP (nút info trên thanh mảnh).
@@ -2021,6 +2026,17 @@ export default function OutboundDetail() {
             </div>
           )}
           <div className="hidden sm:block">{orderInfoJSX}</div>
+
+          {/* MOBILE: rule cổng/cân + vết duyệt LUÔN hiện (user chốt 02/08) — trước đây nằm trong
+              popup ⓘ nên công nhân (dùng điện thoại là chính) bấm Bắt đầu rồi mới biết bị chặn. */}
+          {!gdo.started_at && (gateRuleLabel || gdo.gate_waived_at || gdo.weigh_waived_at) && (
+            <div className="sm:hidden flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[11px]">
+              <span className="flex items-center gap-1 font-medium text-slate-500"><Scale className="h-3 w-3" />Cổng / Cân</span>
+              {gateRuleLabel && <span className="text-amber-700 font-medium">Cần {gateRuleLabel} trước khi Bắt đầu</span>}
+              {gdo.gate_waived_at && <span className="text-green-700">✓ đã duyệt bỏ qua cổng</span>}
+              {gdo.weigh_waived_at && <span className="text-green-700">✓ đã duyệt bỏ qua cân</span>}
+            </div>
+          )}
 
           {/* Banner lỗi LUÔN hiện (cả mobile) — không nằm trong popup info */}
           {undoErr && (

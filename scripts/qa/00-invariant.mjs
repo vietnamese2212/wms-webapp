@@ -53,10 +53,10 @@ check('Không scan entry mồ côi', orphanScans.length === 0, orphanScans.lengt
 // KHÔNG hiện ở màn nào nên chỉ invariant mới thấy; replan nay tự dọn (sweepOrphanDeliveries).
 const alldos = await restAll('OutboundDelivery', 'select=id,delivery_code,gdo_id')
 const doGdoIds = [...new Set(alldos.map(d => d.gdo_id).filter(Boolean))]
-const foundGdo = new Set()
+const aliveGdoForDos = new Set()
 for (const c of chunk(doGdoIds))
-  for (const g of await restAll('GroupDeliveryOrder', `select=id&id=in.(${c.join(',')})`)) foundGdo.add(g.id)
-const orphanDos = alldos.filter(d => !d.gdo_id || !foundGdo.has(d.gdo_id))
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&id=in.(${c.join(',')})`)) aliveGdoForDos.add(g.id)
+const orphanDos = alldos.filter(d => !d.gdo_id || !aliveGdoForDos.has(d.gdo_id))
 check('Không DO xuất mồ côi (chuyến đã xóa)', orphanDos.length === 0,
   orphanDos.length ? `${orphanDos.length} DO — vd ${orphanDos[0].delivery_code}` : `soi ${alldos.length} DO`)
 

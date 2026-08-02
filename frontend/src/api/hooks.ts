@@ -2199,7 +2199,7 @@ export function useQuickExportGDO() {
 export function useQuickExportExistingGDO() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ gdoId, ...body }: { gdoId: string; license_plate: string }) => {
+    mutationFn: async ({ gdoId, ...body }: { gdoId: string; license_plate: string; gate_registration_id?: string | null }) => {
       const { data } = await apiClient.post(`/wms/outbound/${gdoId}/quick-export`, body)
       return data.data as GDO
     },

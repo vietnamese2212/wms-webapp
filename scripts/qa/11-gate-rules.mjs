@@ -118,9 +118,21 @@ const whBoth  = await mkWh('QAGRUL_B', true, true)
   await restWrite('OutboundItem', 'POST', null, { id: itemId, do_id: doId, material_code_raw: 'QAGRUL_MATX', material_type: 'Thành phẩm', cartons_ordered: 2, cartons_scanned: 0, status: 'PENDING', updated_at: now() })
   let r = await api(`/wms/outbound/${g}/quick-export`, 'POST', { license_plate: 'QAGR-7777' })
   check('"Xuất luôn" thiếu đăng ký cổng → 422 GATE_REQUIRED', r.s === 422 && r.j?.error?.code === 'GATE_REQUIRED', `${r.s} ${r.j?.error?.code}`)
-  await api(`/wms/outbound/${g}/gate-waive`, 'POST', { reason: 'QA' })
-  r = await api(`/wms/outbound/${g}/quick-export`, 'POST', { license_plate: 'QAGR-7777' })
-  check('duyệt bỏ qua cổng → "Xuất luôn" chạy', r.s === 200, `${r.s} ${JSON.stringify(r.j?.error)}`)
+  // Bug check-app 01/08: chuyến PENDING không có đường nào gắn cổng (Sửa thông tin xe đòi đã Bắt đầu)
+  // ⇒ dialog "Xuất luôn" gửi kèm gate_registration_id; thiếu đường này là user KẸT ở kho bật rule cổng.
+  const gateX = await mkGateReg(whGate, 'QAGR7777')
+  r = await api(`/wms/outbound/${g}/quick-export`, 'POST', { license_plate: 'QAGR-7777', gate_registration_id: gateX })
+  const savedGate = (await restAll('GroupDeliveryOrder', `select=gate_registration_id&id=eq.${g}`))[0]?.gate_registration_id
+  check('"Xuất luôn" CHỌN chuyến xe ở cổng → 200 + lưu vết cổng vào chuyến',
+    r.s === 200 && savedGate === gateX, `${r.s} gate=${savedGate}`)
+
+  const g2 = await mkGdo('X2', whGate)
+  const doId2 = randomUUID(), itemId2 = randomUUID()
+  await restWrite('OutboundDelivery', 'POST', null, { id: doId2, gdo_id: g2, delivery_code: 'QAGRUL_DOX2', distributor_name: 'QAGRUL NPP', status: 'PENDING', updated_at: now() })
+  await restWrite('OutboundItem', 'POST', null, { id: itemId2, do_id: doId2, material_code_raw: 'QAGRUL_MATX', material_type: 'Thành phẩm', cartons_ordered: 2, cartons_scanned: 0, status: 'PENDING', updated_at: now() })
+  await api(`/wms/outbound/${g2}/gate-waive`, 'POST', { reason: 'QA' })
+  r = await api(`/wms/outbound/${g2}/quick-export`, 'POST', { license_plate: 'QAGR-7778' })
+  check('duyệt bỏ qua cổng → "Xuất luôn" chạy không cần cổng', r.s === 200, `${r.s} ${JSON.stringify(r.j?.error)}`)
 }
 
 // ── 5c. Đăng ký cổng đang gắn chuyến: KHÔNG xóa / KHÔNG đổi định danh (user chốt 01/08) ──

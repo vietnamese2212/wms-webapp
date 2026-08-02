@@ -1355,6 +1355,23 @@ export default function OutboundDetail() {
   const user     = useAuthStore(s => s.user)
 
   const { data: gdo, isLoading, isError } = useGDO(id)
+  // Chuyến xe ở cổng — cho dialog "Xuất luôn" khi kho bật rule cổng (chỉ nạp khi thực sự cần)
+  const needGateData = gdo?.warehouse?.require_gate_on_start === true && !gdo?.gate_waived_at && !gdo?.started_at
+  const gateWindow = (() => {
+    const t = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const d = new Date(t); d.setDate(d.getDate() - 3)
+    return { from: d.toISOString().slice(0, 10), to: t }
+  })()
+  const { data: gateRegsForQuick = [] } = useActiveGateRegistrations(
+    needGateData && gdo?.warehouse_id
+      ? { date_from: gateWindow.from, date_to: gateWindow.to, warehouse_id: gdo.warehouse_id, direction: 'OUTBOUND' }
+      : undefined
+  )
+  const { data: recentGdosForQuick = [] } = useGDOs(
+    needGateData && gdo?.warehouse_id
+      ? { warehouse_id: gdo.warehouse_id, date_from: gateWindow.from, date_to: gateWindow.to }
+      : undefined
+  )
   const { mutate: assignGDO,    isPending: assigning   } = useAssignGDO()
   const { mutate: patchGDO,     isPending: patching    } = usePatchGDO()
   const { mutate: deleteGDO } = useDeleteGDO()
@@ -1372,7 +1389,9 @@ export default function OutboundDetail() {
   const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
   const [quickPlate, setQuickPlate] = useState('')
   const [quickErr, setQuickErr] = useState<string | null>(null)
-  const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED → hiện hướng dẫn nhờ duyệt trên chuyến
+  const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED / GATE_REQUIRED → hiện hướng dẫn nhờ duyệt trên chuyến
+  const [quickGateId, setQuickGateId] = useState('')       // kho bật rule cổng: chọn chuyến xe ngay trong dialog Xuất luôn
+  const [quickSpecial, setQuickSpecial] = useState(false)
   const { vehicles, pin, unpin, isPinned, update } = useActiveVehiclesStore()
   const pinned = isPinned(id ?? '')
 
@@ -1483,9 +1502,18 @@ export default function OutboundDetail() {
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
   const canQuickExportHere = isQtyOrNone && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'quick_export')
+  // Kho bật RULE CỔNG + chuyến chưa duyệt bỏ qua cổng + chưa Bắt đầu → dialog "Xuất luôn" phải cho
+  // CHỌN chuyến xe (không thì chuyến PENDING không có đường nào gắn Đăng ký cổng ⇒ kẹt vĩnh viễn).
+  const quickNeedGate = gdo.warehouse?.require_gate_on_start === true && !gdo.gate_waived_at && !gdo.started_at
+  const quickGatesWithEntry = (gateRegsForQuick as GateRegOpt[]).filter(g => g.entry_at)
+  const quickTakenGateIds = new Set<string>()
+  for (const g of recentGdosForQuick as GDO[]) if (g.gate_registration_id && g.id !== gdo.id) quickTakenGateIds.add(g.gate_registration_id)
   function doQuickExport() {
     setQuickErr(null); setQuickErrCode(null)
-    quickExportExisting({ gdoId: id!, license_plate: quickPlate.trim() }, {
+    quickExportExisting({
+      gdoId: id!, license_plate: quickPlate.trim(),
+      ...(quickNeedGate ? { gate_registration_id: quickGateId || null } : {}),
+    }, {
       onSuccess: () => setShowQuickExport(false),
       onError: (e) => {
         const errBody = (e as AxiosError<{ error?: { message?: string; code?: string } }>)?.response?.data?.error
@@ -1879,21 +1907,42 @@ export default function OutboundDetail() {
         <DialogContent className="sm:max-w-xs">
           <DialogHeader><DialogTitle className="text-base">Xuất luôn</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
-            <p className="text-xs text-slate-600">Ghi nhận xuất toàn bộ mã theo kế hoạch, trừ tồn ngay và hoàn thành chuyến {gdo.group_code}. Nhập biển số xe:</p>
-            <div className="space-y-1">
-              <Label className="text-xs">Biển số xe {gdo.gate_waived_at ? <span className="text-slate-400">(tùy chọn — đã duyệt bỏ qua cổng)</span> : <span className="text-red-500">*</span>}</Label>
-              <Input value={quickPlate} onChange={e => { setQuickPlate(e.target.value); setQuickErr(null) }}
-                placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
-            </div>
+            <p className="text-xs text-slate-600">Ghi nhận xuất toàn bộ mã theo kế hoạch, trừ tồn ngay và hoàn thành chuyến {gdo.group_code}.
+              {quickNeedGate ? ' Chọn chuyến xe đã vào cổng:' : ' Nhập biển số xe:'}</p>
+            {/* Kho bật rule CỔNG mà chuyến chưa duyệt/chưa bắt đầu → phải chọn ĐĂNG KÝ CỔNG ngay tại đây:
+                chuyến PENDING không có đường nào khác để gắn cổng (Sửa thông tin xe đòi đã Bắt đầu). */}
+            {quickNeedGate ? (
+              <div className="space-y-1">
+                <Label className="text-xs">Chuyến xe / Biển số <span className="text-red-500">*</span></Label>
+                <ChuyenPicker gates={quickGatesWithEntry} value={quickGateId}
+                  onPick={id => {
+                    setQuickGateId(id); setQuickErr(null); setQuickErrCode(null)
+                    setQuickPlate((quickGatesWithEntry.find(g => g.id === id)?.license_plate) ?? '')
+                  }}
+                  freePlate="" onFreeText={() => {}}
+                  special={quickSpecial} onSpecialChange={setQuickSpecial}
+                  takenGateIds={quickTakenGateIds} outDate={gdo.delivery_date}
+                  allowFreePlate={false} />
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Label className="text-xs">Biển số xe {gdo.gate_waived_at ? <span className="text-slate-400">(tùy chọn — đã duyệt bỏ qua cổng)</span> : <span className="text-red-500">*</span>}</Label>
+                <Input value={quickPlate} onChange={e => { setQuickPlate(e.target.value); setQuickErr(null) }}
+                  placeholder="VD: 50H-123.45" className="h-10 text-sm font-mono uppercase" autoFocus />
+              </div>
+            )}
             {quickErr && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{quickErr}</p>}
             {/* Bị chặn rule cân: miễn trừ DUY NHẤT = người có quyền bấm "Bỏ qua cổng/cân" trên chuyến */}
             {quickErrCode === 'WEIGH_REQUIRED' && (
-              <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, giao lẻ…)? Người có quyền bấm <b>"Bỏ qua cổng/cân"</b> trên trang chuyến để duyệt, rồi bấm Xuất luôn lại.</p>
+              <p className="text-[11px] text-amber-700">Xe không cân được (hỏng cân, giao lẻ…)? Người có quyền bấm <b>"Bỏ qua cân"</b> trên trang chuyến để duyệt, rồi bấm Xuất luôn lại.</p>
+            )}
+            {quickErrCode === 'GATE_REQUIRED' && (
+              <p className="text-[11px] text-amber-700">Xe không có Đăng ký cổng (giao lẻ, xe máy, nhân viên nhận…)? Người có quyền bấm <b>"Bỏ qua cổng"</b> trên trang chuyến để duyệt, rồi bấm Xuất luôn lại.</p>
             )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowQuickExport(false); setQuickErr(null); setQuickErrCode(null) }} disabled={quickExporting}>Hủy</Button>
-            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || (!quickPlate.trim() && !gdo.gate_waived_at)} onClick={() => doQuickExport()}>
+            <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={quickExporting || (quickNeedGate ? !quickGateId : (!quickPlate.trim() && !gdo.gate_waived_at))} onClick={() => doQuickExport()}>
               {quickExporting ? 'Đang xuất…' : 'Xuất luôn'}
             </Button>
           </DialogFooter>

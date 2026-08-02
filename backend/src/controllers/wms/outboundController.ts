@@ -1321,7 +1321,9 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId } = req.params
-    const { license_plate } = req.body as { license_plate?: string }
+    // gate_registration_id: kho bật rule cổng thì dialog "Xuất luôn" cho chọn chuyến xe ngay tại đó
+    // (không thì chuyến PENDING không có đường nào gắn cổng — Sửa thông tin xe đòi đã Bắt đầu).
+    const { license_plate, gate_registration_id } = req.body as { license_plate?: string; gate_registration_id?: string | null }
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
@@ -1345,12 +1347,14 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
 
     // RULE 1 CỔNG (user chốt 01/08 vòng 2: "Xuất luôn" cũng chấp hành như nút Bắt đầu — không còn
     // cửa lách). Chỉ khi lượt này chính là lượt Bắt đầu; miễn = gate_waived_at / chuyển nội bộ.
+    const qxeGateId = gate_registration_id !== undefined
+      ? gate_registration_id                                             // client chọn ngay ở dialog Xuất luôn
+      : (gdo as { gate_registration_id?: string | null }).gate_registration_id
     if (!gdo.started_at && !qxeGateWaived && !qxeInternal &&
         (gdo as { warehouse?: { require_gate_on_start?: boolean } | null }).warehouse?.require_gate_on_start === true) {
-      const qxeGateErr = await gateRegError(
-        (gdo as { gate_registration_id?: string | null }).gate_registration_id, gdo.warehouse_id as string, license_plate)
+      const qxeGateErr = await gateRegError(qxeGateId, gdo.warehouse_id as string, license_plate)
       if (qxeGateErr) return fail(res, 422, 'GATE_REQUIRED',
-        `${qxeGateErr} Với "Xuất luôn": gắn Đăng ký cổng vào chuyến (nút Bắt đầu / form Sửa) hoặc nhờ duyệt "Bỏ qua cổng" trên chuyến rồi bấm lại.`)
+        `${qxeGateErr} Với "Xuất luôn": chọn đúng chuyến xe đã vào cổng ở ô "Chuyến xe / Biển số", hoặc nhờ người có quyền duyệt "Bỏ qua cổng" trên chuyến rồi bấm lại.`)
     }
 
     // GATE CÂN XE (rule 2) — chỉ khi chuyến CHƯA bắt đầu ("Xuất luôn" lần này chính là lượt Bắt đầu).
@@ -1437,6 +1441,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     await supabase.from('GroupDeliveryOrder').update({
       status: 'IN_PROGRESS',
       ...(normalizePlate(license_plate) ? { license_plate: normalizePlate(license_plate) } : {}),
+      ...(gate_registration_id !== undefined && !gdo.started_at ? { gate_registration_id: gate_registration_id ?? null } : {}),   // giữ vết đã qua cổng
       ...(gdo.assigned_at ? {} : { assigned_at: t, assigned_by: actor }),
       ...(gdo.started_at  ? {} : { started_at: t }),
       updated_by: actor, updated_at: t,

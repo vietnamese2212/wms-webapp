@@ -299,8 +299,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
+          {/* Upload = việc thuần PC (chọn file Excel) → ẩn trên mobile như các nút Upload khác của app */}
           {canUploadVl06o && (
-            <Button size="sm" className="h-9 sm:h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
               <Upload className="h-3.5 w-3.5 mr-1" /> Up VL06O
             </Button>
           )}
@@ -1022,7 +1023,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar hiện/ẩn làm bảng nhảy layout */}
           {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
           {canUploadKhvc && (
-            <Button size="sm" className="h-9 sm:h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setShowUpload(true)}>
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setShowUpload(true)}>
               <Upload className="h-3.5 w-3.5 mr-1" /> Up KH điều vận
             </Button>
           )}

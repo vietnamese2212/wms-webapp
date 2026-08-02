@@ -288,9 +288,21 @@ export async function updateKhvc(req: Request, res: Response) {
       .eq('id', req.params.id).select().maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) return fail(res, 'Không tìm thấy dòng', 404)
+    // NGÀY XUẤT là thuộc tính CẤP XE lưu per-dòng (1 xe vật lý chạy 1 ngày; chuyến lấy ngày dòng đầu):
+    // đổi ngày 1 dòng → ĐỒNG BỘ mọi dòng còn sống của xe, không thì xe mang 2 ngày + ngày chuyến
+    // phụ thuộc dòng nào đứng đầu (hớ thật khi xe hoãn sang ngày khác mà điều vận chỉ sửa 1 dòng).
+    // Không đồng bộ khi cùng lượt đổi cả Số xe (dòng chuyển sang xe khác thì theo ngày xe ĐÍCH).
+    let dateSynced = 0
+    if ('export_date' in fields && !('group_code' in fields)) {
+      const { data: synced } = await supabase.from('khvc_lines')
+        .update({ export_date: (fields.export_date ?? null) as string | null, updated_at: now() })
+        .eq('group_code', String((data as { group_code?: string }).group_code ?? ''))
+        .neq('id', req.params.id).neq('sync_status', 'OBSOLETE').select('id')
+      dateSynced = (synced ?? []).length
+    }
     const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
     const extra = await replanAfterCrud(req, gcs)
-    return ok(res, { ...(data as Record<string, unknown>), ...extra })
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}) })
   } catch (e) { return fail(res, String(e)) }
 }
 

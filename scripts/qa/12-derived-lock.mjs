@@ -83,6 +83,14 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
     && itAfter?.batch_required === 'B123' && Number(itAfter?.cartons_ordered) === 100,
     `date=${rDate.s} add=${rAdd.s} qty=${rQty.s} npp=${rNpp.s} attr=${rAttr.s} batch=${itAfter?.batch_required}`)
   check('message 422 chỉ đường về tab nguồn', /Kế hoạch xuất|DO SAP/.test(rDate.j?.error?.message ?? ''), rDate.j?.error?.message?.slice(0, 80))
+
+  // "Chuyển ngày" hàng loạt (PATCH /outbound/:id {delivery_date}) — lỗ sót user bắt được 02/08:
+  // updateGDO khóa ngày mà PATCH thì không → chuyến SAP vẫn đổi ngày lệch khỏi Kế hoạch xuất
+  const rPatchDate = await api(`/wms/outbound/${gdo1.id}`, 'PATCH', { delivery_date: '2026-12-27' })
+  const gAfterPatch = (await restAll('GroupDeliveryOrder', `select=delivery_date&id=eq.${gdo1.id}`))[0]
+  check('PATCH đổi ngày (Chuyển ngày hàng loạt) trên chuyến SAP → 422 + ngày không đổi',
+    rPatchDate.s === 422 && rPatchDate.j?.error?.code === 'SAP_PLAN_LOCKED' && gAfterPatch?.delivery_date === gdo1.delivery_date,
+    `${rPatchDate.s} ${rPatchDate.j?.error?.code} date=${gAfterPatch?.delivery_date}`)
 }
 
 // ── 3. Chuyến TẠO TAY (origin='MANUAL') vẫn sửa tự do như cũ ──
@@ -155,6 +163,22 @@ check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.te
   check('xóa dòng chuyến ĐÃ QUÉT → 409; xóa hết dòng chuyến PENDING sạch → chuyến tự xóa',
     rDel.s === 409 && !!g3 && rDel3.s === 200 && g3After.length === 0,
     `delScanned=${rDel.s} g3=${!!g3} del3=${rDel3.s} left=${g3After.length}`)
+}
+
+// ── 8b. ĐỔI NGÀY = thuộc tính CẤP XE: sửa 1 dòng → đồng bộ mọi dòng của xe + chuyến nhận ngày mới ──
+// (1 xe vật lý chạy 1 ngày; không đồng bộ thì xe mang 2 ngày, ngày chuyến phụ thuộc dòng đứng đầu)
+// Dùng xe PENDING SẠCH riêng — GC01 đã bị case 6 đưa vào ĐANG XUẤT (replan không đụng là ĐÚNG luật).
+{
+  const dayAfter = new Date(Date.now() + 2 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  const lines = await restAll('khvc_lines', `select=id,do_no&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE&order=do_no`)
+  const r = await api(`/external/khvc/${lines[0].id}`, 'PUT', { export_date: dayAfter })
+  const after = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE`)
+  const g = (await restAll('GroupDeliveryOrder', `select=delivery_date&group_code=eq.${GC('06')}`))[0]
+  check('đổi Ngày xuất 1 dòng → MỌI dòng của xe đồng bộ + chuyến nhận ngày mới',
+    r.s === 200 && lines.length >= 2 && after.every(l => l.export_date === dayAfter) && g?.delivery_date === dayAfter,
+    `edit=${r.s} lines=${lines.length} dates=${[...new Set(after.map(l => l.export_date))].join(',')} gdo=${g?.delivery_date}`)
 }
 
 // ── 9. Chuyến mà KH toàn OBSOLETE (kế hoạch đã bỏ) → PHẢI xóa được, không kẹt vĩnh viễn (fix 02/08) ──

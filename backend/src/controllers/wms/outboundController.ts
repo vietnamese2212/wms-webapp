@@ -2052,9 +2052,16 @@ export async function patchGDO(req: Request, res: Response) {
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
     if (delivery_date) {
       const { data: current } = await supabase.from('GroupDeliveryOrder')
-        .select('status').eq('id', req.params.id).single()
+        .select('status, origin, delivery_date').eq('id', req.params.id).single()
       if (current?.status === 'PAUSED')
         return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
+      // XUẤT LÀ DỮ LIỆU BỊ ĐỘNG với chuyến SAP (user chốt 02/08): đường "Đổi ngày" nhanh này từng
+      // là lỗ sót — updateGDO đã khóa ngày mà PATCH thì không, chuyến SAP vẫn đổi ngày lệch khỏi
+      // Kế hoạch xuất. Ngày = thuộc tính kế hoạch → sửa Ngày xuất ở tab Kế hoạch xuất (tự đồng bộ
+      // mọi dòng của xe + dội xuống chuyến).
+      if ((current as { origin?: string | null } | null)?.origin === 'SAP'
+          && String(delivery_date) !== String((current as { delivery_date?: string | null } | null)?.delivery_date ?? ''))
+        return fail(res, 422, 'SAP_PLAN_LOCKED', 'Chuyến sinh từ SAP — không đổi Ngày xuất tại đây. Sửa Ngày xuất ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài) — mọi dòng của xe tự đồng bộ và chuyến cập nhật theo.')
     }
 
     // MÁY TRẠNG THÁI (bug 01/08 — PATCH status tự do lách startGDO): PATCH chỉ được 3 bước

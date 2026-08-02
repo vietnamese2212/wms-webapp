@@ -5,6 +5,7 @@ import {
   mockLocations,
 } from '@/utils/mockData'
 import { apiClient } from './client'
+import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -2524,32 +2525,44 @@ export function useKhvcFacets() {
 }
 // KHVC mutations invalidate CHÉO cả ['do-sap'] — cột "Số xe (KH)"/"Ngày xuất (KH)" bên DO SAP
 // enrich từ khvc_lines (mirror TABLE_QUERY_MAP khvc_lines→[khvc, khvc-facets, do-sap]; realtime chỉ lo cross-user).
+// CRUD Kế hoạch xuất TỰ DỘI xuống chuyến (replan 02/08). Replan là AUGMENT — có thể lỗi riêng
+// (validation Số xe/ĐVVT, scope loại hàng…) trong khi dòng kế hoạch ĐÃ LƯU ⇒ phải BÁO cho user
+// biết "kế hoạch đã lưu nhưng chuyến CHƯA cập nhật", không để lệch âm thầm.
+function warnKhvcReplan(data: unknown) {
+  const d = data as { replan?: { derive?: { status?: number; error?: { message?: string } } | null }; replan_error?: string } | null
+  const st = d?.replan?.derive?.status
+  const msg = d?.replan_error ?? (st && st >= 400 ? (d?.replan?.derive?.error?.message ?? `lỗi ${st}`) : null)
+  if (msg) toast({
+    variant: 'destructive', title: 'Kế hoạch đã lưu nhưng CHUYẾN chưa cập nhật',
+    description: String(msg).slice(0, 300),
+  })
+}
 export function useCreateKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Partial<KhvcRow>) => apiClient.post('/external/khvc', body).then(r => r.data.data as KhvcRow),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['khvc-facets'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
+    onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['khvc-facets'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useUpdateKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<KhvcRow> & { id: string }) => apiClient.put(`/external/khvc/${id}`, body).then(r => r.data.data as KhvcRow),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
+    onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useDeleteKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/external/khvc/${id}`).then(r => r.data.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
+    onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 export function useBulkDeleteKhvc() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (ids: string[]) => apiClient.post('/external/khvc/bulk-delete', { ids }).then(r => r.data.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
+    onSuccess: (data) => { warnKhvcReplan(data); qc.invalidateQueries({ queryKey: ['khvc'] }); qc.invalidateQueries({ queryKey: ['do-sap'] }) },
   })
 }
 

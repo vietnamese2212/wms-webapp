@@ -1684,8 +1684,11 @@ export async function deleteGDO(req: Request, res: Response) {
 
     // Chuyến sinh từ upload SAP (Kế hoạch xuất còn raw) → không xóa tại đây (đồng bộ với khóa sửa SL/xóa dòng).
     // Raw đã bị xóa ở tab Kế hoạch xuất → CHO xóa (đường dọn chuyến mồ côi — xóa KHVC không cascade).
+    // Chỉ đếm dòng còn SỐNG (fix 02/08): dòng toàn OBSOLETE = kế hoạch đã bỏ, derive cũng bỏ qua —
+    // đếm cả chúng thì chuyến kẹt VĨNH VIỄN không đường xóa (kế hoạch không hiển thị gì để mà xóa tiếp).
     const { count: khvcCount } = await supabase.from('khvc_lines')
       .select('id', { count: 'exact', head: true }).eq('group_code', gdo.group_code)
+      .neq('sync_status', 'OBSOLETE')
     if ((khvcCount ?? 0) > 0) {
       return fail(res, `Chuyến "${gdo.group_code}" thuộc Kế hoạch xuất upload từ SAP — không xóa tại đây. Xóa Số xe ở tab Kế hoạch xuất (Dữ liệu bên ngoài) trước, rồi quay lại xóa chuyến.`, 422)
     }
@@ -3457,8 +3460,14 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
   const rawByDo = new Map<string, ErpRawLine[]>()
   for (const r of raws) { const l = rawByDo.get(r.od_number) ?? []; l.push(r); rawByDo.set(r.od_number, l) }
 
-  const allMats = await fetchAllRowsParallel(() => supabase.from('Material')
-    .select('id, material_code, category, base_unit, entry_unit, units_per_carton')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+  // Tra Material theo ĐÚNG mã có mặt trong raw (luật catalogue-payload) — CRUD 1 dòng kế hoạch
+  // không phải kéo cả danh mục 2.7k mã mỗi lần replan; upload lớn cũng chỉ tra mã của file.
+  const matCodes = [...new Set(raws.map(r => String(r.material_code ?? '').trim()).filter(Boolean))]
+  const allMats = matCodes.length
+    ? await fetchAllByIdChunks(matCodes, chunk => supabase.from('Material')
+        .select('id, material_code, category, base_unit, entry_unit, units_per_carton')
+        .in('material_code', chunk).order('id')) as ({ id: string; material_code: string; category: string | null } & MatUnitsQ)[]
+    : []
   const matByCode = new Map(allMats.map(m => [String(m.material_code).trim(), m]))
 
   const byVehicle = new Map<string, Record<string, any>[]>()

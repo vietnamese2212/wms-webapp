@@ -6,6 +6,9 @@
 // Tự seed tag QADRV, tự dọn 0 sót.
 import { login, api, check, finish, restWrite, restAll, FIX, resolveFixtures } from './lib.mjs'
 import { randomUUID } from 'crypto'
+import { createRequire } from 'module'
+// bcrypt của backend — seed tài khoản vai giới hạn cho case scope (mật khẩu ngẫu nhiên, xóa sau)
+const bcrypt = createRequire(new URL('../../backend/package.json', import.meta.url))('bcrypt')
 
 console.log('── GÓI DERIVED-LOCK (Xuất = dẫn xuất của VL06O + Kế hoạch xuất) ──')
 await login()
@@ -152,6 +155,45 @@ check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.te
   check('xóa dòng chuyến ĐÃ QUÉT → 409; xóa hết dòng chuyến PENDING sạch → chuyến tự xóa',
     rDel.s === 409 && !!g3 && rDel3.s === 200 && g3After.length === 0,
     `delScanned=${rDel.s} g3=${!!g3} del3=${rDel3.s} left=${g3After.length}`)
+}
+
+// ── 9. Chuyến mà KH toàn OBSOLETE (kế hoạch đã bỏ) → PHẢI xóa được, không kẹt vĩnh viễn (fix 02/08) ──
+{
+  await api('/external/khvc', 'POST', { group_code: GC('04'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  const g = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('04')}`))[0]
+  await restWrite('khvc_lines', 'PATCH', `group_code=eq.${GC('04')}`, { sync_status: 'OBSOLETE', updated_at: now() })
+  const rDel = await api(`/wms/outbound/${g.id}`, 'DELETE')
+  check('KH toàn OBSOLETE → chuyến xóa được 200 (không kẹt)', rDel.s === 200, `${rDel.s}`)
+  await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC('04')}`)
+}
+
+// ── 10. SCOPE KHO cho CRUD Kế hoạch xuất (fix 02/08 — lỗ cũ, nặng lên khi CRUD sinh chuyến) ──
+{
+  const PWD = 'Qa' + randomUUID().slice(0, 10) + '!'
+  const jobId = randomUUID(), empId = randomUUID()
+  const whOther = (await restWrite('Warehouse', 'POST', null, {
+    id: randomUUID(), code: 'QADRV2', name: 'QA drv kho khác', warehouse_type: 'CENTRAL', inventory_mode: 'QTY', is_active: true, updated_at: now(),
+  }))[0].id
+  await restWrite('JobTitle', 'POST', null, { id: jobId, name: 'QADRV Điều vận', module_permissions: { external_khvc: ['view', 'create', 'edit', 'delete'] }, updated_at: now() })
+  await restWrite('Employee', 'POST', null, {
+    id: empId, employee_code: 'QADRVU1', name: 'QADRV user', email: 'qadrvu1@qa.local',
+    password: bcrypt.hashSync(PWD, 10), job_title_id: jobId, is_active: true,
+    warehouse_scope: 'ASSIGNED', warehouse_id: whOther, created_at: now(), updated_at: now(),
+  })
+  await restWrite('UserWarehouseAccess', 'POST', null, { id: randomUUID(), employee_id: empId, warehouse_id: whOther })
+  // login vai giới hạn (scope = QADRV2, KHÔNG có QADRV1)
+  const BASE2 = process.env.QA_BASE_URL || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+  const lr = await fetch(`${BASE2}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'qadrvu1@qa.local', password: PWD }) })
+  const tok = (await lr.json().catch(() => null))?.data?.token
+  const rOut = await fetch(`${BASE2}/api/external/khvc`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+    body: JSON.stringify({ group_code: GC('05'), do_no: 'QADRVDO2', npp: 'X', export_date: today }),
+  })
+  check('vai scope kho KHÁC tạo dòng KH kho QADRV1 → 403', !!tok && rOut.status === 403, `tok=${!!tok} s=${rOut.status}`)
+  await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${empId}`)
+  await restWrite('Employee', 'DELETE', `id=eq.${empId}`)
+  await restWrite('JobTitle', 'DELETE', `id=eq.${jobId}`)
+  await restWrite('Warehouse', 'DELETE', `code=eq.QADRV2`)
 }
 
 // ── Dọn 0 sót ──

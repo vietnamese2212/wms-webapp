@@ -27,6 +27,24 @@ async function doMissingInRaw(doNo: string): Promise<boolean> {
   return !(data ?? []).length
 }
 
+// SCOPE KHO cho CRUD (fix check-app 02/08 — lỗ CŨ nhưng nặng lên khi CRUD sinh được chuyến):
+// uploadKhvc gác 403 file mang Số xe kho ngoài phạm vi, còn create/update/delete từng KHÔNG gác
+// → user kho A ghi được raw kế hoạch kho B (replan may mắn 403 trong processVehicleGroups nhưng
+// raw đã lệch). Kho suy từ ĐOẠN ĐẦU Số xe (Mãkho_X_ddmmyy_stt) — cùng cách uploadKhvc.
+// Trả chuỗi lỗi = chặn 403; null = qua. Mã kho không tồn tại → qua (validation derive sẽ báo).
+async function khvcScopeError(req: Request, groupCodes: (string | null | undefined)[]): Promise<string | null> {
+  if (req.user?.warehouse_scope === 'NATIONAL') return null
+  const scope = req.user?.warehouse_ids ?? []
+  const whCodes = [...new Set(groupCodes.map(g => String(g ?? '').split('_')[0]).filter(Boolean))]
+  if (!whCodes.length) return null
+  const { data } = await supabase.from('Warehouse').select('id, code').in('code', whCodes)
+  const outside = whCodes.filter(c => {
+    const w = ((data ?? []) as { id: string; code: string }[]).find(x => x.code === c)
+    return w && !scope.includes(w.id)
+  })
+  return outside.length ? `Ngoài phạm vi kho — Số xe thuộc kho: ${outside.join(', ')}` : null
+}
+
 // Cap an toàn cho filter chéo "Trong DO SAP" (đối xứng erpOrderController): tập DO của cửa sổ đưa vào .in()
 // không được quá lớn → vượt thì bỏ filter + trả cảnh báo (không cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
 // 800 ≈ 9KB URL. ĐO 27/07 trên PostgREST staging: 1000 giá trị 9 ký tự = 9,8KB → 200; 1300 = 12,7KB
@@ -223,6 +241,8 @@ export async function createKhvc(req: Request, res: Response) {
   try {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!fields.group_code || !fields.do_no) return fail(res, 'Thiếu Số xe hoặc DO', 400)
+    const scopeErr = await khvcScopeError(req, [String(fields.group_code)])
+    if (scopeErr) return fail(res, scopeErr, 403)
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
@@ -249,6 +269,9 @@ export async function updateKhvc(req: Request, res: Response) {
     // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
     const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
+    // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
+    const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
+    if (scopeErr) return fail(res, scopeErr, 403)
     if ('group_code' in fields || 'do_no' in fields) {
       const gc = (fields.group_code ?? cur?.group_code) as string | null
       const dn = (fields.do_no ?? cur?.do_no) as string | null
@@ -276,6 +299,8 @@ export async function deleteKhvc(req: Request, res: Response) {
   try {
     const { data: row } = await supabase.from('khvc_lines').select('group_code').eq('id', req.params.id).maybeSingle()
     if (!row) return fail(res, 'Không tìm thấy dòng', 404)
+    const delScopeErr = await khvcScopeError(req, [String(row.group_code)])
+    if (delScopeErr) return fail(res, delScopeErr, 403)
     const dr: KDelRow = { id: req.params.id, group_code: String(row.group_code) }
     const { deletable, blocked } = await classifyKhvcDelete([dr])
     if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
@@ -297,6 +322,8 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
       const { data } = await supabase.from('khvc_lines').select('id, group_code').in('id', ids.slice(i, i + 300))
       for (const r of ((data ?? []) as KDelRow[])) rows.push({ id: r.id, group_code: String(r.group_code) })
     }
+    const bulkScopeErr = await khvcScopeError(req, rows.map(r => r.group_code))
+    if (bulkScopeErr) return fail(res, bulkScopeErr, 403)
     const { deletable, blocked } = await classifyKhvcDelete(rows)
     const blockedOut = blocked.map(b => ({ group_code: b.group_code, reason: b.reason }))
     if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })

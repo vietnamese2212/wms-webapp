@@ -77,15 +77,38 @@ function guardWhCreate(req: Request, res: Response, whId: string | null | undefi
 // Kho bật `Warehouse.require_weigh_on_start` → biển số xe phải khớp 1 phiếu cân CHƯA hoàn thành
 // (is_complete=false: xe đã cân bì, chưa cân ra) của HÔM NAY (giờ VN) mới được Bắt đầu — chống
 // quên cân trước khi làm hàng. Qua cổng thì tự GẮN phiếu ↔ chuyến (đối chiếu KL sau khi cân ra).
+// NGOẠI LỆ DUY NHẤT (user chốt 02/08): chuyến gắn đăng ký cổng của xe ĐÃ RA / đang bốc nhiều đơn
+// thì phiếu ĐÃ cân xong vẫn tính — xem `weighRelaxAllowed` ngay dưới.
 // Xe không cân được (hỏng cân…) → duyệt bỏ qua: quyền `outbound.weigh_waive` (route riêng hoặc
 // body weigh_waive=true ngay lúc bấm). Áp cả 3 đường set started_at: startGDO + 2 đường Xuất luôn.
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const hhmmVN = (ts: string | null | undefined) =>
+  ts ? new Date(ts).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }) : '—'
 
 type WeighGate = { ok: true; ticketId: string | null } | { ok: false; message: string }
 
+// NỚI rule CÂN đúng MỘT tình huống (user chốt 02/08): chuyến gắn ĐĂNG KÝ CỔNG của xe **ĐÃ RA**
+// (`exit_at`) — hoặc đăng ký đang dùng chung với chuyến khác (**bốc nhiều đơn**). Đúng 2 nghĩa của
+// tick "Trường hợp đặc biệt" ở picker chuyến xe.
+// Vì sao cần: xe ra khỏi kho thì phiếu cân ĐÃ HOÀN THÀNH (cân bì + cân ra xong — đo staging
+// 7.779/7.964 phiếu, cuối ngày gần 100%), nên bộ lọc "chưa cân xong" chặn oan chuyến ghi nhận
+// muộn, mà rule cân KHÔNG có đường nào làm đúng ngoài đi duyệt bỏ qua ⇒ rule thành ngõ cụt.
+// Tín hiệu nới lấy TỪ DB (exit_at / gate đã gắn chuyến), KHÔNG tin cờ client gửi lên.
+async function weighRelaxAllowed(gateRegId: string | null | undefined, currentGdoId?: string): Promise<boolean> {
+  if (!gateRegId) return false
+  const { data: g } = await supabase.from('gate_registrations')
+    .select('exit_at').eq('id', gateRegId).maybeSingle()
+  if ((g as { exit_at?: string | null } | null)?.exit_at) return true
+  let q = supabase.from('GroupDeliveryOrder').select('id').eq('gate_registration_id', gateRegId).limit(1)
+  if (currentGdoId) q = q.neq('id', currentGdoId)
+  const { data: shared } = await q
+  return ((shared ?? []) as { id: string }[]).length > 0
+}
+
 async function checkWeighGate(
   warehouseId: string | null | undefined, licensePlate: string | null | undefined, currentGdoId?: string,
+  gateRegId?: string | null,
 ): Promise<WeighGate> {
   // Caller đã kiểm cờ require_weigh_on_start của kho (đọc kèm query GDO/Warehouse sẵn có) — hàm này
   // chỉ lo phần khớp phiếu cân, không tự fetch cờ nữa (đỡ 1 roundtrip mỗi lượt Bắt đầu).
@@ -93,22 +116,31 @@ async function checkWeighGate(
   const plate = normalizePlate(licensePlate)
   if (!plate) return { ok: true, ticketId: null }   // chuyển nội bộ không biển số — đã có guard biển số riêng
   const { data: tks, error } = await supabase.from('WeighTicket')
-    .select('id, gdo_id, warehouse_id, is_complete')
+    .select('id, gdo_id, warehouse_id, is_complete, ticket_no, out_time')
     .eq('weigh_date', todayVN()).eq('license_plate_norm', plate)
     .order('in_time', { ascending: false, nullsFirst: false }).limit(20)
   if (error) return { ok: true, ticketId: null }    // bảng chưa có → như trên, fail-open cửa sổ deploy
-  // Phiếu thuộc kho này (phiếu chưa gắn kho vẫn tính — null-inclusive). Qua rule khi:
+  type Tk = { id: string; gdo_id: string | null; warehouse_id: string | null; is_complete: boolean | null; ticket_no: string | null; out_time: string | null }
+  // Phiếu thuộc kho này (phiếu chưa gắn kho vẫn tính — null-inclusive)
+  const ofWh = ((tks ?? []) as Tk[]).filter(t => !t.warehouse_id || t.warehouse_id === warehouseId)
+  // Ưu tiên gắn phiếu CHƯA gắn chuyến, mới nhất trước (phiếu đã gắn đúng chuyến này thì khỏi gắn lại)
+  const pick = (list: Tk[]) => list.find(t => !t.gdo_id)?.id ?? null
+  // Luồng THƯỜNG (xe đang trong kho) qua rule khi:
   // - phiếu CHƯA cân xong và chưa gắn chuyến khác (xe vừa cân bì, chờ bốc hàng), HOẶC
   // - phiếu ĐÃ gắn ĐÚNG chuyến này — kể cả đã cân xong (unstart → start lại không bị chặn oan)
-  const usable = ((tks ?? []) as { id: string; gdo_id: string | null; warehouse_id: string | null; is_complete: boolean | null }[])
-    .filter(t => (!t.warehouse_id || t.warehouse_id === warehouseId)
-      && (t.gdo_id ? t.gdo_id === currentGdoId : !t.is_complete))
-  if (!usable.length) return {
+  const strict = ofWh.filter(t => (t.gdo_id ? t.gdo_id === currentGdoId : !t.is_complete))
+  if (strict.length) return { ok: true, ticketId: pick(strict) }
+  if (!ofWh.length) return {
     ok: false,
     message: `Xe ${plate} chưa có phiếu cân hôm nay (xe phải CÂN BÌ trước khi bắt đầu làm hàng). Cho xe lên cân rồi thử lại — trường hợp không cân được (hỏng cân…) cần người có quyền "Duyệt bỏ qua cân".`,
   }
-  // Ưu tiên gắn phiếu CHƯA gắn chuyến, mới nhất trước (phiếu đã gắn đúng chuyến này thì khỏi gắn lại)
-  return { ok: true, ticketId: usable.find(t => !t.gdo_id)?.id ?? null }
+  // CÓ phiếu nhưng đã cân xong / đang thuộc chuyến khác → chỉ qua khi đúng ca "xe đã ra / bốc nhiều đơn"
+  if (await weighRelaxAllowed(gateRegId, currentGdoId)) return { ok: true, ticketId: pick(ofWh) }
+  const t0 = ofWh[0]
+  return {
+    ok: false,
+    message: `Xe ${plate} có phiếu cân hôm nay (${t0.ticket_no ?? 'không số'}) nhưng ${t0.is_complete ? `đã cân xong lúc ${hhmmVN(t0.out_time)}` : 'đang gắn chuyến khác'} — chuyến này chưa dùng được phiếu đó. Nếu đúng là xe ĐÃ RA hoặc BỐC NHIỀU ĐƠN cùng chuyến: tick "Trường hợp đặc biệt" ở ô Chuyến xe rồi chọn đúng Đăng ký cổng của xe. Xe không có đăng ký cổng → cần người có quyền "Duyệt bỏ qua cân".`,
+  }
 }
 
 // GATE CỔNG (bổ sung theo user 01/08 — "điều kiện là phải có xe đăng ký cổng VÀ xe cân"):
@@ -1171,7 +1203,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     }
     let qxWeighTicketId: string | null = null
     if (!qxInternal && (wh as { require_weigh_on_start?: boolean }).require_weigh_on_start === true) {
-      const qxGate = await checkWeighGate(warehouse_id, license_plate)
+      const qxGate = await checkWeighGate(warehouse_id, license_plate, undefined, gate_registration_id)
       if (!qxGate.ok) return fail(res, 422, 'WEIGH_REQUIRED', `${qxGate.message} Với "Tạo & Xuất luôn": Lưu đơn thường rồi nhờ duyệt trên chuyến, sau đó bấm Xuất luôn.`)
       qxWeighTicketId = qxGate.ticketId
     }
@@ -1364,7 +1396,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
         (gdo as { warehouse?: { require_weigh_on_start?: boolean } | null }).warehouse?.require_weigh_on_start === true) {
       if (!license_plate?.trim())
         return fail(res, 422, 'WEIGH_REQUIRED', 'Chuyến không có biển số nhưng kho yêu cầu CÂN XE — cần người có quyền duyệt "Bỏ qua cân" trên chuyến.')
-      const qxeGate = await checkWeighGate(gdo.warehouse_id as string, license_plate, gdoId)
+      const qxeGate = await checkWeighGate(gdo.warehouse_id as string, license_plate, gdoId, qxeGateId)
       if (!qxeGate.ok) return fail(res, 422, 'WEIGH_REQUIRED', qxeGate.message)
       qxeWeighTicketId = qxeGate.ticketId
     }
@@ -2161,7 +2193,7 @@ export async function startGDO(req: Request, res: Response) {
         // Chuyến không biển số (đã duyệt cổng — giao lẻ) vẫn phải được duyệt CÂN riêng nếu kho bật rule 2
         if (!license_plate?.trim())
           return fail(res, 422, 'WEIGH_REQUIRED', 'Chuyến không có biển số nhưng kho yêu cầu CÂN XE — cần người có quyền duyệt "Bỏ qua cân" trên chuyến (giao lẻ/xe máy/nhân viên nhận không cân được).')
-        const gate = await checkWeighGate((cur as { warehouse_id?: string | null } | null)?.warehouse_id, license_plate, req.params.id)
+        const gate = await checkWeighGate((cur as { warehouse_id?: string | null } | null)?.warehouse_id, license_plate, req.params.id, gate_registration_id)
         if (!gate.ok) return fail(res, 422, 'WEIGH_REQUIRED', gate.message)
         weighTicketId = gate.ticketId
       }
@@ -2306,7 +2338,7 @@ export async function updateTransport(req: Request, res: Response) {
     const utPlateChanged = utNewPlate !== normalizePlate((gdo as { license_plate?: string | null }).license_plate)
     let utTicketId: string | null = null
     if (utFlags?.require_weigh_on_start === true && !utWeighWaived && utPlateChanged && utNewPlate) {
-      const gate = await checkWeighGate((gdo as { warehouse_id?: string | null }).warehouse_id, license_plate, req.params.id)
+      const gate = await checkWeighGate((gdo as { warehouse_id?: string | null }).warehouse_id, license_plate, req.params.id, gate_registration_id)
       if (!gate.ok) return fail(res, 422, 'WEIGH_REQUIRED', gate.message)
       utTicketId = gate.ticketId
     }

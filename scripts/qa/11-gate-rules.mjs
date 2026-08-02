@@ -53,6 +53,22 @@ const mkTicket = async (wh, plateNorm) => {
     is_complete: false, warehouse_id: wh, updated_at: now(),
   }))[0].id
 }
+// Xe ĐÃ RA cổng (nhập liệu muộn) + phiếu cân đã CÂN XONG cả 2 chiều — trạng thái thật của gần
+// như mọi xe cuối ngày, dùng cho khối 5d.
+const mkGateRegOut = async (wh, plate) => (await restWrite('gate_registrations', 'POST', null, {
+  id: randomUUID(), date: today, registration_number: regNo++, license_plate: plate, warehouse_id: wh,
+  direction: 'OUTBOUND', status: 'COMPLETED', entry_at: now(), exit_at: now(), registered_at: now(), updated_at: now(),
+}))[0].id
+const mkTicketDone = async (wh, plateNorm) => {
+  const src = srcNo++
+  return (await restWrite('WeighTicket', 'POST', null, {
+    id: randomUUID(), station_code: 'QAGR', source_id: src, ticket_no: `QAGR-${src}`,
+    weigh_date: today, license_plate: plateNorm, license_plate_norm: plateNorm,
+    direction: 'Cân Xuất', tare_kg: 12000, tare_at: now(), in_time: now(),
+    gross_kg: 20000, gross_at: now(), net_kg: 8000, out_time: now(),
+    is_complete: true, warehouse_id: wh, updated_at: now(),
+  }))[0].id
+}
 const ticketOf = async id => (await restAll('WeighTicket', `select=gdo_id,matched_by&id=eq.${id}`))[0]
 
 const whGate  = await mkWh('QAGRUL_G', true, false)
@@ -145,6 +161,45 @@ const whBoth  = await mkWh('QAGRUL_B', true, true)
   const rNote = await api(`/tms/gate-registrations/${gate}`, 'PATCH', { notes: 'QA ghi chú' })
   check('gate đang gắn chuyến: chặn xóa + chặn đổi biển, vẫn sửa được ghi chú',
     rDel.s === 422 && rPlate.s === 422 && rNote.s === 200, `del=${rDel.s} plate=${rPlate.s} note=${rNote.s}`)
+}
+
+// ── 5d. XE ĐÃ RA / BỐC NHIỀU ĐƠN: phiếu cân ĐÃ HOÀN THÀNH vẫn tính (user chốt 02/08) ──
+// Bug gốc: xe ra khỏi kho thì phiếu cân complete (cuối ngày gần 100% phiếu ở trạng thái này),
+// rule cân chỉ nhận phiếu CHƯA cân ra ⇒ chuyến ghi nhận muộn bị chặn OAN + câu báo nói sai
+// ("chưa có phiếu cân"), không còn đường nào ngoài duyệt bỏ qua. Nới ĐÚNG ca này, không nới rộng.
+{
+  // (a) kho bật CẢ 2 rule · gate ĐÃ RA · phiếu đã cân xong → PHẢI qua
+  const g = await mkGdo('EX1', whBoth)
+  const gate = await mkGateRegOut(whBoth, 'QAGR6161')
+  const tk = await mkTicketDone(whBoth, 'QAGR6161')
+  let r = await api(`/wms/outbound/${g}/start`, 'POST', { license_plate: 'QAGR-6161', gate_registration_id: gate })
+  check('xe ĐÃ RA + phiếu cân đã hoàn thành → start 200 + gắn phiếu',
+    r.s === 200 && (await ticketOf(tk))?.gdo_id === g, `${r.s} ${r.j?.error?.code}`)
+
+  // (b) KHÔNG nới rộng: gate còn TRONG kho (chưa ra) + phiếu đã cân xong → vẫn 422
+  const g2 = await mkGdo('EX2', whBoth)
+  const gateIn = await mkGateReg(whBoth, 'QAGR6262')
+  await mkTicketDone(whBoth, 'QAGR6262')
+  r = await api(`/wms/outbound/${g2}/start`, 'POST', { license_plate: 'QAGR-6262', gate_registration_id: gateIn })
+  check('xe CHƯA ra + phiếu đã cân xong → vẫn chặn 422 (không nới rộng)',
+    r.s === 422 && r.j?.error?.code === 'WEIGH_REQUIRED', `${r.s} ${r.j?.error?.code}`)
+
+  // (c) kho CHỈ rule cân, không có đăng ký cổng → không có tín hiệu "đã ra" ⇒ vẫn 422
+  const g3 = await mkGdo('EX3', whWeigh)
+  await mkTicketDone(whWeigh, 'QAGR6363')
+  r = await api(`/wms/outbound/${g3}/start`, 'POST', { license_plate: 'QAGR-6363' })
+  check('không gắn cổng + phiếu đã cân xong → vẫn chặn 422', r.s === 422 && r.j?.error?.code === 'WEIGH_REQUIRED',
+    `${r.s} ${r.j?.error?.code}`)
+
+  // (d) BỐC NHIỀU ĐƠN: chuyến 1 đã gắn phiếu, chuyến 2 dùng lại đăng ký cổng đó → PHẢI qua
+  const gA = await mkGdo('EX4A', whBoth), gB = await mkGdo('EX4B', whBoth)
+  const gateShared = await mkGateReg(whBoth, 'QAGR6464')
+  const tkShared = await mkTicket(whBoth, 'QAGR6464')
+  r = await api(`/wms/outbound/${gA}/start`, 'POST', { license_plate: 'QAGR-6464', gate_registration_id: gateShared })
+  const okA = r.s === 200 && (await ticketOf(tkShared))?.gdo_id === gA
+  r = await api(`/wms/outbound/${gB}/start`, 'POST', { license_plate: 'QAGR-6464', gate_registration_id: gateShared, allow_shared_gate: true })
+  check('bốc nhiều đơn: chuyến 2 dùng chung cổng + phiếu đã gắn chuyến 1 → 200',
+    okA && r.s === 200, `A=${okA} B=${r.s} ${r.j?.error?.code}`)
 }
 
 // ── 6. Quét khi CHƯA Bắt đầu phải bị chặn (không lật IN_PROGRESS, không trừ tồn) ──

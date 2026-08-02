@@ -1744,6 +1744,7 @@ export default function OutboundDetail() {
     ? gdo.weight_estimate!.kg_actual
     : (gdo.weight_estimate?.kg_planned ?? null)
   const weighEstSrc = (gdo.weight_estimate?.kg_actual ?? 0) > 0 ? 'thực xuất' : 'theo KH'
+  const weighEstIncomplete = (gdo.weight_estimate?.items_missing ?? 0) > 0
   const weighNet = weighTickets.find(t => t.is_complete && t.net_kg != null)?.net_kg ?? null
 
   // Khối thông tin đơn — dùng CHUNG: desktop hiện inline; mobile mở trong POPUP (nút info trên thanh mảnh).
@@ -1840,8 +1841,10 @@ export default function OutboundDetail() {
                 <span className="text-amber-600">thiếu KL {gdo.weight_estimate!.items_missing}/{gdo.weight_estimate!.items_total} mã</span>
               )}
               {weighNet != null && (
-                <span>Lệch cân−tính: <b className={`tabular-nums ${Math.abs(weighNet - weighEst) / Math.max(weighEst, 1) > 0.05 ? 'text-red-600' : 'text-green-700'}`}>
-                  {(weighNet - weighEst) >= 0 ? '+' : ''}{fmtKg(weighNet - weighEst)} kg ({weighEst > 0 ? `${(((weighNet - weighEst) / weighEst) * 100).toFixed(1)}%` : '—'})
+                // Còn mã chưa khai KL → "KL tính" thiếu hụt, lệch chắc chắn dương lớn ⇒ KHÔNG tô đỏ oan
+                <span>Lệch cân−tính: <b className={`tabular-nums ${weighEstIncomplete ? 'text-slate-400' : Math.abs(weighNet - weighEst) / Math.max(weighEst, 1) > 0.05 ? 'text-red-600' : 'text-green-700'}`}
+                  title={weighEstIncomplete ? 'Chưa đối chiếu được — còn mã chưa khai KL (kg/thùng), số tính thiếu hụt' : undefined}>
+                  {(weighNet - weighEst) >= 0 ? '+' : ''}{fmtKg(weighNet - weighEst)} kg ({weighEst > 0 ? `${(((weighNet - weighEst) / weighEst) * 100).toFixed(1)}%` : '—'}){weighEstIncomplete ? '*' : ''}
                 </b></span>
               )}
             </div>

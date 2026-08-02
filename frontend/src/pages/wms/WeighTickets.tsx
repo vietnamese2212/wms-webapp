@@ -170,6 +170,9 @@ export default function WeighTickets() {
                 const est = (r.est_kg_actual ?? 0) > 0 ? r.est_kg_actual : (r.est_kg_planned ?? null)
                 const diff = r.is_complete && r.net_kg != null && est != null && est > 0 ? r.net_kg - est : null
                 const diffPct = diff != null && est ? (diff / est) * 100 : null
+                // Chuyến còn mã CHƯA khai KL (kg/thùng) → "KL tính" thiếu hụt ⇒ lệch chắc chắn dương lớn.
+                // KHÔNG tô đỏ (báo động oan): 51% mã chưa khai KL nên đây là tình huống phổ biến.
+                const estIncomplete = (r.est_items_missing ?? 0) > 0
                 return (
                   <TableRow key={r.id} className={rowCls}>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white">{r.weigh_date ? formatDate(r.weigh_date) : <span className="text-slate-300">—</span>}</TableCell>
@@ -187,9 +190,10 @@ export default function WeighTickets() {
                       title={(r.est_items_missing ?? 0) > 0 ? `Thiếu KL (kg/thùng) ${r.est_items_missing}/${r.est_items_total} mã — số tính chưa trọn` : undefined}>
                       {est != null ? <>{kg(est)}{(r.est_items_missing ?? 0) > 0 && <span className="text-amber-500">*</span>}</> : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className={`px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap ${diff != null ? (Math.abs(diffPct ?? 0) > 5 ? 'text-red-600' : 'text-green-700') : ''}`}>
+                    <TableCell className={`px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap ${diff != null ? (estIncomplete ? 'text-slate-400' : Math.abs(diffPct ?? 0) > 5 ? 'text-red-600' : 'text-green-700') : ''}`}
+                      title={estIncomplete ? `Chưa đối chiếu được: còn ${r.est_items_missing}/${r.est_items_total} mã chưa khai KL (kg/thùng) nên "KL tính" thiếu hụt — khai KL cho các mã đó rồi xem lại` : undefined}>
                       {diff != null
-                        ? `${diff >= 0 ? '+' : ''}${kg(Math.round(diff * 10) / 10)} (${diffPct!.toFixed(1)}%)`
+                        ? <>{diff >= 0 ? '+' : ''}{kg(Math.round(diff * 10) / 10)} ({diffPct!.toFixed(1)}%){estIncomplete && <span className="text-amber-500">*</span>}</>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.goods_name ?? <span className="text-slate-300">—</span>}</TableCell>

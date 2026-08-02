@@ -4,7 +4,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays, Lock } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -554,8 +554,12 @@ export default function Outbound() {
   ]
 
   // ─── Chuyển ngày xuất hàng loạt (multi-select chuyến PENDING — đơn rớt ngày, user 22/07) ───
+  // CHỈ chuyến upload kiểu CŨ (EXCEL) / tạo TAY (MANUAL/LEGACY) mới đổi ngày được ở đây. Chuyến sinh
+  // từ SAP là dữ liệu BỊ ĐỘNG: ngày sửa ở tab Kế hoạch xuất rồi tự dội xuống (user chốt 02/08) —
+  // BE đã chặn 422, nhưng phải khóa từ Ô TÍCH để người dùng không chọn rồi mới bị báo lỗi.
   const canEditGdo = can(perms, 'outbound', 'edit')
-  const pendingIdsOnScreen = useMemo(() => sorted.filter(g => g.status === 'PENDING').map(g => g.id), [sorted])
+  const canMoveDateOf = (g: GDO) => g.status === 'PENDING' && g.origin !== 'SAP'
+  const pendingIdsOnScreen = useMemo(() => sorted.filter(canMoveDateOf).map(g => g.id), [sorted])
   const allPendingChecked = pendingIdsOnScreen.length > 0 && pendingIdsOnScreen.every(id => checkedIds.has(id))
   function toggleCheckAll() {
     setCheckedIds(prev => {
@@ -569,7 +573,7 @@ export default function Outbound() {
     setCheckedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
   // Chỉ thao tác trên chuyến CÒN trên màn hình + còn PENDING (chuyến đổi trạng thái giữa chừng thì bỏ qua)
-  const moveTargets = useMemo(() => sorted.filter(g => checkedIds.has(g.id) && g.status === 'PENDING'), [sorted, checkedIds])
+  const moveTargets = useMemo(() => sorted.filter(g => checkedIds.has(g.id) && canMoveDateOf(g)), [sorted, checkedIds])
   async function handleMoveDates() {
     if (!moveDate || moveTargets.length === 0) return
     setMovingDates(true); setMoveErrs([]); setMoveOk(null)
@@ -809,7 +813,8 @@ export default function Outbound() {
                     onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
                     onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                     onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
-                    checkable={canEditGdo && gdo.status === 'PENDING'}
+                    checkable={canEditGdo && canMoveDateOf(gdo)}
+                    sapLocked={gdo.origin === 'SAP'}
                     checked={checkedIds.has(gdo.id)}
                     onToggleCheck={() => toggleCheck(gdo.id)}
                   />
@@ -853,7 +858,7 @@ export default function Outbound() {
             </div>
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>Chuyến sinh từ upload SAP: <b>up Kế hoạch VC mới sẽ đè lại ngày theo kế hoạch</b>. Sau khi chuyển, tab Kế hoạch xuất (Dữ liệu bên ngoài) sẽ hiện <b>Lệch ngày xuất</b> để đối chiếu.</span>
+              <span>Chỉ đổi được ngày của chuyến <b>upload kiểu cũ</b> hoặc <b>tạo tay</b>. Chuyến sinh từ <b>SAP</b> có ổ khóa ở cột Ngày — đổi ngày tại tab <b>Kế hoạch xuất</b> (Dữ liệu bên ngoài), chuyến tự cập nhật theo.</span>
             </div>
             {moveOk && (
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-center gap-2">
@@ -947,7 +952,7 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
@@ -957,9 +962,10 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   selected?: boolean
   whInfoByKey: Map<string, { code: string; mode: string }>
   bracketPos?: BracketPos
-  checkable?: boolean          // chuyến PENDING + user có outbound.edit → tick chọn để chuyển ngày hàng loạt
+  checkable?: boolean          // chuyến PENDING KHÔNG phải SAP + user có outbound.edit → tick chọn để chuyển ngày hàng loạt
   checked?: boolean
   onToggleCheck?: () => void
+  sapLocked?: boolean          // chuyến sinh từ SAP → ngày khóa theo Kế hoạch xuất (hiện ổ khóa thay ô tick)
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -997,11 +1003,15 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
 
       <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${rowBg}`} style={{ left: pinW }}>
-        {checkable && (
+        {checkable ? (
           <input type="checkbox" className="h-3 w-3 accent-sky-600 cursor-pointer align-middle mr-1"
             checked={checked} onClick={e => e.stopPropagation()} onChange={onToggleCheck}
             title="Chọn chuyến (chuyển ngày hàng loạt)" />
-        )}
+        ) : sapLocked && gdo.status === 'PENDING' ? (
+          // Chuyến sinh từ SAP: ngày là dữ liệu bị động → không tick chuyển ngày ở đây
+          <Lock className="inline-block h-3 w-3 text-slate-300 align-middle mr-1"
+            aria-label="Ngày xuất khóa theo Kế hoạch xuất" />
+        ) : null}
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">

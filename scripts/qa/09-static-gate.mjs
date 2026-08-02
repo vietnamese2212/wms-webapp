@@ -40,6 +40,15 @@ function countMatches(roots, exts, test, sampleOut) {
 
 // ── Các luật — mỗi luật là 1 phép đếm thuần văn bản, KHÔNG heuristics mờ (mờ = báo oan = bị tắt) ──
 const RULES = [
+  // Ngày xuất của chuyến SAP là dữ liệu BỊ ĐỘNG (user chốt 02/08): ô tích "chuyển ngày hàng loạt"
+  // trên list Xuất phải loại chuyến SAP NGAY TỪ FE (BE đã chặn 422, nhưng để user tick rồi mới
+  // báo lỗi là trải nghiệm sai). Quay lại `gdo.status === 'PENDING'` trần = mở lại cửa đó.
+  {
+    key: 'outbound_movedate_checkbox_ignores_origin',
+    label: 'ô tích Chuyển ngày (list Xuất) bỏ qua origin — phải dùng canMoveDateOf để loại chuyến SAP',
+    count: (s) => countMatches(['frontend/src/pages/wms/Outbound.tsx'], ['.tsx'],
+      l => /checkable=\{canEditGdo && gdo\.status === 'PENDING'\}/.test(l), s),
+  },
   {
     key: 'as_any',
     label: '`as any` (BE+FE) — nợ cũ dọn dần khi đụng file, code MỚI cấm (CLAUDE.md)',

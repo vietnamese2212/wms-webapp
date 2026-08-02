@@ -109,12 +109,16 @@ function pickFields(body: Record<string, unknown>): Record<string, unknown> {
 // GET /external/khvc — list phân trang + filter + search (+ in_do_sap)
 export async function listKhvc(req: Request, res: Response) {
   try {
-    const { q, group_code, group_code_eq, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, in_do_sap, gdo_issue } = req.query as Record<string, string>
+    const { q, group_code, group_code_eq, do_no, warehouse_code, veh_type, source, sync_status, date_from, date_to, export_from, export_to, in_do_sap, gdo_issue } = req.query as Record<string, string>
     const page = Math.max(1, Number(req.query.page) || 1)
     const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50))
     const s = q && q.trim() ? safeFilterValue(q.trim()) : ''
     const gteFrom = date_from ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : ''
     const lteTo   = date_to   ? new Date(`${date_to}T23:59:59.999+07:00`).toISOString() : ''
+    // Ngày XUẤT (export_date) = cột date-only, so thẳng chuỗi YYYY-MM-DD — KHÁC "Ngày nạp" (created_at,
+    // timestamp UTC phải quy giờ VN). Điều vận tìm theo ngày xe chạy chứ không theo ngày up file.
+    const expFrom = /^\d{4}-\d{2}-\d{2}$/.test(export_from ?? '') ? export_from : ''
+    const expTo   = /^\d{4}-\d{2}-\d{2}$/.test(export_to ?? '')   ? export_to   : ''
 
     // ── Filter chéo "Trong DO SAP" (in_do_sap: '1'=có / '0'=không) ──
     // DO của cửa sổ đang xem CÓ/KHÔNG có trong erp_outbound_orders (raw VL06O, bất kể ngày nạp).
@@ -127,6 +131,8 @@ export async function listKhvc(req: Request, res: Response) {
         let wq = supabase.from('khvc_lines').select('do_no')
         if (gteFrom) wq = wq.gte('created_at', gteFrom)
         if (lteTo)   wq = wq.lte('created_at', lteTo)
+        if (expFrom) wq = wq.gte('export_date', expFrom)
+        if (expTo)   wq = wq.lte('export_date', expTo)
         if (group_code)     wq = wq.ilike('group_code', `%${safeFilterValue(group_code)}%`)
         if (do_no)          wq = wq.ilike('do_no', `%${safeFilterValue(do_no)}%`)
         if (warehouse_code) wq = wq.eq('warehouse_code', warehouse_code)
@@ -161,6 +167,8 @@ export async function listKhvc(req: Request, res: Response) {
         let wq = supabase.from('khvc_lines').select('group_code, export_date')
         if (gteFrom) wq = wq.gte('created_at', gteFrom)
         if (lteTo)   wq = wq.lte('created_at', lteTo)
+        if (expFrom) wq = wq.gte('export_date', expFrom)
+        if (expTo)   wq = wq.lte('export_date', expTo)
         if (group_code)     wq = wq.ilike('group_code', `%${safeFilterValue(group_code)}%`)
         if (do_no)          wq = wq.ilike('do_no', `%${safeFilterValue(do_no)}%`)
         if (warehouse_code) wq = wq.eq('warehouse_code', warehouse_code)
@@ -194,6 +202,8 @@ export async function listKhvc(req: Request, res: Response) {
     let query = supabase.from('khvc_lines').select('*', { count: 'exact' })
     if (gteFrom) query = query.gte('created_at', gteFrom)
     if (lteTo)   query = query.lte('created_at', lteTo)
+    if (expFrom) query = query.gte('export_date', expFrom)
+    if (expTo)   query = query.lte('export_date', expTo)
     if (group_code)     query = query.ilike('group_code', `%${safeFilterValue(group_code)}%`)
     if (group_code_eq)  query = query.eq('group_code', group_code_eq)   // editor gom theo Số xe — khớp CHÍNH XÁC
     if (do_no)          query = query.ilike('do_no', `%${safeFilterValue(do_no)}%`)
@@ -264,6 +274,19 @@ export async function createKhvc(req: Request, res: Response) {
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
     if (await doMissingInRaw(String(fields.do_no)))
       return fail(res, `DO ${fields.do_no} chưa có trong VL06O — Up VL06O trước rồi thêm dòng kế hoạch (DO luôn bắt buộc).`, 400)
+    // NGÀY XUẤT LÀ THUỘC TÍNH CẤP XE (1 xe vật lý chạy 1 ngày): thêm DO vào xe ĐÃ CÓ thì phải theo
+    // ngày của xe. Không ép thì xe mang 2 ngày và ngày chuyến phụ thuộc dòng nào đứng đầu — probe
+    // 02/08 C1 tái hiện được. Muốn đổi ngày cả xe: dùng "Đổi ngày" (bulk-date) / sửa dòng.
+    let dateForcedTo: string | null = null
+    {
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date')
+        .eq('group_code', fields.group_code).neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+      const xeDate = (sib as { export_date?: string | null } | null)?.export_date ?? null
+      if (sib && String(xeDate ?? '') !== String(fields.export_date ?? '')) {
+        fields.export_date = xeDate
+        dateForcedTo = xeDate
+      }
+    }
     const row = {
       id: randomUUID(), ...fields,
       warehouse_code: fields.warehouse_code ?? String(fields.group_code).split('_')[0] ?? null,
@@ -273,7 +296,7 @@ export async function createKhvc(req: Request, res: Response) {
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
     if (error) throw new Error(error.message)
     const extra = await replanAfterCrud(req, [String(fields.group_code)])
-    return ok(res, { ...(data as Record<string, unknown>), ...extra }, 201)
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -306,6 +329,19 @@ export async function updateKhvc(req: Request, res: Response) {
       if ('do_no' in fields && dn && (await doMissingInRaw(dn)))
         return fail(res, `DO ${dn} chưa có trong VL06O — Up VL06O trước (DO luôn bắt buộc).`, 400)
     }
+    // CHUYỂN dòng sang xe KHÁC → dòng phải mang ngày của xe ĐÍCH (1 xe 1 ngày). Không ép thì xe đích
+    // mang 2 ngày y hệt lỗi thêm-dòng (probe 02/08 C1). Không áp khi cùng lượt chỉ định export_date mới.
+    let dateForcedTo: string | null = null
+    if ('group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '') && !('export_date' in fields)) {
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date')
+        .eq('group_code', String(fields.group_code ?? '')).neq('id', req.params.id)
+        .neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+      const xeDate = (sib as { export_date?: string | null } | null)?.export_date ?? null
+      if (sib && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
+        fields.export_date = xeDate
+        dateForcedTo = xeDate
+      }
+    }
     const { data, error } = await supabase.from('khvc_lines')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
@@ -325,7 +361,7 @@ export async function updateKhvc(req: Request, res: Response) {
     }
     const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
     const extra = await replanAfterCrud(req, gcs)
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}) })
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) })
   } catch (e) { return fail(res, String(e)) }
 }
 

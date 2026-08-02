@@ -161,8 +161,11 @@ router.get('/outbound/summary',                               requirePerm('outbo
 router.get('/outbound/facets',                                requirePerm('outbound', 'view'), outbound.listGDOsFacets)
 router.post('/outbound',                                      requirePerm('outbound', 'create'), outbound.createGDO)
 router.post('/outbound/upload',                               requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadExcel)
-router.post('/outbound/upload-vl06o',                         requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadVl06o)   // ĐỢT 3: raw SAP → erp_outbound_orders
-router.post('/outbound/upload-khvc',                          requirePerm('outbound', 'import'), upload.single('file'), outbound.uploadKhvc)    // ĐỢT 3: KHVC join raw → GDO/DO/Item
+// 2 nút nạp NGUỒN đã chuyển sang trang "Dữ liệu bên ngoài" (user chốt 02/08) → nhận quyền của CHÍNH
+// tab đang nạp (external_do_sap.create / external_khvc.create) HOẶC outbound.import như trước, để
+// điều vận không phải xin thêm quyền Xuất kho chỉ để nạp dữ liệu nguồn.
+router.post('/outbound/upload-vl06o',                         requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create']), upload.single('file'), outbound.uploadVl06o)   // raw SAP → erp_outbound_orders
+router.post('/outbound/upload-khvc',                          requireAnyPerm(['outbound', 'import'], ['external_khvc', 'create']), upload.single('file'), outbound.uploadKhvc)      // KHVC join raw → GDO/DO/Item
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)

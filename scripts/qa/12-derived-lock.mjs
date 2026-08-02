@@ -44,6 +44,9 @@ async function cleanup() {
   await restWrite('reconcile_tasks', 'DELETE', `group_code=like.${WH_CODE}*`).catch(() => {})
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${WH_CODE}*`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QADRVDO*`)
+  // pool tồn dựng cho case nhặt lẻ (12c) — xóa theo kho test trước khi xóa kho
+  const whs = await restAll('Warehouse', `select=id&code=eq.${WH_CODE}`)
+  for (const w of whs) await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`).catch(() => {})
   await restWrite('Warehouse', 'DELETE', `code=eq.${WH_CODE}`)
 }
 await cleanup()
@@ -262,6 +265,93 @@ check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.te
   const r2 = await api(`/external/khvc/${linesBusy[0].id}`, 'PUT', { export_date: day3 })
   check('sửa lẻ Ngày xuất dòng của xe ĐANG XUẤT → 422 GDO_STATUS_LOCKED',
     r2.s === 422 && r2.j?.error?.code === 'GDO_STATUS_LOCKED', `${r2.s} ${r2.j?.error?.code}`)
+}
+
+// ── 12. Vá từ probe 02/08 (4 lỗ đã bịt — case khoá không cho tái sinh) ──
+{
+  const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // 12a — chuyến ĐÃ BẮT ĐẦU không được dời ngày sang TƯƠNG LAI (nếu được → kẹt: tồn đã trừ, mọi
+  // đường ghi 422, không đường nào hoàn lại)
+  const c = await api('/wms/outbound', 'POST', { delivery_date: today, warehouse_id: whId, dvvt: '', customer_name: 'QADRV KET', delivery_code: 'QADRVKET1', items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 2 }] })
+  const gk = c.j?.data
+  const rStart = await api(`/wms/outbound/${gk.id}/start`, 'POST', { license_plate: 'QADRV2222' })
+  const rPush = await api(`/wms/outbound/${gk.id}`, 'PATCH', { delivery_date: tomorrow })
+  const gAfter = (await restAll('GroupDeliveryOrder', `select=delivery_date&id=eq.${gk.id}`))[0]
+  check('chuyến ĐÃ BẮT ĐẦU: chặn dời ngày sang tương lai (chống ngõ cụt không hoàn được tồn)',
+    rStart.s === 200 && rPush.s === 422 && rPush.j?.error?.code === 'FUTURE_DATE' && gAfter?.delivery_date === today,
+    `start=${rStart.s} push=${rPush.s}/${rPush.j?.error?.code} date=${gAfter?.delivery_date}`)
+
+  // 12b — dữ liệu CŨ đã lỡ ở trạng thái đó vẫn phải SỬA GIẢM/hoàn được (luật là "không xuất sớm",
+  // không phải "không sửa sai") → ép ngày tương lai thẳng DB rồi hoàn số về 0
+  const itK = (await restAll('OutboundItem', `select=id&do_id=eq.${(await restAll('OutboundDelivery', `select=id&gdo_id=eq.${gk.id}`))[0].id}`))[0]
+  await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-complete`, 'POST', { cartons: 2, qty_semantics: 'base' })
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gk.id}`, { delivery_date: tomorrow, updated_at: now() })
+  const rUp = await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-complete`, 'POST', { cartons: 2, qty_semantics: 'base' })   // giữ nguyên số = không tăng → cho
+  const rMore = await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-complete`, 'POST', { cartons: 2 + 1, qty_semantics: 'base' })
+  const rZero = await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-complete`, 'POST', { cartons: 0, qty_semantics: 'base' })
+  const itAfter = (await restAll('OutboundItem', `select=cartons_scanned&id=eq.${itK.id}`))[0]
+  check('ngày tương lai: GHI THÊM bị chặn nhưng GIẢM/hoàn về 0 luôn được (không kẹt tồn)',
+    rMore.s === 422 && rMore.j?.error?.code === 'FUTURE_DATE' && rZero.s === 200 && Number(itAfter?.cartons_scanned) === 0,
+    `same=${rUp.s} more=${rMore.s}/${rMore.j?.error?.code} zero=${rZero.s} scanned=${itAfter?.cartons_scanned}`)
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gk.id}`, { delivery_date: today, updated_at: now() })
+
+  // 12c — XÁC NHẬN nhặt lẻ = trừ tồn thật ⇒ phải chặn khi ngày tương lai (soạn/giữ hàng thì vẫn cho).
+  // Nhặt lẻ cần TỒN trong kho test → dựng pool riêng (kho QADRV1 mới tạo nên rỗng), xóa ở cleanup.
+  await restWrite('InventoryEntry', 'POST', null, {
+    id: randomUUID(), material_id: FIX.MAT_POOL_ID, pallet_code: FIX.MAT_POOL,
+    warehouse_id: whId, location_id: null, cartons_imported: 50, cartons_remaining: 50, cartons_reserved: 0,
+    status: 'IN_STOCK', stack_layer: 1, import_date: today, created_at: now(), updated_at: now(),
+  })
+  await restWrite('OutboundItem', 'PATCH', `id=eq.${itK.id}`, { loose_picking: 2, updated_at: now() })
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gk.id}`, { delivery_date: tomorrow, updated_at: now() })
+  const rLoose = await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-loose`, 'POST', { cartons: 1, qty_semantics: 'base' })
+  const rConfirm = await api(`/wms/outbound/${gk.id}/items/${itK.id}/confirm-loose`, 'POST', {})
+  check('nhặt lẻ ngày tương lai: SOẠN được nhưng XÁC NHẬN (trừ tồn) bị chặn',
+    rLoose.s === 200 && rConfirm.s === 422 && rConfirm.j?.error?.code === 'FUTURE_DATE',
+    `loose=${rLoose.s} confirm=${rConfirm.s}/${rConfirm.j?.error?.code}`)
+  await api(`/wms/outbound/${gk.id}/items/${itK.id}/manual-loose`, 'POST', { cartons: 0, qty_semantics: 'base' })
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gk.id}`, { delivery_date: today, updated_at: now() })
+}
+
+// ── 13. 1 XE = 1 NGÀY: thêm DO / chuyển DO sang xe khác đều phải theo ngày của xe đích ──
+{
+  const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  const rAdd = await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName })
+  const lines7 = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('07')}&sync_status=neq.OBSOLETE`)
+  const dates7 = [...new Set(lines7.map(l => l.export_date))]
+  check('thêm DO ngày KHÁC vào xe đã có → ép về ngày của xe (1 xe 1 ngày)',
+    rAdd.s === 201 && dates7.length === 1 && dates7[0] === today,
+    `add=${rAdd.s} dates=${dates7.join('|')} forced=${rAdd.j?.data?.date_forced_to ?? '-'}`)
+
+  // chuyển 1 dòng của xe 07 sang xe 08 (xe 08 mang ngày khác) → dòng phải theo ngày xe 08
+  // (DO của xe 08 phải là DO ĐÃ SEED trong raw — DO lạ bị chặn 400 "chưa có trong VL06O")
+  const rMk8 = await api('/external/khvc', 'POST', { group_code: GC('08'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName })
+  if (rMk8.s !== 201) console.log(`     (fixture xe 08: ${rMk8.s} ${rMk8.j?.error?.message ?? ''})`)
+  const mv = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('07')}&do_no=eq.QADRVDO2`))[0]
+  const rMove = await api(`/external/khvc/${mv.id}`, 'PUT', { group_code: GC('08') })
+  const lines8 = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('08')}&sync_status=neq.OBSOLETE`)
+  const dates8 = [...new Set(lines8.map(l => l.export_date))]
+  check('chuyển DO sang xe khác → dòng nhận ngày của xe ĐÍCH',
+    rMove.s === 200 && dates8.length === 1 && dates8[0] === tomorrow,
+    `move=${rMove.s} dates=${dates8.join('|')}`)
+}
+
+// ── 14. ĐUA 2 lượt đổi ngày cùng xe → KHÔNG để lại DO mồ côi (chuyến bị xóa-tạo-lại) ──
+{
+  const d1 = new Date(Date.now() + 4 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const d2 = new Date(Date.now() + 5 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const l7 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('07')}&sync_status=neq.OBSOLETE`))[0]
+  await Promise.all([
+    api('/external/khvc/bulk-date', 'POST', { ids: [l7.id], export_date: d1 }),
+    api('/external/khvc/bulk-date', 'POST', { ids: [l7.id], export_date: d2 }),
+  ])
+  const gs = await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('07')}`)
+  const allDos = await restAll('OutboundDelivery', 'select=id,gdo_id&delivery_code=eq.QADRVDO1')
+  const aliveIds = new Set(gs.map(g => g.id))
+  const orphan = allDos.filter(d => !aliveIds.has(d.gdo_id))
+  check('đua 2 lượt đổi ngày cùng xe → 1 chuyến, 0 DO mồ côi',
+    gs.length === 1 && orphan.length === 0, `chuyến=${gs.length} mồ côi=${orphan.length}`)
 }
 
 // ── Dọn 0 sót ──

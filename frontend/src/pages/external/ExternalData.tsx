@@ -3,7 +3,7 @@
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, CalendarDays } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, Upload, CalendarDays } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -30,6 +30,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions, type ModuleKey } from '@/config/permissions'
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
@@ -144,6 +145,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
+  const [upDialog, setUpDialog]     = useState<VcUploadMode | null>(null)   // nạp VL06O (chuyển về đây 02/08)
+  // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
+  const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
@@ -294,6 +298,12 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
+          {canUploadVl06o && (
+            <Button size="sm" className="h-9 sm:h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up VL06O
+            </Button>
+          )}
           {/* Xuất file = mang dữ liệu SAP ra ngoài → quyền RIÊNG external_do_sap.export */}
           {hasDate && can(perms, 'external_do_sap', 'export') && (
             <Button variant="outline" size="sm" className="h-9 sm:h-7 shrink-0" onClick={doExport} disabled={exporting}>
@@ -444,6 +454,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setDoEditor(null); setSelected(new Set()) }}
         />
       )}
+      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
     </div>
   )
 }
@@ -905,21 +916,26 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const canDelete = can(perms, 'external_khvc', 'delete')
 
   const { khvc: f, setKhvc } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, gdoIssue: fGdoIssue, page, pageSize } = f
+  const { search, dateFrom, dateTo, exportFrom, exportTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, gdoIssue: fGdoIssue, page, pageSize } = f
 
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
   const [groupEditor, setGroupEditor] = useState<string[] | null>(null)   // sửa cả Số xe — danh sách group_code (bảng gom mọi DO cùng xe)
   const [dateDialog, setDateDialog] = useState(false)                      // đổi Ngày xuất hàng loạt (theo Số xe)
+  const [showUpload, setShowUpload] = useState(false)                      // nạp KH điều vận (chuyển về đây 02/08)
+  const canUploadKhvc = can(perms, 'outbound', 'import') || can(perms, 'external_khvc', 'create')
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
-  const hasDate = !!(dateFrom || dateTo)
+  // Cần MỘT trong hai khoảng ngày (nạp HOẶC xuất) mới tải — điều vận thường tìm theo NGÀY XE CHẠY
+  const hasDate = !!(dateFrom || dateTo || exportFrom || exportTo)
 
   const params = useMemo(() => ({
     q:              search.trim() || undefined,
     date_from:      dateFrom || undefined,
     date_to:        dateTo || undefined,
+    export_from:    exportFrom || undefined,
+    export_to:      exportTo || undefined,
     warehouse_code: fWh || undefined,
     veh_type:       fVeh || undefined,
     source:         fSource || undefined,
@@ -929,7 +945,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     gdo_issue:      fGdoIssue || undefined,
     page,
     page_size:      pageSize,
-  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, page, pageSize])
+  }), [search, dateFrom, dateTo, exportFrom, exportTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, page, pageSize])
 
   const { data, isLoading, isError, error } = useKhvcLines(params, hasDate)
   const items = data?.items ?? []
@@ -938,7 +954,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const doSapWarn = data?.do_sap_filter_warning
   const gdoIssueWarn = data?.gdo_issue_warning
 
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, exportFrom, exportTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
@@ -947,6 +963,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   useEffect(() => { for (const r of items) idToGroup.current[r.id] = r.group_code }, [items])
 
   const filterDefs: FilterDef[] = [
+    { key: 'exportDate', label: 'Ngày xuất', type: 'daterange', from: exportFrom, to: exportTo,
+      onChange: (from, to) => setKhvc({ exportFrom: from, exportTo: to }) },
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (from, to) => setKhvc({ dateFrom: from, dateTo: to }) },
     { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho', value: fWh,
@@ -1002,6 +1020,12 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar hiện/ẩn làm bảng nhảy layout */}
+          {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
+          {canUploadKhvc && (
+            <Button size="sm" className="h-9 sm:h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setShowUpload(true)}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up KH điều vận
+            </Button>
+          )}
           {selected.size > 0 && (canEdit || canCreate) && selectedGroups.length > 0 && (
             <button type="button" onClick={() => setGroupEditor(selectedGroups)}
               className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
@@ -1041,11 +1065,16 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
         {!hasDate ? (
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
             <Database className="h-10 w-10 opacity-30" />
-            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
-            <p className="text-xs">Kế hoạch vừa upload nằm ở <b>Ngày nạp = hôm nay</b> (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
-            <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
-              Xem hôm nay
-            </Button>
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày xuất</b> hoặc <b>Ngày nạp</b> để xem dữ liệu</p>
+            <p className="text-xs"><b>Ngày xuất</b> = ngày xe chạy · <b>Ngày nạp</b> = ngày upload file (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setKhvc({ exportFrom: TODAY_VN(), exportTo: TODAY_VN() })}>
+                Xe chạy hôm nay
+              </Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
+                Vừa nạp hôm nay
+              </Button>
+            </div>
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={12} rows={12} />
@@ -1129,6 +1158,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
         />
       )}
+      {showUpload && <VcUploadDialog mode="khvc" onClose={() => setShowUpload(false)} />}
       {dateDialog && (
         <KhvcBulkDateDialog
           ids={[...selected]}

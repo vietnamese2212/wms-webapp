@@ -48,6 +48,18 @@ for (const c of chunk(itemIds))
 const orphanScans = scans.filter(s => !foundItem.has(s.item_id))
 check('Không scan entry mồ côi', orphanScans.length === 0, orphanScans.length ? `${orphanScans.length} entry` : `soi ${scans.length} entry`)
 
+// 5b. OutboundDelivery không mồ côi (chuyến đã xóa) — probe 02/08 C5b: 2 lượt replan/upload chạy
+// song song trên cùng Số xe (chuyến PENDING = xóa-tạo-lại) sinh DO trỏ chuyến vừa bị xóa. Rác này
+// KHÔNG hiện ở màn nào nên chỉ invariant mới thấy; replan nay tự dọn (sweepOrphanDeliveries).
+const alldos = await restAll('OutboundDelivery', 'select=id,delivery_code,gdo_id')
+const doGdoIds = [...new Set(alldos.map(d => d.gdo_id).filter(Boolean))]
+const foundGdo = new Set()
+for (const c of chunk(doGdoIds))
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&id=in.(${c.join(',')})`)) foundGdo.add(g.id)
+const orphanDos = alldos.filter(d => !d.gdo_id || !foundGdo.has(d.gdo_id))
+check('Không DO xuất mồ côi (chuyến đã xóa)', orphanDos.length === 0,
+  orphanDos.length ? `${orphanDos.length} DO — vd ${orphanDos[0].delivery_code}` : `soi ${alldos.length} DO`)
+
 // 6. GDO COMPLETED nhưng transfer_status IN_TRANSIT phải CÓ lệnh (ngược của mồ côi)
 const doneGdos = await restAll('GroupDeliveryOrder', 'select=id,group_code,status,transfer_status&transfer_status=eq.IN_TRANSIT')
 const withOrder = new Set(tOrders.map(o => o.transfer_gdo_id))

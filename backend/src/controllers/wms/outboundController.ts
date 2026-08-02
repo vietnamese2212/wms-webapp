@@ -97,6 +97,19 @@ function futureDateError(deliveryDate?: string | null): string | null {
   return `Đơn có Ngày xuất ${dd}/${m}/${y} (tương lai) — hôm nay chưa được quét/xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn (chuyến SAP: tab Kế hoạch xuất · chuyến thường: Sửa đơn/Chuyển ngày).`
 }
 
+// Chuyến ĐÃ BẮT ĐẦU thì KHÔNG được đẩy Ngày xuất sang TƯƠNG LAI: hàng đã ghi nhận/trừ tồn mà ngày
+// nhảy lên tương lai là mâu thuẫn (xuất trước ngày xuất), và trước khi có luật này nó tạo ra NGÕ CỤT —
+// mọi đường ghi đều 422 nên tồn đã trừ không trả lại được (probe 02/08 B2). Kéo ngày về hôm nay/quá
+// khứ vẫn cho (sửa nhầm ngày là nhu cầu thật).
+type GdoDateShift = { started_at?: string | null; delivery_date?: string | null }
+function futureShiftError(cur: GdoDateShift | null, newDate?: string | null): string | null {
+  if (!cur?.started_at || !newDate) return null
+  const d = String(newDate).slice(0, 10)
+  if (d === String(cur.delivery_date ?? '').slice(0, 10) || d <= todayVN()) return null
+  const [y, m, dd] = d.split('-')
+  return `Chuyến đã Bắt đầu xuất hàng — không dời Ngày xuất sang ${dd}/${m}/${y} (tương lai). Xuất nhầm ngày thì sửa về hôm nay/ngày đã xuất; muốn hoãn sang ngày khác hãy Bỏ bắt đầu (hoàn số đã ghi) trước.`
+}
+
 type WeighGate = { ok: true; ticketId: string | null } | { ok: false; message: string }
 
 // NỚI rule CÂN đúng MỘT tình huống (user chốt 02/08): chuyến gắn ĐĂNG KÝ CỔNG của xe **ĐÃ RA**
@@ -1749,9 +1762,14 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type').eq('id', req.params.id).single()
+      .select('status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type, started_at').eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
+    // Chuyến PAUSED có thể đã Bắt đầu + đã ghi nhận số → cấm dời ngày sang tương lai (xem futureShiftError)
+    {
+      const pushErr = futureShiftError(gdo as GdoDateShift, delivery_date)
+      if (pushErr) return fail(res, 422, 'FUTURE_DATE', pushErr)
+    }
 
     // ── CHUYẾN SINH TỪ SAP (origin='SAP', user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT của
     // VL06O + Kế hoạch xuất — phần KẾ HOẠCH khóa trên đơn, sửa Ở NGUỒN rồi hệ thống tự dội xuống:
@@ -2067,9 +2085,11 @@ export async function patchGDO(req: Request, res: Response) {
     // PAUSED: chỉ cho đổi status (ví dụ resume → IN_PROGRESS), không sửa dữ liệu khác
     if (delivery_date) {
       const { data: current } = await supabase.from('GroupDeliveryOrder')
-        .select('status, origin, delivery_date').eq('id', req.params.id).single()
+        .select('status, origin, delivery_date, started_at').eq('id', req.params.id).single()
       if (current?.status === 'PAUSED')
         return fail(res, 'Chuyến đang tạm dừng — chỉ được đổi trạng thái, không sửa dữ liệu', 400)
+      const pushErr = futureShiftError(current as GdoDateShift | null, delivery_date)
+      if (pushErr) return fail(res, 422, 'FUTURE_DATE', pushErr)
       // XUẤT LÀ DỮ LIỆU BỊ ĐỘNG với chuyến SAP (user chốt 02/08): đường "Đổi ngày" nhanh này từng
       // là lỗ sót — updateGDO đã khóa ngày mà PATCH thì không, chuyến SAP vẫn đổi ngày lệch khỏi
       // Kế hoạch xuất. Ngày = thuộc tính kế hoạch → sửa Ngày xuất ở tab Kế hoạch xuất (tự đồng bộ
@@ -3640,7 +3660,40 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
     const { error } = await supabase.from('reconcile_tasks').insert(tasks)
     if (error) console.error('[replanKhvcGroups] ghi reconcile_tasks:', error.message)
   }
-  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length }
+  const swept = await sweepOrphanDeliveries([...new Set(lines.map(l => l.do_no).filter(Boolean))])
+  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(swept ? { orphan_dos_cleaned: swept } : {}) }
+}
+
+// DỌN DO MỒ CÔI (probe 02/08 C5b): replan/upload trên chuyến PENDING = XÓA chuyến cũ rồi TẠO lại.
+// Hai lượt chạy song song trên cùng Số xe (2 người bấm "Đổi ngày", hoặc đổi ngày + upload cùng lúc)
+// thì lượt B có thể ghi DO gắn vào chuyến mà lượt A vừa xóa → OutboundDelivery trỏ GDO không còn.
+// Rác này không hiện ở màn nào (list đi từ chuyến) nhưng vẫn giữ OutboundItem/od_refs → nhiễu đối chiếu SAP.
+// Tự chữa: chỉ xóa DO mà GDO của nó KHÔNG CÒN TỒN TẠI (an toàn tuyệt đối — không đụng dữ liệu sống).
+async function sweepOrphanDeliveries(doNos: string[]): Promise<number> {
+  if (!doNos.length) return 0
+  const dos = await fetchAllByIdChunks(doNos, c => supabase.from('OutboundDelivery')
+    .select('id, gdo_id').in('delivery_code', c).order('id')) as { id: string; gdo_id: string | null }[]
+  if (!dos.length) return 0
+  const gdoIds = [...new Set(dos.map(d => d.gdo_id).filter(Boolean) as string[])]
+  const alive = new Set<string>()
+  for (let i = 0; i < gdoIds.length; i += 300) {
+    const { data } = await supabase.from('GroupDeliveryOrder').select('id').in('id', gdoIds.slice(i, i + 300))
+    for (const g of ((data ?? []) as { id: string }[])) alive.add(g.id)
+  }
+  const orphanIds = dos.filter(d => !d.gdo_id || !alive.has(d.gdo_id)).map(d => d.id)
+  if (!orphanIds.length) return 0
+  console.warn(`[sweepOrphanDeliveries] dọn ${orphanIds.length} DO mồ côi (chuyến đã bị xóa khi replan đua)`)
+  const items = await fetchAllByIdChunks(orphanIds, c => supabase.from('OutboundItem')
+    .select('id').in('do_id', c).order('id')) as { id: string }[]
+  const itemIds = items.map(i => i.id)
+  for (let i = 0; i < itemIds.length; i += 300)
+    await supabase.from('OutboundScanEntry').delete().in('item_id', itemIds.slice(i, i + 300))
+  for (let i = 0; i < orphanIds.length; i += 300) {
+    const c = orphanIds.slice(i, i + 300)
+    await supabase.from('OutboundItem').delete().in('do_id', c)
+    await supabase.from('OutboundDelivery').delete().in('id', c)
+  }
+  return orphanIds.length
 }
 
 // Upload KHVC (kế hoạch điều vận, tự soạn) → JOIN raw VL06O theo DO → reshape về row-shape file gộp
@@ -4554,7 +4607,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id').eq('id', gdoId).single(),
+        supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
         supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
         employee_id
           ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -4565,6 +4618,11 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // SOẠN nhặt lẻ trước ngày = OK (chỉ giữ hàng/reserved), nhưng XÁC NHẬN = TRỪ TỒN THẬT = hàng rời kho
+    // ⇒ phải đúng ngày xuất (probe 02/08: đây là đường lách FUTURE_DATE duy nhất còn trừ được tồn).
+    const clFutErr = futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
+    if (clFutErr) return fail(res, 422, 'FUTURE_DATE',
+      `${clFutErr} (Hàng đã soạn vẫn được giữ — chỉ chờ đến ngày xuất mới xác nhận.)`)
 
     const t = now()
 
@@ -5021,9 +5079,14 @@ export async function manualCompleteItem(req: Request, res: Response) {
     // lách rule cổng/cân — kho QTY/NONE dùng đường này là chính nên lỗ càng rộng)
     if (!(gdo as { started_at?: string | null } | null)?.started_at)
       return fail(res, 'Chuyến chưa Bắt đầu — bấm "Bắt đầu" chuyến (qua kiểm tra cổng/cân nếu kho yêu cầu) rồi mới ghi nhận số lượng', 400)
-    const mcFutErr = futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
-    if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
+    // Chặn xuất sớm CHỈ khi GHI THÊM. Sửa GIẢM / hoàn về 0 luôn cho phép — nếu không, chuyến lỡ bị
+    // đẩy sang ngày tương lai sau khi đã ghi nhận sẽ KẸT: tồn đã trừ mà không đường nào trả lại
+    // (probe 02/08 B2). Luật là "không xuất sớm", không phải "không sửa sai".
+    const mcFutErr = (cartons == null || Number(cartons) > Number(item.cartons_scanned))
+      ? futureDateError((gdo as { delivery_date?: string | null } | null)?.delivery_date)
+      : null
+    if (mcFutErr) return fail(res, 422, 'FUTURE_DATE', mcFutErr)
 
     // BASE UNIT: cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (cartons != null) {

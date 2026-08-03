@@ -2907,10 +2907,13 @@ async function applyAwaitingState(
       continue
     }
     // Chưa có chuyến nào → dựng CHUYẾN VỎ (chưa có dòng hàng vì dòng hàng nằm ở VL06O)
+    // Định dạng Số xe phải kiểm Y HỆT derive thường: nếu không, Số xe sai định dạng sẽ đẻ ra chuyến vỏ
+    // KHÔNG BAO GIỜ derive được (dữ liệu về vẫn 400) — chuyến ma nằm lại trên màn (bắt được khi dựng QA 13).
+    if (validateGroupCode(gc)) continue
     const whId = whByCode.get(gc.split('_')[0]) ?? null
     const delivery_date = parseExcelDate(a.plan.export_date)
     const planned_date = parsePlannedDate(gc)
-    if (!whId || !delivery_date || !planned_date) continue      // Số xe/ngày không hợp lệ → derive thường đã báo lỗi
+    if (!whId || !delivery_date || !planned_date) continue      // kho/ngày không hợp lệ → derive thường đã báo lỗi
     if (!inScope(req, whId)) continue                            // không dựng chuyến cho kho ngoài phạm vi
     const gdoId = randomUUID()
     const { error } = await supabase.from('GroupDeliveryOrder').insert({

@@ -138,6 +138,63 @@ const stillUniform = [...new Set((await restAll('khvc_lines', `select=booking_ca
 check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích hợp)',
   trgBlocked && stillUniform.length === 1, `blocked=${trgBlocked} cửa=${JSON.stringify(stillUniform)}`)
 
+// ── 8. UPLOAD sai cửa phải ra BẢNG BÁO CÁO (không phải 1 dòng chữ 400) ───────
+// User 03/08: "kết quả này nên được đưa về dạng table thì sẽ rõ ràng hơn". Khuôn báo cáo dùng chung
+// đã có bảng "Ở đâu · Vấn đề" + chip lọc + tải lỗi Excel; guard trả fail() chuỗi là ĐI TẮT qua nó.
+// Quy ước máy đọc được: pha kiểm-trước trả 200 + errors[] dạng "Số xe X — <vấn đề>", 1 dòng 1 vấn đề.
+{
+  let XLSX = null
+  try { XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default ?? await import('../../backend/node_modules/xlsx/xlsx.mjs') }
+  catch { console.log('  ⚠ bỏ qua mục 8: chưa cài dependency backend (xlsx)') }
+  if (XLSX) {
+    const tok = await (async () => {
+      const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+      return (await r.json())?.data?.token
+    })()
+    const upload = async (rows, preflight) => {
+      const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'KHVC')
+      const fd = new FormData()
+      fd.append('file', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })]), 'khvc.xlsx')
+      const r = await fetch(`${BASE}/api/wms/outbound/upload-khvc${preflight ? '?preflight=1' : ''}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })
+      let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
+      return { s: r.status, j }
+    }
+    const base = { 'Tên NPP': 'QA BOOKING NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName }
+    const GCU = GC(2)
+    // 8a. 1 Số xe khai 2 cửa khác nhau + 1 mã lạ → báo cáo có bảng, KHÔNG ghi gì
+    const r8 = await upload([
+      { 'Số xe': GCU, 'DO': DO_A, ...base, 'Loại kho booking': CUA_A },
+      { 'Số xe': GCU, 'DO': DO_B, ...base, 'Loại kho booking': 'DG01' },
+    ], true)
+    const errs = r8.j?.data?.errors ?? []
+    const dungQuyUoc = errs.length >= 2 && errs.every(e => / — /.test(e) && e.startsWith('Số xe '))
+    check('8a. Upload sai cửa → 200 + BÁO CÁO (errors dạng "Số xe X — vấn đề", 1 dòng 1 vấn đề)',
+      r8.s === 200 && r8.j?.data?.preflight === true && dungQuyUoc,
+      `http=${r8.s} preflight=${r8.j?.data?.preflight} errors=${JSON.stringify(errs).slice(0, 220)}`)
+    check('8b. Báo cáo KHÓA nút Xác nhận (will_write=0) + đếm đúng tổng xe',
+      r8.j?.data?.will_write === 0 && r8.j?.data?.total === 1,
+      `will_write=${r8.j?.data?.will_write} total=${r8.j?.data?.total}`)
+    check('8c. Lỗi chỉ rõ TỪNG vấn đề: vừa "nhiều loại" vừa "không có trong danh mục"',
+      errs.some(e => /chỉ được 1 loại/.test(e)) && errs.some(e => /không có trong danh mục/.test(e)),
+      JSON.stringify(errs).slice(0, 220))
+    // 8d. Thiếu HẲN cột → 1 dòng chẩn đoán, không phải N dòng giống nhau
+    const r8d = await upload([
+      { 'Số xe': GCU, 'DO': DO_A, ...base },
+      { 'Số xe': GC(1), 'DO': DO_B, ...base },
+    ], true)
+    const e8d = r8d.j?.data?.errors ?? []
+    check('8d. Thiếu HẲN cột "Loại kho booking" → 1 dòng chẩn đoán + chỉ chỗ tải mẫu',
+      r8d.s === 200 && e8d.length === 1 && /không có cột/.test(e8d[0]) && /mẫu/i.test(e8d[0]),
+      `errors=${JSON.stringify(e8d).slice(0, 200)}`)
+    // 8e. Kiểm-trước KHÔNG được ghi gì
+    const wrote = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})&do_no=eq.${DO_B}`)
+    check('8e. Pha kiểm-trước KHÔNG ghi dòng nào', wrote.length === 0, `còn ${wrote.length} dòng`)
+  }
+}
+
 // ── DỌN ──
 await cleanup()
 const leftK = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})`)

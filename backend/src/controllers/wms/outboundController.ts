@@ -4136,12 +4136,17 @@ export async function uploadKhvc(req: Request, res: Response) {
     // Xe chở lẫn FG01+PM01+FG02 chỉ đậu MỘT cửa; để picker gộp khung của mọi loại xe chở = nguy cơ
     // đặt SAI CỬA. Cửa KHÔNG suy diễn được (không phải cứ loại hạng cao nhất — có xe giữ nốt FG02),
     // nên kế hoạch phải KHAI. Gác ALL-OR-NOTHING và gác TRƯỚC khi ghi raw: file sai thì không được
-    // để lại nửa vời (cùng lý do khối scope kho ở trên). Pha kiểm-trước đi qua ĐÚNG khối này nên
-    // user thấy lỗi trước khi ghi.
+    // để lại nửa vời (cùng lý do khối scope kho ở trên).
+    //
+    // BÁO LỖI THEO TỪNG SỐ XE, đi qua ĐÚNG khuôn báo cáo "kiểm trước khi ghi" (user 03/08: một dòng
+    // chữ dài gộp hết vấn đề thì không đọc được) → dialog hiện BẢNG "Ở đâu · Vấn đề" + chip lọc +
+    // tải lỗi ra Excel như mọi upload khác. Trả `fail()` chuỗi ở đây là ĐI TẮT qua khuôn đó.
     {
       const { data: whTypeRows } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
       const validByUpper = new Map(((whTypeRows ?? []) as { value: string }[])
         .map(v => [String(v.value).trim().toUpperCase(), String(v.value).trim()]))
+      const hopLe = [...validByUpper.values()].join(' · ')
+      const allGcs = new Set(khvcRows.map(k => k.group_code))
       const byGc = new Map<string, Set<string>>()
       const blankGcs = new Set<string>()
       for (const k of khvcRows) {
@@ -4150,17 +4155,37 @@ export async function uploadKhvc(req: Request, res: Response) {
         set.add(k.booking_category.toUpperCase())
         byGc.set(k.group_code, set)
       }
-      const errs: string[] = []
-      const multi   = [...byGc].filter(([, s]) => s.size > 1).map(([gc, s]) => `${gc} (${[...s].join(' + ')})`)
-      const unknown = [...new Set([...byGc.values()].flatMap(s => [...s]).filter(v => !validByUpper.has(v)))]
-      const outside  = [...byGc].filter(([, s]) => [...s].some(v =>
-        !categoryAllowed(req, validByUpper.get(v) ?? v))).map(([gc]) => gc)
-      const cap = (a: string[]) => `${a.length}: ${a.slice(0, 5).join(' · ')}${a.length > 5 ? '…' : ''}`
-      if (blankGcs.size) errs.push(`thiếu "Loại kho booking" — ${cap([...blankGcs])}`)
-      if (multi.length)  errs.push(`1 Số xe chỉ được 1 Loại kho booking — ${cap(multi)}`)
-      if (unknown.length) errs.push(`Loại kho booking không có trong danh mục — ${cap(unknown)} (hợp lệ: ${[...validByUpper.values()].join(', ')})`)
-      if (outside.length) errs.push(`Loại kho booking ngoài phạm vi loại kho của bạn — ${cap(outside)}`)
-      if (errs.length) return fail(res, `Từ chối file — ${errs.join(' | ')}`, 400)
+      // 1 dòng lỗi = 1 (Số xe · vấn đề) để lên bảng; giữ đúng quy ước "<ở đâu> — <vấn đề>"
+      const perGc = new Map<string, string[]>()
+      const addErr = (gc: string, msg: string) => perGc.set(gc, [...(perGc.get(gc) ?? []), msg])
+      for (const gc of blankGcs)
+        if (!byGc.has(gc)) addErr(gc, `thiếu "Loại kho booking" (bắt buộc) — hợp lệ: ${hopLe}`)
+        else addErr(gc, `có dòng bỏ trống "Loại kho booking" — mọi dòng của 1 Số xe phải cùng 1 loại`)
+      for (const [gc, s] of byGc) {
+        if (s.size > 1) addErr(gc, `khai ${s.size} loại kho booking khác nhau (${[...s].join(' + ')}) — 1 Số xe chỉ được 1 loại (xe chỉ đậu 1 cửa)`)
+        for (const v of s) {
+          if (!validByUpper.has(v)) addErr(gc, `Loại kho booking "${v}" không có trong danh mục — hợp lệ: ${hopLe}`)
+          else if (!categoryAllowed(req, validByUpper.get(v)!)) addErr(gc, `Loại kho booking "${validByUpper.get(v)}" ngoài phạm vi loại kho của bạn`)
+        }
+      }
+      if (perGc.size) {
+        // Cả file trống cột → 1 dòng chẩn đoán thay vì N dòng giống nhau (file trăm xe đọc không nổi)
+        const thieuHet = blankGcs.size === allGcs.size
+        const errors = thieuHet
+          ? [`Toàn bộ file — không có cột "Loại kho booking" (hoặc để trống hết). Tải lại mẫu ở nút "Up KH điều vận"; hợp lệ: ${hopLe}`]
+          : [...perGc].flatMap(([gc, msgs]) => msgs.map(m => `Số xe ${gc} — ${m}`))
+        if (isPreflight(req)) return ok(res, buildPreflight({
+          unit: 'chuyến', total: allGcs.size, errors, extra: preflightExtra,
+        }))
+        return res.status(400).json({
+          success: false,
+          error: { code: 'BOOKING_CATEGORY_INVALID',
+            message: thieuHet
+              ? `File thiếu cột "Loại kho booking" — không upload`
+              : `File có ${perGc.size} Số xe khai sai "Loại kho booking" — không upload` },
+          validation_errors: [...perGc].map(([group_code, errs]) => ({ group_code, errors: errs })),
+        })
+      }
       // Chuẩn hoá về đúng chữ trong danh mục (file gõ 'fg01' vẫn nhận, lưu 'FG01')
       for (const k of khvcRows) k.booking_category = validByUpper.get(k.booking_category.toUpperCase()) ?? k.booking_category
     }

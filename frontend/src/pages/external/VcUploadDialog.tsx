@@ -50,13 +50,15 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
   const [okMsg, setOkMsg]   = useState<string | null>(null)
   const [errMsg, setErrMsg] = useState<string | null>(null)
   const [unitErrs, setUnitErrs] = useState<UnitErr[] | null>(null)
+  // Lỗi theo TỪNG Số xe → hiện BẢNG (user 03/08: một khối chữ gộp hết vấn đề thì không đọc được)
+  const [gcErrs, setGcErrs] = useState<{ group_code: string; msg: string }[] | null>(null)
   const [pf, setPf] = useState<{ file: File; report: UploadPreflight } | null>(null)
 
   // PHA 1 — LUÔN kiểm trước (không ghi gì) → báo cáo chờ Xác nhận
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
-    setOkMsg(null); setErrMsg(null); setUnitErrs(null); setPf(null)
+    setOkMsg(null); setErrMsg(null); setUnitErrs(null); setGcErrs(null); setPf(null)
     const onPreflightErr = (err: unknown) => {
       const ax = err as AxiosError<{ error?: { message?: string } }>
       setErrMsg(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : `Lỗi kiểm file ${isVl ? 'VL06O' : 'KH điều vận'}`))
@@ -68,7 +70,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
 
   // PHA 2 — ghi thật sau khi user Xác nhận trên báo cáo
   function doUpload(file: File) {
-    setOkMsg(null); setErrMsg(null); setUnitErrs(null)
+    setOkMsg(null); setErrMsg(null); setUnitErrs(null); setGcErrs(null)
     if (isVl) {
       uploadVl06o({ file }, {
         onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
@@ -105,9 +107,8 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
           const data = ax?.response?.data
           const ve = data?.validation_errors
           if (ve?.length) {
-            const lines = [data!.error.message, '']
-            for (const { group_code, errors } of ve) { lines.push(`Số xe: ${group_code}`); for (const m of errors) lines.push(`  • ${m}`) }
-            setErrMsg(lines.join('\n'))
+            setErrMsg(data!.error.message)
+            setGcErrs(ve.flatMap(v => v.errors.map(msg => ({ group_code: v.group_code, msg }))))
           } else {
             setErrMsg(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload KH điều vận'))
           }
@@ -116,7 +117,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
     }
   }
 
-  const wide = (unitErrs?.length ?? 0) > 5 || (errMsg?.length ?? 0) > 600 || (okMsg?.length ?? 0) > 600
+  const wide = (unitErrs?.length ?? 0) > 5 || (gcErrs?.length ?? 0) > 3 || (errMsg?.length ?? 0) > 600 || (okMsg?.length ?? 0) > 600
   return (
     <>
       <ModalOverlay onClose={onClose} className={`w-full max-h-[90vh] ${wide ? 'max-w-[95vw] sm:max-w-[80vw]' : 'max-w-lg'}`}>
@@ -145,6 +146,27 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
           {errMsg && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{errMsg}</pre>
+            </div>
+          )}
+          {/* Lỗi theo từng Số xe = BẢNG (đọc được ngay xe nào sai gì), không phải 1 khối chữ */}
+          {gcErrs && gcErrs.length > 0 && (
+            <div className="overflow-auto border rounded-lg max-h-[52vh]">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-slate-50 sticky top-0">
+                    <th className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 uppercase w-48 whitespace-nowrap">Số xe</th>
+                    <th className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 uppercase">Vấn đề</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gcErrs.map((e, k) => (
+                    <tr key={k} className="border-b border-slate-100 last:border-0">
+                      <td className="px-2 py-1 text-[10px] font-mono text-slate-600 whitespace-nowrap">{e.group_code}</td>
+                      <td className="px-2 py-1 text-[10px] text-red-700">{e.msg}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
           {unitErrs && unitErrs.length > 0 && (

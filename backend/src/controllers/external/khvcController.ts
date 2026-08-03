@@ -427,6 +427,18 @@ export async function updateKhvc(req: Request, res: Response) {
         bookingCatForcedTo = xeCat
       }
     }
+    // ⚠ CỬA phải ghi CẢ XE trong MỘT câu và ghi TRƯỚC câu sửa dòng lẻ. Sửa dòng lẻ trước rồi mới
+    // đồng bộ (như export_date đang làm) sẽ tạo trạng thái LỆCH giữa 2 câu — mà 2 câu này là 2
+    // TRANSACTION riêng qua PostgREST nên trigger `khvc_booking_category_uniform` chặn ngay câu đầu
+    // (đo thật 03/08: PUT trả 500). DEFERRABLE không cứu được vì lệch đã COMMIT ở transaction 1.
+    let bookingCatSynced = 0
+    if ('booking_category' in fields && !('group_code' in fields)) {
+      const { data: synced, error: syncErr } = await supabase.from('khvc_lines')
+        .update({ booking_category: (fields.booking_category ?? null) as string | null, updated_at: now() })
+        .eq('group_code', String(cur.group_code ?? '')).neq('sync_status', 'OBSOLETE').select('id')
+      if (syncErr) throw new Error(syncErr.message)
+      bookingCatSynced = Math.max(0, (synced ?? []).length - 1)   // trừ chính dòng đang sửa
+    }
     const { data, error } = await supabase.from('khvc_lines')
       .update({ ...fields, uploaded_by: req.user?.name ?? null, updated_at: now(), manual_edited_at: now() })
       .eq('id', req.params.id).select().maybeSingle()
@@ -444,16 +456,7 @@ export async function updateKhvc(req: Request, res: Response) {
         .neq('id', req.params.id).neq('sync_status', 'OBSOLETE').select('id')
       dateSynced = (synced ?? []).length
     }
-    // CỬA đặt lịch cũng là thuộc tính CẤP XE ⇒ sửa 1 dòng thì ĐỒNG BỘ CẢ XE. Đây là cách rule
-    // "1 Số xe = 1 Loại kho booking" KHÔNG THỂ bị phá bằng đường sửa lẻ (trigger DB chỉ là lá chắn cuối).
-    let bookingCatSynced = 0
-    if ('booking_category' in fields && !('group_code' in fields)) {
-      const { data: synced } = await supabase.from('khvc_lines')
-        .update({ booking_category: (fields.booking_category ?? null) as string | null, updated_at: now() })
-        .eq('group_code', String((data as { group_code?: string }).group_code ?? ''))
-        .neq('id', req.params.id).neq('sync_status', 'OBSOLETE').select('id')
-      bookingCatSynced = (synced ?? []).length
-    }
+    // (CỬA đặt lịch đã đồng bộ CẢ XE ở TRÊN — phải ghi trước câu sửa dòng lẻ, xem chú thích ở đó)
     const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
     // Ghi sổ: đổi ngày / chuyển DO sang xe khác — 2 thay đổi kế hoạch hay gây thắc mắc nhất khi truy vết
     {

@@ -196,6 +196,21 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   }
 }
 
+// ── 9. Chuyến CHỜ dữ liệu SAP: hàng chở CHƯA BIẾT nhưng CỬA phải có ─────────
+// Hợp đồng dữ liệu cho giao diện: lưới Kế hoạch VC hiện "cửa X" khi warehouse_type null. Thiếu
+// booking_category ở API thì ô Loại kho TRỐNG TRƠN (user báo 03/08 "loại kho lại k hiện lên").
+{
+  const gcW = GC(1)
+  const ord = (await restAll('TmsOrder', `select=order_code,warehouse_type,booking_category&order_code=eq.${gcW}`))[0]
+  const g = (await restAll('GroupDeliveryOrder', `select=awaiting_sap,warehouse_type&group_code=eq.${gcW}`))[0]
+  const q = `date_from=${today}&date_to=${today}&warehouse_id=${WH.id}`
+  const pg = await api(`/tms/orders?${q}&page=1&page_size=200`)
+  const row = (pg.j?.data?.rows ?? []).find(r => r.order_code === gcW)
+  check('9. Lệnh của chuyến CHỜ SAP: API trả CỬA dù hàng chở chưa biết (để ô Loại kho không trống)',
+    !!row && !!row.booking_category,
+    `awaiting=${g?.awaiting_sap} hàng_chở=${ord?.warehouse_type} cửa=${row?.booking_category ?? '(thiếu)'}`)
+}
+
 // ── DỌN ──
 await cleanup()
 const leftK = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})`)

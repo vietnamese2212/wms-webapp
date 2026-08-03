@@ -119,6 +119,14 @@ const RULES = [
   // multi-tenant trong CLAUDE.md: "hành vi mới theo loại = thêm key meta, KHÔNG if tên loại".
   // Viết `=== 'FG01'` vào logic là khoá app vào 1 đơn vị. Bỏ qua dòng comment; baseline hiện tại là
   // dòng VÍ DỤ trong mẫu Excel tải về (dữ liệu mẫu, không phải logic).
+  // Ô "Loại kho" lưới Kế hoạch VC phải nhắc `booking_category`: chuyến CHỜ dữ liệu SAP có
+  // warehouse_type NULL (loại hàng suy từ mã hàng VL06O) nên ô sẽ TRỐNG TRƠN dù cửa đã khai ở kế
+  // hoạch — đúng thứ trang booking cần (user báo 03/08 "loại kho lại k hiện lên trong booking tms").
+  {
+    key: 'tms_cargo_cell_ignores_booking_category',
+    label: 'ô "Loại kho" lưới Kế hoạch VC KHÔNG dùng booking_category — chuyến chờ dữ liệu SAP sẽ hiện ô trống',
+    count: (s) => countCargoCellWithoutDoor(s),
+  },
   {
     key: 'hardcoded_warehouse_type_code',
     label: 'mã Loại kho viết CỨNG trong code (FG0x/PM0x/RM0x/PK0x) — phải đọc từ danh mục LookupValue, không so tên loại',
@@ -151,6 +159,21 @@ function countInertBannerInDesktopOnly(sampleOut) {
     }
   }
   return n
+}
+
+// Từ dòng đánh dấu ô "Loại kho" của lưới Kế hoạch VC, quét 30 dòng tiếp: phải có booking_category.
+// 1 = vi phạm (ô sẽ trống với chuyến chờ dữ liệu SAP), 0 = đạt.
+function countCargoCellWithoutDoor(sampleOut) {
+  const f = 'frontend/src/pages/tms/TMSBookings.tsx'
+  let src = ''
+  try { src = readFileSync(join(ROOT, f), 'utf8') } catch { return 0 }
+  const lines = src.split(/\r?\n/)
+  const at = lines.findIndex(l => /\{\/\* Loại kho — merge qua tất cả rows/.test(l))
+  if (at < 0) return 0                       // đổi cấu trúc thì luật này không còn neo được
+  const vung = lines.slice(at, at + 30).join('\n')
+  if (vung.includes('booking_category')) return 0
+  sampleOut?.push(`${f}:${at + 1}: ô Loại kho không tham chiếu booking_category`)
+  return 1
 }
 
 // Mỗi state tìm lấy từ filter store (`const search = tf.search`) phải có 1 ô `<SearchInput` tương

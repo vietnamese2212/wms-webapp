@@ -3661,7 +3661,8 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             {infoRow('Ngày', <span className="font-mono">{formatDate(order.date)}</span>)}
             {infoRow('ĐVVT', order.ncc?.name)}
             {infoRow('Kho', whName)}
-            {infoRow('Loại kho (hàng chở)', order.warehouse_type)}
+            {infoRow('Loại kho (hàng chở)', order.warehouse_type
+              ?? <span className="text-slate-400">chưa biết — chờ dữ liệu VL06O</span>)}
             {infoRow('Cửa đặt lịch', order.booking_category
               ? order.booking_category
               : <span className="text-amber-600">chưa chốt — khai ở tab Kế hoạch xuất</span>)}
@@ -4571,14 +4572,27 @@ export default function TMSBookings() {
                   {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
-                      {order.warehouse_type || <span className="text-slate-400">—</span>}
-                      {/* CỬA đặt lịch — chỉ hiện khi xe chở LẪN nhiều loại (1 loại thì cửa = chính nó, khỏi nhiễu) */}
-                      {order.booking_category && splitCats(order.warehouse_type).length > 1 && (
-                        <span className="ml-1 shrink-0 px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
-                          title={`Cửa đặt lịch: ${order.booking_category} — khai ở tab Kế hoạch xuất`}>
-                          cửa {order.booking_category}
-                        </span>
-                      )}
+                      {/* HAI thứ khác nhau trong 1 ô: hàng xe CHỞ (warehouse_type) và CỬA đặt lịch.
+                          Chuyến CHỜ dữ liệu SAP thì hàng chở CHƯA BIẾT (loại suy từ mã hàng của VL06O)
+                          nên warehouse_type null — nhưng CỬA đã khai ở kế hoạch, và cửa mới là thứ trang
+                          booking cần ⇒ ô này KHÔNG được để trống khi đã có cửa (user báo 03/08). */}
+                      {order.warehouse_type
+                        ? <>
+                            {order.warehouse_type}
+                            {/* 1 loại thì cửa = chính nó, khỏi nhiễu; chở LẪN mới cần chỉ rõ đậu cửa nào */}
+                            {order.booking_category && splitCats(order.warehouse_type).length > 1 && (
+                              <span className="ml-1 shrink-0 px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
+                                title={`Cửa đặt lịch: ${order.booking_category} — khai ở tab Kế hoạch xuất`}>
+                                cửa {order.booking_category}
+                              </span>
+                            )}
+                          </>
+                        : order.booking_category
+                          ? <span className="px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
+                              title={`Cửa đặt lịch: ${order.booking_category} (khai ở Kế hoạch xuất). Hàng xe chở chưa biết — chờ dữ liệu VL06O.`}>
+                              cửa {order.booking_category}
+                            </span>
+                          : <span className="text-slate-400">—</span>}
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>

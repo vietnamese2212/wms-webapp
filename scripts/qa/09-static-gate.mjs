@@ -107,6 +107,14 @@ const RULES = [
     label: 'banner lý do chuyến bất động nằm trong khối chỉ-hiện-desktop (orderInfoJSX) — mobile mất lý do',
     count: (s) => countInertBannerInDesktopOnly(s),
   },
+  // Ô TÌM CHẾT: khai state `search` trong store + viết logic lọc nhưng QUÊN render `<SearchInput>`
+  // → user không có chỗ gõ, filter vĩnh viễn rỗng, và lỗi này KHÔNG lộ ra ở tsc/build vì mọi biến
+  // đều "được dùng". Bắt thật 03/08: tab Chuyển kho có tSearch + lọc mà không có ô input nào.
+  {
+    key: 'search_state_without_input',
+    label: 'trang khai state tìm (const x = <filter>.search) nhiều hơn số ô <SearchInput> render — ô tìm chết, user không có chỗ gõ',
+    count: (s) => countDeadSearchState(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
@@ -133,6 +141,24 @@ function countInertBannerInDesktopOnly(sampleOut) {
     }
   }
   return n
+}
+
+// Mỗi state tìm lấy từ filter store (`const search = tf.search`) phải có 1 ô `<SearchInput` tương
+// ứng trong CÙNG file. Thiếu = ô tìm chết (state + logic lọc có, chỗ gõ không có).
+function countDeadSearchState(sampleOut) {
+  let miss = 0
+  for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    const declared = [...src.matchAll(/const\s+\w+\s*=\s*\w+\.search\b/g)].length
+    if (!declared) continue
+    const rendered = [...src.matchAll(/<SearchInput\b/g)].length
+    if (rendered < declared) {
+      miss += declared - rendered
+      if (sampleOut && sampleOut.length < 5)
+        sampleOut.push(`${f.slice(ROOT.length + 1)} — khai ${declared} state tìm nhưng chỉ render ${rendered} ô SearchInput`)
+    }
+  }
+  return miss
 }
 
 // Soi TỪNG route `upload.single('file'), <ns>.<fn>` → mở controller của <ns> → thân hàm <fn> có

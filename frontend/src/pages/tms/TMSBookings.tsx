@@ -3307,6 +3307,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
       {/* ── Filter bar (gom 1 chỗ qua FilterBar — đồng bộ tab Kế hoạch) ── */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 sm:py-2 border-b bg-white shrink-0">
+        <SearchInput value={tSearch} onChange={setTSearch} className="flex-1 min-w-[150px] sm:max-w-xs"
+          placeholder="Tìm mã lệnh / chuyến · NPP · biển số · kho…" />
         <FilterBar defs={transferFilterDefs} />
         <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>

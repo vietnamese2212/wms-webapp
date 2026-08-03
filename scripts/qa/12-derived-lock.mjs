@@ -415,6 +415,48 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
   }
 }
 
+// ── 11. RỚT ĐƠN KHÔNG BỐC: chuyến ĐÃ BẮT ĐẦU không được dời ngày sang TƯƠNG LAI ─────────────
+// Tình huống user 03/08: "đã có nhặt lẻ xong nhưng rớt đơn ko bốc — cần chuyển kế hoạch qua ngày
+// hôm sau để theo dõi, booking tiếp". Đo được 03/08: cửa "sửa trên đơn" chặn 422 FUTURE_DATE còn
+// cửa "Kế hoạch xuất" CHO QUA ⇒ đường lách, tạo NGÕ CỤT (tồn đã trừ mà chuyến ở ngày tương lai).
+// Lỗ ẩn sau nút "Tạm dừng" (PAUSED không nằm trong danh sách chặn cũ). Đường ĐÚNG: Bỏ bắt đầu
+// (hoàn số + trả tồn) rồi mới dời ngày.
+{
+  const gc11 = GC('11')
+  const DO11 = 'QADRVDO1'
+  const tmr = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  try {
+    await api('/external/khvc', 'POST', { group_code: gc11, do_no: DO11, npp: 'QADRV NPP',
+      export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
+    const g11 = (await restAll('GroupDeliveryOrder', `select=id,status&group_code=eq.${gc11}`))[0]
+    const l11 = (await restAll('khvc_lines', `select=id&group_code=eq.${gc11}`))[0]
+    const st = g11 ? await api(`/wms/outbound/${g11.id}/start`, 'POST', { license_plate: 'QADRV11' }) : { s: 0 }
+    check('11a. Bắt đầu chuyến để dựng tình huống', st.s === 200, `http=${st.s} ${st.j?.error?.message ?? ''}`)
+    // ĐANG XUẤT → chặn (luật cũ, vẫn phải đúng)
+    const m1 = await api(`/external/khvc/${l11.id}`, 'PUT', { export_date: tmr })
+    check('11b. [ĐANG XUẤT] dời ngày ở Kế hoạch xuất → 422', m1.s === 422, `http=${m1.s}`)
+    // TẠM DỪNG rồi dời → PHẢI VẪN CHẶN (đây là đường lách đã vá)
+    await api(`/wms/outbound/${g11.id}`, 'PATCH', { status: 'PAUSED' })
+    const m2 = await api(`/external/khvc/${l11.id}`, 'PUT', { export_date: tmr })
+    const kept = (await restAll('GroupDeliveryOrder', `select=delivery_date&group_code=eq.${gc11}`))[0]
+    check('11c. [TẠM DỪNG mà ĐÃ BẮT ĐẦU] dời ngày sang TƯƠNG LAI vẫn bị CHẶN + ngày KHÔNG đổi',
+      m2.s === 422 && String(kept?.delivery_date ?? '').slice(0, 10) === today,
+      `http=${m2.s} ngày=${kept?.delivery_date} · ${String(m2.j?.error?.message ?? '').slice(0, 90)}`)
+    check('11d. Thông báo chỉ ĐÚNG đường đi (Bỏ bắt đầu / Hoàn thành theo số thực xuất)',
+      /Bỏ bắt đầu/i.test(String(m2.j?.error?.message ?? '')) && /thực xuất/i.test(String(m2.j?.error?.message ?? '')),
+      String(m2.j?.error?.message ?? '').slice(0, 120))
+    // Đường ĐÚNG: Bỏ bắt đầu → dời ngày được
+    const un = await api(`/wms/outbound/${g11.id}/unstart`, 'POST', {})
+    const m3 = await api(`/external/khvc/${l11.id}`, 'PUT', { export_date: tmr })
+    const after = (await restAll('GroupDeliveryOrder', `select=delivery_date,status,started_at&group_code=eq.${gc11}`))[0]
+    check('11e. Bỏ bắt đầu → dời ngày sang mai ĐƯỢC (đường đi đúng cho đơn rớt không bốc)',
+      un.s === 200 && m3.s === 200 && String(after?.delivery_date ?? '').slice(0, 10) === tmr && !after?.started_at,
+      `unstart=${un.s} move=${m3.s} ngày=${after?.delivery_date} đã_bắt_đầu=${after?.started_at ? 'CÒN' : 'đã gỡ'}`)
+  } catch (e) {
+    check('11. mục rớt-đơn-dời-ngày chạy lỗi', false, String(e).slice(0, 160))
+  }
+}
+
 // ── Dọn 0 sót ──
 await cleanup()
 {

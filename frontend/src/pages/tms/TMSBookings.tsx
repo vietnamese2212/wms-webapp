@@ -3434,6 +3434,14 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                             </TableCell>
                             <TableCell className="px-2 py-1 truncate" title={o.order_code}>
                               <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                              {/* Lệnh dẫn xuất từ Kế hoạch xuất: nói rõ để điều vận biết sửa ở đâu (03/08) */}
+                              {o.plan_dropped ? (
+                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold"
+                                  title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                              ) : o.origin === 'KHVC' ? (
+                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-sky-100 text-sky-700 font-semibold"
+                                  title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất, lệnh tự cập nhật theo">Từ KH xuất</span>
+                              ) : null}
                             </TableCell>
                           </TableRow>
                         )

@@ -633,8 +633,22 @@ export async function updateOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsOrder')
-      .select('id, date, status').eq('id', id).single()
+      .select('id, date, status, origin, order_code').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
+
+    // LỆNH TỰ SINH TỪ KẾ HOẠCH XUẤT = dữ liệu BỊ ĐỘNG (user chốt 03/08): sửa tay ở đây sẽ bị lượt
+    // đồng bộ kế tiếp ghi đè âm thầm → chặn thẳng, chỉ đường về nguồn. Các trường THUỘC VỀ ĐIỀU VẬN
+    // (ghi chú, ưu tiên, ETA, trạng thái) vẫn sửa được vì đồng bộ không đụng tới.
+    if ((existing as { origin?: string | null }).origin === 'KHVC') {
+      const derivedTouched = [
+        ['Ngày', date], ['Kho', warehouse_id], ['ĐVVT', ncc_id], ['NPP', npp_name],
+        ['Loại xe', vehicle_type], ['Chiều', direction], ['Loại kho', warehouse_type],
+        ['Thùng', planned_boxes], ['Pallet', planned_pallets], ['Tấn', planned_tons], ['Mã chuyến', gdo_refs],
+      ].filter(([, v]) => v !== undefined).map(([k]) => k as string)
+      if (derivedTouched.length)
+        return fail(res, 422, 'TMS_PLAN_DERIVED',
+          `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(existing as { order_code?: string }).order_code}) — không sửa ${derivedTouched.join('/')} tại đây. Sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài), lệnh sẽ tự cập nhật theo.`)
+    }
 
     // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
     if (!(await guardOrderScope(req, res, id))) return
@@ -1649,8 +1663,15 @@ export async function deleteOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: order } = await supabase.from('TmsOrder')
-      .select('id, source_type, transfer_gdo_id').eq('id', id).single()
+      .select('id, source_type, transfer_gdo_id, origin, order_code, plan_dropped').eq('id', id).single()
     if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
+
+    // Lệnh tự sinh: xóa ở đây thì lượt đồng bộ kế tiếp tạo lại ngay → vô nghĩa. Muốn bỏ hẳn thì bỏ
+    // Số xe khỏi Kế hoạch xuất (lệnh sẽ tự ngừng hiệu lực + nhả khung giờ). Lệnh ĐÃ ngừng hiệu lực
+    // thì cho xóa để dọn bảng.
+    if ((order as { origin?: string | null }).origin === 'KHVC' && !(order as { plan_dropped?: boolean }).plan_dropped)
+      return fail(res, 422, 'TMS_PLAN_DERIVED',
+        `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(order as { order_code?: string }).order_code}) — xóa ở đây sẽ được tạo lại. Bỏ Số xe khỏi tab "Kế hoạch xuất" thì lệnh tự ngừng hiệu lực và nhả khung giờ.`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: slots } = await supabase.from('TmsVehicleSlot')

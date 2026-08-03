@@ -464,6 +464,10 @@ export interface TmsOrder {
   export_status:   string | null
   status:          string
   source_type?:    string | null
+  // Kế hoạch VC tự sinh theo Kế hoạch xuất (03/08) — bị động: sửa ở nguồn, không sửa tay
+  origin?:         string | null    // 'KHVC' = tự sinh theo Số xe của Kế hoạch xuất
+  plan_dropped?:   boolean | null   // kế hoạch đã bỏ Số xe này → lệnh ngừng hiệu lực, khung giờ ĐÃ nhả
+  plan_dropped_at?: string | null
   destination_warehouse_id?: string | null
   eta?:            string | null
   created_by:      string | null

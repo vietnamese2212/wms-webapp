@@ -14,6 +14,7 @@ import { safeFilterValue, safeSearch } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
+import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
@@ -3388,7 +3389,19 @@ async function processVehicleGroups(
     // Cờ CHỜ DỮ LIỆU: đặt cho xe còn DO thiếu, gỡ cho xe vừa đủ dữ liệu (+ ghi sổ sự kiện)
     const awaitingResult = await applyAwaitingState(req, awaitingByGc ?? new Map(), [...byVehicle.keys()], prevGdoState)
 
-    return ok(res, { created, ...(awaitingResult.awaiting || awaitingResult.cleared || awaitingResult.reopened ? { awaiting: awaitingResult } : {}), ...(extraResult ?? {}) }, 201)
+    // KẾ HOẠCH VC tự sinh theo Số xe (chỉ luồng KHVC/SAP — kho không làm SAP vẫn up tay bên TMS như cũ)
+    let tmsSync: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
+    if (autoLoosePallet) {
+      try { tmsSync = await syncTmsPlanFromKhvc(req, allGroupCodes) }
+      catch (e) { console.error('[processVehicleGroups] đồng bộ Kế hoạch VC:', e) }
+    }
+
+    return ok(res, {
+      created,
+      ...(awaitingResult.awaiting || awaitingResult.cleared || awaitingResult.reopened ? { awaiting: awaitingResult } : {}),
+      ...(tmsSync && (tmsSync.created || tmsSync.updated || tmsSync.dropped) ? { tms_plan: tmsSync } : {}),
+      ...(extraResult ?? {}),
+    }, 201)
 }
 
 // ─── ĐỢT 3 (BASE UNIT): "Up kế hoạch VC" — 2 tầng raw SAP → derived ──────────────
@@ -3857,8 +3870,15 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
     if (error) console.error('[replanKhvcGroups] ghi reconcile_tasks:', error.message)
   }
   await logOutboundEvents(events)
+  // Xe bị bỏ khỏi kế hoạch KHÔNG đi qua derive (không có dòng nào) → phải gọi đồng bộ riêng để
+  // lệnh vận chuyển ngừng hiệu lực + NHẢ khung giờ cho xe khác (user chốt 03/08).
+  let tmsDrop: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
+  if (emptyGcs.length) {
+    try { tmsDrop = await syncTmsPlanFromKhvc(req, emptyGcs) }
+    catch (e) { console.error('[replanKhvcGroups] nhả khung giờ xe bị bỏ:', e) }
+  }
   const swept = await sweepOrphanDeliveries([...new Set(lines.map(l => l.do_no).filter(Boolean))])
-  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(swept ? { orphan_dos_cleaned: swept } : {}) }
+  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(tmsDrop ? { tms_plan_drop: tmsDrop } : {}), ...(swept ? { orphan_dos_cleaned: swept } : {}) }
 }
 
 // DỌN DO MỒ CÔI (probe 02/08 C5b): replan/upload trên chuyến PENDING = XÓA chuyến cũ rồi TẠO lại.

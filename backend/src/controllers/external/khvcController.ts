@@ -196,11 +196,12 @@ export async function listKhvc(req: Request, res: Response) {
       const present = new Set<string>()
       // LỌC OBSOLETE: DO mà SAP đã bỏ hết dòng thì derive coi như CHƯA CÓ — cột/bộ lọc phải nói
       // cùng một sự thật với engine, không thì user thấy "có DO" mà chuyến vẫn chờ dữ liệu.
-      for (let i = 0; i < windowDos.length; i += 300) {
-        const { data } = await supabase.from('erp_outbound_orders').select('od_number')
-          .in('od_number', windowDos.slice(i, i + 300)).neq('sync_status', 'OBSOLETE')
-        for (const r of (data ?? []) as { od_number: string }[]) present.add(String(r.od_number))
-      }
+      // Chunk 300 là để không vượt trần URL, nhưng CHƯA đủ: mỗi chunk vẫn có thể trả >1000 DÒNG
+      // (1 DO nhiều mã hàng) nên phải phân trang TRONG chunk — fetchAllByIdChunks làm cả hai.
+      // Thiếu bước này thì bộ lọc "Trong DO SAP" phân loại sai đúng như cột badge (bug 03/08).
+      const rawsWin = await fetchAllByIdChunks(windowDos, chunk => supabase.from('erp_outbound_orders')
+        .select('od_number').in('od_number', chunk).neq('sync_status', 'OBSOLETE').order('od_number'))
+      for (const r of (rawsWin ?? []) as { od_number: string }[]) present.add(String(r.od_number))
       restrictDos = in_do_sap === '1' ? windowDos.filter(d => present.has(d)) : windowDos.filter(d => !present.has(d))
       if (restrictDos.length > DOSAP_FILTER_CAP) {
         doSapWarning = `Khoảng ngày quá rộng để lọc theo DO SAP (${restrictDos.length} DO) — thu hẹp Ngày nạp rồi lọc lại.`
@@ -287,9 +288,14 @@ export async function listKhvc(req: Request, res: Response) {
     const dos = [...new Set(items.map(i => String(i.do_no ?? '')).filter(Boolean))]
     const readyDos = new Set<string>()
     if (dos.length) {
-      const { data: raws } = await supabase.from('erp_outbound_orders').select('od_number')
-        .in('od_number', dos).neq('sync_status', 'OBSOLETE')   // dòng SAP đã bỏ = coi như chưa có (khớp derive)
-      for (const r of (raws ?? []) as { od_number: string }[]) readyDos.add(r.od_number)
+      // PHẢI phân trang (fetchAllByIdChunks = chunk 300 + range-loop). 1 DO có NHIỀU dòng VL06O
+      // (mỗi mã hàng 1 dòng) nên 200 DO của 1 trang đã cho ~1.000+ dòng ⇒ query trần bị cap ~1000
+      // CẮT ÂM THẦM và những DO rơi vào phần bị cắt hiện sai thành "DO chưa có" (bug thật user báo
+      // 03/08: đo được 200 DO → 1.047 dòng, mất 47 dòng, dù 200/200 DO đều có trong VL06O).
+      // dòng SAP đã bỏ (OBSOLETE) = coi như chưa có, khớp engine derive.
+      const raws = await fetchAllByIdChunks(dos, chunk => supabase.from('erp_outbound_orders')
+        .select('od_number').in('od_number', chunk).neq('sync_status', 'OBSOLETE').order('od_number'))
+      for (const r of (raws ?? []) as { od_number: string }[]) readyDos.add(String(r.od_number))
     }
     for (const i of items) {
       const gc = String(i.group_code ?? '')

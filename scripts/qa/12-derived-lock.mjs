@@ -366,6 +366,55 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
     gs.length === 1 && orphan.length === 0, `chuyến=${gs.length} mồ côi=${orphan.length}`)
 }
 
+// ── 10. Cột/bộ lọc "Trong DO SAP" KHÔNG được dính cap-1000 (bug thật user báo 03/08) ─────────
+// 1 DO có NHIỀU dòng VL06O (mỗi mã hàng 1 dòng) nên 1 trang 200 DO đã cho >1.000 DÒNG. Query trần
+// bị PostgREST cắt âm thầm ở 1000 ⇒ DO rơi vào phần bị cắt hiện SAI thành "DO chưa có", điều vận
+// tưởng thiếu dữ liệu SAP và đi up lại vô ích. Dựng đúng ngưỡng: 210 DO × 5 dòng = 1.050 dòng.
+{
+  const N_DO = 210, N_LINE = 5
+  const TAGD = 'QACAP1000'
+  const gcCap = `${WH_CODE}_X_${qd}${qm}${qy.slice(2)}_CAP`
+  const cleanCap = async () => {
+    await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.${TAGD}*`).catch(() => {})
+    await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gcCap}`).catch(() => {})
+  }
+  try {
+    await cleanCap()
+    const doNos = Array.from({ length: N_DO }, (_, i) => `${TAGD}${String(i).padStart(4, '0')}`)
+    // VL06O: mỗi DO N_LINE dòng (mỗi dòng 1 od_item) → tổng vượt trần 1000
+    const rows = doNos.flatMap(dn => Array.from({ length: N_LINE }, (_, k) => ({
+      id: randomUUID(), od_number: dn, od_item: String((k + 1) * 10), material_code: FIX.MAT_POOL,
+      qty_base: 1, ship_to_code: 'QACAP', ship_to_name: 'QA CAP NPP', source: 'EXCEL',
+      sync_status: 'ACTIVE', last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    })))
+    for (let i = 0; i < rows.length; i += 350) await restWrite('erp_outbound_orders', 'POST', '', rows.slice(i, i + 350))
+    // KH xuất: 1 Số xe mang đủ N_DO dòng (ghi thẳng raw — nhanh, không cần replan)
+    const kh = doNos.map(dn => ({
+      id: randomUUID(), group_code: gcCap, do_no: dn, warehouse_code: WH_CODE,
+      npp: 'QA CAP NPP', export_date: today, booking_category: BK_CAT,
+      source: 'EXCEL', sync_status: 'ACTIVE', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }))
+    for (let i = 0; i < kh.length; i += 350) await restWrite('khvc_lines', 'POST', '', kh.slice(i, i + 350))
+
+    const r10 = await api(`/external/khvc?group_code_eq=${gcCap}&page=1&page_size=200`)
+    const items = r10.j?.data?.items ?? []
+    const chuaCo = items.filter(x => x.do_ready === false)
+    check(`10. ${N_DO} DO × ${N_LINE} dòng VL06O (${N_DO * N_LINE} > cap 1000): KHÔNG DO nào bị báo sai "chưa có"`,
+      r10.s === 200 && items.length === 200 && chuaCo.length === 0,
+      `http=${r10.s} soi ${items.length} dòng · báo sai ${chuaCo.length}: ${JSON.stringify(chuaCo.slice(0, 3).map(x => x.do_no))}`)
+    // Bộ lọc "Trong DO SAP" phải nói CÙNG một sự thật với cột
+    const rY = await api(`/external/khvc?group_code_eq=${gcCap}&in_do_sap=1&page=1&page_size=200&export_from=${today}&export_to=${today}`)
+    const rN = await api(`/external/khvc?group_code_eq=${gcCap}&in_do_sap=0&page=1&page_size=200&export_from=${today}&export_to=${today}`)
+    check('10b. Bộ lọc "Trong DO SAP" khớp cột: có=đủ, không=rỗng',
+      rY.j?.data?.total === N_DO && (rN.j?.data?.total ?? 0) === 0,
+      `có=${rY.j?.data?.total} không=${rN.j?.data?.total}`)
+  } catch (e) {
+    check('10. mục cap-1000 chạy lỗi', false, String(e).slice(0, 160))
+  } finally {
+    await cleanCap()
+  }
+}
+
 // ── Dọn 0 sót ──
 await cleanup()
 {

@@ -4358,6 +4358,14 @@ export default function TMSBookings() {
                           <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
                         {order.order_code || <span className="text-slate-400 font-normal">—</span>}
+                        {/* Lệnh dẫn xuất từ Kế hoạch xuất: nói rõ để điều vận biết sửa ở đâu (03/08) */}
+                        {order.plan_dropped ? (
+                          <span className="ml-1 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold"
+                            title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                        ) : order.origin === 'KHVC' ? (
+                          <span className="ml-1 px-1 py-0.5 rounded-full bg-sky-100 text-sky-700 font-sans font-semibold"
+                            title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất, lệnh tự cập nhật theo">Từ KH xuất</span>
+                        ) : null}
                       </>
                     ) : (() => {
                       const nextRow = pagedRows[rowIndex + 1]

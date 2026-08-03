@@ -14,6 +14,7 @@ import type { Request } from 'express'
 import { supabase } from '../lib/supabase'
 import { fetchAllByIdChunks } from '../utils/pagination'
 import { logOutboundEvents, actorOf } from './outboundEvents'
+import { qtyEntryDecimal, type MatUnits } from '../utils/qtyUnits'
 
 const now = () => new Date().toISOString()
 
@@ -62,12 +63,23 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     const doIds = (dos ?? []).map(d => d.id)
     if (doIds.length) {
       const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('do_id, cartons_ordered, pallets_estimated').in('do_id', chunk).order('id')) as
-        { do_id: string; cartons_ordered: number | null; pallets_estimated: number | null }[]
+        .select('do_id, material_id, cartons_ordered, pallets_estimated').in('do_id', chunk).order('id')) as
+        { do_id: string; material_id: string | null; cartons_ordered: number | null; pallets_estimated: number | null }[]
+      // BASE UNIT: `cartons_ordered` là số BASE (hộp/chai/KG). Cột "Thùng" của lệnh vận chuyển là
+      // ĐƠN VỊ NHẬP (thùng) ⇒ phải quy đổi PER-MÃ rồi mới cộng — cộng base thô rồi gắn nhãn "thùng"
+      // là thổi số (luật cốt tử CLAUDE.md; đo 03/08: 55 base hiện thành "55 thùng").
+      const matIds = [...new Set((items ?? []).map(i => i.material_id).filter(Boolean) as string[])]
+      const matById = new Map<string, MatUnits>()
+      if (matIds.length) {
+        const mats = await fetchAllByIdChunks(matIds, chunk => supabase.from('Material')
+          .select('id, base_unit, entry_unit, units_per_carton').in('id', chunk).order('id')) as ({ id: string } & MatUnits)[]
+        for (const m of (mats ?? [])) matById.set(m.id, m)
+      }
       for (const it of (items ?? [])) {
         const gid = gdoByDo.get(it.do_id); if (!gid) continue
+        const mat = it.material_id ? matById.get(it.material_id) ?? null : null
         palletsByGdo.set(gid, (palletsByGdo.get(gid) ?? 0) + Number(it.pallets_estimated ?? 0))
-        boxesByGdo.set(gid, (boxesByGdo.get(gid) ?? 0) + Number(it.cartons_ordered ?? 0))
+        boxesByGdo.set(gid, (boxesByGdo.get(gid) ?? 0) + qtyEntryDecimal(Number(it.cartons_ordered ?? 0), mat))
       }
     }
   }

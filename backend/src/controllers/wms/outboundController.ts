@@ -2870,6 +2870,28 @@ export async function uploadExcel(req: Request, res: Response) {
 // KHÔNG xóa chuyến trong cả hai (user: "chỉ có thể xem được info của nó — từ đó xem được lịch sử").
 type PrevGdoState = { id: string; status: string; awaiting: boolean; dropped: boolean }
 
+// Dọn dòng hàng của chuyến vừa chuyển sang CHỜ dữ liệu. An toàn tuyệt đối: có BẤT KỲ thùng nào
+// đã quét thì KHÔNG đụng (giữ dữ liệu vận hành + ghi sổ để người xử), và nhả tồn giữ chỗ trước khi xóa.
+async function clearItemsForAwaiting(gdoId: string, gc: string, actor: string, events: OutboundEventInput[]): Promise<void> {
+  const { data: dvs } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId)
+  const doIds = ((dvs ?? []) as { id: string }[]).map(d => d.id)
+  if (!doIds.length) return
+  const its = await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem')
+    .select('id, cartons_scanned').in('do_id', c).order('id')) as { id: string; cartons_scanned: number }[]
+  if (!its.length) return
+  if (its.some(i => Number(i.cartons_scanned) > 0)) {
+    events.push({ group_code: gc, gdo_id: gdoId, event_type: 'AWAITING_KEEP_SCANNED', source: 'SAP', actor,
+      detail: 'Chuyến quay lại chờ dữ liệu SAP nhưng ĐÃ CÓ HÀNG QUÉT — giữ nguyên dòng hàng, cần người đối chiếu' })
+    return
+  }
+  await releaseScansForDOs(doIds)   // nhả tồn nhặt lẻ đã giữ chỗ (nếu có) trước khi xóa
+  for (let i = 0; i < doIds.length; i += 300) {
+    const c = doIds.slice(i, i + 300)
+    await supabase.from('OutboundItem').delete().in('do_id', c)
+    await supabase.from('OutboundDelivery').delete().in('id', c)
+  }
+}
+
 async function applyAwaitingState(
   req: Request,
   awaitingByGc: Map<string, AwaitingGroup>,
@@ -2907,6 +2929,11 @@ async function applyAwaitingState(
       if (g.status === 'IN_PROGRESS' || g.status === 'COMPLETED') continue
       const sameDos = JSON.stringify([...(g.awaiting_dos ?? [])].sort()) === JSON.stringify([...a.dos].sort())
       if (g.awaiting_sap && sameDos && !g.plan_dropped) { out.awaiting++; continue }
+      // Chuyến ĐANG ĐỦ dữ liệu nay quay lại CHỜ (SAP bỏ dòng / điều vận thêm DO chưa có raw):
+      // dọn dòng hàng cũ để chuyến chờ luôn là VỎ — nếu giữ, đó là kế hoạch CŨ đứng im, không bao
+      // giờ được cập nhật cho tới khi dữ liệu về, mà nhìn trên màn lại như kế hoạch thật.
+      // CHỈ dọn khi CHƯA quét gì (đã quét = dữ liệu vận hành, không tự xóa — giữ nguyên + ghi sổ).
+      await clearItemsForAwaiting(g.id, gc, actor, events)
       await supabase.from('GroupDeliveryOrder')
         .update({ awaiting_sap: true, awaiting_dos: a.dos, plan_dropped: false, plan_dropped_at: null, updated_at: t })
         .eq('id', g.id)
@@ -4053,6 +4080,10 @@ export async function uploadKhvc(req: Request, res: Response) {
     // kho up VL06O sau. Xe thiếu dữ liệu vẫn sinh chuyến nhưng ở dạng CHỜ — không xuất được cho tới
     // khi dữ liệu về (rồi tự kích hoạt). Trước đây chặn cả file nên điều vận không nạp được gì.
     if (!byVehicle.size && !awaitingByGc.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
+    // ALL-OR-NOTHING PER XE: xe còn DO thiếu dữ liệu thì KHÔNG dựng dòng hàng phần đã biết —
+    // chuyến chờ là VỎ. Thiếu dòng này, cùng một file upload lại cho ra trạng thái KHÁC đường sửa
+    // kế hoạch (replan đã lọc): chuyến chờ có hàng một nửa, trông như kế hoạch đủ (đo T1 case 2e).
+    for (const gc of awaitingByGc.keys()) byVehicle.delete(gc)
     if (missingDos.size) preflightExtra.push({ label: 'DO chưa có trong VL06O (chuyến sẽ CHỜ dữ liệu)',
       value: `${missingDos.size}: ${[...missingDos].slice(0, 5).join(', ')}${missingDos.size > 5 ? '…' : ''}`, warn: true })
 

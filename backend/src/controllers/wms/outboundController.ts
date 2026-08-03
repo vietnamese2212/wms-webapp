@@ -1782,9 +1782,12 @@ export async function updateGDO(req: Request, res: Response) {
     if ('warehouse_type' in req.body && !categoryAllowed(req, warehouse_type)) return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type, started_at').eq('id', req.params.id).single()
+      .select(`status, shipto_party, warehouse_id, origin, delivery_date, dvvt, warehouse_type, started_at, ${INERT_COLS}`).eq('id', req.params.id).single()
     if (!gdo) return fail(res, 'Không tìm thấy chuyến xe', 404)
     if (!['PENDING', 'PAUSED'].includes(gdo.status)) return fail(res, 'Chỉ sửa được đơn ở trạng thái PENDING hoặc PAUSED', 400)
+    // Chuyến bất động: không sửa đơn (thêm dòng hàng tay vào chuyến chưa có kế hoạch = lệch đối soát)
+    { const inertErr = inertError(gdo as GdoInertState)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     // Chuyến PAUSED có thể đã Bắt đầu + đã ghi nhận số → cấm dời ngày sang tương lai (xem futureShiftError)
     {
       const pushErr = futureShiftError(gdo as GdoDateShift, delivery_date)
@@ -2223,6 +2226,12 @@ export async function patchGDO(req: Request, res: Response) {
 export async function assignGDO(req: Request, res: Response) {
   try {
     if (!(await guardGdoScope(req, res, req.params.id))) return
+    // Chuyến bất động: giao đơn cho người soạn hàng là vô nghĩa (chưa/không còn dòng hàng nào)
+    {
+      const { data: cur } = await supabase.from('GroupDeliveryOrder').select(INERT_COLS).eq('id', req.params.id).maybeSingle()
+      const inertErr = inertError(cur as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr)
+    }
     const { assigned_by } = req.body as { assigned_by?: string }
     const { error } = await supabase.from('GroupDeliveryOrder')
       .update({ assigned_at: now(), assigned_by: assigned_by ?? null, updated_at: now() })

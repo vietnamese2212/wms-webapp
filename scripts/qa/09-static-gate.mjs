@@ -49,6 +49,15 @@ const RULES = [
     count: (s) => countMatches(['frontend/src/pages/wms/Outbound.tsx'], ['.tsx'],
       l => /checkable=\{canEditGdo && gdo\.status === 'PENDING'\}/.test(l), s),
   },
+  // Kế hoạch xuất bị xóa ⇒ chuyến NGỪNG HOẠT ĐỘNG, KHÔNG xóa (user chốt 03/08: "chuyến hàng đó bên
+  // Xuất sẽ không bị xóa mà vào trạng thái không hoạt động, chỉ xem được info — từ đó xem được lịch sử").
+  // Nhánh emptyGcs của replanKhvcGroups từng DELETE thẳng GroupDeliveryOrder; quay lại là mất vết vĩnh viễn.
+  {
+    key: 'replan_hard_deletes_gdo',
+    label: 'replan XÓA CỨNG chuyến khi kế hoạch hết dòng — phải đánh dấu plan_dropped (giữ chuyến để tra lịch sử)',
+    count: (s) => countMatches(['backend/src/controllers/wms/outboundController.ts'], ['.ts'],
+      l => /from\('GroupDeliveryOrder'\)\s*\.delete\(\)\s*\.eq\('id', g\.id\)/.test(l), s),
+  },
   {
     key: 'as_any',
     label: '`as any` (BE+FE) — nợ cũ dọn dần khi đụng file, code MỚI cấm (CLAUDE.md)',

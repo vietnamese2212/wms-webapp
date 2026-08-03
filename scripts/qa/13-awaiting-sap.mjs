@@ -126,17 +126,28 @@ check('4g. Chuyến HOẠT ĐỘNG TRỞ LẠI', !!g2c && g2c.plan_dropped === f
 
 // ── 5. CẤM xóa kế hoạch của chuyến đã xuất ───────────────────────────────────
 if (g2c) {
+  // ĐANG XUẤT: chặn xóa kế hoạch (xe đang bốc hàng — sửa nguồn giữa chừng là sai)
   await api(`/wms/outbound/${g2c.id}/start`, 'POST', { license_plate: 'QAAW2222' })
-  const its2 = await itemsOf(g2c.id)
-  if (its2[0]) await api(`/wms/outbound/${g2c.id}/items/${its2[0].id}/manual-complete`, 'POST', { cartons: 50, qty_semantics: 'base' })
-  await api(`/wms/outbound/${g2c.id}`, 'PATCH', { status: 'COMPLETED' })
-  const gFin = await gdoOf(GC(2))
   const line2b = (await restAll('khvc_lines', `select=id&group_code=eq.${GC(2)}`))[0]
-  const del2 = line2b ? await api(`/external/khvc/${line2b.id}`, 'DELETE') : { s: 0 }
-  check('5a. Chuyến đã HOÀN THÀNH → CẤM xóa dòng kế hoạch', gFin?.status === 'COMPLETED' && del2.s === 409,
-    `status=${gFin?.status} http=${del2.s}`)
+  const delRun = line2b ? await api(`/external/khvc/${line2b.id}`, 'DELETE') : { s: 0 }
+  check('5a. Chuyến ĐANG XUẤT → CẤM xóa dòng kế hoạch', delRun.s === 409, `http=${delRun.s}`)
+
+  // ĐÃ HOÀN THÀNH: đặt thẳng trạng thái dưới DB (chốt chuyến qua API cần đủ tồn — không phải phần
+  // đang kiểm ở gói này) rồi thử xóa: đây là luật user chốt 03/08 "việc này là không được phép".
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g2c.id}`, { status: 'COMPLETED', updated_at: t() })
+  const gFin = await gdoOf(GC(2))
+  const delDone = line2b ? await api(`/external/khvc/${line2b.id}`, 'DELETE') : { s: 0 }
+  check('5b. Chuyến ĐÃ HOÀN THÀNH → CẤM xóa dòng kế hoạch',
+    gFin?.status === 'COMPLETED' && delDone.s === 409 && /HOÀN THÀNH/.test(delDone.j?.error?.message ?? ''),
+    `status=${gFin?.status} http=${delDone.s} msg=${delDone.j?.error?.message ?? ''}`)
   const still = (await restAll('khvc_lines', `select=id&group_code=eq.${GC(2)}`)).length
-  check('5b. Dòng kế hoạch vẫn còn nguyên', still === 1, `còn ${still} dòng`)
+  check('5c. Dòng kế hoạch vẫn còn nguyên', still === 1, `còn ${still} dòng`)
+  // Xóa hàng loạt cũng phải chặn (đường thứ 2 vào cùng nghiệp vụ)
+  const bulk = line2b ? await api('/external/khvc/bulk-delete', 'POST', { ids: [line2b.id] }) : { s: 0 }
+  const blockedN = (bulk.j?.data?.blocked ?? []).length
+  check('5d. Xóa hàng loạt cũng bị chặn', bulk.s === 200 && (bulk.j?.data?.deleted ?? 0) === 0 && blockedN === 1,
+    `http=${bulk.s} deleted=${bulk.j?.data?.deleted} blocked=${blockedN}`)
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g2c.id}`, { status: 'PENDING', started_at: null, updated_at: t() })
 }
 
 // ── 6. Sổ lịch sử ghi đủ vết ─────────────────────────────────────────────────

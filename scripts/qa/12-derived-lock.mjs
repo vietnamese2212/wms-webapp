@@ -145,9 +145,10 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
     `edit=${r.s} date=${g?.delivery_date} add2=${r2.s} total=${total}`)
 }
 
-// ── 5. DO chưa có trong VL06O → chặn 400 ngay lúc thêm dòng ──
-r = await api('/external/khvc', 'POST', { group_code: GC('02'), do_no: 'QADRVDO_MISSING', npp: 'X', export_date: today })
-check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.test(r.j?.error?.message ?? ''), `${r.s}`)
+// ── 5. DO chưa có trong VL06O → KHÔNG chặn nữa (user chốt 03/08: điều vận nạp kế hoạch TRƯỚC khi
+// có VL06O). Dòng vẫn nhận, chuyến sinh ra ở dạng CHỜ dữ liệu — chi tiết ở gói 13.
+r = await api('/external/khvc', 'POST', { group_code: GC('02'), do_no: 'QADRVDO_MISSING', npp: 'X', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ dữ liệu)', r.s === 201, `${r.s} ${r.j?.error?.message ?? ''}`)
 
 // ── 6. Chuyến ĐANG XUẤT: sửa KH không tự đụng chuyến — sinh reconcile_task ──
 {
@@ -185,10 +186,11 @@ check('thêm dòng KH với DO chưa có raw → 400', r.s === 400 && /VL06O/.te
   const g3 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('03')}`))[0]
   const line3 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('03')}`))[0]
   const rDel3 = await api(`/external/khvc/${line3.id}`, 'DELETE')
-  const g3After = await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('03')}`)
-  check('xóa dòng chuyến ĐÃ QUÉT → 409; xóa hết dòng chuyến PENDING sạch → chuyến tự xóa',
-    rDel.s === 409 && !!g3 && rDel3.s === 200 && g3After.length === 0,
-    `delScanned=${rDel.s} g3=${!!g3} del3=${rDel3.s} left=${g3After.length}`)
+  const g3After = await restAll('GroupDeliveryOrder', `select=id,plan_dropped&group_code=eq.${GC('03')}`)
+  // user chốt 03/08: xóa hết dòng kế hoạch KHÔNG xóa chuyến nữa — chuyến NGỪNG HOẠT ĐỘNG để còn tra lịch sử
+  check('xóa dòng chuyến ĐÃ QUÉT → 409; xóa hết dòng chuyến PENDING sạch → chuyến NGỪNG HOẠT ĐỘNG (không xóa)',
+    rDel.s === 409 && !!g3 && rDel3.s === 200 && g3After.length === 1 && g3After[0]?.plan_dropped === true,
+    `delScanned=${rDel.s} g3=${!!g3} del3=${rDel3.s} left=${g3After.length} dropped=${g3After[0]?.plan_dropped}`)
 }
 
 // ── 8b. ĐỔI NGÀY = thuộc tính CẤP XE: sửa 1 dòng → đồng bộ mọi dòng của xe + chuyến nhận ngày mới ──

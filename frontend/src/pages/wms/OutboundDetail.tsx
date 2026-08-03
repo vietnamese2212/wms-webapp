@@ -1578,7 +1578,8 @@ export default function OutboundDetail() {
     tip: 'Lịch sử thay đổi của chuyến: kế hoạch, DO, ngày, thay đổi từ SAP — ai làm, lúc nào',
     onClick: () => setShowHistory(true),
   })
-  if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit'))
+  // Chuyến bất động: ẩn Sửa đơn/Giao đơn (BE cũng chặn 422) — chỉ còn xem + lịch sử + xóa để dọn
+  if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && !inertReason && can(perms, 'outbound', 'edit'))
     actionItems.push({
       key: 'edit', icon: PenSquare, label: 'Sửa đơn', tip: 'Sửa đơn (ngày, khách, mã hàng, số lượng)',
       onClick: () => setShowEditGDO(true),
@@ -1597,7 +1598,7 @@ export default function OutboundDetail() {
       primary: true, variant: 'success', busy: quickExporting, disabled: blockAct,
       onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setQuickErrCode(null); setShowQuickExport(true) },
     })
-  if (!gdo.assigned_at && can(perms, 'outbound', 'assign'))
+  if (!gdo.assigned_at && !inertReason && can(perms, 'outbound', 'assign'))
     actionItems.push({
       key: 'assign', icon: ClipboardList, label: 'Giao đơn', tip: 'Giao đơn cho người phụ trách soạn hàng',
       primary: true, busy: assigning,

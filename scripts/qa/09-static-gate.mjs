@@ -98,6 +98,15 @@ const RULES = [
     count: (s) => countMatches(['backend/migrations'], ['.sql'],
       l => /\b(g|gd)\.warehouse_type\s*=\s*any\s*\(/i.test(l), s),
   },
+  // Lý do chuyến KHÔNG thao tác được phải hiện trên MỌI cỡ màn. Công nhân dùng điện thoại/PDA là
+  // chính; khối `orderInfoJSX` của trang chi tiết Xuất chỉ hiện từ `sm:` trở lên, nên nhét banner
+  // giải thích vào đó = trên điện thoại chỉ thấy nút mờ, không biết vì sao (đã sửa 02/08 cho rule
+  // cổng/cân, tái phạm 03/08 với banner "chờ dữ liệu SAP" — bắt ở đợt kiểm vòng 2).
+  {
+    key: 'inert_banner_desktop_only',
+    label: 'banner lý do chuyến bất động nằm trong khối chỉ-hiện-desktop (orderInfoJSX) — mobile mất lý do',
+    count: (s) => countInertBannerInDesktopOnly(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
@@ -105,6 +114,26 @@ const RULES = [
     count: (s) => countUploadsMissingPreflight(s),
   },
 ]
+
+// Đếm số lần `inertReason` xuất hiện BÊN TRONG khai báo `const orderInfoJSX = (…)` của trang chi
+// tiết Xuất (khối đó bọc `hidden sm:block` nên mobile không thấy). Banner phải render ngoài khối.
+function countInertBannerInDesktopOnly(sampleOut) {
+  const f = 'frontend/src/pages/wms/OutboundDetail.tsx'
+  let src = ''
+  try { src = readFileSync(join(ROOT, f), 'utf8') } catch { return 0 }
+  const lines = src.split(/\r?\n/)
+  const start = lines.findIndex(l => /const orderInfoJSX\s*=\s*\(/.test(l))
+  if (start < 0) return 0
+  let n = 0
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s{0,2}\)\s*$/.test(lines[i])) break            // hết khối JSX
+    if (lines[i].includes('inertReason')) {
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f}:${i + 1}: ${lines[i].trim().slice(0, 100)}`)
+    }
+  }
+  return n
+}
 
 // Soi TỪNG route `upload.single('file'), <ns>.<fn>` → mở controller của <ns> → thân hàm <fn> có
 // `isPreflight` không. Bắt được cả upload MỚI thêm sau này (không phải danh sách cứng).

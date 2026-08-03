@@ -7,5 +7,6 @@
   "band_label_thung_ton": 2,
   "thung_unit_on_aggregate_pages": 0,
   "gdo_category_exact_match": 50,
-  "upload_without_preflight": 0
+  "upload_without_preflight": 0,
+  "inert_banner_desktop_only": 0
 }

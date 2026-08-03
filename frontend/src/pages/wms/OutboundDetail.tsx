@@ -1781,18 +1781,21 @@ export default function OutboundDetail() {
     { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
     { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
   ]
+  // Chuyến bất động: nói NGAY lý do + cách gỡ, đừng để user bấm nút rồi mới biết.
+  // ĐỂ NGOÀI orderInfoJSX vì khối đó chỉ hiện từ sm trở lên — công nhân dùng ĐIỆN THOẠI/PDA là
+  // chính, giấu lý do trên mobile = họ thấy nút mờ mà không biết vì sao (đúng lỗi đã sửa 02/08
+  // cho rule cổng/cân, đợt kiểm vòng 2 bắt lại ở đây).
+  const inertBannerJSX = inertReason ? (
+    <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${gdo.plan_dropped ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+      <div>
+        <div className="font-semibold">{gdo.plan_dropped ? 'Chuyến đã ngừng hoạt động' : 'Chuyến đang chờ dữ liệu SAP'}</div>
+        <div className="mt-0.5">{inertReason}</div>
+      </div>
+    </div>
+  ) : null
   const orderInfoJSX = (
     <div className="space-y-1">
-      {/* Chuyến bất động: nói NGAY lý do + cách gỡ, đừng để user bấm nút rồi mới biết */}
-      {inertReason && (
-        <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${gdo.plan_dropped ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">{gdo.plan_dropped ? 'Chuyến đã ngừng hoạt động' : 'Chuyến đang chờ dữ liệu SAP'}</div>
-            <div className="mt-0.5">{inertReason}</div>
-          </div>
-        </div>
-      )}
       {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
       <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
         <span className="flex items-center gap-1">
@@ -2058,6 +2061,7 @@ export default function OutboundDetail() {
               {npp && <span className="truncate">{npp}</span>}
             </div>
           )}
+          {inertBannerJSX}
           <div className="hidden sm:block">{orderInfoJSX}</div>
 
           {/* MOBILE: rule cổng/cân + vết duyệt LUÔN hiện (user chốt 02/08) — trước đây nằm trong

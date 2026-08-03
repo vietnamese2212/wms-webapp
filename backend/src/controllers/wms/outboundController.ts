@@ -2937,6 +2937,14 @@ async function applyAwaitingState(
       await supabase.from('GroupDeliveryOrder')
         .update({ awaiting_sap: true, awaiting_dos: a.dos, plan_dropped: false, plan_dropped_at: null, updated_at: t })
         .eq('id', g.id)
+      // Chuyến ĐANG NGỪNG mà kế hoạch có lại NHƯNG vẫn thiếu dữ liệu SAP: vẫn phải ghi vết "hết
+      // ngừng" — nếu không, sổ chỉ có "NGỪNG HOẠT ĐỘNG" rồi im, người đọc không biết kế hoạch đã
+      // quay lại lúc nào (nhánh (2) bên dưới bỏ qua xe còn chờ nên không ghi hộ được).
+      if (prev.get(gc)?.dropped) {
+        events.push({ group_code: gc, gdo_id: g.id, event_type: 'PLAN_VEHICLE_REOPENED', source: 'PLAN', actor,
+          detail: 'Kế hoạch xuất có lại dòng cho Số xe này — chuyến hết NGỪNG HOẠT ĐỘNG (vẫn chờ dữ liệu SAP)' })
+        out.reopened++
+      }
       if (!prev.get(gc)?.awaiting)
         events.push({ group_code: gc, gdo_id: g.id, event_type: 'AWAITING_SET', source: 'PLAN', actor,
           new_value: a.dos.join(', '), detail: `Chuyến chờ dữ liệu SAP — thiếu DO: ${a.dos.join(', ')}` })

@@ -28,7 +28,7 @@ const WH = FIX.WH_QTY                       // kho QTY: xuất được bằng "
 const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_9${n}`   // đuôi PHẢI là số (validateGroupCode)
 const DO_A = 'QAAWDO001', DO_B = 'QAAWDO002'
-const ALL_GC = [GC(1), GC(2), GC(3), GC(4)]
+const ALL_GC = [GC(1), GC(2), GC(3), GC(4), GC(5)]
 
 async function cleanup() {
   const gs = await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${ALL_GC.join(',')})`)
@@ -215,6 +215,34 @@ if (g2c) {
   check('8b. Chuyến KHỚP kế hoạch sau đua (tự chữa khi kế hoạch đổi giữa chừng)',
     lines8.length === 2 && gotQty === 197, `dòng KH=${lines8.length} SL chuyến=${gotQty} kỳ vọng=197`)
   await restWrite('erp_outbound_orders', 'DELETE', 'od_number=in.(QAAWDO901,QAAWDO902)')
+}
+
+// ── 9. Chuyến CHỜ bị BỎ rồi kế hoạch CÓ LẠI mà VẪN thiếu dữ liệu SAP ─────────
+// Trạng thái đúng thôi chưa đủ: sổ phải ghi cả "hết ngừng hoạt động", không thì người đọc chỉ
+// thấy "NGỪNG" rồi im, không biết kế hoạch quay lại lúc nào (bắt được ở đợt kiểm vòng 2, 03/08).
+{
+  const GC9 = GC(5), DO9 = 'QAAWDO905'
+  const r9a = await api('/external/khvc', 'POST', { group_code: GC9, do_no: DO9, npp: 'QA AWAIT NPP',
+    export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  check('9a. Tạo chuyến CHỜ (DO chưa có trong VL06O)', r9a.s === 201, `http=${r9a.s}`)
+  const g9 = await gdoOf(GC9)
+  const l9 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC9}`))[0]
+  if (l9) await api(`/external/khvc/${l9.id}`, 'DELETE')
+  const g9b = await gdoOf(GC9)
+  check('9b. Bỏ kế hoạch của chuyến đang CHỜ → NGỪNG HOẠT ĐỘNG', !!g9b && g9b.plan_dropped === true,
+    `plan_dropped=${g9b?.plan_dropped}`)
+  await api('/external/khvc', 'POST', { group_code: GC9, do_no: DO9, npp: 'QA AWAIT NPP',
+    export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  const g9c = await gdoOf(GC9)
+  check('9c. Kế hoạch có lại → hết NGỪNG nhưng VẪN CHỜ (dữ liệu SAP chưa về)',
+    !!g9c && g9c.plan_dropped === false && g9c.awaiting_sap === true,
+    `plan_dropped=${g9c?.plan_dropped} awaiting=${g9c?.awaiting_sap}`)
+  check('9d. Giữ nguyên bản ghi chuyến qua cả 2 lần đổi trạng thái', !!g9c && !!g9 && g9c.id === g9.id,
+    `${g9?.id} → ${g9c?.id}`)
+  const ev9 = (await restAll('outbound_events', `select=event_type&group_code=eq.${GC9}`)).map(e => e.event_type)
+  check('9e. Sổ ghi ĐỦ cả "ngừng" lẫn "hết ngừng"',
+    ev9.includes('PLAN_VEHICLE_DROPPED') && ev9.includes('PLAN_VEHICLE_REOPENED'), ev9.join(','))
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${DO9}`).catch(() => {})
 }
 
 // ── 6. Sổ lịch sử ghi đủ vết ─────────────────────────────────────────────────

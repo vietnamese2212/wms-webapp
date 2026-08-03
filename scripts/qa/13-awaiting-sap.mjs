@@ -28,7 +28,7 @@ const WH = FIX.WH_QTY                       // kho QTY: xuất được bằng "
 const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_9${n}`   // đuôi PHẢI là số (validateGroupCode)
 const DO_A = 'QAAWDO001', DO_B = 'QAAWDO002'
-const ALL_GC = [GC(1), GC(2), GC(3)]
+const ALL_GC = [GC(1), GC(2), GC(3), GC(4)]
 
 async function cleanup() {
   const gs = await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${ALL_GC.join(',')})`)
@@ -153,6 +153,60 @@ if (g2c) {
   check('5d. Xóa hàng loạt cũng bị chặn', bulk.s === 200 && (bulk.j?.data?.deleted ?? 0) === 0 && blockedN === 1,
     `http=${bulk.s} deleted=${bulk.j?.data?.deleted} blocked=${blockedN}`)
   await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g2c.id}`, { status: 'PENDING', started_at: null, updated_at: t() })
+}
+
+// ── 7. ĐƯỜNG UPLOAD phải cho ra CÙNG trạng thái đường sửa kế hoạch (đợt kiểm 03/08) ──
+// Bug thật: uploadKhvc từng dựng dòng hàng cho PHẦN ĐÃ BIẾT của xe còn thiếu DO ⇒ cùng một file
+// upload lại cho ra kết quả KHÁC, chuyến chờ hiện kế hoạch một nửa như thật.
+{
+  let XLSX = null
+  try { XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default ?? await import('../../backend/node_modules/xlsx/xlsx.mjs') }
+  catch { console.log('  ⚠ bỏ qua 7a/7b: chưa cài dependency backend (xlsx) — chạy `npm i` trong backend') }
+  if (XLSX) {
+    const GC7 = GC(3)
+    const rows = [
+      { 'Số xe': GC7, 'DO': DO_B, 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName },
+      { 'Số xe': GC7, 'DO': 'QAAWDO404', 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName },
+    ]
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'KHVC')
+    const fd = new FormData()
+    fd.append('file', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })]), 'khvc.xlsx')
+    const tok = await (async () => {
+      const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+      return (await r.json())?.data?.token
+    })()
+    const up = await fetch(`${BASE}/api/wms/outbound/upload-khvc`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })
+    const g7 = await gdoOf(GC7)
+    const its7 = g7 ? await itemsOf(g7.id) : []
+    check('7a. Upload file có xe thiếu 1 DO → vẫn nhận file', up.status === 200 || up.status === 201, `http=${up.status}`)
+    check('7b. Xe thiếu DO qua đường UPLOAD cũng là chuyến VỎ (0 dòng hàng) — khớp đường sửa kế hoạch',
+      !!g7 && g7.awaiting_sap === true && its7.length === 0, `awaiting=${g7?.awaiting_sap} items=${its7.length}`)
+  }
+}
+
+// ── 8. ĐUA: 2 người cùng thêm DO vào MỘT xe → kế hoạch và chuyến phải khớp ───
+// Bug thật (đo 03/08): lượt đọc trước-ghi sau dựng chuyến theo bản kế hoạch CŨ rồi đứng im.
+// Dùng xe SẠCH (chưa Bắt đầu): chuyến ĐANG XUẤT vốn KHÔNG bị kế hoạch tự đụng — đó là luật khác.
+{
+  const GC8 = GC(4)
+  await seedRaw('QAAWDO901', 120)
+  await seedRaw('QAAWDO902', 77)
+  const rSeed = await addLine(GC8, 'QAAWDO901')
+  const ids8 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC8}`)).map(r => r.id)
+  const [r1, r2] = await Promise.all([
+    addLine(GC8, 'QAAWDO902'),
+    api('/external/khvc/bulk-date', 'POST', { ids: ids8, export_date: today }),
+  ])
+  const g8 = await gdoOf(GC8)
+  const its8 = g8 ? await itemsOf(g8.id) : []
+  const lines8 = await restAll('khvc_lines', `select=do_no&group_code=eq.${GC8}`)
+  const gotQty = its8.reduce((s, i) => s + Number(i.cartons_ordered ?? 0), 0)
+  check('8a. Đua sửa kế hoạch: không 500', rSeed.s === 201 && r1.s < 500 && r2.s < 500, `${rSeed.s}/${r1.s}/${r2.s}`)
+  check('8b. Chuyến KHỚP kế hoạch sau đua (tự chữa khi kế hoạch đổi giữa chừng)',
+    lines8.length === 2 && gotQty === 197, `dòng KH=${lines8.length} SL chuyến=${gotQty} kỳ vọng=197`)
+  await restWrite('erp_outbound_orders', 'DELETE', 'od_number=in.(QAAWDO901,QAAWDO902)')
 }
 
 // ── 6. Sổ lịch sử ghi đủ vết ─────────────────────────────────────────────────

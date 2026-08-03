@@ -96,6 +96,7 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
   const orderByCode = new Map((orders ?? []).map(o => [o.order_code, o]))
 
   const events: Parameters<typeof logOutboundEvents>[0] = []
+  const dropList: { orderId: string; gc: string; gdoId: string }[] = []
 
   for (const gc of gcs) {
     const g = gdoByGc.get(gc)
@@ -122,22 +123,10 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
       updated_by: actor, updated_at: t,
     }
 
-    // ── Xe bị bỏ khỏi kế hoạch → ngừng hiệu lực + NHẢ khung giờ ──
+    // ── Xe bị bỏ khỏi kế hoạch → ngừng hiệu lực + NHẢ khung giờ (gom xử theo LÔ ở dưới) ──
     if (g.plan_dropped) {
-      if (!existing) continue
-      if (existing.plan_dropped) continue                    // đã xử lý lượt trước
-      const released = await releaseSlotsOf(existing.id, actor)
-      out.slots_released += released
-      await supabase.from('TmsOrder')
-        .update({ plan_dropped: true, plan_dropped_at: t, origin: 'KHVC', updated_by: actor, updated_at: t })
-        .eq('id', existing.id)
-      out.dropped++
-      events.push({
-        group_code: gc, gdo_id: g.id, event_type: 'TMS_PLAN_DROPPED', source: 'PLAN', actor,
-        detail: released > 0
-          ? `Kế hoạch bỏ Số xe này — lệnh vận chuyển ngừng hiệu lực và ĐÃ NHẢ ${released} khung giờ cho xe khác`
-          : 'Kế hoạch bỏ Số xe này — lệnh vận chuyển ngừng hiệu lực (chưa đặt khung giờ nào)',
-      })
+      if (!existing || existing.plan_dropped) continue        // chưa có lệnh / đã xử lượt trước
+      dropList.push({ orderId: existing.id, gc, gdoId: g.id })
       continue
     }
 
@@ -184,24 +173,48 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     }
   }
 
+  // ── LÔ: bỏ hàng loạt (điều vận bỏ cả ngày) ──────────────────────────────────
+  // Nhả khung giờ vẫn phải đi TỪNG dòng xe qua RPC nguyên tử (đếm chỗ không được ghi tay), nhưng
+  // chạy song song có TRẦN — pool PostgREST ~10 khe, bắn hết cùng lúc là tự chặn chính mình.
+  if (dropList.length) {
+    const orderIds = dropList.map(d => d.orderId)
+    const slotRows: SlotRow[] = []
+    for (let i = 0; i < orderIds.length; i += 300) {
+      const { data } = await supabase.from('TmsVehicleSlot')
+        .select('id, order_id, slot_id, status, license_plate').in('order_id', orderIds.slice(i, i + 300))
+      slotRows.push(...((data ?? []) as SlotRow[]))
+    }
+    const booked = slotRows.filter(s => s.slot_id)
+    const releasedByOrder = new Map<string, number>()
+    for (let i = 0; i < booked.length; i += 8) {
+      const batch = booked.slice(i, i + 8)
+      const oks = await Promise.all(batch.map(async s => {
+        const { error } = await supabase.rpc('book_vehicle_slot', {
+          p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor,
+        })
+        if (error) { console.error('[tmsPlanSync] nhả khung giờ:', error.message); return null }
+        return s.order_id
+      }))
+      for (const oid of oks) if (oid) releasedByOrder.set(oid, (releasedByOrder.get(oid) ?? 0) + 1)
+    }
+    out.slots_released = [...releasedByOrder.values()].reduce((a, b) => a + b, 0)
+    for (let i = 0; i < orderIds.length; i += 300) {
+      await supabase.from('TmsOrder')
+        .update({ plan_dropped: true, plan_dropped_at: t, origin: 'KHVC', updated_by: actor, updated_at: t })
+        .in('id', orderIds.slice(i, i + 300))
+    }
+    out.dropped = dropList.length
+    for (const d of dropList) {
+      const n = releasedByOrder.get(d.orderId) ?? 0
+      events.push({
+        group_code: d.gc, gdo_id: d.gdoId, event_type: 'TMS_PLAN_DROPPED', source: 'PLAN', actor,
+        detail: n > 0
+          ? `Kế hoạch bỏ Số xe này — lệnh vận chuyển ngừng hiệu lực và ĐÃ NHẢ ${n} khung giờ cho xe khác`
+          : 'Kế hoạch bỏ Số xe này — lệnh vận chuyển ngừng hiệu lực (chưa đặt khung giờ nào)',
+      })
+    }
+  }
+
   await logOutboundEvents(events)
   return out
-}
-
-// Nhả MỌI khung giờ đã đặt của lệnh — đi ĐÚNG đường nguyên tử `book_vehicle_slot(new_slot=NULL)`
-// như nút "Trả lại" của người dùng, để `booked_count` của khung giờ không lệch (bài học
-// tms-slot-booking-atomic: ghi tay slot_id=null làm bộ đếm chỗ trôi dần).
-async function releaseSlotsOf(orderId: string, actor: string): Promise<number> {
-  const { data } = await supabase.from('TmsVehicleSlot')
-    .select('id, order_id, slot_id, status, license_plate').eq('order_id', orderId)
-  const slots = ((data ?? []) as SlotRow[]).filter(s => s.slot_id)
-  let n = 0
-  for (const s of slots) {
-    const { error } = await supabase.rpc('book_vehicle_slot', {
-      p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor,
-    })
-    if (error) { console.error('[tmsPlanSync] nhả khung giờ:', error.message); continue }
-    n++
-  }
-  return n
 }

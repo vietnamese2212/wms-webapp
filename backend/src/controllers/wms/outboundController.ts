@@ -3874,29 +3874,46 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   if (emptyGcs.length) {
     const gdos = await fetchAllByIdChunks(emptyGcs, c => supabase.from('GroupDeliveryOrder')
       .select('id, group_code, status, started_at, plan_dropped').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null; plan_dropped: boolean }[]
+    // GOM TRUY VẤN theo LÔ, không lặp từng xe: điều vận bỏ cả ngày là chuyện thật (đo 03/08 —
+    // bản lặp từng xe tốn ~0,23s/xe ⇒ 250 xe là chạm trần 60s của Vercel, chết giữa chừng).
+    const openOnes = gdos.filter(g => (g.status === 'PENDING' || g.status === 'PAUSED') && !g.plan_dropped)
     for (const g of gdos) {
-      if (g.status === 'PENDING' || g.status === 'PAUSED') {
-        const { data: gDos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', g.id)
-        const doIds = ((gDos ?? []) as { id: string }[]).map(d => d.id)
-        const scans = doIds.length
-          ? await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem').select('id, cartons_scanned').in('do_id', c).order('id')) as { cartons_scanned: number }[]
-          : []
-        if (scans.some(s => Number(s.cartons_scanned) > 0)) {
-          mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐÃ CÓ HÀNG QUÉT — xác nhận trả hàng rồi xử tay (chuyến không tự xóa).')
-          report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
-          continue
-        }
-        if (g.plan_dropped) { report.push({ group_code: g.group_code, action: 'already_dropped' }); continue }
-        await releaseScansForDOs(doIds)   // nhả tồn nhặt lẻ đã giữ chỗ (chuyến bất động không được ôm tồn)
-        await supabase.from('GroupDeliveryOrder')
-          .update({ plan_dropped: true, plan_dropped_at: t, awaiting_sap: false, awaiting_dos: null, updated_by: actor, updated_at: t })
-          .eq('id', g.id)
-        events.push({ group_code: g.group_code, gdo_id: g.id, event_type: 'PLAN_VEHICLE_DROPPED', source: 'PLAN', actor,
-          detail: 'Kế hoạch xuất không còn dòng nào cho Số xe này — chuyến ngừng hoạt động (giữ lại để tra cứu, không xóa)' })
-        report.push({ group_code: g.group_code, action: 'plan_dropped', reason: 'kế hoạch không còn dòng nào' })
-      } else {
+      if (g.status !== 'PENDING' && g.status !== 'PAUSED') {
         mkTask(g, `Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến đang ${g.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT'} — chỉ đối soát/xử tay.`)
         report.push({ group_code: g.group_code, action: 'task', reason: g.status })
+      } else if (g.plan_dropped) report.push({ group_code: g.group_code, action: 'already_dropped' })
+    }
+    if (openOnes.length) {
+      const allDos = await fetchAllByIdChunks(openOnes.map(g => g.id), c => supabase.from('OutboundDelivery')
+        .select('id, gdo_id').in('gdo_id', c).order('id')) as { id: string; gdo_id: string }[]
+      const gdoByDo = new Map((allDos ?? []).map(d => [d.id, d.gdo_id]))
+      const allItems = allDos.length
+        ? await fetchAllByIdChunks(allDos.map(d => d.id), c => supabase.from('OutboundItem')
+            .select('do_id, cartons_scanned').in('do_id', c).order('id')) as { do_id: string; cartons_scanned: number }[]
+        : []
+      const scannedGdos = new Set<string>()
+      for (const it of (allItems ?? [])) if (Number(it.cartons_scanned) > 0) {
+        const gid = gdoByDo.get(it.do_id); if (gid) scannedGdos.add(gid)
+      }
+      const toDrop = openOnes.filter(g => !scannedGdos.has(g.id))
+      for (const g of openOnes.filter(g => scannedGdos.has(g.id))) {
+        mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐÃ CÓ HÀNG QUÉT — xác nhận trả hàng rồi xử tay (chuyến không tự xóa).')
+        report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
+      }
+      if (toDrop.length) {
+        const dropIds = new Set(toDrop.map(g => g.id))
+        const doIds = (allDos ?? []).filter(d => dropIds.has(d.gdo_id)).map(d => d.id)
+        await releaseScansForDOs(doIds)   // nhả tồn nhặt lẻ đã giữ chỗ (chuyến bất động không được ôm tồn)
+        for (let i = 0; i < toDrop.length; i += 300) {
+          await supabase.from('GroupDeliveryOrder')
+            .update({ plan_dropped: true, plan_dropped_at: t, awaiting_sap: false, awaiting_dos: null, updated_by: actor, updated_at: t })
+            .in('id', toDrop.slice(i, i + 300).map(g => g.id))
+        }
+        for (const g of toDrop) {
+          events.push({ group_code: g.group_code, gdo_id: g.id, event_type: 'PLAN_VEHICLE_DROPPED', source: 'PLAN', actor,
+            detail: 'Kế hoạch xuất không còn dòng nào cho Số xe này — chuyến ngừng hoạt động (giữ lại để tra cứu, không xóa)' })
+          report.push({ group_code: g.group_code, action: 'plan_dropped', reason: 'kế hoạch không còn dòng nào' })
+        }
       }
     }
   }

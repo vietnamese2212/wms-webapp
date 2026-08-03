@@ -137,6 +137,97 @@ if (!HAS_DB) {
   }
 }
 
+// ── Tầng 4: chuyến chở LẪN — user CHỈ có 1 loại phải XEM ĐƯỢC HẾT (user chốt 03/08) ──
+// Tầng 3 chỉ chứng minh chuyến LỌT danh sách ở tầng RPC. Câu hỏi thật của người dùng là "user chỉ
+// có quyền FG01 mà đơn ghép FG01+FG02 thì có xem được HẾT không — tôi muốn xem được": tức phải MỞ
+// được chi tiết VÀ thấy ĐỦ MỌI DÒNG HÀNG (kể cả dòng thuộc loại ngoài quyền). Xe là 1 phương tiện
+// vật lý không tách được — ẩn bớt dòng hàng thì người quét tưởng kế hoạch chỉ có thế và XUẤT THIẾU.
+// Dựng user scope THẬT (JWT mang allowed_categories) rồi gọi API thật; so số dòng với admin.
+if (!HAS_DB) {
+  warn('bỏ qua tầng 4 (không có key DB)')
+} else {
+  const T4 = 'QAPERM4'
+  const DAY4 = '2026-12-23'
+  const clean4 = async () => {
+    for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=like.*${T4}*`)) {
+      for (const d of await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)) {
+        await restWrite('OutboundItem', 'DELETE', `do_id=eq.${d.id}`).catch(() => {})
+        await restWrite('OutboundDelivery', 'DELETE', `id=eq.${d.id}`)
+      }
+      await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
+    }
+    for (const e of await restAll('Employee', `select=id&employee_code=like.*${T4}*`)) {
+      await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`).catch(() => {})
+      await restWrite('Employee', 'DELETE', `id=eq.${e.id}`)
+    }
+    for (const j of await restAll('JobTitle', `select=id&name=like.*${T4}*`)) await restWrite('JobTitle', 'DELETE', `id=eq.${j.id}`)
+  }
+  try {
+    const bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m).catch(() => null)
+    const cats = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order')).map(x => x.value)
+    const mats = []
+    for (const c of cats.slice(0, 2)) {
+      const m = (await restAll('Material', `select=material_code&category=eq.${c}&limit=1`))[0]
+      if (m) mats.push({ code: m.material_code, cat: c })
+    }
+    if (!bcrypt) warn('bỏ qua tầng 4 (không load được bcrypt của backend — chạy `npm i` trong backend)')
+    else if (mats.length < 2) warn('bỏ qua tầng 4 (danh mục không có đủ 2 loại kho kèm mã hàng)')
+    else {
+      await clean4()
+      const { randomUUID } = await import('crypto')
+      const now = () => new Date().toISOString()
+      const gid = randomUUID(), did = randomUUID(), jid = randomUUID(), eid = randomUUID()
+      const pw = 'Qa' + randomUUID().slice(0, 10) + '!'      // dùng 1 lần, không in ra
+      await restWrite('GroupDeliveryOrder', 'POST', '', [{
+        id: gid, group_code: `${T4}-MIX`, planned_date: DAY4, delivery_date: DAY4, status: 'PENDING',
+        warehouse_id: FIX.WH_QR.id, warehouse_type: `${mats[0].cat}+${mats[1].cat}`, dvvt: FIX.DVVT_TAG, updated_at: now(),
+      }])
+      await restWrite('OutboundDelivery', 'POST', '', [{
+        id: did, gdo_id: gid, delivery_code: `${T4}-DO`, distributor_name: `${T4} NPP`, status: 'PENDING', updated_at: now(),
+      }])
+      await restWrite('OutboundItem', 'POST', '', mats.map(m => ({
+        id: randomUUID(), do_id: did, material_code_raw: m.code, cartons_ordered: 10,
+        cartons_scanned: 0, loose_picking: 0, status: 'PENDING', updated_at: now(),
+      })))
+      await restWrite('JobTitle', 'POST', '', [{ id: jid, name: `${T4} chuc danh`, module_permissions: { outbound: ['view'] }, updated_at: now() }])
+      await restWrite('Employee', 'POST', '', [{
+        id: eid, employee_code: `${T4}01`, name: `${T4} nv`, email: `${T4.toLowerCase()}01@test.local`,
+        password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: FIX.WH_QR.id,
+        warehouse_scope: 'ASSIGNED', allowed_categories: [mats[0].cat], updated_at: now(),
+      }])
+      await restWrite('UserWarehouseAccess', 'POST', '', [{ id: randomUUID(), employee_id: eid, warehouse_id: FIX.WH_QR.id }])
+
+      const { BASE } = await import('./lib.mjs')
+      const lr = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: `${T4.toLowerCase()}01@test.local`, password: pw }) })
+      const lj = await lr.json()
+      const tk = lj?.data?.token
+      chk(!!tk && JSON.stringify(lj.data.user.allowed_categories) === JSON.stringify([mats[0].cat]),
+        `tầng 4: user test chỉ có loại ${mats[0].cat}`, `http=${lr.status}`)
+      if (tk) {
+        const get = async p => {
+          const r = await fetch(`${BASE}/api${p}`, { headers: { Authorization: `Bearer ${tk}` } })
+          let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
+          return { s: r.status, j }
+        }
+        const list = await get(`/wms/outbound?date_from=${DAY4}&date_to=${DAY4}&page=1&page_size=50`)
+        const rows = list.j?.data?.rows ?? list.j?.data?.items ?? []
+        chk(rows.some(r => r.id === gid), `chuyến ghép ${mats[0].cat}+${mats[1].cat} LỌT danh sách của user 1 loại`, `http=${list.s}`)
+        const det = await get(`/wms/outbound/${gid}`)
+        chk(det.s === 200, 'user 1 loại MỞ ĐƯỢC chi tiết chuyến ghép', `http=${det.s}`)
+        const items = (det.j?.data?.delivery_orders ?? []).flatMap(d => d.items ?? [])
+        chk(items.length === 2 && items.some(i => (i.material_code_raw ?? '') === mats[1].code),
+          'user 1 loại thấy ĐỦ dòng hàng — kể cả dòng thuộc loại NGOÀI quyền (ẩn bớt = xuất thiếu)',
+          `thấy ${items.length}/2: ${JSON.stringify(items.map(i => i.material_code_raw))}`)
+      }
+    }
+  } catch (e) {
+    chk(false, 'tầng 4 (xem hết dòng hàng chuyến ghép) chạy lỗi', String(e).slice(0, 200))
+  } finally {
+    await clean4().catch(() => {})
+  }
+}
+
 console.log(`\n[PERM-COVERAGE] ${pass}/${pass + fail} PASS${warns ? ` · ${warns} cảnh báo` : ''}${fail ? ` · ${fail} FAIL` : ''}`)
 // KHÔNG process.exit() ở đây: trên Windows, exit cưỡng bức ngay sau fetch HTTPS làm libuv assert
 // (exit code 127 bẩn). Đặt exitCode rồi để event-loop tự cạn — socket undici đã unref, thoát sạch.

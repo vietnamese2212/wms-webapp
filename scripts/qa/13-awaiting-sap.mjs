@@ -42,6 +42,11 @@ async function cleanup() {
     }
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
   }
+  // Lệnh vận chuyển TỰ SINH theo Số xe (03/08) — dọn kẻo để lại rác giữa các lượt chạy
+  for (const o of await restAll('TmsOrder', `select=id&order_code=in.(${ALL_GC.join(',')})`)) {
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
+  }
   await restWrite('outbound_events', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`).catch(() => {})
   await restWrite('reconcile_tasks', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`).catch(() => {})
   await restWrite('khvc_lines', 'DELETE', `group_code=in.(${ALL_GC.join(',')})`)

@@ -42,6 +42,14 @@ async function cleanup() {
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=in.${csv}`)
   }
   await restWrite('reconcile_tasks', 'DELETE', `group_code=like.${WH_CODE}*`).catch(() => {})
+  await restWrite('outbound_events', 'DELETE', `group_code=like.${WH_CODE}*`).catch(() => {})
+  // LỆNH VẬN CHUYỂN tự sinh theo Số xe (03/08) — phải dọn TRƯỚC khi xóa kho, không thì FK chặn
+  // (`TmsOrder_warehouse_id_fkey`). Đây là hệ quả của Kế hoạch VC dẫn xuất: cleaner cũ không biết.
+  const tmsOrders = await restAll('TmsOrder', `select=id&order_code=like.${WH_CODE}*`)
+  for (const o of tmsOrders) {
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
+  }
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${WH_CODE}*`)
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QADRVDO*`)
   // pool tồn dựng cho case nhặt lẻ (12c) — xóa theo kho test trước khi xóa kho

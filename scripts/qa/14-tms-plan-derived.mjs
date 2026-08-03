@@ -27,7 +27,7 @@ const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_7${n}`
 const ALL_GC = [GC(1), GC(2)]
 const DO_A = 'QATMSDO01', DO_B = 'QATMSDO02'
-const SLOT_TAG = 'QA-TMS-DERIVED'
+const SLOT_TIME = '23:00:00'   // khung giờ test tự tạo (DeliverySlot không có cột ghi chú → nhận diện bằng giờ+ngày+kho)
 
 async function cleanup() {
   for (const gc of ALL_GC) {
@@ -47,7 +47,7 @@ async function cleanup() {
     await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gc}`)
   }
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
-  await restWrite('DeliverySlot', 'DELETE', `note=eq.${SLOT_TAG}`).catch(() => {})
+  await restWrite('DeliverySlot', 'DELETE', `date=eq.${today}&time_from=eq.${SLOT_TIME}&warehouse_id=eq.${WH.id}`).catch(() => {})
 }
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -80,11 +80,13 @@ check('1d. Lệnh có sẵn 1 dòng xe để đặt khung giờ', s1.length === 
 // ── 2. Đặt khung giờ rồi SỬA DO → lệnh + khung giờ GIỮ NGUYÊN ────────────────
 // Khung giờ test tự tạo (không đụng khung thật), sức chứa 2 xe
 const slotId = randomUUID()
+const vtId = (await restAll('VehicleType', 'select=id&is_active=eq.true&order=name&limit=1'))[0]?.id
 await restWrite('DeliverySlot', 'POST', null, {
-  id: slotId, date: today, time_from: '23:00:00', time_to: '23:59:00', direction: 'OUTBOUND',
-  warehouse_id: WH.id, max_vehicles: 2, booked_count: 0, note: SLOT_TAG, updated_at: t(),
+  id: slotId, date: today, time_from: SLOT_TIME, time_to: '23:59:00', direction: 'OUTBOUND',
+  vehicle_type_id: vtId, cargo_type: 'ALL', warehouse_id: WH.id,
+  max_vehicles: 2, booked_count: 0, status: 'OPEN', created_at: t(), updated_at: t(),
 })
-const bookRes = s1[0] ? await api(`/tms/vehicle-slots/${s1[0].id}/book`, 'PATCH', { slot_id: slotId, license_plate: 'QATMS111' }) : { s: 0 }
+const bookRes = s1[0] ? await api(`/tms/vehicle-slots/${s1[0].id}`, 'PATCH', { slot_id: slotId, license_plate: 'QATMS111' }) : { s: 0 }
 const slotAfterBook = (await restAll('DeliverySlot', `select=booked_count&id=eq.${slotId}`))[0]
 check('2a. Đặt được khung giờ cho lệnh tự sinh', bookRes.s === 200 && Number(slotAfterBook?.booked_count) === 1,
   `http=${bookRes.s} booked=${slotAfterBook?.booked_count} ${bookRes.j?.error?.message ?? ''}`)
@@ -124,10 +126,10 @@ check('4b. KHÔNG tự đặt lại khung giờ (phải booking lại — user c
 
 // ── 5. Lệnh tự sinh không sửa/xóa tay + nhận nuôi lệnh có sẵn ────────────────
 if (o1d) {
-  const upd = await api(`/tms/orders/${o1d.id}`, 'PUT', { date: today, vehicle_type: vehTypeName })
+  const upd = await api(`/tms/orders/${o1d.id}`, 'PATCH', { date: today, vehicle_type: vehTypeName })
   check('5a. Sửa tay trường dẫn xuất → 422 TMS_PLAN_DERIVED',
     upd.s === 422 && upd.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${upd.s} code=${upd.j?.error?.code}`)
-  const note = await api(`/tms/orders/${o1d.id}`, 'PUT', { notes: 'ghi chú điều vận' })
+  const note = await api(`/tms/orders/${o1d.id}`, 'PATCH', { notes: 'ghi chú điều vận' })
   check('5b. Ghi chú/ưu tiên VẪN sửa được (đồng bộ không đụng tới)', note.s === 200, `http=${note.s}`)
   const del = await api(`/tms/orders/${o1d.id}`, 'DELETE')
   check('5c. Xóa tay lệnh tự sinh → 422 (bỏ ở Kế hoạch xuất mới đúng)',

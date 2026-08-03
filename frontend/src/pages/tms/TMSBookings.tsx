@@ -3434,14 +3434,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                             </TableCell>
                             <TableCell className="px-2 py-1 truncate" title={o.order_code}>
                               <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
-                              {/* Lệnh dẫn xuất từ Kế hoạch xuất: nói rõ để điều vận biết sửa ở đâu (03/08) */}
-                              {o.plan_dropped ? (
-                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold"
+                              {/* Lệnh ngừng hiệu lực vì kế hoạch bỏ xe — chỉ đánh dấu trạng thái, không badge nguồn (03/08 vòng 2) */}
+                              {o.plan_dropped && (
+                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold whitespace-nowrap"
                                   title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
-                              ) : o.origin === 'KHVC' ? (
-                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-sky-100 text-sky-700 font-semibold"
-                                  title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất, lệnh tự cập nhật theo">Từ KH xuất</span>
-                              ) : null}
+                              )}
                             </TableCell>
                           </TableRow>
                         )
@@ -3608,14 +3605,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             <span className="text-sm font-mono font-bold text-slate-800">{order.order_code || 'Chi tiết đơn'}</span>
             {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
             {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
-            {/* Nguồn lệnh: dẫn xuất từ Kế hoạch xuất thì sửa ở NGUỒN, luồng cũ (Excel/tạo tay) sửa tại đây */}
+            {/* Nguồn lệnh (user chốt 03/08 vòng 2): TỪ Kế hoạch xuất = mặc định, KHÔNG badge;
+                chỉ đánh dấu nguồn KHÁC "(Excel)" + trạng thái "KH đã bỏ" */}
             {order.plan_dropped ? (
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600"
                 title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả">KH đã bỏ</span>
-            ) : order.origin === 'KHVC' ? (
-              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700"
-                title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất (hoặc VL06O), lệnh tự cập nhật theo">Từ KH xuất</span>
-            ) : order.source_type !== 'TRANSFER' ? (
+            ) : order.origin !== 'KHVC' && order.source_type !== 'TRANSFER' ? (
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
                 title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
             ) : null}
@@ -4423,19 +4418,15 @@ export default function TMSBookings() {
                           <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
                         {order.order_code || <span className="text-slate-400 font-normal">—</span>}
-                        {/* Badge NGUỒN trên DÒNG RIÊNG (block) — cột kéo giãn `table-fixed` + overflow-hidden
-                            nên badge nối đuôi mã xe bị CHE khi cột hẹp (user báo 03/08: "không thể hiện gì") */}
-                        <span className={`block w-fit mt-0.5 px-1 py-0.5 rounded-full font-sans font-semibold text-[9px] ${
-                          order.plan_dropped ? 'bg-slate-200 text-slate-600'
-                          : order.origin === 'KHVC' ? 'bg-sky-100 text-sky-700'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'}`}
-                          title={order.plan_dropped
-                            ? 'Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác'
-                            : order.origin === 'KHVC'
-                              ? 'Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất (hoặc VL06O), lệnh tự cập nhật theo'
-                              : 'Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây'}>
-                          {order.plan_dropped ? 'KH đã bỏ' : order.origin === 'KHVC' ? 'Từ KH xuất' : '(Excel)'}
-                        </span>
+                        {/* Badge nguồn INLINE sau mã, không wrap (user chốt 03/08 vòng 2): lệnh TỪ KẾ HOẠCH
+                            XUẤT là mặc định → KHÔNG badge; chỉ đánh dấu nguồn KHÁC "(Excel)" + trạng thái "KH đã bỏ" */}
+                        {order.plan_dropped ? (
+                          <span className="ml-1 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
+                            title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                        ) : order.origin !== 'KHVC' ? (
+                          <span className="ml-1 px-1 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-sans font-semibold text-[9px] whitespace-nowrap"
+                            title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
+                        ) : null}
                       </>
                     ) : (() => {
                       const nextRow = pagedRows[rowIndex + 1]

@@ -3008,6 +3008,8 @@ async function processVehicleGroups(
   preflightExtra?: PreflightExtra[],   // số liệu rủi ro riêng của luồng (KHVC: DO thiếu, chuyến đã có…)
   awaitingByGc?: Map<string, AwaitingGroup>,   // xe còn DO chưa có VL06O → chuyến CHỜ (không chặn file nữa)
   beforeWrite?: () => Promise<void>,           // ghi tầng raw CHỈ khi đã qua validate (kiểm trước khi ghi)
+  planFp?: Map<string, string>,                // vân tay kế hoạch lúc BẮT ĐẦU dội (chống đua — xem planFingerprints)
+  healDepth = 0,                               // chặn đệ quy khi tự dội lại
 ): Promise<Response> {
     // NGUỒN chuyến (user chốt 02/08): KHVC (autoLoosePallet=true) = 'SAP' → khóa sửa phần kế hoạch
     // trên đơn, mọi đổi đi qua VL06O/Kế hoạch xuất; upload kiểu cũ = 'EXCEL' → sửa như cũ (kho không SAP).
@@ -3423,10 +3425,30 @@ async function processVehicleGroups(
       catch (e) { console.error('[processVehicleGroups] đồng bộ Kế hoạch VC:', e) }
     }
 
+    // TỰ CHỮA khi kế hoạch đổi GIỮA CHỪNG (2 người cùng sửa 1 xe / upload đè lúc người kia thêm DO):
+    // so vân tay kế hoạch trước-sau; xe nào đổi thì dội lại đúng xe đó. Không có bước này, chuyến giữ
+    // bản kế hoạch cũ vĩnh viễn cho tới lần sửa kế tiếp (đo T2 trước khi vá: 2/24 xe lệch số lượng).
+    let healed: Record<string, unknown> | null = null
+    if (autoLoosePallet && planFp && planFp.size && healDepth < 2) {
+      try {
+        const fresh = await fetchAllByIdChunks([...planFp.keys()], chunk => supabase.from('khvc_lines')
+          .select('group_code, do_no, export_date, npp, veh_type, dvvt')
+          .in('group_code', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as PlanFpRow[]
+        const nowFp = planFingerprints(fresh ?? [])
+        const drifted = [...planFp.keys()].filter(gc => (nowFp.get(gc) ?? '') !== (planFp.get(gc) ?? ''))
+        if (drifted.length) {
+          // jitter: 2 lượt cùng phát hiện lệch thì không lao vào dội lại cùng lúc (thundering herd)
+          await new Promise(r => setTimeout(r, 60 + Math.floor(Math.random() * 140)))
+          healed = await replanKhvcGroups(req, drifted, healDepth + 1)
+        }
+      } catch (e) { console.error('[processVehicleGroups] tự chữa lệch kế hoạch:', e) }
+    }
+
     return ok(res, {
       created,
       ...(awaitingResult.awaiting || awaitingResult.cleared || awaitingResult.reopened ? { awaiting: awaitingResult } : {}),
       ...(tmsSync && (tmsSync.created || tmsSync.updated || tmsSync.dropped) ? { tms_plan: tmsSync } : {}),
+      ...(healed ? { healed_drift: healed } : {}),
       ...(extraResult ?? {}),
     }, 201)
 }
@@ -3719,6 +3741,26 @@ type KhvcPlanRow = {
   group_code: string; do_no: string; npp: string; export_date: unknown
   veh_type: string; dvvt: string; priority: string; cs: string; note: string
 }
+// DẤU VÂN TAY KẾ HOẠCH của 1 Số xe — dùng để phát hiện "kế hoạch đã đổi TRONG LÚC đang dội xuống".
+// Hai người cùng sửa 1 xe (hoặc upload đè trong lúc người kia thêm DO): lượt chạy sau đọc kế hoạch
+// TRƯỚC khi lượt kia ghi xong ⇒ chuyến dựng theo bản kế hoạch CŨ và đứng im như vậy (đo T2: 2/24 xe
+// lệch số lượng). Kế hoạch trong DB vẫn đúng — chỉ bản dẫn xuất bị cũ, và không có gì tự sửa.
+// Chốt: so vân tay TRƯỚC/SAU khi dội; khác nhau ⇒ dội lại đúng những xe đó (có chặn độ sâu).
+type PlanFpRow = { group_code: string; do_no: string; export_date?: unknown; npp?: string | null; veh_type?: string | null; dvvt?: string | null }
+function planFingerprints(rows: PlanFpRow[]): Map<string, string> {
+  const byGc = new Map<string, string[]>()
+  for (const r of rows) {
+    const gc = String(r.group_code ?? ''); if (!gc) continue
+    const a = byGc.get(gc) ?? []
+    a.push([String(r.do_no ?? ''), String(parseExcelDate(r.export_date) ?? ''),
+            String(r.npp ?? '').trim(), String(r.veh_type ?? '').trim(), String(r.dvvt ?? '').trim()].join('|'))
+    byGc.set(gc, a)
+  }
+  const out = new Map<string, string>()
+  for (const [gc, a] of byGc) out.set(gc, a.sort().join('#'))
+  return out
+}
+
 // Xe còn DO chưa có dữ liệu VL06O → chuyến vẫn được sinh nhưng ở dạng CHỜ (user chốt 03/08).
 // Giữ luôn 1 dòng kế hoạch mẫu của xe để dựng được chuyến vỏ khi CHƯA có DO nào có dữ liệu.
 export type AwaitingGroup = { dos: string[]; plan: KhvcPlanRow }
@@ -3802,7 +3844,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
 //   PENDING/PAUSED chưa quét → ghi đè/merge như re-upload · ĐANG XUẤT/ĐÃ HT → skip + reconcile_task
 //   (không tự đụng chuyến đang chạy — luật "auto chỉ khi chưa đụng") · group hết dòng → xóa chuyến
 //   PENDING chưa quét, còn lại → task. Lỗi replan KHÔNG làm hỏng thao tác CRUD gốc (caller bọc try/catch).
-export async function replanKhvcGroups(req: Request, groupCodes: string[]): Promise<Record<string, unknown>> {
+export async function replanKhvcGroups(req: Request, groupCodes: string[], healDepth = 0): Promise<Record<string, unknown>> {
   const gcs = [...new Set(groupCodes.map(g => String(g ?? '').trim()).filter(Boolean))]
   if (!gcs.length) return { replanned: 0 }
   const actor = req.user?.name || 'KHVC-EDIT'
@@ -3878,7 +3920,7 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
       // res-facade: bắt status+payload của processVehicleGroups thay vì trả thẳng HTTP.
       // req truyền NGUYÊN (cần req.user cho scope guard); các route CRUD không có ?preflight nên chạy thật.
       const facade = { statusCode: 200, payload: null as unknown, status(c: number) { this.statusCode = c; return this }, json(p: unknown) { this.payload = p; return this } }
-      await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true, undefined, awaitingByGc)
+      await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true, undefined, awaitingByGc, undefined, planFingerprints(lines), healDepth)
       derive = { status: facade.statusCode, ...(typeof facade.payload === 'object' && facade.payload ? facade.payload as Record<string, unknown> : { raw: facade.payload }) }
       // Chuyến bị skip (đang xuất/đã hoàn thành) → kế hoạch đổi mà chuyến không nhận được → task.
       // ok() bọc payload {success,data} → created nằm ở data.created
@@ -4088,7 +4130,7 @@ export async function uploadKhvc(req: Request, res: Response) {
       value: `${missingDos.size}: ${[...missingDos].slice(0, 5).join(', ')}${missingDos.size > 5 ? '…' : ''}`, warn: true })
 
     // KHVC/SAP → nhặt lẻ auto theo pallet; preflightExtra = số liệu rủi ro tính ở trên (nếu đang kiểm trước)
-    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra, awaitingByGc, writeKhvcRaw)
+    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra, awaitingByGc, writeKhvcRaw, planFingerprints(khvcRows))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 

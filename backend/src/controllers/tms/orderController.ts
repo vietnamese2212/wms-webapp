@@ -1539,12 +1539,17 @@ export async function getPlanGoods(req: Request, res: Response) {
     const doById = new Map((dos ?? []).map((d: { id: string; delivery_code: string | null; distributor_name: string | null }) => [d.id, d]))
     const lines = (items ?? []).map((it: {
       do_id: string; cartons_ordered: number | null; cartons_scanned: number | null
-      od_refs: string[] | null; material_code_raw: string | null
+      od_refs: unknown[] | null; material_code_raw: string | null
       material: { material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
     }) => {
       const d = doById.get(it.do_id) as { delivery_code: string | null; distributor_name: string | null } | undefined
+      // od_refs = mảng OBJECT {od_number, od_item, qty_base} (liên kết ngược dòng OD) — bóc SỐ DO,
+      // đừng đưa nguyên object lên FE (in ra "[object Object]", bắt được khi verify sống 03/08)
+      const refs = [...new Set(((it.od_refs ?? []) as unknown[])
+        .map(r => typeof r === 'string' ? r : (r as { od_number?: string } | null)?.od_number)
+        .filter(Boolean))] as string[]
       return {
-        do_refs: (it.od_refs?.length ? it.od_refs : [d?.delivery_code]).filter(Boolean),
+        do_refs: (refs.length ? refs : [d?.delivery_code]).filter(Boolean),
         npp: d?.distributor_name ?? null,
         material_code: it.material?.material_code ?? it.material_code_raw,
         material_name: it.material?.short_name ?? null,

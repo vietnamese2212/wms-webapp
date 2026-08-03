@@ -144,6 +144,9 @@ if (o1d) {
   check('5f. API dòng hàng lệnh xuất trả 200 + có dòng theo kế hoạch',
     goods.s === 200 && Array.isArray(goods.j?.data?.lines) && goods.j.data.lines.length > 0,
     `http=${goods.s} lines=${goods.j?.data?.lines?.length}`)
+  // od_refs trong DB là mảng OBJECT — API phải bóc SỐ DO thành chuỗi, không thì FE in "[object Object]"
+  const badRef = (goods.j?.data?.lines ?? []).flatMap(l => l.do_refs ?? []).find(r => typeof r !== 'string')
+  check('5g. Cột DO là CHUỖI số DO (không phải object)', badRef === undefined, JSON.stringify(badRef))
 }
 // Số xe ĐÃ CÓ lệnh tạo tay từ trước → nhận nuôi, KHÔNG tạo trùng
 await restWrite('TmsOrder', 'POST', null, {

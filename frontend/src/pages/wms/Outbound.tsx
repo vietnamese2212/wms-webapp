@@ -39,6 +39,8 @@ import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
+import { tripInert } from '@/utils/outboundInert'
+import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
@@ -558,7 +560,8 @@ export default function Outbound() {
   // từ SAP là dữ liệu BỊ ĐỘNG: ngày sửa ở tab Kế hoạch xuất rồi tự dội xuống (user chốt 02/08) —
   // BE đã chặn 422, nhưng phải khóa từ Ô TÍCH để người dùng không chọn rồi mới bị báo lỗi.
   const canEditGdo = can(perms, 'outbound', 'edit')
-  const canMoveDateOf = (g: GDO) => g.status === 'PENDING' && g.origin !== 'SAP'
+  // Chuyến bất động (chờ SAP / kế hoạch đã bỏ) cũng không chuyển ngày ở đây — sửa ở nguồn
+  const canMoveDateOf = (g: GDO) => g.status === 'PENDING' && g.origin !== 'SAP' && !tripInert(g)
   const pendingIdsOnScreen = useMemo(() => sorted.filter(canMoveDateOf).map(g => g.id), [sorted])
   const allPendingChecked = pendingIdsOnScreen.length > 0 && pendingIdsOnScreen.every(id => checkedIds.has(id))
   function toggleCheckAll() {
@@ -978,9 +981,10 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const rowBg = selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'
+  const inert = tripInert(gdo)
 
   return (
-    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''} ${showBracket && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${showBracket && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${inert ? 'opacity-50' : ''} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''} ${showBracket && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${showBracket && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
       {/* Bookmark + bracket connector nối chuyến chung 1 xe */}
       <TableCell className={`px-1.5 py-1 sticky left-0 z-10 ${rowBg}`} style={{ left: 0 }} onClick={e => e.stopPropagation()}>
         {showBracket && (
@@ -1015,7 +1019,11 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
+        {inert && (
+          <AlertTriangle className={`inline-block h-3 w-3 align-middle mr-1 ${gdo.plan_dropped ? 'text-slate-400' : 'text-amber-500'}`}
+            aria-label={inert} />
+        )}
+        <span className="text-[10px] font-mono font-semibold" title={inert ?? undefined}>{gdo.group_code}</span>
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>

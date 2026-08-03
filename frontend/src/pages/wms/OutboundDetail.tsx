@@ -10,7 +10,7 @@ import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEnt
 import { QtyInput } from '@/components/shared/QtyInput'
 import {
   ArrowLeft, CheckCircle2,
-  Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen,
+  AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
@@ -20,6 +20,8 @@ import { toast }   from '@/components/ui/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { tripInert } from '@/utils/outboundInert'
+import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -1387,6 +1389,7 @@ export default function OutboundDetail() {
   const [bulkErr, setBulkErr] = useState<string | null>(null)
   const [bulkSaving, setBulkSaving] = useState(false)
   const [showQuickExport, setShowQuickExport] = useState(false)   // dialog "Xuất luôn" (nhập biển số) — kho QTY/NONE
+  const [showHistory, setShowHistory] = useState(false)           // hộp thoại "Thông tin" — lịch sử thay đổi chuyến
   const [quickPlate, setQuickPlate] = useState('')
   const [quickErr, setQuickErr] = useState<string | null>(null)
   const [quickErrCode, setQuickErrCode] = useState<string | null>(null)   // WEIGH_REQUIRED / GATE_REQUIRED → hiện hướng dẫn nhờ duyệt trên chuyến
@@ -1503,6 +1506,11 @@ export default function OutboundDetail() {
   const isFutureTrip = !!gdo.delivery_date &&
     String(gdo.delivery_date).slice(0, 10) > new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const futureTip = `Đơn Ngày xuất ${formatDate(gdo.delivery_date)} (tương lai) — hôm nay chưa được xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn.`
+  // Chuyến bất động (chờ dữ liệu SAP / kế hoạch đã bỏ): BE chặn 422 TRIP_INERT — đây là lớp UX
+  // (mờ + khóa nút + nói rõ lý do) để không ai bấm rồi mới biết.
+  const inertReason = tripInert(gdo)
+  const blockAct = isFutureTrip || !!inertReason
+  const actTip = (normal: string) => inertReason ?? (isFutureTrip ? futureTip : normal)
   // "Xuất luôn" (1 bước) cho kho QTY/NONE: bỏ nghi thức Giao/Bắt đầu — nhập biển số là post + trừ tồn luôn.
   // PAUSED vẫn cho (= ngầm Tiếp tục + chốt) — khớp form Sửa "Lưu & Xuất luôn" trên đơn tạm dừng.
   const isQtyOrNone = isQtyLike(whInvMode) || whInvMode === 'NONE'
@@ -1563,6 +1571,13 @@ export default function OutboundDetail() {
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const actionItems: ActionItem[] = []
+  // Nút "Thông tin" (user chốt 03/08): lịch sử thay đổi của đơn — thế nào, bởi ai, lúc nào, nguồn nào.
+  // Luôn hiện (kể cả chuyến bất động — đó chính là đường duy nhất để tra chuyến đã ngừng hoạt động).
+  actionItems.push({
+    key: 'history', icon: Info, label: 'Thông tin',
+    tip: 'Lịch sử thay đổi của chuyến: kế hoạch, DO, ngày, thay đổi từ SAP — ai làm, lúc nào',
+    onClick: () => setShowHistory(true),
+  })
   if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && can(perms, 'outbound', 'edit'))
     actionItems.push({
       key: 'edit', icon: PenSquare, label: 'Sửa đơn', tip: 'Sửa đơn (ngày, khách, mã hàng, số lượng)',
@@ -1578,8 +1593,8 @@ export default function OutboundDetail() {
   if (canQuickExportHere)
     actionItems.push({
       key: 'quick-export', icon: Play, label: 'Xuất luôn',
-      tip: isFutureTrip ? futureTip : 'Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay',
-      primary: true, variant: 'success', busy: quickExporting, disabled: isFutureTrip,
+      tip: actTip('Nhập biển số → ghi nhận đủ kế hoạch, trừ tồn và hoàn thành chuyến ngay'),
+      primary: true, variant: 'success', busy: quickExporting, disabled: blockAct,
       onClick: () => { setQuickPlate(gdo.license_plate ?? ''); setQuickErr(null); setQuickErrCode(null); setShowQuickExport(true) },
     })
   if (!gdo.assigned_at && can(perms, 'outbound', 'assign'))
@@ -1595,8 +1610,8 @@ export default function OutboundDetail() {
   if (canStart)
     actionItems.push({
       key: 'start', icon: Play, label: 'Bắt đầu',
-      tip: isFutureTrip ? futureTip : 'Bắt đầu xuất hàng (nhập biển số, người xuất)',
-      primary: true, variant: 'default', disabled: isFutureTrip,
+      tip: actTip('Bắt đầu xuất hàng (nhập biển số, người xuất)'),
+      primary: true, variant: 'default', disabled: blockAct,
       onClick: () => setShowStart(true),
     })
   // Quét QR cấp ĐƠN (user 19/07): quét tem pallet bất kỳ, tự nhận mã hàng — khỏi vào từng mã.
@@ -1767,6 +1782,16 @@ export default function OutboundDetail() {
   ]
   const orderInfoJSX = (
     <div className="space-y-1">
+      {/* Chuyến bất động: nói NGAY lý do + cách gỡ, đừng để user bấm nút rồi mới biết */}
+      {inertReason && (
+        <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${gdo.plan_dropped ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">{gdo.plan_dropped ? 'Chuyến đã ngừng hoạt động' : 'Chuyến đang chờ dữ liệu SAP'}</div>
+            <div className="mt-0.5">{inertReason}</div>
+          </div>
+        </div>
+      )}
       {/* Row 2: GDO info compact — kế thừa màu trạng thái như dòng ở list */}
       <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${statusText(gdoKey(gdo))}`}>
         <span className="flex items-center gap-1">
@@ -1906,6 +1931,7 @@ export default function OutboundDetail() {
           {orderInfoJSX}
         </DialogContent>
       </Dialog>
+      {showHistory && <TripHistoryDialog gdoId={gdo.id} groupCode={gdo.group_code} onClose={() => setShowHistory(false)} />}
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}

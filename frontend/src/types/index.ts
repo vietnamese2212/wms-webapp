@@ -750,4 +750,22 @@ export interface GDO {
     is_complete: boolean; in_time: string | null; out_time: string | null
   }[]
   weight_estimate?: { gdo_id: string; kg_planned: number | null; kg_actual: number | null; items_total: number; items_missing: number } | null
+  // CHUYẾN BẤT ĐỘNG (03/08) — hiện trên màn nhưng không thao tác được, chỉ xem + xem lịch sử:
+  awaiting_sap?:  boolean | null   // còn DO chưa có dữ liệu VL06O (tự tắt khi VL06O về)
+  awaiting_dos?:  string[] | null  // DO đang chờ (hiện trong cảnh báo)
+  plan_dropped?:  boolean | null   // Kế hoạch xuất không còn Số xe này (tự bật lại khi kế hoạch có lại)
+}
+
+// 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP
+export interface OutboundEvent {
+  id: string
+  event_type: string
+  source: 'PLAN' | 'SAP' | 'USER' | 'SYSTEM' | string
+  actor: string | null
+  do_number: string | null
+  material_code: string | null
+  old_value: string | null
+  new_value: string | null
+  detail: string
+  created_at: string
 }

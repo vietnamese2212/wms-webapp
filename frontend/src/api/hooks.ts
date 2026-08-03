@@ -2598,6 +2598,15 @@ export function useReconcileTasks(params: Record<string, string | number | undef
     placeholderData: keepPreviousData,
   })
 }
+// Lịch sử thay đổi của 1 chuyến (nút "Thông tin") — chỉ tải khi mở hộp thoại
+export function useOutboundEvents(gdoId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['gdo-events', gdoId],
+    queryFn: async () => (await apiClient.get(`/wms/outbound/${gdoId}/events`)).data.data as
+      { items: import('@/types').OutboundEvent[]; group_code: string },
+    enabled: !!gdoId && enabled,
+  })
+}
 export function useReconcileOpenCount(enabled = true) {
   return useQuery({
     queryKey: ['reconcile-open-count'],

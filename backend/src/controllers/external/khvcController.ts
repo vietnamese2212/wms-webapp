@@ -8,6 +8,7 @@ import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { replanKhvcGroups } from '../wms/outboundController'
+import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 
 const now = () => new Date().toISOString()
 
@@ -19,8 +20,9 @@ async function replanAfterCrud(req: Request, groupCodes: string[]): Promise<{ re
   catch (e) { console.error('[khvc replan]', e); return { replan_error: String(e) } }
 }
 
-// DO bắt buộc có trong VL06O (raw, không OBSOLETE) — cùng luật uploadKhvc "DO LUÔN bắt buộc".
-// Thiếu raw thì dòng kế hoạch không derive được chuyến → chặn ngay lúc nhập cho khỏi lệch.
+// DO đã có dữ liệu VL06O chưa (raw, bỏ dòng OBSOLETE — dòng SAP đã bỏ thì derive cũng không dùng).
+// KHÔNG còn chặn nhập (user chốt 03/08: điều vận nạp kế hoạch TRƯỚC khi có VL06O) — chỉ dùng để
+// báo cho người nhập biết dòng này sẽ ra chuyến CHỜ dữ liệu.
 async function doMissingInRaw(doNo: string): Promise<boolean> {
   const { data } = await supabase.from('erp_outbound_orders')
     .select('id').eq('od_number', doNo).neq('sync_status', 'OBSOLETE').limit(1)
@@ -72,6 +74,19 @@ type KDelRow = { id: string; group_code: string }
 async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
   const gcs = [...new Set(rows.map(r => r.group_code))]
   const scannedGcs = new Set<string>()
+  // CẤM xóa kế hoạch của chuyến ĐÃ HOÀN THÀNH / ĐANG XUẤT (user chốt 03/08: "user xóa đi các đơn hàng
+  // Kế hoạch xuất mà bên Xuất đã hoàn thành — việc này là không được phép"). Chuyến đã xuất là CHỨNG TỪ:
+  // xóa nguồn của nó làm mất đường đối chiếu SAP↔thực xuất. Chặn theo TRẠNG THÁI, không chỉ theo "đã quét"
+  // (chuyến hoàn thành với 0 thùng quét vẫn là chuyến đã chốt).
+  const lockedGcs = new Map<string, string>()
+  for (let i = 0; i < gcs.length; i += 300) {
+    const { data } = await supabase.from('GroupDeliveryOrder').select('group_code, status')
+      .in('group_code', gcs.slice(i, i + 300)).in('status', ['IN_PROGRESS', 'COMPLETED'])
+    for (const g of ((data ?? []) as { group_code: string; status: string }[]))
+      lockedGcs.set(g.group_code, g.status === 'COMPLETED'
+        ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — không xóa được kế hoạch của chuyến đã xuất (muốn sửa số thì sửa DO ở tab DO SAP)'
+        : 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới sửa kế hoạch')
+  }
   for (let i = 0; i < gcs.length; i += 100) {
     const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('id, group_code').in('group_code', gcs.slice(i, i + 100))
     const gcByGdoId = new Map((gdos ?? []).map((g: { id: string; group_code: string }) => [g.id, g.group_code]))
@@ -88,7 +103,9 @@ async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow
   }
   const deletable: KDelRow[] = [], blocked: (KDelRow & { reason: string })[] = []
   for (const r of rows) {
-    if (scannedGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
+    const lockMsg = lockedGcs.get(r.group_code)
+    if (lockMsg) blocked.push({ ...r, reason: lockMsg })
+    else if (scannedGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
     else deletable.push(r)
   }
   return { deletable, blocked }
@@ -144,8 +161,11 @@ export async function listKhvc(req: Request, res: Response) {
       }) as { do_no: string }[]
       const windowDos = [...new Set(winRows.map(r => String(r.do_no ?? '')).filter(Boolean))]
       const present = new Set<string>()
+      // LỌC OBSOLETE: DO mà SAP đã bỏ hết dòng thì derive coi như CHƯA CÓ — cột/bộ lọc phải nói
+      // cùng một sự thật với engine, không thì user thấy "có DO" mà chuyến vẫn chờ dữ liệu.
       for (let i = 0; i < windowDos.length; i += 300) {
-        const { data } = await supabase.from('erp_outbound_orders').select('od_number').in('od_number', windowDos.slice(i, i + 300))
+        const { data } = await supabase.from('erp_outbound_orders').select('od_number')
+          .in('od_number', windowDos.slice(i, i + 300)).neq('sync_status', 'OBSOLETE')
         for (const r of (data ?? []) as { od_number: string }[]) present.add(String(r.od_number))
       }
       restrictDos = in_do_sap === '1' ? windowDos.filter(d => present.has(d)) : windowDos.filter(d => !present.has(d))
@@ -234,7 +254,8 @@ export async function listKhvc(req: Request, res: Response) {
     const dos = [...new Set(items.map(i => String(i.do_no ?? '')).filter(Boolean))]
     const readyDos = new Set<string>()
     if (dos.length) {
-      const { data: raws } = await supabase.from('erp_outbound_orders').select('od_number').in('od_number', dos)
+      const { data: raws } = await supabase.from('erp_outbound_orders').select('od_number')
+        .in('od_number', dos).neq('sync_status', 'OBSOLETE')   // dòng SAP đã bỏ = coi như chưa có (khớp derive)
       for (const r of (raws ?? []) as { od_number: string }[]) readyDos.add(r.od_number)
     }
     for (const i of items) {
@@ -272,8 +293,7 @@ export async function createKhvc(req: Request, res: Response) {
     const { data: dup } = await supabase.from('khvc_lines').select('id')
       .eq('group_code', fields.group_code).eq('do_no', fields.do_no).maybeSingle()
     if (dup) return fail(res, `Đã tồn tại dòng Số xe ${fields.group_code} / DO ${fields.do_no}`, 409)
-    if (await doMissingInRaw(String(fields.do_no)))
-      return fail(res, `DO ${fields.do_no} chưa có trong VL06O — Up VL06O trước rồi thêm dòng kế hoạch (DO luôn bắt buộc).`, 400)
+    const awaitingData = await doMissingInRaw(String(fields.do_no))   // chỉ để BÁO, không chặn
     // NGÀY XUẤT LÀ THUỘC TÍNH CẤP XE (1 xe vật lý chạy 1 ngày): thêm DO vào xe ĐÃ CÓ thì phải theo
     // ngày của xe. Không ép thì xe mang 2 ngày và ngày chuyến phụ thuộc dòng nào đứng đầu — probe
     // 02/08 C1 tái hiện được. Muốn đổi ngày cả xe: dùng "Đổi ngày" (bulk-date) / sửa dòng.
@@ -295,8 +315,13 @@ export async function createKhvc(req: Request, res: Response) {
     }
     const { data, error } = await supabase.from('khvc_lines').insert(row).select().single()
     if (error) throw new Error(error.message)
+    await logOutboundEvents([{
+      group_code: String(fields.group_code), event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: actorOf(req),
+      do_number: String(fields.do_no), new_value: String(fields.export_date ?? ''),
+      detail: `Thêm DO ${fields.do_no} vào Số xe ${fields.group_code}${awaitingData ? ' (DO chưa có dữ liệu VL06O — chuyến sẽ chờ)' : ''}`,
+    }])
     const extra = await replanAfterCrud(req, [String(fields.group_code)])
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) }, 201)
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -326,8 +351,6 @@ export async function updateKhvc(req: Request, res: Response) {
           .eq('group_code', gc).eq('do_no', dn).neq('id', req.params.id).maybeSingle()
         if (dup) return fail(res, `Đã tồn tại dòng Số xe ${gc} / DO ${dn}`, 409)
       }
-      if ('do_no' in fields && dn && (await doMissingInRaw(dn)))
-        return fail(res, `DO ${dn} chưa có trong VL06O — Up VL06O trước (DO luôn bắt buộc).`, 400)
     }
     // CHUYỂN dòng sang xe KHÁC → dòng phải mang ngày của xe ĐÍCH (1 xe 1 ngày). Không ép thì xe đích
     // mang 2 ngày y hệt lỗi thêm-dòng (probe 02/08 C1). Không áp khi cùng lượt chỉ định export_date mới.
@@ -360,6 +383,24 @@ export async function updateKhvc(req: Request, res: Response) {
       dateSynced = (synced ?? []).length
     }
     const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
+    // Ghi sổ: đổi ngày / chuyển DO sang xe khác — 2 thay đổi kế hoạch hay gây thắc mắc nhất khi truy vết
+    {
+      const evs: OutboundEventInput[] = []
+      const actor = actorOf(req)
+      const newGc = String((data as { group_code?: string }).group_code ?? '')
+      const doNo = String((data as { do_no?: string }).do_no ?? cur.do_no ?? '')
+      if (newGc && newGc !== String(cur.group_code ?? '')) {
+        evs.push({ group_code: String(cur.group_code ?? ''), event_type: 'PLAN_DO_REMOVED', source: 'PLAN', actor, do_number: doNo,
+          detail: `Chuyển DO ${doNo} sang Số xe ${newGc}` })
+        evs.push({ group_code: newGc, event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor, do_number: doNo,
+          detail: `Nhận DO ${doNo} từ Số xe ${cur.group_code}` })
+      }
+      if ('export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? ''))
+        evs.push({ group_code: newGc || String(cur.group_code ?? ''), event_type: 'PLAN_DATE_CHANGED', source: 'PLAN', actor,
+          do_number: doNo, old_value: cur.export_date as string | null, new_value: fields.export_date as string | null,
+          detail: `Đổi Ngày xuất: ${cur.export_date ?? '—'} → ${fields.export_date ?? '—'}${dateSynced ? ` (đồng bộ ${dateSynced} dòng cùng xe)` : ''}` })
+      await logOutboundEvents(evs)
+    }
     const extra = await replanAfterCrud(req, gcs)
     return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) })
   } catch (e) { return fail(res, String(e)) }
@@ -376,8 +417,14 @@ export async function deleteKhvc(req: Request, res: Response) {
     const { deletable, blocked } = await classifyKhvcDelete([dr])
     if (req.query.check === '1') return ok(res, { deletable: deletable.map(d => d.id), blocked })
     if (!deletable.length) return fail(res, blocked[0]?.reason ?? 'Không xóa được dòng này', 409)
+    const { data: full } = await supabase.from('khvc_lines').select('do_no').eq('id', req.params.id).maybeSingle()
     const { error } = await supabase.from('khvc_lines').delete().eq('id', req.params.id)
     if (error) throw new Error(error.message)
+    await logOutboundEvents([{
+      group_code: dr.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN', actor: actorOf(req),
+      do_number: (full as { do_no?: string } | null)?.do_no ?? null,
+      detail: `Xóa DO ${(full as { do_no?: string } | null)?.do_no ?? ''} khỏi Số xe ${dr.group_code}`,
+    }])
     const extra = await replanAfterCrud(req, [dr.group_code])
     return ok(res, { deleted: 1, blocked, ...extra })
   } catch (e) { return fail(res, String(e)) }
@@ -433,10 +480,20 @@ export async function bulkDeleteKhvc(req: Request, res: Response) {
     const blockedOut = blocked.map(b => ({ group_code: b.group_code, reason: b.reason }))
     if (req.query.check === '1') return ok(res, { deletable_count: deletable.length, blocked_count: blocked.length, blocked: blockedOut })
     const delIds = deletable.map(d => d.id)
+    const delRows = new Map<string, string>()   // id → do_no (lấy TRƯỚC khi xóa để ghi sổ)
+    for (let i = 0; i < delIds.length; i += 300) {
+      const { data } = await supabase.from('khvc_lines').select('id, do_no').in('id', delIds.slice(i, i + 300))
+      for (const r of ((data ?? []) as { id: string; do_no: string }[])) delRows.set(r.id, r.do_no)
+    }
     for (let i = 0; i < delIds.length; i += 300) {
       const { error } = await supabase.from('khvc_lines').delete().in('id', delIds.slice(i, i + 300))
       if (error) throw new Error(error.message)
     }
+    await logOutboundEvents(deletable.map(d => ({
+      group_code: d.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor: actorOf(req),
+      do_number: delRows.get(d.id) ?? null,
+      detail: `Xóa DO ${delRows.get(d.id) ?? ''} khỏi Số xe ${d.group_code} (xóa hàng loạt)`,
+    })))
     const extra = await replanAfterCrud(req, [...new Set(deletable.map(d => d.group_code))])
     return ok(res, { deleted: delIds.length, blocked_count: blocked.length, blocked: blockedOut, ...extra })
   } catch (e) { return fail(res, String(e)) }

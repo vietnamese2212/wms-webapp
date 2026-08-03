@@ -13,6 +13,7 @@ import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../.
 import { safeFilterValue, safeSearch } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
+import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
@@ -96,6 +97,23 @@ function futureDateError(deliveryDate?: string | null): string | null {
   const [y, m, dd] = d.split('-')
   return `Đơn có Ngày xuất ${dd}/${m}/${y} (tương lai) — hôm nay chưa được quét/xuất. Cần đi sớm: đổi Ngày xuất về hôm nay ở nguồn (chuyến SAP: tab Kế hoạch xuất · chuyến thường: Sửa đơn/Chuyển ngày).`
 }
+
+// CHUYẾN BẤT ĐỘNG (user chốt 03/08) — 2 lý do, cùng 1 hệ quả: chuyến hiện trên màn nhưng KHÔNG
+// thao tác được (chỉ xem + xem lịch sử). Chặn ở ĐÚNG các cửa THỰC THI như luật chặn xuất sớm,
+// KHÔNG chặn Hủy/Xóa/xem (phải cho dọn) và không chặn sửa ở NGUỒN (Kế hoạch xuất).
+//   awaiting_sap  → còn DO chưa có dữ liệu VL06O: không biết phải xuất hàng gì, số bao nhiêu
+//   plan_dropped  → Kế hoạch xuất đã bỏ Số xe này: chuyến giữ lại để tra cứu, không còn hiệu lực
+type GdoInertState = { awaiting_sap?: boolean | null; awaiting_dos?: string[] | null; plan_dropped?: boolean | null }
+function inertError(gdo: GdoInertState | null | undefined): string | null {
+  if (gdo?.plan_dropped)
+    return 'Chuyến đã NGỪNG HOẠT ĐỘNG vì Kế hoạch xuất không còn Số xe này — chỉ xem được thông tin và lịch sử. Muốn chạy lại thì thêm lại dòng kế hoạch ở tab "Kế hoạch xuất".'
+  if (gdo?.awaiting_sap) {
+    const dos = (gdo.awaiting_dos ?? []).filter(Boolean)
+    return `Chuyến đang CHỜ DỮ LIỆU SAP${dos.length ? ` (DO: ${dos.join(', ')})` : ''} — chưa có dòng hàng nên chưa xuất được. Up VL06O có các DO này là chuyến tự hoạt động trở lại.`
+  }
+  return null
+}
+const INERT_COLS = 'awaiting_sap, awaiting_dos, plan_dropped'
 
 // Chuyến ĐÃ BẮT ĐẦU thì KHÔNG được đẩy Ngày xuất sang TƯƠNG LAI: hàng đã ghi nhận/trừ tồn mà ngày
 // nhảy lên tương lai là mâu thuẫn (xuất trước ngày xuất), và trước khi có luật này nó tạo ra NGÕ CỤT —
@@ -1387,11 +1405,13 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     if (!(await guardGdoScope(req, res, gdoId))) return
 
     const { data: gdo } = await supabase.from('GroupDeliveryOrder')
-      .select('id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)')
+      .select(`id, status, warehouse_id, shipto_party, assigned_at, assigned_by, started_at, delivery_date, weigh_waived_at, gate_waived_at, gate_registration_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)`)
       .eq('id', gdoId).single()
     if (!gdo)                        return fail(res, 'Không tìm thấy chuyến', 404)
     if (gdo.status === 'COMPLETED')  return fail(res, 'Chuyến đã hoàn thành', 400)
     if (gdo.status === 'CANCELLED')  return fail(res, 'Chuyến đã hủy', 400)
+    { const inertErr = inertError(gdo as GdoInertState)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     const qxeFutErr = futureDateError((gdo as { delivery_date?: string | null }).delivery_date)
     if (qxeFutErr)                   return fail(res, 422, 'FUTURE_DATE', qxeFutErr)
     // PAUSED vẫn cho: user tạm dừng để sửa kế hoạch → "Xuất luôn" = ngầm Tiếp tục + chốt chuyến.
@@ -2105,7 +2125,12 @@ export async function patchGDO(req: Request, res: Response) {
     // → chuyến "Đang xuất" không biển số, không qua rule nào, started_at vẫn null.
     if (status !== undefined) {
       const { data: curG } = await supabase.from('GroupDeliveryOrder')
-        .select('status, started_at').eq('id', req.params.id).single()
+        .select(`status, started_at, ${INERT_COLS}`).eq('id', req.params.id).single()
+      // Chuyến bất động: không đổi trạng thái (kể cả Hoàn thành) — nhưng vẫn cho HỦY để dọn.
+      if (status !== 'CANCELLED') {
+        const inertErr = inertError(curG as GdoInertState | null)
+        if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr)
+      }
       const cs = curG?.status
       const okTransition =
         (status === 'PAUSED'      && cs === 'IN_PROGRESS') ||
@@ -2254,7 +2279,7 @@ export async function startGDO(req: Request, res: Response) {
 
     // Kho QTY/NONE: không bắt buộc Phân công — ai bấm Bắt đầu tự thành người phụ trách (kho QR giữ nghi thức Phân công)
     const { data: cur } = await supabase.from('GroupDeliveryOrder')
-      .select('assigned_at, started_at, status, warehouse_id, shipto_party, delivery_date, weigh_waived_at, gate_waived_at, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)').eq('id', req.params.id).maybeSingle()
+      .select(`assigned_at, started_at, status, warehouse_id, shipto_party, delivery_date, weigh_waived_at, gate_waived_at, ${INERT_COLS}, warehouse:Warehouse(inventory_mode,require_weigh_on_start,require_gate_on_start)`).eq('id', req.params.id).maybeSingle()
     // Chặn start đúp/start ngược trạng thái: 2 người cùng bấm → người sau đè biển số người trước;
     // tệ hơn, start trên chuyến ĐÃ hoàn thành kéo status về IN_PROGRESS (lách quyền uncomplete).
     const curStatus = (cur as { status?: string } | null)?.status
@@ -2263,6 +2288,8 @@ export async function startGDO(req: Request, res: Response) {
     }
     const startFutErr = futureDateError((cur as { delivery_date?: string | null } | null)?.delivery_date)
     if (startFutErr) return fail(res, 422, 'FUTURE_DATE', startFutErr)
+    { const inertErr = inertError(cur as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
 
@@ -2826,6 +2853,108 @@ export async function uploadExcel(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
+// ─── CHUYẾN BẤT ĐỘNG: chờ dữ liệu SAP / kế hoạch đã bỏ (user chốt 03/08) ───────
+// Hai tình huống, cùng một hệ quả (chuyến hiện nhưng không thao tác được), khác lý do:
+//   awaiting_sap  = còn DO chưa có dữ liệu VL06O  → chờ kho up VL06O (hoặc API SAP) là tự sống
+//   plan_dropped  = Kế hoạch xuất không còn dòng nào cho Số xe này → chờ kế hoạch có lại
+// KHÔNG xóa chuyến trong cả hai (user: "chỉ có thể xem được info của nó — từ đó xem được lịch sử").
+type PrevGdoState = { id: string; status: string; awaiting: boolean; dropped: boolean }
+
+async function applyAwaitingState(
+  req: Request,
+  awaitingByGc: Map<string, AwaitingGroup>,
+  processedGcs: string[],
+  prev: Map<string, PrevGdoState>,
+): Promise<{ awaiting: number; shells: number; cleared: number; reopened: number }> {
+  const out = { awaiting: 0, shells: 0, cleared: 0, reopened: 0 }
+  const gcs = [...new Set([...processedGcs, ...awaitingByGc.keys()])]
+  if (!gcs.length) return out
+  const t = now()
+  const actor = actorOf(req)
+  const events: OutboundEventInput[] = []
+
+  // Chuyến HIỆN TẠI (sau khi derive đã ghi xong) — id có thể MỚI so với prev (nhánh xóa+tạo lại)
+  const cur = await fetchAllByIdChunks(gcs, chunk => supabase.from('GroupDeliveryOrder')
+    .select('id, group_code, status, awaiting_sap, awaiting_dos, plan_dropped').in('group_code', chunk).order('id')) as
+    { id: string; group_code: string; status: string; awaiting_sap: boolean; awaiting_dos: string[] | null; plan_dropped: boolean }[]
+  const byGc = new Map(cur.map(g => [g.group_code, g]))
+
+  // Kho theo mã (Số xe = Mãkho_X_ddmmyy_stt) — chỉ cho nhánh dựng chuyến vỏ
+  const shellGcs = [...awaitingByGc.keys()].filter(gc => !byGc.has(gc))
+  const whByCode = new Map<string, string>()
+  if (shellGcs.length) {
+    const codes = [...new Set(shellGcs.map(gc => gc.split('_')[0]).filter(Boolean))]
+    const { data: whs } = await supabase.from('Warehouse').select('id, code').in('code', codes)
+    for (const w of ((whs ?? []) as { id: string; code: string }[])) whByCode.set(w.code, w.id)
+  }
+  const resolveDvvt = shellGcs.length ? await buildDvvtResolver() : null
+
+  // (1) Xe còn DO chờ dữ liệu
+  for (const [gc, a] of awaitingByGc) {
+    const g = byGc.get(gc)
+    if (g) {
+      // Chuyến đang chạy/đã xong thì KHÔNG tự khóa (replan đã đẩy "Cần xử lý" cho người quyết)
+      if (g.status === 'IN_PROGRESS' || g.status === 'COMPLETED') continue
+      const sameDos = JSON.stringify([...(g.awaiting_dos ?? [])].sort()) === JSON.stringify([...a.dos].sort())
+      if (g.awaiting_sap && sameDos && !g.plan_dropped) { out.awaiting++; continue }
+      await supabase.from('GroupDeliveryOrder')
+        .update({ awaiting_sap: true, awaiting_dos: a.dos, plan_dropped: false, plan_dropped_at: null, updated_at: t })
+        .eq('id', g.id)
+      if (!prev.get(gc)?.awaiting)
+        events.push({ group_code: gc, gdo_id: g.id, event_type: 'AWAITING_SET', source: 'PLAN', actor,
+          new_value: a.dos.join(', '), detail: `Chuyến chờ dữ liệu SAP — thiếu DO: ${a.dos.join(', ')}` })
+      out.awaiting++
+      continue
+    }
+    // Chưa có chuyến nào → dựng CHUYẾN VỎ (chưa có dòng hàng vì dòng hàng nằm ở VL06O)
+    const whId = whByCode.get(gc.split('_')[0]) ?? null
+    const delivery_date = parseExcelDate(a.plan.export_date)
+    const planned_date = parsePlannedDate(gc)
+    if (!whId || !delivery_date || !planned_date) continue      // Số xe/ngày không hợp lệ → derive thường đã báo lỗi
+    if (!inScope(req, whId)) continue                            // không dựng chuyến cho kho ngoài phạm vi
+    const gdoId = randomUUID()
+    const { error } = await supabase.from('GroupDeliveryOrder').insert({
+      id: gdoId, group_code: gc, planned_date, delivery_date, warehouse_id: whId,
+      dvvt: a.plan.dvvt ? resolveDvvt!(a.plan.dvvt).name : null,
+      warehouse_type: null,                 // chưa biết Loại kho (suy từ mã hàng — mà mã hàng nằm ở VL06O)
+      origin: 'SAP', status: 'PENDING',
+      awaiting_sap: true, awaiting_dos: a.dos,
+      created_by: actor, updated_by: actor, updated_at: t,
+    })
+    if (error) { console.error('[applyAwaitingState] tạo chuyến vỏ:', error.message); continue }
+    events.push({ group_code: gc, gdo_id: gdoId, event_type: 'AWAITING_SET', source: 'PLAN', actor,
+      new_value: a.dos.join(', '),
+      detail: `Tạo chuyến từ Kế hoạch xuất khi CHƯA có dữ liệu VL06O — chờ DO: ${a.dos.join(', ')}` })
+    out.shells++; out.awaiting++
+  }
+
+  // (2) Xe đã đủ dữ liệu → gỡ cờ chờ. Chuyến PENDING bị xóa-tạo-lại nên cờ mới vốn đã false;
+  //     vẫn phải ghi sổ dựa trên trạng thái TRƯỚC derive, không thì mất vết "đã được kích hoạt".
+  for (const gc of processedGcs) {
+    if (awaitingByGc.has(gc)) continue
+    const g = byGc.get(gc)
+    const was = prev.get(gc)
+    if (g && (g.awaiting_sap || g.plan_dropped)) {
+      await supabase.from('GroupDeliveryOrder')
+        .update({ awaiting_sap: false, awaiting_dos: null, plan_dropped: false, plan_dropped_at: null, updated_at: t })
+        .eq('id', g.id)
+    }
+    if (was?.awaiting) {
+      events.push({ group_code: gc, gdo_id: g?.id ?? null, event_type: 'AWAITING_CLEARED', source: 'SAP', actor,
+        detail: 'Đã có dữ liệu VL06O cho mọi DO — chuyến hoạt động trở lại' })
+      out.cleared++
+    }
+    if (was?.dropped) {
+      events.push({ group_code: gc, gdo_id: g?.id ?? null, event_type: 'PLAN_VEHICLE_REOPENED', source: 'PLAN', actor,
+        detail: 'Kế hoạch xuất có lại dòng cho Số xe này — chuyến hoạt động trở lại' })
+      out.reopened++
+    }
+  }
+
+  await logOutboundEvents(events)
+  return out
+}
+
 // Xử lý CHUNG cho mọi nguồn upload kế hoạch xuất — nhận map (Số xe → các dòng theo row-shape file gộp):
 //  - uploadExcel : file gộp 1 sheet (Số xe + mọi cột trong 1 hàng)
 //  - uploadKhvc  : join VL06O(raw) + KHVC → reshape về CÙNG row-shape rồi gọi hàm này
@@ -2837,6 +2966,8 @@ async function processVehicleGroups(
   extraResult?: Record<string, unknown>,
   autoLoosePallet = false,   // true (KHVC/SAP): nhặt lẻ = thùng lẻ < 1 pallet, auto theo cartons_per_pallet
   preflightExtra?: PreflightExtra[],   // số liệu rủi ro riêng của luồng (KHVC: DO thiếu, chuyến đã có…)
+  awaitingByGc?: Map<string, AwaitingGroup>,   // xe còn DO chưa có VL06O → chuyến CHỜ (không chặn file nữa)
+  beforeWrite?: () => Promise<void>,           // ghi tầng raw CHỈ khi đã qua validate (kiểm trước khi ghi)
 ): Promise<Response> {
     // NGUỒN chuyến (user chốt 02/08): KHVC (autoLoosePallet=true) = 'SAP' → khóa sửa phần kế hoạch
     // trên đơn, mọi đổi đi qua VL06O/Kế hoạch xuất; upload kiểu cũ = 'EXCEL' → sửa như cũ (kho không SAP).
@@ -2844,7 +2975,9 @@ async function processVehicleGroups(
     // vì 2 luồng upload khác file — cùng group_code up kiểu khác là chủ đích của user).
     const gdoOrigin = autoLoosePallet ? 'SAP' : 'EXCEL'
     // Pre-load warehouses, materials, warehouse types, and existing GDOs in parallel
-    const allGroupCodes = [...byVehicle.keys()]
+    // Gồm CẢ xe đang chờ dữ liệu (không có dòng hàng nào) — cần trạng thái TRƯỚC derive để ghi sổ
+    // "đã kích hoạt trở lại"; các map phân loại bên dưới chỉ tra theo xe CÓ dòng nên không ảnh hưởng.
+    const allGroupCodes = [...new Set([...byVehicle.keys(), ...(awaitingByGc?.keys() ?? [])])]
     const [warehousesRes, whTypesRes, vehicleTypesRes, existingGdos, allMaterials] = await Promise.all([
       supabase.from('Warehouse').select('id, code, name').eq('is_active', true),
       // LookupValue KHÔNG có cột is_active — lọc theo nó làm query lỗi → validWhTypes rỗng → chặn oan mọi file
@@ -2853,7 +2986,7 @@ async function processVehicleGroups(
       // Chunk + phân trang: file nhiều nghìn Số xe → .in() 1 phát vừa vượt URL vừa bị cap-1000
       // (GDO thứ 1001+ bị coi là "mới" → tạo trùng)
       fetchAllByIdChunks(allGroupCodes, chunk => supabase.from('GroupDeliveryOrder')
-        .select('id, group_code, status, assigned_at, assigned_by, shipto_party')
+        .select('id, group_code, status, assigned_at, assigned_by, shipto_party, awaiting_sap, plan_dropped')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
@@ -2894,7 +3027,13 @@ async function processVehicleGroups(
     // Ship-to đã gán tay trên đơn PENDING — mang theo khi upload đè (xóa+tạo lại), không để mất âm thầm
     const shiptoByGroupCode  = new Map<string, string>()
 
+    // Trạng thái TRƯỚC derive (derive có thể xóa+tạo lại chuyến PENDING → mất dấu vết cũ)
+    const prevGdoState = new Map<string, PrevGdoState>()
     for (const g of (existingGdos ?? [])) {
+      prevGdoState.set(g.group_code as string, {
+        id: g.id as string, status: g.status as string,
+        awaiting: g.awaiting_sap === true, dropped: g.plan_dropped === true,
+      })
       if (g.shipto_party) shiptoByGroupCode.set(g.group_code as string, g.shipto_party as string)
       if (g.status === 'PENDING') {
         if (g.assigned_at) pendingPreserveMap.set(g.group_code as string, g.id)
@@ -3151,12 +3290,14 @@ async function processVehicleGroups(
     if (isPreflight(req)) {
       const skippedTrips = created.filter((c: any) => c.skipped).length
       const overwrite = toReplaceIds.length + toPreserveIds.length
+      const awaitingCount = awaitingByGc?.size ?? 0
       return ok(res, buildPreflight({
-        unit: 'chuyến', total: byVehicle.size,
-        toInsert: gdoInserts.length, toUpdate: overwrite + pausedMerges, skipped: skippedTrips,
+        unit: 'chuyến', total: byVehicle.size + awaitingCount,
+        toInsert: gdoInserts.length + awaitingCount, toUpdate: overwrite + pausedMerges, skipped: skippedTrips,
         extra: [
           ...(preflightExtra ?? []),
           { label: 'Dòng hàng sẽ ghi', value: itemInserts.length },
+          ...(awaitingCount ? [{ label: 'Chuyến CHỜ dữ liệu SAP (tạo trước, chưa xuất được)', value: awaitingCount, warn: true }] : []),
           ...(pausedMerges ? [{ label: 'Chuyến TẠM DỪNG sẽ merge thêm hàng', value: pausedMerges, warn: true }] : []),
           ...(overwrite ? [{ label: 'Chuyến GHI ĐÈ kế hoạch cũ', value: overwrite, warn: true }] : []),
           ...(toPreserveIds.length ? [{ label: 'Trong đó giữ phân công đã gán', value: toPreserveIds.length }] : []),
@@ -3164,6 +3305,11 @@ async function processVehicleGroups(
         ],
       }))
     }
+
+    // ĐÃ QUA VALIDATE → giờ mới được ghi tầng raw của luồng gọi (uploadKhvc: khvc_lines).
+    // Trước 03/08 uploadKhvc upsert raw NGAY khi vào hàm: file lỗi validate vẫn ghi đè kế hoạch cũ
+    // rồi mới trả 400 — "kiểm trước khi ghi" chỉ đúng ở pha preflight, pha Xác nhận thì không.
+    if (beforeWrite) await beforeWrite()
 
     // ── Delete validated PENDING GDOs ──
     // .in() với danh sách id lớn phải chia lô 300 — file nhiều nghìn xe → URL quá dài (414/Bad Request)
@@ -3227,7 +3373,10 @@ async function processVehicleGroups(
       throw e
     }
 
-    return ok(res, { created, ...(extraResult ?? {}) }, 201)
+    // Cờ CHỜ DỮ LIỆU: đặt cho xe còn DO thiếu, gỡ cho xe vừa đủ dữ liệu (+ ghi sổ sự kiện)
+    const awaitingResult = await applyAwaitingState(req, awaitingByGc ?? new Map(), [...byVehicle.keys()], prevGdoState)
+
+    return ok(res, { created, ...(awaitingResult.awaiting || awaitingResult.cleared || awaitingResult.reopened ? { awaiting: awaitingResult } : {}), ...(extraResult ?? {}) }, 201)
 }
 
 // ─── ĐỢT 3 (BASE UNIT): "Up kế hoạch VC" — 2 tầng raw SAP → derived ──────────────
@@ -3473,6 +3622,30 @@ export async function uploadVl06o(req: Request, res: Response) {
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadVl06o:', e) }
     }
 
+    // ── KÍCH HOẠT chuyến đang CHỜ DỮ LIỆU (user chốt 03/08: "realtime kích hoạt trở lại khi đủ dữ liệu") ──
+    // Dữ liệu vừa về → xe nào trong Kế hoạch xuất trỏ tới DO đó mà đang chờ thì derive lại NGAY.
+    // Chỉ replan xe THẬT SỰ đang chờ (không quét cả kế hoạch): 1 file VL06O có thể chạm hàng trăm DO.
+    let activated: Record<string, unknown> | null = null
+    try {
+      const khLines = await fetchAllByIdChunks([...fileDos], chunk => supabase.from('khvc_lines')
+        .select('group_code').in('do_no', chunk).neq('sync_status', 'OBSOLETE').order('group_code')) as { group_code: string }[]
+      const gcs = [...new Set((khLines ?? []).map(l => l.group_code).filter(Boolean))]
+      const waiting: string[] = []
+      for (let i = 0; i < gcs.length; i += 300) {
+        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code')
+          .in('group_code', gcs.slice(i, i + 300)).eq('awaiting_sap', true)
+        for (const g of ((data ?? []) as { group_code: string }[])) waiting.push(g.group_code)
+      }
+      // Xe có dòng kế hoạch mà CHƯA hề có chuyến (up KH lúc chưa có VL06O, chuyến vỏ dựng hụt) — cũng derive
+      const known = new Set<string>()
+      for (let i = 0; i < gcs.length; i += 300) {
+        const { data } = await supabase.from('GroupDeliveryOrder').select('group_code').in('group_code', gcs.slice(i, i + 300))
+        for (const g of ((data ?? []) as { group_code: string }[])) known.add(g.group_code)
+      }
+      const target = [...new Set([...waiting, ...gcs.filter(gc => !known.has(gc))])]
+      if (target.length) activated = await replanKhvcGroups(req, target)
+    } catch (e) { console.error('[uploadVl06o] kích hoạt chuyến chờ:', e) }
+
     const deliveries = new Set(records.map(r => r.od_number)).size
     // Nhắc khai map SAP→kho: còn dòng chưa map được thì phần đó CHƯA được siết theo kho
     if (sapUnmapped > 0) warnings.push(
@@ -3480,7 +3653,7 @@ export async function uploadVl06o(req: Request, res: Response) {
     return ok(res, {
       rows: records.length, inserted, updated, noop, obsoleted: removedKeys.length, deliveries, skipped_no_key: skippedNoKey,
       sap_unmapped: sapUnmapped,
-      reconcile, reconcile_error,
+      reconcile, reconcile_error, ...(activated ? { activated } : {}),
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
@@ -3494,7 +3667,10 @@ type KhvcPlanRow = {
   group_code: string; do_no: string; npp: string; export_date: unknown
   veh_type: string; dvvt: string; priority: string; cs: string; note: string
 }
-async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle: Map<string, Record<string, any>[]>; missingDos: Set<string> }> {
+// Xe còn DO chưa có dữ liệu VL06O → chuyến vẫn được sinh nhưng ở dạng CHỜ (user chốt 03/08).
+// Giữ luôn 1 dòng kế hoạch mẫu của xe để dựng được chuyến vỏ khi CHƯA có DO nào có dữ liệu.
+export type AwaitingGroup = { dos: string[]; plan: KhvcPlanRow }
+async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle: Map<string, Record<string, any>[]>; missingDos: Set<string>; awaitingByGc: Map<string, AwaitingGroup> }> {
   const allDos = [...new Set(khvcRows.map(k => k.do_no))]
   // Nạp raw VL06O theo DO (.in chunk + phân trang) + Material (category + đơn vị)
   const raws = (await fetchAllByIdChunks(allDos, chunk => supabase.from('erp_outbound_orders')
@@ -3516,9 +3692,16 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
 
   const byVehicle = new Map<string, Record<string, any>[]>()
   const missingDos = new Set<string>()
+  const awaitingByGc = new Map<string, AwaitingGroup>()
   for (const k of khvcRows) {
     const lines = rawByDo.get(k.do_no)
-    if (!lines || !lines.length) { missingDos.add(k.do_no); continue }
+    if (!lines || !lines.length) {
+      missingDos.add(k.do_no)
+      const a = awaitingByGc.get(k.group_code) ?? { dos: [], plan: k }
+      if (!a.dos.includes(k.do_no)) a.dos.push(k.do_no)
+      awaitingByGc.set(k.group_code, a)
+      continue
+    }
     const list = byVehicle.get(k.group_code) ?? []
     const whCode = k.group_code.split('_')[0]     // Mãkho = đoạn đầu Số xe (Mãkho_X_ddmmyy_stt)
     for (const ln of lines) {
@@ -3557,7 +3740,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
   }
   // Bỏ chuyến rỗng (mọi DO của nó đều thiếu material trong raw)
   for (const [gc, l] of byVehicle) if (!l.length) byVehicle.delete(gc)
-  return { byVehicle, missingDos }
+  return { byVehicle, missingDos, awaitingByGc }
 }
 
 // ── REPLAN từ tab Kế hoạch xuất (user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT — sửa/xóa/thêm dòng
@@ -3588,13 +3771,15 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
     detail, actor, created_at: t, updated_at: t,
   })
 
-  // (a) Group HẾT dòng kế hoạch → chuyến PENDING/PAUSED chưa quét = xóa (kế hoạch không còn);
-  //     chuyến đang chạy/đã đóng = task (classifyKhvcDelete bên khvcController đã chặn xóa dòng
-  //     của chuyến đã quét, nhánh này chỉ còn dính khi trạng thái đổi giữa chừng — vẫn phải gác).
+  // (a) Group HẾT dòng kế hoạch → chuyến NGỪNG HOẠT ĐỘNG, KHÔNG xóa (user chốt 03/08:
+  //     "chuyến hàng đó bên Xuất sẽ không bị xóa mà vào trạng thái không hoạt động, chỉ xem được
+  //     info của nó — từ đó xem được lịch sử"). Kế hoạch có lại → applyAwaitingState mở lại.
+  //     Tồn giữ chỗ (nhặt lẻ đã soạn) phải NHẢ ngay, không thì kẹt tồn trên một chuyến bất động.
+  const events: OutboundEventInput[] = []
   const emptyGcs = gcs.filter(gc => !gcWithLines.has(gc))
   if (emptyGcs.length) {
     const gdos = await fetchAllByIdChunks(emptyGcs, c => supabase.from('GroupDeliveryOrder')
-      .select('id, group_code, status, started_at').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null }[]
+      .select('id, group_code, status, started_at, plan_dropped').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null; plan_dropped: boolean }[]
     for (const g of gdos) {
       if (g.status === 'PENDING' || g.status === 'PAUSED') {
         const { data: gDos } = await supabase.from('OutboundDelivery').select('id').eq('gdo_id', g.id)
@@ -3607,15 +3792,14 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
           report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
           continue
         }
-        await deleteTransferOrdersOf([g.id])
-        await releaseScansForDOs(doIds)
-        for (let i = 0; i < doIds.length; i += 300) {
-          const c = doIds.slice(i, i + 300)
-          await supabase.from('OutboundItem').delete().in('do_id', c)
-          await supabase.from('OutboundDelivery').delete().in('id', c)
-        }
-        await supabase.from('GroupDeliveryOrder').delete().eq('id', g.id)
-        report.push({ group_code: g.group_code, action: 'deleted', reason: 'kế hoạch không còn dòng nào' })
+        if (g.plan_dropped) { report.push({ group_code: g.group_code, action: 'already_dropped' }); continue }
+        await releaseScansForDOs(doIds)   // nhả tồn nhặt lẻ đã giữ chỗ (chuyến bất động không được ôm tồn)
+        await supabase.from('GroupDeliveryOrder')
+          .update({ plan_dropped: true, plan_dropped_at: t, awaiting_sap: false, awaiting_dos: null, updated_by: actor, updated_at: t })
+          .eq('id', g.id)
+        events.push({ group_code: g.group_code, gdo_id: g.id, event_type: 'PLAN_VEHICLE_DROPPED', source: 'PLAN', actor,
+          detail: 'Kế hoạch xuất không còn dòng nào cho Số xe này — chuyến ngừng hoạt động (giữ lại để tra cứu, không xóa)' })
+        report.push({ group_code: g.group_code, action: 'plan_dropped', reason: 'kế hoạch không còn dòng nào' })
       } else {
         mkTask(g, `Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến đang ${g.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT'} — chỉ đối soát/xử tay.`)
         report.push({ group_code: g.group_code, action: 'task', reason: g.status })
@@ -3631,18 +3815,18 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
       group_code: l.group_code, do_no: l.do_no, npp: l.npp ?? '', export_date: l.export_date,
       veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '',
     }))
-    const { byVehicle, missingDos } = await buildKhvcByVehicle(khvcRows)
+    const { byVehicle, missingDos, awaitingByGc } = await buildKhvcByVehicle(khvcRows)
     if (missingDos.size) {
-      // DO chưa có trong VL06O: loại NGUYÊN group dính DO đó (giữ all-or-nothing per chuyến như upload)
-      const badGcs = new Set(khvcRows.filter(k => missingDos.has(k.do_no)).map(k => k.group_code))
-      for (const gc of badGcs) byVehicle.delete(gc)
-      report.push({ action: 'skipped_missing_do', groups: [...badGcs], missing_dos: [...missingDos] })
+      // DO chưa có trong VL06O: xe dính DO đó KHÔNG dựng dòng hàng (all-or-nothing per chuyến),
+      // nhưng vẫn giữ/tạo chuyến ở dạng CHỜ — applyAwaitingState lo phần đó bên trong derive.
+      for (const gc of awaitingByGc.keys()) byVehicle.delete(gc)
+      report.push({ action: 'awaiting_missing_do', groups: [...awaitingByGc.keys()], missing_dos: [...missingDos] })
     }
-    if (byVehicle.size) {
+    if (byVehicle.size || awaitingByGc.size) {
       // res-facade: bắt status+payload của processVehicleGroups thay vì trả thẳng HTTP.
       // req truyền NGUYÊN (cần req.user cho scope guard); các route CRUD không có ?preflight nên chạy thật.
       const facade = { statusCode: 200, payload: null as unknown, status(c: number) { this.statusCode = c; return this }, json(p: unknown) { this.payload = p; return this } }
-      await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true)
+      await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true, undefined, awaitingByGc)
       derive = { status: facade.statusCode, ...(typeof facade.payload === 'object' && facade.payload ? facade.payload as Record<string, unknown> : { raw: facade.payload }) }
       // Chuyến bị skip (đang xuất/đã hoàn thành) → kế hoạch đổi mà chuyến không nhận được → task.
       // ok() bọc payload {success,data} → created nằm ở data.created
@@ -3660,6 +3844,7 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[]): Prom
     const { error } = await supabase.from('reconcile_tasks').insert(tasks)
     if (error) console.error('[replanKhvcGroups] ghi reconcile_tasks:', error.message)
   }
+  await logOutboundEvents(events)
   const swept = await sweepOrphanDeliveries([...new Set(lines.map(l => l.do_no).filter(Boolean))])
   return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(swept ? { orphan_dos_cleaned: swept } : {}) }
 }
@@ -3744,11 +3929,9 @@ export async function uploadKhvc(req: Request, res: Response) {
         else if (g.status === 'PAUSED') trips.paused++
         else trips.pending++
       }
-      // VL06O freshness + DO thiếu (KHVC trỏ DO chưa có trong raw)
+      // VL06O đồng bộ lần cuối lúc nào (DO thiếu tính ở dưới, theo ĐÚNG luật derive — lọc dòng OBSOLETE)
       const rawDos = await fetchAllByIdChunks([...allDos], chunk => supabase.from('erp_outbound_orders')
         .select('od_number, updated_at').in('od_number', chunk).order('od_number')) as { od_number: string; updated_at: string }[]
-      const presentDos = new Set((rawDos ?? []).map(r => r.od_number))
-      const missingDos = [...allDos].filter(d => !presentDos.has(d))
       const lastSynced = (rawDos ?? []).reduce<string | null>((mx, r) => (!mx || r.updated_at > mx ? r.updated_at : mx), null)
 
       // DO trong file đã nằm trong CHUYẾN SỐNG mang Số xe KHÁC (quy ước đơn rớt 22/07: kho chuyển ngày,
@@ -3783,7 +3966,7 @@ export async function uploadKhvc(req: Request, res: Response) {
         ...(trips.total ? [{ label: 'Số xe trong file ĐÃ có chuyến', value: trips.total, warn: true }] : []),
         ...(trips.in_progress ? [{ label: 'Trong đó ĐANG XUẤT (sẽ bỏ qua)', value: trips.in_progress, warn: true }] : []),
         ...(trips.completed ? [{ label: 'Trong đó ĐÃ HOÀN THÀNH (sẽ bỏ qua)', value: trips.completed, warn: true }] : []),
-        ...(missingDos.length ? [{ label: 'DO chưa có trong VL06O (bỏ)', value: `${missingDos.length}: ${missingDos.slice(0, 5).join(', ')}${missingDos.length > 5 ? '…' : ''}`, warn: true }] : []),
+        // (DO chưa có trong VL06O tính Ở DƯỚI theo đúng luật derive — lọc dòng OBSOLETE)
         ...(crossArr.length ? [{ label: 'DO đang ở Số xe khác', value: `${crossArr.length}: ${crossArr.slice(0, 3).join(' · ')}${crossArr.length > 3 ? '…' : ''}`, warn: true }] : []),
       )
       // CHẠY TIẾP (không return) → kiểm tiếp từng chuyến ở processVehicleGroups
@@ -3822,31 +4005,27 @@ export async function uploadKhvc(req: Request, res: Response) {
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
       raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))
-    // PREFLIGHT không ghi tầng raw (đây là ghi DUY NHẤT trước processVehicleGroups — bỏ nó là
-    // toàn nhánh kiểm-trước sạch 100%, phần dưới chỉ ĐỌC).
-    if (!isPreflight(req)) {
+    // Ghi tầng raw để processVehicleGroups gọi SAU khi validate xong (kiểm trước khi ghi).
+    // PREFLIGHT thì không ghi gì cả → toàn nhánh kiểm-trước sạch 100%, phần dưới chỉ ĐỌC.
+    const writeKhvcRaw = async () => {
+      if (isPreflight(req)) return
       for (let i = 0; i < khvcRecords.length; i += 500) {
         const { error } = await supabase.from('khvc_lines').upsert(khvcRecords.slice(i, i + 500), { onConflict: 'group_code,do_no' })
         if (error) throw new Error(error.message)
       }
     }
 
-    const { byVehicle, missingDos } = await buildKhvcByVehicle(khvcRows)
+    const { byVehicle, missingDos, awaitingByGc } = await buildKhvcByVehicle(khvcRows)
 
-    // DO LUÔN bắt buộc: thiếu DO trong VL06O → CHẶN TOÀN BỘ, bắt sửa (thêm DO vào VL06O hoặc bỏ khỏi KHVC).
-    // Xuất tay/không DO: dùng nút "Tạo đơn" thủ công (user chốt — không làm switch bỏ qua DO).
-    if (missingDos.size) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'MISSING_DO', message: `${missingDos.size} DO trong KHVC chưa có trong VL06O — hãy Up VL06O đầy đủ trước (xuất tay không DO thì dùng "Tạo đơn").` },
-        missing_dos: [...missingDos],
-      })
-    }
-
-    if (!byVehicle.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
+    // DO chưa có trong VL06O KHÔNG còn chặn file (user chốt 03/08): điều vận nạp kế hoạch TRƯỚC,
+    // kho up VL06O sau. Xe thiếu dữ liệu vẫn sinh chuyến nhưng ở dạng CHỜ — không xuất được cho tới
+    // khi dữ liệu về (rồi tự kích hoạt). Trước đây chặn cả file nên điều vận không nạp được gì.
+    if (!byVehicle.size && !awaitingByGc.size) return fail(res, 'Không có dữ liệu hợp lệ trong KHVC', 400)
+    if (missingDos.size) preflightExtra.push({ label: 'DO chưa có trong VL06O (chuyến sẽ CHỜ dữ liệu)',
+      value: `${missingDos.size}: ${[...missingDos].slice(0, 5).join(', ')}${missingDos.size > 5 ? '…' : ''}`, warn: true })
 
     // KHVC/SAP → nhặt lẻ auto theo pallet; preflightExtra = số liệu rủi ro tính ở trên (nếu đang kiểm trước)
-    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra)
+    return await processVehicleGroups(req, res, byVehicle, undefined, undefined, true, preflightExtra, awaitingByGc, writeKhvcRaw)
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
@@ -4171,7 +4350,7 @@ export async function checkScanItem(req: Request, res: Response) {
       { data: invList },
       { data: dupCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(id, location_code, warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -4180,6 +4359,10 @@ export async function checkScanItem(req: Request, res: Response) {
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
 
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
+    // Chuyến bất động (chờ dữ liệu SAP / kế hoạch đã bỏ): chặn CẢ nhặt lẻ — khác luật ngày tương lai,
+    // vì ở đây chuyến chưa/không còn dòng hàng để soạn, không phải chuyện sớm hay muộn.
+    { const inertErr = inertError(gdo as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     // Mirror guard của scanItem: preview cũng chặn sớm để người quét biết ngay lý do
     if (!loose_picking_mode && !(gdo as { started_at?: string | null } | null)?.started_at)
       return fail(res, 'Chuyến chưa Bắt đầu — bấm "Bắt đầu" chuyến (qua kiểm tra cổng/cân nếu kho yêu cầu) rồi mới quét xuất', 400)
@@ -4274,7 +4457,7 @@ export async function scanItem(req: Request, res: Response) {
       { data: dupCheck },
       { data: empCheck },
     ] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
       supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
       supabase.from('InventoryEntry').select('*, qa_status:QAStatus(code,name), location:Location!location_id(warehouse_id)').eq('pallet_code', qr).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       dupScanQuery(itemId, qr, !!loose_picking_mode),
@@ -4286,6 +4469,10 @@ export async function scanItem(req: Request, res: Response) {
     const inv = ((invList ?? []) as any[]).find((e: any) => e.location?.warehouse_id === gdo?.warehouse_id) ?? null
     const resolved_employee_id = empCheck ? employee_id : null
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể quét', 400)
+    // Chuyến bất động (chờ dữ liệu SAP / kế hoạch đã bỏ): chặn CẢ nhặt lẻ — khác luật ngày tương lai,
+    // vì ở đây chuyến chưa/không còn dòng hàng để soạn, không phải chuyện sớm hay muộn.
+    { const inertErr = inertError(gdo as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     // Chưa Bắt đầu → không quét (bug 01/08: quét lật IN_PROGRESS + trừ tồn, lách rule cổng/cân).
     // Nhặt lẻ pre-start (xe chưa tới) là chủ đích → miễn.
     if (!loose_picking_mode && !gdo?.started_at)
@@ -4607,7 +4794,7 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }, { data: empCheck }] =
       await Promise.all([
-        supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date').eq('id', gdoId).single(),
+        supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}`).eq('id', gdoId).single(),
         supabase.from('OutboundItem').select('*').eq('id', itemId).single(),
         employee_id
           ? supabase.from('Employee').select('id').eq('id', employee_id).maybeSingle()
@@ -4617,6 +4804,8 @@ export async function confirmLoosePickingItem(req: Request, res: Response) {
 
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng', 400)
+    { const inertErr = inertError(gdo as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
     // SOẠN nhặt lẻ trước ngày = OK (chỉ giữ hàng/reserved), nhưng XÁC NHẬN = TRỪ TỒN THẬT = hàng rời kho
     // ⇒ phải đúng ngày xuất (probe 02/08: đây là đường lách FUTURE_DATE duy nhất còn trừ được tồn).
@@ -4700,13 +4889,15 @@ export async function manualLooseItem(req: Request, res: Response) {
     if (cartons == null || !Number.isFinite(Number(cartons)) || Number(cartons) < 0) return fail(res, 'Số thùng không hợp lệ', 400)
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, warehouse_id, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
       supabase.from('OutboundItem')
         .select('id, do_id, material_id, material_code_raw, cartons_ordered, cartons_scanned, loose_picking, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
         .eq('id', itemId).single(),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
+    { const inertErr = inertError(gdo as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     if (!item) return fail(res, 'Không tìm thấy mặt hàng', 404)
 
     // BASE UNIT: cartons = SỐ BASE (nhặt lẻ đếm hộp nguyên) — mã có entry phải nguyên
@@ -5068,13 +5259,15 @@ export async function manualCompleteItem(req: Request, res: Response) {
     }
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
-      supabase.from('GroupDeliveryOrder').select('status, started_at, warehouse_id, delivery_date, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
+      supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode)`).eq('id', gdoId).single(),
       supabase.from('OutboundItem')
         .select('id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)')
         .eq('id', itemId).single(),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
+    { const inertErr = inertError(gdo as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     // Chưa Bắt đầu → không "Lưu thủ công" (bug 01/08: đường này lật IN_PROGRESS + trừ pool tồn,
     // lách rule cổng/cân — kho QTY/NONE dùng đường này là chính nên lỗ càng rộng)
     if (!(gdo as { started_at?: string | null } | null)?.started_at)

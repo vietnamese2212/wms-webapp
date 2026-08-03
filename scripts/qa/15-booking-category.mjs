@@ -15,6 +15,9 @@ import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE } from './li
 
 const t = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+// Fixture đặt ở NGÀY MAI: khung giờ test nằm cuối ngày, chạy gói sau giờ đó thì app chặn
+// đúng luật ('khung giờ đã qua') và gói TỰ ĐỎ dù code không sai — cổng gác không được phụ thuộc giờ chạy.
+const DAY = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 let pass = 0, fail = 0
 const check = (name, ok, note = '') => {
   if (ok) { pass++; console.log(`  ✅ ${name}`) }
@@ -56,7 +59,7 @@ async function cleanup() {
   }
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
   for (const tm of [TIME_A, TIME_B])
-    await restWrite('DeliverySlot', 'DELETE', `date=eq.${today}&time_from=eq.${tm}&warehouse_id=eq.${WH.id}`).catch(() => {})
+    await restWrite('DeliverySlot', 'DELETE', `date=eq.${DAY}&time_from=eq.${tm}&warehouse_id=eq.${WH.id}`).catch(() => {})
 }
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -64,14 +67,14 @@ const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   last_synced_at: t(), updated_at: t(),
 })
 const addLine = (gc, doNo, cua) => api('/external/khvc', 'POST', {
-  group_code: gc, do_no: doNo, npp: 'QA BOOKING NPP', export_date: today,
+  group_code: gc, do_no: doNo, npp: 'QA BOOKING NPP', export_date: DAY,
   veh_type: vehTypeName, dvvt: dvvtName, ...(cua !== undefined ? { booking_category: cua } : {}),
 })
 const orderOf = async gc => (await restAll('TmsOrder', `select=id,order_code,booking_category&order_code=eq.${gc}`))[0] ?? null
 const mkSlot = (time, cargo) => {
   const id = randomUUID()
   return restWrite('DeliverySlot', 'POST', null, {
-    id, date: today, time_from: time, time_to: '23:59:00', direction: 'OUTBOUND',
+    id, date: DAY, time_from: time, time_to: '23:59:00', direction: 'OUTBOUND',
     vehicle_type_id: vtId, cargo_type: cargo, warehouse_id: WH.id,
     max_vehicles: 2, booked_count: 0, status: 'OPEN', created_at: t(), updated_at: t(),
   }).then(() => id)
@@ -162,7 +165,7 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
       let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
       return { s: r.status, j }
     }
-    const base = { 'Tên NPP': 'QA BOOKING NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName }
+    const base = { 'Tên NPP': 'QA BOOKING NPP', 'Ngày xuất': DAY, 'Loại xe': vehTypeName, 'DVVT': dvvtName }
     const GCU = GC(2)
     // 8a. 1 Số xe khai 2 cửa khác nhau + 1 mã lạ → báo cáo có bảng, KHÔNG ghi gì
     const r8 = await upload([
@@ -203,7 +206,7 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   const gcW = GC(1)
   const ord = (await restAll('TmsOrder', `select=order_code,warehouse_type,booking_category&order_code=eq.${gcW}`))[0]
   const g = (await restAll('GroupDeliveryOrder', `select=awaiting_sap,warehouse_type&group_code=eq.${gcW}`))[0]
-  const q = `date_from=${today}&date_to=${today}&warehouse_id=${WH.id}`
+  const q = `date_from=${DAY}&date_to=${DAY}&warehouse_id=${WH.id}`
   const pg = await api(`/tms/orders?${q}&page=1&page_size=200`)
   const row = (pg.j?.data?.rows ?? []).find(r => r.order_code === gcW)
   check('9. Lệnh của chuyến CHỜ SAP: API trả CỬA dù hàng chở chưa biết (để ô Loại kho không trống)',
@@ -215,7 +218,7 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
 await cleanup()
 const leftK = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})`)
 const leftO = await restAll('TmsOrder', `select=id&order_code=in.(${ALL_GC.join(',')})`)
-const leftS = await restAll('DeliverySlot', `select=id&date=eq.${today}&time_from=in.(${TIME_A},${TIME_B})&warehouse_id=eq.${WH.id}`)
+const leftS = await restAll('DeliverySlot', `select=id&date=eq.${DAY}&time_from=in.(${TIME_A},${TIME_B})&warehouse_id=eq.${WH.id}`)
 check('Dọn 0 sót', leftK.length === 0 && leftO.length === 0 && leftS.length === 0,
   `kh=${leftK.length} lệnh=${leftO.length} khung=${leftS.length}`)
 

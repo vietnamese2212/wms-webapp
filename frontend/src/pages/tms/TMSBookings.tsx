@@ -4417,16 +4417,20 @@ export default function TMSBookings() {
                         {order.vehicle_slots.length > 1 && (
                           <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
-                        {order.order_code || <span className="text-slate-400 font-normal">—</span>}
-                        {/* Badge nguồn INLINE sau mã, không wrap (user chốt 03/08 vòng 2): lệnh TỪ KẾ HOẠCH
-                            XUẤT là mặc định → KHÔNG badge; chỉ đánh dấu nguồn KHÁC "(Excel)" + trạng thái "KH đã bỏ" */}
-                        {order.plan_dropped ? (
-                          <span className="ml-1 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
-                            title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
-                        ) : order.origin !== 'KHVC' ? (
-                          <span className="ml-1 px-1 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-sans font-semibold text-[9px] whitespace-nowrap"
-                            title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
-                        ) : null}
+                        {/* Badge nguồn SAU mã, 1 hàng, KHÔNG bị che (user chốt 03/08 vòng 3): cột table-fixed
+                            + overflow-hidden nên badge nối đuôi chuỗi sẽ bị cắt khi cột hẹp (mã 22 ký tự đã
+                            chiếm trọn 148px mặc định) → flex: MÃ truncate co lại, badge shrink-0 luôn hiện.
+                            Lệnh TỪ Kế hoạch xuất = mặc định, KHÔNG badge; chỉ nguồn khác "(Excel)" + "KH đã bỏ". */}
+                        <div className="flex items-center gap-1 min-w-0" title={order.order_code || undefined}>
+                          <span className="truncate">{order.order_code || <span className="text-slate-400 font-normal">—</span>}</span>
+                          {order.plan_dropped ? (
+                            <span className="shrink-0 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
+                              title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                          ) : order.origin !== 'KHVC' ? (
+                            <span className="shrink-0 px-1 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-sans font-semibold text-[9px] whitespace-nowrap"
+                              title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
+                          ) : null}
+                        </div>
                       </>
                     ) : (() => {
                       const nextRow = pagedRows[rowIndex + 1]

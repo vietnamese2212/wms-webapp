@@ -51,15 +51,36 @@ async function khvcScopeError(req: Request, groupCodes: (string | null | undefin
 // SỬA NGÀY XUẤT phụ thuộc TÌNH TRẠNG chuyến (user chốt 02/08): chuyến ĐANG XUẤT / ĐÃ HOÀN THÀNH
 // → ngày là sự thật vận hành, KHÔNG đổi từ KH (replan vốn skip chuyến bận ⇒ đổi được raw thì
 // KH lệch chuyến vĩnh viễn). PENDING/PAUSED/chưa sinh chuyến → đổi tự do, replan dội xuống.
-async function dateLockedGroups(groupCodes: string[]): Promise<Map<string, string>> {
+// `newDate` (tùy chọn) để gác thêm luật CẤM DỜI SANG TƯƠNG LAI khi chuyến ĐÃ BẮT ĐẦU.
+// Bug thật đo 03/08: chuyến đã Bắt đầu + đã ghi nhận số, TẠM DỪNG rồi dời ngày —
+//   · cửa "sửa trên đơn" (updateGDO/patchGDO): 422 FUTURE_DATE (đúng luật CLAUDE.md)
+//   · cửa "Kế hoạch xuất" (updateKhvc/bulk-date): CHO QUA 200  ⇒ ĐƯỜNG LÁCH
+// Lách được là tạo NGÕ CỤT: tồn đã trừ thật mà chuyến nằm ở ngày tương lai. Trạng thái PAUSED
+// KHÔNG nằm trong danh sách chặn cũ nên lỗ này ẩn sau nút "Tạm dừng". Muốn hoãn sang ngày khác
+// thì phải Bỏ bắt đầu (hoàn số đã ghi + trả tồn) TRƯỚC — cùng hướng dẫn với futureShiftError.
+async function dateLockedGroups(groupCodes: string[], newDate?: string | null): Promise<Map<string, string>> {
   const locked = new Map<string, string>()
+  const nd = newDate ? String(newDate).slice(0, 10) : null
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   for (let i = 0; i < groupCodes.length; i += 300) {
-    const { data } = await supabase.from('GroupDeliveryOrder').select('group_code, status')
-      .in('group_code', groupCodes.slice(i, i + 300)).in('status', ['IN_PROGRESS', 'COMPLETED'])
-    for (const g of ((data ?? []) as { group_code: string; status: string }[]))
-      locked.set(g.group_code, g.status === 'COMPLETED'
-        ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — ngày không đổi được nữa'
-        : 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới đổi ngày')
+    const { data } = await supabase.from('GroupDeliveryOrder')
+      .select('group_code, status, started_at, delivery_date')
+      .in('group_code', groupCodes.slice(i, i + 300))
+    for (const g of ((data ?? []) as { group_code: string; status: string; started_at: string | null; delivery_date: string | null }[])) {
+      if (g.status === 'COMPLETED') {
+        locked.set(g.group_code, 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — ngày không đổi được nữa'); continue
+      }
+      if (g.status === 'IN_PROGRESS') {
+        locked.set(g.group_code, 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới đổi ngày'); continue
+      }
+      // ĐÃ BẮT ĐẦU (kể cả đang TẠM DỪNG) + dời sang TƯƠNG LAI → chặn
+      if (g.started_at && nd && nd > todayVN && nd !== String(g.delivery_date ?? '').slice(0, 10)) {
+        const [yy, mm, dd] = nd.split('-')
+        locked.set(g.group_code, `Chuyến ĐÃ BẮT ĐẦU xuất hàng — không dời Ngày xuất sang ${dd}/${mm}/${yy} (tương lai). `
+          + 'Muốn hoãn sang ngày khác: vào chuyến bấm "Bỏ bắt đầu" (hoàn số đã ghi + trả tồn về kho) rồi dời ngày; '
+          + 'nếu hàng đã bốc lên xe thì Hoàn thành theo số thực xuất, phần rớt lại lên kế hoạch ngày mới.')
+      }
+    }
   }
   return locked
 }
@@ -390,7 +411,7 @@ export async function updateKhvc(req: Request, res: Response) {
     // Đổi Ngày xuất phụ thuộc tình trạng chuyến — gác trên xe ĐÍCH (đổi cả Số xe thì dòng theo xe mới)
     if ('export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')) {
       const targetGc = String((fields.group_code ?? cur.group_code) ?? '')
-      const locked = targetGc ? await dateLockedGroups([targetGc]) : new Map<string, string>()
+      const locked = targetGc ? await dateLockedGroups([targetGc], String(fields.export_date ?? '')) : new Map<string, string>()
       const lockMsg = locked.get(targetGc)
       if (lockMsg) return fail(res, 422, 'GDO_STATUS_LOCKED', `${lockMsg} (xe ${targetGc}).`)
     }
@@ -533,7 +554,7 @@ export async function bulkDateKhvc(req: Request, res: Response) {
     if (!groupCodes.length) return fail(res, 'Không tìm thấy dòng', 404)
     const scopeErr = await khvcScopeError(req, groupCodes)
     if (scopeErr) return fail(res, scopeErr, 403)
-    const locked = await dateLockedGroups(groupCodes)
+    const locked = await dateLockedGroups(groupCodes, export_date)
     const allowed = groupCodes.filter(g => !locked.has(g))
     const blocked = [...locked].map(([group_code, reason]) => ({ group_code, reason }))
     let updatedLines = 0

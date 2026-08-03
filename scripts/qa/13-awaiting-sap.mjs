@@ -98,6 +98,10 @@ const rep = await api('/external/khvc/bulk-date', 'POST', { ids: (await restAll(
 check('3a. Dội lại kế hoạch sau khi có dữ liệu → OK', rep.s === 200, `http=${rep.s}`)
 const g1b = await gdoOf(GC(1))
 check('3b. Cờ chờ đã tắt', !!g1b && g1b.awaiting_sap === false, `awaiting=${g1b?.awaiting_sap}`)
+// Bản ghi chuyến phải GIỮ NGUYÊN id: người dùng đang mở trang chuyến CHỜ, dữ liệu về mà đổi id
+// thì trang của họ 404 và vết sổ lịch sử trỏ vào bản ghi đã chết (bắt được ở đợt kiểm vòng 2, 03/08).
+check('3b2. Kích hoạt GIỮ NGUYÊN bản ghi chuyến (không xóa+tạo lại)', !!g1b && !!g1 && g1b.id === g1.id,
+  `trước=${g1?.id} sau=${g1b?.id}`)
 const its = g1b ? await itemsOf(g1b.id) : []
 check('3c. Chuyến đã có dòng hàng đúng số kế hoạch', its.length === 1 && Number(its[0].cartons_ordered) === 120,
   `items=${its.length} qty=${its[0]?.cartons_ordered}`)
@@ -128,6 +132,10 @@ check('4f. Thêm lại dòng kế hoạch → OK', r4f.s === 201, `http=${r4f.s}
 const g2c = await gdoOf(GC(2))
 check('4g. Chuyến HOẠT ĐỘNG TRỞ LẠI', !!g2c && g2c.plan_dropped === false && g2c.awaiting_sap === false,
   `plan_dropped=${g2c?.plan_dropped} awaiting=${g2c?.awaiting_sap}`)
+// "Chuyến không bị xóa… kế hoạch có lại thì hoạt động trở lại VỚI LỊCH SỬ ĐƯỢC BỔ SUNG" (user chốt
+// 03/08) — mở lại mà đẻ bản ghi mới là mất chính cái lịch sử đó.
+check('4g2. Mở lại DÙNG LẠI đúng bản ghi cũ (giữ lịch sử)', !!g2c && !!g2 && g2c.id === g2.id,
+  `trước=${g2?.id} sau=${g2c?.id}`)
 
 // ── 5. CẤM xóa kế hoạch của chuyến đã xuất ───────────────────────────────────
 if (g2c) {

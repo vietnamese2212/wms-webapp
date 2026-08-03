@@ -2968,8 +2968,8 @@ async function applyAwaitingState(
     out.shells++; out.awaiting++
   }
 
-  // (2) Xe đã đủ dữ liệu → gỡ cờ chờ. Chuyến PENDING bị xóa-tạo-lại nên cờ mới vốn đã false;
-  //     vẫn phải ghi sổ dựa trên trạng thái TRƯỚC derive, không thì mất vết "đã được kích hoạt".
+  // (2) Xe đã đủ dữ liệu → gỡ cờ chờ. Chuyến CHỜ/NGỪNG được GIỮ NGUYÊN bản ghi (nhánh preserve)
+  //     nên cờ vẫn còn true ở đây và phải gỡ thật; vết sổ vẫn ghi theo trạng thái TRƯỚC derive.
   for (const gc of processedGcs) {
     if (awaitingByGc.has(gc)) continue
     const g = byGc.get(gc)
@@ -3078,8 +3078,16 @@ async function processVehicleGroups(
       })
       if (g.shipto_party) shiptoByGroupCode.set(g.group_code as string, g.shipto_party as string)
       if (g.status === 'PENDING') {
-        if (g.assigned_at) pendingPreserveMap.set(g.group_code as string, g.id)
-        else               pendingSimpleMap.set(g.group_code as string, g.id)
+        // GIỮ NGUYÊN bản ghi (không xóa+tạo lại) khi chuyến đã có "danh tính" người dùng đang cầm:
+        //  · assigned_at   → giữ phân công
+        //  · awaiting_sap  → người đang mở trang chuyến CHỜ; VL06O về mà đổi id thì trang họ 404
+        //  · plan_dropped  → user chốt 03/08: "chuyến KHÔNG bị xóa… kế hoạch có lại thì hoạt động
+        //                    trở lại VỚI LỊCH SỬ ĐƯỢC BỔ SUNG" — đổi id là mất chính cái lịch sử đó
+        // (đo 03/08: id đổi ⇒ trang đang mở 404 + vết sổ trỏ vào bản ghi đã chết)
+        if (g.assigned_at || g.awaiting_sap || g.plan_dropped)
+          pendingPreserveMap.set(g.group_code as string, g.id)
+        else
+          pendingSimpleMap.set(g.group_code as string, g.id)
       } else if (g.status === 'PAUSED') {
         pausedGDOMap.set(g.group_code as string, g.id)
       } else {

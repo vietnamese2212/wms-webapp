@@ -13,6 +13,8 @@ const bcrypt = createRequire(new URL('../../backend/package.json', import.meta.u
 console.log('── GÓI DERIVED-LOCK (Xuất = dẫn xuất của VL06O + Kế hoạch xuất) ──')
 await login()
 await resolveFixtures()
+// CỬA đặt lịch BẮT BUỘC từ 03/08 (gói 15 gác luật) — lấy loại đầu danh mục, không viết cứng mã
+const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
 const now = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
@@ -73,7 +75,7 @@ await mkRaw('QADRVDO1', '10', 100)
 await mkRaw('QADRVDO2', '10', 40)
 
 // ── 1. Thêm dòng Kế hoạch xuất → replan SINH CHUYẾN origin='SAP' + item đúng SL raw ──
-let r = await api('/external/khvc', 'POST', { group_code: GC('01'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+let r = await api('/external/khvc', 'POST', { group_code: GC('01'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
 let gdo1 = (await restAll('GroupDeliveryOrder', `select=id,origin,status,dvvt,delivery_date&group_code=eq.${GC('01')}`))[0]
 let it1 = gdo1 ? (await restAll('OutboundItem', `select=id,cartons_ordered,cartons_scanned,od_refs&do_id=in.(${(await restAll('OutboundDelivery', `select=id&gdo_id=eq.${gdo1.id}`)).map(d => d.id).join(',')})`))[0] : null
 check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201 && gdo1?.origin === 'SAP' && Number(it1?.cartons_ordered) === 100 && (it1?.od_refs?.length ?? 0) > 0,
@@ -142,7 +144,7 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
   const line1 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('01')}`))[0]
   const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   r = await api(`/external/khvc/${line1.id}`, 'PUT', { export_date: tomorrow })
-  const r2 = await api('/external/khvc', 'POST', { group_code: GC('01'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName })
+  const r2 = await api('/external/khvc', 'POST', { group_code: GC('01'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   // Replan chuyến PENDING chưa gán = XÓA-TẠO-LẠI (đúng ngữ nghĩa re-upload) → id ĐỔI, phải fetch lại SAU add
   const g = (await restAll('GroupDeliveryOrder', `select=id,delivery_date,origin&group_code=eq.${GC('01')}`))[0]
   const dosOf = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
@@ -155,7 +157,7 @@ check('thêm dòng KH xuất → tự sinh chuyến SAP + SL = raw', r.s === 201
 
 // ── 5. DO chưa có trong VL06O → KHÔNG chặn nữa (user chốt 03/08: điều vận nạp kế hoạch TRƯỚC khi
 // có VL06O). Dòng vẫn nhận, chuyến sinh ra ở dạng CHỜ dữ liệu — chi tiết ở gói 13.
-r = await api('/external/khvc', 'POST', { group_code: GC('02'), do_no: 'QADRVDO_MISSING', npp: 'X', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+r = await api('/external/khvc', 'POST', { group_code: GC('02'), do_no: 'QADRVDO_MISSING', npp: 'X', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
 check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ dữ liệu)', r.s === 201, `${r.s} ${r.j?.error?.message ?? ''}`)
 
 // ── 6. Chuyến ĐANG XUẤT: sửa KH không tự đụng chuyến — sinh reconcile_task ──
@@ -190,7 +192,7 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
   const line1 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('01')}&do_no=eq.QADRVDO1`))[0]
   const rDel = await api(`/external/khvc/${line1.id}`, 'DELETE')
   // 8b — chuyến PENDING sạch: tạo group mới rồi xóa dòng duy nhất → chuyến biến mất
-  await api('/external/khvc', 'POST', { group_code: GC('03'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  await api('/external/khvc', 'POST', { group_code: GC('03'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   const g3 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('03')}`))[0]
   const line3 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('03')}`))[0]
   const rDel3 = await api(`/external/khvc/${line3.id}`, 'DELETE')
@@ -206,8 +208,8 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
 // Dùng xe PENDING SẠCH riêng — GC01 đã bị case 6 đưa vào ĐANG XUẤT (replan không đụng là ĐÚNG luật).
 {
   const dayAfter = new Date(Date.now() + 2 * 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
-  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
+  await api('/external/khvc', 'POST', { group_code: GC('06'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   const lines = await restAll('khvc_lines', `select=id,do_no&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE&order=do_no`)
   const r = await api(`/external/khvc/${lines[0].id}`, 'PUT', { export_date: dayAfter })
   const after = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('06')}&sync_status=neq.OBSOLETE`)
@@ -219,7 +221,7 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
 
 // ── 9. Chuyến mà KH toàn OBSOLETE (kế hoạch đã bỏ) → PHẢI xóa được, không kẹt vĩnh viễn (fix 02/08) ──
 {
-  await api('/external/khvc', 'POST', { group_code: GC('04'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+  await api('/external/khvc', 'POST', { group_code: GC('04'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   const g = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC('04')}`))[0]
   await restWrite('khvc_lines', 'PATCH', `group_code=eq.${GC('04')}`, { sync_status: 'OBSOLETE', updated_at: now() })
   const rDel = await api(`/wms/outbound/${g.id}`, 'DELETE')
@@ -326,8 +328,8 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
 // ── 13. 1 XE = 1 NGÀY: thêm DO / chuyển DO sang xe khác đều phải theo ngày của xe đích ──
 {
   const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
-  const rAdd = await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName })
+  await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
+  const rAdd = await api('/external/khvc', 'POST', { group_code: GC('07'), do_no: 'QADRVDO2', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   const lines7 = await restAll('khvc_lines', `select=export_date&group_code=eq.${GC('07')}&sync_status=neq.OBSOLETE`)
   const dates7 = [...new Set(lines7.map(l => l.export_date))]
   check('thêm DO ngày KHÁC vào xe đã có → ép về ngày của xe (1 xe 1 ngày)',
@@ -336,7 +338,7 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
 
   // chuyển 1 dòng của xe 07 sang xe 08 (xe 08 mang ngày khác) → dòng phải theo ngày xe 08
   // (DO của xe 08 phải là DO ĐÃ SEED trong raw — DO lạ bị chặn 400 "chưa có trong VL06O")
-  const rMk8 = await api('/external/khvc', 'POST', { group_code: GC('08'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName })
+  const rMk8 = await api('/external/khvc', 'POST', { group_code: GC('08'), do_no: 'QADRVDO1', npp: 'QADRV NPP', export_date: tomorrow, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   if (rMk8.s !== 201) console.log(`     (fixture xe 08: ${rMk8.s} ${rMk8.j?.error?.message ?? ''})`)
   const mv = (await restAll('khvc_lines', `select=id&group_code=eq.${GC('07')}&do_no=eq.QADRVDO2`))[0]
   const rMove = await api(`/external/khvc/${mv.id}`, 'PUT', { group_code: GC('08') })

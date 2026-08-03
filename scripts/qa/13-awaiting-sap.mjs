@@ -19,6 +19,8 @@ const check = (name, ok, note = '') => {
 
 await login()
 await resolveFixtures()
+// CỬA đặt lịch BẮT BUỘC từ 03/08 (gói 15 gác luật) — lấy loại đầu danh mục, không viết cứng mã
+const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
 // Loại xe + ĐVVT phải LẤY TỪ DANH MỤC THẬT (validate của derive khớp danh mục, không nhận nhãn tự chế)
 const vehTypeName = (await restAll('VehicleType', 'select=name&is_active=eq.true&order=name&limit=1'))[0]?.name
 const dvvtName = (await restAll('TransportCompany', 'select=name&type=eq.ĐVVT&order=name&limit=1'))[0]?.name
@@ -60,7 +62,7 @@ const itemsOf = async gdoId => {
   return restAll('OutboundItem', `select=id,cartons_ordered,cartons_scanned&do_id=in.(${dos.map(x => x.id).join(',')})`)
 }
 const addLine = (gc, doNo) => api('/external/khvc', 'POST', {
-  group_code: gc, do_no: doNo, npp: 'QA AWAIT NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName,
+  group_code: gc, do_no: doNo, npp: 'QA AWAIT NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT,
 })
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -173,8 +175,8 @@ if (g2c) {
   if (XLSX) {
     const GC7 = GC(3)
     const rows = [
-      { 'Số xe': GC7, 'DO': DO_B, 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName },
-      { 'Số xe': GC7, 'DO': 'QAAWDO404', 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName },
+      { 'Số xe': GC7, 'DO': DO_B, 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName, 'Loại kho booking': BK_CAT },
+      { 'Số xe': GC7, 'DO': 'QAAWDO404', 'Tên NPP': 'QA AWAIT NPP', 'Ngày xuất': today, 'Loại xe': vehTypeName, 'DVVT': dvvtName, 'Loại kho booking': BK_CAT },
     ]
     const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'KHVC')
@@ -223,7 +225,7 @@ if (g2c) {
 {
   const GC9 = GC(5), DO9 = 'QAAWDO905'
   const r9a = await api('/external/khvc', 'POST', { group_code: GC9, do_no: DO9, npp: 'QA AWAIT NPP',
-    export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+    export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   check('9a. Tạo chuyến CHỜ (DO chưa có trong VL06O)', r9a.s === 201, `http=${r9a.s}`)
   const g9 = await gdoOf(GC9)
   const l9 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC9}`))[0]
@@ -232,7 +234,7 @@ if (g2c) {
   check('9b. Bỏ kế hoạch của chuyến đang CHỜ → NGỪNG HOẠT ĐỘNG', !!g9b && g9b.plan_dropped === true,
     `plan_dropped=${g9b?.plan_dropped}`)
   await api('/external/khvc', 'POST', { group_code: GC9, do_no: DO9, npp: 'QA AWAIT NPP',
-    export_date: today, veh_type: vehTypeName, dvvt: dvvtName })
+    export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
   const g9c = await gdoOf(GC9)
   check('9c. Kế hoạch có lại → hết NGỪNG nhưng VẪN CHỜ (dữ liệu SAP chưa về)',
     !!g9c && g9c.plan_dropped === false && g9c.awaiting_sap === true,

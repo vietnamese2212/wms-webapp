@@ -9,5 +9,6 @@
   "gdo_category_exact_match": 50,
   "inert_banner_desktop_only": 0,
   "search_state_without_input": 0,
+  "hardcoded_warehouse_type_code": 1,
   "upload_without_preflight": 0
 }

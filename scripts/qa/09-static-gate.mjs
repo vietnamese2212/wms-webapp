@@ -115,6 +115,16 @@ const RULES = [
     label: 'trang khai state tìm (const x = <filter>.search) nhiều hơn số ô <SearchInput> render — ô tìm chết, user không có chỗ gõ',
     count: (s) => countDeadSearchState(s),
   },
+  // MÃ LOẠI KHO VIẾT CỨNG: taxonomy Loại kho là DỮ LIỆU (LookupValue, mỗi đơn vị mỗi bộ) — luật
+  // multi-tenant trong CLAUDE.md: "hành vi mới theo loại = thêm key meta, KHÔNG if tên loại".
+  // Viết `=== 'FG01'` vào logic là khoá app vào 1 đơn vị. Bỏ qua dòng comment; baseline hiện tại là
+  // dòng VÍ DỤ trong mẫu Excel tải về (dữ liệu mẫu, không phải logic).
+  {
+    key: 'hardcoded_warehouse_type_code',
+    label: 'mã Loại kho viết CỨNG trong code (FG0x/PM0x/RM0x/PK0x) — phải đọc từ danh mục LookupValue, không so tên loại',
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /['"](FG0\d|PM0\d|RM0\d|PK0\d)['"]/.test(line), s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +

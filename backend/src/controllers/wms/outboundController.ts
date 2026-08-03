@@ -3072,6 +3072,9 @@ async function processVehicleGroups(
     // blockedMap         : IN_PROGRESS / COMPLETED → skip
     const pendingSimpleMap   = new Map<string, string>()
     const pendingPreserveMap = new Map<string, string>() // group_code → id
+    // Giữ nguyên bản ghi vì NHIỀU lý do (phân công / đang chờ SAP / đang ngừng) — riêng ô đếm
+    // "giữ phân công đã gán" ở bản kiểm trước chỉ được tính xe THẬT SỰ có phân công.
+    const assignedGcs = new Set<string>()
     const pausedGDOMap       = new Map<string, string>()
     const blockedMap         = new Map<string, string>() // group_code → status
     // Ship-to đã gán tay trên đơn PENDING — mang theo khi upload đè (xóa+tạo lại), không để mất âm thầm
@@ -3092,10 +3095,12 @@ async function processVehicleGroups(
         //  · plan_dropped  → user chốt 03/08: "chuyến KHÔNG bị xóa… kế hoạch có lại thì hoạt động
         //                    trở lại VỚI LỊCH SỬ ĐƯỢC BỔ SUNG" — đổi id là mất chính cái lịch sử đó
         // (đo 03/08: id đổi ⇒ trang đang mở 404 + vết sổ trỏ vào bản ghi đã chết)
-        if (g.assigned_at || g.awaiting_sap || g.plan_dropped)
+        if (g.assigned_at || g.awaiting_sap || g.plan_dropped) {
           pendingPreserveMap.set(g.group_code as string, g.id)
-        else
+          if (g.assigned_at) assignedGcs.add(g.group_code as string)
+        } else {
           pendingSimpleMap.set(g.group_code as string, g.id)
+        }
       } else if (g.status === 'PAUSED') {
         pausedGDOMap.set(g.group_code as string, g.id)
       } else {
@@ -3319,7 +3324,7 @@ async function processVehicleGroups(
           fields: { delivery_date, planned_date, warehouse_id: resolved_warehouse_id, dvvt, warehouse_type: loai_kho, shipto_party: resolvedShipto, priority, transport_note, origin: gdoOrigin, updated_at: now() },
         })
         collectDOsAndItems(gdoId)
-        created.push({ group_code, id: gdoId, created: true, preserved_assignment: true })
+        created.push({ group_code, id: gdoId, created: true, preserved_assignment: assignedGcs.has(group_code) })
         continue
       }
 
@@ -3348,6 +3353,7 @@ async function processVehicleGroups(
     if (isPreflight(req)) {
       const skippedTrips = created.filter((c: any) => c.skipped).length
       const overwrite = toReplaceIds.length + toPreserveIds.length
+      const preservedAssigned = created.filter((c: any) => c.preserved_assignment).length
       const awaitingCount = awaitingByGc?.size ?? 0
       return ok(res, buildPreflight({
         unit: 'chuyến', total: byVehicle.size + awaitingCount,
@@ -3358,7 +3364,7 @@ async function processVehicleGroups(
           ...(awaitingCount ? [{ label: 'Chuyến CHỜ dữ liệu SAP (tạo trước, chưa xuất được)', value: awaitingCount, warn: true }] : []),
           ...(pausedMerges ? [{ label: 'Chuyến TẠM DỪNG sẽ merge thêm hàng', value: pausedMerges, warn: true }] : []),
           ...(overwrite ? [{ label: 'Chuyến GHI ĐÈ kế hoạch cũ', value: overwrite, warn: true }] : []),
-          ...(toPreserveIds.length ? [{ label: 'Trong đó giữ phân công đã gán', value: toPreserveIds.length }] : []),
+          ...(preservedAssigned ? [{ label: 'Trong đó giữ phân công đã gán', value: preservedAssigned }] : []),
           ...(skippedTrips ? [{ label: 'Bỏ qua (đang xuất / đã hoàn thành)', value: skippedTrips, warn: true }] : []),
         ],
       }))

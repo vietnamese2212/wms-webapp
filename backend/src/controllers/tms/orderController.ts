@@ -255,6 +255,7 @@ type TmsListCtx = {
   vehicleTypes: string[] | null
   slotIds: string[] | null
   unbooked: boolean
+  search: string | null     // ô tìm nhanh: mã đơn/Số xe · NPP · biển số · ghi chú (bỏ dấu)
   blocked: boolean          // ngoài phạm vi kho được giao → trả rỗng (không lộ dữ liệu kho khác)
 }
 
@@ -289,6 +290,7 @@ function getTmsListCtx(req: Request, raw: RawFilter = req.query as RawFilter): T
     vehicleTypes: csv(q.vehicle_types as string | string[] | undefined),
     slotIds:      slotIds && uuidList(slotIds).length ? uuidList(slotIds) : null,
     unbooked:     q.unbooked === '1' || q.unbooked === true || (slotIds?.includes('__chua_dat__') ?? false),
+    search:       str(q.search).trim() || null,
     blocked:      scope !== null && (scope.length === 0 || (!!warehouseId && !scope.includes(warehouseId))),
   }
 }
@@ -300,6 +302,8 @@ const tmsRpcFilterParams = (c: TmsListCtx) => ({
   p_directions: c.directions, p_dvvt: c.dvvt,
   p_wh_types: c.whTypes, p_vehicle_types: c.vehicleTypes,
   p_slot_ids: c.slotIds, p_unbooked: c.unbooked,
+  // Ô tìm nhanh đi CHUNG bộ tham số của cả page + summary — lệch là pager và ô tổng đá nhau
+  p_search: c.search,
 })
 
 // GET /api/tms/orders?page=1&page_size=200&… — 1 TRANG lưới Kế hoạch.

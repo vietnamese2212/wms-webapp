@@ -3911,6 +3911,7 @@ export type TmsListFilterParams = {
   date_from: string; date_to: string; warehouse_id?: string
   directions?: string[]; dvvt?: string[]; wh_types?: string[]; vehicle_types?: string[]
   slot_ids?: string[]; unbooked?: boolean
+  search?: string          // ô tìm nhanh — LỌC TRÊN SERVER (lưới phân trang, lọc client chỉ soi 1 trang)
 }
 export type TmsOrdersPage = {
   rows: import('@/types').TmsOrder[]
@@ -3926,6 +3927,7 @@ export function tmsCsvParams(p: TmsListFilterParams) {
     directions: j(p.directions), dvvt: j(p.dvvt), wh_types: j(p.wh_types),
     vehicle_types: j(p.vehicle_types), slot_ids: j(p.slot_ids),
     unbooked: p.unbooked ? '1' : undefined,
+    search: p.search?.trim() || undefined,
   }
 }
 

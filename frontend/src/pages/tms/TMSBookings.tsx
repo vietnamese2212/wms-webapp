@@ -47,6 +47,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
@@ -118,7 +119,11 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
-    if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
+    // 1 XE có thể chở LẪN nhiều loại → warehouse_type là chuỗi GHÉP 'FG01+PM01'. So khớp nguyên
+    // chuỗi thì KHÔNG khung giờ nào khớp (kho khai giờ theo từng loại, không có 'ALL') ⇒ xe chở lẫn
+    // KHÔNG BOOKING ĐƯỢC (user báo 03/08). Luật CLAUDE.md: tách rồi lấy GIAO ≥1.
+    const cargoCats = splitCats(cargoType)
+    if (cargoCats.length && slot.cargo_type !== 'ALL' && !cargoCats.includes(slot.cargo_type)) return false
     if (vehicleType && slot.vehicle_type?.name && slot.vehicle_type.name !== vehicleType) return false
     return true
   })
@@ -3124,6 +3129,13 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: 'Kho' },
   { label: '', resize: false },                    // actions
 ]
+// Loại kho của 1 chuyến/lệnh có thể là chuỗi GHÉP nhiều loại ('FG01+PM01' = xe chở lẫn) — tách ra
+// để so khớp theo GIAO ≥1 (mirror wt_cats() bên SQL + splitCategories() bên BE). Đừng tự split('+').
+const splitCats = (raw?: string | null): string[] =>
+  String(raw ?? '').split('+').map(s => s.trim()).filter(Boolean)
+
+// Ô tìm tại máy (tab Chuyển kho): bỏ dấu + không phân biệt hoa thường, khớp cách server tìm (unaccent)
+const normSearch = (v: string) => v.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
 const MAIN_COL_DEFAULTS = [32, 148, 150, 44, 78, 88, 88, 110, 28, 56, 88, 100, 64, 56, 56, 90, 92, 96, 64, 64, 64, 64, 104, 64]
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
@@ -3173,6 +3185,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   const { widths: colW, startResize, totalWidth } = useColumnResize('tms_transfer_col_widths', TRANSFER_COL_DEFAULTS)
   const khoXuatFilter  = ttf.khoXuat;  const setKhoXuatFilter  = (v: string[]) => setTtf({ khoXuat: v })
   const khoNhanFilter  = ttf.khoNhan;  const setKhoNhanFilter  = (v: string[]) => setTtf({ khoNhan: v })
+  const tSearch = ttf.search; const setTSearch = (v: string) => setTtf({ search: v })
+  const dTSearch = useDebouncedValue(tSearch.trim(), 200)
 
   // Set các kho user có quyền truy cập (null = không giới hạn)
   const accessibleIds = React.useMemo(() => {
@@ -3244,8 +3258,23 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     if (dateTo)   list = list.filter(o => o.date <= dateTo)
     if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
     if (khoNhanFilter.length) list = list.filter(o => o.destination_warehouse_id && (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
+    // Tìm nhanh tại MÁY là đủ và trung thực ở tab này: danh sách nạp TRỌN (BE báo 400 nếu vượt trần,
+    // không cắt âm thầm) nên gõ gì cũng soi hết, không như lưới Kế hoạch phân trang server.
+    if (dTSearch) {
+      const k = normSearch(dTSearch)
+      // Cột hiện trên bảng nhưng chưa có trong type TransferOrder → khai kiểu HẸP tại chỗ (không nới lỏng kiểu)
+      type TOSearch = { license_plate?: string | null; warehouse?: { id?: string | null } | null }
+      list = list.filter(o => {
+        const ox = o as unknown as TOSearch
+        const plates = [ox.license_plate, o.transfer_gdo?.license_plate,
+          ...((o.vehicle_slots ?? []) as { license_plate?: string | null }[]).map(s => s.license_plate)]
+        return [o.order_code, o.npp_name, o.notes, o.transfer_gdo?.group_code, ...plates,
+          whNameById.get(o.transfer_gdo?.warehouse?.id ?? ''), whNameById.get(ox.warehouse?.id ?? '')]
+          .some(v => v && normSearch(String(v)).includes(k))
+      })
+    }
     return list
-  }, [scopedOrders, effDateFrom, dateTo, khoXuatFilter, khoNhanFilter])
+  }, [scopedOrders, effDateFrom, dateTo, khoXuatFilter, khoNhanFilter, dTSearch, whNameById])
 
   // Subtotal tab Chuyển kho (SummaryBand) — tính trên dữ liệu ĐÃ filter.
   // Thùng KH = tổng kế hoạch MỌI lệnh (scope). Thực nhận = CHỈ lệnh ĐÃ GIAO (đã hoàn tất nhận).
@@ -3823,6 +3852,10 @@ export default function TMSBookings() {
   const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v, page: 1 })
   const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v, page: 1 })
   const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v, page: 1 })
+  // Ô TÌM NHANH — lọc TRÊN SERVER (lưới phân trang 200/trang: lọc client chỉ soi trang đang xem,
+  // gõ mã đơn nằm trang sau sẽ ra "không có dòng nào"). Debounce 250ms để không bắn mỗi ký tự.
+  const search = tf.search; const setSearch = (v: string) => setTf({ search: v, page: 1 })
+  const dSearch = useDebouncedValue(search.trim(), 250)
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
 
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
@@ -3857,7 +3890,8 @@ export default function TMSBookings() {
     directions: huongFilter, dvvt: dvvtFilter, wh_types: loaiKhoFilter, vehicle_types: loaiXeFilter,
     slot_ids: khungGioFilter.filter(v => v !== '__chua_dat__'),
     unbooked: khungGioFilter.includes('__chua_dat__'),
-  } : undefined, [canQuery, dateFrom, dateTo, warehouseId, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+    search: dSearch || undefined,
+  } : undefined, [canQuery, dateFrom, dateTo, warehouseId, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter, dSearch])
   const baseParams = useMemo(() => canQuery
     ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined }
     : undefined, [canQuery, dateFrom, dateTo, warehouseId])
@@ -4228,6 +4262,12 @@ export default function TMSBookings() {
               placeholder="— Chọn kho —"
               triggerClassName="h-8 w-[200px]"
             />
+            {/* Ô tìm nhanh — server-side (xem chú thích chỗ khai dSearch) */}
+            {(warehouseId || isNccUser) && (
+              <SearchInput value={search} onChange={setSearch}
+                placeholder="Tìm mã đơn / Số xe · NPP · biển số…"
+                className="w-full sm:w-[260px] order-1 sm:order-none" />
+            )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (

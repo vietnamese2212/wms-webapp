@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { scopeCategoriesOf, splitCategories } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 
 // Scope Kho: NATIONAL → null (toàn quyền); ASSIGNED → danh sách kho được gán.
@@ -368,7 +368,9 @@ export async function getVehicleTypesByWarehouse(req: Request, res: Response) {
         .eq('warehouse_id', warehouse_id)
         .eq('is_active', true)
         .order('id')
-      if (cargo_type) q = q.in('cargo_type', [cargo_type, 'ALL'])
+      // Loại kho có thể là chuỗi GHÉP (xe chở LẪN 'FG01+PM01') → tách rồi lấy GIAO ≥1, không thì
+      // xe chở lẫn chỉ còn khung giờ 'ALL' ⇒ kho khai giờ theo từng loại là KHÔNG booking được.
+      if (cargo_type) q = q.in('cargo_type', [...splitCategories(cargo_type), 'ALL'])
       return q
     })
     const seen = new Set<string>()

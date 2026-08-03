@@ -165,6 +165,7 @@ interface AssignmentFilters {
   dateFrom: string
 }
 interface TmsBookingsFilters {
+  search: string
   dateFrom: string
   dateTo: string
   warehouseId: string
@@ -178,6 +179,7 @@ interface TmsBookingsFilters {
   pageSize: number
 }
 interface TmsTransferFilters {
+  search: string
   dateFrom: string
   dateTo: string
   khoXuat: string[]
@@ -394,8 +396,8 @@ function initialFilters() {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
-    tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
-    tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
+    tmsBookings: { search: '', dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
+    tmsTransfer: { search: '', dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
     userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100 },
     attendanceTeam: { page: 1, pageSize: 100, view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },

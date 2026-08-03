@@ -6,7 +6,7 @@
 //   4. Xe có lại → lệnh sống lại NHƯNG KHÔNG kèm khung giờ (phải booking lại)
 //   5. Lệnh tự sinh KHÔNG sửa/xóa tay được (422 TMS_PLAN_DERIVED) + Số xe đã có lệnh tay thì NHẬN NUÔI
 import { randomUUID } from 'crypto'
-import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE } from './lib.mjs'
+import { login, api, restAll, restWrite, restRpc, resolveFixtures, FIX, BASE } from './lib.mjs'
 
 const t = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -25,7 +25,7 @@ if (!vehTypeName || !dvvtName) { console.log('❌ thiếu danh mục Loại xe/�
 const WH = FIX.WH_QTY
 const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_7${n}`
-const ALL_GC = [GC(1), GC(2)]
+const ALL_GC = [GC(1), GC(2), GC(3)]
 const DO_A = 'QATMSDO01', DO_B = 'QATMSDO02'
 const SLOT_TIME = '23:00:00'   // khung giờ test tự tạo (DeliverySlot không có cột ghi chú → nhận diện bằng giờ+ngày+kho)
 
@@ -158,6 +158,37 @@ const all2 = await restAll('TmsOrder', `select=id,origin,npp_name&order_code=eq.
 check('5d. Số xe đã có lệnh tay → NHẬN NUÔI (1 lệnh, đóng dấu KHVC)',
   r5.s === 201 && all2.length === 1 && all2[0].origin === 'KHVC' && all2[0].npp_name === 'QA TMS NPP',
   `http=${r5.s} n=${all2.length} origin=${all2[0]?.origin} npp=${all2[0]?.npp_name}`)
+
+// ── 8. XE CHỞ LẪN nhiều Loại kho ('QAX1+QAX2') — user báo 03/08 "xe POSM không lên, không booking được"
+// Lỗ hổng: 3 RPC tab Kế hoạch so khớp NGUYÊN CHUỖI ⇒ (a) user có scope loại MẤT xe chở lẫn (ẩn dữ liệu),
+// (b) lọc theo 1 loại làm xe chở lẫn biến mất, (c) facet hiện lựa chọn rác 'A+B' + thiếu lựa chọn đơn.
+{
+  const gc = GC(3), mixed = 'QAX1+QAX2'
+  await restWrite('TmsOrder', 'POST', null, {
+    id: randomUUID(), order_code: gc, date: today, warehouse_id: WH.id, direction: 'OUTBOUND',
+    warehouse_type: mixed, npp_name: 'QA MIX', status: 'PENDING', created_at: t(), updated_at: t(),
+  })
+  const D = { p_date_from: today, p_date_to: today, p_warehouse_id: WH.id }
+  const seesMix = async args => {
+    const ids = (await restRpc('tms_orders_page', { p_offset: 0, p_limit: 500, ...args }))?.ids ?? []
+    if (!ids.length) return false
+    const rows = await restAll('TmsOrder', `select=order_code&id=in.(${ids.join(',')})`)
+    return rows.some(o => o.order_code === gc)
+  }
+  check('8a. Lọc Loại kho = loại THỨ NHẤT vẫn thấy xe chở lẫn', await seesMix({ ...D, p_wh_types: ['QAX1'] }))
+  check('8b. Lọc Loại kho = loại THỨ HAI vẫn thấy xe chở lẫn',  await seesMix({ ...D, p_wh_types: ['QAX2'] }))
+  check('8c. Lọc loại KHÔNG liên quan thì KHÔNG thấy',        !(await seesMix({ ...D, p_wh_types: ['QAX9'] })))
+  check('8d. User scope chỉ 1 trong 2 loại VẪN thấy (không ẩn dữ liệu)', await seesMix({ ...D, p_categories: ['QAX2'] }))
+  const wt = (await restRpc('tms_orders_facets', D))?.wh_types ?? []
+  check('8e. Facet trả TỪNG loại, không đưa chuỗi ghép làm 1 lựa chọn',
+    wt.includes('QAX1') && wt.includes('QAX2') && !wt.includes(mixed), JSON.stringify(wt))
+  const sum = await restRpc('tms_orders_summary', { ...D, p_wh_types: ['QAX1'] })
+  const pg  = await restRpc('tms_orders_page', { p_offset: 0, p_limit: 500, ...D, p_wh_types: ['QAX1'] })
+  check('8f. Ô tổng khớp lưới khi lọc theo 1 loại', Number(sum?.orders) === Number(pg?.total_orders),
+    `tổng=${sum?.orders} lưới=${pg?.total_orders}`)
+  const vr = await api(`/tms/slot-templates/vehicle-types?warehouse_id=${WH.id}&cargo_type=${encodeURIComponent(mixed)}`, 'GET')
+  check('8g. API loại xe theo khung giờ nhận chuỗi ghép không lỗi', vr.s === 200 && Array.isArray(vr.j?.data), `http=${vr.s}`)
+}
 
 // ── 6. Vết trong sổ lịch sử ──────────────────────────────────────────────────
 const evs = await restAll('outbound_events', `select=event_type&group_code=in.(${ALL_GC.join(',')})`)

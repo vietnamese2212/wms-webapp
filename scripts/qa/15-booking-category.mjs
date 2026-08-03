@@ -189,9 +189,10 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
     check('8d. Thiếu HẲN cột "Loại kho booking" → 1 dòng chẩn đoán + chỉ chỗ tải mẫu',
       r8d.s === 200 && e8d.length === 1 && /không có cột/.test(e8d[0]) && /mẫu/i.test(e8d[0]),
       `errors=${JSON.stringify(e8d).slice(0, 200)}`)
-    // 8e. Kiểm-trước KHÔNG được ghi gì
-    const wrote = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})&do_no=eq.${DO_B}`)
-    check('8e. Pha kiểm-trước KHÔNG ghi dòng nào', wrote.length === 0, `còn ${wrote.length} dòng`)
+    // 8e. Kiểm-trước KHÔNG được ghi gì — soi ĐÚNG xe của mục 8 (GC(2)); GC(1) có dòng thật từ mục 3b
+    const wrote = await restAll('khvc_lines', `select=id,do_no&group_code=eq.${GCU}`)
+    check('8e. Pha kiểm-trước KHÔNG ghi dòng nào (xe của mục 8)', wrote.length === 0,
+      `còn ${wrote.length} dòng: ${JSON.stringify(wrote.map(x => x.do_no))}`)
   }
 }
 

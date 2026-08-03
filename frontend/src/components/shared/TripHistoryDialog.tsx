@@ -15,7 +15,11 @@ const SOURCE_LABEL: Record<string, { text: string; cls: string }> = {
 // Sự kiện nào là CẢNH BÁO (đổi số/ngừng hoạt động) thì tô đậm hơn cho dễ lướt
 const WARN_EVENTS = new Set(['PLAN_VEHICLE_DROPPED', 'AWAITING_SET', 'SAP_NEEDS_REVIEW', 'SAP_BLOCKED', 'PLAN_DO_REMOVED'])
 
-export function TripHistoryDialog({ gdoId, groupCode, onClose }: { gdoId: string; groupCode?: string | null; onClose: () => void }) {
+// `infoContent` (tùy chọn): khối THÔNG TIN ĐƠN hiện phía trên dòng thời gian — user chốt 03/08
+// "gom về làm 1": một nút Thông tin duy nhất cho cả thông tin đơn + lịch sử sửa, cả browser lẫn mobile.
+export function TripHistoryDialog({ gdoId, groupCode, infoContent, onClose }: {
+  gdoId: string; groupCode?: string | null; infoContent?: React.ReactNode; onClose: () => void
+}) {
   const { data, isLoading, isError, error } = useOutboundEvents(gdoId)
   const items = data?.items ?? []
 
@@ -24,12 +28,19 @@ export function TripHistoryDialog({ gdoId, groupCode, onClose }: { gdoId: string
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
           <FileClock className="h-4 w-4 text-sky-600" />
-          Lịch sử chuyến {groupCode ?? data?.group_code ?? ''}
+          Thông tin chuyến {groupCode ?? data?.group_code ?? ''}
         </h3>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
       </div>
 
       <div className="p-4 overflow-auto">
+        {infoContent && (
+          <div className="mb-4">
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">Thông tin đơn</p>
+            {infoContent}
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mt-4 mb-0.5">Lịch sử thay đổi</p>
+          </div>
+        )}
         {isLoading && <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Đang tải lịch sử…</div>}
         {isError && (
           <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">

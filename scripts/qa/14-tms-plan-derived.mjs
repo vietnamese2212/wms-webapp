@@ -134,6 +134,16 @@ if (o1d) {
   const del = await api(`/tms/orders/${o1d.id}`, 'DELETE')
   check('5c. Xóa tay lệnh tự sinh → 422 (bỏ ở Kế hoạch xuất mới đúng)',
     del.s === 422 && del.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${del.s} code=${del.j?.error?.code}`)
+  // Đường lách user bắt được 03/08: nút "Đổi ngày" HÀNG LOẠT đi endpoint riêng, từng đổi được
+  // ngày lệnh dẫn xuất — lượt đồng bộ kế tiếp ghi đè âm thầm. Phải chặn như updateOrder.
+  const bd = await api('/tms/orders/bulk-date', 'PATCH', { ids: [o1d.id], date: today })
+  check('5e. Đổi ngày HÀNG LOẠT lệnh tự sinh → 422 TMS_PLAN_DERIVED',
+    bd.s === 422 && bd.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${bd.s} code=${bd.j?.error?.code}`)
+  // Dòng hàng cho điều vận xem khi booking (read-only, từ Kế hoạch xuất + VL06O)
+  const goods = await api(`/tms/orders/${o1d.id}/plan-goods`, 'GET')
+  check('5f. API dòng hàng lệnh xuất trả 200 + có dòng theo kế hoạch',
+    goods.s === 200 && Array.isArray(goods.j?.data?.lines) && goods.j.data.lines.length > 0,
+    `http=${goods.s} lines=${goods.j?.data?.lines?.length}`)
 }
 // Số xe ĐÃ CÓ lệnh tạo tay từ trước → nhận nuôi, KHÔNG tạo trùng
 await restWrite('TmsOrder', 'POST', null, {

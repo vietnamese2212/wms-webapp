@@ -4043,6 +4043,33 @@ export function useTransferGoods(orderId?: string | null) {
   })
 }
 
+// Dòng hàng của lệnh XUẤT theo Số xe (Kế hoạch xuất + VL06O) — read-only cho điều vận lúc booking.
+// Chuyến chờ dữ liệu SAP: lines rỗng + awaiting_dos, KHÔNG chặn thao tác booking nào.
+export type PlanGoodsData = {
+  gdo_status: string | null
+  awaiting_sap: boolean
+  awaiting_dos: string[]
+  plan_dropped: boolean
+  lines: {
+    do_refs: string[]; npp: string | null
+    material_code: string | null; material_name: string | null
+    qty_base: number; scanned_base: number
+    base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+  }[]
+}
+
+export function usePlanGoods(orderId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['tms-plan-goods', orderId],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/tms/orders/${orderId}/plan-goods`)
+      return data.data as PlanGoodsData
+    },
+    enabled: !!orderId && enabled,
+    staleTime: 0,
+  })
+}
+
 export type MaterialSummaryRow = {
   material_id: string
   material_code: string

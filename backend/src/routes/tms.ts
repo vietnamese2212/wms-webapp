@@ -41,6 +41,7 @@ router.post('/orders',                   requirePerm('tms_plan', 'create'),     
 router.post('/orders/bulk',              requireAnyPerm(['tms_plan', 'upload_outbound'], ['tms_plan', 'upload_inbound']),     order.bulkCreateOrders)
 router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_date'),                                      order.bulkUpdateOrderDate)
 router.get('/orders/:id/transfer-goods',       requirePerm('tms_plan', 'view'),          order.getTransferGoods)
+router.get('/orders/:id/plan-goods',           requirePerm('tms_plan', 'view'),          order.getPlanGoods)     // dòng hàng lệnh xuất (KH xuất + VL06O) — read-only cho booking
 router.post('/orders/:id/confirm-receipt',      requirePerm('tms_plan', 'confirm_receipt'), order.confirmTransferReceipt)
 router.post('/orders/:id/cancel-receipt',       requirePerm('tms_plan', 'confirm_receipt'), order.cancelTransferReceipt)
 router.post('/orders/:id/create-one-inbound',   requirePerm('tms_plan', 'confirm_receipt'), order.createOneInbound)

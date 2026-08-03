@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -35,7 +35,7 @@ import {
   useTmsOrdersPaged, useTmsOrdersSummary, useTmsOrdersFacets, useConsolidatableOrders, tmsCsvParams,
   useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
-  usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials, useMaterialsByCodes,
+  usePlanLinesByOrder, usePlanVsActual, usePlanGoods, useBulkCreatePlanLinesForOrder, useMaterials, useMaterialsByCodes,
   fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
@@ -3477,6 +3477,8 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const [addMatId, setAddMatId]     = useState('')
   const { data: planLines = [] }    = usePlanLinesByOrder(order?.id ?? null)
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
+  // Dòng hàng lệnh XUẤT theo Số xe (Kế hoạch xuất + VL06O) — read-only, thiếu VL06O KHÔNG chặn booking
+  const { data: planGoods } = usePlanGoods(order?.direction === 'OUTBOUND' ? order?.id : null)
   // Chỉ tra mã đang hiện trên bảng KH (+ mã đang gõ ở ô Thêm dòng) — không nạp cả danh mục
   const shownCodes = useMemo(() => [...new Set([
     ...(planLines as Record<string, unknown>[]).map(l => (l.material as Record<string, unknown>)?.material_code as string),
@@ -3606,6 +3608,17 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             <span className="text-sm font-mono font-bold text-slate-800">{order.order_code || 'Chi tiết đơn'}</span>
             {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
             {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
+            {/* Nguồn lệnh: dẫn xuất từ Kế hoạch xuất thì sửa ở NGUỒN, luồng cũ (Excel/tạo tay) sửa tại đây */}
+            {order.plan_dropped ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả">KH đã bỏ</span>
+            ) : order.origin === 'KHVC' ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700"
+                title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất (hoặc VL06O), lệnh tự cập nhật theo">Từ KH xuất</span>
+            ) : order.source_type !== 'TRANSFER' ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
+            ) : null}
             {order.priority && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Ưu tiên</span>}
             <ActionCluster className="ml-auto" items={headerActions} />
           </div>
@@ -3667,6 +3680,50 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
               </table>
             </div>
           </section>
+
+          {/* Hàng hóa lệnh XUẤT — dòng SL từ Kế hoạch xuất + VL06O (user chốt 03/08). Chỉ để ĐỌC khi
+              booking; chuyến chờ dữ liệu SAP thì báo DO đang thiếu nhưng KHÔNG khóa thao tác nào. */}
+          {!isInbound && planGoods && (planGoods.lines.length > 0 || planGoods.awaiting_dos.length > 0) && (
+            <section>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                Hàng hóa theo Kế hoạch xuất ({planGoods.lines.length})
+              </p>
+              {planGoods.awaiting_sap && (
+                <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
+                  Chờ dữ liệu SAP — thiếu DO: <span className="font-mono">{planGoods.awaiting_dos.join(', ')}</span>.
+                  Up VL06O có các DO này là dòng hàng tự hiện; <b>booking vẫn đặt bình thường</b>.
+                </div>
+              )}
+              {planGoods.lines.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-max w-full">
+                    <thead className="sticky top-0 z-10 bg-slate-50">
+                      <tr>
+                        {['Mã hàng', 'Tên hàng', 'DO', 'NPP', 'SL kế hoạch', 'Đã xuất'].map(h => (
+                          <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planGoods.lines.map((l, i) => (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{l.material_code ?? '—'}</td>
+                          <td className="px-2 py-1 text-[10px] max-w-[220px] truncate whitespace-nowrap" title={l.material_name ?? undefined}>{l.material_name ?? '—'}</td>
+                          <td className="px-2 py-1 text-[10px] font-mono whitespace-nowrap max-w-[180px] truncate" title={l.do_refs.join(', ')}>{l.do_refs.join(', ') || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[160px] truncate" title={l.npp ?? undefined}>{l.npp ?? '—'}</td>
+                          {/* BASE UNIT: SL lưu base → hiển thị "N thùng + M hộp" per-mã, không in số base thô */}
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">{qtyLabel(l.qty_base, l)}</td>
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">
+                            {l.scanned_base > 0 ? qtyLabel(l.scanned_base, l) : <span className="text-slate-300">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Hàng hóa nhập hàng — KH vs Thực tế (chỉ INBOUND), cùng format bảng dòng hàng với Chuyển kho */}
           {isInbound && (
@@ -4018,8 +4075,12 @@ export default function TMSBookings() {
   // "tổng của trang 1", đúng họ bẫy im lặng của phân trang).
   const mainSummary = summary ?? { orders: 0, vehicles: 0, boxes: 0, pallets: 0, tons: 0, done: 0 }
 
+  // Lệnh TỰ SINH từ Kế hoạch xuất = dữ liệu BỊ ĐỘNG (như chuyến SAP bên Xuất, user chốt 03/08):
+  // sửa/xóa/đổi ngày phải làm ở NGUỒN (tab Kế hoạch xuất / VL06O), lệnh tự cập nhật theo.
+  // Khóa từ FE — không để tick rồi mới báo lỗi (bài học cc332dbb). Lệnh "KH đã bỏ" vẫn xóa được để dọn.
+  const isDerivedOrder = (o: TmsOrder) => o.origin === 'KHVC'
   const canEditOrder = (o: TmsOrder) =>
-    canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
+    canEdit && !isDerivedOrder(o) && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
   const canBookSlot = (vs: TmsVehicleSlot) =>
     canBook && ['PENDING','BOOKED'].includes(vs.status) &&
@@ -4036,9 +4097,13 @@ export default function TMSBookings() {
     !canReleaseSlot(vs)
 
   // Đơn NHẬP cũng đổi ngày/xóa được như đơn xuất (BE dọn inbound_plan_lines + đổi date lines theo).
-  // Trừ đơn chuyển kho TRANSFER (tự tạo từ Outbound — BE chặn xóa, ngày đi theo GDO).
+  // Trừ: đơn chuyển kho TRANSFER (tự tạo từ Outbound — BE chặn xóa, ngày đi theo GDO) và lệnh
+  // TỰ SINH từ Kế hoạch xuất (sửa ở nguồn; riêng "KH đã bỏ" cho tick để bulk-XÓA dọn bảng).
   const checkableOrderIds = useMemo(() =>
-    (canChangeDate || canDelete) ? filteredOrders.filter(o => o.source_type !== 'TRANSFER' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    (canChangeDate || canDelete) ? filteredOrders.filter(o =>
+      o.source_type !== 'TRANSFER' &&
+      !(isDerivedOrder(o) && !o.plan_dropped) &&
+      o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
     [filteredOrders, canChangeDate, canDelete]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
@@ -4358,14 +4423,19 @@ export default function TMSBookings() {
                           <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
                         {order.order_code || <span className="text-slate-400 font-normal">—</span>}
-                        {/* Lệnh dẫn xuất từ Kế hoạch xuất: nói rõ để điều vận biết sửa ở đâu (03/08) */}
-                        {order.plan_dropped ? (
-                          <span className="ml-1 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold"
-                            title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
-                        ) : order.origin === 'KHVC' ? (
-                          <span className="ml-1 px-1 py-0.5 rounded-full bg-sky-100 text-sky-700 font-sans font-semibold"
-                            title="Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất, lệnh tự cập nhật theo">Từ KH xuất</span>
-                        ) : null}
+                        {/* Badge NGUỒN trên DÒNG RIÊNG (block) — cột kéo giãn `table-fixed` + overflow-hidden
+                            nên badge nối đuôi mã xe bị CHE khi cột hẹp (user báo 03/08: "không thể hiện gì") */}
+                        <span className={`block w-fit mt-0.5 px-1 py-0.5 rounded-full font-sans font-semibold text-[9px] ${
+                          order.plan_dropped ? 'bg-slate-200 text-slate-600'
+                          : order.origin === 'KHVC' ? 'bg-sky-100 text-sky-700'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'}`}
+                          title={order.plan_dropped
+                            ? 'Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác'
+                            : order.origin === 'KHVC'
+                              ? 'Lệnh tự sinh từ Kế hoạch xuất — sửa ở tab Kế hoạch xuất (hoặc VL06O), lệnh tự cập nhật theo'
+                              : 'Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây'}>
+                          {order.plan_dropped ? 'KH đã bỏ' : order.origin === 'KHVC' ? 'Từ KH xuất' : '(Excel)'}
+                        </span>
                       </>
                     ) : (() => {
                       const nextRow = pagedRows[rowIndex + 1]
@@ -4649,8 +4719,9 @@ export default function TMSBookings() {
         onClose={() => setDetailOrder(null)}
         warehouses={warehouses as { id: string; name: string }[]}
         canUploadInbound={canUploadInbound}
-        canEdit={canEdit}
-        canDelete={canDelete}
+        // Lệnh dẫn xuất từ Kế hoạch xuất: Sửa/Xóa ở NGUỒN — ẩn nút tại đây ("KH đã bỏ" vẫn xóa được để dọn)
+        canEdit={canEdit && !(detailOrder ? isDerivedOrder(detailOrder) : false)}
+        canDelete={canDelete && !(detailOrder ? isDerivedOrder(detailOrder) && !detailOrder.plan_dropped : false)}
         onEditOrder={() => { setEditOrder(detailOrder); setDetailOrder(null) }}
         onDeleteOrder={() => {
           if (!detailOrder) return

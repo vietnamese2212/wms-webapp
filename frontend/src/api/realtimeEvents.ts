@@ -34,11 +34,11 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
-  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower']],
+  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods']],
   // list Xuất phân trang: tổng SummaryBand + phân bổ NPP tính từ DO/Item → đổi dòng hàng
   // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
-  OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets']],
-  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
+  OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
+  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods']],
   OutboundScanEntry:   [['gdo'], ['gdos-paged'], ['outbound-summary'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.

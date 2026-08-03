@@ -1407,7 +1407,6 @@ export default function OutboundDetail() {
   const [showLoadPlan,      setShowLoadPlan]      = useState(false)   // sơ đồ xếp xe 3D
   const [showEditTransport, setShowEditTransport] = useState(false)
   // Mobile: thu gọn phần header chi tiết (info/audit/tổng) để list nhiều dòng như AppSheet; chevron bung ra. Desktop luôn hiện.
-  const [hdrOpen, setHdrOpen] = useState(false)
   const [showEditGDO,       setShowEditGDO]       = useState(false)
   const [undoErr,           setUndoErr]           = useState<string | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -1570,14 +1569,9 @@ export default function OutboundDetail() {
   }
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
+  // Nút Thông tin KHÔNG nằm ở đây nữa (user chốt 03/08 "gom về làm 1"): nút ⓘ cạnh mã chuyến
+  // mở dialog gộp thông tin đơn + lịch sử, hiện cả desktop lẫn mobile — kể cả chuyến bất động.
   const actionItems: ActionItem[] = []
-  // Nút "Thông tin" (user chốt 03/08): lịch sử thay đổi của đơn — thế nào, bởi ai, lúc nào, nguồn nào.
-  // Luôn hiện (kể cả chuyến bất động — đó chính là đường duy nhất để tra chuyến đã ngừng hoạt động).
-  actionItems.push({
-    key: 'history', icon: Info, label: 'Thông tin',
-    tip: 'Lịch sử thay đổi của chuyến: kế hoạch, DO, ngày, thay đổi từ SAP — ai làm, lúc nào',
-    onClick: () => setShowHistory(true),
-  })
   // Chuyến bất động: ẩn Sửa đơn/Giao đơn (BE cũng chặn 422) — chỉ còn xem + lịch sử + xóa để dọn
   if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && !inertReason && can(perms, 'outbound', 'edit'))
     actionItems.push({
@@ -1928,14 +1922,10 @@ export default function OutboundDetail() {
 
   return (
     <>
-      {/* Mobile: popup thông tin đơn (bấm nút info trên thanh mảnh) — desktop hiện inline nên dialog chỉ mở ở mobile */}
-      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
-        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2 max-h-[85dvh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin đơn · {gdo.group_code}</DialogTitle></DialogHeader>
-          {orderInfoJSX}
-        </DialogContent>
-      </Dialog>
-      {showHistory && <TripHistoryDialog gdoId={gdo.id} groupCode={gdo.group_code} onClose={() => setShowHistory(false)} />}
+      {/* MỘT nút Thông tin duy nhất (user chốt 03/08 "gom về làm 1"): thông tin đơn + lịch sử thay đổi
+          trong cùng dialog, hiện cả browser lẫn mobile */}
+      {showHistory && <TripHistoryDialog gdoId={gdo.id} groupCode={gdo.group_code} infoContent={orderInfoJSX}
+        onClose={() => setShowHistory(false)} />}
       {showStart && (
         <StartDialog open={showStart} gdo={gdo} onClose={() => setShowStart(false)} />
       )}
@@ -2040,10 +2030,11 @@ export default function OutboundDetail() {
               >
                 <Bookmark className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
               </button>
+              {/* Nút Thông tin GỘP (đơn + lịch sử) — hiện cả desktop lẫn mobile, đặt cạnh mã để xem nhanh */}
               <button
-                onClick={() => setHdrOpen(true)}
-                className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
-                title="Xem thông tin đơn"
+                onClick={() => setShowHistory(true)}
+                className="p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+                title="Thông tin đơn + lịch sử thay đổi (ai sửa, lúc nào, nguồn nào)"
               >
                 <Info className="h-4 w-4" />
               </button>

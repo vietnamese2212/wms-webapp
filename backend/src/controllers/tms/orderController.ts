@@ -471,6 +471,7 @@ export async function createOrder(req: Request, res: Response) {
       planned_tons: planned_tons ?? null,
       gdo_refs: gdo_refs || null, notes: notes || null,
       priority: priority === true || priority === 'true',
+      origin: 'MANUAL',   // tạo tay — phân biệt với 'KHVC' tự sinh từ Kế hoạch xuất
       status: 'PENDING',
       created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
@@ -575,6 +576,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         planned_tons: o.planned_tons ?? null,
         gdo_refs: o.gdo_refs || null, notes: o.notes || null,
         priority: o.priority === true || o.priority === 'true',
+        origin: 'EXCEL',   // luồng cũ (upload Excel bên TMS) — phân biệt với 'KHVC' tự sinh từ Kế hoạch xuất
         status: 'PENDING',
         created_by: user?.name || null, updated_by: user?.name || null,
         created_at: now, updated_at: now,
@@ -700,17 +702,26 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     if (!date) return fail(res, 'date là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
 
+    // Chunk ids (300/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm
+    // scope; chunk 500 uuid vẫn cho URL ~18KB → PostgREST từ chối → 500 (verify 26/07 với 1.100 lệnh).
+    const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
+      .select('id, warehouse_id, destination_warehouse_id, origin, order_code').in('id', chunk).order('id'), 300) as
+      { id: string; warehouse_id: string | null; destination_warehouse_id: string | null; origin: string | null; order_code: string | null }[]
+
     // Scope-write: mọi lệnh trong lô phải thuộc kho trong phạm vi (ASSIGNED). NATIONAL/ĐVVT → bỏ qua.
     const scope = scopeWhIds(req)
     if (scope !== null) {
-      // Chunk ids (300/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm
-      // scope; chunk 500 uuid vẫn cho URL ~18KB → PostgREST từ chối → 500 (verify 26/07 với 1.100 lệnh).
-      const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
-        .select('warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 300)
-      const bad = (ords ?? []).some((o: { warehouse_id: string | null; destination_warehouse_id: string | null }) =>
-        !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
+      const bad = (ords ?? []).some(o => !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
       if (bad) return fail(res, 'Ngoài phạm vi kho — có lệnh thuộc kho ngoài phạm vi được giao', 403)
     }
+
+    // LỆNH TỰ SINH TỪ KẾ HOẠCH XUẤT = dữ liệu BỊ ĐỘNG (user chốt 03/08): ngày đi theo Kế hoạch xuất
+    // (đổi ở tab Kế hoạch xuất — sync cả xe), đổi tay ở đây sẽ bị lượt đồng bộ kế tiếp ghi đè âm thầm.
+    // FE đã không cho tick; chặn ở BE là hàng rào thật (mirror updateOrder).
+    const derived = (ords ?? []).filter(o => o.origin === 'KHVC')
+    if (derived.length)
+      return fail(res, 422, 'TMS_PLAN_DERIVED',
+        `${derived.length} lệnh TỰ SINH từ Kế hoạch xuất (${derived.slice(0, 3).map(o => o.order_code).join(', ')}${derived.length > 3 ? '…' : ''}) — đổi Ngày xuất ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài), lệnh sẽ tự cập nhật theo.`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
@@ -1494,6 +1505,60 @@ export async function selfCompleteTransfer(req: Request, res: Response) {
     await supabase.from('TmsOrder').update({ status: 'DONE', completed_at: t, updated_at: t }).eq('id', id)
     await supabase.from('GroupDeliveryOrder').update({ transfer_status: 'DELIVERED', updated_at: t }).eq('id', gdoId)
     return ok(res, { completed: true })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// GET /api/tms/orders/:id/plan-goods — DÒNG HÀNG của lệnh XUẤT theo Số xe (order_code = group_code
+// chuyến Xuất), lấy từ Kế hoạch xuất + VL06O (user chốt 03/08). CHỈ ĐỂ ĐỌC cho điều vận biết xe chở
+// gì khi booking — chuyến chờ dữ liệu SAP thì trả danh sách DO đang thiếu, KHÔNG chặn booking nào.
+export async function getPlanGoods(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
+
+    const { data: order } = await supabase.from('TmsOrder')
+      .select('id, order_code, direction, origin').eq('id', id).maybeSingle()
+    if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
+    const empty = { gdo_status: null, awaiting_sap: false, awaiting_dos: [] as string[], plan_dropped: false, lines: [] as unknown[] }
+    if (!order.order_code || order.direction !== 'OUTBOUND') return ok(res, empty)
+
+    // Khớp theo Số xe — lệnh Excel luồng cũ nếu trùng Số xe với chuyến Xuất cũng thấy được hàng
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, status, awaiting_sap, awaiting_dos, plan_dropped')
+      .eq('group_code', order.order_code).order('id').limit(1).maybeSingle()
+    if (!gdo) return ok(res, empty)
+
+    const dos = await fetchAllPaged(() => supabase.from('OutboundDelivery')
+      .select('id, delivery_code, distributor_name').eq('gdo_id', gdo.id).order('id'))
+    const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+    const items = doIds.length
+      ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+          .select('do_id, cartons_ordered, cartons_scanned, od_refs, material_code_raw, material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
+          .in('do_id', chunk).order('id'))
+      : []
+    const doById = new Map((dos ?? []).map((d: { id: string; delivery_code: string | null; distributor_name: string | null }) => [d.id, d]))
+    const lines = (items ?? []).map((it: {
+      do_id: string; cartons_ordered: number | null; cartons_scanned: number | null
+      od_refs: string[] | null; material_code_raw: string | null
+      material: { material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
+    }) => {
+      const d = doById.get(it.do_id) as { delivery_code: string | null; distributor_name: string | null } | undefined
+      return {
+        do_refs: (it.od_refs?.length ? it.od_refs : [d?.delivery_code]).filter(Boolean),
+        npp: d?.distributor_name ?? null,
+        material_code: it.material?.material_code ?? it.material_code_raw,
+        material_name: it.material?.short_name ?? null,
+        qty_base: Number(it.cartons_ordered ?? 0),          // BASE — FE quy đổi thùng+hộp per-mã
+        scanned_base: Number(it.cartons_scanned ?? 0),
+        base_unit: it.material?.base_unit ?? null,
+        entry_unit: it.material?.entry_unit ?? null,
+        units_per_carton: it.material?.units_per_carton ?? null,
+      }
+    })
+    return ok(res, {
+      gdo_status: gdo.status, awaiting_sap: gdo.awaiting_sap === true,
+      awaiting_dos: (gdo.awaiting_dos ?? []) as string[], plan_dropped: gdo.plan_dropped === true, lines,
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 

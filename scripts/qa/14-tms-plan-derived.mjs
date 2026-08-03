@@ -54,8 +54,11 @@ const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   ship_to_code: 'QATMS', ship_to_name: 'QA TMS NPP', source: 'EXCEL', sync_status: 'ACTIVE',
   last_synced_at: t(), updated_at: t(),
 })
+// CỬA đặt lịch là BẮT BUỘC từ 03/08 (gói 15 gác luật) — lấy loại đầu danh mục, không viết cứng mã
+const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
 const addLine = (gc, doNo) => api('/external/khvc', 'POST', {
   group_code: gc, do_no: doNo, npp: 'QA TMS NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName,
+  booking_category: BK_CAT,
 })
 const orderOf = async gc => (await restAll('TmsOrder',
   `select=id,order_code,origin,plan_dropped,date,vehicle_type,npp_name,planned_pallets&order_code=eq.${gc}`))[0] ?? null

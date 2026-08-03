@@ -23,7 +23,7 @@ type GdoRow = {
   warehouse_id: string | null; warehouse_type: string | null; dvvt: string | null
   plan_dropped: boolean | null; awaiting_sap: boolean | null
 }
-type KLine = { group_code: string; npp: string | null; veh_type: string | null; dvvt: string | null; note: string | null }
+type KLine = { group_code: string; npp: string | null; veh_type: string | null; dvvt: string | null; note: string | null; booking_category: string | null }
 type OrderRow = { id: string; order_code: string; origin: string | null; plan_dropped: boolean | null }
 type SlotRow = { id: string; order_id: string; slot_id: string | null; status: string; license_plate: string | null }
 
@@ -45,7 +45,7 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
 
   // 2) Dòng kế hoạch (nguồn của NPP + Loại xe — điều vận khai, không suy từ chuyến)
   const lines = await fetchAllByIdChunks(gcs, chunk => supabase.from('khvc_lines')
-    .select('group_code, npp, veh_type, dvvt, note').in('group_code', chunk)
+    .select('group_code, npp, veh_type, dvvt, note, booking_category').in('group_code', chunk)
     .neq('sync_status', 'OBSOLETE').order('group_code')) as KLine[]
   const linesByGc = new Map<string, KLine[]>()
   for (const l of (lines ?? [])) { const a = linesByGc.get(l.group_code) ?? []; a.push(l); linesByGc.set(l.group_code, a) }
@@ -116,6 +116,9 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     const kl = linesByGc.get(gc) ?? []
     const npp = [...new Set(kl.map(l => (l.npp ?? '').trim()).filter(Boolean))].join(' · ') || null
     const vehType = kl.map(l => (l.veh_type ?? '').trim()).find(Boolean) ?? null
+    // CỬA đặt lịch: 1 Số xe chỉ 1 giá trị (trigger DB gác) nên lấy dòng đầu có giá trị là đủ.
+    // Đây là giá trị ĐƠN, KHÁC warehouse_type (chuỗi ghép các loại xe CHỞ, dùng cho quyền + lọc).
+    const bookingCat = kl.map(l => (l.booking_category ?? '').trim()).find(Boolean) ?? null
     const existing = orderByCode.get(gc)
 
     // Trường DẪN XUẤT (luôn ghi đè) — KHÔNG đụng gì thuộc về booking (slot/biển số/tài xế)
@@ -123,6 +126,7 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
       date: String(g.delivery_date).slice(0, 10),
       warehouse_id: g.warehouse_id,
       warehouse_type: g.warehouse_type,
+      booking_category: bookingCat,
       npp_name: npp,
       vehicle_type: vehType,
       ncc_id: nccByName.get((g.dvvt ?? '').trim().toLowerCase()) ?? null,

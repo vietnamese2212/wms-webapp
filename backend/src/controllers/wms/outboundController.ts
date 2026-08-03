@@ -4031,7 +4031,7 @@ export async function uploadKhvc(req: Request, res: Response) {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
-    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; raw: Record<string, any> }
+    type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; raw: Record<string, any> }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
     for (const r of rows) {
@@ -4048,6 +4048,10 @@ export async function uploadKhvc(req: Request, res: Response) {
         priority: String(r['Ưu tiên'] ?? r['Uu tien'] ?? '').trim(),
         cs: String(r['CS phụ trách'] ?? r['CS phu trach'] ?? '').trim(),
         note: String(r['Note'] ?? r['Ghi chú'] ?? '').trim(),
+        // CỬA đặt lịch (user chốt 03/08) — 1 Số xe chỉ 1 giá trị, validate ngay dưới.
+        // Nhận cả biến thể tiêu đề hay gặp: có dấu * (đánh dấu bắt buộc), không dấu tiếng Việt.
+        booking_category: String(r['Loại kho booking'] ?? r['Loại kho booking *'] ?? r['Loai kho booking']
+          ?? r['Loai kho booking *'] ?? r['Cửa booking'] ?? r['Cua booking'] ?? '').trim(),
         raw: r,
       })
     }
@@ -4128,6 +4132,39 @@ export async function uploadKhvc(req: Request, res: Response) {
       }
     }
 
+    // ── LOẠI KHO BOOKING: bắt buộc + 1 Số xe CHỈ 1 loại (user chốt 03/08 "làm khóa cứng") ──
+    // Xe chở lẫn FG01+PM01+FG02 chỉ đậu MỘT cửa; để picker gộp khung của mọi loại xe chở = nguy cơ
+    // đặt SAI CỬA. Cửa KHÔNG suy diễn được (không phải cứ loại hạng cao nhất — có xe giữ nốt FG02),
+    // nên kế hoạch phải KHAI. Gác ALL-OR-NOTHING và gác TRƯỚC khi ghi raw: file sai thì không được
+    // để lại nửa vời (cùng lý do khối scope kho ở trên). Pha kiểm-trước đi qua ĐÚNG khối này nên
+    // user thấy lỗi trước khi ghi.
+    {
+      const { data: whTypeRows } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+      const validByUpper = new Map(((whTypeRows ?? []) as { value: string }[])
+        .map(v => [String(v.value).trim().toUpperCase(), String(v.value).trim()]))
+      const byGc = new Map<string, Set<string>>()
+      const blankGcs = new Set<string>()
+      for (const k of khvcRows) {
+        if (!k.booking_category) { blankGcs.add(k.group_code); continue }
+        const set = byGc.get(k.group_code) ?? new Set<string>()
+        set.add(k.booking_category.toUpperCase())
+        byGc.set(k.group_code, set)
+      }
+      const errs: string[] = []
+      const multi   = [...byGc].filter(([, s]) => s.size > 1).map(([gc, s]) => `${gc} (${[...s].join(' + ')})`)
+      const unknown = [...new Set([...byGc.values()].flatMap(s => [...s]).filter(v => !validByUpper.has(v)))]
+      const outside  = [...byGc].filter(([, s]) => [...s].some(v =>
+        !categoryAllowed(req, validByUpper.get(v) ?? v))).map(([gc]) => gc)
+      const cap = (a: string[]) => `${a.length}: ${a.slice(0, 5).join(' · ')}${a.length > 5 ? '…' : ''}`
+      if (blankGcs.size) errs.push(`thiếu "Loại kho booking" — ${cap([...blankGcs])}`)
+      if (multi.length)  errs.push(`1 Số xe chỉ được 1 Loại kho booking — ${cap(multi)}`)
+      if (unknown.length) errs.push(`Loại kho booking không có trong danh mục — ${cap(unknown)} (hợp lệ: ${[...validByUpper.values()].join(', ')})`)
+      if (outside.length) errs.push(`Loại kho booking ngoài phạm vi loại kho của bạn — ${cap(outside)}`)
+      if (errs.length) return fail(res, `Từ chối file — ${errs.join(' | ')}`, 400)
+      // Chuẩn hoá về đúng chữ trong danh mục (file gõ 'fg01' vẫn nhận, lưu 'FG01')
+      for (const k of khvcRows) k.booking_category = validByUpper.get(k.booking_category.toUpperCase()) ?? k.booking_category
+    }
+
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
     // Churn-safe: pre-fetch (group_code, do_no)→id, GIỮ id cũ khi up lại (không đổi PK). Upsert chunk 500.
     const khActor = req.user?.name || null
@@ -4142,6 +4179,7 @@ export async function uploadKhvc(req: Request, res: Response) {
       warehouse_code: k.group_code.split('_')[0] || null,
       npp: k.npp || null, veh_type: k.veh_type || null, dvvt: k.dvvt || null,
       priority: k.priority || null, cs: k.cs || null, note: k.note || null,
+      booking_category: k.booking_category || null,
       export_date: parseExcelDate(k.export_date), source: 'EXCEL', sync_status: 'ACTIVE',
       raw: k.raw, uploaded_by: khActor, updated_at: khNow, manual_edited_at: null,   // upload đè lại → gỡ cờ sửa tay
     }))

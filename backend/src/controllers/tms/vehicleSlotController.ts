@@ -144,8 +144,23 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: newSlot } = await supabase.from('DeliverySlot')
-          .select('date, time_from').eq('id', newSlotId).single()
+          .select('date, time_from, cargo_type').eq('id', newSlotId).single()
         if (!newSlot) return fail(res, 'Slot không tồn tại', 404)
+        // ── GÁC CỬA ĐẶT LỊCH (user chốt 03/08 "làm khóa cứng") ──
+        // 1 xe chở lẫn nhiều loại nhưng chỉ đậu MỘT cửa, cửa đó KHAI ở Kế hoạch xuất
+        // (khvc_lines.booking_category → TmsOrder.booking_category). Lọc ở picker chỉ là GỢI Ý:
+        // gọi thẳng API vẫn đặt được khung của cửa khác nếu không gác tại đây. Lệnh chưa chốt cửa
+        // (dữ liệu nạp trước khi có cột này) → không gác, giữ hành vi cũ.
+        {
+          const { data: ord } = await supabase.from('TmsOrder')
+            .select('booking_category').eq('id', existing.order_id as string).maybeSingle()
+          const cua = (ord as { booking_category?: string | null } | null)?.booking_category ?? null
+          const slotCargo = (newSlot as { cargo_type?: string | null }).cargo_type ?? null
+          if (cua && slotCargo && slotCargo !== 'ALL' && slotCargo !== cua)
+            return fail(res, 422, 'BOOKING_CATEGORY_MISMATCH',
+              `Xe đặt lịch tại cửa ${cua} — không đặt được khung giờ của cửa ${slotCargo}. ` +
+              'Đổi "Loại kho booking" ở tab Kế hoạch xuất nếu cần.')
+        }
         const newSlotStart = new Date(`${newSlot.date}T${newSlot.time_from}+07:00`).getTime()
         if (nowMs >= newSlotStart) {
           return fail(res, `Khung giờ ${String(newSlot.time_from).slice(0, 5)} đã qua, không thể đặt`, 400)

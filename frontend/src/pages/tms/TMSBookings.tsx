@@ -86,10 +86,11 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, vehicleType }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, bookingCategory, vehicleType }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
-  cargoType?: string | null
+  cargoType?: string | null          // các loại hàng xe CHỞ (có thể ghép) — chỉ dùng khi chưa chốt cửa
+  bookingCategory?: string | null    // CỬA đặt lịch đã khai ở Kế hoạch xuất (giá trị ĐƠN)
   vehicleType?: string | null
 }) {
   const [generateDone, setGenerateDone] = useState(false)
@@ -119,11 +120,17 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
-    // 1 XE có thể chở LẪN nhiều loại → warehouse_type là chuỗi GHÉP 'FG01+PM01'. So khớp nguyên
-    // chuỗi thì KHÔNG khung giờ nào khớp (kho khai giờ theo từng loại, không có 'ALL') ⇒ xe chở lẫn
-    // KHÔNG BOOKING ĐƯỢC (user báo 03/08). Luật CLAUDE.md: tách rồi lấy GIAO ≥1.
-    const cargoCats = splitCats(cargoType)
-    if (cargoCats.length && slot.cargo_type !== 'ALL' && !cargoCats.includes(slot.cargo_type)) return false
+    // CỬA ĐẶT LỊCH (user chốt 03/08 "làm khóa cứng"): 1 xe chở lẫn nhiều loại nhưng chỉ đậu MỘT
+    // cửa — cửa đó KHAI ở Kế hoạch xuất (`booking_category`), KHÔNG suy diễn (có xe giữ nốt FG02
+    // dù chở cả FG01). ⇒ chỉ hiện khung của ĐÚNG cửa đó + khung 'ALL'. Gộp khung của mọi loại xe
+    // đang chở (bản vá sáng 03/08) là nguy cơ ĐẶT SAI CỬA. BE gác 422 BOOKING_CATEGORY_MISMATCH.
+    // Lệnh CHƯA chốt cửa (dữ liệu nạp trước khi có cột) → fallback giao ≥1 như cũ, không khoá chết.
+    if (bookingCategory) {
+      if (slot.cargo_type !== 'ALL' && slot.cargo_type !== bookingCategory) return false
+    } else {
+      const cargoCats = splitCats(cargoType)
+      if (cargoCats.length && slot.cargo_type !== 'ALL' && !cargoCats.includes(slot.cargo_type)) return false
+    }
     if (vehicleType && slot.vehicle_type?.name && slot.vehicle_type.name !== vehicleType) return false
     return true
   })
@@ -332,6 +339,7 @@ function BookSlotDialog({ vslot, order, onClose }: {
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
               cargoType={order.warehouse_type}
+              bookingCategory={order.booking_category}
               vehicleType={order.vehicle_type}
             />
           </div>
@@ -3653,7 +3661,10 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             {infoRow('Ngày', <span className="font-mono">{formatDate(order.date)}</span>)}
             {infoRow('ĐVVT', order.ncc?.name)}
             {infoRow('Kho', whName)}
-            {infoRow('Loại kho', order.warehouse_type)}
+            {infoRow('Loại kho (hàng chở)', order.warehouse_type)}
+            {infoRow('Cửa đặt lịch', order.booking_category
+              ? order.booking_category
+              : <span className="text-amber-600">chưa chốt — khai ở tab Kế hoạch xuất</span>)}
             {infoRow('Loại xe', order.vehicle_type)}
             {infoRow('Thùng', order.planned_boxes != null ? `${order.planned_boxes} thùng` : null)}
             {infoRow('Pallet', order.planned_pallets != null ? `${order.planned_pallets} pl` : null)}
@@ -4561,6 +4572,13 @@ export default function TMSBookings() {
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
                       {order.warehouse_type || <span className="text-slate-400">—</span>}
+                      {/* CỬA đặt lịch — chỉ hiện khi xe chở LẪN nhiều loại (1 loại thì cửa = chính nó, khỏi nhiễu) */}
+                      {order.booking_category && splitCats(order.warehouse_type).length > 1 && (
+                        <span className="ml-1 shrink-0 px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
+                          title={`Cửa đặt lịch: ${order.booking_category} — khai ở tab Kế hoạch xuất`}>
+                          cửa {order.booking_category}
+                        </span>
+                      )}
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>

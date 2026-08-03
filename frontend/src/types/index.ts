@@ -454,7 +454,8 @@ export interface TmsOrder {
   npp_name:        string | null
   vehicle_type:    string | null
   direction:       'OUTBOUND' | 'INBOUND' | null
-  warehouse_type:  string | null
+  warehouse_type:  string | null    // các loại hàng xe CHỞ (có thể ghép 'FG01+PM01') → quyền + lọc, giao ≥1
+  booking_category?: string | null  // CỬA đặt lịch (giá trị ĐƠN, khai ở Kế hoạch xuất) → CHỈ dùng khớp khung giờ
   planned_boxes:   number | null
   planned_pallets: number | null
   planned_tons:    number | null

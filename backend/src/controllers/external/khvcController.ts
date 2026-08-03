@@ -9,6 +9,7 @@ import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
+import { categoryAllowed } from '../../utils/categoryScope'
 
 const now = () => new Date().toISOString()
 
@@ -113,8 +114,40 @@ async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow
 
 const STR_FIELDS = [
   'group_code', 'do_no', 'warehouse_code', 'npp', 'veh_type', 'dvvt',
-  'priority', 'cs', 'note', 'source', 'sync_status',
+  'priority', 'cs', 'note', 'source', 'sync_status', 'booking_category',
 ] as const
+
+// ── LOẠI KHO BOOKING (cửa đặt lịch) — luật khoá cứng user chốt 03/08 ─────────────────────────
+// 1 Số xe CHỈ 1 giá trị. Trigger DB `khvc_booking_category_uniform` là lá chắn cuối; ở đây gác sớm
+// để trả lỗi tiếng Việt rõ ràng + ÉP theo xe (thêm dòng vào xe đã có cửa thì theo cửa đó, y hệt
+// cách Ngày xuất đã làm — 1 xe vật lý 1 ngày, 1 xe 1 cửa).
+async function resolveBookingCategory(req: Request, raw: unknown): Promise<{ value: string } | { error: string; status: number }> {
+  const v = String(raw ?? '').trim()
+  if (!v) return { error: 'Thiếu "Loại kho booking" — cửa đặt lịch là bắt buộc (1 Số xe chỉ 1 loại)', status: 400 }
+  const { data } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+  const byUpper = new Map(((data ?? []) as { value: string }[]).map(x => [String(x.value).trim().toUpperCase(), String(x.value).trim()]))
+  const hit = byUpper.get(v.toUpperCase())
+  if (!hit) return { error: `Loại kho booking "${v}" không có trong danh mục (hợp lệ: ${[...byUpper.values()].join(', ')})`, status: 400 }
+  if (!categoryAllowed(req, hit)) return { error: `Loại kho booking "${hit}" ngoài phạm vi loại kho của bạn`, status: 403 }
+  return { value: hit }
+}
+
+// Xe ĐANG GIỮ khung giờ của cửa CŨ thì không cho đổi cửa âm thầm: đổi xong khung đang giữ thuộc
+// cửa khác = dữ liệu tự mâu thuẫn. Bắt nhả khung trước (KHÔNG tự nhả hộ — mất chỗ âm thầm còn tệ hơn).
+async function bookedSlotBlockingCategory(groupCode: string, newCat: string): Promise<string | null> {
+  const { data: ord } = await supabase.from('TmsOrder').select('id').eq('order_code', groupCode).limit(1).maybeSingle()
+  if (!ord) return null
+  const { data: slots } = await supabase.from('TmsVehicleSlot')
+    .select('license_plate, slot:DeliverySlot!slot_id(cargo_type, time_from, time_to, date)')
+    .eq('order_id', (ord as { id: string }).id).not('slot_id', 'is', null)
+  for (const s of (slots ?? []) as { license_plate?: string | null; slot?: { cargo_type?: string | null; time_from?: string; time_to?: string; date?: string } | null }[]) {
+    const ct = s.slot?.cargo_type ?? null
+    if (!ct || ct === 'ALL' || ct === newCat) continue
+    return `Xe đang giữ khung giờ ${s.slot?.date ?? ''} ${s.slot?.time_from ?? ''}–${s.slot?.time_to ?? ''} của cửa ${ct}` +
+           ` — nhả khung giờ trước khi đổi Loại kho booking sang ${newCat}.`
+  }
+  return null
+}
 
 function pickFields(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -298,13 +331,25 @@ export async function createKhvc(req: Request, res: Response) {
     // ngày của xe. Không ép thì xe mang 2 ngày và ngày chuyến phụ thuộc dòng nào đứng đầu — probe
     // 02/08 C1 tái hiện được. Muốn đổi ngày cả xe: dùng "Đổi ngày" (bulk-date) / sửa dòng.
     let dateForcedTo: string | null = null
+    let bookingCatForcedTo: string | null = null
     {
-      const { data: sib } = await supabase.from('khvc_lines').select('export_date')
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
         .eq('group_code', fields.group_code).neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
-      const xeDate = (sib as { export_date?: string | null } | null)?.export_date ?? null
+      const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
+      const xeDate = sibRow?.export_date ?? null
       if (sib && String(xeDate ?? '') !== String(fields.export_date ?? '')) {
         fields.export_date = xeDate
         dateForcedTo = xeDate
+      }
+      // CỬA cũng là thuộc tính CẤP XE: thêm DO vào xe đã có cửa → theo cửa đó, không cho khai lệch
+      const xeCat = sibRow?.booking_category ?? null
+      if (xeCat) {
+        if (String(fields.booking_category ?? '') !== xeCat) bookingCatForcedTo = xeCat
+        fields.booking_category = xeCat
+      } else {
+        const bc = await resolveBookingCategory(req, fields.booking_category)
+        if ('error' in bc) return fail(res, bc.error, bc.status)
+        fields.booking_category = bc.value
       }
     }
     const row = {
@@ -321,7 +366,7 @@ export async function createKhvc(req: Request, res: Response) {
       detail: `Thêm DO ${fields.do_no} vào Số xe ${fields.group_code}${awaitingData ? ' (DO chưa có dữ liệu VL06O — chuyến sẽ chờ)' : ''}`,
     }])
     const extra = await replanAfterCrud(req, [String(fields.group_code)])
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) }, 201)
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(awaitingData ? { awaiting_sap: true } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}) }, 201)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -331,7 +376,7 @@ export async function updateKhvc(req: Request, res: Response) {
     const fields = pickFields(req.body as Record<string, unknown>)
     if (!Object.keys(fields).length) return fail(res, 'Không có trường nào để cập nhật', 400)
     // Group_code CŨ cần cho replan (đổi Số xe = chuyến cũ mất 1 dòng + chuyến mới thêm 1 dòng — dội CẢ HAI)
-    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date').eq('id', req.params.id).maybeSingle()
+    const { data: cur } = await supabase.from('khvc_lines').select('group_code, do_no, export_date, booking_category').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 'Không tìm thấy dòng', 404)
     // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
     const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
@@ -342,6 +387,15 @@ export async function updateKhvc(req: Request, res: Response) {
       const locked = targetGc ? await dateLockedGroups([targetGc]) : new Map<string, string>()
       const lockMsg = locked.get(targetGc)
       if (lockMsg) return fail(res, 422, 'GDO_STATUS_LOCKED', `${lockMsg} (xe ${targetGc}).`)
+    }
+    // ĐỔI CỬA đặt lịch: validate danh mục + scope, và chặn nếu xe đang giữ khung giờ của cửa cũ
+    if ('booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')) {
+      const bc = await resolveBookingCategory(req, fields.booking_category)
+      if ('error' in bc) return fail(res, bc.error, bc.status)
+      fields.booking_category = bc.value
+      const targetGc = String((fields.group_code ?? cur.group_code) ?? '')
+      const blocking = targetGc ? await bookedSlotBlockingCategory(targetGc, bc.value) : null
+      if (blocking) return fail(res, 422, 'BOOKING_CATEGORY_SLOT_HELD', blocking)
     }
     if ('group_code' in fields || 'do_no' in fields) {
       const gc = (fields.group_code ?? cur?.group_code) as string | null
@@ -355,14 +409,22 @@ export async function updateKhvc(req: Request, res: Response) {
     // CHUYỂN dòng sang xe KHÁC → dòng phải mang ngày của xe ĐÍCH (1 xe 1 ngày). Không ép thì xe đích
     // mang 2 ngày y hệt lỗi thêm-dòng (probe 02/08 C1). Không áp khi cùng lượt chỉ định export_date mới.
     let dateForcedTo: string | null = null
-    if ('group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '') && !('export_date' in fields)) {
-      const { data: sib } = await supabase.from('khvc_lines').select('export_date')
+    let bookingCatForcedTo: string | null = null
+    if ('group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '')) {
+      const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
         .eq('group_code', String(fields.group_code ?? '')).neq('id', req.params.id)
         .neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
-      const xeDate = (sib as { export_date?: string | null } | null)?.export_date ?? null
-      if (sib && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
+      const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
+      const xeDate = sibRow?.export_date ?? null
+      if (sib && !('export_date' in fields) && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
         fields.export_date = xeDate
         dateForcedTo = xeDate
+      }
+      // Dòng chuyển sang xe khác thì mang CỬA của xe đích (1 xe 1 cửa) — không thì trigger DB chặn
+      const xeCat = sibRow?.booking_category ?? null
+      if (xeCat && String(fields.booking_category ?? cur.booking_category ?? '') !== xeCat) {
+        fields.booking_category = xeCat
+        bookingCatForcedTo = xeCat
       }
     }
     const { data, error } = await supabase.from('khvc_lines')
@@ -382,6 +444,16 @@ export async function updateKhvc(req: Request, res: Response) {
         .neq('id', req.params.id).neq('sync_status', 'OBSOLETE').select('id')
       dateSynced = (synced ?? []).length
     }
+    // CỬA đặt lịch cũng là thuộc tính CẤP XE ⇒ sửa 1 dòng thì ĐỒNG BỘ CẢ XE. Đây là cách rule
+    // "1 Số xe = 1 Loại kho booking" KHÔNG THỂ bị phá bằng đường sửa lẻ (trigger DB chỉ là lá chắn cuối).
+    let bookingCatSynced = 0
+    if ('booking_category' in fields && !('group_code' in fields)) {
+      const { data: synced } = await supabase.from('khvc_lines')
+        .update({ booking_category: (fields.booking_category ?? null) as string | null, updated_at: now() })
+        .eq('group_code', String((data as { group_code?: string }).group_code ?? ''))
+        .neq('id', req.params.id).neq('sync_status', 'OBSOLETE').select('id')
+      bookingCatSynced = (synced ?? []).length
+    }
     const gcs = [...new Set([String(cur.group_code ?? ''), String((data as { group_code?: string }).group_code ?? '')].filter(Boolean))]
     // Ghi sổ: đổi ngày / chuyển DO sang xe khác — 2 thay đổi kế hoạch hay gây thắc mắc nhất khi truy vết
     {
@@ -399,10 +471,14 @@ export async function updateKhvc(req: Request, res: Response) {
         evs.push({ group_code: newGc || String(cur.group_code ?? ''), event_type: 'PLAN_DATE_CHANGED', source: 'PLAN', actor,
           do_number: doNo, old_value: cur.export_date as string | null, new_value: fields.export_date as string | null,
           detail: `Đổi Ngày xuất: ${cur.export_date ?? '—'} → ${fields.export_date ?? '—'}${dateSynced ? ` (đồng bộ ${dateSynced} dòng cùng xe)` : ''}` })
+      if ('booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? ''))
+        evs.push({ group_code: newGc || String(cur.group_code ?? ''), event_type: 'PLAN_BOOKING_CATEGORY_CHANGED', source: 'PLAN', actor,
+          do_number: doNo, old_value: (cur.booking_category ?? null) as string | null, new_value: fields.booking_category as string | null,
+          detail: `Đổi Loại kho booking (cửa đặt lịch): ${cur.booking_category ?? '—'} → ${fields.booking_category ?? '—'}${bookingCatSynced ? ` (đồng bộ ${bookingCatSynced} dòng cùng xe)` : ''}` })
       await logOutboundEvents(evs)
     }
     const extra = await replanAfterCrud(req, gcs)
-    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}) })
+    return ok(res, { ...(data as Record<string, unknown>), ...extra, ...(dateSynced ? { date_synced_lines: dateSynced } : {}), ...(dateForcedTo !== null ? { date_forced_to: dateForcedTo } : {}), ...(bookingCatSynced ? { booking_category_synced_lines: bookingCatSynced } : {}), ...(bookingCatForcedTo !== null ? { booking_category_forced_to: bookingCatForcedTo } : {}) })
   } catch (e) { return fail(res, String(e)) }
 }
 

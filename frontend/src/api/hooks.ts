@@ -2498,6 +2498,7 @@ export interface KhvcRow {
   id: string; group_code: string; do_no: string; warehouse_code: string | null
   npp: string | null; veh_type: string | null; dvvt: string | null
   priority: string | null; cs: string | null; note: string | null
+  booking_category: string | null   // CỬA đặt lịch — 1 Số xe chỉ 1 giá trị (trigger DB gác); chỉ dùng cho khung giờ
   export_date: string | null; source: string | null; sync_status: string | null
   gdo_id: string | null; uploaded_by: string | null; created_at: string; updated_at: string
   manual_edited_at?: string | null   // dòng bị SỬA TAY — upload KHVC đè lại sẽ gỡ; FE hiện ✎ sau DO

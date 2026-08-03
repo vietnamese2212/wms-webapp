@@ -8,6 +8,8 @@ import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -873,6 +875,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'do_no',     label: 'DO' },
   { id: 'warehouse', label: 'Kho' },
   { id: 'npp',       label: 'NPP' },
+  { id: 'bkcat',     label: 'Cửa booking' },
   { id: 'veh_type',  label: 'Loại xe' },
   { id: 'dvvt',      label: 'ĐVVT' },
   { id: 'priority',  label: 'Ưu tiên' },
@@ -1118,6 +1121,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.warehouse_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.npp ?? undefined}>{r.npp || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap font-medium`}>
+                      {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>
@@ -1246,12 +1252,13 @@ function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: s
 // ─── Sửa cả Số xe (bảng gom mọi DO cùng group_code) — mirror DoSapDoEditor ────
 // Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
 // thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
-const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note'] as const
+const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category'] as const
 type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
 type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
 const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
   warehouse_code: s(r.warehouse_code), npp: s(r.npp), veh_type: s(r.veh_type), dvvt: s(r.dvvt),
   priority: s(r.priority), cs: s(r.cs), export_date: s(r.export_date), note: s(r.note),
+  booking_category: s(r.booking_category),
 })
 function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }: {
   groupCodes: string[]
@@ -1282,6 +1289,9 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
     [...(fetched?.rows ?? [])].sort((a, b) => a.group_code.localeCompare(b.group_code) || a.do_no.localeCompare(b.do_no)),
   [fetched])
 
+  // Danh mục Loại kho theo SCOPE user (không dùng hook gốc — tránh cho chọn loại ngoài quyền)
+  const { data: whTypes = [] } = useScopedWhTypes()
+  const whTypeOpts = useMemo(() => whTypes.map(t => ({ value: t.value, label: t.value })), [whTypes])
   const update = useUpdateKhvc()
   const create = useCreateKhvc()
   const bulkDel = useBulkDeleteKhvc()
@@ -1308,6 +1318,9 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   const changed = remaining.filter(isRowChanged)
   const validAdded = added.filter(l => l.do_no.trim() !== '')
   const wipesAll = rows.length > 0 && remaining.length === 0 && validAdded.length === 0
+  // Cửa đang áp cho xe = giá trị của dòng còn sống ĐẦU TIÊN (mọi dòng luôn bằng nhau — rule 1 xe 1 cửa)
+  const bookingCat = (remaining.map(r => draft[r.id]?.booking_category).find(Boolean)
+    ?? added.map(l => l.booking_category).find(Boolean) ?? '') as string
   const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
   function addLine() {
@@ -1317,6 +1330,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       key: crypto.randomUUID(), group_code: g, do_no: '',
       warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
       priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
+      booking_category: s(base?.booking_category),   // 1 xe 1 cửa → dòng mới KẾ THỪA cửa của xe
     }])
   }
   const patchLine = (key: string, p: Partial<KhvcNewLine>) =>
@@ -1371,7 +1385,8 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
         if (pos >= work.length) {
           work.push({ key: crypto.randomUUID(), group_code: g, do_no: '',
             warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
-            priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '' })
+            priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
+            booking_category: s(base?.booking_category) })
           pos = work.length - 1
         }
         const cols = line.split('\t')
@@ -1428,12 +1443,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             group_code: r.group_code, do_no: r.do_no,
             warehouse_code: n(d.warehouse_code), npp: n(d.npp), veh_type: n(d.veh_type), dvvt: n(d.dvvt),
             priority: n(d.priority), cs: n(d.cs), export_date: n(d.export_date), note: n(d.note),
+            booking_category: n(d.booking_category),
           })
         }),
         ...validAdded.map(l => create.mutateAsync({
           group_code: l.group_code, do_no: l.do_no.trim(),
           warehouse_code: n(l.warehouse_code), npp: n(l.npp), veh_type: n(l.veh_type), dvvt: n(l.dvvt),
-          priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note), source: 'MANUAL',
+          priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note),
+          booking_category: n(l.booking_category), source: 'MANUAL',
         })),
       ])
       if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }
@@ -1474,6 +1491,27 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       {wipesAll && rows.some(r => r.materialized) && (
         <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           ⚠ Số xe này ĐÃ SINH CHUYẾN ở Xuất kho — xóa kế hoạch KHÔNG xóa chuyến; muốn hủy chuyến hãy xóa ở trang Xuất kho.
+        </div>
+      )}
+      {/* CỬA ĐẶT LỊCH = thuộc tính CẤP XE (1 xe vật lý đậu 1 cửa) ⇒ đặt NGOÀI bảng, 1 ô cho cả xe.
+          Mỗi dòng DO một ô sẽ mời gọi khai lệch nhau — đúng cái rule này cấm. Chỉ hiện khi sửa MỘT
+          Số xe; sửa nhiều xe cùng lúc thì mở từng xe (mỗi xe có cửa riêng). */}
+      {!multi && !isLoading && (rows.length > 0 || added.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs font-medium text-slate-600">Loại kho booking (cửa đặt lịch) *</span>
+          <div className="w-44">
+            <SingleSelect
+              options={whTypeOpts}
+              value={bookingCat}
+              placeholder="Chọn cửa…"
+              disabled={!canEdit}
+              onChange={v => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, booking_category: v }])))
+                setAdded(prev => prev.map(l => ({ ...l, booking_category: v })))
+              }}
+            />
+          </div>
+          <span className="text-[10px] text-slate-500">Cả xe dùng 1 cửa — đổi ở đây áp cho MỌI DO của xe. Xe đang giữ khung giờ của cửa khác thì phải nhả khung trước.</span>
         </div>
       )}
       {isLoading ? (

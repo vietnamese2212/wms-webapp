@@ -10,6 +10,10 @@ import { login, api, restAll, restWrite, restRpc, resolveFixtures, FIX, BASE } f
 
 const t = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+// Fixture đặt ở NGÀY MAI: khung giờ test nằm cuối ngày (23:00) nên chạy gói sau giờ đó thì app
+// chặn đúng luật ("khung giờ đã qua") và gói TỰ ĐỎ dù code không sai. Cổng gác không được phụ
+// thuộc GIỜ chạy — chỉ giữ  cho phần dựng mã Số xe theo ddmmyy.
+const DAY = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 let pass = 0, fail = 0
 const check = (name, ok, note = '') => {
   if (ok) { pass++; console.log(`  ✅ ${name}`) }
@@ -47,7 +51,7 @@ async function cleanup() {
     await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gc}`)
   }
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
-  await restWrite('DeliverySlot', 'DELETE', `date=eq.${today}&time_from=eq.${SLOT_TIME}&warehouse_id=eq.${WH.id}`).catch(() => {})
+  await restWrite('DeliverySlot', 'DELETE', `date=eq.${DAY}&time_from=eq.${SLOT_TIME}&warehouse_id=eq.${WH.id}`).catch(() => {})
 }
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -57,7 +61,7 @@ const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
 // CỬA đặt lịch là BẮT BUỘC từ 03/08 (gói 15 gác luật) — lấy loại đầu danh mục, không viết cứng mã
 const BK_CAT = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=sort_order&limit=1'))[0]?.value ?? null
 const addLine = (gc, doNo) => api('/external/khvc', 'POST', {
-  group_code: gc, do_no: doNo, npp: 'QA TMS NPP', export_date: today, veh_type: vehTypeName, dvvt: dvvtName,
+  group_code: gc, do_no: doNo, npp: 'QA TMS NPP', export_date: DAY, veh_type: vehTypeName, dvvt: dvvtName,
   booking_category: BK_CAT,
 })
 const orderOf = async gc => (await restAll('TmsOrder',
@@ -75,7 +79,7 @@ check('1a. Thêm dòng Kế hoạch xuất → OK', r1.s === 201, `http=${r1.s} 
 const o1 = await orderOf(GC(1))
 check('1b. Lệnh vận chuyển TỰ SINH theo Số xe', !!o1 && o1.origin === 'KHVC', o1 ? `origin=${o1.origin}` : 'không có lệnh')
 check('1c. Lệnh mang đúng ngày + loại xe + NPP của kế hoạch',
-  !!o1 && String(o1.date).slice(0, 10) === today && o1.vehicle_type === vehTypeName && o1.npp_name === 'QA TMS NPP',
+  !!o1 && String(o1.date).slice(0, 10) === DAY && o1.vehicle_type === vehTypeName && o1.npp_name === 'QA TMS NPP',
   `date=${o1?.date} veh=${o1?.vehicle_type} npp=${o1?.npp_name}`)
 const s1 = o1 ? await slotsOf(o1.id) : []
 check('1d. Lệnh có sẵn 1 dòng xe để đặt khung giờ', s1.length === 1 && s1[0].status === 'PENDING', `slots=${s1.length}`)
@@ -85,7 +89,7 @@ check('1d. Lệnh có sẵn 1 dòng xe để đặt khung giờ', s1.length === 
 const slotId = randomUUID()
 const vtId = (await restAll('VehicleType', 'select=id&is_active=eq.true&order=name&limit=1'))[0]?.id
 await restWrite('DeliverySlot', 'POST', null, {
-  id: slotId, date: today, time_from: SLOT_TIME, time_to: '23:59:00', direction: 'OUTBOUND',
+  id: slotId, date: DAY, time_from: SLOT_TIME, time_to: '23:59:00', direction: 'OUTBOUND',
   vehicle_type_id: vtId, cargo_type: 'ALL', warehouse_id: WH.id,
   max_vehicles: 2, booked_count: 0, status: 'OPEN', created_at: t(), updated_at: t(),
 })
@@ -129,7 +133,7 @@ check('4b. KHÔNG tự đặt lại khung giờ (phải booking lại — user c
 
 // ── 5. Lệnh tự sinh không sửa/xóa tay + nhận nuôi lệnh có sẵn ────────────────
 if (o1d) {
-  const upd = await api(`/tms/orders/${o1d.id}`, 'PATCH', { date: today, vehicle_type: vehTypeName })
+  const upd = await api(`/tms/orders/${o1d.id}`, 'PATCH', { date: DAY, vehicle_type: vehTypeName })
   check('5a. Sửa tay trường dẫn xuất → 422 TMS_PLAN_DERIVED',
     upd.s === 422 && upd.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${upd.s} code=${upd.j?.error?.code}`)
   const note = await api(`/tms/orders/${o1d.id}`, 'PATCH', { notes: 'ghi chú điều vận' })
@@ -139,7 +143,7 @@ if (o1d) {
     del.s === 422 && del.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${del.s} code=${del.j?.error?.code}`)
   // Đường lách user bắt được 03/08: nút "Đổi ngày" HÀNG LOẠT đi endpoint riêng, từng đổi được
   // ngày lệnh dẫn xuất — lượt đồng bộ kế tiếp ghi đè âm thầm. Phải chặn như updateOrder.
-  const bd = await api('/tms/orders/bulk-date', 'PATCH', { ids: [o1d.id], date: today })
+  const bd = await api('/tms/orders/bulk-date', 'PATCH', { ids: [o1d.id], date: DAY })
   check('5e. Đổi ngày HÀNG LOẠT lệnh tự sinh → 422 TMS_PLAN_DERIVED',
     bd.s === 422 && bd.j?.error?.code === 'TMS_PLAN_DERIVED', `http=${bd.s} code=${bd.j?.error?.code}`)
   // Dòng hàng cho điều vận xem khi booking (read-only, từ Kế hoạch xuất + VL06O)
@@ -153,7 +157,7 @@ if (o1d) {
 }
 // Số xe ĐÃ CÓ lệnh tạo tay từ trước → nhận nuôi, KHÔNG tạo trùng
 await restWrite('TmsOrder', 'POST', null, {
-  id: randomUUID(), order_code: GC(2), date: today, warehouse_id: WH.id, direction: 'OUTBOUND',
+  id: randomUUID(), order_code: GC(2), date: DAY, warehouse_id: WH.id, direction: 'OUTBOUND',
   status: 'PENDING', npp_name: 'TAY', created_at: t(), updated_at: t(),
 })
 const r5 = await addLine(GC(2), DO_B)
@@ -168,10 +172,10 @@ check('5d. Số xe đã có lệnh tay → NHẬN NUÔI (1 lệnh, đóng dấu 
 {
   const gc = GC(3), mixed = 'QAX1+QAX2'
   await restWrite('TmsOrder', 'POST', null, {
-    id: randomUUID(), order_code: gc, date: today, warehouse_id: WH.id, direction: 'OUTBOUND',
+    id: randomUUID(), order_code: gc, date: DAY, warehouse_id: WH.id, direction: 'OUTBOUND',
     warehouse_type: mixed, npp_name: 'QA MIX', status: 'PENDING', created_at: t(), updated_at: t(),
   })
-  const D = { p_date_from: today, p_date_to: today, p_warehouse_id: WH.id }
+  const D = { p_date_from: DAY, p_date_to: DAY, p_warehouse_id: WH.id }
   const seesMix = async args => {
     const ids = (await restRpc('tms_orders_page', { p_offset: 0, p_limit: 500, ...args }))?.ids ?? []
     if (!ids.length) return false

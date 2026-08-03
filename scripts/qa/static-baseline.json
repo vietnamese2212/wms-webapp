@@ -10,6 +10,7 @@
   "inert_banner_desktop_only": 0,
   "search_state_without_input": 0,
   "tms_cargo_cell_ignores_booking_category": 0,
+  "qa_slot_fixture_on_today": 0,
   "hardcoded_warehouse_type_code": 1,
   "upload_without_preflight": 0
 }

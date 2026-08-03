@@ -127,6 +127,15 @@ const RULES = [
     label: 'ô "Loại kho" lưới Kế hoạch VC KHÔNG dùng booking_category — chuyến chờ dữ liệu SAP sẽ hiện ô trống',
     count: (s) => countCargoCellWithoutDoor(s),
   },
+  // FIXTURE QA TỰ HỎNG THEO GIỜ: khung giờ (DeliverySlot) tạo với `date: today` — app chặn đặt
+  // khung ĐÃ QUA, nên chạy bộ QA vào cuối ngày là gói TỰ ĐỎ dù code không sai (đo 03/08 lúc 23:08:
+  // gói 14 và 15 cùng đỏ vì khung 22:00/23:00 hôm nay). Cổng gác mà tự hỏng thì hoặc bị bỏ qua,
+  // hoặc chặn oan — cả hai đều nguy hiểm hơn không có cổng. Fixture khung giờ phải đặt ở NGÀY MAI.
+  {
+    key: 'qa_slot_fixture_on_today',
+    label: 'fixture QA tạo DeliverySlot với `date: today` — chạy cuối ngày sẽ tự đỏ ("khung giờ đã qua"), phải dùng ngày mai',
+    count: (s) => countQaSlotFixtureOnToday(s),
+  },
   {
     key: 'hardcoded_warehouse_type_code',
     label: 'mã Loại kho viết CỨNG trong code (FG0x/PM0x/RM0x/PK0x) — phải đọc từ danh mục LookupValue, không so tên loại',
@@ -157,6 +166,23 @@ function countInertBannerInDesktopOnly(sampleOut) {
       n++
       if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f}:${i + 1}: ${lines[i].trim().slice(0, 100)}`)
     }
+  }
+  return n
+}
+
+// Mỗi khối tạo DeliverySlot trong bộ QA: quét 8 dòng sau đó, gặp `date: today` = vi phạm.
+function countQaSlotFixtureOnToday(sampleOut) {
+  let n = 0
+  for (const f of filesOf('scripts/qa', ['.mjs'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/'DeliverySlot'\s*,\s*'POST'/.test(line)) return
+      const vung = lines.slice(i, i + 8).join('\n')
+      if (/\bdate:\s*today\b/.test(vung)) {
+        n++
+        if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+      }
+    })
   }
   return n
 }

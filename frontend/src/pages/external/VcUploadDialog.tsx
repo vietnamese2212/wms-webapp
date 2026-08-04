@@ -90,14 +90,19 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
       })
     } else {
       uploadKhvc({ file }, {
-        onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }> }) => {
+        onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }>
+          awaiting?: { awaiting?: number; cleared?: number; reopened?: number } }) => {
           setPf(null)
           const items = result.created ?? []
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length
           const nSkipped = items.filter(r => r.skipped).length
+          // Xe thiếu VL06O KHÔNG nằm trong `created` (chuyến chờ là VỎ, đi nhánh awaiting riêng) —
+          // chỉ đếm created thì up 3 xe báo "Tạo mới 1 chuyến", điều vận tưởng MẤT 2 xe (đo UI 04/08).
+          const nAwaiting = result.awaiting?.awaiting ?? 0
           setOkMsg([
             nCreated > 0 && `Tạo mới ${nCreated} chuyến`,
+            nAwaiting > 0 && `${nAwaiting} chuyến CHỜ dữ liệu VL06O (sẽ tự kích hoạt khi up VL06O)`,
             nMerged  > 0 && `Cập nhật ${nMerged} chuyến (đang tạm dừng)`,
             nSkipped > 0 && `Bỏ qua ${nSkipped} chuyến (đang xuất/đã hoàn thành)`,
           ].filter(Boolean).join(' · ') || 'Không có chuyến mới')

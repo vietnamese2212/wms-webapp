@@ -432,6 +432,13 @@ function AssigneePicker({ warehouseId, value, onChange }: {
         ]}
         placeholder="Chọn nhân sự…"
       />
+      {/* Kho chưa gán nhân sự nào thì ô chọn chỉ có 1 dòng — nói rõ VÌ SAO, đừng để người dùng
+          tưởng tính năng hỏng (staging: 36/36 nhân sự đang ở Kho Ba Vì) */}
+      {emps.length === 0 && (
+        <p className="text-[10px] text-amber-700 mt-1">
+          Kho này chưa có nhân sự nào được gán — lệnh sẽ để trống, ai quét thì người đó nhận.
+        </p>
+      )}
     </div>
   )
 }
@@ -541,16 +548,30 @@ function TasksTab({ warehouseId, dense, canPlan, canAssign }: {
                         </div>
                       : <span className="text-slate-300">—</span>}
                   </TableCell>
-                  <TableCell className="px-2 py-1" onClick={e => e.stopPropagation()}>
+                  {/* Nút trong CELL = icon nhỏ (table-format 17b) — ActionCluster có sàn touch-target
+                      44px nên nhét vào ô sẽ ép DÒNG cao gấp ba, vỡ bảng dày/thoáng */}
+                  <TableCell className="px-2 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                     {t.status === 'PENDING' && (
-                      <ActionCluster items={[
-                        ...(canAssign ? [{ key: 'asg', icon: UserPlus, label: 'Giao', tip: 'Giao lệnh này cho người khác',
-                          onClick: () => openEdit(t, 'assign') } satisfies ActionItem] : []),
-                        ...(canPlan ? [{ key: 'dest', icon: MapPin, label: 'Đổi đích', tip: 'Đổi vị trí nhặt lẻ sẽ hạ về (dùng khi vị trí đích đã đầy)',
-                          onClick: () => openEdit(t, 'dest') } satisfies ActionItem] : []),
-                        ...(canPlan ? [{ key: 'del', icon: X, label: 'Hủy', tip: 'Hủy lệnh fill này', danger: true,
-                          className: 'border-red-200 text-red-600', onClick: () => doCancel(t) } satisfies ActionItem] : []),
-                      ]} />
+                      <div className="flex items-center gap-0.5">
+                        {canAssign && (
+                          <button type="button" title="Giao lệnh này cho người khác" onClick={() => openEdit(t, 'assign')}
+                            className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
+                            <UserPlus className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canPlan && (
+                          <button type="button" title="Đổi vị trí nhặt lẻ sẽ hạ về (dùng khi đích đã đầy)" onClick={() => openEdit(t, 'dest')}
+                            className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
+                            <MapPin className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canPlan && (
+                          <button type="button" title="Hủy lệnh fill này" onClick={() => doCancel(t)}
+                            className="px-1.5 py-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>

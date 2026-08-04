@@ -32,8 +32,12 @@ export function expandMergedCells(ws: XLSX.WorkSheet): number {
     if (!src) continue
     for (let r = m.s.r; r <= m.e.r; r++)
       for (let c = m.s.c; c <= m.e.c; c++) {
+        if (r === m.s.r && c === m.s.c) continue
         const addr = XLSX.utils.encode_cell({ r, c })
-        if (!ws[addr]) { ws[addr] = { ...src }; filled++ }
+        // Ô trong vùng gộp có thể KHÔNG TỒN TẠI, hoặc tồn tại nhưng RỖNG (tuỳ công cụ tạo file) —
+        // phải xử CẢ HAI. Chỉ trải lên ô thật sự trống, không đè giá trị của file dị dạng.
+        const cur = ws[addr] as { v?: unknown } | undefined
+        if (!cur || cur.v == null || String(cur.v).trim() === '') { ws[addr] = { ...src }; filled++ }
       }
   }
   return filled

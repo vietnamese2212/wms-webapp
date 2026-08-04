@@ -131,6 +131,21 @@ const RULES = [
   // khung ĐÃ QUA, nên chạy bộ QA vào cuối ngày là gói TỰ ĐỎ dù code không sai (đo 03/08 lúc 23:08:
   // gói 14 và 15 cùng đỏ vì khung 22:00/23:00 hôm nay). Cổng gác mà tự hỏng thì hoặc bị bỏ qua,
   // hoặc chặn oan — cả hai đều nguy hiểm hơn không có cổng. Fixture khung giờ phải đặt ở NGÀY MAI.
+  // `.in(cột, <danh sách>)` KHÔNG qua helper phân trang: 1 khóa có thể khớp NHIỀU dòng nên tập 200
+  // khóa đã cho >1.000 dòng → PostgREST cắt ÂM THẦM ở db-max-rows. Đây là lớp lỗi tái phát nhiều
+  // nhất của dự án (chiến dịch 03/07 dọn ~40 chỗ, 03/08 vẫn đẻ chỗ mới). Chỉ đếm dạng RỦI RO:
+  // tham số KHÔNG phải biến chunk (`chunk`/`c`) — tức không nằm trong callback của fetchAllByIdChunks.
+  // Nợ cũ không chặn (baseline), nhưng code MỚI không được làm tăng.
+  {
+    key: 'unpaginated_in_query',
+    label: '`.in()` với danh sách khóa mà KHÔNG qua fetchAllByIdChunks/fetchAllRowsParallel/limit — cap 1000 cắt âm thầm',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => /\.in\('[^']+',\s*[A-Za-z_$][\w$.]*/.test(line)
+        && !/\.in\('[^']+',\s*(chunk|c)\b/.test(line)
+        && !/\.(limit|range|single|maybeSingle)\(/.test(line)
+        && !/\.slice\(/.test(line)
+        && !/^\s*(\/\/|\*)/.test(line), s),
+  },
   {
     key: 'qa_slot_fixture_on_today',
     label: 'fixture QA tạo DeliverySlot với `date: today` — chạy cuối ngày sẽ tự đỏ ("khung giờ đã qua"), phải dùng ngày mai',

@@ -1253,6 +1253,14 @@ function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: s
 // Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
 // thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
 const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category'] as const
+// Ô NHẬP THEO DÒNG — KHÁC danh sách trên (danh sách trên là các field mang theo khi lưu).
+// `booking_category` KHÔNG có ô theo dòng: cửa đặt lịch là thuộc tính CẤP XE, 1 ô duy nhất đặt
+// ngoài bảng. Nhét nó vào mảng render thì (a) đẻ ra ô cho từng DO — mời gọi khai lệch nhau, đúng
+// cái luật này cấm, (b) LỆCH cột vì hàng <th> không có cột tương ứng, (c) khối dán Excel bị đẩy
+// thêm 1 cột. Cả 3 đã xảy ra thật (bắt bằng Playwright 04/08). Thêm field mới mà user gõ theo
+// từng DO thì thêm vào ĐÂY và thêm <th>; field cấp xe thì chỉ thêm ở KHVC_FIELDS.
+type KhvcField = (typeof KHVC_FIELDS)[number]
+const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category')
 type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
 type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
 const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
@@ -1359,7 +1367,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
         if (!r || removed.has(r.id)) return
         const cur = { ...(next[r.id] ?? khvcDraftOf(r)) }
         line.split('\t').forEach((v, c) => {
-          const f = KHVC_FIELDS[fieldIdx + c]
+          const f = KHVC_ROW_FIELDS[fieldIdx + c]
           if (f) cur[f] = pasteVal(f, v)
         })
         next[r.id] = cur
@@ -1392,7 +1400,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
         const cols = line.split('\t')
         const p: Partial<KhvcNewLine> = { do_no: (cols[0] ?? '').trim() }
         cols.slice(1).forEach((v, c) => {
-          const f = KHVC_FIELDS[c]
+          const f = KHVC_ROW_FIELDS[c]
           if (f && v.trim() !== '') p[f] = pasteVal(f, v)
         })
         work[pos] = { ...work[pos], ...p }
@@ -1411,7 +1419,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       if (off < 0 || off >= lines.length) return l
       const p: Partial<KhvcNewLine> = {}
       lines[off].split('\t').forEach((v, c) => {
-        const f = KHVC_FIELDS[fieldIdx + c]
+        const f = KHVC_ROW_FIELDS[fieldIdx + c]
         if (f) p[f] = pasteVal(f, v)
       })
       return { ...l, ...p }
@@ -1550,7 +1558,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                     <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : 'font-semibold'}`}>{r.do_no}</td>
                     {/* 8 field theo đúng thứ tự cột — dán block Excel vào ô bất kỳ điền sang phải + xuống dưới */}
-                    {KHVC_FIELDS.map((fld, fi) => (
+                    {KHVC_ROW_FIELDS.map((fld, fi) => (
                       <td key={fld} className="px-1 py-1">
                         <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
                           disabled={isRemoved || !canEdit || incomplete}
@@ -1599,7 +1607,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                       onChange={e => patchLine(l.key, { do_no: e.target.value })}
                       onPaste={e => handlePasteAddedDoAt(l.key, e)} />
                   </td>
-                  {KHVC_FIELDS.map((fld, fi) => (
+                  {KHVC_ROW_FIELDS.map((fld, fi) => (
                     <td key={fld} className="px-1 py-1">
                       <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
                         value={l[fld]} onChange={e => patchLine(l.key, { [fld]: e.target.value })}

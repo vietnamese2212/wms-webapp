@@ -110,6 +110,16 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       l => /warehouse_type\.in\.\(/.test(l), s),
   },
+  // Danh sách field LƯU bị dùng luôn làm danh sách CỘT render: thêm 1 field cấp-xe vào mảng là
+  // lặng lẽ đẻ thêm 1 <input> cho MỖI DÒNG mà hàng <th> không có cột tương ứng ⇒ lệch cột + có ô
+  // nhập cho thứ đáng lẽ 1 xe 1 giá trị + khối dán Excel lệch 1 cột. Đã xảy ra thật với
+  // `booking_category` (bắt bằng Playwright 04/08). Ô nhập theo dòng phải lấy từ KHVC_ROW_FIELDS.
+  {
+    key: 'khvc_save_fields_used_as_columns',
+    label: 'KHVC_FIELDS (danh sách field LƯU) bị dùng để render cột/dán Excel — phải dùng KHVC_ROW_FIELDS',
+    count: (s) => countMatches(['frontend/src/pages/external'], ['.tsx'],
+      l => /KHVC_FIELDS\.map\(|KHVC_FIELDS\[/.test(l), s),
+  },
   // Lý do chuyến KHÔNG thao tác được phải hiện trên MỌI cỡ màn. Công nhân dùng điện thoại/PDA là
   // chính; khối `orderInfoJSX` của trang chi tiết Xuất chỉ hiện từ `sm:` trở lên, nên nhét banner
   // giải thích vào đó = trên điện thoại chỉ thấy nút mờ, không biết vì sao (đã sửa 02/08 cho rule

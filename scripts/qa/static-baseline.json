@@ -8,6 +8,7 @@
   "thung_unit_on_aggregate_pages": 0,
   "gdo_category_exact_match": 50,
   "category_text_exact_match_ts": 0,
+  "khvc_save_fields_used_as_columns": 0,
   "inert_banner_desktop_only": 0,
   "search_state_without_input": 0,
   "tms_cargo_cell_ignores_booking_category": 0,

@@ -12,6 +12,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { RowCheck } from '@/components/shared/RowCheck'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
@@ -69,6 +70,7 @@ interface WhWithCount {
 const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'check',   label: '',                w: 34 },
   { id: 'wh',      label: 'Kho',             w: 160 },
   { id: 'cat',     label: 'Loại kho',        w: 120 },
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
@@ -118,6 +120,12 @@ export default function Locations() {
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
   // Dialog gắn/bỏ cờ HÀNG LOẠT — 2 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface' (vị trí nhặt lẻ)
   const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | null>(null)
+  // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
+  // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
+  // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
+  const [selected,      setSelected]      = useState<Set<string>>(new Set())
+  const [allFiltered,   setAllFiltered]   = useState(false)
+  const canEditLoc = can(perms, 'locations', 'edit')
   const [showUpload,    setShowUpload]    = useState(false)   // dialog upload Excel vị trí
   const [bulkErr,       setBulkErr]       = useState('')
 
@@ -156,17 +164,33 @@ export default function Locations() {
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      // Gửi CỜ bộ lọc: áp cho TOÀN BỘ vị trí đang lọc (không chỉ trang đang xem) mà không phải
-      // nhồi hàng nghìn id qua mạng — BE tự resolve bằng đúng bộ lọc này.
-      await bulkFlag.mutateAsync({
-        by_filter: true, filter: listParams ?? {},
-        ...(bulkMode === 'pickface' ? { is_pick_face: flag } : { requires_stocktake: flag }),
-      })
+      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag } : { requires_stocktake: flag }
+      await bulkFlag.mutateAsync(allFiltered
+        // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
+        ? { by_filter: true, filter: listParams ?? {}, ...cờ }
+        : { ids: [...selected], ...cờ })
       setBulkMode(null)
+      setSelected(new Set())
+      setAllFiltered(false)
     } catch (e: unknown) {
       setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
     }
   }
+
+  // Chọn dòng: "chọn hết" = TRANG đang xem (danh sách đã phân trang server); muốn cả bộ lọc thì
+  // bấm thêm dòng gợi ý trong thanh action. Đổi bộ lọc/trang → bỏ chọn (tránh áp nhầm dòng cũ).
+  const allPageSelected = locations.length > 0 && locations.every(l => selected.has(l.id))
+  const somePageSelected = selected.size > 0 && !allPageSelected
+  function toggleSelect(id: string) {
+    setAllFiltered(false)
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function toggleAllPage() {
+    setAllFiltered(false)
+    setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
+  }
+  useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
+    [warehouseId, catFilter, search, flagFilter, pickFaceFilter, statusFilter, locFilter.page])
 
   // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
   const filtered = locations
@@ -372,18 +396,6 @@ export default function Locations() {
               mobileHidden: true, // upload file là việc trên PC
               onClick: () => setShowUpload(true),
             } satisfies ActionItem] : []),
-            ...(can(perms, 'locations', 'edit') ? [{
-              key: 'bulkpickface', icon: Hand, label: 'Vị trí nhặt lẻ',
-              tip: 'Khai / bỏ khai "vị trí nhặt lẻ" hàng loạt cho các vị trí đang lọc — nguồn dữ liệu của trang Fill hàng',
-              disabled: !activeCount,
-              onClick: () => { setBulkErr(''); setBulkMode('pickface') },
-            } satisfies ActionItem] : []),
-            ...(can(perms, 'locations', 'edit') ? [{
-              key: 'bulkflag', icon: Flag, label: 'Cờ check',
-              tip: 'Gắn / bỏ cờ "cần kiểm kê" hàng loạt cho các vị trí đang lọc (vị trí quan trọng)',
-              disabled: !activeCount,
-              onClick: () => { setBulkErr(''); setBulkMode('stocktake') },
-            } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'create') ? [{
               key: 'add', icon: Plus, label: 'Thêm vị trí', tip: 'Thêm vị trí kho mới',
               primary: true, variant: 'default',
@@ -428,7 +440,9 @@ export default function Locations() {
                   {LOC_COLS.map((c, i) => (
                     <TableHead key={c.id}
                       className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                      {c.label}
+                      {c.id === 'check'
+                        ? (canEditLoc && <RowCheck checked={allPageSelected} indeterminate={somePageSelected} onClick={toggleAllPage} />)
+                        : c.label}
                       {i > 0 && c.id !== 'actions' && (
                         <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
                           className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
@@ -450,7 +464,10 @@ export default function Locations() {
                   const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                   return (
                     <TableRow key={loc.id} className={`${rowCls} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
-                      <TableCell className={`px-2 py-1 text-[10px] sticky left-0 z-10 ${stickyBg}`}>
+                      <TableCell className={`px-2 py-1 sticky left-0 z-10 ${stickyBg}`}>
+                        {canEditLoc && <RowCheck checked={selected.has(loc.id)} onClick={() => toggleSelect(loc.id)} />}
+                      </TableCell>
+                      <TableCell className={`px-2 py-1 text-[10px] ${stickyBg}`}>
                         <span className="block truncate" title={loc.warehouse?.name ?? ''}>{loc.warehouse?.name ?? '—'}</span>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
@@ -556,8 +573,36 @@ export default function Locations() {
 
       {/* Footer đếm bản ghi + chọn dòng/trang (chuẩn chung ListPager) */}
       <ListFooter page={locFilter.page} pageSize={locFilter.pageSize} total={totalRows} unit="vị trí"
-        onPageSize={n => setLocations({ pageSize: n, page: 1 })} />
+        onPageSize={n => setLocations({ pageSize: n, page: 1 })}>
+        {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {allFiltered ? totalRows : selected.size} đang chọn</span>}
+      </ListFooter>
      </div>
+
+      {/* ── Thanh thao tác hàng loạt (hiện khi có dòng được chọn) ───────────── */}
+      {canEditLoc && selected.size > 0 && (
+        <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl max-w-[95vw] flex-wrap">
+          <span className="text-xs text-slate-300">
+            {allFiltered ? `${totalRows} vị trí (toàn bộ bộ lọc)` : `${selected.size} vị trí đã chọn`}
+          </span>
+          {/* Chọn hết TRANG rồi mà bộ lọc còn nhiều hơn → cho chọn cả bộ lọc (BE tự resolve theo cờ lọc) */}
+          {!allFiltered && allPageSelected && totalRows > locations.length && (
+            <button onClick={() => setAllFiltered(true)} className="text-xs text-sky-300 hover:text-sky-200 underline underline-offset-2">
+              Chọn tất cả {totalRows} vị trí đang lọc
+            </button>
+          )}
+          <button onClick={() => { setBulkErr(''); setBulkMode('pickface') }}
+            className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+            <Hand className="h-3.5 w-3.5" />Vị trí nhặt lẻ
+          </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
+            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+            <Flag className="h-3.5 w-3.5" />Cần kiểm kê
+          </button>
+          <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Add / Edit FormSheet */}
       <FormSheet
@@ -737,7 +782,8 @@ export default function Locations() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
-            Áp cho <span className="font-semibold">{activeCount}</span> vị trí đang lọc (toàn bộ kết quả lọc, không chỉ trang đang xem).
+            Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
+            {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
             {bulkMode === 'pickface'
               ? ' Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.'
               : ' Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.'}

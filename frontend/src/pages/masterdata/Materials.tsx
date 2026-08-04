@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
-import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
+import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
+import { RowCheck } from '@/components/shared/RowCheck'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -39,22 +40,6 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
 
 type WhRow = { id: string; code: string; name: string }
-
-// ── Shared mini checkbox ─────────────────────────────────────────────────────
-function RowCheck({ checked, indeterminate, onClick }: {
-  checked: boolean; indeterminate?: boolean; onClick: () => void
-}) {
-  return (
-    <div
-      onClick={e => { e.preventDefault(); e.stopPropagation(); onClick() }}
-      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center cursor-pointer transition-colors
-        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}
-    >
-      {checked && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-      {!checked && indeterminate && <Minus className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-    </div>
-  )
-}
 
 function CatBadge({ cat, metaMap }: { cat: string | null; metaMap?: WhTypeMetaMap }) {
   if (!cat) return <span className="text-slate-300">—</span>

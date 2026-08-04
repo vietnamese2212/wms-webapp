@@ -193,7 +193,7 @@ if (!HAS_DB) {
         id: randomUUID(), do_id: did, material_code_raw: m.code, cartons_ordered: 10,
         cartons_scanned: 0, loose_picking: 0, status: 'PENDING', updated_at: now(),
       })))
-      await restWrite('JobTitle', 'POST', '', [{ id: jid, name: `${T4} chuc danh`, module_permissions: { outbound: ['view'] }, updated_at: now() }])
+      await restWrite('JobTitle', 'POST', '', [{ id: jid, name: `${T4} chuc danh`, module_permissions: { outbound: ['view'], tms_plan: ['view'] }, updated_at: now() }])
       await restWrite('Employee', 'POST', '', [{
         id: eid, employee_code: `${T4}01`, name: `${T4} nv`, email: `${T4.toLowerCase()}01@test.local`,
         password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: FIX.WH_QR.id,
@@ -237,7 +237,7 @@ if (!HAS_DB) {
         await restWrite('TmsVehicleSlot', 'POST', '', [{
           id: randomUUID(), order_id: oid, status: 'PENDING', created_at: now(), updated_at: now(),
         }])
-        const tms = await get(`/tms/orders?date_from=${DAY4}&date_to=${DAY4}&page=1&page_size=100`)
+        const tms = await get(`/tms/orders?date_from=${DAY4}&date_to=${DAY4}&warehouse_id=${FIX.WH_QR.id}&page=1&page_size=100`)
         const trows = tms.j?.data?.rows ?? tms.j?.data ?? []
         chk(Array.isArray(trows) && trows.some(r => r.order_code === `${T4}-MIXORD`),
           'lệnh VC chở LẪN loại LỌT danh sách Kế hoạch VC của user 1 loại (không ẩn oan)',

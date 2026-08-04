@@ -4125,8 +4125,11 @@ export default function TMSBookings() {
   const canEditOrder = (o: TmsOrder) =>
     canEdit && !isDerivedOrder(o) && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
-  const canBookSlot = (vs: TmsVehicleSlot) =>
-    canBook && ['PENDING','BOOKED'].includes(vs.status) &&
+  // Lệnh "KH đã bỏ" KHÔNG được đặt khung giờ: xe không còn trong kế hoạch mà vẫn chiếm 1 chỗ thì
+  // xe thật mất chỗ, và không lượt đồng bộ nào nhả hộ lần hai (BE chặn 422 TMS_PLAN_DROPPED —
+  // ẩn nút để user khỏi bấm rồi mới biết). Nhả khung vẫn cho (canReleaseSlot không đụng cờ này).
+  const canBookSlot = (vs: TmsVehicleSlot, o?: TmsOrder) =>
+    canBook && !o?.plan_dropped && ['PENDING','BOOKED'].includes(vs.status) &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
   const canReleaseSlot = (vs: TmsVehicleSlot) =>
@@ -4517,7 +4520,7 @@ export default function TMSBookings() {
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
-                    {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot) && (
+                    {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot, order) && (
                       <button
                         onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
                         className="text-blue-400 hover:text-blue-600 p-1 rounded"

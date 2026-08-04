@@ -10,6 +10,7 @@ import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination
 import { replanKhvcGroups } from '../wms/outboundController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { categoryAllowed } from '../../utils/categoryScope'
+import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
 
 const now = () => new Date().toISOString()
 
@@ -155,19 +156,20 @@ async function resolveBookingCategory(req: Request, raw: unknown): Promise<{ val
 
 // Xe ĐANG GIỮ khung giờ của cửa CŨ thì không cho đổi cửa âm thầm: đổi xong khung đang giữ thuộc
 // cửa khác = dữ liệu tự mâu thuẫn. Bắt nhả khung trước (KHÔNG tự nhả hộ — mất chỗ âm thầm còn tệ hơn).
+// Luật + cách đo nằm ở `utils/bookingGuards` (dùng chung với gác ĐỔI NGÀY — cùng một họ lỗi).
 async function bookedSlotBlockingCategory(groupCode: string, newCat: string): Promise<string | null> {
-  const { data: ord } = await supabase.from('TmsOrder').select('id').eq('order_code', groupCode).limit(1).maybeSingle()
-  if (!ord) return null
-  const { data: slots } = await supabase.from('TmsVehicleSlot')
-    .select('license_plate, slot:DeliverySlot!slot_id(cargo_type, time_from, time_to, date)')
-    .eq('order_id', (ord as { id: string }).id).not('slot_id', 'is', null)
-  for (const s of (slots ?? []) as { license_plate?: string | null; slot?: { cargo_type?: string | null; time_from?: string; time_to?: string; date?: string } | null }[]) {
-    const ct = s.slot?.cargo_type ?? null
-    if (!ct || ct === 'ALL' || ct === newCat) continue
-    return `Xe đang giữ khung giờ ${s.slot?.date ?? ''} ${s.slot?.time_from ?? ''}–${s.slot?.time_to ?? ''} của cửa ${ct}` +
-           ` — nhả khung giờ trước khi đổi Loại kho booking sang ${newCat}.`
+  return slotHeldBlockingCategory((await heldSlotsByVehicle([groupCode])).get(groupCode), newCat)
+}
+
+// Đổi NGÀY xuất khi xe đang giữ khung giờ của NGÀY KHÁC → chặn per-xe (trả Map gc→lý do).
+async function dateBlockedByHeldSlot(groupCodes: string[], newDate: string): Promise<Map<string, string>> {
+  const held = await heldSlotsByVehicle(groupCodes)
+  const out = new Map<string, string>()
+  for (const gc of groupCodes) {
+    const msg = slotHeldBlockingDate(held.get(gc), newDate)
+    if (msg) out.set(gc, msg)
   }
-  return null
+  return out
 }
 
 function pickFields(body: Record<string, unknown>): Record<string, unknown> {
@@ -382,6 +384,12 @@ export async function createKhvc(req: Request, res: Response) {
         if ('error' in bc) return fail(res, bc.error, bc.status)
         fields.booking_category = bc.value
       }
+      // ĐƯỜNG "NHẬN NUÔI" (probe 04/08): Số xe này có thể ĐÃ có lệnh vận chuyển tạo tay và ĐÃ đặt
+      // khung giờ TRƯỚC khi kế hoạch khai cửa. Dòng kế hoạch đầu tiên khai cửa khác ⇒ lệnh bị
+      // syncTmsPlanFromKhvc đóng dấu cửa mới trong khi vẫn đậu khung của cửa cũ — đúng trạng thái mà
+      // luật "đổi cửa" đang chặn ở updateKhvc, chỉ khác là lọt qua cửa TẠO. Gác cùng ngữ nghĩa.
+      const heldErr = await bookedSlotBlockingCategory(String(fields.group_code), String(fields.booking_category))
+      if (heldErr) return fail(res, 422, 'BOOKING_CATEGORY_SLOT_HELD', heldErr)
     }
     const row = {
       id: randomUUID(), ...fields,
@@ -418,6 +426,10 @@ export async function updateKhvc(req: Request, res: Response) {
       const locked = targetGc ? await dateLockedGroups([targetGc], String(fields.export_date ?? '')) : new Map<string, string>()
       const lockMsg = locked.get(targetGc)
       if (lockMsg) return fail(res, 422, 'GDO_STATUS_LOCKED', `${lockMsg} (xe ${targetGc}).`)
+      // …và trên KHUNG GIỜ đang giữ: dời ngày mà giữ nguyên khung của ngày cũ = xe chiếm chỗ ngày nó
+      // không chạy, còn ngày nó chạy thì không có khung (probe 04/08 P4).
+      const heldMsg = targetGc ? (await dateBlockedByHeldSlot([targetGc], String(fields.export_date ?? ''))).get(targetGc) : null
+      if (heldMsg) return fail(res, 422, 'BOOKING_SLOT_HELD_DATE', `${heldMsg} (xe ${targetGc}).`)
     }
     // ĐỔI CỬA đặt lịch: validate danh mục + scope, và chặn nếu xe đang giữ khung giờ của cửa cũ
     if ('booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')) {
@@ -561,8 +573,12 @@ export async function bulkDateKhvc(req: Request, res: Response) {
     const scopeErr = await khvcScopeError(req, groupCodes)
     if (scopeErr) return fail(res, scopeErr, 403)
     const locked = await dateLockedGroups(groupCodes, export_date)
-    const allowed = groupCodes.filter(g => !locked.has(g))
-    const blocked = [...locked].map(([group_code, reason]) => ({ group_code, reason }))
+    // Xe đang GIỮ khung giờ của ngày cũ cũng bị chặn per-xe (không tự nhả hộ) — cùng ngữ nghĩa với
+    // gác đổi CỬA, và khôi phục luật vốn có bên TMS ("lệnh đang giữ booking thì không đổi ngày"):
+    // lệnh tự sinh bị 422 TMS_PLAN_DERIVED ở cửa TMS nên cửa này là cửa DUY NHẤT, thiếu gác = mất luật.
+    const heldBlocked = await dateBlockedByHeldSlot(groupCodes.filter(g => !locked.has(g)), export_date)
+    const allowed = groupCodes.filter(g => !locked.has(g) && !heldBlocked.has(g))
+    const blocked = [...locked, ...heldBlocked].map(([group_code, reason]) => ({ group_code, reason }))
     let updatedLines = 0
     for (let i = 0; i < allowed.length; i += 300) {
       const { data: upd, error } = await supabase.from('khvc_lines')

@@ -153,7 +153,17 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         // (dữ liệu nạp trước khi có cột này) → không gác, giữ hành vi cũ.
         {
           const { data: ord } = await supabase.from('TmsOrder')
-            .select('booking_category').eq('id', existing.order_id as string).maybeSingle()
+            .select('booking_category, plan_dropped, order_code').eq('id', existing.order_id as string).maybeSingle()
+          // ── LỆNH ĐÃ NGỪNG HIỆU LỰC thì KHÔNG được chiếm chỗ (probe 04/08 P1) ──
+          // Kế hoạch bỏ Số xe ⇒ lệnh plan_dropped + hệ thống TỰ NHẢ khung giờ cho xe khác. Nhưng
+          // không có gì cấm đặt LẠI: nút đồng hồ vẫn hiện trên lưới (canBookSlot không soi cờ này)
+          // ⇒ xe KHÔNG có trong kế hoạch vẫn giữ 1 chỗ, và giữ VĨNH VIỄN (không lượt đồng bộ nào
+          // nhả lần hai vì lệnh đã ở trạng thái dropped). Khung giờ là tài nguyên khan hiếm giờ cao
+          // điểm — chỗ này mất là xe thật không đặt được. Nhả khung thì vẫn cho (chỉ gác lúc GÁN).
+          if ((ord as { plan_dropped?: boolean | null } | null)?.plan_dropped)
+            return fail(res, 422, 'TMS_PLAN_DROPPED',
+              `Lệnh ${(ord as { order_code?: string | null }).order_code ?? ''} đã NGỪNG HIỆU LỰC (Kế hoạch xuất không còn Số xe này)`
+              + ' — không đặt được khung giờ. Đưa Số xe trở lại Kế hoạch xuất trước, rồi đặt lịch.')
           const cua = (ord as { booking_category?: string | null } | null)?.booking_category ?? null
           const slotCargo = (newSlot as { cargo_type?: string | null }).cargo_type ?? null
           if (cua && slotCargo && slotCargo !== 'ALL' && slotCargo !== cua)
@@ -245,7 +255,7 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .select('direction, warehouse_type, booking_category').eq('id', existing.order_id).single()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: secondaryOrders } = await supabase.from('TmsOrder')
-        .select('order_code, direction, warehouse_type, booking_category').in('id', orderIds)
+        .select('order_code, direction, warehouse_type, booking_category, plan_dropped').in('id', orderIds)
       if (primaryOrder?.direction) {
         const hasWrongDir = (secondaryOrders ?? []).some(
           (o: { direction: string }) => o.direction !== primaryOrder.direction
@@ -271,6 +281,13 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       // Gom = 1 xe VẬT LÝ chạy chung ⇒ chỉ đậu 1 cửa, các đơn gom phải cùng cửa. Chưa chốt cửa (null,
       // dữ liệu cũ) thì bỏ qua, giữ hành vi cũ.
       {
+        // Nhánh gom ghi THẲNG slot_id sang vslot đơn phụ ⇒ đơn phụ đã NGỪNG HIỆU LỰC cũng chiếm chỗ
+        // được qua cửa này, lách gác ở trên (cùng lý do phải gác cửa đặt lịch riêng cho nhánh gom).
+        const chet = ((secondaryOrders ?? []) as { order_code?: string | null; plan_dropped?: boolean | null }[])
+          .find(o => o.plan_dropped)
+        if (chet)
+          return fail(res, 422, 'TMS_PLAN_DROPPED',
+            `Không gom được Số xe ${chet.order_code ?? ''} — lệnh đã NGỪNG HIỆU LỰC (Kế hoạch xuất không còn Số xe này).`)
         const cuaChinh = (primaryOrder as { booking_category?: string | null } | null)?.booking_category ?? null
         const lech = ((secondaryOrders ?? []) as { order_code?: string | null; booking_category?: string | null }[])
           .find(o => cuaChinh && o.booking_category && o.booking_category !== cuaChinh)

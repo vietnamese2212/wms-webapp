@@ -9,6 +9,7 @@ import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
+import { heldSlotsByOrderId, slotHeldBlockingDate } from '../../utils/bookingGuards'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -664,9 +665,14 @@ export async function updateOrder(req: Request, res: Response) {
     // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
     // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).
     // Muốn đổi ngày đơn đã đặt lịch → huỷ đặt lịch (revoke) rồi đặt lại, hoặc dùng luồng đổi lịch chuyên dụng.
+    // ⚠️ Gác này TỪNG VÔ HIỆU (probe 04/08): nó soi `TmsOrder.status`, nhưng đặt lịch chỉ đổi
+    // `TmsVehicleSlot.status` — BOOKED/ARRIVED là giá trị của DÒNG XE, lệnh thì luôn ở 'PENDING'
+    // (chỉ nhận 'DONE' khi kho nhận xác nhận). Nên điều kiện không bao giờ đúng và ngày vẫn đổi được
+    // dù đang giữ khung giờ. Phải soi ĐÚNG chỗ giữ chỗ: khung giờ mà dòng xe đang gắn.
     if (date !== undefined && date !== existing.date) {
-      if (existing.status !== 'PENDING')
-        return fail(res, 'Đơn đã đặt lịch/đã đến — không đổi được ngày ở đây (huỷ đặt lịch trước rồi đặt lại)', 400)
+      const held = (await heldSlotsByOrderId([id])).get(id)
+      const heldMsg = slotHeldBlockingDate(held, String(date))
+      if (heldMsg) return fail(res, 422, 'BOOKING_SLOT_HELD_DATE', heldMsg)
       if (date < todayVN())
         return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
     }
@@ -730,6 +736,19 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now = new Date().toISOString()
+
+    // Đơn ĐANG GIỮ KHUNG GIỜ → chặn cả lô (mirror updateOrder). `.eq('status','PENDING')` bên dưới
+    // KHÔNG gánh được việc này: đó là trạng thái LỆNH, còn BOOKED/ARRIVED là trạng thái DÒNG XE
+    // (probe 04/08 — comment cũ tưởng đã gác, thực tế điều kiện không bao giờ đúng).
+    {
+      const codeById = new Map((ords ?? []).map(o => [o.id, o.order_code ?? o.id]))
+      const held = await heldSlotsByOrderId(ids, codeById)
+      const guilty = [...held].filter(([, h]) => slotHeldBlockingDate(h, date)).map(([oid]) => codeById.get(oid))
+      if (guilty.length)
+        return fail(res, 422, 'BOOKING_SLOT_HELD_DATE',
+          `${guilty.length} lệnh đang GIỮ KHUNG GIỜ của ngày khác (${guilty.slice(0, 3).join(', ')}${guilty.length > 3 ? '…' : ''})`
+          + ' — nhả khung giờ trước khi đổi ngày, rồi đặt lại khung của ngày mới.')
+    }
 
     // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count).
     // CHUNK 300: nhồi cả nghìn id vào `.in()` làm URL >40KB → PostgREST từ chối → 500, KHÔNG lệnh nào

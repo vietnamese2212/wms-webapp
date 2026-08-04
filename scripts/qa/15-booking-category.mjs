@@ -36,9 +36,15 @@ const CUA_A = cats[0], CUA_B = cats[1]      // 2 cửa khác nhau lấy TỪ DAN
 const WH = FIX.WH_QTY
 const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_8${n}`
-const ALL_GC = [GC(1), GC(2), GC(3)]
+const ALL_GC = [GC(1), GC(2), GC(3), GC(4), GC(5), GC(6), GC(7)]
 const DO_A = 'QABKDO01', DO_B = 'QABKDO02', DO_C = 'QABKDO03'
+const DO_D = 'QABKDO04', DO_E = 'QABKDO05', DO_F = 'QABKDO06'
+const ALL_DO = [DO_A, DO_B, DO_C, DO_D, DO_E, DO_F]
 const TIME_A = '22:00:00', TIME_B = '22:30:00'
+const TIME_C = '21:00:00', TIME_D = '21:15:00', TIME_E = '21:30:00'
+const ALL_TIME = [TIME_A, TIME_B, TIME_C, TIME_D, TIME_E]
+// Ngày thứ 2 cho phép kiểm "đổi Ngày xuất khi đang giữ khung giờ"
+const DAY2 = new Date(Date.now() + 2 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 async function cleanup() {
   for (const gc of ALL_GC) {
@@ -57,9 +63,9 @@ async function cleanup() {
     await restWrite('outbound_events', 'DELETE', `group_code=eq.${gc}`).catch(() => {})
     await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gc}`)
   }
-  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B},${DO_C})`)
-  for (const tm of [TIME_A, TIME_B])
-    await restWrite('DeliverySlot', 'DELETE', `date=eq.${DAY}&time_from=eq.${tm}&warehouse_id=eq.${WH.id}`).catch(() => {})
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${ALL_DO.join(',')})`)
+  for (const tm of ALL_TIME)
+    await restWrite('DeliverySlot', 'DELETE', `date=in.(${DAY},${DAY2})&time_from=eq.${tm}&warehouse_id=eq.${WH.id}`).catch(() => {})
 }
 const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
   id: randomUUID(), od_number: doNo, od_item: '10', material_code: FIX.MAT_POOL, qty_base: qty,
@@ -71,10 +77,10 @@ const addLine = (gc, doNo, cua) => api('/external/khvc', 'POST', {
   veh_type: vehTypeName, dvvt: dvvtName, ...(cua !== undefined ? { booking_category: cua } : {}),
 })
 const orderOf = async gc => (await restAll('TmsOrder', `select=id,order_code,booking_category&order_code=eq.${gc}`))[0] ?? null
-const mkSlot = (time, cargo) => {
+const mkSlot = (time, cargo, date = DAY) => {
   const id = randomUUID()
   return restWrite('DeliverySlot', 'POST', null, {
-    id, date: DAY, time_from: time, time_to: '23:59:00', direction: 'OUTBOUND',
+    id, date, time_from: time, time_to: '23:59:00', direction: 'OUTBOUND',
     vehicle_type_id: vtId, cargo_type: cargo, warehouse_id: WH.id,
     max_vehicles: 2, booked_count: 0, status: 'OPEN', created_at: t(), updated_at: t(),
   }).then(() => id)
@@ -86,6 +92,9 @@ await cleanup()
 await seedRaw(DO_A, 100)
 await seedRaw(DO_B, 60)
 await seedRaw(DO_C, 40)
+await seedRaw(DO_D, 30)
+await seedRaw(DO_E, 20)
+await seedRaw(DO_F, 10)
 
 // ── 1+2. Bắt buộc khai + phải có trong danh mục ───────────────────────────────
 const rMissing = await addLine(GC(1), DO_A, undefined)
@@ -266,11 +275,96 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   }
 }
 
+// ══ VÒNG ĐỜI LỆNH VC × KHUNG GIỜ (probe 04/08) ═══════════════════════════════
+// Ba trạng thái CẤM đo được trên staging, cùng một họ: "khung giờ đang giữ mâu thuẫn với kế hoạch
+// của chính xe đó". Khung giờ là tài nguyên khan hiếm giờ cao điểm — chỗ bị xe ma giữ là xe thật
+// không đặt được, và không có lượt đồng bộ nào tự dọn.
+
+// ── 12. Lệnh ĐÃ NGỪNG HIỆU LỰC (kế hoạch bỏ xe) không được chiếm chỗ ────────
+// Hệ thống tự NHẢ khung khi bỏ xe, nhưng trước 04/08 không có gì cấm đặt LẠI (nút đồng hồ vẫn hiện):
+// đo thật HTTP 200, booked_count=1 — giữ VĨNH VIỄN vì lệnh đã ở trạng thái dropped.
+const slotDead = await mkSlot(TIME_C, CUA_A)
+{
+  await addLine(GC(4), DO_D, CUA_A)
+  const lid = (await restAll('khvc_lines', `select=id&group_code=eq.${GC(4)}&do_no=eq.${DO_D}`))[0]?.id
+  await api(`/external/khvc/${lid}`, 'DELETE')                 // bỏ xe khỏi kế hoạch → lệnh NGỪNG
+  const o4 = await orderOf(GC(4))
+  const drop4 = (await restAll('TmsOrder', `select=plan_dropped&order_code=eq.${GC(4)}`))[0]?.plan_dropped
+  const vs4 = o4 ? (await restAll('TmsVehicleSlot', `select=id&order_id=eq.${o4.id}`))[0] : null
+  const r = vs4 ? await api(`/tms/vehicle-slots/${vs4.id}`, 'PATCH', { slot_id: slotDead, license_plate: 'QABK444' }) : { s: 0 }
+  const cnt = (await restAll('DeliverySlot', `select=booked_count&id=eq.${slotDead}`))[0]?.booked_count
+  check('12. Lệnh ĐÃ NGỪNG (KH bỏ xe) → không đặt được khung giờ (422) + không chiếm chỗ',
+    drop4 === true && r.s === 422 && r.j?.error?.code === 'TMS_PLAN_DROPPED' && Number(cnt) === 0,
+    `dropped=${drop4} http=${r.s} code=${r.j?.error?.code} booked=${cnt}`)
+}
+
+// ── 13. Gom đơn chạy chung KHÔNG được kéo lệnh ĐÃ NGỪNG vào khung ───────────
+// Nhánh gom ghi THẲNG slot_id sang vslot đơn phụ ⇒ lách gác ở mục 12 nếu không chặn riêng.
+{
+  await addLine(GC(5), DO_E, CUA_A)                            // xe sống, CÙNG cửa (cô lập đúng biến plan_dropped)
+  const o5 = await orderOf(GC(5)), o4 = await orderOf(GC(4))
+  const vs5 = o5 ? (await restAll('TmsVehicleSlot', `select=id&order_id=eq.${o5.id}&order=created_at`))[0] : null
+  const r = (o4 && vs5) ? await api(`/tms/vehicle-slots/${vs5.id}`, 'PATCH', {
+    slot_id: slotDead, license_plate: 'QABK555', status: 'BOOKED', consolidation_order_ids: [o4.id],
+  }) : { s: 0 }
+  const vs4After = o4 ? (await restAll('TmsVehicleSlot', `select=slot_id&order_id=eq.${o4.id}`))[0] : null
+  check('13. Gom chung với lệnh ĐÃ NGỪNG → CHẶN (đơn phụ chết không chiếm chỗ)',
+    r.s === 422 && r.j?.error?.code === 'TMS_PLAN_DROPPED' && !vs4After?.slot_id,
+    `http=${r.s} code=${r.j?.error?.code} slot đơn phụ=${vs4After?.slot_id ? 'BỊ GÁN' : 'null'}`)
+}
+
+// ── 14. "NHẬN NUÔI": lệnh tạo tay ĐANG GIỮ khung cửa A, kế hoạch khai cửa B ──
+// Luật 7 chỉ gác ở đường SỬA cửa; đường TẠO dòng đầu tiên cho Số xe đã có lệnh tay thì lọt
+// ⇒ lệnh bị đóng dấu cửa B trong khi vẫn đậu khung cửa A (đo thật 04/08: HTTP 201, im lặng).
+{
+  const ordId = randomUUID(), vsId = randomUUID()
+  await restWrite('TmsOrder', 'POST', null, {
+    id: ordId, order_code: GC(6), date: DAY, warehouse_id: WH.id, direction: 'OUTBOUND',
+    vehicle_type: vehTypeName, origin: 'MANUAL', status: 'PENDING', plan_dropped: false,
+    created_at: t(), updated_at: t(),
+  })
+  await restWrite('TmsVehicleSlot', 'POST', null, { id: vsId, order_id: ordId, status: 'PENDING', created_at: t(), updated_at: t() })
+  const slotAdopt = await mkSlot(TIME_D, CUA_A)
+  const rBook = await api(`/tms/vehicle-slots/${vsId}`, 'PATCH', { slot_id: slotAdopt, license_plate: 'QABK666' })
+  const rAdopt = await addLine(GC(6), DO_F, CUA_B)             // kế hoạch khai cửa KHÁC
+  const ordAfter = await orderOf(GC(6))
+  const lines6 = await restAll('khvc_lines', `select=id&group_code=eq.${GC(6)}`)
+  check('14. Nhận nuôi lệnh tay đang giữ khung cửa khác → CHẶN 422 (không ghi dòng kế hoạch)',
+    rBook.s === 200 && rAdopt.s === 422 && rAdopt.j?.error?.code === 'BOOKING_CATEGORY_SLOT_HELD'
+      && lines6.length === 0 && (ordAfter?.booking_category ?? null) === null,
+    `book=${rBook.s} addLine=${rAdopt.s}/${rAdopt.j?.error?.code} dòng=${lines6.length} cửa lệnh=${ordAfter?.booking_category}`)
+}
+
+// ── 15. ĐỔI NGÀY XUẤT khi xe đang GIỮ khung giờ → chặn ở CẢ HAI cửa ─────────
+// Dời ngày mà giữ nguyên khung của ngày cũ: ngày cũ mất 1 chỗ oan, ngày mới xe KHÔNG có khung —
+// mà lưới vẫn hiện "đã đặt lịch". Luật này vốn CÓ bên TMS nhưng gác soi nhầm trường (TmsOrder.status
+// thay vì trạng thái DÒNG XE) nên chưa bao giờ chặn được; lệnh tự sinh lại chỉ đổi ngày được ở cửa KHVC.
+{
+  await addLine(GC(7), DO_A, CUA_A)                            // DO_A dùng lại: xe khác, dòng khác
+  const o7 = await orderOf(GC(7))
+  const slotDate = await mkSlot(TIME_E, CUA_A, DAY)
+  const vs7 = o7 ? (await restAll('TmsVehicleSlot', `select=id&order_id=eq.${o7.id}&order=created_at`))[0] : null
+  const rBook = vs7 ? await api(`/tms/vehicle-slots/${vs7.id}`, 'PATCH', { slot_id: slotDate, license_plate: 'QABK777' }) : { s: 0 }
+  const lid7 = (await restAll('khvc_lines', `select=id&group_code=eq.${GC(7)}&do_no=eq.${DO_A}`))[0]?.id
+  const rBulk = await api('/external/khvc/bulk-date', 'POST', { ids: [lid7], export_date: DAY2 })
+  const rOne = await api(`/external/khvc/${lid7}`, 'PUT', { export_date: DAY2 })
+  const line7 = (await restAll('khvc_lines', `select=export_date&id=eq.${lid7}`))[0]
+  const vs7After = o7 ? (await restAll('TmsVehicleSlot', `select=slot_id&order_id=eq.${o7.id}`))[0] : null
+  check('15a. Đổi ngày HÀNG LOẠT khi đang giữ khung → chặn per-xe, ngày KHÔNG đổi',
+    rBook.s === 200 && rBulk.s === 200 && rBulk.j?.data?.updated_groups === 0
+      && (rBulk.j?.data?.blocked ?? []).some(b => b.group_code === GC(7) && /khung giờ/i.test(b.reason ?? ''))
+      && String(line7?.export_date) === DAY,
+    `book=${rBook.s} bulk=${rBulk.s} updated=${rBulk.j?.data?.updated_groups} blocked=${JSON.stringify(rBulk.j?.data?.blocked ?? []).slice(0, 160)} ngày=${line7?.export_date}`)
+  check('15b. Đổi ngày SỬA LẺ khi đang giữ khung → 422 BOOKING_SLOT_HELD_DATE + khung giữ nguyên',
+    rOne.s === 422 && rOne.j?.error?.code === 'BOOKING_SLOT_HELD_DATE' && vs7After?.slot_id === slotDate,
+    `http=${rOne.s} code=${rOne.j?.error?.code} giữ_khung=${vs7After?.slot_id === slotDate}`)
+}
+
 // ── DỌN ──
 await cleanup()
 const leftK = await restAll('khvc_lines', `select=id&group_code=in.(${ALL_GC.join(',')})`)
 const leftO = await restAll('TmsOrder', `select=id&order_code=in.(${ALL_GC.join(',')})`)
-const leftS = await restAll('DeliverySlot', `select=id&date=eq.${DAY}&time_from=in.(${TIME_A},${TIME_B})&warehouse_id=eq.${WH.id}`)
+const leftS = await restAll('DeliverySlot', `select=id&date=in.(${DAY},${DAY2})&time_from=in.(${ALL_TIME.join(',')})&warehouse_id=eq.${WH.id}`)
 check('Dọn 0 sót', leftK.length === 0 && leftO.length === 0 && leftS.length === 0,
   `kh=${leftK.length} lệnh=${leftO.length} khung=${leftS.length}`)
 

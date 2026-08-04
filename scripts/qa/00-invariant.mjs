@@ -1,6 +1,11 @@
 // GÓI INVARIANT — bất biến dữ liệu, READ-ONLY, chạy TRƯỚC & SAU mọi đợt test.
 // Soi thẳng DB staging qua PostgREST (service key backend/.env).
-import { HAS_DB, restAll, chunk, check, finish } from './lib.mjs'
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+import { HAS_DB, restAll, restRpc, chunk, check, finish } from './lib.mjs'
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 if (!HAS_DB) {
   console.error('Thiếu backend/.env (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) — không soi được DB')
@@ -146,6 +151,29 @@ for (const [table, label] of [
   } else {
     check('Đích của lệnh fill đang treo vẫn là VỊ TRÍ NHẶT LẺ', true, 'chưa có lệnh treo')
   }
+}
+
+// 10. REALTIME KHAI RỒI THÌ PHẢI NHẬN ĐƯỢC (chốt 04/08).
+//     Lỗi này ÂM THẦM tuyệt đối: bảng ghi đúng, API trả đúng, chỉ MÀN HÌNH ĐANG MỞ là đứng im.
+//     Hai cách chết: (a) bảng không nằm trong publication `supabase_realtime`; (b) bật RLS mà
+//     KHÔNG có policy SELECT cho `authenticated` — Realtime phát sự kiện dưới quyền đó nên client
+//     không nhận gì. Đo thật 04/08: FillTask (mới) và outbound_events (sổ lịch sử chuyến, phát
+//     hiện 03/08) đều dính (b); `Employee` dính (a) và đã gỡ khỏi bản đồ vì HR cố ý đóng.
+//     Nguồn sự thật = TABLE_QUERY_MAP của FE: đó là chỗ app TỰ KHAI "tôi cần realtime bảng này".
+{
+  const src = readFileSync(join(ROOT, 'frontend', 'src', 'api', 'realtimeEvents.ts'), 'utf8')
+  const body = src.slice(src.indexOf('TABLE_QUERY_MAP'))
+  const declared = [...body.matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*):\s*\[/gm)].map(m => m[1])
+  const ready = await restRpc('realtime_readiness')
+  const broken = declared.filter(t => {
+    const r = ready?.[t]
+    return !r || !r.in_pub || (r.rls && Number(r.sel_pol) === 0)
+  })
+  check('Bảng khai realtime trong code đều NHẬN được sự kiện (publication + policy đọc)',
+    broken.length === 0,
+    broken.length
+      ? `${broken.length} bảng câm: ${broken.slice(0, 4).map(t => `${t}(${!ready?.[t]?.in_pub ? 'ngoài publication' : 'thiếu policy đọc'})`).join(', ')}`
+      : `soi ${declared.length} bảng`)
 }
 
 finish('INVARIANT')

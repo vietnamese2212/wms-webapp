@@ -77,6 +77,42 @@ END $$;
 -- RLS: khoá anon như mọi bảng nghiệp vụ khác (backend đi service_role nên không ảnh hưởng).
 ALTER TABLE "FillTask" ENABLE ROW LEVEL SECURITY;
 
+-- ⚠️ BẬT RLS MÀ KHÔNG CÓ POLICY SELECT = REALTIME CHẾT CÂM.
+-- Supabase Realtime phát sự kiện postgres_changes dưới quyền `authenticated`, nên RLS bật + 0
+-- policy nghĩa là client KHÔNG NHẬN GÌ: bảng vẫn ghi đúng, API vẫn trả đúng, chỉ có màn hình
+-- đang mở là đứng im — không lỗi, không cảnh báo (đo thật 04/08: tab thứ hai chờ 8s không nhúc
+-- nhích). Mọi bảng realtime khác của app đều đã có đúng policy này.
+-- Vá luôn `outbound_events` — cùng lỗi, phát hiện từ đợt kiểm 03/08 và đang làm chết feed "Thông
+-- tin / lịch sử chuyến".
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='FillTask' AND policyname='rls_auth_select') THEN
+    EXECUTE 'CREATE POLICY rls_auth_select ON "FillTask" FOR SELECT TO authenticated USING (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='outbound_events' AND policyname='rls_auth_select') THEN
+    EXECUTE 'CREATE POLICY rls_auth_select ON outbound_events FOR SELECT TO authenticated USING (true)';
+  END IF;
+END $$;
+
+-- Soi "bảng nào KHAI BÁO cần realtime mà thực tế không nhận được" — dùng cho bất biến gói QA 00
+-- (bộ QA đi qua PostgREST nên không đọc được pg_catalog trực tiếp).
+CREATE OR REPLACE FUNCTION realtime_readiness() RETURNS jsonb
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(jsonb_object_agg(t.tablename, jsonb_build_object(
+           'in_pub', t.in_pub, 'rls', t.rls, 'sel_pol', t.sel_pol)), '{}'::jsonb)
+  FROM (
+    SELECT c.relname AS tablename,
+           EXISTS (SELECT 1 FROM pg_publication_tables pt
+                   WHERE pt.pubname = 'supabase_realtime' AND pt.schemaname = 'public'
+                     AND pt.tablename = c.relname) AS in_pub,
+           c.relrowsecurity AS rls,
+           (SELECT count(*) FROM pg_policies p
+             WHERE p.schemaname = 'public' AND p.tablename = c.relname
+               AND p.cmd IN ('SELECT', 'ALL') AND p.roles::text LIKE '%authenticated%') AS sel_pol
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+  ) t
+$$;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3) RPC fill_demand — CẦN / ĐANG CÓ Ở TẦNG DƯỚI / THIẾU (một lời gọi duy nhất)
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -374,7 +410,10 @@ BEGIN
             ELSE lower(immutable_unaccent(btrim(p_search))) END;
 
   RETURN (
-    WITH f AS (
+    -- `base` = MỌI bộ lọc TRỪ trạng thái. Bốn ô SummaryBand đếm trên base (toàn cảnh), bảng và
+    -- `total` đếm trên `f` (đã lọc). Nếu đếm ô trên `f` thì lọc mặc định "Chờ làm" sẽ khiến ô
+    -- "Đã hạ"/"Đã hủy" LUÔN bằng 0 — người dùng vừa hủy xong vẫn thấy "Đã hủy 0" (đo thật 04/08).
+    WITH base AS (
       SELECT t.*,
              m.entry_unit, m.units_per_carton, m.base_unit,
              l.location_code AS cur_location_code,
@@ -388,13 +427,15 @@ BEGIN
         AND (p_wh_scope     IS NULL OR t.warehouse_id = ANY (p_wh_scope))
         AND (p_from   IS NULL OR t.target_date >= p_from)
         AND (p_to     IS NULL OR t.target_date <= p_to)
-        AND (p_status IS NULL OR t.status = ANY (p_status))
         AND (p_assignee IS NULL OR t.assignee_id = p_assignee)
         AND (s IS NULL OR NOT EXISTS (
               SELECT 1 FROM unnest(string_to_array(s, ' ')) tok
               WHERE tok <> '' AND position(tok IN lower(immutable_unaccent(
                 concat_ws(' ', t.pallet_code, t.material_code, t.material_name,
                                t.from_location_code, t.to_location_code, t.assignee_name)))) = 0))
+    ),
+    f AS (
+      SELECT * FROM base WHERE (p_status IS NULL OR status = ANY (p_status))
     )
     SELECT jsonb_build_object(
       'rows', COALESCE((
@@ -406,12 +447,12 @@ BEGIN
                        target_date DESC, material_code, pallet_code
               OFFSET GREATEST(p_offset, 0) LIMIT GREATEST(p_limit, 0)) x), '[]'::jsonb),
       'total',          (SELECT count(*) FROM f),
-      'pending_n',      (SELECT count(*) FROM f WHERE status = 'PENDING'),
-      'done_n',         (SELECT count(*) FROM f WHERE status = 'DONE'),
-      'cancelled_n',    (SELECT count(*) FROM f WHERE status = 'CANCELLED'),
+      'pending_n',      (SELECT count(*) FROM base WHERE status = 'PENDING'),
+      'done_n',         (SELECT count(*) FROM base WHERE status = 'DONE'),
+      'cancelled_n',    (SELECT count(*) FROM base WHERE status = 'CANCELLED'),
       -- tổng cross-mã ⇒ quy đổi per-mã TRƯỚC khi cộng (nhãn hiển thị: "SL (quy đổi)")
       'done_qty_entry', (SELECT COALESCE(sum(qty_entry_decimal(qty_base, entry_unit, units_per_carton)), 0)
-                         FROM f WHERE status = 'DONE')
+                         FROM base WHERE status = 'DONE')
     )
   );
 END $$;

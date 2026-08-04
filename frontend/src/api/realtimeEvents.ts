@@ -55,7 +55,11 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],
   forklift_checklist_items: [['forklift-items']],
   forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log'], ['forklift-logs-matrix']],
-  Employee:             [['employees'], ['employee-records'], ['employee-records-paged'], ['employee-record'], ['warehouse-employees'], ['hr-attendance-matrix']],
+  // `Employee` ĐÃ GỠ KHỎI BẢN ĐỒ (04/08): bảng nhân sự CỐ Ý không nằm trong publication realtime và
+  // không có policy đọc cho `authenticated` — dữ liệu HR chỉ ra ngoài qua API đã cắt scope. Giữ dòng
+  // map ở đây là lời hứa suông: sự kiện KHÔNG BAO GIỜ tới, người đọc code lại tưởng đã có realtime.
+  // Muốn realtime cho nhân sự thì phải quyết định mở đọc bảng này trước (quyết định về dữ liệu, không
+  // phải kỹ thuật). Bất biến "bảng khai realtime phải nhận được sự kiện" ở gói QA 00 gác luật này.
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],
   UserWarehouseAccess:  [['employee-record'], ['employee-records']],

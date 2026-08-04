@@ -222,14 +222,29 @@ try {
   check('10. Quét lại pallet đã hạ → 404 NO_TASK (không nhân đôi)',
     scanAgain.s === 404 && scanAgain.j?.error?.code === 'NO_TASK', `http=${scanAgain.s} code=${scanAgain.j?.error?.code}`)
 
-  // ── 11. Hủy lệnh → phần thiếu quay lại ────────────────────────────────────
+  // ── 11. Hủy lệnh → NHẢ phần đang giữ, phép trừ vẫn khớp ───────────────────
+  // Không khẳng định "thiếu tăng đúng +qty": `short` bị KẸP SÀN ở 0, nên khi nhu cầu đã được phủ
+  // dư thì hủy 1 lệnh chỉ đẩy thiếu lên tới mức thật, không phải cả lượng pallet. Bất biến đúng =
+  // lệnh treo giảm đúng lượng đó VÀ short vẫn = max(0, cần − đang có − đang treo).
   const taskB = (await restAll('FillTask', `select=id&entry_id=eq.${pB.id}&status=eq.PENDING`))[0]
   const dBefore = await demandOf()
   const del = await api(`/wms/fill/tasks/${taskB.id}`, 'DELETE')
   const dAfter = await demandOf()
-  check('11. Hủy lệnh → phần "thiếu" tăng lại đúng bằng lượng pallet đó',
-    del.s === 200 && Number(dAfter.row?.short_base) === Number(dBefore.row?.short_base) + pB.qty,
-    `trước=${dBefore.row?.short_base} sau=${dAfter.row?.short_base} (+${pB.qty})`)
+  const pendDrop = Number(dBefore.row?.pending_base) - Number(dAfter.row?.pending_base)
+  const shortExp = Math.max(0, Number(dAfter.row?.demand_base) - Number(dAfter.row?.pick_face_base) - Number(dAfter.row?.pending_base))
+  check('11a. Hủy lệnh → NHẢ đúng lượng đang giữ', del.s === 200 && pendDrop === pB.qty,
+    `treo ${dBefore.row?.pending_base} → ${dAfter.row?.pending_base} (giảm ${pendDrop}, kỳ vọng ${pB.qty})`)
+  check('11b. Sau khi hủy, phép trừ vẫn khớp (thiếu = cần − có − treo, kẹp sàn 0)',
+    Number(dAfter.row?.short_base) === shortExp, `thiếu=${dAfter.row?.short_base} kỳ vọng=${shortExp}`)
+
+  // ── 11c. Ô tổng phải mô tả TOÀN CẢNH, không chỉ phần đang lọc ─────────────
+  // Lọc mặc định của tab là "Chờ làm"; nếu 4 ô đếm trên tập ĐÃ LỌC thì vừa hủy xong vẫn thấy
+  // "Đã hủy = 0" (đo thật 04/08 trên Preview). Bảng lọc, ô tổng thì không.
+  const band = await api(`/wms/fill/tasks?warehouse_id=${whId}&status=PENDING`)
+  check('11c. Ô tổng đếm toàn cảnh (lọc "Chờ làm" vẫn thấy số đã hủy)',
+    band.s === 200 && Number(band.j?.data?.cancelled_n) >= 1
+      && (band.j?.data?.rows ?? []).every(r => r.status === 'PENDING'),
+    `rows=${band.j?.data?.rows?.length} đã hủy=${band.j?.data?.cancelled_n}`)
 
   // ── 12. Báo cáo theo người ────────────────────────────────────────────────
   const rep = await api(`/wms/fill/report?warehouse_id=${whId}&date_from=${DAY}&date_to=${DAY}`)

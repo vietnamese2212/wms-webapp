@@ -12,6 +12,7 @@ import * as palletOps from '../controllers/wms/palletOpsController'
 import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
+import * as fill from '../controllers/wms/fillController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
@@ -182,6 +183,22 @@ router.patch('/slotting/plans/:id',                           requirePerm('slott
 router.post('/slotting/plans/:id/scan-move',                  requirePerm('inventory', 'move_location'), slotting.scanMovePlanPallet)
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
+
+// ─── FILL HÀNG phục vụ nhặt lẻ (04/08) ──────────────────────────────────────
+// Quét thực hiện GHI location_id, nhưng phạm vi bị chặn cứng ở BE: đúng pallet của lệnh và đúng
+// vị trí đích của lệnh. Cùng tiền lệ `leftover_location_id` bên Xuất kho — người đi hạ hàng phải
+// làm được việc của mình; đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
+router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
+router.get('/fill/tasks',                                     requirePerm('fill', 'view'),    fill.listFillTasks)
+router.get('/fill/report',                                    requirePerm('fill', 'view'),    fill.getFillReport)
+router.get('/fill/pick-face-locations',                       requirePerm('fill', 'view'),    fill.listPickFaceLocations)
+// Ô chọn người nhận lệnh — dùng lại controller danh sách nhân sự theo kho (read-only) của Xuất kho
+router.get('/fill/employees',                                 requirePerm('fill', 'assign'),  outbound.getWarehouseEmployees)
+router.post('/fill/tasks',                                    requirePerm('fill', 'plan'),    fill.createFillTasks)
+router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
+// Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
+router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'plan']), fill.updateFillTask)
+router.delete('/fill/tasks/:id',                              requirePerm('fill', 'plan'),    fill.cancelFillTask)
 
 // ─── Xe nâng: check list an toàn hàng ngày + đồng hồ giờ vận hành ───────────
 router.get('/forklifts',            requirePerm('forklift', 'view'),           forklift.listForklifts)

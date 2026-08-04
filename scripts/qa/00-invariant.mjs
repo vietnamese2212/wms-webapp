@@ -111,4 +111,41 @@ for (const [table, label] of [
     vuot.length ? `vd ${vuot[0].date} ${vuot[0].time_from} ${vuot[0].booked_count}/${vuot[0].max_vehicles}` : `soi ${slots.length} khung`)
 }
 
+// 9. LỆNH FILL (hạ hàng xuống vị trí nhặt lẻ) — 3 bất biến cấu trúc.
+//    (a) MỘT pallet chỉ được có MỘT lệnh đang treo: hai lệnh cùng pallet nghĩa là hai người cùng
+//        được giao đi lấy một pallet — người thứ hai chắc chắn thất bại và số liệu "đang về" bị
+//        đếm đôi, làm phần "thiếu" tụt xuống oan. DB có unique index gác; bất biến này bắt cả
+//        trường hợp index bị DROP nhầm khi sửa bảng.
+//    (b) Lệnh ĐÃ HẠ phải có mốc thời gian — thiếu thì báo cáo tỷ lệ/thời gian trung bình sai câm.
+//    (c) Vị trí ĐÍCH phải đang là vị trí nhặt lẻ: khai nhầm cờ rồi bỏ khai sẽ biến lệnh thành
+//        "hạ hàng lên tầng trên" mà không ai thấy.
+{
+  const tasks = await restAll('FillTask', 'select=id,entry_id,status,done_at,to_location_id')
+  const pend = tasks.filter(t => t.status === 'PENDING')
+  const seen = new Map()
+  for (const t of pend) seen.set(t.entry_id, (seen.get(t.entry_id) ?? 0) + 1)
+  const dup = [...seen.entries()].filter(([, n]) => n > 1)
+  check('Mỗi pallet chỉ có 1 lệnh fill đang treo', dup.length === 0,
+    dup.length ? `${dup.length} pallet có >1 lệnh, vd ${dup[0][0]}` : `soi ${pend.length} lệnh treo`)
+
+  const doneNoStamp = tasks.filter(t => t.status === 'DONE' && !t.done_at)
+  check('Lệnh fill đã hạ đều có mốc hoàn thành', doneNoStamp.length === 0,
+    doneNoStamp.length ? `${doneNoStamp.length} lệnh thiếu done_at` : `soi ${tasks.filter(t => t.status === 'DONE').length} lệnh đã hạ`)
+
+  if (pend.length) {
+    const locIds = [...new Set(pend.map(t => t.to_location_id).filter(Boolean))]
+    const pf = new Set()
+    for (let i = 0; i < locIds.length; i += 200) {
+      const rows = await restAll('Location',
+        `select=id&is_pick_face=is.true&id=in.(${locIds.slice(i, i + 200).join(',')})`)
+      for (const r of rows) pf.add(r.id)
+    }
+    const bad = pend.filter(t => !pf.has(t.to_location_id))
+    check('Đích của lệnh fill đang treo vẫn là VỊ TRÍ NHẶT LẺ', bad.length === 0,
+      bad.length ? `${bad.length} lệnh trỏ vào vị trí không còn là nhặt lẻ` : `soi ${pend.length} lệnh treo`)
+  } else {
+    check('Đích của lệnh fill đang treo vẫn là VỊ TRÍ NHẶT LẺ', true, 'chưa có lệnh treo')
+  }
+}
+
 finish('INVARIANT')

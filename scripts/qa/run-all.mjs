@@ -23,6 +23,7 @@ const steps = [
   ['15-booking-category.mjs'],    // CỬA đặt lịch: bắt buộc khai, 1 Số xe 1 cửa (trigger DB), đặt sai cửa → 422 (03/08)
   ['16-upload-shape.mjs'],        // biên dạng file THẬT (ô gộp, dòng trùng) + gác upload + thứ tự gác/RPC (04/08)
   ['17-slot-count-integrity.mjs'],// xoá dòng xe đang giữ chỗ PHẢI đếm lại — không thì khung kẹt "Đầy" (04/08)
+  ['18-fill-replenish.mjs'],      // fill hàng nhặt lẻ: oracle cần/có/thiếu, đua 1 pallet 2 lệnh, quét lệch nguồn/đích đầy (04/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

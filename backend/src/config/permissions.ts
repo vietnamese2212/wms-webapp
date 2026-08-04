@@ -18,6 +18,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   weigh_station: ['view', 'match'],
   control_tower:     ['view'],
   slotting:          ['view', 'plan', 'complete', 'configure'],   // Tối ưu vị trí: xem / tạo-xóa kế hoạch / hoàn thành-hủy-mở lại / tab Cài đặt (hạng nhặt + luồng cửa khu)
+  fill:              ['view', 'plan', 'assign', 'execute'],   // Fill hàng nhặt lẻ: xem đề xuất/lệnh/kết quả · ra lệnh-hủy-đổi đích · gán người · quét thực hiện
   forklift:          ['view', 'check', 'manage_vehicle', 'manage_item'],   // Xe nâng: xem board/lịch sử/báo cáo / ghi-sửa-xóa check list ngày / danh mục xe / danh mục hạng mục
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],

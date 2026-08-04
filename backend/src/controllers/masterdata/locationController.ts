@@ -36,7 +36,7 @@ async function guardLocScope(req: Request, res: Response, locationId: string): P
 // Giữ max_pallets/categories/slot_no_* vì picker Nhập kho & Slotting đọc.
 const LOCATION_LITE_COLS =
   'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
-  'max_pallets, is_active, requires_stocktake, slot_no_in, slot_no_out'
+  'max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
 
 // ─── Phân trang SERVER cho TRANG danh mục Vị trí kho ────────────────────────────────────────────
 // 1 kho có thể vài nghìn vị trí (Bàu Bàng 1.517) — trước đây render hết + cộng tổng ở máy.
@@ -47,6 +47,7 @@ type LocListCtx = {
   scopeCats: string[] | null
   tokens: string[] | null
   flag: boolean
+  pickFace: boolean | null    // null = không lọc; true/false = chỉ vị trí nhặt lẻ / chỉ vị trí thường
   inclInactive: boolean
   blocked: boolean
 }
@@ -70,12 +71,14 @@ function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx 
     tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
     // nhận '1' | 'true' | true — cờ boolean qua query-string mỗi client serialize một kiểu
     flag: q.flag === '1' || q.flag === 'true' || q.flag === true,
+    pickFace: q.pick_face === undefined || q.pick_face === '' || q.pick_face === null ? null
+              : (q.pick_face === '1' || q.pick_face === 'true' || q.pick_face === true),
     inclInactive: q.include_inactive === '1' || q.include_inactive === 'true' || q.include_inactive === true,
   }
 }
 const locRpcParams = (c: LocListCtx) => ({
   p_wh_ids: c.whIds, p_category: c.category, p_scope_cats: c.scopeCats,
-  p_tokens: c.tokens, p_flag: c.flag,
+  p_tokens: c.tokens, p_flag: c.flag, p_pick_face: c.pickFace,
 })
 
 // Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem (định nghĩa khớp listLocations)
@@ -106,9 +109,14 @@ async function listLocationsPaged(req: Request, res: Response) {
     p_with_rows: true,
   })
   if (error && (error as { code?: string }).code === 'PGRST202') {
-    ({ data, error } = await supabase.rpc('locations_page', {
+    // Chỉ hạ cấp khi KHÔNG lọc "vị trí nhặt lẻ": bỏ tham số đó ở nhánh dự phòng sẽ trả về danh
+    // sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm thầm.
+    if (ctx.pickFace !== null)
+      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc vị trí nhặt lẻ)')
+    ;({ data, error } = await supabase.rpc('locations_page', {
       p_offset: (page - 1) * pageSize, p_limit: pageSize,
-      ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
+      p_wh_ids: ctx.whIds, p_category: ctx.category, p_scope_cats: ctx.scopeCats,
+      p_tokens: ctx.tokens, p_flag: ctx.flag, p_incl_inactive: ctx.inclInactive,
     }))
   }
   if (error) throw error
@@ -350,13 +358,14 @@ export async function updateLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return
     // Loại của vị trí KHÔNG sửa lẻ ở đây — kế thừa từ Khu (sửa loại = sửa ở Khu vực, tự cascade)
-    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake } = req.body
+    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
     if (max_pallets !== undefined)       patch.max_pallets       = Number(max_pallets)
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
+    if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)
 
     const { data, error } = await supabase
       .from('Location').update(patch).eq('id', req.params.id).select().maybeSingle()
@@ -366,11 +375,16 @@ export async function updateLocation(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// Gắn / bỏ cờ "cần kiểm kê" HÀNG LOẠT (vị trí quan trọng). Chỉ áp cho vị trí TRONG phạm vi kho + loại
-// của user (bỏ qua id ngoài scope, không báo lỗi cả lô). Chunk 300/lô né URL dài + cap ~1000.
+// Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" và/hoặc "vị trí nhặt lẻ" (tầng dưới, fill hàng phục vụ
+// nhặt lẻ). Chỉ áp cho vị trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo
+// lỗi cả lô). Chunk 300/lô né URL dài + cap ~1000.
 export async function bulkFlagLocations(req: Request, res: Response) {
   try {
-    const { ids, requires_stocktake } = req.body as { ids?: unknown; requires_stocktake?: unknown }
+    const { ids, requires_stocktake, is_pick_face } = req.body as {
+      ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown
+    }
+    if (requires_stocktake === undefined && is_pick_face === undefined)
+      return fail(res, 400, 'INVALID_INPUT', 'Thiếu cờ cần gắn')
     let idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     // Danh sách đã PHÂN TRANG → client không còn đủ id của bộ lọc: gửi CỜ bộ lọc, BE tự resolve
     // (luật id-list-url-limits: không nhồi hàng nghìn id qua mạng).
@@ -385,7 +399,9 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       idList = ((data ?? {}) as { ids?: string[] }).ids ?? []
     }
     if (!idList.length) return fail(res, 400, 'INVALID_INPUT', 'Thiếu danh sách vị trí')
-    const flag = Boolean(requires_stocktake)
+    const flags: Record<string, boolean> = {}
+    if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
+    if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
 
     const scope = scopeWhIds(req)
     const cats  = scopeCategoriesOf(req)
@@ -405,12 +421,12 @@ export async function bulkFlagLocations(req: Request, res: Response) {
         .map(r => r.id)
       if (!allowed.length) continue
       const { error: upErr } = await supabase.from('Location')
-        .update({ requires_stocktake: flag, updated_at: now, updated_by: by })
+        .update({ ...flags, updated_at: now, updated_by: by })
         .in('id', allowed)
       if (upErr) throw upErr
       updated += allowed.length
     }
-    ok(res, { updated, requires_stocktake: flag })
+    ok(res, { updated, ...flags })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

@@ -103,6 +103,7 @@ interface LocationsFilters {
   catFilter: string
   statusFilter: string[]
   flagFilter: boolean
+  pickFaceFilter: boolean   // chỉ hiện VỊ TRÍ NHẶT LẺ (đã khai cờ is_pick_face)
   page: number
   pageSize: number
 }
@@ -232,6 +233,20 @@ interface SlottingFilters {
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
 }
+// Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
+interface FillFilters {
+  warehouseId: string
+  date: string                                   // ngày xuất đang xem (tab Đề xuất)
+  tab: 'demand' | 'tasks' | 'report'
+  search: string
+  status: string[]                               // lọc trạng thái lệnh (tab Lệnh fill)
+  mine: boolean                                  // chỉ việc được giao cho tôi
+  onlyShort: boolean                             // tab Đề xuất: chỉ mã đang THIẾU
+  reportFrom: string
+  reportTo: string
+  page: number
+  pageSize: number
+}
 interface ForkliftFilters {
   tab: 'board' | 'report' | 'matrix' | 'summary' | 'detail' | 'settings'
   date: string          // ngày xem board check list (mặc định hôm nay)
@@ -292,6 +307,7 @@ interface WmsFilterState {
   weighTickets:      WeighTicketFilters
   controlTower:      ControlTowerFilters
   slotting:          SlottingFilters
+  fill:              FillFilters
   forklift:          ForkliftFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
@@ -326,6 +342,7 @@ interface WmsFilterState {
   setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
   setControlTower:      (f: Partial<ControlTowerFilters>)     => void
   setSlotting:          (f: Partial<SlottingFilters>)          => void
+  setFill:              (f: Partial<FillFilters>)              => void
   setForklift:          (f: Partial<ForkliftFilters>)          => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
@@ -382,11 +399,13 @@ function initialFilters() {
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
+    fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
+                    onlyShort: true, reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
-    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false, page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false, pickFaceFilter: false, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
@@ -425,6 +444,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
       setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
+      setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
       setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),

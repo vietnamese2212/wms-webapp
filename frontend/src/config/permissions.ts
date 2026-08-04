@@ -240,6 +240,15 @@ export const MODULES = {
       configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
     },
   },
+  fill: {
+    page: 'Fill hàng (nhặt lẻ)',
+    actions: {
+      view:    'Xem đề xuất + lệnh fill + kết quả',
+      plan:    'Ra lệnh fill / hủy / đổi vị trí đích',
+      assign:  'Gán lệnh fill cho người khác',
+      execute: 'Quét thực hiện (hạ hàng xuống vị trí nhặt lẻ)',
+    },
+  },
   forklift: {
     page: 'Xe nâng',
     actions: {

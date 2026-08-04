@@ -543,9 +543,14 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['locations-real'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['locations-real'] })
+      qc.invalidateQueries({ queryKey: ['locations-paged'] })
+      qc.invalidateQueries({ queryKey: ['locations-summary'] })
+      qc.invalidateQueries({ queryKey: ['fill-demand'] })   // đổi cờ nhặt lẻ ⇒ đề xuất fill đổi theo
+    },
   })
 }
 
@@ -567,12 +572,16 @@ export function useBulkFlagLocations() {
   return useMutation({
     // Danh sách đã phân trang → gửi CỜ bộ lọc (`by_filter`) để BE tự resolve TOÀN BỘ vị trí khớp,
     // thay vì nhồi hàng nghìn id qua mạng. Vẫn nhận `ids` cho chỗ gọi cũ.
-    mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>; requires_stocktake: boolean }) =>
-      apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number; requires_stocktake: boolean }),
+    // 2 cờ: requires_stocktake (cần kiểm kê) · is_pick_face (vị trí nhặt lẻ — nguồn của Fill hàng).
+    // Gửi cờ nào thì BE ghi cờ đó; thiếu cả hai → 400 (không ghi mù).
+    mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>
+                         requires_stocktake?: boolean; is_pick_face?: boolean }) =>
+      apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
       qc.invalidateQueries({ queryKey: ['locations-paged'] })
       qc.invalidateQueries({ queryKey: ['locations-summary'] })
+      qc.invalidateQueries({ queryKey: ['fill-demand'] })   // khai vị trí nhặt lẻ ⇒ đề xuất fill đổi theo
     },
   })
 }
@@ -3604,6 +3613,149 @@ export function useUpdateSlottingZoneConfig() {
       qc.invalidateQueries({ queryKey: ['warehouse-zones'] })
       qc.invalidateQueries({ queryKey: ['slotting'] })
     },
+  })
+}
+
+// ─── FILL HÀNG phục vụ nhặt lẻ (04/08) ───────────────────────────────────────
+// Mọi số lượng từ API là BASE UNIT — quy đổi "thùng" chỉ ở tầng hiển thị, và tổng cross-mã
+// phải qua qtyEntryDecimal per-mã (nhãn QTY_CONVERTED_LABEL), không cộng base thô.
+
+export interface FillSuggestion {
+  entry_id: string; pallet_code: string
+  from_location_id: string | null; from_location_code: string | null
+  avail: number; expiry_date: string | null
+}
+export interface FillDemandRow {
+  material_id: string; material_code: string | null; material_name: string | null
+  base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+  demand_base: number; pick_face_base: number; pick_face_pallets: number
+  pending_base: number; pending_n: number; short_base: number
+  to_location: { id: string; code: string } | null
+  suggestions: FillSuggestion[]
+}
+export interface FillDemandData {
+  rows: FillDemandRow[]; pick_face_locations: number; error?: string
+}
+export function useFillDemand(params?: { warehouse_id: string; date: string }) {
+  return useQuery({
+    queryKey: ['fill-demand', params?.warehouse_id, params?.date],
+    enabled: !!params?.warehouse_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/demand', { params })
+      return data.data as FillDemandData
+    },
+  })
+}
+
+export type FillTaskStatus = 'PENDING' | 'DONE' | 'CANCELLED'
+export interface FillTaskRow {
+  id: string; warehouse_id: string; target_date: string
+  material_id: string; material_code: string | null; material_name: string | null
+  entry_id: string; pallet_code: string
+  from_location_id: string | null; from_location_code: string | null
+  to_location_id: string; to_location_code: string | null
+  qty_base: number; status: FillTaskStatus
+  assignee_id: string | null; assignee_name: string | null
+  assigned_by: string | null; assigned_at: string | null
+  done_by: string | null; done_by_name: string | null; done_at: string | null
+  cancel_reason: string | null; created_by: string | null; created_at: string
+  entry_unit: string | null; units_per_carton: number | null; base_unit: string | null
+  cur_location_code: string | null; cur_avail: number | null; entry_status: string | null
+}
+export interface FillTasksData {
+  rows: FillTaskRow[]; total: number
+  pending_n: number; done_n: number; cancelled_n: number; done_qty_entry: number
+}
+export function useFillTasks(params?: {
+  warehouse_id: string; date_from?: string; date_to?: string
+  status?: string; assignee_id?: string; mine?: string; search?: string
+  page?: number; page_size?: number
+}) {
+  return useQuery({
+    queryKey: ['fill-tasks', params],
+    enabled: !!params?.warehouse_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/tasks', { params })
+      return data.data as FillTasksData
+    },
+  })
+}
+
+export interface FillReportRow {
+  assignee_id: string | null; assignee_name: string
+  total_n: number; done_n: number; pending_n: number
+  done_qty_entry: number; total_qty_entry: number
+  avg_minutes: number | null; rate: number
+}
+export function useFillReport(params?: { warehouse_id: string; date_from?: string; date_to?: string }) {
+  return useQuery({
+    queryKey: ['fill-report', params],
+    enabled: !!params?.warehouse_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/report', { params })
+      return data.data as { rows: FillReportRow[]; total: number; done: number; unassigned: number; qty_entry: number }
+    },
+  })
+}
+
+export function usePickFaceLocations(warehouseId?: string) {
+  return useQuery({
+    queryKey: ['fill-pick-face-locations', warehouseId],
+    enabled: !!warehouseId,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/pick-face-locations', { params: { warehouse_id: warehouseId } })
+      return data.data as { id: string; location_code: string; sub_code: string | null; max_pallets: number }[]
+    },
+  })
+}
+
+/** Danh sách nhân sự theo kho cho ô "Giao cho" — route riêng của Fill (quyền fill.assign). */
+export function useFillEmployees(warehouseId?: string) {
+  return useQuery({
+    queryKey: ['fill-employees', warehouseId],
+    enabled: !!warehouseId,
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/employees', { params: { warehouse_id: warehouseId } })
+      return data.data as { id: string; name: string; employee_code: string; job_title?: string | null }[]
+    },
+  })
+}
+
+const invalidateFill = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['fill-tasks'] })
+  qc.invalidateQueries({ queryKey: ['fill-demand'] })   // lệnh treo trừ vào phần "thiếu"
+  qc.invalidateQueries({ queryKey: ['fill-report'] })
+}
+
+export function useCreateFillTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      warehouse_id: string; target_date: string
+      items: { entry_id: string; to_location_id?: string; assignee_id?: string }[]
+    }) => apiClient.post('/wms/fill/tasks', body)
+      .then(r => r.data.data as { created: number; skipped: { entry_id: string; pallet_code?: string; reason: string }[] }),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+export function useUpdateFillTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; assignee_id?: string | null; to_location_id?: string }) =>
+      apiClient.patch(`/wms/fill/tasks/${id}`, body).then(r => r.data.data as FillTaskRow),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+export function useCancelFillTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      apiClient.delete(`/wms/fill/tasks/${id}`, { data: reason ? { reason } : undefined }).then(r => r.data.data),
+    onSettled: () => invalidateFill(qc),
   })
 }
 

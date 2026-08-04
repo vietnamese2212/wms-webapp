@@ -220,6 +220,17 @@ const RULES = [
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /['"](FG0\d|PM0\d|RM0\d|PK0\d)['"]/.test(line), s),
   },
+  // Đổi VỊ TRÍ pallet phải đi qua RPC `move_pallets_to_location` — RPC khoá dòng Location rồi mới
+  // đếm sức chứa DƯỚI LOCK. Ghi thẳng `location_id` bằng UPDATE là bỏ qua hàng rào đó: hai người
+  // cùng dồn vào một ô 1 slot thì cả hai cùng "thành công", và tồn kho ghi 2 pallet ở chỗ chỉ chứa
+  // được 1 — sai câm, chỉ ra kho mới biết. Luật này gác cả 3 đường đang ghi vị trí (slotting quét
+  // thực hiện · leftover khi xuất · fill hàng). Baseline = số chỗ ghi hợp lệ hiện có (RPC + seed).
+  {
+    key: 'location_write_without_move_rpc',
+    label: 'ghi thẳng location_id vào InventoryEntry — phải qua RPC move_pallets_to_location (khoá sức chứa dưới lock)',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line) => /\.update\(\s*\{[^}]*\blocation_id\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line), s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +

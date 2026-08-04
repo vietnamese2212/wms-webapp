@@ -161,6 +161,10 @@ if (!HAS_DB) {
       await restWrite('Employee', 'DELETE', `id=eq.${e.id}`)
     }
     for (const j of await restAll('JobTitle', `select=id&name=like.*${T4}*`)) await restWrite('JobTitle', 'DELETE', `id=eq.${j.id}`)
+    for (const o of await restAll('TmsOrder', `select=id&order_code=like.*${T4}*`)) {
+      await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+      await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`)
+    }
   }
   try {
     const bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m).catch(() => null)
@@ -219,6 +223,25 @@ if (!HAS_DB) {
         chk(items.length === 2 && items.some(i => (i.material_code_raw ?? '') === mats[1].code),
           'user 1 loại thấy ĐỦ dòng hàng — kể cả dòng thuộc loại NGOÀI quyền (ẩn bớt = xuất thiếu)',
           `thấy ${items.length}/2: ${JSON.stringify(items.map(i => i.material_code_raw))}`)
+
+        // LỆNH VẬN CHUYỂN cũng mang Loại kho GHÉP (lệnh tự sinh từ Kế hoạch xuất sao chép của chuyến).
+        // Cắt list bằng `warehouse_type.in.(...)` là so khớp NGUYÊN CHUỖI ⇒ lệnh xe chở lẫn BIẾN MẤT
+        // với user có scope loại — đo staging 04/08: scope FG01 thấy 50/117, scope PM01 thấy 1/68.
+        // Cùng lớp lỗi đã vá cho chuyến ngày 30/07, tái sinh ở TmsOrder ngày 03/08.
+        const oid = randomUUID()
+        await restWrite('TmsOrder', 'POST', '', [{
+          id: oid, order_code: `${T4}-MIXORD`, date: DAY4, warehouse_id: FIX.WH_QR.id,
+          warehouse_type: `${mats[0].cat}+${mats[1].cat}`, direction: 'OUTBOUND', status: 'PENDING',
+          npp_name: `${T4} NPP`, created_at: now(), updated_at: now(),
+        }])
+        await restWrite('TmsVehicleSlot', 'POST', '', [{
+          id: randomUUID(), order_id: oid, status: 'PENDING', created_at: now(), updated_at: now(),
+        }])
+        const tms = await get(`/tms/orders?date_from=${DAY4}&date_to=${DAY4}&page=1&page_size=100`)
+        const trows = tms.j?.data?.rows ?? tms.j?.data ?? []
+        chk(Array.isArray(trows) && trows.some(r => r.order_code === `${T4}-MIXORD`),
+          'lệnh VC chở LẪN loại LỌT danh sách Kế hoạch VC của user 1 loại (không ẩn oan)',
+          `http=${tms.s} thấy ${Array.isArray(trows) ? trows.length : '?'} lệnh`)
       }
     }
   } catch (e) {

@@ -4141,6 +4141,16 @@ export async function uploadKhvc(req: Request, res: Response) {
     // BÁO LỖI THEO TỪNG SỐ XE, đi qua ĐÚNG khuôn báo cáo "kiểm trước khi ghi" (user 03/08: một dòng
     // chữ dài gộp hết vấn đề thì không đọc được) → dialog hiện BẢNG "Ở đâu · Vấn đề" + chip lọc +
     // tải lỗi ra Excel như mọi upload khác. Trả `fail()` chuỗi ở đây là ĐI TẮT qua khuôn đó.
+    // Dòng ĐANG CÓ của các Số xe trong file — nạp SỚM (trước khối gác) để dùng cho CẢ 2 việc:
+    // (a) gác "file khai cửa khác dòng cũ còn lại" ngay ở pha kiểm-trước, (b) giữ id cũ khi upsert.
+    // Nạp 1 lần dùng 2 chỗ — đừng hỏi DB hai lượt cho cùng một tập dòng.
+    const khActor = req.user?.name || null
+    const khGcs = [...new Set(khvcRows.map(k => k.group_code))]
+    const priorKh = await fetchAllByIdChunks(khGcs, chunk => supabase.from('khvc_lines')
+      .select('id, group_code, do_no, booking_category, sync_status').in('group_code', chunk)
+      .order('id')) as { id: string; group_code: string; do_no: string; booking_category: string | null; sync_status: string | null }[]
+    const khIdByKey = new Map((priorKh ?? []).map(k => [`${k.group_code}__${k.do_no}`, k.id]))
+
     {
       const { data: whTypeRows } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
       const validByUpper = new Map(((whTypeRows ?? []) as { value: string }[])
@@ -4168,6 +4178,26 @@ export async function uploadKhvc(req: Request, res: Response) {
           else if (!categoryAllowed(req, validByUpper.get(v)!)) addErr(gc, `Loại kho booking "${validByUpper.get(v)}" ngoài phạm vi loại kho của bạn`)
         }
       }
+      // ⭐ File chỉ chứa MỘT PHẦN số DO của xe: dòng cũ KHÔNG có trong file vẫn ở lại với cửa cũ,
+      // nên "trong file thống nhất" CHƯA đủ — trạng thái SAU KHI GHI mới là thứ phải hợp lệ.
+      // Thiếu phép gác này thì kiểm-trước báo xanh, user bấm Xác nhận rồi ăn 500 từ trigger DB
+      // (đo thật 04/08: preflight will_write=2 → ghi thật HTTP 500 "Lỗi hệ thống") — vừa mất niềm
+      // tin vào pha kiểm-trước, vừa đẩy 5xx vào telemetry mà không ai biết vì sao.
+      const fileKeys = new Set(khvcRows.map(k => `${k.group_code}__${k.do_no}`))
+      const survivorCat = new Map<string, { cat: string; do_no: string }>()
+      for (const p of (priorKh ?? [])) {
+        if (p.sync_status === 'OBSOLETE' || !p.booking_category) continue
+        if (fileKeys.has(`${p.group_code}__${p.do_no}`)) continue          // dòng này sẽ bị file ghi đè
+        if (!survivorCat.has(p.group_code)) survivorCat.set(p.group_code, { cat: p.booking_category, do_no: p.do_no })
+      }
+      for (const [gc, s] of byGc) {
+        const old = survivorCat.get(gc)
+        if (!old || s.size !== 1) continue                                 // sai kiểu khác đã báo ở trên
+        const fileCat = validByUpper.get([...s][0]) ?? [...s][0]
+        if (fileCat !== old.cat)
+          addErr(gc, `file khai cửa "${fileCat}" nhưng xe đang có DO ${old.do_no} ở cửa "${old.cat}" (không nằm trong file) `
+            + `— 1 Số xe chỉ 1 cửa: đưa đủ DO của xe vào file, hoặc đổi cửa ở tab "Kế hoạch xuất" trước`)
+      }
       if (perGc.size) {
         // Cả file trống cột → 1 dòng chẩn đoán thay vì N dòng giống nhau (file trăm xe đọc không nổi)
         const thieuHet = blankGcs.size === allGcs.size
@@ -4191,12 +4221,8 @@ export async function uploadKhvc(req: Request, res: Response) {
     }
 
     // ── Lưu TẦNG RAW "Kế hoạch xuất" (khvc_lines) — giữ lại kế hoạch để xem/đối chiếu/up lại ──
-    // Churn-safe: pre-fetch (group_code, do_no)→id, GIỮ id cũ khi up lại (không đổi PK). Upsert chunk 500.
-    const khActor = req.user?.name || null
-    const khGcs = [...new Set(khvcRows.map(k => k.group_code))]
-    const priorKh = await fetchAllByIdChunks(khGcs, chunk => supabase.from('khvc_lines')
-      .select('id, group_code, do_no').in('group_code', chunk).order('id')) as { id: string; group_code: string; do_no: string }[]
-    const khIdByKey = new Map((priorKh ?? []).map(k => [`${k.group_code}__${k.do_no}`, k.id]))
+    // Churn-safe: (group_code, do_no)→id nạp Ở TRÊN (cùng lượt với gác cửa), GIỮ id cũ khi up lại
+    // (không đổi PK). Upsert chunk 500.
     const khNow = now()
     const khvcRecords = khvcRows.map(k => ({
       id: khIdByKey.get(`${k.group_code}__${k.do_no}`) ?? randomUUID(),

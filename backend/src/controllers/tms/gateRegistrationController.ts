@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { categoryTextOrScopeFilter, scopeCategoriesOf, splitCategories } from '../../utils/categoryScope'
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
@@ -65,7 +65,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
     }
     if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
     // Cắt theo Loại hàng được phép — đăng ký không khai loại hoặc 'Khác' vẫn hiện
-    if (scopeCats) q = q.or(`warehouse_type.is.null,warehouse_type.eq.Khác,warehouse_type.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+    if (scopeCats) q = q.or(`warehouse_type.eq."Khác",${categoryTextOrScopeFilter('warehouse_type', scopeCats)}`)
     if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
     if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
     if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
@@ -276,7 +276,11 @@ export async function suggestBooking(req: Request, res: Response) {
     if (vs.order.date !== date) return false
     if (vs.order.warehouse_id !== warehouse_id) return false
     if (direction && vs.order.direction !== direction) return false
-    if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
+    // Loại kho của LỆNH có thể là chuỗi GHÉP ('FG01+PM01' — xe chở lẫn): so khớp nguyên chuỗi sẽ
+    // KHÔNG bao giờ khớp giá trị đơn của đăng ký cổng ⇒ xe chở lẫn không gắn được booking, và ở kho
+    // bật rule "phải có đăng ký cổng" thì chuyến không Bắt đầu được. Luật giao ≥1 (utils/categoryScope).
+    if (warehouse_type && vs.order.warehouse_type
+        && !splitCategories(vs.order.warehouse_type).includes(warehouse_type)) return false
     if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
     if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
     return true

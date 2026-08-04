@@ -242,10 +242,10 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     if (orderIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: primaryOrder } = await supabase.from('TmsOrder')
-        .select('direction, warehouse_type').eq('id', existing.order_id).single()
+        .select('direction, warehouse_type, booking_category').eq('id', existing.order_id).single()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: secondaryOrders } = await supabase.from('TmsOrder')
-        .select('direction, warehouse_type').in('id', orderIds)
+        .select('order_code, direction, warehouse_type, booking_category').in('id', orderIds)
       if (primaryOrder?.direction) {
         const hasWrongDir = (secondaryOrders ?? []).some(
           (o: { direction: string }) => o.direction !== primaryOrder.direction
@@ -261,6 +261,23 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         )
         if (hasWrongType) {
           return fail(res, `Không thể gom đơn khác loại kho: chỉ gom được các đơn cùng loại kho "${primaryOrder.warehouse_type}"`, 400)
+        }
+      }
+      // ── GÁC CỬA ĐẶT LỊCH cho ĐƠN GOM CHUNG (probe 04/08) ──
+      // Nhánh gom ghi THẲNG slot_id sang vslot của đơn KHÁC (không qua gác cửa ở trên, không qua RPC)
+      // ⇒ đây là ĐƯỜNG LÁCH: gom đơn cửa FG02 vào xe đang đậu khung cửa FG01 thì đơn phụ đậu SAI CỬA,
+      // im lặng, HTTP 200 (đo thật). warehouse_type ở trên KHÔNG chặn được vì đó là hàng xe CHỞ
+      // (chuỗi ghép, 2 xe chở lẫn giống nhau vẫn có thể khai 2 cửa khác nhau) — cửa là trường RIÊNG.
+      // Gom = 1 xe VẬT LÝ chạy chung ⇒ chỉ đậu 1 cửa, các đơn gom phải cùng cửa. Chưa chốt cửa (null,
+      // dữ liệu cũ) thì bỏ qua, giữ hành vi cũ.
+      {
+        const cuaChinh = (primaryOrder as { booking_category?: string | null } | null)?.booking_category ?? null
+        const lech = ((secondaryOrders ?? []) as { order_code?: string | null; booking_category?: string | null }[])
+          .find(o => cuaChinh && o.booking_category && o.booking_category !== cuaChinh)
+        if (lech) {
+          return fail(res, 422, 'BOOKING_CATEGORY_MISMATCH',
+            `Không gom được Số xe ${lech.order_code ?? ''} (cửa ${lech.booking_category}) vào xe đang đặt lịch tại cửa ${cuaChinh}` +
+            ' — xe chạy chung chỉ đậu MỘT cửa. Sửa "Loại kho booking" ở tab Kế hoạch xuất nếu khai nhầm.')
         }
       }
       if (existing.status === 'PENDING') {

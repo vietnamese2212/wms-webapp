@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
-import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
@@ -116,7 +116,7 @@ export async function listOrders(req: Request, res: Response) {
         if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
         if (date_from) q = q.gte('date', date_from)
         if (date_to)   q = q.lte('date', date_to)
-        if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
+        if (tCats) q = q.or(categoryTextOrScopeFilter('warehouse_type', tCats))
         if (tScope) q = q.or(`warehouse_id.in.(${tScope.join(',')}),destination_warehouse_id.in.(${tScope.join(',')})`)
         return q
       })
@@ -230,7 +230,7 @@ export async function listOrders(req: Request, res: Response) {
         .order('created_at')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
       if (userNccId)    q = q.eq('ncc_id', userNccId)
-      if (listCats)     q = q.or(`warehouse_type.is.null,warehouse_type.in.(${listCats.map(c => `"${c}"`).join(',')})`)
+      if (listCats)     q = q.or(categoryTextOrScopeFilter('warehouse_type', listCats))
       return q
     }, LIST_ROW_CAP)
     if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
@@ -409,7 +409,7 @@ export async function listConsolidatable(req: Request, res: Response) {
       .neq('source_type', 'TRANSFER')
       .order('created_at')
     if (o.direction) q = q.eq('direction', o.direction)
-    if (cats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${cats.map(c => `"${c}"`).join(',')})`)
+    if (cats) q = q.or(categoryTextOrScopeFilter('warehouse_type', cats))
     const { data, error } = await q.limit(500)
     if (error) throw new Error(error.message)
     // Điều kiện gom (mirror FE cũ): xe chính còn PENDING và CHƯA nằm trong cụm gom nào

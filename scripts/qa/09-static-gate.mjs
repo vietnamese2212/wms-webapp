@@ -98,6 +98,18 @@ const RULES = [
     count: (s) => countMatches(['backend/migrations'], ['.sql'],
       l => /\b(g|gd)\.warehouse_type\s*=\s*any\s*\(/i.test(l), s),
   },
+  // Bản TypeScript của CÙNG lớp lỗi trên: cắt list bằng `warehouse_type.in.(...)` của PostgREST cũng
+  // là so khớp NGUYÊN CHUỖI. Vá cho GroupDeliveryOrder 30/07 nhưng TÁI SINH ở TmsOrder khi lệnh VC
+  // tự sinh (03/08) sao chép chuỗi ghép từ chuyến — đo staging 04/08: user scope FG01 thấy 50/117
+  // lệnh, scope PM01 thấy 1/68. Cách đúng: `categoryTextOrScopeFilter()` (utils/categoryScope).
+  {
+    key: 'category_text_exact_match_ts',
+    label: 'cắt list theo Loại kho bằng `warehouse_type.in.(...)` — cột này có thể là CHUỖI GHÉP ' +
+           '("FG01+PM01") nên so khớp nguyên chuỗi ẨN MẤT bản ghi chở lẫn với mọi user có scope loại. ' +
+           'Dùng `categoryTextOrScopeFilter(col, scope)` (giao ≥1, null-inclusive)',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      l => /warehouse_type\.in\.\(/.test(l), s),
+  },
   // Lý do chuyến KHÔNG thao tác được phải hiện trên MỌI cỡ màn. Công nhân dùng điện thoại/PDA là
   // chính; khối `orderInfoJSX` của trang chi tiết Xuất chỉ hiện từ `sm:` trở lên, nên nhét banner
   // giải thích vào đó = trên điện thoại chỉ thấy nút mờ, không biết vì sao (đã sửa 02/08 cho rule

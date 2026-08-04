@@ -62,4 +62,25 @@ export function categoriesOrScopeFilter(col: string, scope: string[]): string {
   return `${col}.is.null,${col}.ov.{${scope.map(c => `"${c}"`).join(',')}}`
 }
 
+/**
+ * Cột TEXT chứa loại kho GHÉP ('FG01+PM01') — điều kiện .or() PostgREST cắt LIST theo luật
+ * GIAO ≥1 (null-inclusive). Dùng cho bảng KHÔNG đi qua RPC (`TmsOrder`); bảng đi qua RPC thì
+ * dùng `wt_cats(col) && p_categories` trong SQL.
+ *
+ * VÌ SAO PHẢI CÓ: `col.in.(FG01,PM01)` so khớp NGUYÊN CHUỖI nên bản ghi 'FG01+PM01' KHÔNG khớp
+ * giá trị đơn nào ⇒ biến mất với MỌI user có scope loại, kể cả người có đủ cả hai. Đúng lớp lỗi
+ * đã vá cho GroupDeliveryOrder ngày 30/07, tái sinh ở TmsOrder khi lệnh VC tự sinh (03/08) sao
+ * chép chuỗi ghép từ chuyến. Đo staging 04/08: user scope FG01 thấy 50/117 lệnh, PM01 thấy 1/68.
+ *
+ * Khớp theo ĐOẠN có neo dấu '+' (không dùng '*CAT*') để mã này không ăn nhầm mã khác chứa nó.
+ */
+export function categoryTextOrScopeFilter(col: string, scope: string[]): string {
+  const terms = [`${col}.is.null`]
+  for (const raw of scope) {
+    const c = String(raw).replace(/["(),]/g, '')     // giá trị danh mục không có ký tự này; chặn vỡ cú pháp or()
+    terms.push(`${col}.eq."${c}"`, `${col}.like."${c}+*"`, `${col}.like."*+${c}"`, `${col}.like."*+${c}+*"`)
+  }
+  return terms.join(',')
+}
+
 export const CATEGORY_FORBIDDEN_MSG = 'Ngoài phạm vi Loại hàng được phép — không thể thao tác loại kho này'

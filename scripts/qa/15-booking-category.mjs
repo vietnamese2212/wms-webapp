@@ -36,8 +36,8 @@ const CUA_A = cats[0], CUA_B = cats[1]      // 2 cửa khác nhau lấy TỪ DAN
 const WH = FIX.WH_QTY
 const [y, m, d] = today.split('-')
 const GC = n => `${WH.code}_X_${d}${m}${y.slice(2)}_8${n}`
-const ALL_GC = [GC(1), GC(2)]
-const DO_A = 'QABKDO01', DO_B = 'QABKDO02'
+const ALL_GC = [GC(1), GC(2), GC(3)]
+const DO_A = 'QABKDO01', DO_B = 'QABKDO02', DO_C = 'QABKDO03'
 const TIME_A = '22:00:00', TIME_B = '22:30:00'
 
 async function cleanup() {
@@ -57,7 +57,7 @@ async function cleanup() {
     await restWrite('outbound_events', 'DELETE', `group_code=eq.${gc}`).catch(() => {})
     await restWrite('khvc_lines', 'DELETE', `group_code=eq.${gc}`)
   }
-  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B})`)
+  await restWrite('erp_outbound_orders', 'DELETE', `od_number=in.(${DO_A},${DO_B},${DO_C})`)
   for (const tm of [TIME_A, TIME_B])
     await restWrite('DeliverySlot', 'DELETE', `date=eq.${DAY}&time_from=eq.${tm}&warehouse_id=eq.${WH.id}`).catch(() => {})
 }
@@ -85,6 +85,7 @@ console.log(`   2 cửa lấy từ danh mục: ${CUA_A} / ${CUA_B}`)
 await cleanup()
 await seedRaw(DO_A, 100)
 await seedRaw(DO_B, 60)
+await seedRaw(DO_C, 40)
 
 // ── 1+2. Bắt buộc khai + phải có trong danh mục ───────────────────────────────
 const rMissing = await addLine(GC(1), DO_A, undefined)
@@ -212,6 +213,57 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   check('9. Lệnh của chuyến CHỜ SAP: API trả CỬA dù hàng chở chưa biết (để ô Loại kho không trống)',
     !!row && !!row.booking_category,
     `awaiting=${g?.awaiting_sap} hàng_chở=${ord?.warehouse_type} cửa=${row?.booking_category ?? '(thiếu)'}`)
+}
+
+// ── 10. GOM ĐƠN CHẠY CHUNG không được kéo đơn KHÁC CỬA vào khung giờ sai cửa ──
+// Nhánh consolidation ghi THẲNG slot_id sang vslot của đơn khác (không qua gác cửa, không qua RPC)
+// ⇒ đường lách: đo thật 04/08 trả HTTP 200 và đơn cửa B đậu khung của cửa A, im lặng.
+// warehouse_type KHÔNG chặn được: đó là hàng xe CHỞ (chuỗi ghép), cửa là trường RIÊNG.
+{
+  await addLine(GC(3), DO_C, CUA_A)                       // xe thứ 2, cửa KHÁC xe 1 (đang ở CUA_B)
+  const o1 = await orderOf(GC(1)), o3 = await orderOf(GC(3))
+  const vs1 = o1 ? (await restAll('TmsVehicleSlot', `select=id,slot_id&order_id=eq.${o1.id}&order=created_at`))[0] : null
+  const vs3 = o3 ? (await restAll('TmsVehicleSlot', `select=id,slot_id&order_id=eq.${o3.id}&order=created_at`))[0] : null
+  if (o1 && o3 && vs1 && vs3 && o1.booking_category !== o3.booking_category) {
+    const r = await api(`/tms/vehicle-slots/${vs1.id}`, 'PATCH', {
+      slot_id: slotRight, license_plate: 'QABK111', status: 'BOOKED', consolidation_order_ids: [o3.id],
+    })
+    const vs3After = (await restAll('TmsVehicleSlot', `select=slot_id&order_id=eq.${o3.id}&order=created_at`))[0]
+    check('10. Gom đơn chạy chung KHÁC CỬA → CHẶN (đơn phụ không bị kéo vào khung sai cửa)',
+      r.s === 422 && r.j?.error?.code === 'BOOKING_CATEGORY_MISMATCH' && vs3After?.slot_id !== slotRight,
+      `http=${r.s} code=${r.j?.error?.code} slot đơn phụ=${vs3After?.slot_id ? 'BỊ GÁN' : 'null'}`)
+  } else check('10. Gom đơn chạy chung KHÁC CỬA → CHẶN', false,
+    `thiếu fixture: cửa xe1=${o1?.booking_category} cửa xe3=${o3?.booking_category}`)
+}
+
+// ── 11. UPLOAD khai cửa khác DÒNG CŨ CÒN LẠI của cùng Số xe → bắt ở KIỂM-TRƯỚC ──
+// File chỉ chứa MỘT PHẦN số DO của xe: dòng không có trong file vẫn ở lại với cửa cũ, nên "trong
+// file thống nhất" CHƯA đủ — trạng thái SAU KHI GHI mới là thứ phải hợp lệ. Đo thật 04/08 trước khi
+// vá: kiểm-trước báo XANH (will_write=2, 0 lỗi) → bấm Xác nhận → HTTP 500 từ trigger DB.
+{
+  let XLSX = null
+  try { XLSX = (await import('../../backend/node_modules/xlsx/xlsx.mjs')).default ?? await import('../../backend/node_modules/xlsx/xlsx.mjs') }
+  catch { console.log('  ⚠ bỏ qua mục 11: chưa cài dependency backend (xlsx)') }
+  if (XLSX) {
+    const tok = await (async () => {
+      const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+      return (await r.json())?.data?.token
+    })()
+    // GC(1) đang có 2 DO ở cửa CUA_B; file chỉ đưa 1 DO và khai cửa CUA_A
+    const ws = XLSX.utils.json_to_sheet([{ 'Số xe': GC(1), 'DO': DO_A, 'Tên NPP': 'QA BOOKING NPP',
+      'Ngày xuất': DAY, 'Loại xe': vehTypeName, 'DVVT': dvvtName, 'Loại kho booking': CUA_A }])
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'KHVC')
+    const fd = new FormData()
+    fd.append('file', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })]), 'khvc.xlsx')
+    const r = await fetch(`${BASE}/api/wms/outbound/upload-khvc?preflight=1`,
+      { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })
+    let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
+    const errs = j?.data?.errors ?? []
+    check('11. Upload khai cửa khác DÒNG CŨ còn lại của xe → báo ở KIỂM-TRƯỚC (không để 500 sau khi Xác nhận)',
+      r.status === 200 && j?.data?.will_write === 0 && errs.some(e => e.startsWith(`Số xe ${GC(1)} —`) && /cửa/.test(e)),
+      `http=${r.status} will_write=${j?.data?.will_write} errors=${JSON.stringify(errs).slice(0, 240)}`)
+  }
 }
 
 // ── DỌN ──

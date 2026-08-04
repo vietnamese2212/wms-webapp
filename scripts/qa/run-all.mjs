@@ -21,6 +21,7 @@ const steps = [
   ['13-awaiting-sap.mjs'],        // KH xuất đi TRƯỚC dữ liệu SAP: chuyến CHỜ/bất động, tự kích hoạt, ngừng-hoạt-động thay vì xóa (03/08)
   ['14-tms-plan-derived.mjs'],    // Kế hoạch VC tự sinh theo Số xe + tự NHẢ khung giờ khi xe bị bỏ khỏi kế hoạch (03/08)
   ['15-booking-category.mjs'],    // CỬA đặt lịch: bắt buộc khai, 1 Số xe 1 cửa (trigger DB), đặt sai cửa → 422 (03/08)
+  ['16-upload-shape.mjs'],        // biên dạng file THẬT (ô gộp, dòng trùng) + gác upload + thứ tự gác/RPC (04/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

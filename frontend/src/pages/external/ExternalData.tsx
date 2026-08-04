@@ -886,7 +886,9 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'source',    label: 'Nguồn' },
   { id: 'updated',   label: 'Cập nhật' },
 ]
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110]
+// PHẢI đủ 1 số cho MỖI cột của KH_COLS (thiếu 1 số → mọi cột từ đó trở đi lệch nhãn, cột cuối
+// rộng `undefined` và totalWidth tính thiếu → kéo giãn cột cuối cho ra NaN). Thêm cột = thêm số.
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
   if (!materialized) {

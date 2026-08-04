@@ -1,8 +1,13 @@
-// PROBE 04/08 đợt 2 — biên dạng FILE THẬT + gác upload + thứ tự gác/RPC.
-//  U1 ô GỘP cột "Số xe" (Excel merge) — trước đây mất DO âm thầm
-//  U2 dòng TRÙNG (Số xe, DO) trong cùng file — trước đây kiểm-trước XANH rồi ghi thật 500
-//  U3 upload đổi CỬA / đổi NGÀY khi xe đang GIỮ khung giờ — cửa ghi thứ 6
-//  U4 gom chung sai cửa → 422 mà xe CHÍNH có bị chiếm chỗ oan không (gác chạy trước RPC chưa)
+// GÓI 16 — BIÊN DẠNG FILE THẬT + gác upload + THỨ TỰ gác/RPC (sinh từ đợt kiểm 04/08).
+// Bốn lỗi THẬT đo được trên staging, đều thuộc loại "app không sai cú pháp, chỉ sai khi FILE/THỨ TỰ
+// giống đời thật" — không phép kiểm nào trước đó chạm tới:
+//   U1 ô GỘP cột "Số xe" (điều vận gộp cho nhiều DO của 1 xe) → mất DO ÂM THẦM, kiểm-trước không lộ
+//   U2 dòng TRÙNG (Số xe, DO) trong cùng file → kiểm-trước XANH rồi ghi thật 500 (Postgres 21000),
+//      và kể cả không nổ thì số lượng chuyến bị cộng HAI LẦN
+//   U3 upload là cửa ghi thứ 6 — 5 cửa kia đã chặn "đổi cửa/đổi ngày khi xe đang GIỮ khung giờ"
+//   U4 gác gom chung chạy SAU khi RPC đã COMMIT ⇒ API trả 422 nhưng xe CHÍNH đã chiếm chỗ thật
+// LUẬT RÚT RA (đừng bỏ khi thêm phép kiểm mới): phép kiểm upload phải dựng SHEET như file thật
+// (kể cả `!merges`), và phép kiểm API phải gọi ĐÚNG payload client — không phải payload tối giản.
 import { randomUUID } from 'crypto'
 import { login, api, restAll, restWrite, resolveFixtures, FIX, BASE } from './lib.mjs'
 
@@ -180,5 +185,5 @@ for (const gc of ALL_GC) {
 }
 residue += (await restAll('DeliverySlot', `select=id&warehouse_id=eq.${WH.id}&date=in.(${DAY},${DAY2})&time_from=in.(${TIMES.join(',')})`)).length
 check('Dọn 0 sót', residue === 0, `residue=${residue}`)
-console.log(`\n[UPLOAD-2] ${pass}/${pass + fail} PASS`)
+console.log(`\n[UPLOAD-SHAPE] ${pass}/${pass + fail} PASS`)
 process.exitCode = fail ? 1 : 0

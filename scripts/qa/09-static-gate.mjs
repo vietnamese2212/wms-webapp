@@ -38,8 +38,40 @@ function countMatches(roots, exts, test, sampleOut) {
   return n
 }
 
+// Đếm cặp `X_COLS` (mảng cột) ↔ `X_COL_DEFAULTS` (mảng độ rộng) LỆCH SỐ PHẦN TỬ.
+// Bảng Manhattan dùng <colgroup> + table-fixed: thiếu 1 số thì MỌI cột từ đó trở đi ăn nhầm độ rộng
+// của cột bên cạnh, cột cuối rộng `undefined` (bóp về 0) và totalWidth cộng thiếu → kéo giãn cột
+// cuối ra NaN. Không có lỗi biên dịch, không có cảnh báo — chỉ nhìn mới thấy (bug thật 03/08: thêm
+// cột "Cửa booking" mà quên thêm số). Đếm bằng cách so số phần tử, không heuristics mờ.
+function countColWidthMismatch(roots, sampleOut) {
+  let n = 0
+  for (const root of roots) {
+    for (const f of filesOf(root, ['.tsx', '.ts'])) {
+      const src = readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/const (\w+)_COLS\b[^=]*=\s*\[([\s\S]*?)\n\]/g)) {
+        const cols = (m[2].match(/\bid:\s*['"]/g) ?? []).length
+        if (!cols) continue
+        const dm = src.match(new RegExp(`const ${m[1]}_COL_DEFAULTS\\s*=\\s*\\[([^\\]]*)\\]`))
+        if (!dm) continue
+        const widths = dm[1].split(',').map(x => x.trim()).filter(Boolean).length
+        if (cols !== widths) {
+          n++
+          if (sampleOut && sampleOut.length < 5)
+            sampleOut.push(`${f.slice(ROOT.length + 1)} — ${m[1]}_COLS có ${cols} cột nhưng ${m[1]}_COL_DEFAULTS có ${widths} số`)
+        }
+      }
+    }
+  }
+  return n
+}
+
 // ── Các luật — mỗi luật là 1 phép đếm thuần văn bản, KHÔNG heuristics mờ (mờ = báo oan = bị tắt) ──
 const RULES = [
+  {
+    key: 'col_defaults_length_mismatch',
+    label: 'mảng cột và mảng độ rộng LỆCH số phần tử — cột lệch nhãn + cột cuối bóp về 0 (thêm cột phải thêm số)',
+    count: (s) => countColWidthMismatch(['frontend/src'], s),
+  },
   // Ngày xuất của chuyến SAP là dữ liệu BỊ ĐỘNG (user chốt 02/08): ô tích "chuyển ngày hàng loạt"
   // trên list Xuất phải loại chuyến SAP NGAY TỪ FE (BE đã chặn 422, nhưng để user tick rồi mới
   // báo lỗi là trải nghiệm sai). Quay lại `gdo.status === 'PENDING'` trần = mở lại cửa đó.

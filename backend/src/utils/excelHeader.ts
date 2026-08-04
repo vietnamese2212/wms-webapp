@@ -19,6 +19,26 @@ export const normHeader = (s: unknown): string =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 
+// Ô GỘP (merge) — TRẢI giá trị ra mọi ô trong vùng gộp TRƯỚC khi parse.
+// Excel chỉ lưu giá trị ở ô TRÁI-TRÊN của vùng gộp; `sheet_to_json` đọc các ô còn lại là RỖNG.
+// Điều vận rất hay gộp ô "Số xe" cho nhiều DO của cùng một xe ⇒ mọi DO trừ dòng đầu mất Số xe và
+// bị vòng parse bỏ ÂM THẦM (không lỗi, không cảnh báo, kiểm-trước cũng không lộ). Trải trước thì
+// dòng "rỗng vì gộp" khác hẳn dòng "rỗng thật" — cái sau mới đáng báo lỗi.
+export function expandMergedCells(ws: XLSX.WorkSheet): number {
+  const merges = (ws['!merges'] ?? []) as XLSX.Range[]
+  let filled = 0
+  for (const m of merges) {
+    const src = ws[XLSX.utils.encode_cell({ r: m.s.r, c: m.s.c })]
+    if (!src) continue
+    for (let r = m.s.r; r <= m.e.r; r++)
+      for (let c = m.s.c; c <= m.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c })
+        if (!ws[addr]) { ws[addr] = { ...src }; filled++ }
+      }
+  }
+  return filled
+}
+
 export type ParsedSheet = {
   rows: Record<string, unknown>[]
   missingRequired: string[]   // NHÃN của field required không tìm thấy cột

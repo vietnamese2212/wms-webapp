@@ -20,6 +20,8 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
+import { expandMergedCells } from '../../utils/excelHeader'
+import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
 
 const now = () => new Date().toISOString()
 
@@ -3407,8 +3409,25 @@ async function processVehicleGroups(
         await supabase.from('OutboundItem').delete().in('do_id', c)
         await supabase.from('OutboundDelivery').delete().in('id', c)
       }
-      for (const { id, fields } of preserveGDOUpdates) {
-        await supabase.from('GroupDeliveryOrder').update(fields).eq('id', id)
+      // ⚠️ TỪNG LÀ 1 REQUEST/CHUYẾN, TUẦN TỰ. Vô hại khi nhánh này chỉ ôm vài chuyến "đã gán người",
+      // nhưng bản vá 03/08 (giữ nguyên id cho chuyến CHỜ/NGỪNG) đẩy 100% xe trên đường KÍCH HOẠT vào
+      // đây ⇒ file 300 xe = 300 round-trip nối tiếp, mỗi request 1 khe pool + 3 câu SQL → chạm trần
+      // 60s của Vercel và chết GIỮA CHỪNG (đúng lớp lỗi đã đo ở nhánh "bỏ kế hoạch hàng loạt").
+      // Gom theo BỘ GIÁ TRỊ: 1 lượt nạp thường cùng ngày/kho/ĐVVT nên vài nhóm là hết, mỗi nhóm 1 câu.
+      // updated_at để NGOÀI khoá gom (mỗi push gọi now() lệch mili-giây thì không nhóm được gì).
+      {
+        const t = now()
+        const byFields = new Map<string, { fields: Record<string, unknown>; ids: string[] }>()
+        for (const { id, fields } of preserveGDOUpdates) {
+          const { updated_at: _skip, ...rest } = fields as Record<string, unknown>
+          const k = JSON.stringify(rest)
+          const g = byFields.get(k) ?? { fields: { ...rest, updated_at: t }, ids: [] }
+          g.ids.push(id); byFields.set(k, g)
+        }
+        const tasks = [...byFields.values()].flatMap(({ fields, ids }) =>
+          idChunks(ids).map(c => async () => { await supabase.from('GroupDeliveryOrder').update(fields).in('id', c) }))
+        for (let i = 0; i < tasks.length; i += 8)   // trần 8: pool PostgREST ~10 khe, bắn hết là tự chặn mình
+          await Promise.all(tasks.slice(i, i + 8).map(f => f()))
       }
     }
 
@@ -4028,18 +4047,37 @@ export async function uploadKhvc(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
     const ws = wb.Sheets[wb.SheetNames[0]]   // SHEET ĐẦU TIÊN (chốt user)
+    // Trải ô GỘP trước khi đọc: file điều vận hay gộp ô "Số xe" cho nhiều DO của cùng một xe, mà ô
+    // gộp chỉ mang giá trị ở dòng đầu ⇒ các DO còn lại mất Số xe và bị bỏ ÂM THẦM ở vòng dưới.
+    const mergedFilled = expandMergedCells(ws)
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' })
     if (!rows.length) return fail(res, 'File KHVC trống hoặc không đúng định dạng', 400)
 
     type KRow = { group_code: string; do_no: string; npp: string; export_date: any; veh_type: string; dvvt: string; priority: string; cs: string; note: string; booking_category: string; raw: Record<string, any> }
     const khvcRows: KRow[] = []
     const allDos = new Set<string>()
-    for (const r of rows) {
+    // Dòng BỊ BỎ (thiếu Số xe hoặc DO) phải ĐẾM ĐƯỢC và báo ra, không bỏ im lặng: người nạp đang
+    // tin cả file đã vào. Số dòng Excel = index + 2 (1 dòng tiêu đề, đếm từ 1) để chỉ đúng chỗ sửa.
+    const droppedRows: string[] = []
+    // Trùng (Số xe, DO) NGAY TRONG FILE: upsert 2 dòng cùng khóa trong MỘT câu → Postgres 21000
+    // ("ON CONFLICT ... cannot affect row a second time") ⇒ kiểm-trước XANH rồi bấm Xác nhận ăn 500.
+    // Và kể cả không nổ thì dòng lặp cũng bị cộng số lượng HAI LẦN vào chuyến. Theo chuẩn upload của
+    // dự án: tự GỘP (dòng sau thắng) + cảnh báo, chứ không chặn cả file.
+    const byKey = new Map<string, KRow>()       // `${gc}__${do}` → dòng (lần sau ĐÈ lần trước)
+    const dupKeys: string[] = []
+    for (const [idx, r] of rows.entries()) {
       const gc = String(r['Số xe'] ?? r['So xe'] ?? '').trim()
       const doNo = String(r['DO'] ?? r['Delivery'] ?? '').trim()
-      if (!gc || !doNo) continue
+      if (!gc || !doNo) {
+        // dòng trống hoàn toàn (Excel hay để dòng thừa cuối bảng) thì bỏ qua im lặng, không báo oan
+        if (Object.values(r).some(v => String(v ?? '').trim())) droppedRows.push(
+          `dòng ${idx + 2}${gc ? ` (Số xe ${gc}, thiếu DO)` : doNo ? ` (DO ${doNo}, thiếu Số xe)` : ''}`)
+        continue
+      }
       allDos.add(doNo)
-      khvcRows.push({
+      const key = `${gc}__${doNo}`
+      if (byKey.has(key)) dupKeys.push(`${gc}/${doNo}`)
+      byKey.set(key, {
         group_code: gc, do_no: doNo,
         npp: String(r['Tên NPP'] ?? '').trim(),
         export_date: r['Ngày xuất'],
@@ -4055,6 +4093,7 @@ export async function uploadKhvc(req: Request, res: Response) {
         raw: r,
       })
     }
+    khvcRows.push(...byKey.values())
     if (!khvcRows.length) return fail(res, 'Không tìm thấy cột "Số xe"/"DO" hoặc dữ liệu trống', 400)
 
     // ── PREFLIGHT: cảnh báo TRƯỚC khi sinh chuyến — ngày/Số xe này đã có chuyến? VL06O đã mới chưa?
@@ -4104,6 +4143,12 @@ export async function uploadKhvc(req: Request, res: Response) {
 
       preflightExtra.push(
         { label: 'Số DO trong file', value: allDos.size },
+        // 3 ô dưới là các thứ TRƯỚC ĐÂY XẢY RA ÂM THẦM — người nạp không có cách nào biết
+        ...(mergedFilled ? [{ label: 'Ô GỘP đã trải ra', value: `${mergedFilled} ô (giữ nguyên file gốc)` }] : []),
+        ...(droppedRows.length ? [{ label: 'Dòng BỊ BỎ (thiếu Số xe/DO)',
+          value: `${droppedRows.length}: ${droppedRows.slice(0, 3).join(' · ')}${droppedRows.length > 3 ? '…' : ''}`, warn: true }] : []),
+        ...(dupKeys.length ? [{ label: 'Dòng TRÙNG (Số xe + DO) đã gộp',
+          value: `${dupKeys.length}: ${dupKeys.slice(0, 3).join(' · ')}${dupKeys.length > 3 ? '…' : ''}`, warn: true }] : []),
         { label: 'VL06O đồng bộ lúc', value: lastSynced
             ? new Date(lastSynced).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false })
             : 'CHƯA có dữ liệu raw', warn: !lastSynced },
@@ -4197,6 +4242,33 @@ export async function uploadKhvc(req: Request, res: Response) {
         if (fileCat !== old.cat)
           addErr(gc, `file khai cửa "${fileCat}" nhưng xe đang có DO ${old.do_no} ở cửa "${old.cat}" (không nằm trong file) `
             + `— 1 Số xe chỉ 1 cửa: đưa đủ DO của xe vào file, hoặc đổi cửa ở tab "Kế hoạch xuất" trước`)
+      }
+
+      // ⭐ UPLOAD LÀ CỬA GHI THỨ 6 — 5 cửa kia (thêm dòng / sửa dòng / đổi ngày lẻ / đổi ngày hàng
+      // loạt / đặt lịch) đều đã chặn "xe đang GIỮ khung giờ mà đổi cửa hoặc đổi ngày", riêng file thì
+      // không ⇒ nạp lại file là dựng đúng cái trạng thái vừa cấm: xe đậu khung của cửa/ngày khác.
+      // Cùng ngữ nghĩa: CHẶN + bắt nhả khung trước, KHÔNG tự nhả hộ.
+      {
+        const heldByGc = await heldSlotsByVehicle([...allGcs])
+        const dateByGc = new Map<string, string>()
+        for (const k of khvcRows) {
+          const d = parseExcelDate(k.export_date)
+          if (d && !dateByGc.has(k.group_code)) dateByGc.set(k.group_code, d)
+        }
+        for (const gc of allGcs) {
+          const held = heldByGc.get(gc); if (!held?.length) continue
+          const s = byGc.get(gc)
+          if (s?.size === 1) {
+            const fileCat = validByUpper.get([...s][0]) ?? [...s][0]
+            const msg = slotHeldBlockingCategory(held, fileCat)
+            if (msg) addErr(gc, `file khai cửa "${fileCat}" nhưng ${msg}`)
+          }
+          const fileDate = dateByGc.get(gc)
+          if (fileDate) {
+            const msg = slotHeldBlockingDate(held, fileDate)
+            if (msg) addErr(gc, msg)
+          }
+        }
       }
       if (perGc.size) {
         // Cả file trống cột → 1 dòng chẩn đoán thay vì N dòng giống nhau (file trăm xe đọc không nổi)

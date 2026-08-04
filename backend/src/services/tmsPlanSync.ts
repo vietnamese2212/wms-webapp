@@ -109,6 +109,12 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
 
   const events: Parameters<typeof logOutboundEvents>[0] = []
   const dropList: { orderId: string; gc: string; gdoId: string }[] = []
+  // Ghi theo LÔ: vòng lặp cũ ghi 1-2 request/xe NỐI TIẾP — nạp kế hoạch 300 xe là ~600 round-trip,
+  // mỗi cái chiếm 1 khe pool PostgREST + 3 câu SQL ⇒ chạm trần 60s của Vercel và chết giữa chừng
+  // (đúng lớp lỗi đã đo ở nhánh "bỏ kế hoạch hàng loạt" 03/08, nay tái sinh ở nhánh TẠO/CẬP NHẬT).
+  const orderInserts: Record<string, unknown>[] = []
+  const vslotInserts: Record<string, unknown>[] = []
+  const orderUpdates: { id: string; fields: Record<string, unknown> }[] = []
 
   for (const gc of gcs) {
     const g = gdoByGc.get(gc)
@@ -146,22 +152,14 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
       continue
     }
 
-    // ── Xe còn trong kế hoạch ──
+    // ── Xe còn trong kế hoạch ── (GOM để ghi theo LÔ ở dưới — xem chú thích khối "GHI THEO LÔ")
     if (!existing) {
       const orderId = randomUUID()
-      const { error } = await supabase.from('TmsOrder').insert({
+      orderInserts.push({
         id: orderId, order_code: gc, ...derived,
         status: 'PENDING', plan_dropped: false, created_by: actor, created_at: t,
       })
-      if (error) {
-        // 23505 = có người/lượt khác vừa tạo cùng Số xe → lượt sau tự cập nhật, không phá upload
-        if (error.code !== '23505') console.error('[tmsPlanSync] tạo lệnh:', error.message)
-        continue
-      }
-      // 1 lệnh luôn có sẵn 1 dòng xe để đặt khung giờ (giống upload KH xuất bên TMS)
-      await supabase.from('TmsVehicleSlot').insert({
-        id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: t, updated_at: t,
-      })
+      vslotInserts.push({ id: randomUUID(), order_id: orderId, status: 'PENDING', created_at: t, updated_at: t })
       out.created++
       events.push({
         group_code: gc, gdo_id: g.id, event_type: 'TMS_PLAN_CREATED', source: 'PLAN', actor,
@@ -171,9 +169,10 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     }
 
     const wasDropped = existing.plan_dropped === true
-    await supabase.from('TmsOrder')
-      .update({ ...derived, ...(wasDropped ? { plan_dropped: false, plan_dropped_at: null } : {}) })
-      .eq('id', existing.id)
+    orderUpdates.push({
+      id: existing.id,
+      fields: { ...derived, ...(wasDropped ? { plan_dropped: false, plan_dropped_at: null } : {}) },
+    })
     out.updated++
     if (wasDropped) {
       out.reopened++
@@ -186,6 +185,39 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
         group_code: gc, gdo_id: g.id, event_type: 'TMS_PLAN_ADOPTED', source: 'PLAN', actor,
         detail: 'Số xe đã có lệnh vận chuyển tạo tay — cập nhật theo Kế hoạch xuất thay vì tạo lệnh trùng',
       })
+    }
+  }
+
+  // ── GHI THEO LÔ: tạo lệnh + dòng xe, rồi cập nhật ──────────────────────────
+  // INSERT gom chunk 500. Lô hỏng → fallback TỪNG DÒNG để chỉ mất đúng xe hỏng (chuẩn upload của dự
+  // án), và 23505 vẫn nuốt như cũ: lượt khác vừa tạo cùng Số xe thì lượt sau tự cập nhật.
+  {
+    const okOrderIds = new Set<string>()
+    for (let i = 0; i < orderInserts.length; i += 500) {
+      const chunk = orderInserts.slice(i, i + 500)
+      const { error } = await supabase.from('TmsOrder').insert(chunk)
+      if (!error) { for (const r of chunk) okOrderIds.add(String(r.id)); continue }
+      for (const r of chunk) {
+        const { error: e1 } = await supabase.from('TmsOrder').insert(r)
+        if (!e1) okOrderIds.add(String(r.id))
+        else if (e1.code !== '23505') console.error('[tmsPlanSync] tạo lệnh:', e1.message)
+      }
+    }
+    // 1 lệnh luôn có sẵn 1 dòng xe để đặt khung giờ — CHỈ cho lệnh đã tạo được (tránh dòng xe mồ côi)
+    const vslots = vslotInserts.filter(v => okOrderIds.has(String(v.order_id)))
+    for (let i = 0; i < vslots.length; i += 500) {
+      const { error } = await supabase.from('TmsVehicleSlot').insert(vslots.slice(i, i + 500))
+      if (error) console.error('[tmsPlanSync] tạo dòng xe:', error.message)
+    }
+    out.created -= orderInserts.length - okOrderIds.size
+
+    // UPDATE: mỗi xe một bộ giá trị riêng nên không gộp được thành 1 câu — chạy SONG SONG có trần 8
+    // (pool PostgREST ~10 khe; bắn hết cùng lúc là tự xếp hàng chặn chính mình).
+    for (let i = 0; i < orderUpdates.length; i += 8) {
+      await Promise.all(orderUpdates.slice(i, i + 8).map(async u => {
+        const { error } = await supabase.from('TmsOrder').update(u.fields).eq('id', u.id)
+        if (error) console.error('[tmsPlanSync] cập nhật lệnh:', error.message)
+      }))
     }
   }
 

@@ -188,11 +188,17 @@ if (g2c) {
       return (await r.json())?.data?.token
     })()
     const up = await fetch(`${BASE}/api/wms/outbound/upload-khvc`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })
+    let upJ = null; try { upJ = JSON.parse(await up.text()) } catch { /* */ }
     const g7 = await gdoOf(GC7)
     const its7 = g7 ? await itemsOf(g7.id) : []
     check('7a. Upload file có xe thiếu 1 DO → vẫn nhận file', up.status === 200 || up.status === 201, `http=${up.status}`)
     check('7b. Xe thiếu DO qua đường UPLOAD cũng là chuyến VỎ (0 dòng hàng) — khớp đường sửa kế hoạch',
       !!g7 && g7.awaiting_sap === true && its7.length === 0, `awaiting=${g7?.awaiting_sap} items=${its7.length}`)
+    // HỢP ĐỒNG RESPONSE cho dialog: chuyến CHỜ không nằm trong `created` (đi nhánh awaiting riêng),
+    // nên response PHẢI mang `awaiting.awaiting` — FE đọc số này để báo "N chuyến CHỜ dữ liệu".
+    // Bug UI thật 04/08: up 3 xe (2 chờ) → dialog nói "Tạo mới 1 chuyến", điều vận tưởng MẤT 2 xe.
+    check('7c. Response upload đếm chuyến CHỜ (`awaiting.awaiting` ≥ 1) — dialog phải báo đủ, không được nói thiếu xe',
+      (upJ?.data?.awaiting?.awaiting ?? 0) >= 1, `awaiting=${JSON.stringify(upJ?.data?.awaiting)}`)
   }
 }
 

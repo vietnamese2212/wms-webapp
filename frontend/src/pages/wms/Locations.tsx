@@ -75,6 +75,8 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'cat',     label: 'Loại kho',        w: 120 },
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
   { id: 'loc',     label: 'Vị trí',          w: 160 },
+  { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
+  { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
   { id: 'status',  label: 'Trạng thái',      w: 100 },
@@ -427,7 +429,7 @@ export default function Locations() {
               Chọn <span className="font-semibold text-slate-600">Kho</span> ở thanh lọc để xem vị trí
             </div>
           ) : isLoading ? (
-            <div className="p-4"><TableSkeleton rows={8} cols={8} /></div>
+            <div className="p-4"><TableSkeleton rows={8} cols={11} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
           ) : (
@@ -479,13 +481,20 @@ export default function Locations() {
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
-                        {loc.requires_stocktake && (
-                          <Flag className="inline-block ml-1 h-3 w-3 text-red-500 shrink-0" style={{ verticalAlign: 'middle' }} />
-                        )}
-                        {loc.is_pick_face && (
-                          <span className="ml-1 align-middle text-[8px] font-semibold px-1 py-0.5 rounded bg-sky-100 text-sky-700"
-                                title="Vị trí nhặt lẻ — hàng ở đây với tay lấy được">NL</span>
-                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {loc.is_pick_face
+                          ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700"
+                                  title="Vị trí nhặt lẻ — hàng ở đây với tay lấy được">Có</span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {loc.requires_stocktake
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700"
+                                  title="Vị trí phải kiểm kê hàng ngày">
+                              <Flag className="h-2.5 w-2.5" />Có
+                            </span>
+                          : <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                         {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>

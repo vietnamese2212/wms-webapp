@@ -46,11 +46,16 @@ type LocListCtx = {
   category: string | null
   scopeCats: string[] | null
   tokens: string[] | null
-  flag: boolean
-  pickFace: boolean | null    // null = không lọc; true/false = chỉ vị trí nhặt lẻ / chỉ vị trí thường
+  // Cả hai cờ đều BA TRẠNG THÁI: null = không lọc; true/false = chỉ có / chỉ chưa có cờ
+  flag: boolean | null        // requires_stocktake (cần check hàng ngày)
+  pickFace: boolean | null    // is_pick_face (vị trí nhặt lẻ)
   inclInactive: boolean
   blocked: boolean
 }
+// Cờ 3 trạng thái qua query-string: vắng/rỗng = không lọc; '1'|'true'|true = có; còn lại = không.
+const tri = (v: unknown): boolean | null =>
+  v === undefined || v === '' || v === null ? null : (v === '1' || v === 'true' || v === true)
+
 function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx {
   const q = (raw ?? req.query) as Record<string, unknown>
   const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -70,9 +75,8 @@ function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx 
     scopeCats: scopeCategoriesOf(req),
     tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
     // nhận '1' | 'true' | true — cờ boolean qua query-string mỗi client serialize một kiểu
-    flag: q.flag === '1' || q.flag === 'true' || q.flag === true,
-    pickFace: q.pick_face === undefined || q.pick_face === '' || q.pick_face === null ? null
-              : (q.pick_face === '1' || q.pick_face === 'true' || q.pick_face === true),
+    flag: tri(q.flag),
+    pickFace: tri(q.pick_face),
     inclInactive: q.include_inactive === '1' || q.include_inactive === 'true' || q.include_inactive === true,
   }
 }
@@ -109,14 +113,15 @@ async function listLocationsPaged(req: Request, res: Response) {
     p_with_rows: true,
   })
   if (error && (error as { code?: string }).code === 'PGRST202') {
-    // Chỉ hạ cấp khi KHÔNG lọc "vị trí nhặt lẻ": bỏ tham số đó ở nhánh dự phòng sẽ trả về danh
-    // sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm thầm.
-    if (ctx.pickFace !== null)
-      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc vị trí nhặt lẻ)')
+    // Chỉ hạ cấp khi bộ lọc CŨNG chạy được trên RPC cũ: bỏ tham số ở nhánh dự phòng sẽ trả về
+    // danh sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm
+    // thầm. RPC cũ: p_flag chỉ 2 trạng thái (false = không lọc), không có p_pick_face.
+    if (ctx.pickFace !== null || ctx.flag === false)
+      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc theo cờ vị trí)')
     ;({ data, error } = await supabase.rpc('locations_page', {
       p_offset: (page - 1) * pageSize, p_limit: pageSize,
       p_wh_ids: ctx.whIds, p_category: ctx.category, p_scope_cats: ctx.scopeCats,
-      p_tokens: ctx.tokens, p_flag: ctx.flag, p_incl_inactive: ctx.inclInactive,
+      p_tokens: ctx.tokens, p_flag: ctx.flag === true, p_incl_inactive: ctx.inclInactive,
     }))
   }
   if (error) throw error

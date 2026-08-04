@@ -32,7 +32,7 @@ import {
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useWmsFilterStore, type FlagMode } from '@/stores/wmsFilterStore'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { can, type ModulePermissions } from '@/config/permissions'
 
@@ -84,15 +84,18 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
 ]
 const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 
+// Lựa chọn cho 2 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
+const FLAG_OPTS = [{ value: 'yes', label: 'Có' }, { value: 'no', label: 'Chưa' }]
+
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const locFilter = useWmsFilterStore(s => s.locations)
-  const { search, warehouseId, catFilter, statusFilter, flagFilter, pickFaceFilter } = locFilter
+  const { search, warehouseId, catFilter, statusFilter, flagMode, pickFaceMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
-  const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagFilter }
+  const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagMode, pickFaceMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -138,12 +141,13 @@ export default function Locations() {
   const { data: activeWhRaw = [] }      = useWarehouses(true)
   // PHÂN TRANG SERVER (chỉ khi đã chọn kho): 1 kho có thể vài nghìn vị trí — trước đây render hết
   // + cộng tổng ở máy. Bộ lọc (loại/tìm/cờ) + 4 ô tổng nay tính bằng SQL trên toàn bộ kết quả lọc.
+  // Cờ 3 trạng thái: bỏ trống = không lọc · 'yes'/'no' = chỉ vị trí CÓ / CHƯA có cờ
+  const modeVal = (m: typeof flagMode) => (m === '' ? undefined : m === 'yes')
   const listParams = useMemo(() => warehouseId ? {
     warehouse_id: warehouseId, category: catFilter || undefined, search,
-    flag: flagFilter, include_inactive: statusFilter.includes('inactive'),
-    // chỉ gửi khi ĐANG lọc — gửi false nghĩa là "chỉ vị trí KHÔNG phải nhặt lẻ"
-    ...(pickFaceFilter ? { pick_face: true } : {}),
-  } : undefined, [warehouseId, catFilter, search, flagFilter, statusFilter, pickFaceFilter])
+    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode),
+    include_inactive: statusFilter.includes('inactive'),
+  } : undefined, [warehouseId, catFilter, search, flagMode, statusFilter, pickFaceMode])
   const { data: pageData, isLoading } = useLocationsPaged(
     listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
   const { data: locSummary } = useLocationsSummary(listParams)
@@ -192,7 +196,7 @@ export default function Locations() {
     setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
   }
   useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
-    [warehouseId, catFilter, search, flagFilter, pickFaceFilter, statusFilter, locFilter.page])
+    [warehouseId, catFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
 
   // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
   const filtered = locations
@@ -306,10 +310,12 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ catFilter: v }) },
     { key: 'status', label: 'Trạng thái', type: 'multi', options: [{ value: 'inactive', label: 'Đã xóa' }], selected: statusFilter, searchable: false,
       onChange: v => setLocationsFilter({ statusFilter: v }) },
-    { key: 'flag', label: 'Cần check hàng ngày', type: 'multi', options: [{ value: 'flag', label: 'Cần check hàng ngày' }], selected: flagFilter ? ['flag'] : [], searchable: false,
-      onChange: v => setLocationsFilter({ flagFilter: v.includes('flag') }) },
-    { key: 'pick_face', label: 'Vị trí nhặt lẻ', type: 'multi', options: [{ value: 'pf', label: 'Vị trí nhặt lẻ' }], selected: pickFaceFilter ? ['pf'] : [], searchable: false,
-      onChange: v => setLocationsFilter({ pickFaceFilter: v.includes('pf') }) },
+    // 2 cờ = chọn-1 Có/Chưa (KHÔNG phải multi 1-lựa-chọn trùng tên filter — chip in ra
+    // "Vị trí nhặt lẻVị trí nhặt lẻ" và không lọc được chiều "chưa khai")
+    { key: 'flag', label: 'Cần check hàng ngày', type: 'single', options: FLAG_OPTS, value: flagMode,
+      onChange: v => setLocationsFilter({ flagMode: v as FlagMode }) },
+    { key: 'pick_face', label: 'Vị trí nhặt lẻ', type: 'single', options: FLAG_OPTS, value: pickFaceMode,
+      onChange: v => setLocationsFilter({ pickFaceMode: v as FlagMode }) },
   ]
 
   // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`

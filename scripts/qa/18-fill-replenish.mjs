@@ -21,6 +21,7 @@
 //   12 báo cáo theo người: đã xong / tỷ lệ khớp đếm tay
 //   13 `?status=` RỖNG trả RỖNG (đúng ngữ nghĩa parseListParam — không âm thầm bỏ lọc)
 //   14 thiếu kho → 400, không dump dữ liệu kho khác
+//   15 bộ lọc cờ vị trí (nhặt lẻ / cần check) THẬT SỰ cắt: khớp oracle · có+chưa = tổng · band khớp
 // usage: node scripts/qa/18-fill-replenish.mjs
 import { login, api, check, finish, restAll, restWrite } from './lib.mjs'
 import { randomUUID } from 'crypto'
@@ -69,17 +70,18 @@ try {
   const whId = anyEntry.warehouse_id
   const [mat] = await restAll('Material', `select=id,material_code,category,entry_unit,units_per_carton&id=eq.${anyEntry.material_id}`)
 
-  const mkLoc = async (code, maxPallets, pickFace) => {
+  const mkLoc = async (code, maxPallets, pickFace, needStocktake = false) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: maxPallets,
-      is_active: true, is_pick_face: pickFace, row: 'QA', shelf: pickFace ? 'T1' : 'T3',
+      is_active: true, is_pick_face: pickFace, requires_stocktake: needStocktake,
+      row: 'QA', shelf: pickFace ? 'T1' : 'T3',
       sub_code: `${TAG}-${code}`, created_at: nowIso(), updated_at: nowIso(),
     })
     created.locs.push(row.id)
     return { id: row.id, code: row.location_code }
   }
   const locRsv  = await mkLoc('RSV',  10, false)  // tầng trên — nguồn
-  const locPF   = await mkLoc('PF',    5, true)   // vị trí nhặt lẻ — đích
+  const locPF   = await mkLoc('PF',    5, true, true)   // vị trí nhặt lẻ — đích (+ cờ kiểm kê, cho phép kiểm 15)
   const locFull = await mkLoc('FULL',  1, true)   // vị trí nhặt lẻ ĐÃ ĐẦY
 
   // NSX lệch nhau để kiểm thứ tự FEFO (A cũ nhất → phải được gợi ý trước)
@@ -260,6 +262,33 @@ try {
     empty.s === 200 && (empty.j?.data?.rows ?? []).length === 0, `rows=${empty.j?.data?.rows?.length}`)
   const noWh = await api('/wms/fill/demand')
   check('14. Thiếu kho → 400 (không dump dữ liệu kho khác)', noWh.s === 400, `http=${noWh.s}`)
+
+  // ── 15. Bộ lọc cờ vị trí PHẢI THẬT SỰ CẮT (bug 04/08) ─────────────────────
+  // Tham số `pick_face` từng bị hook FE bỏ rơi trên đường xuống query-string: chip lọc bật,
+  // danh sách vẫn trả ĐỦ 1.517 dòng, không lỗi nào để lần ra. Phép kiểm chốt ở lớp API —
+  // nếu một cờ bị bỏ qua thì "có" + "chưa" sẽ cộng thành GẤP ĐÔI tổng, không thể lọt.
+  const locTotal = async qs => {
+    const r = await api(`/masterdata/locations?warehouse_id=${whId}&page=1&page_size=1${qs}`)
+    return { s: r.s, n: Number(r.j?.data?.total ?? -1) }
+  }
+  const oracleCount = async extra =>
+    (await restAll('Location', `select=id&warehouse_id=eq.${whId}&is_active=is.true${extra}`)).length
+  for (const [nhãn, qsKey, cột] of [['Vị trí nhặt lẻ', 'pick_face', 'is_pick_face'],
+                                    ['Cần check hàng ngày', 'flag', 'requires_stocktake']]) {
+    const [yes, no, all] = await Promise.all([
+      locTotal(`&${qsKey}=1`), locTotal(`&${qsKey}=0`), locTotal(''),
+    ])
+    const oYes = await oracleCount(`&${cột}=is.true`)
+    check(`15. Lọc "${nhãn}" = CÓ cắt đúng oracle`, yes.s === 200 && yes.n === oYes && oYes > 0,
+      `api=${yes.n} oracle=${oYes}`)
+    check(`15. Lọc "${nhãn}": có + chưa = tổng (cờ không bị bỏ rơi)`, yes.n + no.n === all.n,
+      `${yes.n} + ${no.n} ≠ ${all.n}`)
+  }
+  // Ô tổng dùng CHUNG bộ lọc với danh sách — lệch nhau là band "1.517" trên bảng 25 dòng
+  const sum = await api(`/masterdata/locations/summary?warehouse_id=${whId}&pick_face=1`)
+  const pg1 = await locTotal('&pick_face=1')
+  check('15. Ô tổng đếm cùng tập với danh sách', sum.s === 200 && Number(sum.j?.data?.count) === pg1.n,
+    `band=${sum.j?.data?.count} danh sách=${pg1.n}`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup()

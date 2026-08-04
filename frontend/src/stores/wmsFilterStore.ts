@@ -97,13 +97,17 @@ export interface WeighTicketFilters {
   warehouse_ids: string[]  // kho của trạm cân (nhiều kho tích hợp sau này)
   search: string
 }
+export type FlagMode = '' | 'yes' | 'no'
 interface LocationsFilters {
   search: string
   warehouseId: string
   catFilter: string
   statusFilter: string[]
-  flagFilter: boolean
-  pickFaceFilter: boolean   // chỉ hiện VỊ TRÍ NHẶT LẺ (đã khai cờ is_pick_face)
+  // Hai cờ vị trí, mỗi cờ 3 trạng thái: '' = không lọc · 'yes' = có cờ · 'no' = chưa có cờ.
+  // (Đổi tên khỏi flagFilter/pickFaceFilter cũ kiểu boolean — tên mới để giá trị đã nhớ của
+  // phiên cũ không bị đọc nhầm thành 'yes'/'no'.)
+  flagMode: FlagMode        // requires_stocktake — cần check hàng ngày
+  pickFaceMode: FlagMode    // is_pick_face — vị trí nhặt lẻ
   page: number
   pageSize: number
 }
@@ -405,7 +409,7 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
-    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false, pickFaceFilter: false, page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',

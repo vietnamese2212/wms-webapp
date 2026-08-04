@@ -60,16 +60,23 @@ export function useLocationsFull(params?: LocationListParams, enabled = true) {
 
 // ─── Trang DANH MỤC Vị trí kho: phân trang SERVER ───────────────────────────────────────────────
 // 1 kho có thể vài nghìn vị trí; tổng (sức chứa / đang dùng / đầy) tính bằng SQL trên toàn bộ lọc.
+// flag / pick_face = BA trạng thái: undefined (không lọc) · true (có cờ) · false (chưa có cờ)
 export type LocationsListParams = {
-  warehouse_id?: string; category?: string; search?: string; flag?: boolean; include_inactive?: boolean
+  warehouse_id?: string; category?: string; search?: string
+  flag?: boolean; pick_face?: boolean; include_inactive?: boolean
 }
 export type LocationsSummary = { count: number; capacity: number; used: number; full: number }
 
-function locationsQp(p: LocationsListParams) {
+// Kiểu trả `Record<keyof LocationsListParams, …>` là RÀNG BUỘC CỐ Ý: thêm field lọc mới mà quên
+// ánh xạ xuống query-string = LỖI BIÊN DỊCH. (Bug 04/08: `pick_face` không có ở đây nên bị bỏ
+// âm thầm — chip lọc bật, danh sách vẫn đủ 1.517 dòng, không lỗi nào để lần ra.)
+function locationsQp(p: LocationsListParams): Record<keyof LocationsListParams, string | undefined> {
+  const tri = (v?: boolean) => (v === undefined ? undefined : v ? '1' : '0')
   return {
     warehouse_id: p.warehouse_id || undefined, category: p.category || undefined,
     search: p.search || undefined,
-    flag: p.flag ? '1' : undefined, include_inactive: p.include_inactive ? '1' : undefined,
+    flag: tri(p.flag), pick_face: tri(p.pick_face),
+    include_inactive: p.include_inactive ? '1' : undefined,
   }
 }
 

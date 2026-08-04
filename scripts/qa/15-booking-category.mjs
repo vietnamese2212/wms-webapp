@@ -115,13 +115,35 @@ check('3b. Thêm DO khai cửa KHÁC → bị ÉP về cửa của xe (1 xe 1 c�
   `http=${rForce.s} cửa=${JSON.stringify(distinct)} forced=${rForce.j?.data?.booking_category_forced_to}`)
 
 // ── 4. Sửa cửa 1 dòng → đồng bộ CẢ XE + dội xuống lệnh VC ───────────────────
+// ⚠️ PHẢI gọi Y HỆT FRONTEND: FE gửi NGUYÊN dòng mỗi lần lưu (kèm group_code/do_no/export_date…),
+// không gửi mỗi trường vừa sửa. Bản cũ của phép kiểm này gọi payload TỐI GIẢN `{booking_category}`
+// nên XANH suốt, trong khi qua UI thật: nhánh đồng bộ bị điều kiện `!('group_code' in fields)` chặn
+// ⇒ sửa cửa 1 dòng làm xe LỆCH cửa → trigger DB chặn → user ăn HTTP 500 (đo 04/08).
+// Luật rút ra: phép kiểm API phải mô phỏng ĐÚNG payload client, không phải payload tối thiểu.
 const lineIds = await restAll('khvc_lines', `select=id,do_no&group_code=eq.${GC(1)}&order=do_no`)
-const rEdit = await api(`/external/khvc/${lineIds[0].id}`, 'PUT', { booking_category: CUA_B })
+const fePayload = extra => ({
+  group_code: GC(1), do_no: lineIds[0].do_no, npp: 'QA BOOKING NPP', veh_type: vehTypeName,
+  dvvt: dvvtName, export_date: DAY, priority: null, cs: null, note: null, warehouse_code: WH.code, ...extra,
+})
+const rEdit = await api(`/external/khvc/${lineIds[0].id}`, 'PUT', fePayload({ booking_category: CUA_B }))
 const afterEdit = await restAll('khvc_lines', `select=booking_category&group_code=eq.${GC(1)}`)
 const ord1 = await orderOf(GC(1))
-check('4. Sửa cửa 1 dòng → ĐỒNG BỘ cả xe + dội xuống lệnh VC',
+check('4. Sửa cửa 1 dòng (payload Y HỆT FE) → ĐỒNG BỘ cả xe + dội xuống lệnh VC, KHÔNG 500',
   rEdit.s === 200 && afterEdit.every(l => l.booking_category === CUA_B) && ord1?.booking_category === CUA_B,
   `http=${rEdit.s} dòng=${JSON.stringify([...new Set(afterEdit.map(l => l.booking_category))])} lệnh=${ord1?.booking_category}`)
+
+// ── 4b. Sửa NGÀY 1 dòng (payload Y HỆT FE) → đồng bộ CẢ XE (luật "1 xe 1 ngày") ──
+// Cùng gốc rễ mục 4: qua UI thật xe từng mang 2 NGÀY và ngày chuyến rơi vào dòng đứng đầu.
+{
+  const rDate = await api(`/external/khvc/${lineIds[0].id}`, 'PUT', fePayload({ booking_category: CUA_B, export_date: DAY2 }))
+  const days = [...new Set((await restAll('khvc_lines', `select=export_date&group_code=eq.${GC(1)}`)).map(l => l.export_date))]
+  const gdoD = (await restAll('GroupDeliveryOrder', `select=delivery_date&group_code=eq.${GC(1)}`))[0]
+  check('4b. Sửa NGÀY 1 dòng (payload Y HỆT FE) → mọi dòng của xe cùng ngày (1 xe 1 ngày)',
+    rDate.s === 200 && days.length === 1 && days[0] === DAY2 && String(gdoD?.delivery_date).slice(0, 10) === DAY2,
+    `http=${rDate.s} ngày các dòng=${JSON.stringify(days)} ngày chuyến=${gdoD?.delivery_date}`)
+  // trả về ngày cũ để các mục sau (khung giờ đặt ở DAY) không bị lệch ngày
+  await api(`/external/khvc/${lineIds[0].id}`, 'PUT', fePayload({ booking_category: CUA_B, export_date: DAY }))
+}
 
 // ── 5+6. Gác đặt lịch ở BE (không chỉ lọc ở picker) ─────────────────────────
 const slotWrong = await mkSlot(TIME_A, CUA_A)          // khung của cửa KHÁC (xe đang ở cửa CUA_B)

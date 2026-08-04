@@ -420,8 +420,14 @@ export async function updateKhvc(req: Request, res: Response) {
     // Scope kho: gác CẢ dòng đang sửa (kho cũ) lẫn Số xe mới (kho đích nếu đổi xe)
     const scopeErr = await khvcScopeError(req, [String(cur.group_code ?? ''), String(fields.group_code ?? '')])
     if (scopeErr) return fail(res, scopeErr, 403)
+    // ĐO THAY ĐỔI BẰNG GIÁ TRỊ, KHÔNG BẰNG "key có mặt trong body" (bug 04/08 — xem chú thích dưới):
+    // FE gửi NGUYÊN dòng mỗi lần lưu, nên `'x' in fields` luôn đúng và mọi nhánh dựa vào nó chết lặng.
+    const movingVehicle = 'group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '')
+    const changingDate  = 'export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')
+    const changingCat   = 'booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')
+
     // Đổi Ngày xuất phụ thuộc tình trạng chuyến — gác trên xe ĐÍCH (đổi cả Số xe thì dòng theo xe mới)
-    if ('export_date' in fields && String(fields.export_date ?? '') !== String(cur.export_date ?? '')) {
+    if (changingDate) {
       const targetGc = String((fields.group_code ?? cur.group_code) ?? '')
       const locked = targetGc ? await dateLockedGroups([targetGc], String(fields.export_date ?? '')) : new Map<string, string>()
       const lockMsg = locked.get(targetGc)
@@ -432,7 +438,7 @@ export async function updateKhvc(req: Request, res: Response) {
       if (heldMsg) return fail(res, 422, 'BOOKING_SLOT_HELD_DATE', `${heldMsg} (xe ${targetGc}).`)
     }
     // ĐỔI CỬA đặt lịch: validate danh mục + scope, và chặn nếu xe đang giữ khung giờ của cửa cũ
-    if ('booking_category' in fields && String(fields.booking_category ?? '') !== String(cur.booking_category ?? '')) {
+    if (changingCat) {
       const bc = await resolveBookingCategory(req, fields.booking_category)
       if ('error' in bc) return fail(res, bc.error, bc.status)
       fields.booking_category = bc.value
@@ -453,7 +459,7 @@ export async function updateKhvc(req: Request, res: Response) {
     // mang 2 ngày y hệt lỗi thêm-dòng (probe 02/08 C1). Không áp khi cùng lượt chỉ định export_date mới.
     let dateForcedTo: string | null = null
     let bookingCatForcedTo: string | null = null
-    if ('group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '')) {
+    if (movingVehicle) {
       const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
         .eq('group_code', String(fields.group_code ?? '')).neq('id', req.params.id)
         .neq('sync_status', 'OBSOLETE')
@@ -461,7 +467,7 @@ export async function updateKhvc(req: Request, res: Response) {
         .limit(1).maybeSingle()
       const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
       const xeDate = sibRow?.export_date ?? null
-      if (sib && !('export_date' in fields) && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
+      if (sib && !changingDate && String(xeDate ?? '') !== String(cur.export_date ?? '')) {
         fields.export_date = xeDate
         dateForcedTo = xeDate
       }
@@ -477,7 +483,7 @@ export async function updateKhvc(req: Request, res: Response) {
     // TRANSACTION riêng qua PostgREST nên trigger `khvc_booking_category_uniform` chặn ngay câu đầu
     // (đo thật 03/08: PUT trả 500). DEFERRABLE không cứu được vì lệch đã COMMIT ở transaction 1.
     let bookingCatSynced = 0
-    if ('booking_category' in fields && !('group_code' in fields)) {
+    if (changingCat && !movingVehicle) {
       const { data: synced, error: syncErr } = await supabase.from('khvc_lines')
         .update({ booking_category: (fields.booking_category ?? null) as string | null, updated_at: now() })
         .eq('group_code', String(cur.group_code ?? '')).neq('sync_status', 'OBSOLETE').select('id')
@@ -494,7 +500,7 @@ export async function updateKhvc(req: Request, res: Response) {
     // phụ thuộc dòng nào đứng đầu (hớ thật khi xe hoãn sang ngày khác mà điều vận chỉ sửa 1 dòng).
     // Không đồng bộ khi cùng lượt đổi cả Số xe (dòng chuyển sang xe khác thì theo ngày xe ĐÍCH).
     let dateSynced = 0
-    if ('export_date' in fields && !('group_code' in fields)) {
+    if (changingDate && !movingVehicle) {
       const { data: synced } = await supabase.from('khvc_lines')
         .update({ export_date: (fields.export_date ?? null) as string | null, updated_at: now() })
         .eq('group_code', String((data as { group_code?: string }).group_code ?? ''))

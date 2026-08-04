@@ -67,6 +67,15 @@ function countColWidthMismatch(roots, sampleOut) {
 
 // ── Các luật — mỗi luật là 1 phép đếm thuần văn bản, KHÔNG heuristics mờ (mờ = báo oan = bị tắt) ──
 const RULES = [
+  // `booked_count` là CACHE và DB KHÔNG có trigger nào — xoá dòng xe mà quên `recount_slot` là khung
+  // giờ kẹt "Đầy" vĩnh viễn (đo thật 04/08). Mọi chỗ xoá mới PHẢI đi qua `deleteVehicleSlotsAndRecount`.
+  // Baseline = 2: bookingGuards (chính helper) + vehicleSlotController.deleteVehicleSlot (đã recount tại chỗ).
+  {
+    key: 'vslot_delete_without_recount',
+    label: 'xoá TmsVehicleSlot trực tiếp — phải dùng deleteVehicleSlotsAndRecount (không đếm lại = khung giờ kẹt "Đầy")',
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      l => /from\('TmsVehicleSlot'\)[\s\S]*\.delete\(/.test(l), s),
+  },
   {
     key: 'col_defaults_length_mismatch',
     label: 'mảng cột và mảng độ rộng LỆCH số phần tử — cột lệch nhãn + cột cuối bóp về 0 (thêm cột phải thêm số)',

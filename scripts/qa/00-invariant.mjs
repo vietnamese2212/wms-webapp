@@ -83,4 +83,32 @@ for (const [table, label] of [
     bad.length ? `${bad.length} dòng sai, vd "${bad[0].license_plate}"` : `soi ${rows.length} dòng`)
 }
 
+// 8. CHỖ ĐÃ ĐẶT của khung giờ: cache `booked_count` phải KHỚP đếm sống.
+//    `booked_count` chỉ là CACHE; DB KHÔNG có trigger nào trên TmsVehicleSlot/DeliverySlot nên
+//    `recount_slot` chỉ chạy khi code GỌI TAY, mà FK order_id là ON DELETE CASCADE ⇒ bất kỳ đường
+//    xoá nào quên đếm lại là khung giờ kẹt số cũ. Hậu quả đo thật 04/08: cache 2/2 trong khi chỉ
+//    còn 1 xe ⇒ giao diện khoá nút "Đầy" ⇒ KHÔNG AI đặt được vào chỗ trống đó nữa, và không lượt
+//    nào tự sửa. Bất biến này bắt lệch từ MỌI nguyên nhân, không riêng đường vừa vá.
+//    Quy ước đếm phải khớp RPC: dòng không biển = 1 chỗ; dòng có biển = số biển DISTINCT.
+{
+  const slots = await restAll('DeliverySlot', 'select=id,date,time_from,booked_count,max_vehicles')
+  const vslots = await restAll('TmsVehicleSlot', 'select=slot_id,license_plate,status&slot_id=not.is.null')
+  const bySlot = new Map()
+  for (const v of vslots) {
+    if (!['BOOKED', 'ARRIVED', 'DONE'].includes(v.status)) continue
+    const g = bySlot.get(v.slot_id) ?? { noPlate: 0, plates: new Set() }
+    if (v.license_plate) g.plates.add(v.license_plate); else g.noPlate++
+    bySlot.set(v.slot_id, g)
+  }
+  const lech = slots.filter(s => {
+    const g = bySlot.get(s.id)
+    return Number(s.booked_count) !== ((g?.noPlate ?? 0) + (g?.plates.size ?? 0))
+  })
+  check('Chỗ đã đặt của khung giờ khớp đếm sống (không có khung "kẹt Đầy")', lech.length === 0,
+    lech.length ? `${lech.length} khung lệch, vd ${lech[0].date} ${lech[0].time_from} cache=${lech[0].booked_count}` : `soi ${slots.length} khung`)
+  const vuot = slots.filter(s => Number(s.booked_count) > Number(s.max_vehicles))
+  check('Không khung giờ nào vượt sức chứa', vuot.length === 0,
+    vuot.length ? `vd ${vuot[0].date} ${vuot[0].time_from} ${vuot[0].booked_count}/${vuot[0].max_vehicles}` : `soi ${slots.length} khung`)
+}
+
 finish('INVARIANT')

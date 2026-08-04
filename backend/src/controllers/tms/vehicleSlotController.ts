@@ -340,16 +340,22 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .filter(s => { if (seen.has(s.order_id)) return false; seen.add(s.order_id); return true })
 
       if (eligible.length > 0) {
-        await Promise.all(eligible.map(s =>
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // SO-SÁNH-RỒI-GHI: lặp lại ĐÚNG điều kiện đã lọc ở câu SELECT ngay trên câu UPDATE.
+        // Ghi mù theo ảnh chụp (`.eq('id')` trần) làm MẤT CẬP NHẬT im lặng: giữa hai câu, người
+        // khác có thể vừa đặt lịch cho chính dòng xe đó (RPC nguyên tử, hợp lệ) — câu ghi mù sẽ
+        // đè booking của họ sang khung của mình, không ai được báo, và khung CŨ của họ giữ lại 1
+        // chỗ ma (không có lời gọi recount nào cho khung cũ). Thêm 2 điều kiện thì dòng đã đổi
+        // trạng thái sẽ KHÔNG khớp và bị bỏ qua — thà gom thiếu 1 xe còn hơn xoá booking người khác.
+        const ghi = await Promise.all(eligible.map(s =>
           supabase.from('TmsVehicleSlot').update({
             slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
             consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
-          }).eq('id', s.id)
+          }).eq('id', s.id).eq('status', 'PENDING').is('consolidation_group_id', null).select('id')
         ))
+        const bo = eligible.length - ghi.filter(r => (r.data ?? []).length > 0).length
+        if (bo > 0) console.warn(`[consolidation] bỏ qua ${bo} xe phụ vừa đổi trạng thái (người khác đặt lịch xen giữa)`)
         // Recount slot đích sau khi thêm các xe gom (cùng biển → số chỗ không đổi, nhưng đảm bảo cache đúng)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (finalSlotId) await (supabase.rpc as any)('recount_slot', { p_slot_id: finalSlotId })
+        if (finalSlotId) await supabase.rpc('recount_slot', { p_slot_id: finalSlotId })
       }
     }
 

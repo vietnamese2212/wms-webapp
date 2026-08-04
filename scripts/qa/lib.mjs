@@ -67,9 +67,22 @@ function readBackendEnv() {
 const ENV = readBackendEnv()
 export const HAS_DB = !!(ENV.SUPABASE_URL && ENV.SUPABASE_SERVICE_ROLE_KEY)
 
+// Thử lại khi ĐỨT MẠNG (DNS/timeout/reset) — KHÔNG thử lại khi server trả lỗi HTTP.
+// Lý do: lỗi mạng thoáng qua làm cổng QA ĐỎ OAN, mà đỏ oan thì cổng sẽ bị bỏ qua — nguy hiểm hơn
+// là không có cổng. Ngược lại, 4xx/5xx của app là TÍN HIỆU THẬT, thử lại sẽ che mất.
+async function fetchNetRetry(url, init, tries = 3) {
+  for (let i = 0; ; i++) {
+    try { return await fetch(url, init) }
+    catch (e) {
+      if (i >= tries - 1) throw e
+      await new Promise(r => setTimeout(r, 400 * (i + 1) + Math.random() * 300))
+    }
+  }
+}
+
 // GET 1 trang PostgREST (limit/offset). filter = chuỗi query PostgREST.
 async function restPage(table, filter, offset, limit) {
-  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
+  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
     headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` },
   })
   if (!r.ok) throw new Error(`PostgREST ${table}: ${r.status} ${await r.text()}`)
@@ -88,7 +101,7 @@ export async function restAll(table, filter, maxRows = 50_000) {
 }
 // Ghi thẳng PostgREST (chỉ dùng để DỰNG/DỌN fixture test, không dùng cho logic nghiệp vụ)
 export async function restWrite(table, method, filter, body) {
-  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${table}${filter ? '?' + filter : ''}`, {
+  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}${filter ? "?" + filter : ""}`, {
     method,
     headers: {
       apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,

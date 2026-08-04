@@ -226,6 +226,19 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
   // chạy song song có TRẦN — pool PostgREST ~10 khe, bắn hết cùng lúc là tự chặn chính mình.
   if (dropList.length) {
     const orderIds = dropList.map(d => d.orderId)
+
+    // ⚠️ ĐÁNH DẤU `plan_dropped` TRƯỚC, RỒI MỚI đọc + nhả khung. Thứ tự ngược lại (đọc → nhả →
+    // đánh dấu) để hở một cửa sổ đua có thật: người đặt lịch chen vào GIỮA thấy cờ vẫn false nên
+    // gác TMS_PLAN_DROPPED cho qua, RPC chiếm chỗ hợp lệ — rồi lệnh bị đánh dấu chết ngay sau đó.
+    // Chỗ ấy KHÔNG lượt đồng bộ nào nhả lần hai (nhánh trên `continue` với mọi lệnh đã dropped),
+    // nên nó nằm im tới khi có người tình cờ phát hiện. Đặt cờ trước thì mọi booking tới sau bị
+    // gác chặn, còn booking đã COMMIT trước đó nằm trong ảnh chụp ở dưới và được nhả đúng.
+    for (let i = 0; i < orderIds.length; i += 300) {
+      await supabase.from('TmsOrder')
+        .update({ plan_dropped: true, plan_dropped_at: t, origin: 'KHVC', updated_by: actor, updated_at: t })
+        .in('id', orderIds.slice(i, i + 300))
+    }
+
     const slotRows: SlotRow[] = []
     for (let i = 0; i < orderIds.length; i += 300) {
       const { data } = await supabase.from('TmsVehicleSlot')
@@ -246,11 +259,6 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
       for (const oid of oks) if (oid) releasedByOrder.set(oid, (releasedByOrder.get(oid) ?? 0) + 1)
     }
     out.slots_released = [...releasedByOrder.values()].reduce((a, b) => a + b, 0)
-    for (let i = 0; i < orderIds.length; i += 300) {
-      await supabase.from('TmsOrder')
-        .update({ plan_dropped: true, plan_dropped_at: t, origin: 'KHVC', updated_by: actor, updated_at: t })
-        .in('id', orderIds.slice(i, i + 300))
-    }
     out.dropped = dropList.length
     for (const d of dropList) {
       const n = releasedByOrder.get(d.orderId) ?? 0

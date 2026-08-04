@@ -66,6 +66,36 @@ export async function heldSlotsByVehicle(groupCodes: string[]): Promise<Map<stri
   return out
 }
 
+/**
+ * XOÁ dòng xe của các lệnh + ĐẾM LẠI chỗ của mọi khung giờ bị ảnh hưởng.
+ *
+ * Vì sao bắt buộc (đo thật 04/08): `booked_count` chỉ là CACHE, và DB **không có trigger nào** trên
+ * TmsVehicleSlot/DeliverySlot — `recount_slot` chỉ chạy khi code GỌI TAY. FK
+ * `TmsVehicleSlot.order_id` lại là **ON DELETE CASCADE**, nên xoá lệnh là dòng xe bay theo ÂM THẦM.
+ * Xoá một dòng xe ĐANG GIỮ CHỖ mà không đếm lại ⇒ khung giờ kẹt số cũ: đo được cache=2/2 trong khi
+ * thực tế chỉ còn 1 xe. Hậu quả nặng ở GIAO DIỆN: picker khoá nút và ghi "Đầy" theo `booked_count`,
+ * nên **không ai đặt được vào chỗ trống đó nữa** — và không lượt nào tự sửa (cache chỉ tự khớp lại
+ * khi có người đặt THÀNH CÔNG, mà họ bị chính cái khoá đó chặn). RPC đếm SỐNG nên DB vẫn nhận:
+ * lệch này là lệch HIỂN THỊ nhưng khoá mất tài nguyên thật.
+ */
+export async function deleteVehicleSlotsAndRecount(orderIds: string[]): Promise<number> {
+  const ids = [...new Set(orderIds.filter(Boolean))]
+  if (!ids.length) return 0
+  const slotIds = new Set<string>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await supabase.from('TmsVehicleSlot')
+      .select('slot_id').in('order_id', ids.slice(i, i + 300)).not('slot_id', 'is', null)
+    for (const v of ((data ?? []) as { slot_id: string | null }[])) if (v.slot_id) slotIds.add(v.slot_id)
+  }
+  for (let i = 0; i < ids.length; i += 300)
+    await supabase.from('TmsVehicleSlot').delete().in('order_id', ids.slice(i, i + 300))
+  for (const s of slotIds) {
+    const { error } = await supabase.rpc('recount_slot', { p_slot_id: s })
+    if (error) console.error('[bookingGuards] recount_slot:', error.message)
+  }
+  return slotIds.size
+}
+
 /** Đổi CỬA đặt lịch: khung đang giữ thuộc cửa khác (khung 'ALL' thì mọi cửa đều đậu được → bỏ qua). */
 export function slotHeldBlockingCategory(held: HeldSlot[] | undefined, newCat: string): string | null {
   for (const s of held ?? []) {

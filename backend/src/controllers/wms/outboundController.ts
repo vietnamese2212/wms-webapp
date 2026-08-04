@@ -21,7 +21,7 @@ import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells } from '../../utils/excelHeader'
-import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
+import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 
 const now = () => new Date().toISOString()
 
@@ -1718,11 +1718,13 @@ async function deleteTransferOrdersOf(gdoIds: string[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: orders } = await supabase.from('TmsOrder')
     .select('id').in('transfer_gdo_id', gdoIds)
-  for (const o of (orders ?? []) as { id: string }[]) {
-    await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', o.id)
-    await supabase.from('TmsVehicleSlot').delete().eq('order_id', o.id)
-    await supabase.from('TmsOrder').delete().eq('id', o.id)
-  }
+  const orderIds = ((orders ?? []) as { id: string }[]).map(o => o.id)
+  for (const id of orderIds) await supabase.from('inbound_plan_lines').delete().eq('tms_order_id', id)
+  // Dòng xe của lệnh có thể ĐANG GIỮ khung giờ — xoá mà không đếm lại thì khung kẹt "Đầy" vĩnh viễn
+  // (xem chú thích trong deleteVehicleSlotsAndRecount). Phải xoá TRƯỚC khi xoá lệnh: FK là CASCADE,
+  // xoá lệnh trước thì dòng xe biến mất và không còn gì để lần ra khung bị ảnh hưởng.
+  await deleteVehicleSlotsAndRecount(orderIds)
+  for (const id of orderIds) await supabase.from('TmsOrder').delete().eq('id', id)
 }
 
 export async function deleteGDO(req: Request, res: Response) {

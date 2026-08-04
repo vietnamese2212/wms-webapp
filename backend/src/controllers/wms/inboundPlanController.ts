@@ -7,6 +7,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { isUuid } from '../../utils/ids'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 
 // ─── Scope kho+loại (mirror TMS orderController) — KH nhập chuyển kho gắn 1 kho đích ──
 // NATIONAL → null (toàn quyền). Khác → chỉ các kho được gán cho user.
@@ -644,8 +645,9 @@ export async function deletePlanLine(req: Request, res: Response) {
         .eq('tms_order_id', existing.tms_order_id)
 
       if (!count) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('TmsVehicleSlot').delete().eq('order_id', existing.tms_order_id)
+        // Dòng xe có thể ĐANG GIỮ khung giờ — xoá mà không đếm lại thì khung kẹt "Đầy" vĩnh viễn
+        // (DB không có trigger; recount_slot chỉ chạy khi code gọi tay). Xem bookingGuards.
+        await deleteVehicleSlotsAndRecount([existing.tms_order_id])
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await supabase.from('TmsOrder').delete().eq('id', existing.tms_order_id)
       }

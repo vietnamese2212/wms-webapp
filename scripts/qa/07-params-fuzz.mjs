@@ -57,6 +57,25 @@ const LIST_FUZZ = [
   `/wms/weigh-tickets?page=1&page_size=50&warehouse_ids=`,
   `/wms/outbound/scan-log?date_from=${d0}&date_to=${d1}&material=&machines=`,
   `/wms/dashboard`,
+  // ── Ô TỔNG / FACET đi CHUNG bộ tham số với list ──────────────────────────
+  // Bài học 04/08: thêm 1 tham số lọc vào helper dùng chung (`locRpcParams`) làm
+  // `/locations/summary` gọi RPC SAI CHỮ KÝ → PGRST202 → **500**, mà bộ QA lúc đó chỉ soi
+  // `/locations` nên vẫn xanh; lỗi chỉ lộ khi tôi tình cờ mở trang. Ô tổng và facet luôn là
+  // "endpoint anh em" của list — thêm bộ lọc cho list thì phải fuzz cả hai.
+  `/masterdata/locations?page=1&page_size=50&warehouse_id=&pick_face=1`,
+  `/masterdata/locations/summary?warehouse_id=`,
+  `/masterdata/locations/summary?warehouse_id=&pick_face=1`,
+  `/masterdata/locations/summary?warehouse_id=&flag=1`,
+  `/masterdata/materials/summary?search=`,
+  `/wms/inventory/summary?warehouse_ids=&categories=`,
+  `/wms/inventory/facets?warehouse_ids=`,
+  `/wms/outbound/summary?date_from=${d0}&date_to=${d1}&warehouse_ids=`,
+  `/wms/outbound/facets?date_from=${d0}&date_to=${d1}`,
+  `/wms/inbound-orders/summary?date_from=${d0}&date_to=${d1}`,
+  `/wms/loosepicking/facets?date_from=${d0}&date_to=${d1}`,
+  `/wms/fill/demand?warehouse_id=`,
+  `/wms/fill/tasks?warehouse_id=&status=`,
+  `/wms/fill/report?warehouse_id=`,
 ]
 for (const path of LIST_FUZZ) {
   const r = await api(path)

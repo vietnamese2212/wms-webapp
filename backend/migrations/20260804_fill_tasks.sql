@@ -379,6 +379,54 @@ BEGIN
   RETURN result;
 END $function$;
 
+-- locations_summary phải nhận CÙNG bộ lọc với locations_page — 4 ô SummaryBand đếm trên tập
+-- ĐANG LỌC; thiếu tham số này thì lọc "Vị trí nhặt lẻ" ra 25 dòng mà ô tổng vẫn ghi 1.517.
+-- (Và vì controller dùng CHUNG `locRpcParams` cho cả hai RPC, thiếu ở đây là PGRST202 → 500.)
+DROP FUNCTION IF EXISTS locations_summary(text[], text, text[], text[], boolean);
+
+CREATE OR REPLACE FUNCTION locations_summary(
+  p_wh_ids text[] DEFAULT NULL, p_category text DEFAULT NULL, p_scope_cats text[] DEFAULT NULL,
+  p_tokens text[] DEFAULT NULL, p_flag boolean DEFAULT false, p_pick_face boolean DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SET plan_cache_mode TO 'force_custom_plan'
+AS $function$
+DECLARE
+  result jsonb;
+BEGIN
+  WITH f AS (   -- SummaryBand luôn tính trên vị trí ĐANG DÙNG (mirror activeFiltered của FE cũ)
+    SELECT l.id, l.max_pallets
+    FROM "Location" l
+    LEFT JOIN "Warehouse" w ON w.id = l.warehouse_id
+    WHERE (p_wh_ids IS NULL OR l.warehouse_id = ANY (p_wh_ids))
+      AND l.is_active
+      AND (p_category IS NULL OR l.categories IS NULL OR l.categories @> ARRAY[p_category])
+      AND (p_scope_cats IS NULL OR l.categories IS NULL OR l.categories && p_scope_cats)
+      AND (NOT p_flag OR l.requires_stocktake)
+      AND (p_pick_face IS NULL OR l.is_pick_face = p_pick_face)
+      AND (p_tokens IS NULL OR NOT EXISTS (
+            SELECT 1 FROM unnest(p_tokens) t
+            WHERE position(t IN (COALESCE(l.search_norm, '') || ' ' ||
+                   lower(COALESCE(array_to_string(l.categories, ' '), '') || ' ' ||
+                         COALESCE(l.sub_type, '') || ' ' || COALESCE(l.row, '') || ' ' ||
+                         COALESCE(l.shelf, '') || ' ' || COALESCE(w.code, '') || ' ' || COALESCE(w.name, '')))) = 0))
+  ),
+  used AS (
+    SELECT f.id, f.max_pallets, count(e.id) AS used_slots
+    FROM f LEFT JOIN "InventoryEntry" e
+      ON e.location_id = f.id AND e.stack_layer = 1
+     AND e.status IN ('IN_STOCK', 'PARTIAL') AND e.cartons_remaining > 0
+    GROUP BY f.id, f.max_pallets
+  )
+  SELECT jsonb_build_object(
+    'count',    (SELECT count(*) FROM used),
+    'capacity', (SELECT COALESCE(sum(max_pallets), 0) FROM used),
+    'used',     (SELECT COALESCE(sum(used_slots), 0) FROM used),
+    'full',     (SELECT count(*) FROM used WHERE max_pallets > 0 AND used_slots >= max_pallets)
+  ) INTO result;
+  RETURN result;
+END $function$;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3c) RPC fill_tasks_page — danh sách lệnh: DÒNG + TỔNG + 4 ô SummaryBand trong MỘT lời gọi
 -- ─────────────────────────────────────────────────────────────────────────────

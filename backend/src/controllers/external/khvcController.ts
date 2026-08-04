@@ -360,8 +360,12 @@ export async function createKhvc(req: Request, res: Response) {
     let dateForcedTo: string | null = null
     let bookingCatForcedTo: string | null = null
     {
+      // Lấy dòng ĐÃ CHỐT CỬA làm mẫu (nullsFirst:false). Xe di sản có dòng cửa NULL lẫn dòng có cửa
+      // (sau migration, MỌI dòng cũ đều NULL cho tới khi ai đó khai): bốc đúng dòng NULL thì code
+      // tưởng "xe chưa có cửa" → cho khai cửa khác → trigger DB chặn 23514 → user ăn 500 vô cớ.
       const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
-        .eq('group_code', fields.group_code).neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+        .eq('group_code', fields.group_code).neq('sync_status', 'OBSOLETE')
+        .order('booking_category', { nullsFirst: false }).limit(1).maybeSingle()
       const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
       const xeDate = sibRow?.export_date ?? null
       if (sib && String(xeDate ?? '') !== String(fields.export_date ?? '')) {
@@ -440,7 +444,9 @@ export async function updateKhvc(req: Request, res: Response) {
     if ('group_code' in fields && String(fields.group_code ?? '') !== String(cur.group_code ?? '')) {
       const { data: sib } = await supabase.from('khvc_lines').select('export_date, booking_category')
         .eq('group_code', String(fields.group_code ?? '')).neq('id', req.params.id)
-        .neq('sync_status', 'OBSOLETE').limit(1).maybeSingle()
+        .neq('sync_status', 'OBSOLETE')
+        .order('booking_category', { nullsFirst: false })    // ưu tiên dòng ĐÃ chốt cửa (xem chú thích ở createKhvc)
+        .limit(1).maybeSingle()
       const sibRow = sib as { export_date?: string | null; booking_category?: string | null } | null
       const xeDate = sibRow?.export_date ?? null
       if (sib && !('export_date' in fields) && String(xeDate ?? '') !== String(cur.export_date ?? '')) {

@@ -282,7 +282,7 @@ try {
     check(`15. Lọc "${nhãn}" = CÓ cắt đúng oracle`, yes.s === 200 && yes.n === oYes && oYes > 0,
       `api=${yes.n} oracle=${oYes}`)
     check(`15. Lọc "${nhãn}": có + chưa = tổng (cờ không bị bỏ rơi)`, yes.n + no.n === all.n,
-      `${yes.n} + ${no.n} ≠ ${all.n}`)
+      `${yes.n} + ${no.n} so với tổng ${all.n}`)
   }
   // Ô tổng dùng CHUNG bộ lọc với danh sách — lệch nhau là band "1.517" trên bảng 25 dòng
   const sum = await api(`/masterdata/locations/summary?warehouse_id=${whId}&pick_face=1`)

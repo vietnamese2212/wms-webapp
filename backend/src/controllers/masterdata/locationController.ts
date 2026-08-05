@@ -7,6 +7,7 @@ import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEG
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
@@ -46,6 +47,7 @@ type LocListCtx = {
   category: string | null
   scopeCats: string[] | null
   tokens: string[] | null
+  subs: string[] | null       // Khu vực kho (sub_code) — [] = có mặt nhưng rỗng ⇒ trả RỖNG
   // Cả hai cờ đều BA TRẠNG THÁI: null = không lọc; true/false = chỉ có / chỉ chưa có cờ
   flag: boolean | null        // requires_stocktake (cần check hàng ngày)
   pickFace: boolean | null    // is_pick_face (vị trí nhặt lẻ)
@@ -74,6 +76,7 @@ function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx 
     category: str(q.category) || null,
     scopeCats: scopeCategoriesOf(req),
     tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
+    subs: parseListParam(q.zones),
     // nhận '1' | 'true' | true — cờ boolean qua query-string mỗi client serialize một kiểu
     flag: tri(q.flag),
     pickFace: tri(q.pick_face),
@@ -82,7 +85,7 @@ function getLocListCtx(req: Request, raw?: Record<string, unknown>): LocListCtx 
 }
 const locRpcParams = (c: LocListCtx) => ({
   p_wh_ids: c.whIds, p_category: c.category, p_scope_cats: c.scopeCats,
-  p_tokens: c.tokens, p_flag: c.flag, p_pick_face: c.pickFace,
+  p_tokens: c.tokens, p_flag: c.flag, p_pick_face: c.pickFace, p_subs: c.subs,
 })
 
 // Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem (định nghĩa khớp listLocations)
@@ -115,9 +118,9 @@ async function listLocationsPaged(req: Request, res: Response) {
   if (error && (error as { code?: string }).code === 'PGRST202') {
     // Chỉ hạ cấp khi bộ lọc CŨNG chạy được trên RPC cũ: bỏ tham số ở nhánh dự phòng sẽ trả về
     // danh sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm
-    // thầm. RPC cũ: p_flag chỉ 2 trạng thái (false = không lọc), không có p_pick_face.
-    if (ctx.pickFace !== null || ctx.flag === false)
-      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc theo cờ vị trí)')
+    // thầm. RPC cũ: p_flag chỉ 2 trạng thái (false = không lọc), không p_pick_face/p_subs.
+    if (ctx.pickFace !== null || ctx.flag === false || ctx.subs !== null)
+      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc theo cờ/khu vực)')
     ;({ data, error } = await supabase.rpc('locations_page', {
       p_offset: (page - 1) * pageSize, p_limit: pageSize,
       p_wh_ids: ctx.whIds, p_category: ctx.category, p_scope_cats: ctx.scopeCats,

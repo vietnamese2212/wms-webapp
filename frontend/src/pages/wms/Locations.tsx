@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { FormSheet } from '@/components/shared/FormSheet'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
-  useLocationsPaged, useLocationsSummary, useWarehouses, useWarehouseZones,
+  useLocationsPaged, useLocationsSummary, locationsQp, useWarehouses, useWarehouseZones,
   useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
   useUploadLocationsExcel,
 } from '@/api/hooks'
@@ -91,11 +91,11 @@ export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const locFilter = useWmsFilterStore(s => s.locations)
-  const { search, warehouseId, catFilter, statusFilter, flagMode, pickFaceMode } = locFilter
+  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
-  const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagMode, pickFaceMode }
+  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -138,6 +138,7 @@ export default function Locations() {
   const { data: whTypes = [] }          = useScopedWhTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
+  const { data: filterZones = [] }      = useWarehouseZones(warehouseId || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
   // PHÂN TRANG SERVER (chỉ khi đã chọn kho): 1 kho có thể vài nghìn vị trí — trước đây render hết
   // + cộng tổng ở máy. Bộ lọc (loại/tìm/cờ) + 4 ô tổng nay tính bằng SQL trên toàn bộ kết quả lọc.
@@ -145,9 +146,10 @@ export default function Locations() {
   const modeVal = (m: typeof flagMode) => (m === '' ? undefined : m === 'yes')
   const listParams = useMemo(() => warehouseId ? {
     warehouse_id: warehouseId, category: catFilter || undefined, search,
+    zones: zoneFilter.length ? zoneFilter : undefined,
     flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode),
     include_inactive: statusFilter.includes('inactive'),
-  } : undefined, [warehouseId, catFilter, search, flagMode, statusFilter, pickFaceMode])
+  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode])
   const { data: pageData, isLoading } = useLocationsPaged(
     listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
   const { data: locSummary } = useLocationsSummary(listParams)
@@ -196,7 +198,7 @@ export default function Locations() {
     setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
   }
   useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
-    [warehouseId, catFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
+    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
 
   // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
   const filtered = locations
@@ -305,9 +307,16 @@ export default function Locations() {
   // ─── Filter chip bar (Manhattan) ───
   const filterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', options: warehouses.map(w => ({ value: w.id, label: w.name })), value: warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setLocationsFilter({ warehouseId: v, catFilter: '' }) },
+      // Khu vực thuộc kho → đổi kho phải reset khu đã chọn, không thì lọc theo khu của kho CŨ
+      // (mã khu trùng tên giữa 2 kho thì sai âm thầm, không trùng thì bảng trống khó hiểu)
+      onChange: v => setLocationsFilter({ warehouseId: v, catFilter: '', zoneFilter: [] }) },
     { key: 'category', label: 'Loại kho', type: 'single', options: categoryOptions.map((c: string) => ({ value: c, label: c })), value: catFilter, allLabel: 'Tất cả loại',
       onChange: v => setLocationsFilter({ catFilter: v }) },
+    { key: 'zone', label: 'Khu vực kho', type: 'multi',
+      options: filterZones.filter(z => z.is_active).map(z => ({
+        value: z.code, label: z.name && z.name !== z.code ? `${z.code} — ${z.name}` : z.code,
+      })),
+      selected: zoneFilter, onChange: v => setLocationsFilter({ zoneFilter: v }) },
     { key: 'status', label: 'Trạng thái', type: 'multi', options: [{ value: 'inactive', label: 'Đã xóa' }], selected: statusFilter, searchable: false,
       onChange: v => setLocationsFilter({ statusFilter: v }) },
     // 2 cờ = chọn-1 Có/Chưa (KHÔNG phải multi 1-lựa-chọn trùng tên filter — chip in ra
@@ -320,17 +329,15 @@ export default function Locations() {
 
   // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`
   // thì file chỉ có 200 dòng của trang đang xem mà KHÔNG báo gì (đúng kiểu sai âm thầm).
+  // Params dựng bằng `locationsQp` DÙNG CHUNG với hook — bản tự chép tay ở đây từng bỏ quên
+  // `pick_face`, file xuất ra lờ luôn bộ lọc đó (cùng họ bug chip-lọc-không-cắt 04/08).
   const [exporting, setExporting] = useState(false)
   async function fetchAllFiltered(): Promise<RealLocation[]> {
     if (!listParams) return []
     const out: RealLocation[] = []
     for (let page = 1; page <= 200; page++) {
       const { data } = await apiClient.get('/masterdata/locations', {
-        params: {
-          warehouse_id: listParams.warehouse_id, category: listParams.category, search: listParams.search || undefined,
-          flag: listParams.flag ? '1' : undefined, include_inactive: listParams.include_inactive ? '1' : undefined,
-          page, page_size: 1000,
-        },
+        params: { ...locationsQp(listParams), page, page_size: 1000 },
       })
       const d = data.data as { rows: RealLocation[]; total: number }
       out.push(...d.rows)

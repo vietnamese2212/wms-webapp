@@ -63,9 +63,12 @@ const LIST_FUZZ = [
   // `/locations` nên vẫn xanh; lỗi chỉ lộ khi tôi tình cờ mở trang. Ô tổng và facet luôn là
   // "endpoint anh em" của list — thêm bộ lọc cho list thì phải fuzz cả hai.
   `/masterdata/locations?page=1&page_size=50&warehouse_id=&pick_face=1`,
+  `/masterdata/locations?page=1&page_size=50&warehouse_id=&zones=`,
+  `/masterdata/locations?page=1&page_size=50&warehouse_id=&zones=${encodeURIComponent("';--")}`,
   `/masterdata/locations/summary?warehouse_id=`,
   `/masterdata/locations/summary?warehouse_id=&pick_face=1`,
   `/masterdata/locations/summary?warehouse_id=&flag=1`,
+  `/masterdata/locations/summary?warehouse_id=&zones=`,
   `/masterdata/materials/summary?search=`,
   `/wms/inventory/summary?warehouse_ids=&categories=`,
   `/wms/inventory/facets?warehouse_ids=`,

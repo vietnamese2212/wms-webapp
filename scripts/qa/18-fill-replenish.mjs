@@ -22,6 +22,7 @@
 //   13 `?status=` RỖNG trả RỖNG (đúng ngữ nghĩa parseListParam — không âm thầm bỏ lọc)
 //   14 thiếu kho → 400, không dump dữ liệu kho khác
 //   15 bộ lọc cờ vị trí (nhặt lẻ / cần check) THẬT SỰ cắt: khớp oracle · có+chưa = tổng · band khớp
+//   16 bộ lọc Khu vực kho (`?zones=`): khớp oracle · rỗng trả rỗng · ô tổng cùng tập
 // usage: node scripts/qa/18-fill-replenish.mjs
 import { login, api, check, finish, restAll, restWrite } from './lib.mjs'
 import { randomUUID } from 'crypto'
@@ -289,6 +290,19 @@ try {
   const pg1 = await locTotal('&pick_face=1')
   check('15. Ô tổng đếm cùng tập với danh sách', sum.s === 200 && Number(sum.j?.data?.count) === pg1.n,
     `band=${sum.j?.data?.count} danh sách=${pg1.n}`)
+
+  // ── 16. Bộ lọc "Khu vực kho" (`?zones=`, thêm 04/08) ──────────────────────
+  // 3 vị trí fixture mang sub_code riêng (QAFILL-RSV/PF/FULL) — oracle biết trước từng con số.
+  const [z2, zEmpty, zSum] = await Promise.all([
+    locTotal(`&zones=QAFILL-PF,QAFILL-FULL`),
+    locTotal('&zones='),
+    api(`/masterdata/locations/summary?warehouse_id=${whId}&zones=QAFILL-PF,QAFILL-FULL`),
+  ])
+  check('16a. Lọc theo 2 khu trả đúng 2 vị trí fixture', z2.s === 200 && z2.n === 2, `total=${z2.n}`)
+  check('16b. `?zones=` RỖNG trả RỖNG (không âm thầm bỏ lọc)', zEmpty.s === 200 && zEmpty.n === 0,
+    `total=${zEmpty.n}`)
+  check('16c. Ô tổng cũng lọc theo khu', zSum.s === 200 && Number(zSum.j?.data?.count) === 2,
+    `band=${zSum.j?.data?.count}`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup()

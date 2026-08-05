@@ -102,6 +102,7 @@ interface LocationsFilters {
   search: string
   warehouseId: string
   catFilter: string
+  zoneFilter: string[]      // Khu vực kho (sub_code) — đổi Kho thì reset (khu thuộc kho)
   statusFilter: string[]
   // Hai cờ vị trí, mỗi cờ 3 trạng thái: '' = không lọc · 'yes' = có cờ · 'no' = chưa có cờ.
   // (Đổi tên khỏi flagFilter/pickFaceFilter cũ kiểu boolean — tên mới để giá trị đã nhớ của
@@ -409,7 +410,7 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
-    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',

@@ -117,9 +117,11 @@ export default function FillPicking() {
       options: whList.map(w => ({ value: w.id, label: w.name })),
       onChange: v => setFillFilter({ warehouseId: v }) },
     ...(f.tab === 'demand' ? [
-      { key: 'short', label: 'Chỉ mã đang thiếu', type: 'multi' as const, searchable: false,
-        options: [{ value: 'y', label: 'Chỉ mã đang thiếu' }], selected: f.onlyShort ? ['y'] : [],
-        onChange: (v: string[]) => setFillFilter({ onlyShort: v.includes('y') }) },
+      // Toggle = chọn-1 Có (KHÔNG multi-1-lựa-chọn trùng tên filter — chip in trùng nhãn,
+      // cùng họ bug "Vị trí nhặt lẻVị trí nhặt lẻ" 04/08)
+      { key: 'short', label: 'Chỉ mã đang thiếu', type: 'single' as const,
+        options: [{ value: 'y', label: 'Có' }], value: f.onlyShort ? 'y' : '',
+        onChange: (v: string) => setFillFilter({ onlyShort: v === 'y' }) },
       { key: 'cat', label: 'Loại kho', type: 'multi' as const, searchable: false,
         options: whTypes.map(t => ({ value: t.value, label: t.value })), selected: f.cats,
         onChange: (v: string[]) => setFillFilter({ cats: v }) },
@@ -132,9 +134,9 @@ export default function FillPicking() {
           { value: 'CANCELLED', label: 'Đã hủy' },
         ], selected: f.status,
         onChange: (v: string[]) => setFillFilter({ status: v }) },
-      { key: 'mine', label: 'Việc của tôi', type: 'multi' as const, searchable: false,
-        options: [{ value: 'y', label: 'Việc của tôi' }], selected: f.mine ? ['y'] : [],
-        onChange: (v: string[]) => setFillFilter({ mine: v.includes('y') }) },
+      { key: 'mine', label: 'Việc của tôi', type: 'single' as const,
+        options: [{ value: 'y', label: 'Có' }], value: f.mine ? 'y' : '',
+        onChange: (v: string) => setFillFilter({ mine: v === 'y' }) },
     ] : []),
     ...(f.tab === 'report' ? [
       { key: 'range', label: 'Khoảng ngày', type: 'daterange' as const,

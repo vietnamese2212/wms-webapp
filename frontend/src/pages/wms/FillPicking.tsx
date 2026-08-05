@@ -682,16 +682,16 @@ function DestPicker({ warehouseId, materialId, value, onChange }: {
 }
 
 // ─── Dialog "Chọn date" (tab Đề xuất) ────────────────────────────────────────
-// Người nhặt lẻ chọn NSX họ cần từ TỒN THẬT (danh mục date lấy từ pallet ứng viên); không chọn
-// = FEFO mặc định (date xa nhất). Pallet tick sẵn theo FEFO tới khi đủ bù thiếu — CHẴN PALLET
-// (xe nâng hạ nguyên pallet), tổng hạ có thể vượt số thiếu.
+// User chỉ CHỌN DATE (NSX, từ tồn thật) — HỆ THỐNG tự chỉ định pallet + vị trí (FEFO trong
+// date đó, đủ bù thiếu thì dừng; xe nâng hạ NGUYÊN pallet). Bảng dưới là BẢN CHỈ ĐỊNH chỉ-đọc
+// để người ra lệnh soát trước; người nhận việc xem tab Lệnh fill là biết lấy gì, ở đâu, hạ về
+// đâu (user chốt 05/08: "chọn date chứ không phải chọn pallet").
 function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
   warehouseId: string; date: string; row: FillDemandRow; canAssign: boolean; onClose: () => void
 }) {
   const { data, isLoading } = useFillCandidates({ warehouse_id: warehouseId, material_id: row.material_id })
   const createTasks = useCreateFillTasks()
   const [dateSel, setDateSel] = useState('')
-  const [sel, setSel] = useState<Set<string>>(new Set())
   const [assignee, setAssignee] = useState('')
   const [err, setErr] = useState('')
   const [result, setResult] = useState<{ created: number; skipped: { pallet_code?: string; reason: string }[] } | null>(null)
@@ -706,27 +706,24 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [all])
-  const list = useMemo(
-    () => dateSel ? all.filter(c => (c.production_date ?? '').slice(0, 10) === dateSel) : all,
-    [all, dateSel])
 
-  // Tick sẵn FEFO (danh sách đã xếp FEFO từ RPC) tới khi đủ bù thiếu
-  useEffect(() => {
+  // HỆ THỐNG chỉ định: FEFO trong date đã chọn (không chọn = toàn bộ, FEFO), đủ bù thiếu thì dừng
+  const picked = useMemo(() => {
+    const pool = dateSel ? all.filter(c => (c.production_date ?? '').slice(0, 10) === dateSel) : all
     const short = Number(row.short_base)
-    const n = new Set<string>(); let cum = 0
-    for (const c of list) { if (cum >= short) break; n.add(c.entry_id); cum += Number(c.avail) }
-    setSel(n)
-  }, [list, row.short_base])
-
-  const selQty = list.filter(c => sel.has(c.entry_id)).reduce((s, c) => s + Number(c.avail), 0)
+    const out: typeof pool = []; let cum = 0
+    for (const c of pool) { if (cum >= short) break; out.push(c); cum += Number(c.avail) }
+    return out
+  }, [all, dateSel, row.short_base])
+  const pickedQty = picked.reduce((s, c) => s + Number(c.avail), 0)
 
   async function save() {
     setErr('')
-    if (!sel.size) { setErr('Chưa tick pallet nào') ; return }
+    if (!picked.length) { setErr('Date này không còn pallet khả dụng để hạ'); return }
     try {
       const res = await createTasks.mutateAsync({
         warehouse_id: warehouseId, target_date: date,
-        items: [...sel].map(entry_id => ({ entry_id, assignee_id: assignee || undefined })),
+        items: picked.map(c => ({ entry_id: c.entry_id, assignee_id: assignee || undefined })),
       })
       setResult(res)
     } catch (e: unknown) {
@@ -743,7 +740,8 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
         <div className="space-y-2">
           <p className="text-[11px] text-slate-500">
             Thiếu <b className="text-red-600">{qtyLabel(Number(row.short_base), row)}</b>.
-            Không chọn date = mặc định FEFO (date xa nhất hạ trước). Xe nâng hạ NGUYÊN pallet.
+            Chọn date — hệ thống tự chỉ định pallet & vị trí (FEFO, hạ NGUYÊN pallet).
+            Không chọn = date xa nhất hạ trước.
           </p>
           <SingleSelect
             value={dateSel} onChange={setDateSel}
@@ -753,30 +751,28 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
               }))]}
             placeholder="Chọn date (NSX)…"
           />
-          <div className="border rounded max-h-56 overflow-auto">
-            {isLoading ? (
-              <p className="p-3 text-xs text-slate-400">Đang tải tồn kho…</p>
-            ) : list.length === 0 ? (
-              <p className="p-3 text-xs text-slate-400">Không còn pallet khả dụng (ngoài vị trí nhặt lẻ) cho date này</p>
-            ) : list.map(c => (
-              <label key={c.entry_id} className="flex items-center gap-2 px-2 py-1.5 border-b last:border-b-0 cursor-pointer hover:bg-slate-50">
-                <input type="checkbox" className="h-3 w-3" checked={sel.has(c.entry_id)}
-                  onChange={e => setSel(prev => {
-                    const n = new Set(prev)
-                    if (e.target.checked) n.add(c.entry_id); else n.delete(c.entry_id)
-                    return n
-                  })} />
-                <span className="font-mono text-[10px] font-semibold flex-1 truncate" title={c.pallet_code}>{c.pallet_code}</span>
-                <span className="font-mono text-[10px] text-slate-500">{c.from_location_code ?? '—'}</span>
-                <span className="text-[10px] tabular-nums font-semibold w-24 text-right">{qtyLabel(Number(c.avail), row)}</span>
-                <span className="text-[9px] text-slate-400 w-14 text-right">{c.production_date ? formatTimestampDate(c.production_date, true) : '—'}</span>
-              </label>
-            ))}
+          {/* Bản chỉ định của hệ thống — CHỈ ĐỌC, để soát trước khi ra lệnh */}
+          <div>
+            <p className="text-[10px] font-medium text-slate-500 uppercase mb-1">Hệ thống chỉ định</p>
+            <div className="border rounded max-h-52 overflow-auto">
+              {isLoading ? (
+                <p className="p-3 text-xs text-slate-400">Đang tải tồn kho…</p>
+              ) : picked.length === 0 ? (
+                <p className="p-3 text-xs text-slate-400">Không còn pallet khả dụng (ngoài vị trí nhặt lẻ) cho date này</p>
+              ) : picked.map(c => (
+                <div key={c.entry_id} className="flex items-center gap-2 px-2 py-1.5 border-b last:border-b-0">
+                  <span className="font-mono text-[10px] font-semibold flex-1 truncate" title={c.pallet_code}>{c.pallet_code}</span>
+                  <span className="font-mono text-[10px] text-sky-700 font-semibold">{c.from_location_code ?? '—'}</span>
+                  <span className="text-[10px] tabular-nums font-semibold w-24 text-right">{qtyLabel(Number(c.avail), row)}</span>
+                  <span className="text-[9px] text-slate-400 w-14 text-right">{c.production_date ? formatTimestampDate(c.production_date, true) : '—'}</span>
+                </div>
+              ))}
+            </div>
           </div>
           <p className="text-[11px] text-slate-600">
-            Đã tick <b>{sel.size}</b> pallet · sẽ hạ <b>{qtyLabel(selQty, row)}</b>
-            {selQty >= Number(row.short_base) ? <span className="text-green-600"> (đủ bù thiếu)</span>
-              : <span className="text-amber-600"> (chưa đủ bù thiếu)</span>}
+            Sẽ hạ <b>{picked.length}</b> pallet · <b>{qtyLabel(pickedQty, row)}</b>
+            {pickedQty >= Number(row.short_base) ? <span className="text-green-600"> (đủ bù thiếu)</span>
+              : <span className="text-amber-600"> (date này chưa đủ bù thiếu — phần còn lại ra lệnh thêm sau)</span>}
           </p>
           {canAssign && <AssigneePicker warehouseId={warehouseId} value={assignee} onChange={setAssignee} />}
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
@@ -794,8 +790,8 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
             {result ? 'Đóng' : 'Hủy'}
           </Button>
           {!result && (
-            <Button size="sm" onClick={save} disabled={createTasks.isPending || sel.size === 0}>
-              {createTasks.isPending ? 'Đang tạo…' : `Ra lệnh (${sel.size} pallet)`}
+            <Button size="sm" onClick={save} disabled={createTasks.isPending || picked.length === 0}>
+              {createTasks.isPending ? 'Đang tạo…' : `Ra lệnh (${picked.length} pallet)`}
             </Button>
           )}
         </DialogFooter>

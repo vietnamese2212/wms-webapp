@@ -41,6 +41,7 @@ const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const forklift           = () => import('@/pages/wms/Forklift')
 const fillPicking        = () => import('@/pages/wms/FillPicking')
+const fillOrderDetail    = () => import('@/pages/wms/FillOrderDetail')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
@@ -82,6 +83,7 @@ export const Pages = {
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   Forklift: lazyRetry(forklift),
   FillPicking: lazyRetry(fillPicking),
+  FillOrderDetail: lazyRetry(fillOrderDetail),
   LoosePicking: lazyRetry(loosePicking),
   LoosePickingDetail: lazyRetry(loosePickingDetail),
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),

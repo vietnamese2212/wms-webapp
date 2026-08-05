@@ -184,22 +184,25 @@ router.post('/slotting/plans/:id/scan-move',                  requirePerm('inven
 router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
 
-// ─── FILL HÀNG phục vụ nhặt lẻ (04/08) ──────────────────────────────────────
-// Quét thực hiện GHI location_id, nhưng phạm vi bị chặn cứng ở BE: đúng pallet của lệnh và đúng
-// vị trí đích của lệnh. Cùng tiền lệ `leftover_location_id` bên Xuất kho — người đi hạ hàng phải
-// làm được việc của mình; đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
+// ─── FILL HÀNG phục vụ nhặt lẻ (04/08; v3 gom lệnh theo DATE 05/08) ─────────
+// Quét thực hiện GHI location_id, nhưng phạm vi bị chặn cứng ở BE: đúng mã + đúng DATE của dòng
+// lệnh, đích phải là vị trí nhặt lẻ nhận đúng Loại kho. Cùng tiền lệ `leftover_location_id` bên
+// Xuất kho — người đi hạ hàng phải làm được việc của mình (kể cả đổi vị trí đến ngay màn quét);
+// đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
 router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
 router.get('/fill/candidates',                                requirePerm('fill', 'view'),    fill.getFillCandidates)
-router.get('/fill/tasks',                                     requirePerm('fill', 'view'),    fill.listFillTasks)
+router.get('/fill/orders',                                    requirePerm('fill', 'view'),    fill.listFillOrders)
+router.get('/fill/orders/:id',                                requirePerm('fill', 'view'),    fill.getFillOrder)
 router.get('/fill/report',                                    requirePerm('fill', 'view'),    fill.getFillReport)
 router.get('/fill/pick-face-locations',                       requirePerm('fill', 'view'),    fill.listPickFaceLocations)
 // Ô chọn người nhận lệnh — dùng lại controller danh sách nhân sự theo kho (read-only) của Xuất kho
 router.get('/fill/employees',                                 requirePerm('fill', 'assign'),  outbound.getWarehouseEmployees)
-router.post('/fill/tasks',                                    requirePerm('fill', 'plan'),    fill.createFillTasks)
+router.post('/fill/orders',                                   requirePerm('fill', 'plan'),    fill.createFillOrder)
 router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
 // Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
 router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'plan']), fill.updateFillTask)
 router.delete('/fill/tasks/:id',                              requirePerm('fill', 'plan'),    fill.cancelFillTask)
+router.delete('/fill/orders/:id',                             requirePerm('fill', 'plan'),    fill.cancelFillOrder)
 
 // ─── Xe nâng: check list an toàn hàng ngày + đồng hồ giờ vận hành ───────────
 router.get('/forklifts',            requirePerm('forklift', 'view'),           forklift.listForklifts)

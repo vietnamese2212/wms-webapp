@@ -3675,35 +3675,69 @@ export function useFillDemand(params?: { warehouse_id: string; date: string }) {
 }
 
 export type FillTaskStatus = 'PENDING' | 'DONE' | 'CANCELLED'
+// DÒNG của lệnh fill (v3 05/08 — chỉ định theo DATE, không ghim pallet)
 export interface FillTaskRow {
-  id: string; warehouse_id: string; target_date: string
+  id: string; fill_order_id: string; warehouse_id: string; target_date: string
   material_id: string; material_code: string | null; material_name: string | null
-  entry_id: string; pallet_code: string
-  from_location_id: string | null; from_location_code: string | null
+  required_date: string | null; required_expiry: string | null
+  required_pallets: number; scanned_pallets: number
+  qty_base: number; qty_done_base: number
+  from_location_code: string | null            // gợi ý "lấy tại đâu" chụp lúc ra lệnh
   to_location_id: string; to_location_code: string | null
-  qty_base: number; status: FillTaskStatus
+  status: FillTaskStatus
   assignee_id: string | null; assignee_name: string | null
   assigned_by: string | null; assigned_at: string | null
   done_by: string | null; done_by_name: string | null; done_at: string | null
   cancel_reason: string | null; created_by: string | null; created_at: string
   entry_unit: string | null; units_per_carton: number | null; base_unit: string | null
-  cur_location_code: string | null; cur_avail: number | null; entry_status: string | null
 }
-export interface FillTasksData {
-  rows: FillTaskRow[]; total: number
+// LỆNH fill (gom nhiều dòng mã — một lần "Ra lệnh fill")
+export interface FillOrderRow {
+  id: string; order_code: string; warehouse_id: string; target_date: string
+  status: FillTaskStatus; created_by: string | null; created_at: string
+  lines_n: number; pending_lines: number; done_lines: number; cancelled_lines: number
+  pallets_req: number; pallets_done: number
+  qty_req_entry: number; qty_done_entry: number
+  assignees: string | null; mat_codes: string | null; mat_names: string | null
+}
+export interface FillOrdersData {
+  rows: FillOrderRow[]; total: number
   pending_n: number; done_n: number; cancelled_n: number; done_qty_entry: number
 }
-export function useFillTasks(params?: {
+export function useFillOrders(params?: {
   warehouse_id: string; date_from?: string; date_to?: string
   status?: string; assignee_id?: string; mine?: string; search?: string
   page?: number; page_size?: number
 }) {
   return useQuery({
-    queryKey: ['fill-tasks', params],
+    queryKey: ['fill-orders', params],
     enabled: !!params?.warehouse_id,
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/fill/tasks', { params })
-      return data.data as FillTasksData
+      const { data } = await apiClient.get('/wms/fill/orders', { params })
+      return data.data as FillOrdersData
+    },
+  })
+}
+export interface FillScanRow {
+  id: string; task_id: string; entry_id: string; pallet_code: string
+  qty_base: number; production_date: string | null
+  from_location_code: string | null; to_location_code: string | null
+  scanned_by_name: string | null; created_at: string
+}
+export function useFillOrder(orderId?: string) {
+  return useQuery({
+    queryKey: ['fill-order', orderId],
+    enabled: !!orderId,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/fill/orders/${orderId}`)
+      const d = data.data as {
+        order: { id: string; order_code: string; warehouse_id: string; target_date: string
+                 status: FillTaskStatus; created_by: string | null; created_at: string }
+        lines: (FillTaskRow & { material: { entry_unit: string | null; units_per_carton: number | null; base_unit: string | null } | null })[]
+        scans: FillScanRow[]
+      }
+      // Trải đơn vị của mã lên dòng để qtyLabel dùng thẳng
+      return { ...d, lines: d.lines.map(l => ({ ...l, ...(l.material ?? {}) })) }
     },
   })
 }
@@ -3754,19 +3788,34 @@ export function useFillEmployees(warehouseId?: string) {
 }
 
 const invalidateFill = (qc: ReturnType<typeof useQueryClient>) => {
-  qc.invalidateQueries({ queryKey: ['fill-tasks'] })
-  qc.invalidateQueries({ queryKey: ['fill-demand'] })   // lệnh treo trừ vào phần "thiếu"
+  qc.invalidateQueries({ queryKey: ['fill-orders'] })
+  qc.invalidateQueries({ queryKey: ['fill-order'] })
+  qc.invalidateQueries({ queryKey: ['fill-demand'] })   // dòng treo trừ vào phần "thiếu"
   qc.invalidateQueries({ queryKey: ['fill-report'] })
 }
 
-export function useCreateFillTasks() {
+export interface FillOrderSkipped { material_code?: string; required_date?: string | null; reason: string }
+export function useCreateFillOrder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
       warehouse_id: string; target_date?: string   // bỏ trống = BE lấy hôm nay (giờ VN)
-      items: { entry_id: string; to_location_id?: string; assignee_id?: string }[]
-    }) => apiClient.post('/wms/fill/tasks', body)
-      .then(r => r.data.data as { created: number; skipped: { entry_id: string; pallet_code?: string; reason: string }[] }),
+      assignee_id?: string
+      lines: {
+        material_id: string; required_date?: string | null; required_expiry?: string | null
+        qty_base: number; required_pallets: number; src_hint?: string; to_location_id?: string
+      }[]
+    }) => apiClient.post('/wms/fill/orders', body)
+      .then(r => r.data.data as { created: number; skipped: FillOrderSkipped[]; order_id?: string; order_code?: string }),
+    onSettled: () => invalidateFill(qc),
+  })
+}
+
+export function useCancelFillOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      apiClient.delete(`/wms/fill/orders/${id}`, { data: reason ? { reason } : undefined }).then(r => r.data.data),
     onSettled: () => invalidateFill(qc),
   })
 }

@@ -79,7 +79,7 @@ const LIST_FUZZ = [
   `/wms/inbound-orders/summary?date_from=${d0}&date_to=${d1}`,
   `/wms/loosepicking/facets?date_from=${d0}&date_to=${d1}`,
   `/wms/fill/demand?warehouse_id=`,
-  `/wms/fill/tasks?warehouse_id=&status=`,
+  `/wms/fill/orders?warehouse_id=&status=`,
   `/wms/fill/report?warehouse_id=`,
 ]
 for (const path of LIST_FUZZ) {

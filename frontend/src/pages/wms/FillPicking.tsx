@@ -188,7 +188,9 @@ export default function FillPicking() {
             )}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
               <ActionCluster mobileInline items={[
-                ...(canExecute && whId ? [{
+                // Quét thực hiện CHỈ đặt ở tab Lệnh fill (user chốt 05/08) — quét là thao tác
+                // trên LỆNH; tab Đề xuất/Kết quả không có gì để quét
+                ...(canExecute && whId && f.tab === 'tasks' ? [{
                   key: 'scan', icon: QrCode, label: 'Quét thực hiện', primary: true,
                   tip: 'Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ',
                   onClick: () => openScan(undefined),

@@ -160,24 +160,35 @@ export default function FillOrderDetail() {
             <span className="text-[11px] text-slate-500">
               Đã chọn <b className="text-slate-700">{sel.size}</b> dòng ({pendingSel.length} đang treo)
             </span>
-            <span className="ml-auto">
-              <ActionCluster mobileInline items={[
-                ...(canAssign ? [{
-                  key: 'assign', icon: UserPlus, label: 'Giao cho',
-                  tip: 'Giao các dòng đã chọn cho một người', disabled: !pendingSel.length,
-                  onClick: () => { setVal(''); setErr(''); setDlg('assign') },
-                } satisfies ActionItem] : []),
-                ...(canPlan ? [{
-                  key: 'dest', icon: MapPin, label: 'Đổi vị trí đến',
-                  tip: 'Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)',
-                  disabled: !pendingSel.length,
-                  onClick: () => { setVal(''); setErr(''); setDlg('dest') },
-                } satisfies ActionItem, {
-                  key: 'del', icon: X, label: 'Hủy dòng', danger: true,
-                  tip: 'Hủy các dòng đã chọn (giữ lại để tra cứu)', disabled: !pendingSel.length, busy,
-                  onClick: () => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel),
-                } satisfies ActionItem] : []),
-              ]} />
+            {/* Nút THƯỜNG thay ActionCluster: cụm không có primary nên trên mobile ActionCluster
+                gom HẾT vào menu ⋮ — user bắt 05/08 "chọn nhiều không đủ action như trên browser".
+                Thao tác bulk phải thấy ĐỦ cả 3 nút ở mọi cỡ màn. */}
+            <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+              {canAssign && (
+                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                  disabled={!pendingSel.length || busy}
+                  title="Giao các dòng đã chọn cho một người"
+                  onClick={() => { setVal(''); setErr(''); setDlg('assign') }}>
+                  <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cho
+                </Button>
+              )}
+              {canPlan && (
+                <>
+                  <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                    disabled={!pendingSel.length || busy}
+                    title="Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)"
+                    onClick={() => { setVal(''); setErr(''); setDlg('dest') }}>
+                    <MapPin className="h-3.5 w-3.5 mr-1" /> Đổi vị trí đến
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
+                    disabled={!pendingSel.length || busy}
+                    title="Hủy các dòng đã chọn (giữ lại để tra cứu)"
+                    onClick={() => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel)}>
+                    <X className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang hủy…' : 'Hủy dòng'}
+                  </Button>
+                </>
+              )}
             </span>
           </div>
         )}

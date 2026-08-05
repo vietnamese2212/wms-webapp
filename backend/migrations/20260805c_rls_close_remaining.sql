@@ -27,11 +27,16 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Production LOF CHƯA có StocktakeLog (module Kiểm kê nằm trong đợt chưa merge) → khối này
+-- phải tự bỏ qua khi bảng chưa tồn tại, không thì cả file rollback (SQL Editor = 1 transaction;
+-- lỗi thật LOF báo 05/08: 42P01 relation does not exist). Khi merge main, migration tạo
+-- StocktakeLog đã kèm policy riêng của nó.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies
-                 WHERE schemaname = 'public' AND tablename = 'StocktakeLog'
-                   AND policyname = 'rls_auth_select') THEN
+  IF to_regclass('public."StocktakeLog"') IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM pg_policies
+                     WHERE schemaname = 'public' AND tablename = 'StocktakeLog'
+                       AND policyname = 'rls_auth_select') THEN
     CREATE POLICY rls_auth_select ON public."StocktakeLog"
       FOR SELECT TO authenticated USING (true);
   END IF;

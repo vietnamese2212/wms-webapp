@@ -33,3 +33,26 @@ CREATE TABLE IF NOT EXISTS "StocktakeLog" (
 CREATE INDEX IF NOT EXISTS idx_stocktakelog_wh_at   ON "StocktakeLog" (warehouse_id, counted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stocktakelog_loc_at  ON "StocktakeLog" (location_id, counted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stocktakelog_at      ON "StocktakeLog" (counted_at DESC);
+
+-- ── Bổ sung 05/08 (cảnh báo Supabase rls_disabled_in_public) ─────────────────
+-- Bảng này từng được tạo KHÔNG bật RLS → hở với anon key suốt từ 24/07. Đóng ngay trong
+-- migration TẠO BẢNG (idempotent) để production apply lúc merge là kín luôn, không phụ thuộc
+-- thứ tự với 20260805c. Realtime màn Kiểm kê cần policy đọc cho authenticated + publication
+-- (bật RLS mà thiếu policy = realtime chết CÂM — bài học weigh_ticket/forklift).
+ALTER TABLE "StocktakeLog" ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                 WHERE schemaname = 'public' AND tablename = 'StocktakeLog'
+                   AND policyname = 'rls_auth_select') THEN
+    CREATE POLICY rls_auth_select ON public."StocktakeLog"
+      FOR SELECT TO authenticated USING (true);
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                 WHERE pubname = 'supabase_realtime' AND tablename = 'StocktakeLog') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "StocktakeLog";
+  END IF;
+END $$;

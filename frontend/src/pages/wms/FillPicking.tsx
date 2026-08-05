@@ -376,7 +376,11 @@ function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: 
                       : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono">
-                    {r.to_location?.code ?? (short > 0 ? <span className="text-red-600 font-sans">hết chỗ dưới</span> : <span className="text-slate-300">—</span>)}
+                    {r.to_location?.code ?? (short > 0
+                      ? <span className="text-red-600 font-sans"
+                          title="Không còn vị trí nhặt lẻ trống NHẬN LOẠI KHO của mã này — khai thêm vị trí nhặt lẻ cho loại này ở trang Vị trí kho, hoặc giải phóng chỗ">
+                          hết chỗ nhận loại này</span>
+                      : <span className="text-slate-300">—</span>)}
                   </TableCell>
                 </TableRow>
               )

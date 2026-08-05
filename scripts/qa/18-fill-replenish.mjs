@@ -70,7 +70,8 @@ try {
   // ── Fixture ────────────────────────────────────────────────────────────────
   // Mã fixture phải CÓ Loại kho (category not null) — không thì cụm kiểm 17 (luật Loại kho của
   // vị trí đích) thành vô nghĩa: mã chưa khai loại được phép hạ mọi chỗ theo luật null-inclusive.
-  const catMats = await restAll('Material', 'select=id&category=not.is.null&limit=50')
+  // restAll tự phân trang (đè limit trong filter) → kẹp 50 id ở JS, kẻo in-list 37KB → 414
+  const catMats = (await restAll('Material', 'select=id&category=not.is.null')).slice(0, 50)
   const inList = catMats.map(m => m.id).join(',')
   const anyEntry = (inList
     ? await restAll('InventoryEntry', `select=warehouse_id,material_id&material_id=in.(${inList})&cartons_remaining=gt.0&limit=1`)
@@ -109,6 +110,15 @@ try {
     created.entries.push(row.id)
     return { id: row.id, code: row.pallet_code, qty }
   }
+  // Tồn THẬT của mã ở các vị trí nhặt lẻ thật của kho — đo TRƯỚC khi bơm pallet fixture.
+  // Mã thật có thể đang tồn sẵn cả nghìn base ở đó; nhu cầu phải CỘNG phần này để "thiếu"
+  // của fixture luôn = 100 (đủ để cần pA + pB → kiểm được FEFO + tính vừa-đủ).
+  const pfIdsReal = (await restAll('Location', `select=id&warehouse_id=eq.${whId}&is_pick_face=is.true`))
+    .map(l => l.id).slice(0, 300)
+  const realPF = !pfIdsReal.length ? 0 : (await restAll('InventoryEntry',
+    `select=cartons_remaining,cartons_reserved&material_id=eq.${mat.id}&status=in.(IN_STOCK,PARTIAL,LOOSE_PICKING)&cartons_remaining=gt.0&location_id=in.(${pfIdsReal.join(',')})`))
+    .reduce((s, e) => s + Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0)), 0)
+
   await mkPallet('FILLER', 30, locFull.id, 1)              // lấp đầy vị trí FULL (max = 1)
   const pOnPF = await mkPallet('ONPF', 40, locPF.id, 2)    // ĐANG Ở vị trí nhặt lẻ → là "đang có"
   // Cho locBad CHỨA SẴN mã này: nếu luật Loại kho vắng mặt thì locBad thắng MỌI tiêu chí chọn
@@ -118,8 +128,8 @@ try {
   const pB = await mkPallet('B', 60, locRsv.id, 60)
   const pC = await mkPallet('C', 60, locRsv.id, 30)        // mới nhất — không cần tới
 
-  // Nhu cầu: 1 chuyến, 1 dòng hàng nhặt lẻ 150 base, chưa quét gì
-  const LOOSE = 150
+  // Nhu cầu: thiếu kỳ vọng = LOOSE − (tồn thật + 40 pOnPF + 5 BADSTOCK) = 100
+  const LOOSE = realPF + 45 + 100
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
     id: randomUUID(), group_code: `${TAG}-GDO`, warehouse_id: whId, warehouse_type: mat.category,
     delivery_date: DAY, planned_date: DAY, status: 'PENDING',
@@ -133,7 +143,7 @@ try {
   created.do = dlv.id
   const [item] = await restWrite('OutboundItem', 'POST', null, {
     id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
-    cartons_ordered: 400, cartons_scanned: 0, loose_picking: LOOSE, status: 'PENDING',
+    cartons_ordered: LOOSE + 250, cartons_scanned: 0, loose_picking: LOOSE, status: 'PENDING',
     created_at: nowIso(), updated_at: nowIso(),
   })
   created.items.push(item.id)

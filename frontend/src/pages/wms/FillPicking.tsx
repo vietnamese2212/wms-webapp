@@ -95,6 +95,13 @@ export default function FillPicking() {
   const canAssign  = can(perms, 'fill', 'assign')
   const canExecute = can(perms, 'fill', 'execute')
 
+  // Công nhân (không có quyền lập kế hoạch) mở trang = vào THẲNG tab Lệnh fill — việc của họ
+  // nằm ở đó (vị trí lấy/hạ + nút quét); tab Đề xuất là màn của người lập kế hoạch.
+  useEffect(() => {
+    if (perms && !canPlan && f.tab === 'demand') setFill({ tab: 'tasks' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canPlan])
+
   const [dense, setDense] = useState(() => localStorage.getItem('fill_density') !== 'comfortable')
   const toggleDensity = () =>
     setDense(d => { localStorage.setItem('fill_density', d ? 'comfortable' : 'compact'); return !d })
@@ -585,7 +592,74 @@ function OrdersTab({ warehouseId, dense, canPlan, canExecute, onScan }: {
       ]} />
       {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
+      {/* Mobile: chuyển nhanh "Việc của tôi" — công nhân không phải mở sheet lọc */}
+      <div className="sm:hidden px-3 pt-2 flex gap-1.5 shrink-0">
+        {[{ v: false, label: 'Tất cả' }, { v: true, label: 'Việc của tôi' }].map(t => (
+          <button key={t.label} type="button"
+            onClick={() => setFill({ mine: t.v, page: 1 })}
+            className={`h-9 px-3 rounded-full text-[11px] font-medium border ${f.mine === t.v
+              ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {/* MOBILE = THẺ VIỆC (user chốt 05/08: "thông tin và thao tác ở VỊ TRÍ NÀO phải hiện
+            ngay view đầu tiên") — vị trí LẤY → VỀ chữ to, nút Quét ngay trên thẻ; bảng đầy đủ
+            cột giữ nguyên cho desktop từ breakpoint sm. */}
+        <div className="sm:hidden divide-y divide-slate-100">
+          {isLoading ? (
+            <p className="text-center py-8 text-xs text-slate-400">Đang tải…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-center py-8 text-xs text-slate-400">Chưa có lệnh fill nào khớp bộ lọc</p>
+          ) : rows.map(o => {
+            const prog = o.pallets_req > 0 ? Math.min(100, Math.round(o.pallets_done * 100 / o.pallets_req)) : 0
+            return (
+              <div key={o.id} className="px-3 py-2.5 active:bg-slate-50"
+                onClick={() => navigate(`/wms/fill/orders/${o.id}`)}>
+                <div className="flex items-center gap-2">
+                  <span className={`font-mono text-xs font-bold ${fillRowText(o.status) || 'text-slate-800'}`}>{o.order_code}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[o.status]}`}>{FILL_STATUS_LABEL[o.status]}</span>
+                  <span className="text-[10px] text-slate-400">{formatTimestampDate(o.target_date, true)}</span>
+                  <span className="ml-auto text-[11px] tabular-nums font-semibold">{nf(o.pallets_done)}/{nf(o.pallets_req)} pl</span>
+                </div>
+                {o.status === 'PENDING' && (
+                  <div className="mt-1.5 space-y-0.5">
+                    <p className="text-[13px] font-mono font-semibold text-slate-800 truncate" title={o.src_hints ?? ''}>
+                      <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">LẤY</span>
+                      {o.src_hints ?? '—'}
+                    </p>
+                    <p className="text-[13px] font-mono font-semibold text-sky-700 truncate" title={o.dest_codes ?? ''}>
+                      <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">VỀ</span>
+                      {o.dest_codes ?? '—'}
+                    </p>
+                  </div>
+                )}
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 truncate flex-1" title={o.mat_codes ?? ''}>{o.mat_codes ?? '—'}</span>
+                  <span className="text-[10px] text-slate-500 truncate max-w-[35%]" title={o.assignees ?? ''}>
+                    {o.assignees ?? 'chưa giao'}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 rounded-full bg-slate-200 overflow-hidden">
+                    <div className={`h-full ${prog >= 100 ? 'bg-green-500' : prog > 0 ? 'bg-amber-500' : 'bg-slate-300'}`}
+                      style={{ width: `${prog}%` }} />
+                  </div>
+                  <span className="text-[10px] tabular-nums font-semibold">{prog}%</span>
+                  {o.status === 'PENDING' && canExecute && (
+                    <Button size="sm" className="h-9 text-[11px] shrink-0"
+                      onClick={e => { e.stopPropagation(); onScan(o.id) }}>
+                      <QrCode className="h-3.5 w-3.5 mr-1" /> Quét
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="hidden sm:block">
         <Table className={`table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden ${dense ? '' : '[&_td]:py-2.5'}`}
           style={{ width: totalWidth, minWidth: '100%' }}>
           <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
@@ -669,6 +743,7 @@ function OrdersTab({ warehouseId, dense, canPlan, canExecute, onScan }: {
             })}
           </TableBody>
         </Table>
+        </div>
       </div>
       <PagerNav page={f.page} totalPages={totalPages} onPage={p => setFill({ page: p })} />
       <ListFooter page={f.page} pageSize={f.pageSize} total={total} unit="lệnh"

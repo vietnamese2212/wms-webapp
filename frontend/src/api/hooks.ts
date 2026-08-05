@@ -3699,6 +3699,7 @@ export interface FillOrderRow {
   pallets_req: number; pallets_done: number
   qty_req_entry: number; qty_done_entry: number
   assignees: string | null; mat_codes: string | null; mat_names: string | null
+  src_hints: string | null; dest_codes: string | null   // vị trí LẤY / VỀ của việc còn treo (card mobile)
 }
 export interface FillOrdersData {
   rows: FillOrderRow[]; total: number

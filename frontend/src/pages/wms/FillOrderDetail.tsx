@@ -184,6 +184,57 @@ export default function FillOrderDetail() {
         {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
 
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+          {/* MOBILE = THẺ per dòng (user chốt 05/08): VỊ TRÍ LẤY → VỀ chữ to ngay view đầu,
+              tick chọn để dùng thanh action; bảng đầy đủ cột giữ cho desktop từ sm. */}
+          <div className="sm:hidden divide-y divide-slate-100">
+            {lines.length === 0 ? (
+              <p className="text-center py-8 text-xs text-slate-400">Lệnh không có dòng nào</p>
+            ) : lines.map(l => {
+              const picked = sel.has(l.id)
+              return (
+                <div key={l.id} className={`px-3 py-2.5 ${picked ? 'bg-sky-50' : ''}`}
+                  onClick={() => {
+                    if (!(canAssign || canPlan) || l.status !== 'PENDING') return
+                    setSel(prev => {
+                      const n = new Set(prev)
+                      if (n.has(l.id)) n.delete(l.id); else n.add(l.id)
+                      return n
+                    })
+                  }}>
+                  <div className="flex items-center gap-2">
+                    {(canAssign || canPlan) && l.status === 'PENDING' && (
+                      <input type="checkbox" readOnly checked={picked} className="h-4 w-4 shrink-0" />
+                    )}
+                    <span className={`font-mono text-xs font-bold ${fillRowText(l.status) || 'text-slate-800'}`}>{l.material_code}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[l.status]}`}>{FILL_STATUS_LABEL[l.status]}</span>
+                    <span className="ml-auto"><RequiredDateBadge line={l} /></span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 truncate mt-0.5" title={l.material_name ?? ''}>{l.material_name ?? '—'}</p>
+                  {l.status !== 'CANCELLED' && (
+                    <div className="mt-1 space-y-0.5">
+                      <p className="text-[13px] font-mono font-semibold text-slate-800 truncate" title={l.from_location_code ?? ''}>
+                        <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">LẤY</span>
+                        {l.from_location_code ?? '—'}
+                      </p>
+                      <p className="text-[13px] font-mono font-semibold text-sky-700 truncate" title={l.to_location_code ?? ''}>
+                        <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">VỀ</span>
+                        {l.to_location_code ?? '—'}
+                      </p>
+                    </div>
+                  )}
+                  <div className="mt-1 flex items-center gap-2 text-[11px]">
+                    <span className="font-semibold tabular-nums">{qtyLabel(Number(l.qty_base), l)}</span>
+                    <span className="text-slate-400">·</span>
+                    <span className="tabular-nums">{l.scanned_pallets}/{l.required_pallets} pl</span>
+                    <span className="ml-auto text-[10px] text-slate-500 truncate max-w-[40%]" title={l.assignee_name ?? ''}>
+                      {l.done_at ? `✓ ${l.done_by_name ?? ''}` : (l.assignee_name ?? 'chưa giao')}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="hidden sm:block">
           <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
             style={{ width: totalWidth, minWidth: '100%' }}>
             <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
@@ -254,6 +305,7 @@ export default function FillOrderDetail() {
               })}
             </TableBody>
           </Table>
+          </div>
 
           {/* Vết quét — pallet nào đã thật sự hạ, ai quét, lúc nào */}
           <div className="mt-3">

@@ -238,19 +238,21 @@ try {
   check('4d. Danh sách lệnh gom: 1 dòng mã, 1 pallet cần', ordList.s === 200 && ordRow?.lines_n === 1 && Number(ordRow?.pallets_req) === 1,
     `lines=${ordRow?.lines_n} pallets_req=${ordRow?.pallets_req}`)
 
-  // ── 5. ĐUA: 2 người cùng ra lệnh MỘT (mã, date) ───────────────────────────
+  // ── 5. ĐUA: 2 người cùng ra lệnh MỘT (mã, date) — từ 05/08 người thua CỘNG DỒN (đơn phát sinh) ──
   const [r1, r2] = await Promise.all([
     mkOrder([{ required_date: pB.date, to_location_id: locPF.id }]),
     mkOrder([{ required_date: pB.date, to_location_id: locPF.id }]),
   ])
   const pendB = await restAll('FillTask',
-    `select=id&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}&required_date=eq.${pB.date}&status=eq.PENDING`)
+    `select=id,qty_base&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}&required_date=eq.${pB.date}&status=eq.PENDING`)
   const nCreated = (r1.j?.data?.created ?? 0) + (r2.j?.data?.created ?? 0)
   const nSkipped = (r1.j?.data?.skipped?.length ?? 0) + (r2.j?.data?.skipped?.length ?? 0)
+  const nMerged = (r1.j?.data?.merged?.length ?? 0) + (r2.j?.data?.merged?.length ?? 0)
   check('5a. Hai người cùng ra lệnh 1 (mã,date) → đúng 1 dòng treo', pendB.length === 1,
     `dòng treo=${pendB.length} created=${nCreated}`)
-  check('5b. Người thua được báo rõ (không nuốt lỗi)', nSkipped === 1 && nCreated === 1,
-    `skipped=${nSkipped}`)
+  check('5b. Người thua CỘNG DỒN vào dòng người thắng (không nuốt, không đôi lệnh)',
+    nCreated === 1 && nMerged === 1 && nSkipped === 0 && Number(pendB[0]?.qty_base) === 120,
+    `created=${nCreated} merged=${nMerged} skipped=${nSkipped} qty=${pendB[0]?.qty_base}`)
 
   // ── 6. Quét SAI DATE → chặn + nói rõ date yêu cầu ─────────────────────────
   const scanWrong = await scan(pC.code, { commit: true })
@@ -315,8 +317,9 @@ try {
   const pendDrop = Number(dBefore.row?.pending_base) - Number(dAfter.row?.pending_base)
   const shortExp = Math.max(0, Number(dAfter.row?.demand_base) - Number(dAfter.row?.pick_face_base) - Number(dAfter.row?.pending_base))
   const [orderB] = await restAll('FillOrder', `select=status&id=eq.${lineB.fill_order_id}`)
-  check('11a. Hủy dòng → NHẢ đúng lượng đang giữ', del.s === 200 && pendDrop === 60,
-    `treo ${dBefore.row?.pending_base} → ${dAfter.row?.pending_base} (giảm ${pendDrop}, kỳ vọng 60)`)
+  // Kỳ vọng = qty THẬT của dòng lúc hủy (đua cụm 5 đã cộng dồn thành 120 — đừng hard-code 60)
+  check('11a. Hủy dòng → NHẢ đúng lượng đang giữ', del.s === 200 && pendDrop === Number(lineB.qty_base),
+    `treo ${dBefore.row?.pending_base} → ${dAfter.row?.pending_base} (giảm ${pendDrop}, kỳ vọng ${lineB.qty_base})`)
   check('11b. Sau khi hủy, phép trừ vẫn khớp (thiếu = cần − có − treo, kẹp sàn 0)',
     Number(dAfter.row?.short_base) === shortExp, `thiếu=${dAfter.row?.short_base} kỳ vọng=${shortExp}`)
   check('11c. Lệnh 1-dòng rollup CANCELLED khi dòng cuối bị hủy', orderB?.status === 'CANCELLED',

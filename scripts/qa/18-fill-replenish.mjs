@@ -483,6 +483,31 @@ try {
   check('20b. Commit → RPC hạ pallet chưa-gán-vị-trí về đúng vị trí nhặt lẻ',
     cm20.s === 200 && ent20?.location_id === locPF20.id,
     `http=${cm20.s} code=${cm20.j?.error?.code ?? 'OK'} loc=${ent20?.location_id === locPF20.id ? 'PF20' : ent20?.location_id}`)
+
+  // ── 21. ĐƠN PHÁT SINH — ra lệnh trùng (mã,date) đang treo = CỘNG DỒN vào dòng cũ ──
+  const mk21a = await mkOrder([{ required_date: pB.date, to_location_id: locPF.id }])
+  const mk21b = await mkOrder([{ required_date: pB.date, to_location_id: locPF.id }])
+  const m21 = (mk21b.j?.data?.merged ?? [])[0]
+  const line21 = await lineOf(pB.date)
+  check('21a. Lệnh trùng (mã,date) → created=0 + merged trỏ đúng lệnh cũ, dòng cộng dồn 60→120',
+    mk21a.s === 201 && mk21b.s === 201 && mk21b.j?.data?.created === 0
+      && m21?.order_code === mk21a.j?.data?.order_code
+      && Number(line21?.qty_base) === 120 && line21?.required_pallets === 2,
+    `created=${mk21b.j?.data?.created} merged→${m21?.order_code} (kỳ vọng ${mk21a.j?.data?.order_code}) qty=${line21?.qty_base} pl=${line21?.required_pallets}`)
+
+  // 5 người cùng lúc ra lệnh trùng — cộng dồn NGUYÊN TỬ: đủ đúng 5×60, vẫn đúng 1 dòng treo, 0 lệnh vỏ
+  const race21 = await Promise.all(Array.from({ length: 5 }, () =>
+    mkOrder([{ required_date: pB.date, to_location_id: locPF.id }])))
+  const line21r = await lineOf(pB.date)
+  const dupPending = (await restAll('FillTask',
+    `select=id&warehouse_id=eq.${whId}&target_date=eq.${DAY}&material_id=eq.${mat.id}&required_date=eq.${pB.date}&status=eq.PENDING`)).length
+  const emptyOrders = (await restAll('FillOrder',
+    `select=id,FillTask(id)&warehouse_id=eq.${whId}&target_date=eq.${DAY}`))
+    .filter(o => !(o.FillTask ?? []).length).length
+  check('21b. 5 người cùng cộng dồn → đủ đúng 120+300=420 / 7 pallet, 1 dòng treo, 0 lệnh vỏ',
+    race21.every(r => r.s === 201) && Number(line21r?.qty_base) === 420 && line21r?.required_pallets === 7
+      && dupPending === 1 && emptyOrders === 0,
+    `qty=${line21r?.qty_base} pl=${line21r?.required_pallets} pending=${dupPending} vỏ=${emptyOrders}`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)

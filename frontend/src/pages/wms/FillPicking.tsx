@@ -25,7 +25,7 @@ import { AssigneePicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText } fro
 import {
   useWarehouses, useFillDemand, useFillCandidates, useFillOrders, useFillReport,
   useCreateFillOrder, useCancelFillOrder,
-  type FillDemandRow, type FillOrderRow, type FillOrderSkipped,
+  type FillDemandRow, type FillOrderRow, type FillOrderSkipped, type FillOrderMerged,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -254,7 +254,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignee, setAssignee] = useState('')
   const [err, setErr] = useState('')
-  const [result, setResult] = useState<{ created: number; order_code?: string; skipped: FillOrderSkipped[] } | null>(null)
+  const [result, setResult] = useState<{ created: number; order_code?: string; skipped: FillOrderSkipped[]; merged?: FillOrderMerged[] } | null>(null)
   // Dialog "Đổi date": user chỉ chọn DATE — hệ thống chỉ định lại pallet/vị trí theo date đó
   const [dateRow, setDateRow] = useState<FillDemandRow | null>(null)
   // Bản chỉ định GHI ĐÈ per mã (user đã đổi date). Không có = mặc định FEFO của RPC.
@@ -381,7 +381,21 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         <div className="mx-3 mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-[11px] text-green-800">
           {result.created > 0
             ? <>Đã tạo lệnh <b className="font-mono">{result.order_code}</b> với <b>{result.created}</b> dòng mã — xem tab <b>Lệnh fill</b>.</>
-            : <>Không tạo được dòng nào.</>}
+            : (result.merged?.length ? <>Không tạo lệnh mới — toàn bộ đã CỘNG DỒN vào lệnh đang treo.</> : <>Không tạo được dòng nào.</>)}
+          {(result.merged?.length ?? 0) > 0 && (
+            <div className="mt-1 text-sky-800">
+              {result.merged!.length} dòng CỘNG DỒN vào lệnh đang treo (đơn phát sinh):
+              <ul className="list-disc ml-4">
+                {result.merged!.slice(0, 6).map((m, i) => (
+                  <li key={i}>
+                    {m.material_code}{m.required_date ? ` (NSX ${formatDate(m.required_date)})` : ''} — +{m.added_pallets} pallet
+                    {m.order_code && <> vào lệnh <b className="font-mono">{m.order_code}</b></>}
+                  </li>
+                ))}
+                {result.merged!.length > 6 && <li>… và {result.merged!.length - 6} dòng khác</li>}
+              </ul>
+            </div>
+          )}
           {result.skipped.length > 0 && (
             <div className="mt-1 text-amber-700">
               {result.skipped.length} dòng bị bỏ qua:

@@ -3796,6 +3796,11 @@ const invalidateFill = (qc: ReturnType<typeof useQueryClient>) => {
 }
 
 export interface FillOrderSkipped { material_code?: string; required_date?: string | null; reason: string }
+// Đơn phát sinh: dòng trùng (mã, date) với dòng đang treo → BE CỘNG DỒN vào dòng cũ (05/08)
+export interface FillOrderMerged {
+  material_code: string; required_date: string | null
+  added_qty: number; added_pallets: number; order_code: string | null
+}
 export function useCreateFillOrder() {
   const qc = useQueryClient()
   return useMutation({
@@ -3807,7 +3812,7 @@ export function useCreateFillOrder() {
         qty_base: number; required_pallets: number; src_hint?: string; to_location_id?: string
       }[]
     }) => apiClient.post('/wms/fill/orders', body)
-      .then(r => r.data.data as { created: number; skipped: FillOrderSkipped[]; order_id?: string; order_code?: string }),
+      .then(r => r.data.data as { created: number; skipped: FillOrderSkipped[]; merged: FillOrderMerged[]; order_id?: string; order_code?: string }),
     onSettled: () => invalidateFill(qc),
   })
 }

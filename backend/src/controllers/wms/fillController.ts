@@ -355,29 +355,65 @@ export async function createFillOrder(req: Request, res: Response) {
     if (!order) return fail(res, 409, 'CONFLICT', 'Không sinh được mã lệnh — thử lại giúp')
     for (const r of rows) r.fill_order_id = order.id
 
-    // Ghi theo LÔ; đụng unique (mã+date này vừa có người khác ra lệnh) → rơi xuống từng dòng
-    // để chỉ đúng dòng hỏng thay vì bỏ cả mẻ.
+    // Ghi theo LÔ; đụng unique (mã+date này ĐANG có dòng treo) → rơi xuống từng dòng, và dòng
+    // trùng thì CỘNG DỒN vào dòng treo (đơn phát sinh — user chốt 05/08) qua RPC nguyên tử
+    // fill_task_topup (qty = qty + delta dưới lock, không đọc-rồi-ghi). RPC trả NULL = dòng vừa
+    // DONE/hủy giữa chừng → unique đã nhả, thử INSERT lại (tối đa 3 vòng, có jitter).
     let created = 0
+    const merged: { material_code: string; required_date: string | null; added_qty: number
+      added_pallets: number; fill_order_id: string | null }[] = []
     for (let i = 0; i < rows.length; i += 500) {
       const batch = rows.slice(i, i + 500)
       const { error } = await supabase.from('FillTask').insert(batch)
       if (!error) { created += batch.length; continue }
       for (const r of batch) {
-        const { error: e1 } = await supabase.from('FillTask').insert(r)
-        if (!e1) { created++; continue }
-        skipped.push({
-          material_code: r.material_code as string, required_date: r.required_date as string | null,
-          reason: (e1 as { code?: string }).code === '23505'
-            ? 'Mã này (date này) vừa có người khác ra lệnh — xem tab Lệnh fill' : 'Không ghi được dòng lệnh',
-        })
+        let settled = false
+        for (let attempt = 0; attempt < 3 && !settled; attempt++) {
+          const { error: e1 } = await supabase.from('FillTask').insert(r)
+          if (!e1) { created++; settled = true; break }
+          if ((e1 as { code?: string }).code !== '23505') {
+            skipped.push({ material_code: r.material_code as string,
+              required_date: r.required_date as string | null, reason: 'Không ghi được dòng lệnh' })
+            settled = true; break
+          }
+          const { data: tp } = await supabase.rpc('fill_task_topup', {
+            p_warehouse_id: warehouse_id, p_target_date: day, p_material_id: r.material_id,
+            p_required_date: r.required_date, p_add_qty: r.qty_base,
+            p_add_pallets: r.required_pallets, p_now: t,
+          })
+          if (tp) {
+            merged.push({ material_code: r.material_code as string,
+              required_date: r.required_date as string | null,
+              added_qty: Number(r.qty_base), added_pallets: Number(r.required_pallets),
+              fill_order_id: (tp as { fill_order_id?: string }).fill_order_id ?? null })
+            settled = true; break
+          }
+          await new Promise(rs => setTimeout(rs, 80 + Math.random() * 200))
+        }
+        if (!settled) skipped.push({ material_code: r.material_code as string,
+          required_date: r.required_date as string | null,
+          reason: 'Đụng độ liên tục với lệnh khác — thử lại giúp' })
       }
     }
-    if (!created) {   // lệnh rỗng thì đừng để lại vỏ
+    // Nhãn lệnh đích cho các dòng đã cộng dồn (để user biết mở lệnh nào)
+    const mergedOrderIds = [...new Set(merged.map(m => m.fill_order_id).filter(Boolean))] as string[]
+    const codeOf = new Map<string, string>()
+    if (mergedOrderIds.length) {
+      const { data: ords } = await supabase.from('FillOrder')
+        .select('id, order_code').in('id', mergedOrderIds.slice(0, 300))
+      for (const o of ords ?? []) codeOf.set(o.id as string, o.order_code as string)
+    }
+    const mergedOut = merged.map(m => ({
+      material_code: m.material_code, required_date: m.required_date,
+      added_qty: m.added_qty, added_pallets: m.added_pallets,
+      order_code: m.fill_order_id ? codeOf.get(m.fill_order_id) ?? null : null,
+    }))
+    if (!created) {   // lệnh rỗng thì đừng để lại vỏ (dòng cộng dồn nằm ở lệnh CŨ)
       await supabase.from('FillOrder').delete().eq('id', order.id)
-      return res.status(201).json({ success: true, data: { created: 0, skipped } })
+      return res.status(201).json({ success: true, data: { created: 0, skipped, merged: mergedOut } })
     }
     return res.status(201).json({ success: true, data: {
-      created, skipped, order_id: order.id, order_code: order.order_code,
+      created, skipped, merged: mergedOut, order_id: order.id, order_code: order.order_code,
     } })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

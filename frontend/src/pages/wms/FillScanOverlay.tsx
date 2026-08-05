@@ -1,7 +1,8 @@
 // Màn QUÉT THỰC HIỆN lệnh fill (v3 05/08) — flow CONFIRM theo skill qr-scan-flow:
 // quét tem pallet → BE khớp DÒNG LỆNH theo MÃ + DATE (không ghim tem cụ thể) → card soi:
 // date yêu cầu (%Date), SL trên pallet, VỊ TRÍ ĐẾN (ĐỔI ĐƯỢC ngay tại đây — user chốt 05/08)
-// → "Xác nhận hạ" chạy RPC nguyên tử → beep + card xanh → camera chạy lại sau 1,5s.
+// → "Xác nhận hạ" chạy RPC nguyên tử → beep + card xanh; camera ĐỨNG YÊN (user chốt 05/08:
+// KHÔNG auto-resume — hạ xong còn chạy xe nâng), bấm "Quét tiếp" trên card mới chạy tiếp.
 // Lỗi (không có lệnh / sai date / hàng block / đích đầy / lệnh của người khác) → banner đỏ;
 // riêng đích đầy GIỮ NGUYÊN card để đổi vị trí đến rồi xác nhận lại (không ngõ cụt).
 // Mount 1 lần, CSS hidden khi đóng; camera TẮT HẲN khi đóng (`active={open}` — user bắt 05/08:
@@ -121,7 +122,8 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
         setPrev(null)
         setCount(c => c + 1)
         invalidate()
-        setTimeout(() => scannerRef.current?.resume(), 1500)
+        // KHÔNG auto-resume camera (user chốt 05/08 — module này hạ pallet xong còn phải chạy xe
+        // nâng, camera tự bật lại chỉ tốn pin): đứng yên ở card kết quả, bấm "Quét tiếp" mới chạy.
       })
       .catch((e: unknown) => {
         const code = errOf(e)?.code
@@ -246,19 +248,28 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
           </div>
         )}
         {!err && !prev && last && (
-          <div className="rounded-lg bg-green-600 text-white px-3 py-2">
-            <p className="text-[11px]">
-              <span className="font-mono font-semibold">{last.task.material_code}</span>
-              {last.task.material_name ? ` ${last.task.material_name}` : ''}
-              {' · đã hạ '}{qtyLabel(Number(last.scanned_qty ?? 0), last.task)}
-            </p>
-            <p className="text-base font-bold leading-tight">
-              → {last.task.to_location_code ?? '—'}
-              {last.done && <span className="text-[11px] font-normal text-white/90"> · dòng lệnh HOÀN THÀNH</span>}
-            </p>
-            <p className="text-[10px] text-white/80 mt-0.5">
-              Tiến độ dòng: {last.task.scanned_pallets}/{last.task.required_pallets} pallet
-            </p>
+          <div className="rounded-lg bg-green-600 text-white px-3 py-2 flex items-end gap-2 flex-wrap">
+            <div className="flex-1 min-w-[160px]">
+              <p className="text-[11px]">
+                <span className="font-mono font-semibold">{last.task.material_code}</span>
+                {last.task.material_name ? ` ${last.task.material_name}` : ''}
+                {' · đã hạ '}{qtyLabel(Number(last.scanned_qty ?? 0), last.task)}
+              </p>
+              <p className="text-base font-bold leading-tight">
+                → {last.task.to_location_code ?? '—'}
+                {last.done && <span className="text-[11px] font-normal text-white/90"> · dòng lệnh HOÀN THÀNH</span>}
+              </p>
+              <p className="text-[10px] text-white/80 mt-0.5">
+                Tiến độ dòng: {last.task.scanned_pallets}/{last.task.required_pallets} pallet
+              </p>
+            </div>
+            {/* KHÔNG auto-resume — camera đứng yên tới khi chủ động quét tiếp (súng: cứ bóp cò) */}
+            {!gunMode && (
+              <Button size="sm" className="h-9 text-[11px] bg-white text-green-700 hover:bg-green-50 shrink-0"
+                onClick={() => { setLast(null); scannerRef.current?.resume() }}>
+                Quét tiếp
+              </Button>
+            )}
           </div>
         )}
         {!err && !prev && !last && (

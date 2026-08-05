@@ -445,8 +445,8 @@ try {
     `kho ${servable18 ? 'CÓ' : 'KHÔNG có'} chỗ nhận '__QANOPF__' → dòng ${row18 ? 'CÓ' : 'KHÔNG'} trong Đề xuất`)
 
   // ── 19. fill_candidates — nguồn ngoài nhặt lẻ, FEFO, v3 KHÔNG loại theo lệnh treo ──
-  // pA đã hạ xuống locPF (phải VẮNG); pB/pC tự do ở tầng trên (phải CÓ — kể cả khi có lệnh
-  // treo, vì lệnh v3 không ghim pallet).
+  // pA (cụm 9) và pC (cụm 12) đã hạ xuống locPF → phải VẮNG; pB còn tự do ở tầng trên
+  // (phải CÓ — kể cả khi có lệnh treo, vì lệnh v3 không ghim pallet).
   const mk19 = await mkOrder([{ required_date: pB.date, to_location_id: locPF.id }])
   const cand19 = await api(`/wms/fill/candidates?warehouse_id=${whId}&material_id=${mat.id}`)
   const cRows = cand19.j?.data?.rows ?? []
@@ -456,10 +456,10 @@ try {
   const nonNull = keys19.filter(Boolean)
   const fefoSorted = JSON.stringify(nonNull) === JSON.stringify([...nonNull].sort())
     && (firstNull === -1 || keys19.slice(firstNull).every(k => !k))
-  check('19a. Candidates: có pallet tự do tầng trên, VẮNG pallet đang ở vị trí nhặt lẻ, xếp FEFO',
-    cand19.s === 200 && cIds.has(pC.id) && !cIds.has(pOnPF.id) && !cIds.has(pA.id)
+  check('19a. Candidates: có pallet tự do tầng trên, VẮNG mọi pallet đang ở vị trí nhặt lẻ, xếp FEFO',
+    cand19.s === 200 && cIds.has(pB.id) && !cIds.has(pOnPF.id) && !cIds.has(pA.id) && !cIds.has(pC.id)
       && cRows.every(c => 'production_date' in c) && fefoSorted,
-    `n=${cRows.length} FEFO=${fefoSorted}`)
+    `n=${cRows.length} FEFO=${fefoSorted} pB=${cIds.has(pB.id)} pA/pC vắng=${!cIds.has(pA.id) && !cIds.has(pC.id)}`)
   check('19b. v3: pallet vẫn xuất hiện dù (mã,date) đang có lệnh treo (lệnh không ghim tem)',
     mk19.s === 201 && cIds.has(pB.id), `pB trong danh sách=${cIds.has(pB.id)}`)
   const line19 = await lineOf(pB.date)

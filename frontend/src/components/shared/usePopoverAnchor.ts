@@ -43,17 +43,32 @@ export function usePopoverAnchor(
       const spaceBelow = boxBottom - r.bottom
       const spaceAbove = r.top - boxTop
       const dropUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
-      const maxHeight = Math.max(120, Math.min(estimatedHeight, (dropUp ? spaceAbove : spaceBelow) - 8))
+      const side = dropUp ? spaceAbove : spaceBelow
+      const maxHeight = Math.max(120, Math.min(estimatedHeight, side - 8))
 
       let style: CSSProperties
       if (dialog && d) {
-        // absolute neo theo hộp dialog (dialog là positioned ancestor) → không phụ thuộc transform
-        style = {
-          position: 'absolute',
-          left: r.left - d.left,
-          width: r.width,
-          maxHeight,
-          ...(dropUp ? { bottom: d.bottom - r.top + 4 } : { top: r.bottom - d.top + 4 }),
+        if (side < 140) {
+          // Hộp dialog QUÁ THẤP (vd dialog xác nhận nhỏ) — không phía nào đủ chỗ, mà thò ra
+          // ngoài hộp là bị overflow của DialogContent CẮT (đo thật 05/08: menu "Giao cho"
+          // hụt 36px). Cách duy nhất còn lại: menu PHỦ LÊN trong lòng hộp, cao tối đa gần
+          // bằng hộp — che trigger nhưng dùng được trọn danh sách.
+          style = {
+            position: 'absolute',
+            left: r.left - d.left,
+            width: r.width,
+            top: boxTop - d.top + 8,
+            maxHeight: boxBottom - boxTop - 16,
+          }
+        } else {
+          // absolute neo theo hộp dialog (dialog là positioned ancestor) → không phụ thuộc transform
+          style = {
+            position: 'absolute',
+            left: r.left - d.left,
+            width: r.width,
+            maxHeight,
+            ...(dropUp ? { bottom: d.bottom - r.top + 4 } : { top: r.bottom - d.top + 4 }),
+          }
         }
       } else {
         style = {

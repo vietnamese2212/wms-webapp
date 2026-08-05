@@ -14,6 +14,8 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { FillScanOverlay } from './FillScanOverlay'
 import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
 import { useFillOrder, useUpdateFillTask, useCancelFillTask, useCancelFillOrder, type FillTaskRow } from '@/api/hooks'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { unlockAudio } from '@/utils/audio'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
@@ -67,6 +69,7 @@ export default function FillOrderDetail() {
   const [busy, setBusy] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
   const [scanMounted, setScanMounted] = useState(false)
+  const [pdaScan, setPdaScan] = useState<string | null>(null)
 
   const order = data?.order
   const lines = useMemo(() => data?.lines ?? [], [data])
@@ -75,6 +78,17 @@ export default function FillOrderDetail() {
   const pendingSel = selLines.filter(l => l.status === 'PENDING')
   const selectable = lines.filter(l => l.status === 'PENDING')
   const allSel = selectable.length > 0 && selectable.every(l => sel.has(l.id))
+
+  // PDA: bóp cò NGAY TẠI TRANG chi tiết → mở màn quét chế độ SÚNG (không bật camera) + xử lý
+  // luôn tem vừa bắn — quét giới hạn trong lệnh này (đồng bộ chuẩn Outbound, user nhắc 05/08)
+  useWedgeScanner(code => {
+    if (scanOpen || !canExecute || !order || order.status !== 'PENDING') return
+    if (dlg || busy) return
+    unlockAudio()
+    setPdaScan(code)
+    setScanMounted(true)
+    setScanOpen(true)
+  }, true)
 
   const tot = useMemo(() => {
     let req = 0, done = 0, plReq = 0, plDone = 0
@@ -409,7 +423,8 @@ export default function FillOrderDetail() {
 
       {scanMounted && (
         <FillScanOverlay warehouseId={order.warehouse_id} orderId={order.id} open={scanOpen}
-          canAssign={canAssign} onClose={() => setScanOpen(false)} />
+          canAssign={canAssign} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setScanOpen(false); setPdaScan(null) }} />
       )}
     </div>
   )

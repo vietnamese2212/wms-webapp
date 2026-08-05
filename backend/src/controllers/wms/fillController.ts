@@ -495,21 +495,34 @@ export async function scanFill(req: Request, res: Response) {
     if (!guardWarehouse(req, res, warehouse_id)) return
 
     const code = normalizeQR(String(qr))
-    // Pallet theo tem (kho QTY có thể nhiều dòng cùng pallet_code — lấy hết rồi lọc)
+    // Pallet theo tem (kho QTY có thể nhiều dòng cùng pallet_code — lấy hết rồi lọc).
+    // Lọc KHO bằng cột warehouse_id TRỰC TIẾP của entry (luật CLAUDE.md) — bản cũ suy kho qua join
+    // Location nên pallet CHƯA GÁN VỊ TRÍ (location_id null, phổ biến sau quét nhập) bị chối oan
+    // "không tìm thấy trong kho" (user báo 05/08).
     type LocEmb = { warehouse_id: string | null; is_pick_face: boolean | null; location_code: string | null }
     type ScanEntry = {
       id: string; pallet_code: string; material_id: string; location_id: string | null
+      warehouse_id: string | null
       status: string; cartons_remaining: number; cartons_reserved: number | null
       production_date: string | null; expiry_date: string | null; shelf_life_days: number | null
       location: LocEmb | LocEmb[] | null
     }
     const { data: entRaw } = await supabase.from('InventoryEntry')
-      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_reserved, production_date, expiry_date, shelf_life_days, location:Location!location_id(warehouse_id, is_pick_face, location_code)')
+      .select('id, pallet_code, material_id, location_id, warehouse_id, status, cartons_remaining, cartons_reserved, production_date, expiry_date, shelf_life_days, location:Location!location_id(warehouse_id, is_pick_face, location_code)')
       .eq('pallet_code', code).limit(50)
-    const ents = ((entRaw ?? []) as unknown as ScanEntry[])
+    const all = ((entRaw ?? []) as unknown as ScanEntry[])
       .map(r => ({ ...r, loc: Array.isArray(r.location) ? r.location[0] : r.location }))
-      .filter(r => r.loc?.warehouse_id === warehouse_id)
-    if (!ents.length) return fail(res, 404, 'PALLET_NOT_FOUND', 'Không tìm thấy pallet này trong kho')
+    if (!all.length) return fail(res, 404, 'PALLET_NOT_FOUND', 'Không tìm thấy pallet này trong tồn kho — kiểm tra lại tem')
+    const whOf = (r: (typeof all)[number]) => r.loc?.warehouse_id ?? r.warehouse_id
+    const ents = all.filter(r => whOf(r) === warehouse_id)
+    if (!ents.length) {
+      // Pallet CÓ tồn nhưng ở kho khác — nói rõ để user biết đang chọn nhầm kho (không nói "không có tồn")
+      const otherWh = [...new Set(all.map(whOf).filter(Boolean))] as string[]
+      const { data: whs } = await supabase.from('Warehouse').select('name').in('id', otherWh.slice(0, 5))
+      const names = (whs ?? []).map(w => w.name as string).join(', ')
+      return fail(res, 409, 'WRONG_WAREHOUSE',
+        `Pallet đang ở kho ${names || 'khác'} — màn quét đang chọn kho khác. Đổi kho rồi quét lại.`)
+    }
 
     const avail = (e: Record<string, unknown>) =>
       Math.max(0, Number(e.cartons_remaining) - Number(e.cartons_reserved ?? 0))
@@ -517,7 +530,11 @@ export async function scanFill(req: Request, res: Response) {
     if (!usable.length) {
       if (ents.some(e => e.loc?.is_pick_face)) return fail(res, 409, 'ALREADY_PICK_FACE', 'Pallet đã ở vị trí nhặt lẻ rồi')
       if (ents.some(e => e.status === 'QUARANTINE')) return fail(res, 409, 'BLOCKED', 'Pallet đang bị giữ (QA/block) — không được hạ')
-      return fail(res, 409, 'GONE', 'Pallet đã hết khả dụng / đã xuất')
+      // Còn tồn nhưng bị GIỮ (reserved) cho đơn xuất/nhặt lẻ ≠ đã xuất hết — nói rõ (user báo 05/08 "có tồn mà bị chối")
+      const held = ents.find(e => USABLE.includes(e.status) && Number(e.cartons_remaining) > 0 && Number(e.cartons_reserved ?? 0) > 0)
+      if (held) return fail(res, 409, 'RESERVED',
+        `Pallet còn tồn nhưng đang bị GIỮ cho đơn xuất/nhặt lẻ (giữ ${Number(held.cartons_reserved)}/${Number(held.cartons_remaining)}) — không còn khả dụng để fill`)
+      return fail(res, 409, 'GONE', 'Pallet đã xuất hết / hết khả dụng')
     }
 
     // Khớp dòng lệnh theo MÃ + DATE: ưu tiên dòng ĐÚNG date, rồi dòng không ràng date

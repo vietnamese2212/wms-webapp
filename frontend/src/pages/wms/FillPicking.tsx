@@ -29,6 +29,8 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { unlockAudio } from '@/utils/audio'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
@@ -154,7 +156,17 @@ export default function FillPicking() {
   const [scanOpen, setScanOpen] = useState(false)
   const [scanMounted, setScanMounted] = useState(false)
   const [scanOrderId, setScanOrderId] = useState<string | undefined>(undefined)
+  const [pdaScan, setPdaScan] = useState<string | null>(null)
   const openScan = (orderId?: string) => { setScanOrderId(orderId); setScanMounted(true); setScanOpen(true) }
+
+  // PDA: bóp cò NGAY TẠI TRANG (tab Lệnh fill, chưa mở màn quét) → mở màn quét chế độ SÚNG
+  // (không bật camera) và xử lý luôn tem vừa bắn — đồng bộ chuẩn Outbound/Nhập (user nhắc 05/08)
+  useWedgeScanner(code => {
+    if (scanOpen || !whId || !canExecute || f.tab !== 'tasks') return
+    unlockAudio()
+    setPdaScan(code)
+    openScan(undefined)
+  }, true)
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -224,7 +236,8 @@ export default function FillPicking() {
 
       {scanMounted && (
         <FillScanOverlay warehouseId={whId} orderId={scanOrderId} open={scanOpen} canAssign={canAssign}
-          onClose={() => setScanOpen(false)} />
+          pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+          onClose={() => { setScanOpen(false); setPdaScan(null) }} />
       )}
     </div>
   )

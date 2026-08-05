@@ -6,6 +6,8 @@
 // riêng đích đầy GIỮ NGUYÊN card để đổi vị trí đến rồi xác nhận lại (không ngõ cụt).
 // Mount 1 lần, CSS hidden khi đóng; camera TẮT HẲN khi đóng (`active={open}` — user bắt 05/08:
 // đèn camera vẫn sáng chạy ngầm sau khi đóng), mở lại tự bật không hỏi quyền lại.
+// PDA súng quét (đồng bộ chuẩn GdoScanSheet, user nhắc 05/08): bắn 1 phát = chuyển hẳn chế độ súng
+// (camera KHÔNG bật — đỡ tốn pin); bắn lại ĐÚNG tem đang chờ = Xác nhận hạ, không cần chạm màn hình.
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { useQueryClient } from '@tanstack/react-query'
@@ -13,9 +15,12 @@ import { QrCode, X, MapPin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { apiClient } from '@/api/client'
 import { usePickFaceLocations, type FillTaskRow } from '@/api/hooks'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep } from '@/utils/audio'
+import { normalizeQR } from '@/utils/qr'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 import { RequiredDateBadge } from './fillShared'
@@ -33,12 +38,16 @@ type Preview = {
 }
 type Done = { task: FillTaskRow; scanned_qty?: number; done?: boolean }
 
-export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign }: {
+export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign, pdaMode = false, initialScan }: {
   warehouseId: string; orderId?: string; open: boolean; onClose: () => void; canAssign: boolean
+  pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
+  initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }) {
   const qc = useQueryClient()
   const scannerRef = useRef<QRScannerHandle>(null)
   const busyRef = useRef(false)
+  // Bắn 1 phát súng = chuyển hẳn chế độ súng cả lượt mở (camera unmount; listener súng độc lập)
+  const [gunMode, setGunMode] = useState(false)
   const [err, setErr] = useState('')
   const [pendingQR, setPendingQR] = useState('')
   const [canTakeOver, setCanTakeOver] = useState(false)
@@ -53,7 +62,23 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
   const { data: destLocs = [] } = usePickFaceLocations(prev ? warehouseId : undefined, prev?.task.material_id)
 
   useEffect(() => { setErr(''); setLast(null); setPrev(null); setCount(0) }, [warehouseId, orderId])
-  useEffect(() => { if (open) setTimeout(() => scannerRef.current?.resume(), 50) }, [open])
+  // Mở lại → đặt chế độ theo CÁCH MỞ (cò súng = súng, nút = camera) + xử lý luôn tem vừa bắn (nếu có).
+  // Tem bắn vào đi THẲNG preview (không qua handleScan): overlay giữ state giữa các lượt mở, card
+  // treo của lượt trước sẽ làm handleScan nuốt tem mới — dọn card cũ rồi soi tem mới.
+  useEffect(() => {
+    if (!open) return
+    setGunMode(pdaMode)
+    setTimeout(() => scannerRef.current?.resume(), 50)
+    if (pdaMode && initialScan) {
+      setPrev(null); setErr(''); setCanTakeOver(false); setTakeOver(false)
+      playBeep()
+      setPendingQR(initialScan)
+      preview(initialScan, false)
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Súng quét PDA — chạy song song camera, chống double-read trong hook; chỉ nghe khi overlay mở
+  useWedgeScanner(code => handleScan(code, 'wedge'), open)
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['fill-orders'] })
@@ -114,7 +139,15 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
     scannerRef.current?.resume()
   }
 
-  function handleScan(raw: string) {
+  function handleScan(raw: string, src: 'camera' | 'wedge' = 'camera') {
+    if (src === 'wedge' && !gunMode) setGunMode(true)   // có phát bắn = tắt camera cả lượt (đỡ tốn pin)
+    if (busyRef.current || saving) return
+    if (prev) {
+      // PDA: đang chờ xác nhận mà BẮN LẠI đúng tem đó = Xác nhận hạ (không cần chạm màn hình).
+      // Chỉ áp cho SÚNG — camera đứng yên vẫn nhìn tem, không được tự lưu. Tem khác → bỏ qua.
+      if (src === 'wedge' && normalizeQR(raw) === prev.entry.pallet_code) { playBeep(); confirm() }
+      return
+    }
     playBeep()
     setPendingQR(raw)
     setTakeOver(false)
@@ -139,7 +172,15 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
         </button>
       </div>
       <div className="flex-1 min-h-0">
-        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
+        {gunMode ? (
+          <div className="h-full mx-3 rounded-xl border border-slate-700 bg-slate-900 flex flex-col items-center justify-center gap-2 p-4">
+            <PdaGunHint className="h-10 w-10" />
+            <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+            <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Xác nhận hạ</p>
+          </div>
+        ) : (
+          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
+        )}
       </div>
       <div className="shrink-0 p-3 space-y-2">
         {err && (

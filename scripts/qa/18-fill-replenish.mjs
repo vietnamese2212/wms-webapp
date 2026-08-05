@@ -466,6 +466,23 @@ try {
   if (line19?.status === 'PENDING') await api(`/wms/fill/tasks/${line19.id}`, 'DELETE')
   const candBad = await api(`/wms/fill/candidates?warehouse_id=${whId}&material_id=khong-phai-uuid`)
   check('19c. material_id không hợp lệ → 400 (không 500)', candBad.s === 400, `http=${candBad.s}`)
+
+  // ── 20. Pallet CHƯA GÁN VỊ TRÍ (location_id NULL) vẫn quét fill được ────────
+  // Bug user bắt 05/08: kho của pallet từng suy qua JOIN Location nên pallet chưa gán vị trí
+  // (phổ biến ngay sau quét nhập) bị chối "không tìm thấy trong kho" ở controller và
+  // WRONG_WAREHOUSE ở RPC. Luật: lọc kho bằng cột warehouse_id TRỰC TIẾP của entry.
+  const locPF20 = await mkLoc('PF20', 2, true, false, [mat.category])
+  const pNoLoc = await mkPallet('NOLOC', 48, null, 120)
+  const mk20 = await mkOrder([{ required_date: pNoLoc.date, to_location_id: locPF20.id }])
+  const prev20 = await scan(pNoLoc.code)
+  check('20a. Preview pallet chưa gán vị trí → 200 khớp dòng lệnh (không PALLET_NOT_FOUND)',
+    mk20.s === 201 && prev20.s === 200 && prev20.j?.data?.entry?.entry_id === pNoLoc.id,
+    `mk=${mk20.s} scan=${prev20.s} code=${prev20.j?.error?.code ?? 'OK'}`)
+  const cm20 = await scan(pNoLoc.code, { commit: true })
+  const ent20 = (await restAll('InventoryEntry', `select=location_id&id=eq.${pNoLoc.id}`))[0]
+  check('20b. Commit → RPC hạ pallet chưa-gán-vị-trí về đúng vị trí nhặt lẻ',
+    cm20.s === 200 && ent20?.location_id === locPF20.id,
+    `http=${cm20.s} code=${cm20.j?.error?.code ?? 'OK'} loc=${ent20?.location_id === locPF20.id ? 'PF20' : ent20?.location_id}`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup(WH)

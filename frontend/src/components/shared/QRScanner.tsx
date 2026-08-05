@@ -9,6 +9,10 @@ interface QRScannerProps {
   // fill=true: camera lấp đầy chiều cao parent (dùng trong sheet quét 1-màn flex, không cuộn).
   // fill=false (mặc định): khung aspect-4/3 độc lập (dialog/khối inline như Stocktake, SearchInput…).
   fill?: boolean
+  // active=false: TẮT HẲN stream camera (đèn camera tắt) — bắt buộc truyền `active={open}` khi parent
+  // giữ scanner mount + ẩn bằng CSS (overlay keep-mounted); không thì camera chạy ngầm sau khi user đóng
+  // (user bắt 05/08 ở màn quét Fill). Mở lại KHÔNG hỏi quyền lại — trình duyệt đã nhớ quyền.
+  active?: boolean
 }
 
 export interface QRScannerHandle {
@@ -21,7 +25,7 @@ export interface QRScannerHandle {
 // Confirm-flow (Nhập): quét → onScan → parent hiện preview, gọi resume() cho lần kế. Instant-flow (Xuất): onScan → API.
 // KHÔNG phát bíp ở đây — parent tự bíp trong onScan (tránh bíp đôi).
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
-  function QRScanner({ onScan, fill }, ref) {
+  function QRScanner({ onScan, fill, active = true }, ref) {
     const videoRef   = useRef<HTMLVideoElement>(null)
     const overlayRef = useRef<HTMLCanvasElement>(null)
     const wrapRef    = useRef<HTMLDivElement>(null)
@@ -93,6 +97,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     }, [])
 
     useEffect(() => {
+      if (!active) return          // đóng overlay → cleanup của lần active trước đã dừng track, không mở lại
       let destroyed = false
 
       async function loop() {
@@ -154,9 +159,10 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         streamRef.current = null
         const v = videoRef.current
         if (v) v.srcObject = null
+        setTorchOn(false)          // track mới luôn mở với đèn pin tắt — icon phải khớp
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [active])
 
     function applyZoom(raw: number) {
       const track = streamRef.current?.getVideoTracks()[0]

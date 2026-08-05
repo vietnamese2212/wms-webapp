@@ -231,6 +231,14 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       (line) => /\.update\(\s*\{[^}]*\blocation_id\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line), s),
   },
+  // Overlay quét KEEP-MOUNTED (ẩn bằng CSS `${open ? '' : 'hidden'}`) mà <QRScanner> không truyền
+  // `active={open}` = camera CHẠY NGẦM sau khi user đóng (đèn camera sáng, tốn pin, lo ngại riêng
+  // tư — user bắt 05/08 ở màn quét Fill). Màn quét unmount khi đóng thì không cần active.
+  {
+    key: 'qrscanner_keepmounted_without_active',
+    label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',
+    count: (s) => countKeepMountedScannerWithoutActive(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
@@ -307,6 +315,24 @@ function countDeadSearchState(sampleOut) {
     }
   }
   return miss
+}
+
+// File có overlay ẩn-bằng-CSS (`${open ? '' : 'hidden'}`) thì mọi thẻ <QRScanner …> trong file
+// phải mang prop `active` (thường active={open}) — thiếu = camera vẫn giữ stream khi overlay đóng.
+function countKeepMountedScannerWithoutActive(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    if (!src.includes("? '' : 'hidden'")) continue
+    for (const m of src.matchAll(/<QRScanner\b[^>]*>/g)) {
+      if (!/\bactive=/.test(m[0])) {
+        n++
+        if (sampleOut && sampleOut.length < 5)
+          sampleOut.push(`${f.slice(ROOT.length + 1)} — <QRScanner> trong overlay keep-mounted thiếu active=`)
+      }
+    }
+  }
+  return n
 }
 
 // Soi TỪNG route `upload.single('file'), <ns>.<fn>` → mở controller của <ns> → thân hàm <fn> có

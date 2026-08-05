@@ -4,7 +4,8 @@
 // → "Xác nhận hạ" chạy RPC nguyên tử → beep + card xanh → camera chạy lại sau 1,5s.
 // Lỗi (không có lệnh / sai date / hàng block / đích đầy / lệnh của người khác) → banner đỏ;
 // riêng đích đầy GIỮ NGUYÊN card để đổi vị trí đến rồi xác nhận lại (không ngõ cụt).
-// Mount 1 lần, CSS hidden khi đóng (camera keep-alive, không hỏi lại quyền).
+// Mount 1 lần, CSS hidden khi đóng; camera TẮT HẲN khi đóng (`active={open}` — user bắt 05/08:
+// đèn camera vẫn sáng chạy ngầm sau khi đóng), mở lại tự bật không hỏi quyền lại.
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { useQueryClient } from '@tanstack/react-query'
@@ -138,7 +139,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
         </button>
       </div>
       <div className="flex-1 min-h-0">
-        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
       </div>
       <div className="shrink-0 p-3 space-y-2">
         {err && (

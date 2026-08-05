@@ -16,13 +16,14 @@ description: BẮT BUỘC áp dụng khi làm/ sửa BẤT KỲ tính năng qué
 Sau mỗi scan: tự `pause(true)` rồi gọi `onScan(text)`. Parent tự resume.
 
 ## Camera keep-alive (quan trọng)
-Mount một lần, dùng CSS `hidden` thay vì unmount — tránh hỏi lại quyền camera:
+Mount một lần, dùng CSS `hidden` thay vì unmount (giữ state phiên quét: đếm, card kết quả):
 ```tsx
 {hasOpenedScan && <ScanDialog open={showScan} ... />}
 // Bên trong ScanDialog:
 <div className={`fixed inset-0 z-50 ${open ? '' : 'hidden'}`}>
 ```
 Khi re-open: `useEffect([open]) → setTimeout(() => scannerRef.current?.resume(), 50)`
+**⚠️ BẮT BUỘC `<QRScanner active={open} />` khi overlay keep-mounted** — không truyền là camera CHẠY NGẦM sau khi user đóng (đèn sáng, tốn pin — user bắt 05/08 ở màn quét Fill). `active=false` tắt hẳn stream; mở lại tự bật, KHÔNG hỏi quyền lại (trình duyệt nhớ quyền theo origin). Ratchet `qrscanner_keepmounted_without_active` gác. Màn quét unmount khi đóng thì không cần `active`.
 
 ## Confirm Flow — state cốt lõi
 ```tsx

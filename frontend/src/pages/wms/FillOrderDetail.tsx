@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { FillScanOverlay } from './FillScanOverlay'
 import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
@@ -100,24 +99,14 @@ export default function FillOrderDetail() {
     else { setSel(new Set()); setDlg(null) }
   }
 
-  const headerActions: ActionItem[] = []
-  if (canExecute && order?.status === 'PENDING') headerActions.push({
-    key: 'scan', icon: QrCode, label: 'Quét thực hiện', primary: true,
-    tip: 'Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này',
-    onClick: () => { setScanMounted(true); setScanOpen(true) },
-  })
-  if (canPlan && order?.status === 'PENDING') headerActions.push({
-    key: 'cancel', icon: X, label: 'Hủy lệnh', danger: true,
-    tip: 'Hủy toàn bộ dòng còn treo của lệnh này (dòng đã hạ giữ nguyên)',
-    onClick: async () => {
-      if (!order) return
-      setErr('')
-      try { await cancelOrder.mutateAsync({ id: order.id }) }
-      catch (e: unknown) {
-        setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không hủy được lệnh')
-      }
-    },
-  })
+  async function doCancelOrder() {
+    if (!order) return
+    setErr('')
+    try { await cancelOrder.mutateAsync({ id: order.id }) }
+    catch (e: unknown) {
+      setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không hủy được lệnh')
+    }
+  }
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải lệnh fill…</div>
   if (!order) return <div className="p-8 text-center text-sm text-slate-400">Không tìm thấy lệnh fill</div>
@@ -142,8 +131,25 @@ export default function FillOrderDetail() {
               Ngày xuất <b>{formatDate(order.target_date)}</b>
               {order.created_by && <> · tạo bởi {order.created_by}</>}
             </span>
-            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
-              <span className="sm:ml-auto"><ActionCluster mobileInline items={headerActions} /></span>
+            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
+                nút ba chấm") — người cầm điện thoại phải thấy đủ thao tác ngay */}
+            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents sm:ml-auto">
+              {canExecute && order.status === 'PENDING' && (
+                <Button size="sm" className="h-9 sm:h-7 text-[11px]"
+                  title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này"
+                  onClick={() => { setScanMounted(true); setScanOpen(true) }}>
+                  <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
+                </Button>
+              )}
+              {canPlan && order.status === 'PENDING' && (
+                <Button size="sm" variant="outline"
+                  className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
+                  disabled={cancelOrder.isPending}
+                  title="Hủy toàn bộ dòng còn treo của lệnh này (dòng đã hạ giữ nguyên)"
+                  onClick={doCancelOrder}>
+                  <X className="h-3.5 w-3.5 mr-1" /> {cancelOrder.isPending ? 'Đang hủy…' : 'Hủy lệnh'}
+                </Button>
+              )}
             </div>
           </div>
         </div>

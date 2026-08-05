@@ -18,7 +18,6 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { SingleSelect } from '@/components/shared/SingleSelect'
-import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { FillScanOverlay } from './FillScanOverlay'
@@ -186,21 +185,22 @@ export default function FillPicking() {
               <SearchInput value={f.search} onChange={v => setFillFilter({ search: v })}
                 placeholder="Tìm mã lệnh, mã hàng, người…" className="flex-1 min-w-[140px]" />
             )}
+            {/* Nút HIỆN THẲNG, không nhét vào menu ⋮ (user chốt 05/08 "đưa action lên trên
+                nút ba chấm"). Quét thực hiện CHỈ đặt ở tab Lệnh fill — quét là thao tác trên
+                LỆNH; tab Đề xuất/Kết quả không có gì để quét. */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
-              <ActionCluster mobileInline items={[
-                // Quét thực hiện CHỈ đặt ở tab Lệnh fill (user chốt 05/08) — quét là thao tác
-                // trên LỆNH; tab Đề xuất/Kết quả không có gì để quét
-                ...(canExecute && whId && f.tab === 'tasks' ? [{
-                  key: 'scan', icon: QrCode, label: 'Quét thực hiện', primary: true,
-                  tip: 'Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ',
-                  onClick: () => openScan(undefined),
-                } satisfies ActionItem] : []),
-                {
-                  key: 'loose', icon: Info, label: 'Nhặt lẻ',
-                  tip: 'Mở trang Nhặt lẻ (nguồn của nhu cầu fill)',
-                  onClick: () => navigate('/wms/loosepicking'),
-                } satisfies ActionItem,
-              ]} />
+              {canExecute && whId && f.tab === 'tasks' && (
+                <Button size="sm" className="h-9 sm:h-7 text-[11px]"
+                  title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ"
+                  onClick={() => openScan(undefined)}>
+                  <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                title="Mở trang Nhặt lẻ (nguồn của nhu cầu fill)"
+                onClick={() => navigate('/wms/loosepicking')}>
+                <Info className="h-3.5 w-3.5 mr-1" /> Nhặt lẻ
+              </Button>
               <button onClick={toggleDensity} title={dense ? 'Dòng thoáng' : 'Dòng dày'}
                 className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50">
                 {dense ? <Rows3 className="h-3.5 w-3.5" /> : <AlignJustify className="h-3.5 w-3.5" />}

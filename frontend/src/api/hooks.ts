@@ -3708,13 +3708,16 @@ export function useFillReport(params?: { warehouse_id: string; date_from?: strin
   })
 }
 
-export function usePickFaceLocations(warehouseId?: string) {
+// materialId: BE lọc luôn theo LOẠI KHO của mã — đừng bày lựa chọn mà lưu sẽ bị 400
+export function usePickFaceLocations(warehouseId?: string, materialId?: string) {
   return useQuery({
-    queryKey: ['fill-pick-face-locations', warehouseId],
+    queryKey: ['fill-pick-face-locations', warehouseId, materialId ?? null],
     enabled: !!warehouseId,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/fill/pick-face-locations', { params: { warehouse_id: warehouseId } })
+      const { data } = await apiClient.get('/wms/fill/pick-face-locations', {
+        params: { warehouse_id: warehouseId, material_id: materialId || undefined },
+      })
       return data.data as { id: string; location_code: string; sub_code: string | null; max_pallets: number }[]
     },
   })

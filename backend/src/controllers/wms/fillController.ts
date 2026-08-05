@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { maskServerMessage } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 
@@ -110,19 +111,27 @@ export async function listFillTasks(req: Request, res: Response) {
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 
+// ─── LOẠI KHO: vị trí đích phải NHẬN loại của mã hàng ────────────────────────
+// Cùng khuôn với picker vị trí toàn app (Tồn kho / Vị trí kho): vị trí nhận mã ⇔ `categories`
+// chứa loại của mã, HOẶC vị trí chưa khai loại (NULL), HOẶC mã chưa khai loại — null-inclusive
+// hai chiều. Thiếu luật này thì hàng FG02 bị hạ về khu FG01 (user bắt 05/08).
+function locAcceptsCat(locCats: string[] | null, matCat: string | null): boolean {
+  return !locCats || !matCat || locCats.includes(matCat)
+}
+
 // ─── Chỉ mục vị trí nhặt lẻ còn chỗ (dựng MỘT LẦN cho cả lô ra lệnh) ─────────
 // Ưu tiên chỗ ĐANG chứa đúng mã đó (nhặt một chỗ, khỏi chạy vòng kho), rồi tới chỗ trống nhiều.
 // `free` bị TRỪ DẦN khi gán để 10 pallet cùng mã không dồn hết vào một ô 2 slot.
 type PickFaceIdx = {
-  locs: { id: string; code: string; free: number }[]
+  locs: { id: string; code: string; cats: string[] | null; free: number }[]
   hasMat: Map<string, Set<string>>   // material_id → location_id đang chứa mã đó
 }
 async function buildPickFaceIdx(warehouseId: string, materialIds: string[]): Promise<PickFaceIdx> {
   const { data: locRaw } = await supabase.from('Location')
-    .select('id, location_code, max_pallets')
+    .select('id, location_code, max_pallets, categories')
     .eq('warehouse_id', warehouseId).eq('is_pick_face', true).eq('is_active', true)
     .order('location_code').limit(1000)
-  const locs = (locRaw ?? []) as { id: string; location_code: string; max_pallets: number | null }[]
+  const locs = (locRaw ?? []) as { id: string; location_code: string; max_pallets: number | null; categories: string[] | null }[]
   if (!locs.length) return { locs: [], hasMat: new Map() }
   const ids = locs.map(l => l.id)
 
@@ -147,13 +156,16 @@ async function buildPickFaceIdx(warehouseId: string, materialIds: string[]): Pro
     }
   }
   return {
-    locs: locs.map(l => ({ id: l.id, code: l.location_code, free: Number(l.max_pallets ?? 0) - (used.get(l.id) ?? 0) })),
+    locs: locs.map(l => ({
+      id: l.id, code: l.location_code, cats: l.categories,
+      free: Number(l.max_pallets ?? 0) - (used.get(l.id) ?? 0),
+    })),
     hasMat,
   }
 }
-function takePickFace(idx: PickFaceIdx, materialId: string): { id: string; code: string } | null {
+function takePickFace(idx: PickFaceIdx, materialId: string, matCat: string | null): { id: string; code: string } | null {
   const same = idx.hasMat.get(materialId)
-  const pool = idx.locs.filter(l => l.free > 0)
+  const pool = idx.locs.filter(l => l.free > 0 && locAcceptsCat(l.cats, matCat))
   if (!pool.length) return null
   pool.sort((a, b) => {
     const sa = same?.has(a.id) ? 0 : 1, sb = same?.has(b.id) ? 0 : 1
@@ -207,14 +219,16 @@ export async function createFillTasks(req: Request, res: Response) {
     }
     const byId = new Map(entries.map(e => [e.id, e]))
 
-    // Vị trí đích hợp lệ (thuộc kho + đang bật cờ nhặt lẻ + còn hoạt động) — kiểm ở BE, không tin FE
+    // Vị trí đích hợp lệ (thuộc kho + đang bật cờ nhặt lẻ + còn hoạt động) — kiểm ở BE, không tin
+    // FE. `categories` giữ lại để so LOẠI KHO với từng mã ở vòng dưới (đích phải nhận loại của mã).
     const destIds = [...new Set(list.map(i => i.to_location_id).filter(Boolean))] as string[]
-    const destOk = new Map<string, string>()
+    const destOk = new Map<string, { code: string; cats: string[] | null }>()
     if (destIds.length) {
       const { data } = await supabase.from('Location')
-        .select('id, location_code').in('id', destIds.slice(0, 300))
+        .select('id, location_code, categories').in('id', destIds.slice(0, 300))
         .eq('warehouse_id', warehouse_id).eq('is_pick_face', true).eq('is_active', true)
-      for (const d of (data ?? []) as { id: string; location_code: string }[]) destOk.set(d.id, d.location_code)
+      for (const d of (data ?? []) as { id: string; location_code: string; categories: string[] | null }[])
+        destOk.set(d.id, { code: d.location_code, cats: d.categories })
     }
 
     // Người được gán: chỉ nhận nhân sự CÒN HOẠT ĐỘNG (tên chụp lại để báo cáo không vỡ khi đổi tên)
@@ -227,12 +241,12 @@ export async function createFillTasks(req: Request, res: Response) {
     }
 
     const matIds = [...new Set(entries.map(e => e.material_id).filter(Boolean))]
-    const matMap = new Map<string, { material_code: string; short_name: string | null }>()
+    const matMap = new Map<string, { material_code: string; short_name: string | null; category: string | null }>()
     for (let i = 0; i < matIds.length; i += 300) {
       const { data } = await supabase.from('Material')
-        .select('id, material_code, short_name').in('id', matIds.slice(i, i + 300))
-      for (const m of (data ?? []) as { id: string; material_code: string; short_name: string | null }[])
-        matMap.set(m.id, { material_code: m.material_code, short_name: m.short_name })
+        .select('id, material_code, short_name, category').in('id', matIds.slice(i, i + 300))
+      for (const m of (data ?? []) as { id: string; material_code: string; short_name: string | null; category: string | null }[])
+        matMap.set(m.id, { material_code: m.material_code, short_name: m.short_name, category: m.category })
     }
 
     const t = now()
@@ -248,16 +262,28 @@ export async function createFillTasks(req: Request, res: Response) {
       if (!USABLE.includes(e.status) || avail <= 0) {
         skipped.push({ entry_id: e.id, pallet_code: e.pallet_code, reason: 'Pallet đã hết khả dụng / đang giữ' }); continue
       }
-      let destId = it.to_location_id && destOk.has(it.to_location_id) ? it.to_location_id : null
-      let destCode = destId ? destOk.get(destId)! : null
+      const mat = matMap.get(e.material_id)
+      const matCat = mat?.category ?? null
+      // Đích user chỉ định: ngoài kho/cờ/hoạt động (đã lọc ở destOk) còn phải NHẬN loại của mã —
+      // chỉ định sai thì BÁO RÕ và bỏ dòng đó, KHÔNG âm thầm đổi sang chỗ khác thay user
+      let destId: string | null = null
+      let destCode: string | null = null
+      if (it.to_location_id) {
+        const d = destOk.get(it.to_location_id)
+        if (d && !locAcceptsCat(d.cats, matCat)) {
+          skipped.push({ entry_id: e.id, pallet_code: e.pallet_code,
+            reason: `Vị trí ${d.code} không nhận Loại kho ${matCat} của mã này` }); continue
+        }
+        if (d) { destId = it.to_location_id; destCode = d.code }
+      }
       if (!destId) {
-        const b = takePickFace(pfIdx, e.material_id)
+        const b = takePickFace(pfIdx, e.material_id, matCat)
         if (b) { destId = b.id; destCode = b.code }
       }
       if (!destId) {
-        skipped.push({ entry_id: e.id, pallet_code: e.pallet_code, reason: 'Không còn vị trí nhặt lẻ trống cho mã này' }); continue
+        skipped.push({ entry_id: e.id, pallet_code: e.pallet_code,
+          reason: 'Không còn vị trí nhặt lẻ trống nhận Loại kho của mã này' }); continue
       }
-      const mat = matMap.get(e.material_id)
       const asgId = it.assignee_id && empMap.has(it.assignee_id) ? it.assignee_id : null
       rows.push({
         id: randomUUID(), warehouse_id, target_date: day,
@@ -312,7 +338,7 @@ export async function updateFillTask(req: Request, res: Response) {
     if (!hasAsg && !hasDest) return fail(res, 400, 'INVALID_INPUT', 'Không có gì để sửa')
 
     const { data: task } = await supabase.from('FillTask')
-      .select('id, warehouse_id, status').eq('id', req.params.id).maybeSingle()
+      .select('id, warehouse_id, status, material_id').eq('id', req.params.id).maybeSingle()
     if (!task) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy lệnh fill')
     if (!guardWarehouse(req, res, task.warehouse_id as string)) return
     if (task.status !== 'PENDING') return fail(res, 409, 'NOT_PENDING', 'Lệnh đã xong hoặc đã hủy — không sửa được')
@@ -338,9 +364,16 @@ export async function updateFillTask(req: Request, res: Response) {
     }
     if (hasDest) {
       const { data: loc } = await supabase.from('Location')
-        .select('id, location_code').eq('id', to_location_id)
+        .select('id, location_code, categories').eq('id', to_location_id)
         .eq('warehouse_id', task.warehouse_id).eq('is_pick_face', true).eq('is_active', true).maybeSingle()
       if (!loc) return fail(res, 400, 'INVALID_INPUT', 'Vị trí đích phải là VỊ TRÍ NHẶT LẺ đang hoạt động của kho này')
+      // LOẠI KHO: đích mới phải nhận loại của mã trên lệnh (mã FG02 không hạ về khu FG01)
+      const { data: mat } = task.material_id
+        ? await supabase.from('Material').select('category').eq('id', task.material_id).maybeSingle()
+        : { data: null }
+      if (!locAcceptsCat(loc.categories as string[] | null, (mat?.category as string | null) ?? null))
+        return fail(res, 400, 'CATEGORY_MISMATCH',
+          `Vị trí ${loc.location_code} không nhận Loại kho ${mat?.category} của mã trên lệnh`)
       Object.assign(patch, { to_location_id: loc.id, to_location_code: loc.location_code })
     }
 
@@ -476,17 +509,25 @@ export async function getFillReport(req: Request, res: Response) {
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 
-// ─── GET /wms/fill/pick-face-locations?warehouse_id ─────────────────────────
+// ─── GET /wms/fill/pick-face-locations?warehouse_id&material_id ─────────────
 // Ô chọn "đổi vị trí đích" — chỉ vị trí nhặt lẻ của kho (danh sách nhỏ, không phải danh mục lớn).
+// Có material_id thì lọc luôn theo LOẠI KHO của mã (đừng bày ra lựa chọn mà BE sẽ 400).
 export async function listPickFaceLocations(req: Request, res: Response) {
   try {
-    const { warehouse_id } = req.query as Record<string, string>
+    const { warehouse_id, material_id } = req.query as Record<string, string>
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
     if (!guardWarehouse(req, res, warehouse_id)) return
-    const { data, error } = await supabase.from('Location')
+    let matCat: string | null = null
+    if (material_id && UUID_RE.test(material_id)) {
+      const { data: mat } = await supabase.from('Material').select('category').eq('id', material_id).maybeSingle()
+      matCat = (mat?.category as string | null) ?? null
+    }
+    let q = supabase.from('Location')
       .select('id, location_code, sub_code, max_pallets')
       .eq('warehouse_id', warehouse_id).eq('is_pick_face', true).eq('is_active', true)
-      .order('location_code').limit(1000)
+    // Cùng khuôn picker vị trí toàn app: khớp loại HOẶC vị trí chưa khai loại (null-inclusive)
+    if (matCat) q = q.or(`categories.cs.{"${safeFilterValue(matCat)}"},categories.is.null`)
+    const { data, error } = await q.order('location_code').limit(1000)
     if (error) throw error
     return ok(res, data ?? [])
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

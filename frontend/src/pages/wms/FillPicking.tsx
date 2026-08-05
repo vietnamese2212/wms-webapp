@@ -598,7 +598,7 @@ function TasksTab({ warehouseId, dense, canPlan, canAssign }: {
             </p>
             {mode === 'assign'
               ? <AssigneePicker warehouseId={warehouseId} value={val} onChange={setVal} />
-              : <DestPicker warehouseId={warehouseId} value={val} onChange={setVal} />}
+              : <DestPicker warehouseId={warehouseId} materialId={editing?.material_id} value={val} onChange={setVal} />}
             {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           </div>
           <DialogFooter className="gap-2">
@@ -613,10 +613,11 @@ function TasksTab({ warehouseId, dense, canPlan, canAssign }: {
   )
 }
 
-function DestPicker({ warehouseId, value, onChange }: {
-  warehouseId: string; value: string; onChange: (v: string) => void
+function DestPicker({ warehouseId, materialId, value, onChange }: {
+  warehouseId: string; materialId?: string; value: string; onChange: (v: string) => void
 }) {
-  const { data: locs = [] } = usePickFaceLocations(warehouseId)
+  // materialId → BE chỉ trả vị trí NHẬN Loại kho của mã (đích khác loại lưu sẽ bị 400)
+  const { data: locs = [] } = usePickFaceLocations(warehouseId, materialId)
   return (
     <div>
       <label className="text-[11px] text-slate-500">Vị trí nhặt lẻ đích</label>

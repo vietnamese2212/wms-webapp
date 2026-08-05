@@ -23,6 +23,8 @@
 //   14 thiếu kho → 400, không dump dữ liệu kho khác
 //   15 bộ lọc cờ vị trí (nhặt lẻ / cần check) THẬT SỰ cắt: khớp oracle · có+chưa = tổng · band khớp
 //   16 bộ lọc Khu vực kho (`?zones=`): khớp oracle · rỗng trả rỗng · ô tổng cùng tập
+//   17 đích fill PHẢI KHỚP LOẠI KHO của mã — cả 5 cửa: gợi ý RPC · đích chỉ định · đổi đích ·
+//      tự chọn (kể cả khi hết chỗ đúng loại) · ô chọn đích
 // usage: node scripts/qa/18-fill-replenish.mjs
 import { login, api, check, finish, restAll, restWrite } from './lib.mjs'
 import { randomUUID } from 'crypto'
@@ -66,15 +68,22 @@ for (const t of ['InventoryEntry', 'Location']) {
 
 try {
   // ── Fixture ────────────────────────────────────────────────────────────────
-  const anyEntry = (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
+  // Mã fixture phải CÓ Loại kho (category not null) — không thì cụm kiểm 17 (luật Loại kho của
+  // vị trí đích) thành vô nghĩa: mã chưa khai loại được phép hạ mọi chỗ theo luật null-inclusive.
+  const catMats = await restAll('Material', 'select=id&category=not.is.null&limit=50')
+  const inList = catMats.map(m => m.id).join(',')
+  const anyEntry = (inList
+    ? await restAll('InventoryEntry', `select=warehouse_id,material_id&material_id=in.(${inList})&cartons_remaining=gt.0&limit=1`)
+    : [])[0]
+    ?? (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
   if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('FILL-REPLENISH') }
   const whId = anyEntry.warehouse_id
   const [mat] = await restAll('Material', `select=id,material_code,category,entry_unit,units_per_carton&id=eq.${anyEntry.material_id}`)
 
-  const mkLoc = async (code, maxPallets, pickFace, needStocktake = false) => {
+  const mkLoc = async (code, maxPallets, pickFace, needStocktake = false, cats = null) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: maxPallets,
-      is_active: true, is_pick_face: pickFace, requires_stocktake: needStocktake,
+      is_active: true, is_pick_face: pickFace, requires_stocktake: needStocktake, categories: cats,
       row: 'QA', shelf: pickFace ? 'T1' : 'T3',
       sub_code: `${TAG}-${code}`, created_at: nowIso(), updated_at: nowIso(),
     })
@@ -84,6 +93,9 @@ try {
   const locRsv  = await mkLoc('RSV',  10, false)  // tầng trên — nguồn
   const locPF   = await mkLoc('PF',    5, true, true)   // vị trí nhặt lẻ — đích (+ cờ kiểm kê, cho phép kiểm 15)
   const locFull = await mkLoc('FULL',  1, true)   // vị trí nhặt lẻ ĐÃ ĐẦY
+  // Nhặt lẻ KHÁC LOẠI KHO, trống NHIỀU NHẤT kho — nếu luật loại vắng mặt, mọi cửa chọn đích
+  // đều sẽ rơi vào đây (free DESC) → cụm kiểm 17 bắt được ngay
+  const locBad  = await mkLoc('BAD',  50, true, false, ['__QAKHAC__'])
 
   // NSX lệch nhau để kiểm thứ tự FEFO (A cũ nhất → phải được gợi ý trước)
   const mkPallet = async (code, qty, locId, prodDaysAgo = 0, reserved = 0) => {
@@ -99,6 +111,9 @@ try {
   }
   await mkPallet('FILLER', 30, locFull.id, 1)              // lấp đầy vị trí FULL (max = 1)
   const pOnPF = await mkPallet('ONPF', 40, locPF.id, 2)    // ĐANG Ở vị trí nhặt lẻ → là "đang có"
+  // Cho locBad CHỨA SẴN mã này: nếu luật Loại kho vắng mặt thì locBad thắng MỌI tiêu chí chọn
+  // đích (ưu tiên chỗ-đang-chứa-mã + trống nhiều nhất kho) → cụm 17 bắt được, không vacuous
+  await mkPallet('BADSTOCK', 5, locBad.id, 3)
   const pA = await mkPallet('A', 60, locRsv.id, 90)        // FEFO: cũ nhất
   const pB = await mkPallet('B', 60, locRsv.id, 60)
   const pC = await mkPallet('C', 60, locRsv.id, 30)        // mới nhất — không cần tới
@@ -303,6 +318,54 @@ try {
     `total=${zEmpty.n}`)
   check('16c. Ô tổng cũng lọc theo khu', zSum.s === 200 && Number(zSum.j?.data?.count) === 2,
     `band=${zSum.j?.data?.count}`)
+
+  // ── 17. VỊ TRÍ ĐÍCH PHẢI KHỚP LOẠI KHO của mã (user bắt 05/08) ─────────────
+  // locBad = nhặt lẻ TRỐNG NHIỀU NHẤT nhưng categories khác loại của mã. Luật vắng mặt thì
+  // "free DESC" sẽ chọn nó ở MỌI cửa: gợi ý RPC, đích chỉ định, đổi đích, tự chọn, ô chọn.
+  check('17. (tiền đề) mã fixture có Loại kho', !!mat.category, `category=${mat.category}`)
+  const d17 = await api(`/wms/fill/demand?warehouse_id=${whId}&date=${DAY}`)
+  const row17 = (d17.j?.data?.rows ?? []).find(r => r.material_id === mat.id)
+  check('17a. Gợi ý đích của RPC không rơi vào vị trí khác loại (dù nó chứa sẵn mã + trống nhất)',
+    !!row17?.to_location?.id && row17.to_location.id !== locBad.id,
+    `to_location=${row17?.to_location?.code ?? 'null'}`)
+
+  const mkBad = await api('/wms/fill/tasks', 'POST', {
+    warehouse_id: whId, target_date: DAY, items: [{ entry_id: pB.id, to_location_id: locBad.id }],
+  })
+  const badSkip = (mkBad.j?.data?.skipped ?? [])[0]
+  check('17b. Ra lệnh với đích chỉ định KHÁC LOẠI → bị từ chối, báo rõ lý do',
+    mkBad.s === 201 && mkBad.j?.data?.created === 0 && /Loại kho/i.test(badSkip?.reason ?? ''),
+    `created=${mkBad.j?.data?.created} reason="${badSkip?.reason ?? ''}"`)
+
+  const mk17 = await api('/wms/fill/tasks', 'POST', {
+    warehouse_id: whId, target_date: DAY, items: [{ entry_id: pB.id, to_location_id: locPF.id }],
+  })
+  const [task17] = await restAll('FillTask', `select=id&entry_id=eq.${pB.id}&status=eq.PENDING`)
+  const patchBad = await api(`/wms/fill/tasks/${task17?.id}`, 'PATCH', { to_location_id: locBad.id })
+  check('17c. Đổi đích sang vị trí khác loại → 400 CATEGORY_MISMATCH',
+    mk17.s === 201 && patchBad.s === 400 && patchBad.j?.error?.code === 'CATEGORY_MISMATCH',
+    `http=${patchBad.s} code=${patchBad.j?.error?.code}`)
+
+  const pfList = await api(`/wms/fill/pick-face-locations?warehouse_id=${whId}&material_id=${mat.id}`)
+  const pfIds = (pfList.j?.data ?? []).map(l => l.id)
+  check('17d. Ô chọn đích lọc theo loại của mã (không bày lựa chọn sẽ bị 400)',
+    pfList.s === 200 && !pfIds.includes(locBad.id) && pfIds.includes(locPF.id),
+    `${pfIds.length} vị trí, chứa BAD=${pfIds.includes(locBad.id)}`)
+
+  // TỰ CHỌN đích (không gửi to_location_id): nếu luật vắng mặt, locBad thắng chắc (chứa sẵn mã
+  // + trống nhất). Đúng luật = hoặc chọn chỗ khác, hoặc báo "hết chỗ nhận loại này" — cả hai đều
+  // chứng minh locBad không được lấy.
+  await api(`/wms/fill/tasks/${task17?.id}`, 'DELETE')
+  const mkAuto = await api('/wms/fill/tasks', 'POST', {
+    warehouse_id: whId, target_date: DAY, items: [{ entry_id: pB.id }],
+  })
+  const autoSkip = (mkAuto.j?.data?.skipped ?? [])[0]
+  const [autoTask] = await restAll('FillTask', `select=to_location_id&entry_id=eq.${pB.id}&status=eq.PENDING`)
+  check('17e. Tự chọn đích KHÔNG lấy vị trí khác loại (dù nó chứa sẵn mã + trống nhất)',
+    mkAuto.s === 201 && (mkAuto.j?.data?.created === 1
+      ? autoTask?.to_location_id !== locBad.id
+      : /Loại kho/i.test(autoSkip?.reason ?? '')),
+    `created=${mkAuto.j?.data?.created} dest≠BAD=${autoTask?.to_location_id !== locBad.id} reason="${autoSkip?.reason ?? ''}"`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup()

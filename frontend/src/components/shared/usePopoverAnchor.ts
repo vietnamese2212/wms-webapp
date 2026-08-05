@@ -33,18 +33,26 @@ export function usePopoverAnchor(
 
     const measure = () => {
       const r = el.getBoundingClientRect()
-      const spaceBelow = window.innerHeight - r.bottom
-      const spaceAbove = r.top
+      // Trong Dialog: menu là con ABSOLUTE của hộp dialog, mà DialogContent có
+      // `overflow-y-auto` → vượt quá đáy HỘP là bị cắt ("Giao cho" ở đáy dialog Fill hàng:
+      // menu mở xuống dưới bị che mất, 05/08). Chỗ trống phải đo theo HỘP DIALOG (giao với
+      // viewport), không phải theo màn hình; và kẹp maxHeight để menu không bao giờ tràn hộp.
+      const d = dialog?.getBoundingClientRect()
+      const boxTop    = d ? Math.max(d.top, 0) : 0
+      const boxBottom = d ? Math.min(d.bottom, window.innerHeight) : window.innerHeight
+      const spaceBelow = boxBottom - r.bottom
+      const spaceAbove = r.top - boxTop
       const dropUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
+      const maxHeight = Math.max(120, Math.min(estimatedHeight, (dropUp ? spaceAbove : spaceBelow) - 8))
 
       let style: CSSProperties
-      if (dialog) {
+      if (dialog && d) {
         // absolute neo theo hộp dialog (dialog là positioned ancestor) → không phụ thuộc transform
-        const d = dialog.getBoundingClientRect()
         style = {
           position: 'absolute',
           left: r.left - d.left,
           width: r.width,
+          maxHeight,
           ...(dropUp ? { bottom: d.bottom - r.top + 4 } : { top: r.bottom - d.top + 4 }),
         }
       } else {
@@ -52,6 +60,7 @@ export function usePopoverAnchor(
           position: 'fixed',
           left: r.left,
           width: r.width,
+          maxHeight,
           ...(dropUp ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
         }
       }

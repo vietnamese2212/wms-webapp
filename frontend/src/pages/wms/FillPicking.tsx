@@ -31,6 +31,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
+import { computePctDate } from '@/utils/shelfLife'
 import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -47,10 +48,17 @@ const DEMAND_COLS = [
   { id: 'short',   label: 'Thiếu',            w: 140, align: 'right' as const },
   { id: 'pallets', label: 'Pallet chẵn',      w: 90,  align: 'right' as const },
   { id: 'qtydown', label: 'SL hạ (chẵn pallet)', w: 140, align: 'right' as const },
+  { id: 'pickdate', label: 'Date chỉ định (%Date)', w: 150 },
   { id: 'src',     label: 'Vị trí lấy hàng',  w: 160 },
   { id: 'dest',    label: 'Đề xuất hạ về',    w: 130 },
-  { id: 'act',     label: '',                 w: 44 },
 ]
+
+// Bản chỉ định hiệu lực của 1 dòng: mặc định = suggestions FEFO từ RPC; user đổi DATE trong
+// dialog thì thay bằng chỉ định tính từ fill_candidates của date đó (pallet/vị trí đổi theo).
+type EffSugg = {
+  entry_id: string; from_location_code: string | null
+  avail: number; production_date: string | null; expiry_date: string | null
+}
 const TASK_COLS = [
   { id: 'date',    label: 'Ngày xuất',   w: 90 },
   { id: 'status',  label: 'Trạng thái',  w: 100 },
@@ -231,10 +239,15 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
   const [assignee, setAssignee] = useState('')
   const [err, setErr] = useState('')
   const [result, setResult] = useState<{ created: number; skipped: { pallet_code?: string; reason: string }[] } | null>(null)
-  // Dialog "Chọn date": người nhặt lẻ chọn NSX họ cần từ tồn thật (không chọn = FEFO — date xa nhất)
+  // Dialog "Đổi date": user chỉ chọn DATE — hệ thống chỉ định lại pallet/vị trí theo date đó
   const [dateRow, setDateRow] = useState<FillDemandRow | null>(null)
+  // Bản chỉ định GHI ĐÈ per mã (user đã đổi date). Không có = mặc định FEFO của RPC.
+  const [overrides, setOverrides] = useState<Map<string, { date: string; sugg: EffSugg[] }>>(new Map())
 
-  useEffect(() => { setSel(new Set()) }, [warehouseId, date])
+  useEffect(() => { setSel(new Set()); setOverrides(new Map()) }, [warehouseId, date])
+
+  // Chỉ định HIỆU LỰC của 1 dòng — mọi cột (pallet/SL hạ/date/vị trí lấy) + Ra lệnh đọc từ đây
+  const eff = (r: FillDemandRow): EffSugg[] => overrides.get(r.material_id)?.sugg ?? r.suggestions
 
   const rows = useMemo(() => {
     let all = data?.rows ?? []
@@ -251,22 +264,24 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
       if (Number(r.short_base) > 0) {
         shortMats++
         short += qtyEntryDecimal(Number(r.short_base), r)
-        pallets += r.suggestions.length
+        pallets += eff(r).length
       }
     }
     return { demand, short, shortMats, pallets }
-  }, [rows])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, overrides])
 
-  const selectable = rows.filter(r => Number(r.short_base) > 0 && r.suggestions.length > 0)
+  const selectable = rows.filter(r => Number(r.short_base) > 0 && eff(r).length > 0)
   const allSel = selectable.length > 0 && selectable.every(r => sel.has(r.material_id))
 
   async function raLenh() {
     setErr(''); setResult(null)
     const items = rows
       .filter(r => sel.has(r.material_id))
-      .flatMap(r => r.suggestions.map(s => ({
+      .flatMap(r => eff(r).map(s => ({
         entry_id: s.entry_id,
-        to_location_id: r.to_location?.id,
+        // đổi date = bản chỉ định KHÔNG còn là gợi ý mặc định → để BE tự chọn đích khớp loại
+        to_location_id: overrides.has(r.material_id) ? undefined : r.to_location?.id,
         assignee_id: assignee || undefined,
       })))
     if (!items.length) { setErr('Chưa chọn mã nào có pallet để hạ'); return }
@@ -274,9 +289,23 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
       const res = await createTasks.mutateAsync({ warehouse_id: warehouseId, target_date: date, items })
       setResult(res)
       setSel(new Set())
+      setOverrides(new Map())   // demand refetch — bản ghi đè đã thành lệnh, quay về FEFO mặc định
       setAssignOpen(false)
     } catch (e: unknown) {
       setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không ra lệnh được')
+    }
+  }
+
+  // Cột "Date chỉ định (%Date)": date của bản chỉ định hiệu lực + %Date (computePctDate tập trung)
+  function pickDateInfo(r: FillDemandRow): { label: string; pct: number | null; multi: boolean } | null {
+    const s = eff(r)
+    if (!s.length) return null
+    const dates = [...new Set(s.map(x => (x.production_date ?? '').slice(0, 10)).filter(Boolean))]
+    const first = s[0]
+    const pct = computePctDate({ expiry_date: first.expiry_date, production_date: first.production_date }, null)
+    return {
+      label: first.production_date ? formatTimestampDate(first.production_date, true) : '—',
+      pct, multi: dates.length > 1,
     }
   }
 
@@ -301,7 +330,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
         <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
           <span className="text-[11px] text-slate-500">
             Đã chọn <b className="text-slate-700">{sel.size}</b> mã ·
-            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + r.suggestions.length, 0))} pallet sẽ ra lệnh
+            {' '}{nf(rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0))} pallet sẽ ra lệnh
           </span>
           <Button size="sm" className="h-7 text-[11px] ml-auto" disabled={sel.size === 0 || createTasks.isPending}
             onClick={() => { setErr(''); setAssignOpen(true) }}>
@@ -357,7 +386,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
               return (
                 <TableRow key={r.material_id} className={short > 0 ? 'text-[#D8891C]' : ''}>
                   <TableCell className={`px-2 py-1 sticky left-0 z-10 ${picked ? 'bg-sky-50' : 'bg-white'}`}>
-                    {canPlan && short > 0 && r.suggestions.length > 0 && (
+                    {canPlan && short > 0 && eff(r).length > 0 && (
                       <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={picked}
                         onChange={e => setSel(prev => {
                           const n = new Set(prev)
@@ -390,18 +419,45 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
                     {short > 0
-                      ? (r.suggestions.length || <span className="text-red-600">hết hàng trên</span>)
+                      ? (eff(r).length || <span className="text-red-600">hết hàng trên</span>)
                       : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums"
                     title="Xe nâng hạ NGUYÊN pallet (chẵn pallet) — tổng hạ có thể vượt số thiếu">
-                    {short > 0 && r.suggestions.length > 0
-                      ? qtyLabel(r.suggestions.reduce((s, x) => s + Number(x.avail), 0), r)
+                    {short > 0 && eff(r).length > 0
+                      ? qtyLabel(eff(r).reduce((s, x) => s + Number(x.avail), 0), r)
                       : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {(() => {
+                      if (short <= 0) return <span className="text-slate-300">—</span>
+                      const info = pickDateInfo(r)
+                      const inner = info
+                        ? <>
+                            <span className="text-[10px] font-semibold tabular-nums">{info.label}</span>
+                            {info.multi && <span className="text-[9px] text-slate-400"> +</span>}
+                            {info.pct !== null && (
+                              <span className={`ml-1 text-[9px] px-1 py-0.5 rounded ${info.pct < 50 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                {info.pct}%
+                              </span>
+                            )}
+                            {overrides.has(r.material_id) && (
+                              <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">đã đổi</span>
+                            )}
+                          </>
+                        : <span className="text-[10px] text-slate-400">chọn date…</span>
+                      return canPlan
+                        ? <button type="button" onClick={() => setDateRow(r)}
+                            title="Date hệ thống đang chỉ định — bấm để đổi theo yêu cầu (vị trí lấy hàng đổi theo)"
+                            className="inline-flex items-center px-1.5 py-0.5 rounded border border-dashed border-slate-300 hover:border-sky-400 hover:bg-sky-50">
+                            {inner}<CalendarSearch className="h-3 w-3 ml-1 text-slate-400" />
+                          </button>
+                        : <span>{inner}</span>
+                    })()}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono">
                     {(() => {
-                      const srcs = [...new Set(r.suggestions.map(s => s.from_location_code).filter(Boolean))] as string[]
+                      const srcs = [...new Set(eff(r).map(s => s.from_location_code).filter(Boolean))] as string[]
                       if (!srcs.length) return <span className="text-slate-300">—</span>
                       const shown = srcs.slice(0, 2).join(', ')
                       return <span title={srcs.join(', ')}>{shown}{srcs.length > 2 ? ` +${srcs.length - 2}` : ''}</span>
@@ -413,15 +469,6 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
                           title="Không còn vị trí nhặt lẻ trống NHẬN LOẠI KHO của mã này — khai thêm vị trí nhặt lẻ cho loại này ở trang Vị trí kho, hoặc giải phóng chỗ">
                           hết chỗ nhận loại này</span>
                       : <span className="text-slate-300">—</span>)}
-                  </TableCell>
-                  <TableCell className="px-2 py-1">
-                    {canPlan && short > 0 && (
-                      <button type="button" onClick={() => setDateRow(r)}
-                        title="Chọn date (NSX) cần hạ từ tồn kho — không chọn thì mặc định FEFO (date xa nhất)"
-                        className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
-                        <CalendarSearch className="h-3.5 w-3.5" />
-                      </button>
-                    )}
                   </TableCell>
                 </TableRow>
               )
@@ -439,7 +486,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
           </DialogTitle></DialogHeader>
           <div className="space-y-2">
             <p className="text-xs text-slate-600">
-              Sẽ tạo <b>{rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + r.suggestions.length, 0)}</b> lệnh
+              Sẽ tạo <b>{rows.filter(r => sel.has(r.material_id)).reduce((s, r) => s + eff(r).length, 0)}</b> lệnh
               (mỗi pallet 1 lệnh) cho ngày xuất <b>{date}</b>.
             </p>
             {canAssign ? (
@@ -459,7 +506,17 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
       </Dialog>
 
       {dateRow && (
-        <ChooseDateDialog warehouseId={warehouseId} date={date} row={dateRow} canAssign={canAssign}
+        <ChooseDateDialog warehouseId={warehouseId} row={dateRow}
+          currentDate={overrides.get(dateRow.material_id)?.date ?? ''}
+          onApply={(d, sugg) => {
+            setOverrides(prev => {
+              const n = new Map(prev)
+              if (d === '') n.delete(dateRow.material_id)   // quay về FEFO mặc định của RPC
+              else n.set(dateRow.material_id, { date: d, sugg })
+              return n
+            })
+            setDateRow(null)
+          }}
           onClose={() => setDateRow(null)} />
       )}
     </>
@@ -681,77 +738,70 @@ function DestPicker({ warehouseId, materialId, value, onChange }: {
   )
 }
 
-// ─── Dialog "Chọn date" (tab Đề xuất) ────────────────────────────────────────
-// User chỉ CHỌN DATE (NSX, từ tồn thật) — HỆ THỐNG tự chỉ định pallet + vị trí (FEFO trong
-// date đó, đủ bù thiếu thì dừng; xe nâng hạ NGUYÊN pallet). Bảng dưới là BẢN CHỈ ĐỊNH chỉ-đọc
-// để người ra lệnh soát trước; người nhận việc xem tab Lệnh fill là biết lấy gì, ở đâu, hạ về
-// đâu (user chốt 05/08: "chọn date chứ không phải chọn pallet").
-function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
-  warehouseId: string; date: string; row: FillDemandRow; canAssign: boolean; onClose: () => void
+// ─── Dialog "Đổi date chỉ định" (tab Đề xuất) ────────────────────────────────
+// User chỉ CHỌN DATE (NSX + %Date, từ tồn thật) — HỆ THỐNG chỉ định pallet + vị trí (FEFO
+// trong date đó, đủ bù thiếu thì dừng; xe nâng hạ NGUYÊN pallet). "Áp dụng" KHÔNG tạo lệnh —
+// chỉ đổi bản chỉ định trên bảng (cột Vị trí lấy hàng/SL hạ đổi theo); ra lệnh vẫn ở nút
+// "Ra lệnh fill" (user chốt 05/08: "chỉ định theo date, bấm vào cột date để thay đổi").
+function ChooseDateDialog({ warehouseId, row, currentDate, onApply, onClose }: {
+  warehouseId: string; row: FillDemandRow; currentDate: string
+  onApply: (date: string, sugg: EffSugg[]) => void; onClose: () => void
 }) {
   const { data, isLoading } = useFillCandidates({ warehouse_id: warehouseId, material_id: row.material_id })
-  const createTasks = useCreateFillTasks()
-  const [dateSel, setDateSel] = useState('')
-  const [assignee, setAssignee] = useState('')
-  const [err, setErr] = useState('')
-  const [result, setResult] = useState<{ created: number; skipped: { pallet_code?: string; reason: string }[] } | null>(null)
+  const [dateSel, setDateSel] = useState(currentDate)
 
   const all = data?.rows ?? []
   const dates = useMemo(() => {
-    const m = new Map<string, { avail: number; n: number }>()
+    const m = new Map<string, { avail: number; n: number; pct: number | null }>()
     for (const c of all) {
       const d = c.production_date ? c.production_date.slice(0, 10) : ''
-      const cur = m.get(d) ?? { avail: 0, n: 0 }
+      const cur = m.get(d) ?? {
+        avail: 0, n: 0,
+        pct: computePctDate({ expiry_date: c.fefo_key, production_date: c.production_date }, null),
+      }
       cur.avail += Number(c.avail); cur.n += 1; m.set(d, cur)
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [all])
 
   // HỆ THỐNG chỉ định: FEFO trong date đã chọn (không chọn = toàn bộ, FEFO), đủ bù thiếu thì dừng
-  const picked = useMemo(() => {
+  const picked = useMemo<EffSugg[]>(() => {
     const pool = dateSel ? all.filter(c => (c.production_date ?? '').slice(0, 10) === dateSel) : all
     const short = Number(row.short_base)
-    const out: typeof pool = []; let cum = 0
-    for (const c of pool) { if (cum >= short) break; out.push(c); cum += Number(c.avail) }
+    const out: EffSugg[] = []; let cum = 0
+    for (const c of pool) {
+      if (cum >= short) break
+      out.push({ entry_id: c.entry_id, from_location_code: c.from_location_code,
+                 avail: Number(c.avail), production_date: c.production_date, expiry_date: c.fefo_key })
+      cum += Number(c.avail)
+    }
     return out
   }, [all, dateSel, row.short_base])
   const pickedQty = picked.reduce((s, c) => s + Number(c.avail), 0)
-
-  async function save() {
-    setErr('')
-    if (!picked.length) { setErr('Date này không còn pallet khả dụng để hạ'); return }
-    try {
-      const res = await createTasks.mutateAsync({
-        warehouse_id: warehouseId, target_date: date,
-        items: picked.map(c => ({ entry_id: c.entry_id, assignee_id: assignee || undefined })),
-      })
-      setResult(res)
-    } catch (e: unknown) {
-      setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không ra lệnh được')
-    }
-  }
+  const pickedSrcs = [...new Set(picked.map(c => c.from_location_code).filter(Boolean))] as string[]
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle className="flex items-center gap-1.5">
-          <CalendarSearch className="h-4 w-4 text-sky-600" /> Chọn date cần hạ — {row.material_code}
+          <CalendarSearch className="h-4 w-4 text-sky-600" /> Đổi date chỉ định — {row.material_code}
         </DialogTitle></DialogHeader>
         <div className="space-y-2">
           <p className="text-[11px] text-slate-500">
             Thiếu <b className="text-red-600">{qtyLabel(Number(row.short_base), row)}</b>.
-            Chọn date — hệ thống tự chỉ định pallet & vị trí (FEFO, hạ NGUYÊN pallet).
-            Không chọn = date xa nhất hạ trước.
+            Chọn date — hệ thống chỉ định lại pallet & vị trí lấy hàng theo date đó.
+            "Tự động" = FEFO (date xa nhất hạ trước).
           </p>
           <SingleSelect
             value={dateSel} onChange={setDateSel}
             options={[{ value: '', label: 'Tự động — FEFO (date xa nhất)' },
               ...dates.map(([d, v]) => ({
-                value: d, label: `NSX ${d ? formatDate(d) : 'không rõ'} — ${qtyLabel(v.avail, row)} · ${v.n} pallet`,
+                value: d,
+                label: `NSX ${d ? formatDate(d) : 'không rõ'}${v.pct !== null ? ` · ${v.pct}%Date` : ''} — ${qtyLabel(v.avail, row)} · ${v.n} pallet`,
               }))]}
             placeholder="Chọn date (NSX)…"
           />
-          {/* Bản chỉ định của hệ thống — CHỈ ĐỌC, để soát trước khi ra lệnh */}
+          {/* Hệ thống chỉ định theo date đang chọn — CHỈ ĐỌC, để soát trước khi Áp dụng */}
           <div>
             <p className="text-[10px] font-medium text-slate-500 uppercase mb-1">Hệ thống chỉ định</p>
             <div className="border rounded max-h-52 overflow-auto">
@@ -761,8 +811,7 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
                 <p className="p-3 text-xs text-slate-400">Không còn pallet khả dụng (ngoài vị trí nhặt lẻ) cho date này</p>
               ) : picked.map(c => (
                 <div key={c.entry_id} className="flex items-center gap-2 px-2 py-1.5 border-b last:border-b-0">
-                  <span className="font-mono text-[10px] font-semibold flex-1 truncate" title={c.pallet_code}>{c.pallet_code}</span>
-                  <span className="font-mono text-[10px] text-sky-700 font-semibold">{c.from_location_code ?? '—'}</span>
+                  <span className="font-mono text-[10px] text-sky-700 font-semibold flex-1">{c.from_location_code ?? '—'}</span>
                   <span className="text-[10px] tabular-nums font-semibold w-24 text-right">{qtyLabel(Number(c.avail), row)}</span>
                   <span className="text-[9px] text-slate-400 w-14 text-right">{c.production_date ? formatTimestampDate(c.production_date, true) : '—'}</span>
                 </div>
@@ -771,29 +820,17 @@ function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
           </div>
           <p className="text-[11px] text-slate-600">
             Sẽ hạ <b>{picked.length}</b> pallet · <b>{qtyLabel(pickedQty, row)}</b>
+            {pickedSrcs.length > 0 && <> · lấy tại <b className="font-mono">{pickedSrcs.join(', ')}</b></>}
             {pickedQty >= Number(row.short_base) ? <span className="text-green-600"> (đủ bù thiếu)</span>
-              : <span className="text-amber-600"> (date này chưa đủ bù thiếu — phần còn lại ra lệnh thêm sau)</span>}
+              : <span className="text-amber-600"> (date này chưa đủ bù thiếu)</span>}
           </p>
-          {canAssign && <AssigneePicker warehouseId={warehouseId} value={assignee} onChange={setAssignee} />}
-          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          {result && (
-            <div className="text-[11px] rounded border border-green-200 bg-green-50 px-2 py-1.5 text-green-800">
-              Đã tạo <b>{result.created}</b> lệnh fill.
-              {result.skipped.length > 0 && (
-                <span className="text-amber-700"> {result.skipped.length} pallet bị bỏ qua — {result.skipped[0]?.reason}</span>
-              )}
-            </div>
-          )}
         </div>
         <DialogFooter className="gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={createTasks.isPending}>
-            {result ? 'Đóng' : 'Hủy'}
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={() => onApply(dateSel, picked)}
+            disabled={isLoading || (dateSel !== '' && picked.length === 0)}>
+            Áp dụng
           </Button>
-          {!result && (
-            <Button size="sm" onClick={save} disabled={createTasks.isPending || picked.length === 0}>
-              {createTasks.isPending ? 'Đang tạo…' : `Ra lệnh (${picked.length} pallet)`}
-            </Button>
-          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

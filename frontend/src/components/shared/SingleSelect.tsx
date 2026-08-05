@@ -87,11 +87,13 @@ export function SingleSelect({
           <>
             <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
             <div
-              className="z-[200] pointer-events-auto min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              // flex-col + list min-h-0: anchor.style có maxHeight (kẹp theo hộp dialog) —
+              // danh sách phải CO THEO chứ không giữ max-h cứng rồi bị cắt phần đuôi
+              className="z-[200] pointer-events-auto min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden flex flex-col"
               style={anchor.style}
             >
               {searchable && (
-                <div className="p-2 border-b border-slate-100">
+                <div className="p-2 border-b border-slate-100 shrink-0">
                   <input
                     type="text"
                     value={search}
@@ -102,7 +104,7 @@ export function SingleSelect({
                   />
                 </div>
               )}
-              <div className="max-h-48 overflow-y-auto">
+              <div className="max-h-48 min-h-0 overflow-y-auto">
                 {loading ? (
                   <p className="text-[11px] text-slate-400 text-center py-3">Đang tìm…</p>
                 ) : filtered.length === 0 ? (

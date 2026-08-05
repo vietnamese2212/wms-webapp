@@ -181,7 +181,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
             <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Xác nhận hạ</p>
           </div>
         ) : (
-          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
+          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} stopOnScan />
         )}
       </div>
       <div className="shrink-0 p-3 space-y-2">

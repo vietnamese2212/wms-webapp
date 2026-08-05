@@ -23,6 +23,7 @@ Mount một lần, dùng CSS `hidden` thay vì unmount (giữ state phiên quét
 <div className={`fixed inset-0 z-50 ${open ? '' : 'hidden'}`}>
 ```
 Khi re-open: `useEffect([open]) → setTimeout(() => scannerRef.current?.resume(), 50)`
+**Flow KHÔNG auto-resume (vd Fill — quét xong còn thao tác dài) → thêm `stopOnScan`:** bắt được mã = chụp khung cuối làm ảnh đóng băng rồi TẮT HẲN camera (đèn tắt, 0 pin); `resume()` tự bật lại (~0,5s, không hỏi quyền). Flow auto-resume 1,5s (Xuất/Nhập) ĐỪNG bật cờ này — tắt/bật liên tục chỉ thêm trễ.
 **⚠️ BẮT BUỘC `<QRScanner active={open} />` khi overlay keep-mounted** — không truyền là camera CHẠY NGẦM sau khi user đóng (đèn sáng, tốn pin — user bắt 05/08 ở màn quét Fill). `active=false` tắt hẳn stream; mở lại tự bật, KHÔNG hỏi quyền lại (trình duyệt nhớ quyền theo origin). Ratchet `qrscanner_keepmounted_without_active` gác. Màn quét unmount khi đóng thì không cần `active`.
 
 ## Confirm Flow — state cốt lõi

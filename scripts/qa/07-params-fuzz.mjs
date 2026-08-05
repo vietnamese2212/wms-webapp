@@ -81,6 +81,11 @@ const LIST_FUZZ = [
   `/wms/fill/demand?warehouse_id=`,
   `/wms/fill/orders?warehouse_id=&status=`,
   `/wms/fill/report?warehouse_id=`,
+  // Ngày KHỚP ĐỊNH DẠNG nhưng không phải ngày thật — regex ^\d{4}-\d{2}-\d{2}$ cho qua rồi
+  // Postgres nổ 22008 thành 500 (check-app bắt 05/08; fix = isDay có Date.parse)
+  `/wms/fill/demand?warehouse_id=x&date=2026-13-99`,
+  `/wms/fill/orders?warehouse_id=x&date_from=2026-13-99`,
+  `/wms/fill/report?warehouse_id=x&date_to=0000-00-00`,
 ]
 for (const path of LIST_FUZZ) {
   const r = await api(path)

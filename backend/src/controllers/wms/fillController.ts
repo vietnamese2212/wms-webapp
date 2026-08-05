@@ -34,6 +34,9 @@ function fail(res: Response, status: number, code: string, message: string) {
 const now = () => new Date().toISOString()
 const vnToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+// Regex chỉ kiểm ĐỊNH DẠNG — '2026-13-99' vẫn lọt rồi nổ 22008 ở Postgres thành 500
+// (check-app bắt 05/08). Ngày phải parse được thật sự mới cho qua.
+const isDay = (d: string) => DATE_RE.test(d) && !isNaN(Date.parse(d))
 const fmtDMY = (d: string | null | undefined) => {
   if (!d) return '?'
   const [y, m, day] = d.slice(0, 10).split('-')
@@ -71,7 +74,7 @@ export async function getFillDemand(req: Request, res: Response) {
   try {
     const { warehouse_id, date } = req.query as Record<string, string>
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
-    if (date && !DATE_RE.test(date)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
+    if (date && !isDay(date)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
     if (!guardWarehouse(req, res, warehouse_id)) return
 
     const { data, error } = await supabase.rpc('fill_demand', {
@@ -118,7 +121,7 @@ export async function listFillOrders(req: Request, res: Response) {
     if (!q.warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
     if (!guardWarehouse(req, res, q.warehouse_id)) return
     for (const d of [q.date_from, q.date_to])
-      if (d && !DATE_RE.test(d)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
+      if (d && !isDay(d)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
 
     const page     = Math.max(1, Number(q.page) || 1)
     const pageSize = Math.min(500, Math.max(1, Number(q.page_size) || 100))
@@ -248,14 +251,14 @@ export async function createFillOrder(req: Request, res: Response) {
     if (!warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
     if (!guardWarehouse(req, res, warehouse_id)) return
     const day = target_date || vnToday()
-    if (!DATE_RE.test(day)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
+    if (!isDay(day)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
     const list = (Array.isArray(lines) ? lines : []).filter(l =>
       l && typeof l.material_id === 'string' && UUID_RE.test(l.material_id)
       && Number(l.qty_base) > 0 && Number.isFinite(Number(l.qty_base)))
     if (!list.length) return fail(res, 400, 'INVALID_INPUT', 'Chưa có dòng mã nào để ra lệnh')
     if (list.length > 200) return fail(res, 400, 'TOO_MANY', 'Tối đa 200 dòng mỗi lệnh — chia nhỏ giúp')
     for (const l of list) {
-      if (l.required_date && !DATE_RE.test(String(l.required_date).slice(0, 10)))
+      if (l.required_date && !isDay(String(l.required_date).slice(0, 10)))
         return fail(res, 400, 'INVALID_INPUT', 'Date yêu cầu không hợp lệ (YYYY-MM-DD)')
     }
 
@@ -636,7 +639,7 @@ export async function getFillReport(req: Request, res: Response) {
     if (!q.warehouse_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho')
     if (!guardWarehouse(req, res, q.warehouse_id)) return
     for (const d of [q.date_from, q.date_to])
-      if (d && !DATE_RE.test(d)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
+      if (d && !isDay(d)) return fail(res, 400, 'INVALID_INPUT', 'Ngày không hợp lệ (YYYY-MM-DD)')
 
     const { data, error } = await supabase.rpc('fill_report', {
       p_wh_scope: scopeWhIds(req), p_warehouse_id: q.warehouse_id,

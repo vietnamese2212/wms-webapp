@@ -9,7 +9,7 @@
 // là thổi tổng (luật BASE UNIT trong CLAUDE.md, cổng tĩnh 09 đang gác nhãn này).
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDownToLine, QrCode, Plus, X, Rows3, AlignJustify, UserPlus, MapPin, Info } from 'lucide-react'
+import { ArrowDownToLine, QrCode, Plus, X, Rows3, AlignJustify, UserPlus, MapPin, Info, CalendarSearch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -22,15 +22,16 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { FillScanOverlay } from './FillScanOverlay'
 import {
-  useWarehouses, useFillDemand, useFillTasks, useFillReport, useFillEmployees,
+  useWarehouses, useFillDemand, useFillCandidates, useFillTasks, useFillReport, useFillEmployees,
   usePickFaceLocations, useCreateFillTasks, useUpdateFillTask, useCancelFillTask,
   type FillDemandRow, type FillTaskRow,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
-import { formatDateTime, formatTimestampDate } from '@/utils/formatters'
+import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
@@ -38,13 +39,17 @@ const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 }
 const DEMAND_COLS = [
   { id: 'sel',     label: '',                 w: 36 },
   { id: 'code',    label: 'Mã hàng',          w: 110 },
-  { id: 'name',    label: 'Tên hàng',         w: 220 },
-  { id: 'demand',  label: 'Cần nhặt lẻ',      w: 150, align: 'right' as const },
-  { id: 'onhand',  label: 'Đang có ở dưới',   w: 150, align: 'right' as const },
-  { id: 'onway',   label: 'Đang có lệnh',     w: 140, align: 'right' as const },
-  { id: 'short',   label: 'Thiếu',            w: 150, align: 'right' as const },
-  { id: 'pallets', label: 'Pallet cần hạ',    w: 110, align: 'right' as const },
-  { id: 'dest',    label: 'Đề xuất hạ về',    w: 140 },
+  { id: 'name',    label: 'Tên hàng',         w: 200 },
+  { id: 'cat',     label: 'Loại kho',         w: 80 },
+  { id: 'demand',  label: 'Cần nhặt lẻ',      w: 140, align: 'right' as const },
+  { id: 'onhand',  label: 'Đang có ở dưới',   w: 140, align: 'right' as const },
+  { id: 'onway',   label: 'Đang có lệnh',     w: 130, align: 'right' as const },
+  { id: 'short',   label: 'Thiếu',            w: 140, align: 'right' as const },
+  { id: 'pallets', label: 'Pallet chẵn',      w: 90,  align: 'right' as const },
+  { id: 'qtydown', label: 'SL hạ (chẵn pallet)', w: 140, align: 'right' as const },
+  { id: 'src',     label: 'Vị trí lấy hàng',  w: 160 },
+  { id: 'dest',    label: 'Đề xuất hạ về',    w: 130 },
+  { id: 'act',     label: '',                 w: 44 },
 ]
 const TASK_COLS = [
   { id: 'date',    label: 'Ngày xuất',   w: 90 },
@@ -95,6 +100,7 @@ export default function FillPicking() {
     setDense(d => { localStorage.setItem('fill_density', d ? 'comfortable' : 'compact'); return !d })
 
   const { data: warehouses = [] } = useWarehouses(true)
+  const { data: whTypes = [] } = useScopedWhTypes()   // option Loại kho theo scope (luật CLAUDE.md)
   const allowedWh = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whList = warehouses.filter(w => !allowedWh || allowedWh.has(w.id))
@@ -114,6 +120,9 @@ export default function FillPicking() {
       { key: 'short', label: 'Chỉ mã đang thiếu', type: 'multi' as const, searchable: false,
         options: [{ value: 'y', label: 'Chỉ mã đang thiếu' }], selected: f.onlyShort ? ['y'] : [],
         onChange: (v: string[]) => setFillFilter({ onlyShort: v.includes('y') }) },
+      { key: 'cat', label: 'Loại kho', type: 'multi' as const, searchable: false,
+        options: whTypes.map(t => ({ value: t.value, label: t.value })), selected: f.cats,
+        onChange: (v: string[]) => setFillFilter({ cats: v }) },
     ] : []),
     ...(f.tab === 'tasks' ? [
       { key: 'status', label: 'Trạng thái', type: 'multi' as const, searchable: false,
@@ -192,7 +201,7 @@ export default function FillPicking() {
         {!whId ? (
           <div className="p-8 text-center text-sm text-slate-400">Chọn kho để xem đề xuất fill hàng</div>
         ) : f.tab === 'demand' ? (
-          <DemandTab warehouseId={whId} date={f.date} onlyShort={f.onlyShort} dense={dense} canPlan={canPlan} canAssign={canAssign} />
+          <DemandTab warehouseId={whId} date={f.date} onlyShort={f.onlyShort} cats={f.cats} dense={dense} canPlan={canPlan} canAssign={canAssign} />
         ) : f.tab === 'tasks' ? (
           <TasksTab warehouseId={whId} dense={dense} canPlan={canPlan} canAssign={canAssign} />
         ) : (
@@ -209,8 +218,8 @@ export default function FillPicking() {
 }
 
 // ─── TAB 1 — ĐỀ XUẤT ─────────────────────────────────────────────────────────
-function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: {
-  warehouseId: string; date: string; onlyShort: boolean; dense: boolean; canPlan: boolean; canAssign: boolean
+function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssign }: {
+  warehouseId: string; date: string; onlyShort: boolean; cats: string[]; dense: boolean; canPlan: boolean; canAssign: boolean
 }) {
   const { widths: colW, startResize, totalWidth } = useColumnResize('fill_demand_col_widths', DEMAND_COLS.map(c => c.w))
   const { data, isLoading } = useFillDemand({ warehouse_id: warehouseId, date })
@@ -220,13 +229,17 @@ function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: 
   const [assignee, setAssignee] = useState('')
   const [err, setErr] = useState('')
   const [result, setResult] = useState<{ created: number; skipped: { pallet_code?: string; reason: string }[] } | null>(null)
+  // Dialog "Chọn date": người nhặt lẻ chọn NSX họ cần từ tồn thật (không chọn = FEFO — date xa nhất)
+  const [dateRow, setDateRow] = useState<FillDemandRow | null>(null)
 
   useEffect(() => { setSel(new Set()) }, [warehouseId, date])
 
   const rows = useMemo(() => {
-    const all = data?.rows ?? []
-    return onlyShort ? all.filter(r => Number(r.short_base) > 0) : all
-  }, [data, onlyShort])
+    let all = data?.rows ?? []
+    if (onlyShort) all = all.filter(r => Number(r.short_base) > 0)
+    if (cats.length) all = all.filter(r => r.category && cats.includes(r.category))
+    return all
+  }, [data, onlyShort, cats])
 
   // Tổng CROSS-MÃ: quy đổi per-mã rồi mới cộng (nhãn "SL (quy đổi)")
   const tot = useMemo(() => {
@@ -355,6 +368,9 @@ function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: 
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.material_name ?? ''}>
                     {r.material_name ?? <span className="text-slate-300">—</span>}
                   </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    {r.category ?? <span className="text-slate-300">—</span>}
+                  </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right font-semibold tabular-nums">
                     {qtyLabel(Number(r.demand_base), r)}
                   </TableCell>
@@ -375,12 +391,35 @@ function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: 
                       ? (r.suggestions.length || <span className="text-red-600">hết hàng trên</span>)
                       : <span className="text-slate-300">—</span>}
                   </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums"
+                    title="Xe nâng hạ NGUYÊN pallet (chẵn pallet) — tổng hạ có thể vượt số thiếu">
+                    {short > 0 && r.suggestions.length > 0
+                      ? qtyLabel(r.suggestions.reduce((s, x) => s + Number(x.avail), 0), r)
+                      : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono">
+                    {(() => {
+                      const srcs = [...new Set(r.suggestions.map(s => s.from_location_code).filter(Boolean))] as string[]
+                      if (!srcs.length) return <span className="text-slate-300">—</span>
+                      const shown = srcs.slice(0, 2).join(', ')
+                      return <span title={srcs.join(', ')}>{shown}{srcs.length > 2 ? ` +${srcs.length - 2}` : ''}</span>
+                    })()}
+                  </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono">
                     {r.to_location?.code ?? (short > 0
                       ? <span className="text-red-600 font-sans"
                           title="Không còn vị trí nhặt lẻ trống NHẬN LOẠI KHO của mã này — khai thêm vị trí nhặt lẻ cho loại này ở trang Vị trí kho, hoặc giải phóng chỗ">
                           hết chỗ nhận loại này</span>
                       : <span className="text-slate-300">—</span>)}
+                  </TableCell>
+                  <TableCell className="px-2 py-1">
+                    {canPlan && short > 0 && (
+                      <button type="button" onClick={() => setDateRow(r)}
+                        title="Chọn date (NSX) cần hạ từ tồn kho — không chọn thì mặc định FEFO (date xa nhất)"
+                        className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
+                        <CalendarSearch className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </TableCell>
                 </TableRow>
               )
@@ -416,6 +455,11 @@ function DemandTab({ warehouseId, date, onlyShort, dense, canPlan, canAssign }: 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {dateRow && (
+        <ChooseDateDialog warehouseId={warehouseId} date={date} row={dateRow} canAssign={canAssign}
+          onClose={() => setDateRow(null)} />
+      )}
     </>
   )
 }
@@ -632,6 +676,129 @@ function DestPicker({ warehouseId, materialId, value, onChange }: {
         placeholder="Chọn vị trí nhặt lẻ…"
       />
     </div>
+  )
+}
+
+// ─── Dialog "Chọn date" (tab Đề xuất) ────────────────────────────────────────
+// Người nhặt lẻ chọn NSX họ cần từ TỒN THẬT (danh mục date lấy từ pallet ứng viên); không chọn
+// = FEFO mặc định (date xa nhất). Pallet tick sẵn theo FEFO tới khi đủ bù thiếu — CHẴN PALLET
+// (xe nâng hạ nguyên pallet), tổng hạ có thể vượt số thiếu.
+function ChooseDateDialog({ warehouseId, date, row, canAssign, onClose }: {
+  warehouseId: string; date: string; row: FillDemandRow; canAssign: boolean; onClose: () => void
+}) {
+  const { data, isLoading } = useFillCandidates({ warehouse_id: warehouseId, material_id: row.material_id })
+  const createTasks = useCreateFillTasks()
+  const [dateSel, setDateSel] = useState('')
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [assignee, setAssignee] = useState('')
+  const [err, setErr] = useState('')
+  const [result, setResult] = useState<{ created: number; skipped: { pallet_code?: string; reason: string }[] } | null>(null)
+
+  const all = data?.rows ?? []
+  const dates = useMemo(() => {
+    const m = new Map<string, { avail: number; n: number }>()
+    for (const c of all) {
+      const d = c.production_date ? c.production_date.slice(0, 10) : ''
+      const cur = m.get(d) ?? { avail: 0, n: 0 }
+      cur.avail += Number(c.avail); cur.n += 1; m.set(d, cur)
+    }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [all])
+  const list = useMemo(
+    () => dateSel ? all.filter(c => (c.production_date ?? '').slice(0, 10) === dateSel) : all,
+    [all, dateSel])
+
+  // Tick sẵn FEFO (danh sách đã xếp FEFO từ RPC) tới khi đủ bù thiếu
+  useEffect(() => {
+    const short = Number(row.short_base)
+    const n = new Set<string>(); let cum = 0
+    for (const c of list) { if (cum >= short) break; n.add(c.entry_id); cum += Number(c.avail) }
+    setSel(n)
+  }, [list, row.short_base])
+
+  const selQty = list.filter(c => sel.has(c.entry_id)).reduce((s, c) => s + Number(c.avail), 0)
+
+  async function save() {
+    setErr('')
+    if (!sel.size) { setErr('Chưa tick pallet nào') ; return }
+    try {
+      const res = await createTasks.mutateAsync({
+        warehouse_id: warehouseId, target_date: date,
+        items: [...sel].map(entry_id => ({ entry_id, assignee_id: assignee || undefined })),
+      })
+      setResult(res)
+    } catch (e: unknown) {
+      setErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Không ra lệnh được')
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle className="flex items-center gap-1.5">
+          <CalendarSearch className="h-4 w-4 text-sky-600" /> Chọn date cần hạ — {row.material_code}
+        </DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <p className="text-[11px] text-slate-500">
+            Thiếu <b className="text-red-600">{qtyLabel(Number(row.short_base), row)}</b>.
+            Không chọn date = mặc định FEFO (date xa nhất hạ trước). Xe nâng hạ NGUYÊN pallet.
+          </p>
+          <SingleSelect
+            value={dateSel} onChange={setDateSel}
+            options={[{ value: '', label: 'Tự động — FEFO (date xa nhất)' },
+              ...dates.map(([d, v]) => ({
+                value: d, label: `NSX ${d ? formatDate(d) : 'không rõ'} — ${qtyLabel(v.avail, row)} · ${v.n} pallet`,
+              }))]}
+            placeholder="Chọn date (NSX)…"
+          />
+          <div className="border rounded max-h-56 overflow-auto">
+            {isLoading ? (
+              <p className="p-3 text-xs text-slate-400">Đang tải tồn kho…</p>
+            ) : list.length === 0 ? (
+              <p className="p-3 text-xs text-slate-400">Không còn pallet khả dụng (ngoài vị trí nhặt lẻ) cho date này</p>
+            ) : list.map(c => (
+              <label key={c.entry_id} className="flex items-center gap-2 px-2 py-1.5 border-b last:border-b-0 cursor-pointer hover:bg-slate-50">
+                <input type="checkbox" className="h-3 w-3" checked={sel.has(c.entry_id)}
+                  onChange={e => setSel(prev => {
+                    const n = new Set(prev)
+                    if (e.target.checked) n.add(c.entry_id); else n.delete(c.entry_id)
+                    return n
+                  })} />
+                <span className="font-mono text-[10px] font-semibold flex-1 truncate" title={c.pallet_code}>{c.pallet_code}</span>
+                <span className="font-mono text-[10px] text-slate-500">{c.from_location_code ?? '—'}</span>
+                <span className="text-[10px] tabular-nums font-semibold w-24 text-right">{qtyLabel(Number(c.avail), row)}</span>
+                <span className="text-[9px] text-slate-400 w-14 text-right">{c.production_date ? formatTimestampDate(c.production_date, true) : '—'}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-600">
+            Đã tick <b>{sel.size}</b> pallet · sẽ hạ <b>{qtyLabel(selQty, row)}</b>
+            {selQty >= Number(row.short_base) ? <span className="text-green-600"> (đủ bù thiếu)</span>
+              : <span className="text-amber-600"> (chưa đủ bù thiếu)</span>}
+          </p>
+          {canAssign && <AssigneePicker warehouseId={warehouseId} value={assignee} onChange={setAssignee} />}
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+          {result && (
+            <div className="text-[11px] rounded border border-green-200 bg-green-50 px-2 py-1.5 text-green-800">
+              Đã tạo <b>{result.created}</b> lệnh fill.
+              {result.skipped.length > 0 && (
+                <span className="text-amber-700"> {result.skipped.length} pallet bị bỏ qua — {result.skipped[0]?.reason}</span>
+              )}
+            </div>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={createTasks.isPending}>
+            {result ? 'Đóng' : 'Hủy'}
+          </Button>
+          {!result && (
+            <Button size="sm" onClick={save} disabled={createTasks.isPending || sel.size === 0}>
+              {createTasks.isPending ? 'Đang tạo…' : `Ra lệnh (${sel.size} pallet)`}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

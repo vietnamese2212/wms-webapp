@@ -247,6 +247,7 @@ interface FillFilters {
   status: string[]                               // lọc trạng thái lệnh (tab Lệnh fill)
   mine: boolean                                  // chỉ việc được giao cho tôi
   onlyShort: boolean                             // tab Đề xuất: chỉ mã đang THIẾU
+  cats: string[]                                 // tab Đề xuất: lọc Loại kho của mã
   reportFrom: string
   reportTo: string
   page: number
@@ -405,7 +406,7 @@ function initialFilters() {
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
-                    onlyShort: true, reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
+                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },

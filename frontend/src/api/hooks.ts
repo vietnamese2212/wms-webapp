@@ -3633,10 +3633,27 @@ export function useUpdateSlottingZoneConfig() {
 export interface FillSuggestion {
   entry_id: string; pallet_code: string
   from_location_id: string | null; from_location_code: string | null
-  avail: number; expiry_date: string | null
+  avail: number; production_date: string | null; expiry_date: string | null
+}
+// Pallet ứng viên cho dialog "Chọn date" (fill_candidates — FEFO, cùng điều kiện nguồn fill_demand)
+export interface FillCandidate {
+  entry_id: string; pallet_code: string
+  from_location_id: string | null; from_location_code: string | null
+  avail: number; production_date: string | null; fefo_key: string | null
+}
+export function useFillCandidates(params?: { warehouse_id: string; material_id: string }) {
+  return useQuery({
+    queryKey: ['fill-candidates', params],
+    enabled: !!params?.warehouse_id && !!params?.material_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/fill/candidates', { params })
+      return data.data as { rows: FillCandidate[] }
+    },
+  })
 }
 export interface FillDemandRow {
   material_id: string; material_code: string | null; material_name: string | null
+  category: string | null
   base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   demand_base: number; pick_face_base: number; pick_face_pallets: number
   pending_base: number; pending_n: number; short_base: number
@@ -3746,7 +3763,7 @@ export function useCreateFillTasks() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      warehouse_id: string; target_date: string
+      warehouse_id: string; target_date?: string   // bỏ trống = BE lấy hôm nay (giờ VN)
       items: { entry_id: string; to_location_id?: string; assignee_id?: string }[]
     }) => apiClient.post('/wms/fill/tasks', body)
       .then(r => r.data.data as { created: number; skipped: { entry_id: string; pallet_code?: string; reason: string }[] }),

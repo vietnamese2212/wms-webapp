@@ -75,6 +75,29 @@ export async function getFillDemand(req: Request, res: Response) {
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 
+// ─── GET /wms/fill/candidates?warehouse_id&material_id ─────────────────────
+// Dialog "Chọn date": toàn bộ pallet ứng viên của MỘT mã (FEFO) để người nhặt lẻ chọn NSX họ
+// cần từ tồn thật; không chọn = mặc định FEFO (date xa nhất). Điều kiện nguồn khớp fill_demand.
+export async function getFillCandidates(req: Request, res: Response) {
+  try {
+    const { warehouse_id, material_id } = req.query as Record<string, string>
+    if (!warehouse_id || !material_id) return fail(res, 400, 'INVALID_INPUT', 'Thiếu kho hoặc mã hàng')
+    if (!UUID_RE.test(material_id)) return fail(res, 400, 'INVALID_INPUT', 'Mã hàng không hợp lệ')
+    if (!guardWarehouse(req, res, warehouse_id)) return
+
+    const { data, error } = await supabase.rpc('fill_candidates', {
+      p_wh_scope:     scopeWhIds(req),
+      p_warehouse_id: warehouse_id,
+      p_material_id:  material_id,
+    })
+    if (error) {
+      if (error.code === 'PGRST202') return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260805b (fill hàng)')
+      return fail(res, 500, 'DB_ERROR', error.message)
+    }
+    return ok(res, data)
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
+}
+
 // ─── GET /wms/fill/tasks ────────────────────────────────────────────────────
 export async function listFillTasks(req: Request, res: Response) {
   try {

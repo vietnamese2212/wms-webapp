@@ -189,6 +189,7 @@ router.patch('/slotting/zone-config/:id',                     requirePerm('slott
 // vị trí đích của lệnh. Cùng tiền lệ `leftover_location_id` bên Xuất kho — người đi hạ hàng phải
 // làm được việc của mình; đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
 router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
+router.get('/fill/candidates',                                requirePerm('fill', 'view'),    fill.getFillCandidates)
 router.get('/fill/tasks',                                     requirePerm('fill', 'view'),    fill.listFillTasks)
 router.get('/fill/report',                                    requirePerm('fill', 'view'),    fill.getFillReport)
 router.get('/fill/pick-face-locations',                       requirePerm('fill', 'view'),    fill.listPickFaceLocations)

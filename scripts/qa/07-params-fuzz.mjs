@@ -69,6 +69,8 @@ const LIST_FUZZ = [
   `/masterdata/locations/summary?warehouse_id=&pick_face=1`,
   `/masterdata/locations/summary?warehouse_id=&flag=1`,
   `/masterdata/locations/summary?warehouse_id=&zones=`,
+  `/wms/fill/candidates?warehouse_id=&material_id=`,
+  `/wms/fill/candidates?warehouse_id=x&material_id=khong-phai-uuid`,
   `/masterdata/materials/summary?search=`,
   `/wms/inventory/summary?warehouse_ids=&categories=`,
   `/wms/inventory/facets?warehouse_ids=`,

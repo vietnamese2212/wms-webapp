@@ -25,6 +25,8 @@
 //   16 bộ lọc Khu vực kho (`?zones=`): khớp oracle · rỗng trả rỗng · ô tổng cùng tập
 //   17 đích fill PHẢI KHỚP LOẠI KHO của mã — cả 5 cửa: gợi ý RPC · đích chỉ định · đổi đích ·
 //      tự chọn (kể cả khi hết chỗ đúng loại) · ô chọn đích
+//   18 kho KHÔNG có vị trí nhặt lẻ nhận loại ⇒ mã bị LOẠI khỏi Đề xuất (kho không nhặt lẻ loại đó)
+//   19 fill_candidates (dialog "Chọn date"): nguồn ngoài nhặt lẻ · vắng pallet có lệnh treo · FEFO
 // usage: node scripts/qa/18-fill-replenish.mjs
 import { login, api, check, finish, restAll, restWrite } from './lib.mjs'
 import { randomUUID } from 'crypto'
@@ -37,7 +39,7 @@ const DAY = '2026-12-21'
 console.log('── GÓI FILL-REPLENISH ──')
 await login()
 
-const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
+const created = { locs: [], entries: [], gdo: null, do: null, items: [], mat2: null }
 async function cleanup() {
   for (const id of created.entries) await restWrite('FillTask', 'DELETE', `entry_id=eq.${id}`).catch(() => {})
   for (const id of created.items)   await restWrite('OutboundScanEntry', 'DELETE', `item_id=eq.${id}`).catch(() => {})
@@ -46,6 +48,7 @@ async function cleanup() {
   if (created.gdo) await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${created.gdo}`).catch(() => {})
   for (const id of created.entries) await restWrite('InventoryEntry', 'DELETE', `id=eq.${id}`).catch(() => {})
   for (const id of created.locs)    await restWrite('Location', 'DELETE', `id=eq.${id}`).catch(() => {})
+  if (created.mat2) await restWrite('Material', 'DELETE', `id=eq.${created.mat2}`).catch(() => {})
 }
 // Tàn dư của lần chạy hỏng giữa chừng (fixture phải TỰ HỒI PHỤC)
 for (const e of await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}-*`))
@@ -65,6 +68,8 @@ for (const t of ['InventoryEntry', 'Location']) {
   for (const o of await restAll(t, `select=id&${col}=like.${TAG}-*`))
     await restWrite(t, 'DELETE', `id=eq.${o.id}`).catch(() => {})
 }
+for (const m of await restAll('Material', `select=id&material_code=like.${TAG}-*`))
+  await restWrite('Material', 'DELETE', `id=eq.${m.id}`).catch(() => {})
 
 try {
   // ── Fixture ────────────────────────────────────────────────────────────────
@@ -91,9 +96,11 @@ try {
     created.locs.push(row.id)
     return { id: row.id, code: row.location_code }
   }
+  // 2 vị trí nhặt lẻ fixture khai ĐÚNG loại của mã (KHÔNG để NULL — NULL nhận mọi hàng sẽ làm
+  // phép kiểm 18 "kho không phục vụ loại X" vô nghĩa vì chính fixture lại phục vụ X)
   const locRsv  = await mkLoc('RSV',  10, false)  // tầng trên — nguồn
-  const locPF   = await mkLoc('PF',    5, true, true)   // vị trí nhặt lẻ — đích (+ cờ kiểm kê, cho phép kiểm 15)
-  const locFull = await mkLoc('FULL',  1, true)   // vị trí nhặt lẻ ĐÃ ĐẦY
+  const locPF   = await mkLoc('PF',    5, true, true, [mat.category])   // đích (+ cờ kiểm kê cho kiểm 15)
+  const locFull = await mkLoc('FULL',  1, true, false, [mat.category])  // vị trí nhặt lẻ ĐÃ ĐẦY
   // Nhặt lẻ KHÁC LOẠI KHO, trống NHIỀU NHẤT kho — nếu luật loại vắng mặt, mọi cửa chọn đích
   // đều sẽ rơi vào đây (free DESC) → cụm kiểm 17 bắt được ngay
   const locBad  = await mkLoc('BAD',  50, true, false, ['__QAKHAC__'])
@@ -147,6 +154,22 @@ try {
     created_at: nowIso(), updated_at: nowIso(),
   })
   created.items.push(item.id)
+
+  // Mã LOẠI KHÔNG ĐƯỢC PHỤC VỤ: category giả '__QANOPF__' — chỉ bị loại khỏi Đề xuất nếu
+  // KHÔNG vị trí nhặt lẻ nào của kho nhận nó (vị trí chưa khai loại = nhận mọi hàng, nên kỳ
+  // vọng tính ĐỘNG từ DB thay vì đóng đinh — kho thật có thể có vị trí NULL loại)
+  const [mat2] = await restWrite('Material', 'POST', null, {
+    id: randomUUID(), material_code: `${TAG}-M2`, material_description: 'QA fill no-pickface',
+    short_name: 'QA fill no-pickface', category: '__QANOPF__',
+    created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.mat2 = mat2.id
+  const [item2] = await restWrite('OutboundItem', 'POST', null, {
+    id: randomUUID(), do_id: dlv.id, material_id: mat2.id, material_code_raw: mat2.material_code,
+    cartons_ordered: 60, cartons_scanned: 0, loose_picking: 60, status: 'PENDING',
+    created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.items.push(item2.id)
 
   const demandOf = async () => {
     const r = await api(`/wms/fill/demand?warehouse_id=${whId}&date=${DAY}`)
@@ -376,6 +399,40 @@ try {
       ? autoTask?.to_location_id !== locBad.id
       : /Loại kho/i.test(autoSkip?.reason ?? '')),
     `created=${mkAuto.j?.data?.created} dest≠BAD=${autoTask?.to_location_id !== locBad.id} reason="${autoSkip?.reason ?? ''}"`)
+
+  // ── 18. Kho KHÔNG có vị trí nhặt lẻ nhận loại ⇒ mã bị LOẠI khỏi Đề xuất ────
+  // mat2 mang category giả '__QANOPF__', có nhặt lẻ 60 trong cùng chuyến. Kỳ vọng tính ĐỘNG
+  // từ DB (vị trí NULL loại nhận mọi hàng — kho thật có thể có) thay vì đóng đinh.
+  const accepts18 = await restAll('Location',
+    `select=id,categories&warehouse_id=eq.${whId}&is_pick_face=is.true&is_active=is.true`)
+  const servable18 = accepts18.some(l => !l.categories || l.categories.includes('__QANOPF__'))
+  const d18 = await api(`/wms/fill/demand?warehouse_id=${whId}&date=${DAY}`)
+  const row18 = (d18.j?.data?.rows ?? []).find(r => r.material_id === mat2.id)
+  check('18. Mã loại kho KHÔNG phục vụ nhặt lẻ bị LOẠI khỏi Đề xuất (kỳ vọng động theo DB)',
+    servable18 ? !!row18 : row18 === undefined,
+    `kho ${servable18 ? 'CÓ' : 'KHÔNG có'} chỗ nhận '__QANOPF__' → dòng ${row18 ? 'CÓ' : 'KHÔNG'} trong Đề xuất`)
+
+  // ── 19. fill_candidates (dialog "Chọn date") — cùng điều kiện nguồn với fill_demand ──
+  // Tại đây: pC còn tự do ở tầng trên (phải CÓ); pA đã hạ xuống locPF, pOnPF/BADSTOCK đang ở
+  // vị trí nhặt lẻ (phải VẮNG); pB có/không lệnh treo tuỳ 17e → kỳ vọng động.
+  const cand19 = await api(`/wms/fill/candidates?warehouse_id=${whId}&material_id=${mat.id}`)
+  const cRows = cand19.j?.data?.rows ?? []
+  const cIds = new Set(cRows.map(c => c.entry_id))
+  const keys19 = cRows.map(c => c.fefo_key)
+  const firstNull = keys19.findIndex(k => !k)
+  const nonNull = keys19.filter(Boolean)
+  const fefoSorted = JSON.stringify(nonNull) === JSON.stringify([...nonNull].sort())
+    && (firstNull === -1 || keys19.slice(firstNull).every(k => !k))
+  check('19a. Candidates: có pallet tự do tầng trên, VẮNG pallet đang ở vị trí nhặt lẻ, xếp FEFO',
+    cand19.s === 200 && cIds.has(pC.id) && !cIds.has(pOnPF.id) && !cIds.has(pA.id)
+      && cRows.every(c => 'production_date' in c) && fefoSorted,
+    `n=${cRows.length} FEFO=${fefoSorted}`)
+  const [pend19] = await restAll('FillTask', `select=id&entry_id=eq.${pB.id}&status=eq.PENDING`)
+  check('19b. Pallet ĐANG CÓ LỆNH TREO không xuất hiện trong candidates',
+    pend19 ? !cIds.has(pB.id) : cIds.has(pB.id),
+    `pB ${pend19 ? 'đang treo' : 'tự do'} → ${cIds.has(pB.id) ? 'CÓ' : 'KHÔNG'} trong danh sách`)
+  const candBad = await api(`/wms/fill/candidates?warehouse_id=${whId}&material_id=khong-phai-uuid`)
+  check('19c. material_id không hợp lệ → 400 (không 500)', candBad.s === 400, `http=${candBad.s}`)
 } finally {
   console.log('\n🧹 dọn…')
   await cleanup()

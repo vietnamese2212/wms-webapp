@@ -174,6 +174,16 @@ for (const [table, label] of [
     broken.length
       ? `${broken.length} bảng câm: ${broken.slice(0, 4).map(t => `${t}(${!ready?.[t]?.in_pub ? 'ngoài publication' : 'thiếu policy đọc'})`).join(', ')}`
       : `soi ${declared.length} bảng`)
+
+  // MỌI bảng public phải BẬT RLS (cảnh báo Supabase 03/08: StocktakeLog + 10 bảng backup hở —
+  // ai có anon key đọc/sửa được). RPC rls_gap_tables (migration 20260805c) liệt kê bảng tắt;
+  // bảng MỚI quên bật là đỏ trong ngày thay vì chờ email cảnh báo.
+  const rlsGaps = await restRpc('rls_gap_tables')
+  check('Mọi bảng public đều bật RLS (không bảng nào hở với anon key)',
+    Array.isArray(rlsGaps) && rlsGaps.length === 0,
+    Array.isArray(rlsGaps)
+      ? (rlsGaps.length ? `HỞ: ${rlsGaps.slice(0, 5).join(', ')}${rlsGaps.length > 5 ? '…' : ''}` : 'soi toàn schema public')
+      : 'RPC rls_gap_tables chưa apply (migration 20260805c)')
 }
 
 finish('INVARIANT')

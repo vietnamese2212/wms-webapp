@@ -116,22 +116,27 @@ for (const [table, label] of [
     vuot.length ? `vd ${vuot[0].date} ${vuot[0].time_from} ${vuot[0].booked_count}/${vuot[0].max_vehicles}` : `soi ${slots.length} khung`)
 }
 
-// 9. LỆNH FILL (hạ hàng xuống vị trí nhặt lẻ) — 3 bất biến cấu trúc.
-//    (a) MỘT pallet chỉ được có MỘT lệnh đang treo: hai lệnh cùng pallet nghĩa là hai người cùng
-//        được giao đi lấy một pallet — người thứ hai chắc chắn thất bại và số liệu "đang về" bị
-//        đếm đôi, làm phần "thiếu" tụt xuống oan. DB có unique index gác; bất biến này bắt cả
-//        trường hợp index bị DROP nhầm khi sửa bảng.
-//    (b) Lệnh ĐÃ HẠ phải có mốc thời gian — thiếu thì báo cáo tỷ lệ/thời gian trung bình sai câm.
+// 9. LỆNH FILL (hạ hàng xuống vị trí nhặt lẻ) — 3 bất biến cấu trúc (v3 05/08: lệnh theo DATE,
+//    KHÔNG ghim tem — bất biến (a) đổi khóa theo mô hình mới).
+//    (a) MỘT (kho, ngày xuất, mã, date) chỉ được có MỘT dòng đang treo: hai dòng trùng khóa
+//        nghĩa là hai người cùng ra lệnh một việc — "đang về" bị đếm đôi, phần "thiếu" tụt oan.
+//        DB có unique index `uq_filltask_pending_matdate` gác; bất biến bắt cả trường hợp index
+//        bị DROP nhầm khi sửa bảng.
+//    (b) Dòng ĐÃ HẠ phải có mốc thời gian — thiếu thì báo cáo tỷ lệ/thời gian trung bình sai câm.
 //    (c) Vị trí ĐÍCH phải đang là vị trí nhặt lẻ: khai nhầm cờ rồi bỏ khai sẽ biến lệnh thành
 //        "hạ hàng lên tầng trên" mà không ai thấy.
 {
-  const tasks = await restAll('FillTask', 'select=id,entry_id,status,done_at,to_location_id')
+  const tasks = await restAll('FillTask',
+    'select=id,warehouse_id,target_date,material_id,required_date,status,done_at,to_location_id')
   const pend = tasks.filter(t => t.status === 'PENDING')
   const seen = new Map()
-  for (const t of pend) seen.set(t.entry_id, (seen.get(t.entry_id) ?? 0) + 1)
+  for (const t of pend) {
+    const k = `${t.warehouse_id}|${t.target_date}|${t.material_id}|${t.required_date ?? ''}`
+    seen.set(k, (seen.get(k) ?? 0) + 1)
+  }
   const dup = [...seen.entries()].filter(([, n]) => n > 1)
-  check('Mỗi pallet chỉ có 1 lệnh fill đang treo', dup.length === 0,
-    dup.length ? `${dup.length} pallet có >1 lệnh, vd ${dup[0][0]}` : `soi ${pend.length} lệnh treo`)
+  check('Mỗi (kho, ngày xuất, mã, date) chỉ có 1 dòng lệnh fill đang treo', dup.length === 0,
+    dup.length ? `${dup.length} khóa có >1 dòng, vd ${dup[0][0]}` : `soi ${pend.length} dòng treo`)
 
   const doneNoStamp = tasks.filter(t => t.status === 'DONE' && !t.done_at)
   check('Lệnh fill đã hạ đều có mốc hoàn thành', doneNoStamp.length === 0,

@@ -3397,6 +3397,7 @@ async function processVehicleGroups(
     // Đếm lấy từ chính các mảng sắp ghi: chuyến mới = gdoInserts, ghi đè kế hoạch cũ = toReplace +
     // toPreserve (chuyến PENDING đã gán người thì giữ phân công), bỏ qua = chuyến đang xuất/đã HT.
     if (isPreflight(req)) {
+      const looseSkipped = created.filter((c: any) => c.skipped && /NHẶT LẺ/.test(String(c.reason ?? ''))).length
       const skippedTrips = created.filter((c: any) => c.skipped).length
       const overwrite = toReplaceIds.length + toPreserveIds.length
       const preservedAssigned = created.filter((c: any) => c.preserved_assignment).length
@@ -3411,7 +3412,8 @@ async function processVehicleGroups(
           ...(pausedMerges ? [{ label: 'Chuyến TẠM DỪNG sẽ merge thêm hàng', value: pausedMerges, warn: true }] : []),
           ...(overwrite ? [{ label: 'Chuyến GHI ĐÈ kế hoạch cũ', value: overwrite, warn: true }] : []),
           ...(preservedAssigned ? [{ label: 'Trong đó giữ phân công đã gán', value: preservedAssigned }] : []),
-          ...(skippedTrips ? [{ label: 'Bỏ qua (đang xuất / đã hoàn thành)', value: skippedTrips, warn: true }] : []),
+          ...(skippedTrips - looseSkipped ? [{ label: 'Bỏ qua (đang xuất / đã hoàn thành)', value: skippedTrips - looseSkipped, warn: true }] : []),
+          ...(looseSkipped ? [{ label: 'Bỏ qua (đang GIỮ HÀNG NHẶT LẺ — gỡ trả trên chuyến rồi up lại)', value: looseSkipped, warn: true }] : []),
         ],
       }))
     }

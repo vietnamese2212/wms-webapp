@@ -166,6 +166,22 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
       sum.review++
       continue
     }
+    // Soạn nhặt lẻ CÓ cộng vào item.cartons_scanned (addItemScanned) nên item đang soạn vốn đã rơi
+    // Z3 (không tự áp) — nhưng message "đã quét, chuyến đang xuất" sai bản chất. Tách: chỉ-soạn
+    // (chưa quét xuất thật) → message GỠ TRẢ nhặt lẻ (hàng ở vị trí chờ, user chốt 05/08).
+    const loosePrepped = looseByItem.get(it.id) ?? 0
+    if (loosePrepped > 0 && scanned - loosePrepped <= 0) {
+      if (newOrdered < loosePrepped) {
+        tasks.push({ ...baseTask, action: 'BLOCKED', status: 'OPEN',
+          detail: `SAP giảm còn ${newOrdered} nhưng ĐÃ SOẠN NHẶT LẺ ${loosePrepped} (base, hàng đang ở vị trí chờ) → gỡ trả nhặt lẻ trên chuyến rồi "Áp SAP", hoặc Giữ WMS + báo SAP.` })
+        sum.blocked++
+      } else {
+        tasks.push({ ...baseTask, action: 'NEEDS_REVIEW', status: 'OPEN',
+          detail: `SAP đổi ${oldOrdered}→${newOrdered} nhưng chuyến ĐANG SOẠN NHẶT LẺ ${loosePrepped} (base, hàng ở vị trí chờ) → gỡ trả/kiểm hàng rồi "Áp SAP", hoặc Giữ WMS.` })
+        sum.review++
+      }
+      continue
+    }
     if (scanned > 0) {
       // Z3 — đã quét → KHÔNG tự áp (v2.1). Giảm < đã quét = BLOCKED (cần trả hàng vật lý).
       if (newOrdered < scanned) {
@@ -175,20 +191,6 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
       } else {
         tasks.push({ ...baseTask, action: 'NEEDS_REVIEW', status: 'OPEN',
           detail: `SAP đổi ${oldOrdered}→${newOrdered} nhưng đã quét ${scanned} (chuyến đang xuất) → xác nhận rồi "Áp SAP", hoặc Giữ WMS.` })
-        sum.review++
-      }
-      continue
-    }
-    const loosePrepped = looseByItem.get(it.id) ?? 0
-    if (loosePrepped > 0) {
-      // Đang soạn nhặt lẻ mà SAP đổi số → hàng chờ xử tay (gỡ trả trước), KHÔNG tự áp
-      if (newOrdered < loosePrepped) {
-        tasks.push({ ...baseTask, action: 'BLOCKED', status: 'OPEN',
-          detail: `SAP giảm còn ${newOrdered} nhưng ĐÃ SOẠN NHẶT LẺ ${loosePrepped} (base, hàng đang ở vị trí chờ) → gỡ trả nhặt lẻ trên chuyến rồi "Áp SAP", hoặc Giữ WMS + báo SAP.` })
-        sum.blocked++
-      } else {
-        tasks.push({ ...baseTask, action: 'NEEDS_REVIEW', status: 'OPEN',
-          detail: `SAP đổi ${oldOrdered}→${newOrdered} nhưng chuyến ĐANG SOẠN NHẶT LẺ ${loosePrepped} (base, hàng ở vị trí chờ) → gỡ trả/kiểm hàng rồi "Áp SAP", hoặc Giữ WMS.` })
         sum.review++
       }
       continue

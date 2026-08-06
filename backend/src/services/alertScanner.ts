@@ -85,7 +85,9 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
     // Số lượng hiển thị PHẢI qua qtyLabel ("N thùng + M hộp") — luật BASE UNIT của CLAUDE.md;
     // ghi số base thô thì mã 1 CAR=48 HOP hiện "48" mà thực chất là 1 thùng (check-app 06/08).
     detail: `${g.c.short_name ?? g.c.material_code ?? ''} tại ${g.c.warehouse_name ?? 'kho ?'}: ${g.lots} lô ≤ ${THRESHOLDS.PCT_WARN}%Date, ${qtyLabel(g.qty, g.c)} / ${g.pallets} pallet`,
-    object_url: '/wms/inventory',
+    // Mở Tồn kho ĐÃ LỌC sẵn đúng mã + kho (user chốt 06/08) — bấm vào là thấy ngay lô nào cận date,
+    // không phải tự gõ lại mã. Trang Inventory đọc 2 param này rồi xoá khỏi URL.
+    object_url: `/wms/inventory?${g.c.warehouse_id ? `warehouse_id=${g.c.warehouse_id}&` : ''}search=${encodeURIComponent(g.c.material_code ?? '')}`,
   }))
 }
 

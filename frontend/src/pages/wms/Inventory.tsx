@@ -719,6 +719,25 @@ export default function Inventory() {
     }
   }, [categories]) // eslint-disable-line
 
+  // DEEP-LINK từ cảnh báo "tồn cận date" (/wms/alerts): ?warehouse_id=..&search=<mã hàng>
+  // → mở thẳng Tồn kho ĐÃ LỌC sẵn đúng mã + kho, khỏi bắt người dùng tự tìm lại.
+  // Đặt SAU 2 effect gán mặc định ở trên để đè lên chúng; chạy đúng 1 lần rồi xoá param
+  // (F5 sau đó không áp lại, người dùng đổi filter không bị kéo về).
+  const deepLinkApplied = useRef(false)
+  useEffect(() => {
+    if (deepLinkApplied.current) return
+    const sp = new URLSearchParams(window.location.search)
+    const wh = sp.get('warehouse_id'), term = sp.get('search')
+    if (!wh && !term) return
+    deepLinkApplied.current = true
+    setInventory({
+      ...(wh ? { warehouseIds: [wh] } : {}),
+      ...(term ? { search: term } : {}),
+      page: 1,
+    })
+    window.history.replaceState(null, '', '/wms/inventory')
+  }, []) // eslint-disable-line
+
   const queryParams = {
     warehouse_ids:      f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
     categories:         f.materialCategories.length > 0 ? f.materialCategories : undefined,

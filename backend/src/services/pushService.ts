@@ -110,45 +110,65 @@ export async function sendPushToEmployees(employeeIds: string[], payload: PushPa
  * (null = mọi kho). Superadmin (name='Admin'/employee_code='ADMIN') luôn nhận.
  * Dùng cho thông báo "có việc cần xử" không gắn đích danh (vd task Cần xử lý SAP).
  */
+interface PermEmp { id: string; warehouse_scope: string | null }
+interface PermTargets { emps: PermEmp[]; whOf: Map<string, Set<string>> }
+const _permCache = new Map<string, { at: number; v: PermTargets }>()
+const PERM_CACHE_MS = 60_000
+
+/**
+ * Danh sách người có quyền (module, action) + bản đồ kho được gán — NẠP MỘT LẦN rồi dùng lại.
+ * Trước đây mỗi lời gọi sendPushToPerm tự query JobTitle + Employee + UserWarehouseAccess; một lượt
+ * quét cảnh báo gọi 1 lần cho MỖI cặp (kho, rule) ⇒ 20 kho × 5 rule ≈ hàng trăm request PostgREST,
+ * trong khi pool chỉ ~10 khe (luật CLAUDE.md). Cache 60s: đủ cho cả lượt quét, quyền đổi trễ tối đa
+ * 1 phút (cùng tinh thần cache cờ hệ thống 30s).
+ */
+async function permTargets(module: string, action: string): Promise<PermTargets> {
+  const key = `${module}.${action}`
+  const hit = _permCache.get(key)
+  if (hit && Date.now() - hit.at < PERM_CACHE_MS) return hit.v
+
+  const { data: jts } = await supabase.from('JobTitle').select('id, module_permissions').limit(1000)
+  const jtIds = ((jts ?? []) as { id: string; module_permissions: Record<string, string[]> | null }[])
+    .filter(j => Array.isArray(j.module_permissions?.[module]) && (j.module_permissions?.[module] ?? []).includes(action))
+    .map(j => j.id)
+
+  const emps: PermEmp[] = []
+  for (let i = 0; i < jtIds.length; i += 300) {
+    const { data } = await supabase.from('Employee')
+      .select('id, warehouse_scope')
+      .in('job_title_id', jtIds.slice(i, i + 300)).eq('is_active', true).limit(1000)
+    emps.push(...((data ?? []) as PermEmp[]))
+  }
+  const { data: admins } = await supabase.from('Employee')
+    .select('id, warehouse_scope').or('name.eq.Admin,employee_code.eq.ADMIN').eq('is_active', true).limit(10)
+  for (const a of (admins ?? []) as PermEmp[]) if (!emps.some(e => e.id === a.id)) emps.push(a)
+
+  // Kho được gán của những người scope ASSIGNED — nạp 1 lượt cho MỌI kho (thay vì mỗi kho 1 query)
+  const whOf = new Map<string, Set<string>>()
+  const assigned = emps.filter(e => e.warehouse_scope === 'ASSIGNED').map(e => e.id)
+  for (let i = 0; i < assigned.length; i += 300) {
+    const { data } = await supabase.from('UserWarehouseAccess')
+      .select('employee_id, warehouse_id').in('employee_id', assigned.slice(i, i + 300)).limit(5000)
+    for (const r of (data ?? []) as { employee_id: string; warehouse_id: string }[]) {
+      const s = whOf.get(r.employee_id) ?? new Set<string>()
+      s.add(r.warehouse_id); whOf.set(r.employee_id, s)
+    }
+  }
+  const v: PermTargets = { emps, whOf }
+  _permCache.set(key, { at: Date.now(), v })
+  return v
+}
+
 export async function sendPushToPerm(
   module: string, action: string, warehouseId: string | null, payload: PushPayload,
   prefKey?: PrefKey,   // lọc theo cài đặt chuông per user (thiếu = gửi hết)
 ): Promise<{ sent: number; failed: number }> {
   try {
-    // 1) Chức danh có quyền — JobTitle ít (vài chục dòng), nạp hết rồi lọc trong JS
-    const { data: jts } = await supabase.from('JobTitle').select('id, module_permissions').limit(1000)
-    const jtIds = ((jts ?? []) as { id: string; module_permissions: Record<string, string[]> | null }[])
-      .filter(j => Array.isArray(j.module_permissions?.[module]) && (j.module_permissions?.[module] ?? []).includes(action))
-      .map(j => j.id)
-
-    // 2) Nhân viên active thuộc các chức danh đó + superadmin
-    const emps: { id: string; warehouse_scope: string | null; name: string; employee_code: string | null }[] = []
-    for (let i = 0; i < jtIds.length; i += 300) {
-      const { data } = await supabase.from('Employee')
-        .select('id, warehouse_scope, name, employee_code')
-        .in('job_title_id', jtIds.slice(i, i + 300)).eq('is_active', true).limit(1000)
-      emps.push(...((data ?? []) as typeof emps))
-    }
-    const { data: admins } = await supabase.from('Employee')
-      .select('id, warehouse_scope, name, employee_code')
-      .or('name.eq.Admin,employee_code.eq.ADMIN').eq('is_active', true).limit(10)
-    for (const a of (admins ?? []) as typeof emps) if (!emps.some(e => e.id === a.id)) emps.push(a)
+    const { emps, whOf } = await permTargets(module, action)
     if (!emps.length) return { sent: 0, failed: 0 }
-
-    // 3) Cắt theo scope kho: ASSIGNED → phải có dòng UserWarehouseAccess với kho này
-    let targets = emps
-    if (warehouseId) {
-      const assigned = emps.filter(e => e.warehouse_scope === 'ASSIGNED')
-      const allowed = new Set<string>()
-      for (let i = 0; i < assigned.length; i += 300) {
-        const { data } = await supabase.from('UserWarehouseAccess')
-          .select('employee_id')
-          .in('employee_id', assigned.slice(i, i + 300).map(e => e.id))
-          .eq('warehouse_id', warehouseId).limit(1000)
-        for (const r of (data ?? []) as { employee_id: string }[]) allowed.add(r.employee_id)
-      }
-      targets = emps.filter(e => e.warehouse_scope !== 'ASSIGNED' || allowed.has(e.id))
-    }
+    const targets = warehouseId
+      ? emps.filter(e => e.warehouse_scope !== 'ASSIGNED' || whOf.get(e.id)?.has(warehouseId))
+      : emps
     const targetIds = prefKey ? await filterByPref(targets.map(e => e.id), prefKey) : targets.map(e => e.id)
     return await sendPushToEmployees(targetIds, payload)
   } catch (e) { console.error('[push] sendPushToPerm:', e); return { sent: 0, failed: 0 } }

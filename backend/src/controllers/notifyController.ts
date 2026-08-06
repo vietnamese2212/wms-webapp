@@ -54,13 +54,24 @@ export async function unsubscribe(req: Request, res: Response) {
 
 // ── FEED CÁ NHÂN (tab "Cá nhân" trên nút chuông — user chốt 06/08) ───────────
 
-// Dọn lười: feed chỉ giữ 30 NGÀY gần nhất (kiểu cleanupOldPhotos — không pg_cron)
+// Dọn lười feed (kiểu cleanupOldPhotos — free tier không có pg_cron).
+// Giữ 3 NGÀY gần nhất (user chốt 06/08 — thông báo là việc trong ngày, quá 3 ngày là hết thời sự).
+// XOÁ THEO LÔ: câu `DELETE ... < cutoff` không giới hạn sẽ bắt MỘT người dùng gánh việc xoá hàng
+// trăm nghìn dòng khi app chạy quy mô lớn (check-app 06/08 nêu). Mỗi lượt tối đa BATCH dòng,
+// throttle 1h/instance → tồn đọng được dọn dần qua các lượt, không lượt nào treo lâu.
+const FEED_RETENTION_DAYS = 3
+const FEED_CLEAN_BATCH = 2000
 let _lastFeedCleanupAt = 0
 async function cleanupOldFeed(): Promise<void> {
-  if (Date.now() - _lastFeedCleanupAt < 6 * 3600_000) return
+  if (Date.now() - _lastFeedCleanupAt < 3600_000) return
   _lastFeedCleanupAt = Date.now()
-  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString()
-  await supabase.from('user_notifications').delete().lt('created_at', cutoff)
+  const cutoff = new Date(Date.now() - FEED_RETENTION_DAYS * 86400_000).toISOString()
+  const { data } = await supabase.from('user_notifications')
+    .select('id').lt('created_at', cutoff).order('created_at').limit(FEED_CLEAN_BATCH)
+  const ids = (data ?? []).map(r => r.id as string)
+  for (let i = 0; i < ids.length; i += 300) {
+    await supabase.from('user_notifications').delete().in('id', ids.slice(i, i + 300))
+  }
 }
 
 // GET /api/notify/feed — thông báo đích danh của CHÍNH MÌNH (mới nhất trước, cap 50)

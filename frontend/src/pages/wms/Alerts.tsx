@@ -127,7 +127,7 @@ function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
 
         <SummaryBand tiles={[
           { label: 'Chưa đọc', value: unread.toLocaleString('vi-VN'), accent: unread > 0 },
-          { label: 'Gần đây (giữ 30 ngày)', value: (data?.rows?.length ?? 0).toLocaleString('vi-VN') },
+          { label: 'Gần đây (giữ 3 ngày)', value: (data?.rows?.length ?? 0).toLocaleString('vi-VN') },
         ]} />
 
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -171,7 +171,7 @@ function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
           </Table>
         </div>
         <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
-          1–{rows.length} thông báo · giữ 30 ngày gần nhất · bật/tắt chuông per trường hợp ở nút chuông góc phải màn hình
+          1–{rows.length} thông báo · giữ 3 ngày gần nhất · bật/tắt chuông per trường hợp ở nút chuông góc phải màn hình
         </div>
       </div>
     </div>

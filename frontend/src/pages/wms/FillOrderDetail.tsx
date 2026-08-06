@@ -13,7 +13,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { FillScanOverlay } from './FillScanOverlay'
 import { AssigneePicker, DestPicker, FILL_STATUS_LABEL, FILL_STATUS_BADGE, fillRowText, RequiredDateBadge } from './fillShared'
-import { useFillOrder, useUpdateFillTask, useCancelFillTask, useCancelFillOrder, type FillTaskRow } from '@/api/hooks'
+import { useFillOrder, useFillDemand, useUpdateFillTask, useCancelFillTask, useCancelFillOrder, type FillTaskRow } from '@/api/hooks'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { useAuthStore } from '@/stores/authStore'
@@ -77,6 +77,33 @@ export default function FillOrderDetail() {
   const order = data?.order
   const lines = useMemo(() => data?.lines ?? [], [data])
   const scans = data?.scans ?? []
+
+  // Badge "Cần đã giảm" (user chốt 06/08): đơn xuất giảm/hủy KHÔNG tự hủy lệnh treo (chủ đích)
+  // → đối chiếu nhu cầu SỐNG (RPC fill_demand — MỘT nguồn công thức, không chép lại) với phần
+  // đang treo để chỉ ra dòng nên cân nhắc hủy; quyết định thuộc người có fill.cancel.
+  const demand = useFillDemand(order && order.status === 'PENDING'
+    ? { warehouse_id: order.warehouse_id, date: (order.target_date ?? '').slice(0, 10) }
+    : undefined).data
+  const dropInfo = useMemo(() => {
+    const m = new Map<string, string>()
+    if (!order || order.status !== 'PENDING') return m
+    // Demand lỗi / kho chưa khai vị trí nhặt lẻ → KHÔNG kết luận (tránh báo "hết cần" oan)
+    if (!demand || demand.error || !(demand.pick_face_locations > 0)) return m
+    const byMat = new Map(demand.rows.map(r => [r.material_id, r]))
+    for (const l of lines) {
+      if (l.status !== 'PENDING') continue
+      const r = byMat.get(l.material_id)
+      if (!r) { // fill_demand chỉ trả mã còn cần > 0 → vắng mặt = ngày xuất này hết nhu cầu mã đó
+        m.set(l.id, 'Ngày xuất này không còn nhu cầu nhặt lẻ mã này (đơn đã giảm/hủy hoặc đổi ngày) — cân nhắc hủy dòng')
+        continue
+      }
+      const needLeft = Math.max(0, Number(r.demand_base) - Number(r.pick_face_base))
+      if (Number(r.pending_base) > needLeft) {
+        m.set(l.id, `Cần đã giảm — tổng đang treo (mọi lệnh) ${qtyLabel(Number(r.pending_base), l)}, chỉ còn thiếu ${qtyLabel(needLeft, l)} — cân nhắc hủy bớt`)
+      }
+    }
+    return m
+  }, [demand, lines, order])
   const selLines = lines.filter(l => sel.has(l.id))
   const pendingSel = selLines.filter(l => l.status === 'PENDING')
   const selectable = lines.filter(l => l.status === 'PENDING')
@@ -216,6 +243,12 @@ export default function FillOrderDetail() {
           </div>
         )}
         {err && <p className="mx-3 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        {dropInfo.size > 0 && (
+          <p className="mx-3 mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 shrink-0">
+            <b>{dropInfo.size} dòng</b> có nhu cầu ĐÃ GIẢM so với lúc ra lệnh (đơn xuất đổi/hủy) — hạ thừa chỉ chiếm chỗ
+            vị trí nhặt lẻ, cân nhắc hủy dòng (xem badge vàng từng dòng).
+          </p>
+        )}
 
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {/* MOBILE = THẺ per dòng (user chốt 05/08): VỊ TRÍ LẤY → VỀ chữ to ngay view đầu,
@@ -241,6 +274,10 @@ export default function FillOrderDetail() {
                     )}
                     <span className={`font-mono text-xs font-bold ${fillRowText(l.status) || 'text-slate-800'}`}>{l.material_code}</span>
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[l.status]}`}>{FILL_STATUS_LABEL[l.status]}</span>
+                    {dropInfo.has(l.id) && (
+                      <span title={dropInfo.get(l.id)}
+                        className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">Cần đã giảm</span>
+                    )}
                     <span className="ml-auto"><RequiredDateBadge line={l} /></span>
                   </div>
                   <p className="text-[10px] text-slate-500 truncate mt-0.5" title={l.material_name ?? ''}>{l.material_name ?? '—'}</p>
@@ -306,6 +343,10 @@ export default function FillOrderDetail() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${FILL_STATUS_BADGE[l.status]}`}>{FILL_STATUS_LABEL[l.status]}</span>
+                      {dropInfo.has(l.id) && (
+                        <span title={dropInfo.get(l.id)}
+                          className="mt-0.5 block w-fit text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 cursor-help">Cần đã giảm</span>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{l.material_code ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={l.material_name ?? ''}>{l.material_name ?? '—'}</TableCell>

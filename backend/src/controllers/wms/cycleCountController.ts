@@ -82,7 +82,10 @@ export async function getCycleCount(req: Request, res: Response) {
     const rows = materials.filter(m => Number(m.stock_pallets) > 0).map(m => {
       const lastAt = lastByMat.get(m.material_id) ?? null
       const cycle = CYCLE_DAYS[m.abc]
-      const daysSince = lastAt ? Math.floor((nowMs - new Date(lastAt).getTime()) / 86400_000) : null
+      // KHÔNG thể "kiểm ở tương lai": lệch đồng hồ vài giây giữa máy ghi và server làm hiệu ÂM,
+      // Math.floor(-0.001) = -1 ⇒ mã vừa kiểm xong hiện "kiểm 1 ngày trước" và due_in lệch 1 ngày
+      // (check-app 06/08 bắt). Kẹp sàn 0.
+      const daysSince = lastAt ? Math.max(0, Math.floor((nowMs - new Date(lastAt).getTime()) / 86400_000)) : null
       // due_in: âm = quá hạn N ngày; null last = chưa kiểm bao giờ → coi như quá hạn từ lâu
       const dueIn = daysSince == null ? -9999 : cycle - daysSince
       const locs = locsByMat.get(m.material_id)

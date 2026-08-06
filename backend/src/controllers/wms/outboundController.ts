@@ -317,6 +317,28 @@ async function releaseScansForDOs(doIds: string[]): Promise<void> {
   await releaseScansForItems((items ?? []).map(i => i.id))
 }
 
+// Chuyến đang GIỮ HÀNG NHẶT LẺ (đã soạn — user chốt 05/08: hàng VẬT LÝ đã rời pallet xuống vị trí
+// chờ, "nhả trên giấy" là lệch hiện trường). Kế hoạch xuất KHÔNG được tự xóa/ghi đè/ngừng các
+// chuyến này — user phải GỠ TRẢ hàng nhặt lẻ trên chuyến trước (trả hàng về chỗ cũ) rồi mới sửa.
+// Đếm CẢ loose đã xác nhận lẫn chưa (cùng một thực tế: hàng đang nằm ở khu chờ).
+export async function looseHeldGdoIds(gdoIds: string[]): Promise<Set<string>> {
+  const held = new Set<string>()
+  if (!gdoIds.length) return held
+  const dvs = await fetchAllByIdChunks(gdoIds, chunk => supabase.from('OutboundDelivery')
+    .select('id, gdo_id').in('gdo_id', chunk).order('id')) as { id: string; gdo_id: string }[]
+  if (!dvs.length) return held
+  const gdoByDo = new Map(dvs.map(d => [d.id, d.gdo_id]))
+  const items = await fetchAllByIdChunks(dvs.map(d => d.id), chunk => supabase.from('OutboundItem')
+    .select('id, do_id').in('do_id', chunk).order('id')) as { id: string; do_id: string }[]
+  if (!items.length) return held
+  const gdoByItem = new Map(items.map(i => [i.id, gdoByDo.get(i.do_id)]))
+  const scans = await fetchAllByIdChunks(items.map(i => i.id), chunk => supabase.from('OutboundScanEntry')
+    .select('item_id').eq('is_loose_picking', true).gt('cartons_scanned', 0)
+    .in('item_id', chunk).order('id')) as { item_id: string }[]
+  for (const s of (scans ?? [])) { const g = gdoByItem.get(s.item_id); if (g) held.add(g) }
+  return held
+}
+
 // XUẤT (trừ remaining) NGUYÊN TỬ: chỉ trừ ĐÚNG `amount` nếu tồn còn đủ, dưới optimistic-lock.
 // Trả: true=trừ xong · false=KHÔNG đủ tồn (đã bị thao tác khác lấy) · null=tranh chấp sau 5 lần.
 // Chống đua + chống xuất-quá-tồn khi nhiều nhân viên quét cùng 1 pallet (giống book_vehicle_slot).
@@ -3112,6 +3134,19 @@ async function processVehicleGroups(
       }
     }
 
+    // Chuyến PENDING/PAUSED đang GIỮ HÀNG NHẶT LẺ → KHÔNG ghi đè/merge (user chốt 05/08): ghi đè
+    // là xóa-tạo-lại item nên tự nhả phần giữ TRÊN GIẤY, trong khi hàng VẬT LÝ đã rời pallet nằm ở
+    // vị trí chờ — user phải gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới sửa/dội kế hoạch.
+    const looseHeldGcs = new Set<string>()
+    {
+      const openIds = (existingGdos ?? [])
+        .filter(g => g.status === 'PENDING' || g.status === 'PAUSED')
+        .map(g => g.id as string)
+      const held = await looseHeldGdoIds(openIds)
+      for (const g of (existingGdos ?? []))
+        if (held.has(g.id as string)) looseHeldGcs.add(g.group_code as string)
+    }
+
     // ── Phase 1: pre-validate ALL vehicles, block entire upload on any error ──
 
     const resolveDvvt = await buildDvvtResolver()
@@ -3224,6 +3259,13 @@ async function processVehicleGroups(
           reason: blockedMap.get(group_code) === 'COMPLETED'
             ? 'Đã hoàn thành — bỏ qua, không ghi đè'
             : 'Đang xuất — bỏ qua, không ghi đè',
+        })
+        continue
+      }
+      if (looseHeldGcs.has(group_code)) {
+        created.push({
+          group_code, skipped: true,
+          reason: 'Đang GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi mới sửa/ghi đè kế hoạch',
         })
         continue
       }
@@ -3938,10 +3980,17 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
       for (const it of (allItems ?? [])) if (Number(it.cartons_scanned) > 0) {
         const gid = gdoByDo.get(it.do_id); if (gid) scannedGdos.add(gid)
       }
-      const toDrop = openOnes.filter(g => !scannedGdos.has(g.id))
+      // Đang GIỮ HÀNG NHẶT LẺ (soạn chưa xác nhận — cartons_scanned chưa tăng nên lọt lưới trên):
+      // hàng vật lý đã ở vị trí chờ, KHÔNG tự ngừng + tự nhả (user chốt 05/08) — task để gỡ trả tay.
+      const looseHeld = await looseHeldGdoIds(openOnes.map(g => g.id))
+      const toDrop = openOnes.filter(g => !scannedGdos.has(g.id) && !looseHeld.has(g.id))
       for (const g of openOnes.filter(g => scannedGdos.has(g.id))) {
         mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐÃ CÓ HÀNG QUÉT — xác nhận trả hàng rồi xử tay (chuyến không tự xóa).')
         report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
+      }
+      for (const g of openOnes.filter(g => looseHeld.has(g.id) && !scannedGdos.has(g.id))) {
+        mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐANG GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi xử tay (chuyến không tự ngừng).')
+        report.push({ group_code: g.group_code, action: 'task', reason: 'đang giữ nhặt lẻ' })
       }
       if (toDrop.length) {
         const dropIds = new Set(toDrop.map(g => g.id))

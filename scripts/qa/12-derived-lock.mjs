@@ -457,6 +457,54 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
   }
 }
 
+// ── 15. CHUYẾN ĐANG GIỮ HÀNG NHẶT LẺ (đã soạn — hàng VẬT LÝ đã rời pallet xuống vị trí chờ):
+// kế hoạch xuất KHÔNG được tự xóa/ghi đè/ngừng chuyến này — user phải GỠ TRẢ nhặt lẻ trước
+// (user chốt 05/08: "nếu động tới chuyến xe có nhặt lẻ thì đơn phải được user gỡ trả thì mới được phép")
+{
+  const gc15 = GC('15')
+  const tmr15 = new Date(Date.now() + 86400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  try {
+    await api('/external/khvc', 'POST', { group_code: gc15, do_no: 'QADRVDO2', npp: 'QADRV NPP',
+      export_date: today, veh_type: vehTypeName, dvvt: dvvtName, booking_category: BK_CAT })
+    const g15 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${gc15}`))[0]
+    const do15 = (await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g15.id}`))[0]
+    const it15 = (await restAll('OutboundItem', `select=id&do_id=eq.${do15.id}`))[0]
+    await restWrite('OutboundItem', 'PATCH', `id=eq.${it15.id}`, { loose_picking: 2, updated_at: now() })
+    // SOẠN nhặt lẻ (giữ chỗ, CHƯA xác nhận — cartons_scanned của item chưa tăng, lớp lọt lưới cũ).
+    // Pool tồn dựng ở 12c vẫn còn (cleanup cuối mới xóa).
+    const rl = await api(`/wms/outbound/${g15.id}/items/${it15.id}/manual-loose`, 'POST', { cartons: 1, qty_semantics: 'base' })
+    const l15 = (await restAll('khvc_lines', `select=id&group_code=eq.${gc15}&sync_status=neq.OBSOLETE`))[0]
+
+    // (a) XÓA dòng kế hoạch → 409 nêu rõ nhặt lẻ + chỉ đường gỡ trả
+    const rDel = await api(`/external/khvc/${l15.id}`, 'DELETE')
+    check('15a. Đang giữ nhặt lẻ: xóa dòng Kế hoạch xuất → 409 chỉ đường gỡ trả',
+      rl.s === 200 && rDel.s === 409 && /nhặt lẻ/i.test(String(rDel.j?.error?.message ?? '')),
+      `loose=${rl.s} del=${rDel.s} msg="${String(rDel.j?.error?.message ?? '').slice(0, 80)}"`)
+
+    // (b) SỬA dòng (đổi ngày) → replan KHÔNG ghi đè chuyến (ghi đè = xóa-tạo-lại item, tự nhả
+    // phần giữ): ngày chuyến giữ nguyên + vết soạn + reserve còn nguyên + có task báo xử tay
+    const rPut = await api(`/external/khvc/${l15.id}`, 'PUT', { export_date: tmr15 })
+    const g15b = (await restAll('GroupDeliveryOrder', `select=delivery_date,status&id=eq.${g15.id}`))[0]
+    const scans15 = await restAll('OutboundScanEntry', `select=id&item_id=eq.${it15.id}&is_loose_picking=is.true&cartons_scanned=gt.0`)
+    const tasks15 = await restAll('reconcile_tasks', `select=id&group_code=eq.${gc15}`)
+    check('15b. Sửa kế hoạch của chuyến đang giữ nhặt lẻ → chuyến KHÔNG bị ghi đè (vết soạn còn) + task xử tay',
+      String(g15b?.delivery_date ?? '').slice(0, 10) === today && g15b?.status === 'PENDING'
+        && scans15.length === 1 && tasks15.length >= 1,
+      `put=${rPut.s} ngày=${g15b?.delivery_date} vết=${scans15.length} task=${tasks15.length}`)
+
+    // (c) GỠ TRẢ (manual-loose 0) → xóa kế hoạch ĐƯỢC + chuyến ngừng hoạt động (hết dòng)
+    await api(`/wms/outbound/${g15.id}/items/${it15.id}/manual-loose`, 'POST', { cartons: 0, qty_semantics: 'base' })
+    const rDel2 = await api(`/external/khvc/${l15.id}`, 'DELETE')
+    const g15c = (await restAll('GroupDeliveryOrder', `select=plan_dropped&id=eq.${g15.id}`))[0]
+    const resv15 = (await restAll('InventoryEntry', `select=cartons_reserved&pallet_code=eq.${FIX.MAT_POOL}&warehouse_id=eq.${whId}`))[0]
+    check('15c. Gỡ trả xong → xóa được kế hoạch, chuyến ngừng hoạt động, reserve về 0 (không kẹt tồn)',
+      rDel2.s === 200 && g15c?.plan_dropped === true && Number(resv15?.cartons_reserved ?? 0) === 0,
+      `del=${rDel2.s} dropped=${g15c?.plan_dropped} reserve=${resv15?.cartons_reserved}`)
+  } catch (e) {
+    check('15. mục giữ-nhặt-lẻ-chặn-kế-hoạch chạy lỗi', false, String(e).slice(0, 160))
+  }
+}
+
 // ── Dọn 0 sót ──
 await cleanup()
 {

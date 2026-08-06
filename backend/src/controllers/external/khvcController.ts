@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { safeFilterValue } from '../../utils/search'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
-import { replanKhvcGroups } from '../wms/outboundController'
+import { replanKhvcGroups, looseHeldGdoIds } from '../wms/outboundController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate } from '../../utils/bookingGuards'
@@ -110,6 +110,9 @@ async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow
         ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — không xóa được kế hoạch của chuyến đã xuất (muốn sửa số thì sửa DO ở tab DO SAP)'
         : 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới sửa kế hoạch')
   }
+  // Chuyến đang GIỮ HÀNG NHẶT LẺ (soạn — hàng vật lý đã rời pallet xuống vị trí chờ, user chốt
+  // 05/08): chặn xóa kế hoạch, user gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới được xóa.
+  const looseGcs = new Set<string>()
   for (let i = 0; i < gcs.length; i += 100) {
     const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('id, group_code').in('group_code', gcs.slice(i, i + 100))
     const gcByGdoId = new Map((gdos ?? []).map((g: { id: string; group_code: string }) => [g.id, g.group_code]))
@@ -123,11 +126,14 @@ async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow
       const its = await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem').select('do_id, cartons_scanned').in('do_id', c).order('id')) as { do_id: string; cartons_scanned: number }[]
       for (const it of (its ?? [])) if (Number(it.cartons_scanned) > 0) { const gc = gcByDo.get(it.do_id); if (gc) scannedGcs.add(gc) }
     }
+    const held = await looseHeldGdoIds(gdoIds)
+    for (const gid of held) { const gc = gcByGdoId.get(gid); if (gc) looseGcs.add(gc) }
   }
   const deletable: KDelRow[] = [], blocked: (KDelRow & { reason: string })[] = []
   for (const r of rows) {
     const lockMsg = lockedGcs.get(r.group_code)
     if (lockMsg) blocked.push({ ...r, reason: lockMsg })
+    else if (looseGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đang GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi mới xóa kế hoạch' })
     else if (scannedGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
     else deletable.push(r)
   }

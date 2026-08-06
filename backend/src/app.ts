@@ -9,6 +9,7 @@ import tmsRouter from './routes/tms'
 import hrRouter from './routes/hr'
 import integrationRouter from './routes/integration'
 import externalRouter from './routes/external'
+import notifyRouter from './routes/notify'
 import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 import { recordServerError } from './utils/response'
@@ -88,6 +89,7 @@ app.use('/api/wms',        verifyToken, wmsRouter)
 app.use('/api/tms',        verifyToken, tmsRouter)
 app.use('/api/hr',         verifyToken, hrRouter)
 app.use('/api/external',   verifyToken, externalRouter)   // Dữ liệu bên ngoài (ERP/SAP)
+app.use('/api/notify',     verifyToken, notifyRouter)     // Web Push — thiết bị của chính user
 // Cổng tích hợp ERP: auth RIÊNG bằng API key (requireApiKey trong router), KHÔNG dùng verifyToken.
 app.use('/api/integration', integrationRouter)
 

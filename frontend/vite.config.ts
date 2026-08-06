@@ -21,6 +21,9 @@ export default defineConfig({
         icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
       },
       workbox: {
+        // Web Push: handler push/notificationclick nằm ở public/push-sw.js, nạp vào SW
+        // qua importScripts (generateSW không cho viết code SW trực tiếp).
+        importScripts: ['push-sw.js'],
         // PHẢI có 'wasm': máy không có BarcodeDetector native (iPhone/desktop) giải mã QR
         // bằng zxing_reader.wasm nạp lúc chạy — thiếu precache → offline camera lên
         // nhưng KHÔNG giải mã được tem (bug thật user báo 12/07).

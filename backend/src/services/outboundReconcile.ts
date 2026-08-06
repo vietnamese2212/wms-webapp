@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { fetchAllByIdChunks } from '../utils/pagination'
 import { loosePalletRemainder, type MatPalletUnits } from '../controllers/wms/outboundController'
+import { sendPushToPerm } from './pushService'
 
 const now = () => new Date().toISOString()
 
@@ -207,6 +208,25 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
       const { error } = await supabase.from('reconcile_tasks').insert(tasks.slice(i, i + 500))
       if (error) throw new Error(error.message)
     }
+    // Web Push (Đợt 1 06/08): task OPEN = việc NGƯỜI phải xử → báo người có quyền
+    // outbound.reconcile của từng kho. Push là phụ trợ — lỗi không được đụng reconcile.
+    try {
+      const openByWh = new Map<string | null, number>()
+      for (const tk of tasks) {
+        if (tk.status !== 'OPEN') continue
+        const g = tk.gdo_id ? gdoById.get(tk.gdo_id as string) : undefined
+        const wh = g?.warehouse_id ?? null
+        openByWh.set(wh, (openByWh.get(wh) ?? 0) + 1)
+      }
+      for (const [wh, n] of openByWh) {
+        await sendPushToPerm('outbound', 'reconcile', wh, {
+          title: 'SAP đổi dữ liệu — cần xử lý',
+          body: `${n} việc mới trong tab "Cần xử lý" (chuyến đã quét/đang soạn bị SAP đổi số lượng)`,
+          url: '/external?tab=reconcile',
+          tag: `reconcile-${wh ?? 'all'}`,
+        })
+      }
+    } catch (e) { console.error('[push] reconcile notify:', e) }
   }
   return sum
 }

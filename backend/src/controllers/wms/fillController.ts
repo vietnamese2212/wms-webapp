@@ -7,6 +7,7 @@ import { safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { computePctDate } from '../../utils/shelfLife'
+import { sendPushToEmployees } from '../../services/pushService'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
 // Nhặt lẻ lấy hàng bằng TAY ⇒ hàng phải nằm ở "vị trí nhặt lẻ" (cờ Location.is_pick_face).
@@ -412,6 +413,16 @@ export async function createFillOrder(req: Request, res: Response) {
       await supabase.from('FillOrder').delete().eq('id', order.id)
       return res.status(201).json({ success: true, data: { created: 0, skipped, merged: mergedOut } })
     }
+    // Push tới người được giao (nếu giao cho NGƯỜI KHÁC — tự giao cho mình thì khỏi báo).
+    // Push là phụ trợ: await để chắc gửi xong trước khi serverless đóng, nhưng KHÔNG fail response.
+    if (asg && asg.id !== selfId(req)) {
+      await sendPushToEmployees([asg.id], {
+        title: `Lệnh fill ${order.order_code}`,
+        body: `${actor ?? 'Quản lý'} giao bạn ${created} dòng hạ hàng nhặt lẻ — ngày xuất ${fmtDMY(day)}`,
+        url: `/wms/fill/orders/${order.id}`,
+        tag: `fill-${order.id}`,
+      })
+    }
     return res.status(201).json({ success: true, data: {
       created, skipped, merged: mergedOut, order_id: order.id, order_code: order.order_code,
     } })
@@ -430,7 +441,7 @@ export async function updateFillTask(req: Request, res: Response) {
     if (!hasAsg && !hasDest) return fail(res, 400, 'INVALID_INPUT', 'Không có gì để sửa')
 
     const { data: task } = await supabase.from('FillTask')
-      .select('id, warehouse_id, status, material_id').eq('id', req.params.id).maybeSingle()
+      .select('id, warehouse_id, status, material_id, material_code, fill_order_id').eq('id', req.params.id).maybeSingle()
     if (!task) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng lệnh fill')
     if (!guardWarehouse(req, res, task.warehouse_id as string)) return
     if (task.status !== 'PENDING') return fail(res, 409, 'NOT_PENDING', 'Dòng đã xong hoặc đã hủy — không sửa được')
@@ -469,6 +480,16 @@ export async function updateFillTask(req: Request, res: Response) {
       .update(patch).eq('id', task.id).eq('status', 'PENDING').select().maybeSingle()
     if (error) throw error
     if (!data) return fail(res, 409, 'NOT_PENDING', 'Dòng vừa đổi trạng thái — tải lại danh sách')
+    // Push cho người MỚI được giao (khác chính mình). Multi-select gọi route này song song
+    // per-dòng → dùng chung tag theo LỆNH để trình duyệt gộp thành 1 thông báo, không dội chuông N lần.
+    if (hasAsg && assignee_id && assignee_id !== selfId(req)) {
+      await sendPushToEmployees([assignee_id], {
+        title: 'Được giao lệnh fill',
+        body: `${req.user?.name ?? 'Quản lý'} giao bạn dòng hạ hàng ${task.material_code ?? ''} — mở lệnh để xem`,
+        url: task.fill_order_id ? `/wms/fill/orders/${task.fill_order_id}` : '/wms/fill',
+        tag: `fill-asg-${task.fill_order_id ?? task.id}`,
+      })
+    }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

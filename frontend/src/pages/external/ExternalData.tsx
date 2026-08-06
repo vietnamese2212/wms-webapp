@@ -123,7 +123,11 @@ export default function ExternalData() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const firstTab = (TABS.find(t => can(perms, t.module, t.action ?? 'view'))?.key ?? 'dosap') as TabKey
-  const [tab, setTab] = useState<TabKey>(firstTab)
+  // ?tab=reconcile — deep-link từ thông báo đẩy "Cần xử lý" vào thẳng đúng tab (nếu có quyền)
+  const urlTab = new URLSearchParams(window.location.search).get('tab') as TabKey | null
+  const urlTabDef = urlTab ? TABS.find(t => t.key === urlTab) : null
+  const initialTab = urlTabDef && can(perms, urlTabDef.module, urlTabDef.action ?? 'view') ? urlTabDef.key : firstTab
+  const [tab, setTab] = useState<TabKey>(initialTab)
   const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
   if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
   if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />

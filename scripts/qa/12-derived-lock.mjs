@@ -492,6 +492,19 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
         && scans15.length === 1 && tasks15.length >= 1,
       `put=${rPut.s} ngày=${g15b?.delivery_date} vết=${scans15.length} task=${tasks15.length}`)
 
+    // (b2) VL06O/DO SAP đổi SỐ khi đang soạn nhặt lẻ → engine đối chiếu KHÔNG "tự áp, an toàn"
+    // (soạn không tăng cartons_scanned nên lưới Z1/Z2 cũ coi là chưa quét): số giữ nguyên + task OPEN
+    const raw15 = (await restAll('erp_outbound_orders', 'select=id,qty_base&od_number=eq.QADRVDO2'))[0]
+    const rSap = await api(`/external/do-sap/${raw15.id}`, 'PUT', { qty_base: 35 })
+    const it15b = (await restAll('OutboundItem', `select=cartons_ordered&id=eq.${it15.id}`))[0]
+    const task15b = await restAll('reconcile_tasks',
+      `select=id,action,detail&group_code=eq.${gc15}&status=eq.OPEN&action=in.(NEEDS_REVIEW,BLOCKED)`)
+    check('15b2. SAP đổi số khi đang SOẠN NHẶT LẺ → KHÔNG tự áp (số giữ nguyên) + task nêu rõ nhặt lẻ',
+      rSap.s === 200 && Number(it15b?.cartons_ordered) === 40
+        && task15b.some(x => /SOẠN NHẶT LẺ/i.test(x.detail ?? '')),
+      `sap=${rSap.s} ordered=${it15b?.cartons_ordered} task=${task15b.length}`)
+    await api(`/external/do-sap/${raw15.id}`, 'PUT', { qty_base: 40 })   // trả raw về như cũ
+
     // (c) GỠ TRẢ (manual-loose 0) → xóa kế hoạch ĐƯỢC + chuyến ngừng hoạt động (hết dòng)
     await api(`/wms/outbound/${g15.id}/items/${it15.id}/manual-loose`, 'POST', { cartons: 0, qty_semantics: 'base' })
     const rDel2 = await api(`/external/khvc/${l15.id}`, 'DELETE')

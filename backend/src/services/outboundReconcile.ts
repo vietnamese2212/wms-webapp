@@ -50,6 +50,17 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
   const items = [...affected.values()]
   if (!items.length) return sum
 
+  // Dòng đang SOẠN NHẶT LẺ (giữ chỗ — hàng VẬT LÝ đã rời pallet xuống vị trí chờ, user chốt 05/08):
+  // KHÔNG được coi là "chưa quét, an toàn" — soạn không tăng cartons_scanned nên phải soi thẳng
+  // OutboundScanEntry. Tự áp đổi số ở đây là đổi loose_picking dưới chân người đang soạn.
+  const looseByItem = new Map<string, number>()
+  {
+    const ses = await fetchAllByIdChunks(items.map(i => i.id), chunk => supabase.from('OutboundScanEntry')
+      .select('item_id, cartons_scanned').eq('is_loose_picking', true).gt('cartons_scanned', 0)
+      .in('item_id', chunk).order('id')) as { item_id: string; cartons_scanned: number }[]
+    for (const s of (ses ?? [])) looseByItem.set(s.item_id, (looseByItem.get(s.item_id) ?? 0) + Number(s.cartons_scanned))
+  }
+
   // 2) Nạp GDO (trạng thái/scan_completed_at/kho) qua OutboundDelivery
   const doIds = [...new Set(items.map(i => i.do_id))]
   const { data: dosData } = await supabase.from('OutboundDelivery').select('id, gdo_id').in('id', doIds)
@@ -168,7 +179,21 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
       }
       continue
     }
-    // Z1/Z2 chưa quét → TỰ ÁP số + loose + thuộc tính
+    const loosePrepped = looseByItem.get(it.id) ?? 0
+    if (loosePrepped > 0) {
+      // Đang soạn nhặt lẻ mà SAP đổi số → hàng chờ xử tay (gỡ trả trước), KHÔNG tự áp
+      if (newOrdered < loosePrepped) {
+        tasks.push({ ...baseTask, action: 'BLOCKED', status: 'OPEN',
+          detail: `SAP giảm còn ${newOrdered} nhưng ĐÃ SOẠN NHẶT LẺ ${loosePrepped} (base, hàng đang ở vị trí chờ) → gỡ trả nhặt lẻ trên chuyến rồi "Áp SAP", hoặc Giữ WMS + báo SAP.` })
+        sum.blocked++
+      } else {
+        tasks.push({ ...baseTask, action: 'NEEDS_REVIEW', status: 'OPEN',
+          detail: `SAP đổi ${oldOrdered}→${newOrdered} nhưng chuyến ĐANG SOẠN NHẶT LẺ ${loosePrepped} (base, hàng ở vị trí chờ) → gỡ trả/kiểm hàng rồi "Áp SAP", hoặc Giữ WMS.` })
+        sum.review++
+      }
+      continue
+    }
+    // Z1/Z2 chưa quét (và không soạn nhặt lẻ) → TỰ ÁP số + loose + thuộc tính
     await autoApply(true)
     tasks.push({ ...baseTask, action: 'AUTO_APPLIED', status: 'RESOLVED',
       detail: `Tự áp: ${oldOrdered}→${newOrdered} (base)${anyRemoved ? ' [SAP bỏ dòng OD]' : ''} — chưa quét, an toàn.` })

@@ -11,6 +11,7 @@
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
+import { qtyLabel } from '../utils/qtyUnits'
 import { recordServerError } from '../utils/response'
 import { sendPushToPerm } from './pushService'
 
@@ -55,6 +56,7 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
   type Cand = {
     warehouse_id: string | null; warehouse_name: string | null
     material_id: string; material_code: string | null; short_name: string | null; category: string | null
+    entry_unit: string | null; base_unit: string | null; units_per_carton: number | null
     production_date: string | null; expiry_date: string | null; shelf_life_days: number | null; ncc_id: string | null
     mat_shelf_life_days: number | null
     supplier_shelf_life_overrides: SupplierOverride[] | null
@@ -80,7 +82,9 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
     severity: g.worst <= THRESHOLDS.PCT_CRIT ? 'CRITICAL' as const : 'WARNING' as const,
     warehouse_id: g.c.warehouse_id, category: g.c.category,
     title: `Tồn cận date: ${g.c.material_code ?? '?'} — %Date thấp nhất ${nf(g.worst)}%`,
-    detail: `${g.c.short_name ?? g.c.material_code ?? ''} tại ${g.c.warehouse_name ?? 'kho ?'}: ${g.lots} lô ≤ ${THRESHOLDS.PCT_WARN}%Date, ${nf(g.qty)} (base) / ${g.pallets} pallet`,
+    // Số lượng hiển thị PHẢI qua qtyLabel ("N thùng + M hộp") — luật BASE UNIT của CLAUDE.md;
+    // ghi số base thô thì mã 1 CAR=48 HOP hiện "48" mà thực chất là 1 thùng (check-app 06/08).
+    detail: `${g.c.short_name ?? g.c.material_code ?? ''} tại ${g.c.warehouse_name ?? 'kho ?'}: ${g.lots} lô ≤ ${THRESHOLDS.PCT_WARN}%Date, ${qtyLabel(g.qty, g.c)} / ${g.pallets} pallet`,
     object_url: '/wms/inventory',
   }))
 }

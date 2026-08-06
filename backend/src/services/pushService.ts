@@ -190,15 +190,25 @@ export async function notifyEmployees(
     const rows = ids.map(id => ({
       id: randomUUID(), employee_id: id, kind,
       title: payload.title, body: payload.body, url: payload.url ?? null,
-      read_at: null,                      // báo lại = chưa đọc lại (dòng nổi lên đầu)
       created_at: t, updated_at: t,
     }))
-    // GỘP Ở TẦNG DB (unique `uq_user_notif_target`): giao N dòng cùng lệnh SONG SONG chỉ để lại
-    // MỘT dòng feed. Kiểm-rồi-ghi trong JS không chống được đua (đo 06/08: 6 request → 4 dòng).
-    const { error } = await supabase.from('user_notifications')
-      .upsert(rows, { onConflict: 'employee_id,kind,url' })
+    // Việc CŨ đã đọc xong thì cho phép báo lại: dọn dòng ĐÃ ĐỌC cùng đích trước khi ghi.
+    // (Dòng CHƯA đọc thì giữ — người ta còn chưa xem việc trước, báo thêm chỉ gây nhiễu.)
+    {
+      let del = supabase.from('user_notifications').delete()
+        .in('employee_id', ids.slice(0, 300)).eq('kind', kind).not('read_at', 'is', null)
+      del = payload.url ? del.eq('url', payload.url) : del.is('url', null)
+      await del
+    }
+    // GỘP Ở TẦNG DB (unique `uq_user_notif_target`) — kiểm-rồi-ghi trong JS thua đua (đo 06/08:
+    // giao 6 dòng song song → 4 thông báo). `ignoreDuplicates` + `.select()` trả về ĐÚNG những
+    // người THỰC SỰ có thông báo mới ⇒ CHUÔNG cũng chỉ kêu cho họ, không dội N lần (đo: 5 lần).
+    const { data: inserted, error } = await supabase.from('user_notifications')
+      .upsert(rows, { onConflict: 'employee_id,kind,url', ignoreDuplicates: true })
+      .select('employee_id')
     if (error) console.error('[push] ghi feed lỗi:', error.message)
-    const pushIds = await filterByPref(ids, prefKey)
+    const freshIds = [...new Set(((inserted ?? []) as { employee_id: string }[]).map(r => r.employee_id))]
+    const pushIds = await filterByPref(freshIds, prefKey)
     if (pushIds.length) await sendPushToEmployees(pushIds, payload)
   } catch (e) { console.error('[push] notifyEmployees:', e) }
 }

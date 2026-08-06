@@ -1,10 +1,10 @@
-// TRUNG TÂM CẢNH BÁO (Đợt 2 roadmap 06/08) — màn "việc phải xử" gom từ 5 rule quét sống:
-// tồn cận %Date · xe trong cổng lâu · chuyến trễ/kẹt · lệch cân >5% · lỗi hệ thống BE.
-// Cảnh báo TỰ ĐÓNG khi điều kiện hết; Ack = "tôi biết rồi" (ẩn khỏi list mặc định).
-// Layout theo skill table-format: card + toolbar + FilterBar + SummaryBand + bảng resize cột.
-import { useMemo, useState } from 'react'
+// TRUNG TÂM CẢNH BÁO / THÔNG BÁO — 2 tab GIỐNG NÚT CHUÔNG (user chốt 06/08 "chuông và cảnh báo
+// chung nhau"): Cá nhân (feed việc đích danh của MÌNH — mọi user vào được) · Thông báo chung
+// (cảnh báo vận hành 5 rule quét sống — cần quyền alerts.view; tự đóng khi điều kiện hết,
+// Ack = "tôi biết rồi"). Layout theo skill table-format.
+import { useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BellRing, Check, Undo2, RefreshCw } from 'lucide-react'
+import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -12,7 +12,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { useAlerts, useAckAlert, type AlertRow } from '@/api/hooks'
+import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -60,7 +60,126 @@ const COLS = [
   { id: 'act',    label: '',           w: 90 },
 ]
 
+// ─── Shell: 2 tab khớp nút chuông — Cá nhân (mọi user) · Thông báo chung (alerts.view) ───────
 export default function Alerts() {
+  const user  = useAuthStore(s => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const canAlerts = can(perms, 'alerts', 'view')
+  const f = useWmsFilterStore(s => s.alerts)
+  const setF = useWmsFilterStore(s => s.setAlerts)
+  // ?tab=personal — deep-link từ nút chuông; không quyền xem tab Chung → ép về Cá nhân
+  const [urlTab] = useState(() => new URLSearchParams(window.location.search).get('tab'))
+  const tab: 'personal' | 'general' =
+    !canAlerts ? 'personal' : urlTab === 'personal' || urlTab === 'general' ? urlTab : f.tab
+
+  const tabBar = (
+    <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
+      <BellRing className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
+      {([['personal', 'Cá nhân', true], ['general', 'Thông báo chung', canAlerts]] as const).map(([k, label, show]) => show && (
+        <button key={k} type="button"
+          onClick={() => { window.history.replaceState(null, '', '/wms/alerts'); setF({ tab: k }) }}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${
+            tab === k ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+  if (tab === 'personal') return <PersonalTab tabBar={tabBar} />
+  return <GeneralTab tabBar={tabBar} />
+}
+
+// ─── Tab CÁ NHÂN — bản đầy đủ của feed trên chuông (50 thông báo gần nhất, 30 ngày) ─────────
+function PersonalTab({ tabBar }: { tabBar: ReactNode }) {
+  const navigate = useNavigate()
+  const { data, isLoading } = useNotifyFeed()
+  const markRead = useMarkFeedRead()
+  const [search, setSearch] = useState('')
+
+  const rows = useMemo(() => {
+    const all = data?.rows ?? []
+    const term = search.trim().toLowerCase()
+    if (!term) return all
+    return all.filter(n => `${n.title} ${n.body ?? ''}`.toLowerCase().includes(term))
+  }, [data, search])
+  const unread = data?.unread ?? 0
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+        {tabBar}
+        <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+              <User className="h-4 w-4 text-sky-600" /> Thông báo của tôi
+            </h1>
+            <SearchInput value={search} onChange={setSearch} placeholder="Tìm nội dung…" className="flex-1 min-w-[120px]" />
+            {unread > 0 && (
+              <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                disabled={markRead.isPending}
+                onClick={() => markRead.mutate(undefined)}>
+                <CheckCheck className="h-3.5 w-3.5 mr-1" /> Đã đọc tất cả
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <SummaryBand tiles={[
+          { label: 'Chưa đọc', value: unread.toLocaleString('vi-VN'), accent: unread > 0 },
+          { label: 'Gần đây (giữ 30 ngày)', value: (data?.rows?.length ?? 0).toLocaleString('vi-VN') },
+        ]} />
+
+        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+          <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
+            <TableHeader>
+              <TableRow>
+                {[['st', '', 40], ['title', 'Nội dung', 300], ['body', 'Chi tiết', 380], ['time', 'Lúc', 130], ['act', '', 110]].map(([id, label, w]) => (
+                  <TableHead key={id as string} style={{ width: w as number }}
+                    className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">{label as string}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+              ) : rows.length === 0 ? (
+                <TableRow><TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400">Chưa có thông báo nào cho bạn</TableCell></TableRow>
+              ) : rows.map(n => (
+                <TableRow key={n.id} className={`${n.url ? 'cursor-pointer' : ''} ${n.read_at ? 'text-slate-400' : 'text-slate-800'} hover:bg-slate-50`}
+                  onClick={() => { if (!n.read_at) markRead.mutate([n.id]); if (n.url) navigate(n.url) }}>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {!n.read_at && <span className="inline-block h-2 w-2 rounded-full bg-sky-500" />}
+                  </TableCell>
+                  <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap truncate ${n.read_at ? '' : 'font-semibold'}`} title={n.title}>{n.title}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={n.body ?? ''}>{n.body ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
+                    {formatTimestampDate(n.created_at, true)} <span className="text-slate-400">{formatTimestampTime(n.created_at)}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {!n.read_at && (
+                      <button type="button" title="Đánh dấu đã đọc" disabled={markRead.isPending}
+                        onClick={e => { e.stopPropagation(); markRead.mutate([n.id]) }}
+                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 inline-flex items-center gap-1 text-[10px]">
+                        <Check className="h-3.5 w-3.5" /> Đã đọc
+                      </button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
+          1–{rows.length} thông báo · giữ 30 ngày gần nhất · bật/tắt chuông per trường hợp ở nút chuông góc phải màn hình
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tab THÔNG BÁO CHUNG — cảnh báo vận hành (cần alerts.view) ───────────────────────────────
+function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
   const navigate = useNavigate()
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
@@ -129,11 +248,10 @@ export default function Alerts() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-        <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 sm:rounded-t-xl space-y-1">
+        {tabBar}
+        <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
-              <BellRing className="h-4 w-4 text-sky-600" /> Cảnh báo
-            </h1>
+            <h1 className="text-sm font-semibold text-slate-800 shrink-0">Cảnh báo vận hành</h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm nội dung / kho…" className="flex-1 min-w-[120px]" />
             <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
             {canAck && pickedOpen.length > 0 && (

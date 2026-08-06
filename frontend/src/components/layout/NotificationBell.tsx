@@ -101,12 +101,18 @@ export function NotificationBell() {
                   {n.body && <p className="text-[11px] text-slate-500 truncate mt-0.5">{n.body}</p>}
                 </button>
               ))}
-              {(feed.data?.rows ?? []).some(n => !n.read_at) && (
-                <button type="button" onClick={() => markRead.mutate(undefined)}
-                  className="w-full px-3 py-2 text-[11px] text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1">
-                  <CheckCheck className="h-3.5 w-3.5" /> Đánh dấu đã đọc tất cả
+              <div className="flex items-center border-t border-slate-100">
+                {(feed.data?.rows ?? []).some(n => !n.read_at) && (
+                  <button type="button" onClick={() => markRead.mutate(undefined)}
+                    className="flex-1 px-3 py-2 text-[11px] text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1">
+                    <CheckCheck className="h-3.5 w-3.5" /> Đã đọc tất cả
+                  </button>
+                )}
+                <button type="button" onClick={() => openItem('/wms/alerts?tab=personal')}
+                  className="flex-1 px-3 py-2 text-[11px] text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1">
+                  <ExternalLink className="h-3.5 w-3.5" /> Xem tất cả
                 </button>
-              )}
+              </div>
             </>
           )}
 

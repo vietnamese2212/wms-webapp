@@ -32,7 +32,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
-      { to: '/wms/alerts',        icon: BellRing, label: 'Cảnh báo',          module: 'alerts' },
+      // Không gate module: tab Cá nhân (feed việc của mình) dành cho MỌI user; tab Chung tự ẩn khi thiếu alerts.view
+      { to: '/wms/alerts',        icon: BellRing, label: 'Thông báo' },
     ],
   },
   {

@@ -91,7 +91,8 @@ export default function App() {
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/weigh-tickets"                    element={<PermissionRoute module="weigh_station"><WeighTickets /></PermissionRoute>} />
         <Route path="/wms/control-tower"                    element={<PermissionRoute module="control_tower"><ControlTower /></PermissionRoute>} />
-        <Route path="/wms/alerts"                           element={<PermissionRoute module="alerts"><Alerts /></PermissionRoute>} />
+        {/* Trang thông báo mở cho MỌI user (tab Cá nhân = feed của mình); tab Chung tự ẩn khi thiếu alerts.view */}
+        <Route path="/wms/alerts"                           element={<Alerts />} />
         <Route path="/external/do-sap"                      element={<ExternalRoute><ExternalData /></ExternalRoute>} />
         <Route path="/external"                             element={<ExternalRoute><ExternalData /></ExternalRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />

@@ -261,6 +261,7 @@ interface StocktakeCycleFilters {
   dueOnly: boolean       // chỉ mã đến hạn/quá hạn (mặc định bật)
 }
 interface AlertFilters {
+  tab: 'personal' | 'general'   // Cá nhân (feed của mình — mọi user) | Thông báo chung (cần alerts.view)
   search: string
   warehouseId: string    // '' = mọi kho trong scope
   rules: string[]        // loại cảnh báo (EXPIRY/GATE_DWELL/…) — [] = tất cả
@@ -426,7 +427,7 @@ function initialFilters() {
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
-    alerts:       { search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
+    alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },

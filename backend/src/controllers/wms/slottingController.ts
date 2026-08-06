@@ -6,6 +6,7 @@ import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
+import { safeFilterValue } from '../../utils/search'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -157,7 +158,8 @@ export async function getSlotting(req: Request, res: Response) {
     if (!warehouseId) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouseId)) return
     const scopeCats = scopeCategoriesOf(req)
-    const reqCats = parseListParam(req.query.categories) ?? []
+    // safeFilterValue: ký tự điều khiển (%00…) xuống Postgres text[] là 22021 → 500 (QA 21 bắt 06/08, cùng lỗ với cycle-count)
+    const reqCats = (parseListParam(req.query.categories) ?? []).map(c => safeFilterValue(c)).filter(Boolean)
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats

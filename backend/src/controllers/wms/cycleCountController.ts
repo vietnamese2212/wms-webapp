@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase'
 import { maskServerMessage } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
+import { safeFilterValue } from '../../utils/search'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
@@ -43,7 +44,8 @@ export async function getCycleCount(req: Request, res: Response) {
     if (!warehouseId) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouseId)) return
     const scopeCats = scopeCategoriesOf(req)
-    const reqCats = parseListParam(req.query.categories) ?? []
+    // safeFilterValue: ký tự điều khiển (%00…) xuống Postgres text[] là 22021 → 500 (QA 21 bắt 06/08)
+    const reqCats = (parseListParam(req.query.categories) ?? []).map(c => safeFilterValue(c)).filter(Boolean)
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats

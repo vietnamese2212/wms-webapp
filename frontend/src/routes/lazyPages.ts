@@ -37,6 +37,7 @@ const outboundScanLog    = () => import('@/pages/wms/OutboundScanLog')
 const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const weighTickets       = () => import('@/pages/wms/WeighTickets')
 const controlTower       = () => import('@/pages/wms/ControlTower')
+const alertsPage         = () => import('@/pages/wms/Alerts')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const forklift           = () => import('@/pages/wms/Forklift')
@@ -79,6 +80,7 @@ export const Pages = {
   OutboundPrepare: lazyRetry(outboundPrepare),
   WeighTickets: lazyRetry(weighTickets),
   ControlTower: lazyRetry(controlTower),
+  Alerts: lazyRetry(alertsPage),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   Forklift: lazyRetry(forklift),

@@ -37,6 +37,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
   gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower']],
+  alert_events:        [['alerts-list']],
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
   // fill-demand: "Cần" của tab Đề xuất fill = đơn nhặt lẻ theo NGÀY XUẤT — đơn phát sinh/đổi ngày
   // phải làm số nhảy ngay với người đang mở tab (user chốt 05/08), không chờ F5.

@@ -5349,3 +5349,31 @@ export function useForkliftReport(params: { from: string; to: string; warehouse_
     },
   })
 }
+
+// ─── Trung tâm cảnh báo (Đợt 2 roadmap 06/08) ─────────────────────────────────
+export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
+export interface AlertRow {
+  id: string; rule: AlertRule; severity: 'CRITICAL' | 'WARNING'
+  warehouse_id: string | null; category: string | null
+  title: string; detail: string | null; object_url: string | null
+  first_seen: string; last_seen: string
+  ack_by: string | null; ack_at: string | null; resolved_at: string | null
+}
+export function useAlerts(params: { status: string; rule?: string; severity?: string; warehouse_id?: string }) {
+  return useQuery({
+    queryKey: ['alerts-list', params],
+    refetchInterval: 120_000,   // quét lười phía BE throttle 10' — refetch chỉ đọc bảng
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/alerts', { params })
+      return data.data as { rows: AlertRow[]; total: number }
+    },
+  })
+}
+export function useAckAlert() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ack }: { id: string; ack: boolean }) =>
+      (ack ? apiClient.post(`/wms/alerts/${id}/ack`) : apiClient.delete(`/wms/alerts/${id}/ack`)).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
+  })
+}

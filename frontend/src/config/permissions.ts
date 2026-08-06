@@ -231,6 +231,13 @@ export const MODULES = {
       view: 'Xem bảng giám sát + chế độ TV',
     },
   },
+  alerts: {
+    page: 'Cảnh báo vận hành',
+    actions: {
+      view: 'Xem danh sách cảnh báo + nhận thông báo đẩy cảnh báo mới (theo kho được gán)',
+      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu một cảnh báo',
+    },
+  },
   slotting: {
     page: 'Tối ưu vị trí (Slotting)',
     actions: {

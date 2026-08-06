@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine,
+  ArrowDownToLine, BellRing,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -32,6 +32,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
+      { to: '/wms/alerts',        icon: BellRing, label: 'Cảnh báo',          module: 'alerts' },
     ],
   },
   {

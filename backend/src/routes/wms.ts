@@ -13,6 +13,7 @@ import * as weigh from '../controllers/wms/weighTicketController'
 import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
 import * as fill from '../controllers/wms/fillController'
+import * as alerts from '../controllers/wms/alertController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
@@ -190,6 +191,11 @@ router.patch('/slotting/zone-config/:id',                     requirePerm('slott
 // lệnh, đích phải là vị trí nhặt lẻ nhận đúng Loại kho. Cùng tiền lệ `leftover_location_id` bên
 // Xuất kho — người đi hạ hàng phải làm được việc của mình (kể cả đổi vị trí đến ngay màn quét);
 // đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
+// Trung tâm cảnh báo (Đợt 2 roadmap 06/08) — mỗi nút 1 quyền: view=xem, ack=đánh dấu đã biết
+router.get('/alerts',                                         requirePerm('alerts', 'view'),  alerts.listAlerts)
+router.post('/alerts/:id/ack',                                requirePerm('alerts', 'ack'),   alerts.ackAlert)
+router.delete('/alerts/:id/ack',                              requirePerm('alerts', 'ack'),   alerts.unackAlert)
+
 router.get('/fill/demand',                                    requirePerm('fill', 'view'),    fill.getFillDemand)
 router.get('/fill/candidates',                                requirePerm('fill', 'view'),    fill.getFillCandidates)
 router.get('/fill/orders',                                    requirePerm('fill', 'view'),    fill.listFillOrders)

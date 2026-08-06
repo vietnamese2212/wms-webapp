@@ -92,7 +92,8 @@ export default function FillPicking() {
   const setFill = useWmsFilterStore(s => s.setFill)
   const setFillFilter = (p: Partial<typeof f>) => setFill({ ...p, page: 1 })
 
-  const canPlan    = can(perms, 'fill', 'plan')
+  const canPlan    = can(perms, 'fill', 'plan')     // Ra lệnh fill (tab Đề xuất)
+  const canCancel  = can(perms, 'fill', 'cancel')   // Hủy dòng/lệnh — quyền riêng (tách 05/08)
   const canAssign  = can(perms, 'fill', 'assign')
   const canExecute = can(perms, 'fill', 'execute')
 
@@ -228,7 +229,7 @@ export default function FillPicking() {
         ) : f.tab === 'demand' ? (
           <DemandTab warehouseId={whId} date={f.date} onlyShort={f.onlyShort} cats={f.cats} dense={dense} canPlan={canPlan} canAssign={canAssign} />
         ) : f.tab === 'tasks' ? (
-          <OrdersTab warehouseId={whId} dense={dense} canPlan={canPlan} canExecute={canExecute} onScan={openScan} />
+          <OrdersTab warehouseId={whId} dense={dense} canCancel={canCancel} canExecute={canExecute} onScan={openScan} />
         ) : (
           <ReportTab warehouseId={whId} from={f.reportFrom} to={f.reportTo} dense={dense} />
         )}
@@ -581,8 +582,8 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
 }
 
 // ─── TAB 2 — LỆNH FILL (danh sách lệnh gom — mở dòng ra trang chi tiết) ──────
-function OrdersTab({ warehouseId, dense, canPlan, canExecute, onScan }: {
-  warehouseId: string; dense: boolean; canPlan: boolean; canExecute: boolean
+function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
+  warehouseId: string; dense: boolean; canCancel: boolean; canExecute: boolean
   onScan: (orderId: string) => void
 }) {
   const navigate = useNavigate()
@@ -758,7 +759,7 @@ function OrdersTab({ warehouseId, dense, canPlan, canExecute, onScan }: {
                             <QrCode className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {canPlan && (
+                        {canCancel && (
                           <button type="button" title="Hủy các dòng còn treo của lệnh này" onClick={() => doCancel(o)}
                             className="px-1.5 py-1 rounded text-slate-400 hover:bg-red-50 hover:text-red-600">
                             <X className="h-3.5 w-3.5" />

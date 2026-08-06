@@ -435,8 +435,8 @@ export async function updateFillTask(req: Request, res: Response) {
     if (!guardWarehouse(req, res, task.warehouse_id as string)) return
     if (task.status !== 'PENDING') return fail(res, 409, 'NOT_PENDING', 'Dòng đã xong hoặc đã hủy — không sửa được')
 
-    if (hasAsg  && !mayFill(req, 'assign')) return fail(res, 403, 'FORBIDDEN', 'Không có quyền gán lệnh fill')
-    if (hasDest && !mayFill(req, 'plan'))   return fail(res, 403, 'FORBIDDEN', 'Không có quyền sửa lệnh fill')
+    if (hasAsg  && !mayFill(req, 'assign'))      return fail(res, 403, 'FORBIDDEN', 'Không có quyền gán lệnh fill')
+    if (hasDest && !mayFill(req, 'change_dest')) return fail(res, 403, 'FORBIDDEN', 'Không có quyền đổi vị trí đến của lệnh fill')
 
     const patch: Record<string, unknown> = { updated_at: now() }
     if (hasAsg) {

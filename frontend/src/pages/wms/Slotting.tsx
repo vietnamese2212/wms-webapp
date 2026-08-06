@@ -89,7 +89,8 @@ export default function Slotting() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const admin = isAdmin(user?.name)
-  const canPlan = admin || can(perms, 'slotting', 'plan')
+  const canPlan   = admin || can(perms, 'slotting', 'plan')
+  const canDelete = admin || can(perms, 'slotting', 'delete')   // xóa kế hoạch — quyền riêng (tách 05/08)
   const canConfigure = admin || can(perms, 'slotting', 'configure')
 
   const { warehouseId, categories, days, level, principle, tab, palletKind: rawPalletKind } = useWmsFilterStore(s => s.slotting)
@@ -192,7 +193,7 @@ export default function Slotting() {
 
         {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level}
             page={matPage} pageSize={matPageSize} onPage={setMatPage} onPageSize={n => { setMatPageSize(n); setMatPage(1) }} />}
-        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
+        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} canDelete={canDelete} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
@@ -707,8 +708,8 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
 // ─── Tab Kế hoạch ──────────────────────────────────────────────────────────────
 // Nút Quét thực hiện KHÔNG đặt ở tab danh sách (user bỏ 19/07 — "ở ngoài không có tác dụng gì"),
 // chỉ nằm trong trang chi tiết kế hoạch (cuối ô Từ vị trí từng dòng).
-function PlansTab({ warehouseId, canPlan, onOpen }: {
-  warehouseId: string; canPlan: boolean; onOpen: (id: string) => void
+function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
+  warehouseId: string; canPlan: boolean; canDelete: boolean; onOpen: (id: string) => void
 }) {
   const { data: plans = [], isLoading, error } = useSlottingPlans(warehouseId || undefined)
   const { mutate: deletePlan, isPending: deleting } = useDeleteSlottingPlan()
@@ -752,7 +753,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
-                {canPlan && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
+                {canDelete && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -779,7 +780,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.principle ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
-                    {canPlan && (
+                    {canDelete && (
                       <TableCell className="px-2 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-100">
                         <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting}
                           onClick={e => { e.stopPropagation(); handleDelete(p) }}>

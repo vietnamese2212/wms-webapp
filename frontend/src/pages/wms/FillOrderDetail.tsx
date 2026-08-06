@@ -1,7 +1,7 @@
 // CHI TIẾT MỘT LỆNH FILL (v3 05/08) — mở từ tab "Lệnh fill".
 // Mỗi dòng = 1 mã hàng + DATE yêu cầu (%Date) + số pallet phải hạ + vị trí đến.
-// Multi-select dòng → action theo QUYỀN: Giao cho (fill.assign) · Đổi vị trí đến / Hủy dòng
-// (fill.plan). Quét thực hiện (fill.execute) mở màn quét GIỚI HẠN trong lệnh này.
+// Multi-select dòng → action theo QUYỀN RIÊNG TỪNG NÚT (tách 05/08): Giao cho (fill.assign) ·
+// Đổi vị trí đến (fill.change_dest) · Hủy dòng/lệnh (fill.cancel). Quét (fill.execute) giới hạn lệnh này.
 // Bulk chạy SONG SONG per-dòng qua route PATCH/DELETE /fill/tasks/:id (chuẩn Promise.all).
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -52,9 +52,12 @@ export default function FillOrderDetail() {
   const navigate = useNavigate()
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const canPlan    = can(perms, 'fill', 'plan')
-  const canAssign  = can(perms, 'fill', 'assign')
-  const canExecute = can(perms, 'fill', 'execute')
+  // Mỗi nút 1 quyền riêng (user chốt 05/08 — không gộp "plan" cho cả 3 nút)
+  const canCancel     = can(perms, 'fill', 'cancel')
+  const canChangeDest = can(perms, 'fill', 'change_dest')
+  const canAssign     = can(perms, 'fill', 'assign')
+  const canExecute    = can(perms, 'fill', 'execute')
+  const canBulk       = canAssign || canChangeDest || canCancel
 
   const { data, isLoading } = useFillOrder(id)
   const updateTask  = useUpdateFillTask()
@@ -155,7 +158,7 @@ export default function FillOrderDetail() {
                   <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
                 </Button>
               )}
-              {canPlan && order.status === 'PENDING' && (
+              {canCancel && order.status === 'PENDING' && (
                 <Button size="sm" variant="outline"
                   className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
                   disabled={cancelOrder.isPending}
@@ -175,7 +178,7 @@ export default function FillOrderDetail() {
           { label: `ĐÃ HẠ — ${QTY_CONVERTED_LABEL}`, value: nf(tot.done), tip: QTY_CONVERTED_TIP },
         ]} />
 
-        {(canAssign || canPlan) && sel.size > 0 && (
+        {canBulk && sel.size > 0 && (
           <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 flex-wrap shrink-0">
             <span className="text-[11px] text-slate-500">
               Đã chọn <b className="text-slate-700">{sel.size}</b> dòng ({pendingSel.length} đang treo)
@@ -192,22 +195,22 @@ export default function FillOrderDetail() {
                   <UserPlus className="h-3.5 w-3.5 mr-1" /> Giao cho
                 </Button>
               )}
-              {canPlan && (
-                <>
-                  <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
-                    disabled={!pendingSel.length || busy}
-                    title="Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)"
-                    onClick={() => { setVal(''); setErr(''); setDlg('dest') }}>
-                    <MapPin className="h-3.5 w-3.5 mr-1" /> Đổi vị trí đến
-                  </Button>
-                  <Button size="sm" variant="outline"
-                    className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
-                    disabled={!pendingSel.length || busy}
-                    title="Hủy các dòng đã chọn (giữ lại để tra cứu)"
-                    onClick={() => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel)}>
-                    <X className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang hủy…' : 'Hủy dòng'}
-                  </Button>
-                </>
+              {canChangeDest && (
+                <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
+                  disabled={!pendingSel.length || busy}
+                  title="Đổi vị trí nhặt lẻ sẽ hạ về cho các dòng đã chọn (vị trí phải nhận đúng Loại kho từng mã)"
+                  onClick={() => { setVal(''); setErr(''); setDlg('dest') }}>
+                  <MapPin className="h-3.5 w-3.5 mr-1" /> Đổi vị trí đến
+                </Button>
+              )}
+              {canCancel && (
+                <Button size="sm" variant="outline"
+                  className="h-9 sm:h-7 text-[11px] border-red-200 text-red-600 hover:bg-red-50"
+                  disabled={!pendingSel.length || busy}
+                  title="Hủy các dòng đã chọn (giữ lại để tra cứu)"
+                  onClick={() => bulk(l => cancelTask.mutateAsync({ id: l.id }), pendingSel)}>
+                  <X className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang hủy…' : 'Hủy dòng'}
+                </Button>
               )}
             </span>
           </div>
@@ -225,7 +228,7 @@ export default function FillOrderDetail() {
               return (
                 <div key={l.id} className={`px-3 py-2.5 ${picked ? 'bg-sky-50' : ''}`}
                   onClick={() => {
-                    if (!(canAssign || canPlan) || l.status !== 'PENDING') return
+                    if (!(canBulk) || l.status !== 'PENDING') return
                     setSel(prev => {
                       const n = new Set(prev)
                       if (n.has(l.id)) n.delete(l.id); else n.add(l.id)
@@ -233,7 +236,7 @@ export default function FillOrderDetail() {
                     })
                   }}>
                   <div className="flex items-center gap-2">
-                    {(canAssign || canPlan) && l.status === 'PENDING' && (
+                    {(canBulk) && l.status === 'PENDING' && (
                       <input type="checkbox" readOnly checked={picked} className="h-4 w-4 shrink-0" />
                     )}
                     <span className={`font-mono text-xs font-bold ${fillRowText(l.status) || 'text-slate-800'}`}>{l.material_code}</span>
@@ -274,7 +277,7 @@ export default function FillOrderDetail() {
                 {LINE_COLS.map((c, i) => (
                   <TableHead key={c.id}
                     className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                    {c.id === 'sel' && (canAssign || canPlan) ? (
+                    {c.id === 'sel' && (canBulk) ? (
                       <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
                         onChange={e => setSel(e.target.checked ? new Set(selectable.map(l => l.id)) : new Set())} />
                     ) : c.label}
@@ -292,7 +295,7 @@ export default function FillOrderDetail() {
                 return (
                   <TableRow key={l.id} className={fillRowText(l.status)}>
                     <TableCell className={`px-2 py-1 sticky left-0 z-10 ${picked ? 'bg-sky-50' : 'bg-white'}`}>
-                      {(canAssign || canPlan) && l.status === 'PENDING' && (
+                      {(canBulk) && l.status === 'PENDING' && (
                         <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={picked}
                           onChange={e => setSel(prev => {
                             const n = new Set(prev)

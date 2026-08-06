@@ -17,9 +17,9 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   weigh_station: ['view', 'match'],
   control_tower:     ['view'],
-  slotting:          ['view', 'plan', 'complete', 'configure'],   // Tối ưu vị trí: xem / tạo-xóa kế hoạch / hoàn thành-hủy-mở lại / tab Cài đặt (hạng nhặt + luồng cửa khu)
-  fill:              ['view', 'plan', 'assign', 'execute'],   // Fill hàng nhặt lẻ: xem đề xuất/lệnh/kết quả · ra lệnh-hủy-đổi đích · gán người · quét thực hiện
-  forklift:          ['view', 'check', 'manage_vehicle', 'manage_item'],   // Xe nâng: xem board/lịch sử/báo cáo / ghi-sửa-xóa check list ngày / danh mục xe / danh mục hạng mục
+  slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
+  fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
+  forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint', 'history', 'audit'],

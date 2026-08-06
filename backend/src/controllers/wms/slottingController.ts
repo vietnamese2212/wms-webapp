@@ -918,6 +918,16 @@ export async function updatePlan(req: Request, res: Response) {
     const { status } = req.body as { status?: string }
     if (!status || !['COMPLETED', 'CANCELLED', 'ACTIVE'].includes(status))
       return fail(res, 400, 'INVALID_INPUT', 'status phải là COMPLETED / CANCELLED / ACTIVE')
+    // Hoàn thành / Hủy / Mở lại = 3 quyền riêng (tách 05/08) — route gộp requireAnyPerm nên
+    // kiểm đúng quyền theo status ở đây (đừng để người chỉ có complete hủy được kế hoạch)
+    {
+      const need = status === 'COMPLETED' ? 'complete' : status === 'CANCELLED' ? 'cancel' : 'reopen'
+      const isAdmin = req.user?.is_superadmin === true || req.user?.name === 'Admin'
+      if (!isAdmin && !(req.user?.module_permissions?.slotting ?? []).includes(need)) {
+        const label = need === 'complete' ? 'hoàn thành' : need === 'cancel' ? 'hủy' : 'mở lại'
+        return fail(res, 403, 'FORBIDDEN', `Không có quyền ${label} kế hoạch sắp xếp`)
+      }
+    }
     const { data: plan } = await supabase.from('SlottingPlan')
       .select('id, warehouse_id, status').eq('id', req.params.id).maybeSingle()
     if (!plan) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kế hoạch')

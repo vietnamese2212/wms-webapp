@@ -178,10 +178,11 @@ router.get('/slotting/plans',                                 requirePerm('slott
 router.get('/slotting/plans/:id',                             requirePerm('slotting', 'view'),     slotting.getPlan)
 router.post('/slotting/plans/preview',                        requirePerm('slotting', 'plan'),     slotting.previewPlan)
 router.post('/slotting/plans',                                requirePerm('slotting', 'plan'),     slotting.createPlan)
-router.patch('/slotting/plans/:id',                           requirePerm('slotting', 'complete'), slotting.updatePlan)
+// Hoàn thành / Hủy / Mở lại = 3 quyền riêng (tách 05/08) — controller kiểm đúng quyền theo status body
+router.patch('/slotting/plans/:id',                           requireAnyPerm(['slotting', 'complete'], ['slotting', 'cancel'], ['slotting', 'reopen']), slotting.updatePlan)
 // Quét thực hiện lệnh kế hoạch = thao tác CHUYỂN VỊ TRÍ pallet → dùng đúng quyền inventory.move_location (cross-module)
 router.post('/slotting/plans/:id/scan-move',                  requirePerm('inventory', 'move_location'), slotting.scanMovePlanPallet)
-router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'plan'),     slotting.deletePlan)
+router.delete('/slotting/plans/:id',                          requirePerm('slotting', 'delete'),   slotting.deletePlan)
 router.patch('/slotting/zone-config/:id',                     requirePerm('slotting', 'configure'), slotting.updateZoneConfig)
 
 // ─── FILL HÀNG phục vụ nhặt lẻ (04/08; v3 gom lệnh theo DATE 05/08) ─────────
@@ -200,9 +201,10 @@ router.get('/fill/employees',                                 requirePerm('fill'
 router.post('/fill/orders',                                   requirePerm('fill', 'plan'),    fill.createFillOrder)
 router.post('/fill/scan',                                     requirePerm('fill', 'execute'), fill.scanFill)
 // Gán người (assign) và đổi vị trí đích (plan) đi chung 1 route → controller tự kiểm TỪNG quyền
-router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'plan']), fill.updateFillTask)
-router.delete('/fill/tasks/:id',                              requirePerm('fill', 'plan'),    fill.cancelFillTask)
-router.delete('/fill/orders/:id',                             requirePerm('fill', 'plan'),    fill.cancelFillOrder)
+// Gán người ≠ đổi vị trí đến ≠ hủy = 3 quyền riêng (tách 05/08 — controller kiểm đúng field)
+router.patch('/fill/tasks/:id',                               requireAnyPerm(['fill', 'assign'], ['fill', 'change_dest']), fill.updateFillTask)
+router.delete('/fill/tasks/:id',                              requirePerm('fill', 'cancel'),  fill.cancelFillTask)
+router.delete('/fill/orders/:id',                             requirePerm('fill', 'cancel'),  fill.cancelFillOrder)
 
 // ─── Xe nâng: check list an toàn hàng ngày + đồng hồ giờ vận hành ───────────
 router.get('/forklifts',            requirePerm('forklift', 'view'),           forklift.listForklifts)
@@ -217,7 +219,7 @@ router.get('/forklift-board',       requirePerm('forklift', 'view'),           f
 router.post('/forklift-logs',       requirePerm('forklift', 'check'),          forklift.saveLog)
 router.get('/forklift-logs',        requirePerm('forklift', 'view'),           forklift.listLogs)   // ma trận 1 xe (ĐẶT TRƯỚC /:id)
 router.get('/forklift-logs/:id',    requirePerm('forklift', 'view'),           forklift.getLog)
-router.delete('/forklift-logs/:id', requirePerm('forklift', 'check'),          forklift.deleteLog)
+router.delete('/forklift-logs/:id', requirePerm('forklift', 'delete_check'),   forklift.deleteLog)
 router.get('/forklift-report',      requirePerm('forklift', 'view'),           forklift.getReport)
 router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)

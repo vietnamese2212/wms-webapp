@@ -47,8 +47,11 @@ export default function SlottingPlanDetail() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const admin = isAdmin(user?.name)
-  const canPlan = admin || can(perms, 'slotting', 'plan')
+  // Mỗi nút 1 quyền riêng (tách 05/08 — không gộp complete cho cả 3 nút, plan không kiêm xóa)
+  const canDelete   = admin || can(perms, 'slotting', 'delete')
   const canComplete = admin || can(perms, 'slotting', 'complete')
+  const canCancel   = admin || can(perms, 'slotting', 'cancel')
+  const canReopen   = admin || can(perms, 'slotting', 'reopen')
   // Quét thực hiện lệnh = thao tác Chuyển vị trí pallet → đúng quyền inventory.move_location (cross-module)
   const canScanMove = admin || can(perms, 'inventory', 'move_location')
   const [scanOpen, setScanOpen] = useState(false)
@@ -188,24 +191,24 @@ export default function SlottingPlanDetail() {
                 <Printer className="h-3.5 w-3.5 mr-1" /> In
               </Button>
               {canComplete && plan.status === 'ACTIVE' && (
-                <>
-                  <Button size="sm" className="h-7 text-[11px] bg-green-600 hover:bg-green-700" disabled={updating}
-                    onClick={() => setStatus('COMPLETED', `Hoàn thành kế hoạch "${plan.name}"?\n${s.done_pallets + s.gone_pallets}/${s.total_pallets} pallet đã xử lý${s.pending_pallets > 0 ? ` — CÒN ${s.pending_pallets} pallet chưa chuyển` : ''}.`)}>
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Hoàn thành
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[11px] text-red-600 border-red-200 hover:bg-red-50" disabled={updating}
-                    onClick={() => setStatus('CANCELLED', `Hủy kế hoạch "${plan.name}"? Pallet đã chuyển không bị hoàn tác.`)}>
-                    <XCircle className="h-3.5 w-3.5 mr-1" /> Hủy
-                  </Button>
-                </>
+                <Button size="sm" className="h-7 text-[11px] bg-green-600 hover:bg-green-700" disabled={updating}
+                  onClick={() => setStatus('COMPLETED', `Hoàn thành kế hoạch "${plan.name}"?\n${s.done_pallets + s.gone_pallets}/${s.total_pallets} pallet đã xử lý${s.pending_pallets > 0 ? ` — CÒN ${s.pending_pallets} pallet chưa chuyển` : ''}.`)}>
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Hoàn thành
+                </Button>
               )}
-              {canComplete && plan.status !== 'ACTIVE' && (
+              {canCancel && plan.status === 'ACTIVE' && (
+                <Button size="sm" variant="outline" className="h-7 text-[11px] text-red-600 border-red-200 hover:bg-red-50" disabled={updating}
+                  onClick={() => setStatus('CANCELLED', `Hủy kế hoạch "${plan.name}"? Pallet đã chuyển không bị hoàn tác.`)}>
+                  <XCircle className="h-3.5 w-3.5 mr-1" /> Hủy
+                </Button>
+              )}
+              {canReopen && plan.status !== 'ACTIVE' && (
                 <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={updating}
                   onClick={() => setStatus('ACTIVE', `Mở lại kế hoạch "${plan.name}"?`)}>
                   <RotateCcw className="h-3.5 w-3.5 mr-1" /> Mở lại
                 </Button>
               )}
-              {canPlan && (
+              {canDelete && (
                 <Button size="sm" variant="outline" className="h-7 text-[11px] text-red-600 border-red-200 hover:bg-red-50" disabled={deleting} onClick={handleDelete}>
                   <Trash2 className="h-3.5 w-3.5 mr-1" /> Xóa
                 </Button>

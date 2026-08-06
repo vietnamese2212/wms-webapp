@@ -117,6 +117,7 @@ export default function Forklift() {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const canCheck = can(perms, 'forklift', 'check')
+  const canDelCheck = can(perms, 'forklift', 'delete_check')   // xóa bản ghi ngày — quyền riêng (tách 05/08)
   const canVehicle = can(perms, 'forklift', 'manage_vehicle')
   const canItem = can(perms, 'forklift', 'manage_item')
   const showSettings = canVehicle || canItem
@@ -158,7 +159,7 @@ export default function Forklift() {
             <SummaryTab whOpts={whOpts} active={f.tab === 'summary'} />
           </TabsContent>
           <TabsContent value="detail" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-            <DetailTab canCheck={canCheck} whOpts={whOpts} active={f.tab === 'detail'} />
+            <DetailTab canDelete={canDelCheck} whOpts={whOpts} active={f.tab === 'detail'} />
           </TabsContent>
           {showSettings && (
             <TabsContent value="settings" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
@@ -866,7 +867,7 @@ function SummaryTab({ whOpts, active }: { whOpts: { value: string; label: string
 }
 
 // ─── Tab CHI TIẾT THEO NGÀY — filter Kho + Xe + khoảng ngày ──────────────────
-function DetailTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
+function DetailTab({ canDelete, whOpts, active }: { canDelete: boolean; whOpts: { value: string; label: string; sub?: string }[]; active: boolean }) {
   const f = useWmsFilterStore(s => s.forklift)
   const setF = useWmsFilterStore(s => s.setForklift)
   const vehicles = useScopedFkVehicles(f.warehouseId)
@@ -937,7 +938,7 @@ function DetailTab({ canCheck, whOpts, active }: { canCheck: boolean; whOpts: { 
                         onClick={e => { e.stopPropagation(); setViewLogId(r.id) }}>
                         <Eye className="h-3.5 w-3.5" />
                       </button>
-                      {canCheck && (
+                      {canDelete && (
                         <button className="text-slate-400 hover:text-red-500 p-1" title="Xóa bản ghi (ghi nhầm)" disabled={del.isPending}
                           onClick={e => { e.stopPropagation(); handleDelete(r) }}>
                           <Trash2 className="h-3.5 w-3.5" />

@@ -182,27 +182,21 @@ export async function filterByPref(employeeIds: string[], prefKey: PrefKey): Pro
  */
 export async function notifyEmployees(
   employeeIds: string[], kind: string, prefKey: PrefKey, payload: PushPayload,
-  opts?: { dedupeWindowMs?: number },   // giao N dòng song song (Promise.all) → chỉ 1 dòng feed/URL
 ): Promise<void> {
   try {
-    let ids = [...new Set(employeeIds.filter(Boolean))]
+    const ids = [...new Set(employeeIds.filter(Boolean))]
     if (!ids.length) return
     const t = new Date().toISOString()
-    if (opts?.dedupeWindowMs && payload.url) {
-      const since = new Date(Date.now() - opts.dedupeWindowMs).toISOString()
-      const { data: dups } = await supabase.from('user_notifications')
-        .select('employee_id').eq('kind', kind).eq('url', payload.url)
-        .in('employee_id', ids.slice(0, 300)).gte('created_at', since).limit(1000)
-      const seen = new Set((dups ?? []).map(d => d.employee_id as string))
-      ids = ids.filter(id => !seen.has(id))
-      if (!ids.length) return   // feed đã có dòng cho URL này — push cũng khỏi (tag gộp rồi)
-    }
     const rows = ids.map(id => ({
       id: randomUUID(), employee_id: id, kind,
       title: payload.title, body: payload.body, url: payload.url ?? null,
+      read_at: null,                      // báo lại = chưa đọc lại (dòng nổi lên đầu)
       created_at: t, updated_at: t,
     }))
-    const { error } = await supabase.from('user_notifications').insert(rows)
+    // GỘP Ở TẦNG DB (unique `uq_user_notif_target`): giao N dòng cùng lệnh SONG SONG chỉ để lại
+    // MỘT dòng feed. Kiểm-rồi-ghi trong JS không chống được đua (đo 06/08: 6 request → 4 dòng).
+    const { error } = await supabase.from('user_notifications')
+      .upsert(rows, { onConflict: 'employee_id,kind,url' })
     if (error) console.error('[push] ghi feed lỗi:', error.message)
     const pushIds = await filterByPref(ids, prefKey)
     if (pushIds.length) await sendPushToEmployees(pushIds, payload)

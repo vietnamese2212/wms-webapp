@@ -150,6 +150,39 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
   check('Key lạ ngoài sổ → 400', bad.s === 400, `http=${bad.s}`)
 }
 
+// [9] RÒ FEED CÁ NHÂN QUA RLS (check-app 06/08 đo thật: user B cầm anon key + vé realtime đọc
+// được thông báo riêng của A vì policy `USING (true)`). Policy nay phải là `employee_id = auth.uid()`.
+{
+  const anon = readAnonKey(); const sbUrl = readSupabaseUrl()
+  const pol = await restAll('pg_policies', `select=policyname,qual&tablename=eq.user_notifications`).catch(() => [])
+  if (pol.length) {
+    check('Policy đọc feed cá nhân KHÔNG phải USING(true)',
+      pol.every(p => !/^\s*true\s*$/i.test(String(p.qual ?? ''))),
+      pol.map(p => `${p.policyname}: ${p.qual}`).join(' | ').slice(0, 140))
+  } else if (anon && sbUrl) {
+    // fallback: đọc thẳng bằng anon key (không có JWT user) — phải rỗng
+    const r = await fetch(`${sbUrl}/rest/v1/user_notifications?select=id&limit=5`, { headers: { apikey: anon, Authorization: `Bearer ${anon}` } })
+    const b = await r.text()
+    check('Anon KHÔNG đọc được feed cá nhân', !r.ok || b === '[]', `http=${r.status} ${b.slice(0, 60)}`)
+  } else check('Policy đọc feed cá nhân KHÔNG phải USING(true)', true, 'skip — không đọc được pg_policies/anon key')
+}
+
+// [10] GỘP THÔNG BÁO: ghi N dòng CÙNG (người, loại, url) phải còn ĐÚNG 1 (unique DB, không
+// phải kiểm-rồi-ghi trong JS — đo 06/08: giao 6 dòng song song sinh 4 thông báo).
+{
+  const { randomUUID } = await import('crypto')
+  const url = `/wms/fill/orders/${randomUUID()}`
+  const mk = () => restWrite('user_notifications', 'POST', null, {
+    id: randomUUID(), employee_id: me, kind: 'ASSIGN', title: `${TAG} gop`, url,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }).then(() => 'ok', () => 'dup')
+  const rs = await Promise.all(Array.from({ length: 6 }, mk))
+  const rows = await restAll('user_notifications', `select=id&employee_id=eq.${me}&url=eq.${encodeURIComponent(url)}`)
+  check('6 lần báo cùng (người, loại, đối tượng) → chỉ 1 dòng feed (gộp ở tầng DB)',
+    rows.length === 1, `còn ${rows.length} dòng · ghi=${rs.filter(x => x === 'ok').length} trùng=${rs.filter(x => x === 'dup').length}`)
+  await restWrite('user_notifications', 'DELETE', `url=eq.${encodeURIComponent(url)}`).catch(() => {})
+}
+
 console.log('\n🧹 dọn…')
 await cleanup(me)
 const residue = (await restAll('push_subscriptions', `select=id&endpoint=like.*${TAG.toLowerCase()}*`)).length

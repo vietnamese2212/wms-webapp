@@ -488,7 +488,7 @@ export async function updateFillTask(req: Request, res: Response) {
         body: `${req.user?.name ?? 'Quản lý'} giao bạn dòng hạ hàng ${task.material_code ?? ''} — mở lệnh để xem`,
         url: task.fill_order_id ? `/wms/fill/orders/${task.fill_order_id}` : '/wms/fill',
         tag: `fill-asg-${task.fill_order_id ?? task.id}`,
-      }, { dedupeWindowMs: 120_000 })   // multi-select giao N dòng song song → 1 dòng feed/lệnh
+      })   // multi-select giao N dòng song song → 1 dòng feed/lệnh (gộp bằng unique DB)
     }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

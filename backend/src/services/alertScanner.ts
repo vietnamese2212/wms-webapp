@@ -11,6 +11,7 @@
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
+import { recordServerError } from '../utils/response'
 import { sendPushToPerm } from './pushService'
 
 export const THRESHOLDS = {
@@ -232,7 +233,15 @@ export async function runAlertScan(force = false): Promise<void> {
     ]
     for (const [rule, fn] of runners) {
       try { found.push(...await fn()); okRules.push(rule) }
-      catch (e) { console.error(`[alerts] rule ${rule} lỗi (bỏ qua vòng này):`, e) }
+      catch (e) {
+        // KHÔNG để rule chết CÂM: check-app 06/08 phát hiện rule EXPIRY nổ 42883 suốt từ lúc ship
+        // mà không ai biết (console.error trên serverless không ai đọc) — tính năng "có" mà không
+        // chạy còn nguy hơn không có. Ghi error_logs → digest hằng ngày dựng cờ đỏ + chính rule
+        // BE_ERRORS sẽ nổi cảnh báo ngay vòng quét này.
+        console.error(`[alerts] rule ${rule} lỗi (bỏ qua vòng này):`, e)
+        recordServerError('be', `[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
+          500, 'ALERT_RULE_FAILED')
+      }
     }
     if (!okRules.length) return
     const t = now()

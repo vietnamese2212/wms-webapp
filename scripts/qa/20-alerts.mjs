@@ -4,7 +4,7 @@
 // TÁI MỞ như đợt mới (first_seen mới) · Ack ẩn khỏi list mặc định + hiện ở status=acked · unack.
 // Scanner throttle force = 20s → giữa các pha có sleep 21s (đường throttle là hành vi thật).
 import { randomUUID } from 'crypto'
-import { login, api, restAll, restWrite, check, finish, FIX, BASE } from './lib.mjs'
+import { login, api, restAll, restWrite, restRpc, check, finish, FIX, BASE } from './lib.mjs'
 
 const t = () => new Date().toISOString()
 const TAG = 'SIMALERT'
@@ -97,6 +97,22 @@ check('3.5h chưa ra → leo thang CRITICAL (≥180p)', hit5?.severity === 'CRIT
 {
   const r = await api(`/wms/alerts?rule=,,&severity=XX&status=&warehouse_id=%00`, 'GET')
   check('Tham số rỗng/bậy → không 500', r.s === 200, `http=${r.s}`)
+}
+
+// [7] MỌI RULE PHẢI CHẠY ĐƯỢC — chống lớp lỗi "rule chết CÂM" (check-app 06/08: RPC
+// alerts_expiry_candidates nổ 42883 `timestamp + integer` suốt từ lúc ship mà không ai biết,
+// vì scanner bọc try/catch per-rule; hậu quả: 120 nhóm tồn cận date KHÔNG hề được cảnh báo).
+// Hai lưới: (a) RPC nền phải chạy; (b) sau lượt quét, error_logs KHÔNG được có ALERT_RULE_FAILED.
+{
+  let rpcErr = null
+  try { await restRpc('alerts_expiry_candidates', { p_days: 120 }) } catch (e) { rpcErr = String(e).slice(0, 160) }
+  check('RPC nền của rule "tồn cận date" chạy được (không chết câm)', !rpcErr, rpcErr ?? 'ok')
+
+  const since = new Date(Date.now() - 5 * 60_000).toISOString()
+  await api('/wms/alerts?fresh=1&status=open', 'GET')   // ép 1 lượt quét
+  const failed = await restAll('error_logs', `select=message&code=eq.ALERT_RULE_FAILED&created_at=gte.${since}`)
+  check('Không rule nào lỗi trong lượt quét vừa rồi (scanner tự tố nếu có)',
+    failed.length === 0, failed.length ? failed[0].message?.slice(0, 120) : '0 lỗi rule')
 }
 
 console.log('\n🧹 dọn…')

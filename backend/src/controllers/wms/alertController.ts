@@ -29,7 +29,7 @@ export async function listAlerts(req: Request, res: Response) {
     const whFilter = safeFilterValue(typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : '') || null
 
     let q = supabase.from('alert_events')
-      .select('id, rule, severity, warehouse_id, category, title, detail, object_url, first_seen, last_seen, ack_by, ack_at, resolved_at', { count: 'exact' })
+      .select('id, rule, severity, warehouse_id, warehouse_name, category, title, detail, object_url, first_seen, last_seen, ack_by, ack_at, resolved_at', { count: 'exact' })
     if (status === 'open') q = q.is('resolved_at', null).is('ack_at', null)
     else if (status === 'acked') q = q.is('resolved_at', null).not('ack_at', 'is', null)
     else if (status === 'resolved') q = q.not('resolved_at', 'is', null)

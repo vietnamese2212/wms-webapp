@@ -224,7 +224,7 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
           body: `${n} việc mới trong tab "Cần xử lý" (chuyến đã quét/đang soạn bị SAP đổi số lượng)`,
           url: '/external?tab=reconcile',
           tag: `reconcile-${wh ?? 'all'}`,
-        })
+        }, 'reconcile')   // tôn trọng cài đặt chuông per user (nút chuông > Cài đặt)
       }
     } catch (e) { console.error('[push] reconcile notify:', e) }
   }

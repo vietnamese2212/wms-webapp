@@ -7,7 +7,7 @@ import { safeFilterValue } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { computePctDate } from '../../utils/shelfLife'
-import { sendPushToEmployees } from '../../services/pushService'
+import { notifyEmployees } from '../../services/pushService'
 
 // ─── FILL HÀNG PHỤC VỤ NHẶT LẺ (v3 — user chốt 05/08) ───────────────────────
 // Nhặt lẻ lấy hàng bằng TAY ⇒ hàng phải nằm ở "vị trí nhặt lẻ" (cờ Location.is_pick_face).
@@ -413,10 +413,10 @@ export async function createFillOrder(req: Request, res: Response) {
       await supabase.from('FillOrder').delete().eq('id', order.id)
       return res.status(201).json({ success: true, data: { created: 0, skipped, merged: mergedOut } })
     }
-    // Push tới người được giao (nếu giao cho NGƯỜI KHÁC — tự giao cho mình thì khỏi báo).
-    // Push là phụ trợ: await để chắc gửi xong trước khi serverless đóng, nhưng KHÔNG fail response.
+    // Báo người được giao (nếu giao cho NGƯỜI KHÁC): ghi feed Cá nhân (nút chuông) + đổ chuông
+    // theo cài đặt. Await để chắc xong trước khi serverless đóng, nhưng KHÔNG fail response.
     if (asg && asg.id !== selfId(req)) {
-      await sendPushToEmployees([asg.id], {
+      await notifyEmployees([asg.id], 'ASSIGN', 'assign', {
         title: `Lệnh fill ${order.order_code}`,
         body: `${actor ?? 'Quản lý'} giao bạn ${created} dòng hạ hàng nhặt lẻ — ngày xuất ${fmtDMY(day)}`,
         url: `/wms/fill/orders/${order.id}`,
@@ -483,12 +483,12 @@ export async function updateFillTask(req: Request, res: Response) {
     // Push cho người MỚI được giao (khác chính mình). Multi-select gọi route này song song
     // per-dòng → dùng chung tag theo LỆNH để trình duyệt gộp thành 1 thông báo, không dội chuông N lần.
     if (hasAsg && assignee_id && assignee_id !== selfId(req)) {
-      await sendPushToEmployees([assignee_id], {
+      await notifyEmployees([assignee_id], 'ASSIGN', 'assign', {
         title: 'Được giao lệnh fill',
         body: `${req.user?.name ?? 'Quản lý'} giao bạn dòng hạ hàng ${task.material_code ?? ''} — mở lệnh để xem`,
         url: task.fill_order_id ? `/wms/fill/orders/${task.fill_order_id}` : '/wms/fill',
         tag: `fill-asg-${task.fill_order_id ?? task.id}`,
-      })
+      }, { dedupeWindowMs: 120_000 })   // multi-select giao N dòng song song → 1 dòng feed/lệnh
     }
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

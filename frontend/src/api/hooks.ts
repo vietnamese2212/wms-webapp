@@ -5354,14 +5354,15 @@ export function useForkliftReport(params: { from: string; to: string; warehouse_
 export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
 export interface AlertRow {
   id: string; rule: AlertRule; severity: 'CRITICAL' | 'WARNING'
-  warehouse_id: string | null; category: string | null
+  warehouse_id: string | null; warehouse_name: string | null; category: string | null
   title: string; detail: string | null; object_url: string | null
   first_seen: string; last_seen: string
   ack_by: string | null; ack_at: string | null; resolved_at: string | null
 }
-export function useAlerts(params: { status: string; rule?: string; severity?: string; warehouse_id?: string }) {
+export function useAlerts(params: { status: string; rule?: string; severity?: string; warehouse_id?: string }, enabled = true) {
   return useQuery({
     queryKey: ['alerts-list', params],
+    enabled,   // chuông Header tắt query khi user không có alerts.view (khỏi 403 ồn)
     refetchInterval: 120_000,   // quét lười phía BE throttle 10' — refetch chỉ đọc bảng
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/alerts', { params })
@@ -5399,5 +5400,46 @@ export function useCycleCount(params?: { warehouse_id: string; categories?: stri
         window_days: number
       }
     },
+  })
+}
+
+// ─── Nút chuông: feed cá nhân + cài đặt chuông (06/08) ────────────────────────
+export interface NotifyFeedRow {
+  id: string; kind: string; title: string; body: string | null; url: string | null
+  read_at: string | null; created_at: string
+}
+export function useNotifyFeed(enabled = true) {
+  return useQuery({
+    queryKey: ['notify-feed'],
+    enabled,
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/notify/feed')
+      return data.data as { rows: NotifyFeedRow[]; unread: number }
+    },
+  })
+}
+export function useMarkFeedRead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids?: string[]) => apiClient.post('/notify/feed/read', ids?.length ? { ids } : {}).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['notify-feed'] }),
+  })
+}
+export function useNotifyPrefs(enabled = true) {
+  return useQuery({
+    queryKey: ['notify-prefs'],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/notify/prefs')
+      return data.data as { prefs: Record<string, boolean> }
+    },
+  })
+}
+export function useUpdateNotifyPrefs() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (prefs: Record<string, boolean>) => apiClient.put('/notify/prefs', { prefs }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['notify-prefs'] }),
   })
 }

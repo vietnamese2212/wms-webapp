@@ -2,9 +2,10 @@
 // tồn cận %Date · xe trong cổng lâu · chuyến trễ/kẹt · lệch cân >5% · lỗi hệ thống BE.
 // Cảnh báo TỰ ĐÓNG khi điều kiện hết; Ack = "tôi biết rồi" (ẩn khỏi list mặc định).
 // Layout theo skill table-format: card + toolbar + FilterBar + SummaryBand + bảng resize cột.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BellRing, Check, Undo2, RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -46,10 +47,12 @@ function alertKey(a: AlertRow): RowStatusKey {
 }
 
 const COLS = [
+  { id: 'sel',    label: '',           w: 36 },
   { id: 'sev',    label: 'Mức độ',     w: 95 },
   { id: 'rule',   label: 'Loại',       w: 115 },
-  { id: 'title',  label: 'Nội dung',   w: 330 },
-  { id: 'detail', label: 'Chi tiết',   w: 380 },
+  { id: 'wh',     label: 'Kho',        w: 110 },
+  { id: 'title',  label: 'Nội dung',   w: 320 },
+  { id: 'detail', label: 'Chi tiết',   w: 360 },
   { id: 'cat',    label: 'Loại kho',   w: 90 },
   { id: 'first',  label: 'Xuất hiện',  w: 115 },
   { id: 'last',   label: 'Lần cuối',   w: 115 },
@@ -76,14 +79,26 @@ export default function Alerts() {
     warehouse_id: f.warehouseId || undefined,
   })
   const ackMut = useAckAlert()
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
 
   // Search client-side: list đã cap 1000 dòng server (cảnh báo mở là danh sách VIỆC, không phải kho lưu trữ)
   const rows = useMemo(() => {
     const all = data?.rows ?? []
     const term = f.search.trim().toLowerCase()
     if (!term) return all
-    return all.filter(a => `${a.title} ${a.detail ?? ''} ${whName.get(a.warehouse_id ?? '') ?? ''}`.toLowerCase().includes(term))
+    return all.filter(a => `${a.title} ${a.detail ?? ''} ${a.warehouse_name ?? whName.get(a.warehouse_id ?? '') ?? ''}`.toLowerCase().includes(term))
   }, [data, f.search, whName])
+
+  // Bulk "Đã biết" (user chốt 06/08 "chọn multi và kích hoạt action hàng loạt") — song song chuẩn
+  const selectable = rows.filter(a => !a.resolved_at && !a.ack_at)
+  const allSel = selectable.length > 0 && selectable.every(a => sel.has(a.id))
+  const pickedOpen = selectable.filter(a => sel.has(a.id))
+  async function bulkAck() {
+    setBusy(true)
+    await Promise.all(pickedOpen.map(a => ackMut.mutateAsync({ id: a.id, ack: true }).catch(() => undefined)))
+    setBusy(false); setSel(new Set())
+  }
 
   const nCrit = rows.filter(a => a.severity === 'CRITICAL' && !a.resolved_at && !a.ack_at).length
   const nWarn = rows.filter(a => a.severity === 'WARNING' && !a.resolved_at && !a.ack_at).length
@@ -121,6 +136,13 @@ export default function Alerts() {
             </h1>
             <SearchInput value={f.search} onChange={v => setF({ search: v })} placeholder="Tìm nội dung / kho…" className="flex-1 min-w-[120px]" />
             <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
+            {canAck && pickedOpen.length > 0 && (
+              <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={busy}
+                title="Đánh dấu đã biết các cảnh báo đã chọn (ẩn khỏi danh sách mặc định)"
+                onClick={bulkAck}>
+                <Check className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang lưu…' : `Đã biết (${pickedOpen.length})`}
+              </Button>
+            )}
             <button type="button" title="Quét lại ngay (bình thường tự quét ~10 phút/lần)"
               onClick={() => refetch()}
               className="h-9 sm:h-7 px-2 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 inline-flex items-center gap-1 text-[11px] shrink-0">
@@ -147,7 +169,10 @@ export default function Alerts() {
                 {COLS.map((c, i) => (
                   <TableHead key={c.id}
                     className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                    {c.label}
+                    {c.id === 'sel' && canAck ? (
+                      <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
+                        onChange={e => setSel(e.target.checked ? new Set(selectable.map(a => a.id)) : new Set())} />
+                    ) : c.label}
                     <span onPointerDown={e => startResize(i, e)}
                       className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-sky-400/70" />
                   </TableHead>
@@ -163,15 +188,31 @@ export default function Alerts() {
                 </TableCell></TableRow>
               ) : rows.map(a => {
                 const acked = !!a.ack_at && !a.resolved_at
+                const picked = sel.has(a.id)
                 return (
                   <TableRow key={a.id}
-                    className={`${a.object_url ? 'cursor-pointer' : ''} ${rowText(alertKey(a))}`}
+                    className={`${a.object_url ? 'cursor-pointer' : ''} ${rowText(alertKey(a))} ${picked ? 'bg-sky-50' : ''}`}
                     onClick={() => { if (a.object_url) navigate(a.object_url) }}>
-                    <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                    <TableCell className={`px-2 py-1 sticky left-0 z-10 ${picked ? 'bg-sky-50' : 'bg-white'}`}>
+                      {canAck && !a.resolved_at && !a.ack_at && (
+                        <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={picked}
+                          onClick={e => e.stopPropagation()}
+                          onChange={e => setSel(prev => {
+                            const n = new Set(prev)
+                            if (e.target.checked) n.add(a.id); else n.delete(a.id)
+                            return n
+                          })} />
+                      )}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${SEV_BADGE[a.severity]}`}>{SEV_LABEL[a.severity]}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${RULE_BADGE[a.rule] ?? 'bg-slate-100 text-slate-600'}`}>{RULE_LABEL[a.rule] ?? a.rule}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-semibold truncate"
+                      title={a.warehouse_name ?? ''}>
+                      {a.warehouse_name ?? whName.get(a.warehouse_id ?? '') ?? (a.warehouse_id ? '—' : <span className="text-slate-400 font-normal">Toàn hệ thống</span>)}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-semibold truncate" title={a.title}>{a.title}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={a.detail ?? ''}>

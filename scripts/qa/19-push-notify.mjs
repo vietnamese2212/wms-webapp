@@ -32,8 +32,10 @@ function readSupabaseUrl() {
   return null
 }
 
-async function cleanup() {
+async function cleanup(meId) {
   await restWrite('push_subscriptions', 'DELETE', `endpoint=like.*${TAG.toLowerCase()}*`).catch(() => {})
+  await restWrite('user_notifications', 'DELETE', `title=like.*${TAG}*`).catch(() => {})
+  if (meId) await restWrite('notification_prefs', 'DELETE', `employee_id=eq.${meId}`).catch(() => {})
 }
 
 console.log(`── WEB PUSH /api/notify · ${BASE.replace('https://', '')} ──`)
@@ -114,8 +116,44 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
   check('Unsubscribe endpoint chưa từng đăng ký → 200 no-op', r2.s === 200, `http=${r2.s}`)
 }
 
+// [7] FEED CÁ NHÂN (nút chuông tab "Cá nhân" — 06/08): thấy dòng của MÌNH + đếm chưa đọc + đọc hết
+{
+  const { randomUUID } = await import('crypto')
+  await restWrite('user_notifications', 'POST', null, {
+    id: randomUUID(), employee_id: me, kind: 'ASSIGN',
+    title: `${TAG} — được giao lệnh thử`, body: 'dòng QA', url: '/wms/fill',
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  })
+  const r = await api('/notify/feed', 'GET')
+  const hit = (r.j?.data?.rows ?? []).find(x => (x.title ?? '').includes(TAG))
+  check('Feed cá nhân: thấy dòng vừa ghi + unread ≥ 1', r.s === 200 && !!hit && Number(r.j?.data?.unread) >= 1,
+    `http=${r.s} unread=${r.j?.data?.unread}`)
+  const rRead = await api('/notify/feed/read', 'POST', {})
+  const r2 = await api('/notify/feed', 'GET')
+  check('Đọc hết → unread = 0, dòng vẫn còn (feed là lịch sử)', rRead.s === 200 && Number(r2.j?.data?.unread) === 0
+    && (r2.j?.data?.rows ?? []).some(x => (x.title ?? '').includes(TAG) && x.read_at),
+    `unread=${r2.j?.data?.unread}`)
+}
+
+// [8] CÀI ĐẶT CHUÔNG (tab "Cài đặt"): default bật hết · PUT tắt 1 case · MERGE không đè case khác · key lạ 400
+{
+  const d = await api('/notify/prefs', 'GET')
+  check('Prefs mặc định: mọi trường hợp BẬT', d.s === 200 && Object.values(d.j?.data?.prefs ?? {}).every(v => v === true),
+    JSON.stringify(d.j?.data?.prefs ?? {}).slice(0, 80))
+  await api('/notify/prefs', 'PUT', { prefs: { GATE_DWELL: false } })
+  await api('/notify/prefs', 'PUT', { prefs: { assign: false } })
+  const d2 = await api('/notify/prefs', 'GET')
+  const p = d2.j?.data?.prefs ?? {}
+  check('PUT từng công tắc MERGE (tắt GATE_DWELL rồi tắt assign → cả 2 tắt, còn lại bật)',
+    p.GATE_DWELL === false && p.assign === false && p.EXPIRY === true, JSON.stringify(p).slice(0, 100))
+  const bad = await api('/notify/prefs', 'PUT', { prefs: { hack_key: true } })
+  check('Key lạ ngoài sổ → 400', bad.s === 400, `http=${bad.s}`)
+}
+
 console.log('\n🧹 dọn…')
-await cleanup()
-const residue = await restAll('push_subscriptions', `select=id&endpoint=like.*${TAG.toLowerCase()}*`)
-console.log(`residue=${residue.length}`)
+await cleanup(me)
+const residue = (await restAll('push_subscriptions', `select=id&endpoint=like.*${TAG.toLowerCase()}*`)).length
+  + (await restAll('user_notifications', `select=id&title=like.*${TAG}*`)).length
+  + (await restAll('notification_prefs', `select=employee_id&employee_id=eq.${me}`)).length
+console.log(`residue=${residue}`)
 finish('PUSH-NOTIFY')

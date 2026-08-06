@@ -5,7 +5,7 @@
 import { Request, Response } from 'express'
 import { supabase } from '../lib/supabase'
 import { maskServerMessage } from '../utils/response'
-import { getVapid, sendPushToEmployees, upsertSubscription } from '../services/pushService'
+import { getVapid, sendPushToEmployees, upsertSubscription, PREF_KEYS } from '../services/pushService'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
@@ -50,6 +50,87 @@ export async function unsubscribe(req: Request, res: Response) {
     .delete().eq('endpoint', endpoint).eq('employee_id', me)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   return ok(res, { unsubscribed: true })
+}
+
+// ── FEED CÁ NHÂN (tab "Cá nhân" trên nút chuông — user chốt 06/08) ───────────
+
+// Dọn lười: feed chỉ giữ 30 NGÀY gần nhất (kiểu cleanupOldPhotos — không pg_cron)
+let _lastFeedCleanupAt = 0
+async function cleanupOldFeed(): Promise<void> {
+  if (Date.now() - _lastFeedCleanupAt < 6 * 3600_000) return
+  _lastFeedCleanupAt = Date.now()
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString()
+  await supabase.from('user_notifications').delete().lt('created_at', cutoff)
+}
+
+// GET /api/notify/feed — thông báo đích danh của CHÍNH MÌNH (mới nhất trước, cap 50)
+export async function getFeed(req: Request, res: Response) {
+  const me = selfId(req)
+  if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
+  try { await cleanupOldFeed() } catch { /* dọn lỗi không chặn đọc */ }
+  const [{ data, error }, unreadR] = await Promise.all([
+    supabase.from('user_notifications')
+      .select('id, kind, title, body, url, read_at, created_at')
+      .eq('employee_id', me).order('created_at', { ascending: false }).limit(50),
+    supabase.from('user_notifications')
+      .select('id', { count: 'exact', head: true }).eq('employee_id', me).is('read_at', null),
+  ])
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { rows: data ?? [], unread: unreadR.count ?? 0 })
+}
+
+// POST /api/notify/feed/read  body { ids?: string[] } — thiếu ids = đánh dấu ĐỌC HẾT của mình
+export async function markFeedRead(req: Request, res: Response) {
+  const me = selfId(req)
+  if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
+  const { ids } = req.body as { ids?: string[] }
+  const t = new Date().toISOString()
+  let q = supabase.from('user_notifications')
+    .update({ read_at: t, updated_at: t }).eq('employee_id', me).is('read_at', null)
+  if (Array.isArray(ids) && ids.length) q = q.in('id', ids.slice(0, 300))
+  const { error } = await q
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { read: true })
+}
+
+// ── CÀI ĐẶT CHUÔNG per user (tab "Cài đặt" trên nút chuông) ──────────────────
+// prefs key→bool, THIẾU KEY = BẬT. Tắt chỉ tắt CHUÔNG (push) — feed/danh sách vẫn đủ.
+
+// GET /api/notify/prefs
+export async function getPrefs(req: Request, res: Response) {
+  const me = selfId(req)
+  if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
+  const { data, error } = await supabase.from('notification_prefs')
+    .select('prefs').eq('employee_id', me).maybeSingle()
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const stored = (data?.prefs ?? {}) as Record<string, boolean>
+  const prefs: Record<string, boolean> = {}
+  for (const k of PREF_KEYS) prefs[k] = stored[k] !== false
+  return ok(res, { prefs })
+}
+
+// PUT /api/notify/prefs  body { prefs: { <key>: boolean } } — chỉ nhận key trong sổ PREF_KEYS
+export async function updatePrefs(req: Request, res: Response) {
+  const me = selfId(req)
+  if (!me) return fail(res, 401, 'UNAUTHORIZED', 'Không xác định được người dùng')
+  const raw = (req.body as { prefs?: Record<string, unknown> })?.prefs
+  if (!raw || typeof raw !== 'object') return fail(res, 400, 'INVALID_INPUT', 'Thiếu prefs')
+  const clean: Record<string, boolean> = {}
+  for (const [k, v] of Object.entries(raw)) {
+    if (!(PREF_KEYS as readonly string[]).includes(k)) return fail(res, 400, 'UNKNOWN_PREF', `Cài đặt "${k}" không có trong sổ`)
+    if (typeof v !== 'boolean') return fail(res, 400, 'INVALID_VALUE', `Giá trị của "${k}" phải là true/false`)
+    clean[k] = v
+  }
+  const t = new Date().toISOString()
+  // Merge với prefs cũ (PUT từng công tắc một không đè công tắc khác)
+  const { data: ex } = await supabase.from('notification_prefs')
+    .select('prefs').eq('employee_id', me).maybeSingle()
+  const merged = { ...((ex?.prefs ?? {}) as Record<string, boolean>), ...clean }
+  const { error } = ex
+    ? await supabase.from('notification_prefs').update({ prefs: merged, updated_at: t }).eq('employee_id', me)
+    : await supabase.from('notification_prefs').insert({ employee_id: me, prefs: merged, created_at: t, updated_at: t })
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  return ok(res, { prefs: merged })
 }
 
 // POST /api/notify/test — gửi thử tới MỌI thiết bị của chính mình (xác nhận chuông kêu)

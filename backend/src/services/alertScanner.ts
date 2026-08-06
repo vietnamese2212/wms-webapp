@@ -31,6 +31,7 @@ export interface AlertCandidate {
   dedup_key: string
   severity: 'CRITICAL' | 'WARNING'
   warehouse_id: string | null
+  warehouse_name?: string | null   // scanner tự đắp sau (resolve tên 1 lần/lượt quét)
   category: string | null
   title: string
   detail: string
@@ -236,6 +237,13 @@ export async function runAlertScan(force = false): Promise<void> {
     if (!okRules.length) return
     const t = now()
 
+    // Đắp TÊN KHO (user góp ý 06/08: "thông báo chung phải nói rõ kho nào") — resolve 1 lần
+    {
+      const { data: whs } = await supabase.from('Warehouse').select('id, name').limit(1000)
+      const nameOf = new Map((whs ?? []).map(w => [String(w.id), w.name as string]))
+      for (const f of found) if (f.warehouse_id && !f.warehouse_name) f.warehouse_name = nameOf.get(String(f.warehouse_id)) ?? null
+    }
+
     // Nạp dòng hiện có theo dedup_key (kể cả đã resolved — unique toàn cục) — chunk 300
     type ExRow = { id: string; dedup_key: string; first_seen: string; pushed_at: string | null
       ack_by: string | null; ack_at: string | null; resolved_at: string | null }
@@ -259,7 +267,7 @@ export async function runAlertScan(force = false): Promise<void> {
       if (isNew) newOnes.push({ ...f, id })
       return {
         id, rule: f.rule, dedup_key: f.dedup_key, severity: f.severity,
-        warehouse_id: f.warehouse_id, category: f.category,
+        warehouse_id: f.warehouse_id, warehouse_name: f.warehouse_name ?? null, category: f.category,
         title: f.title, detail: f.detail, object_url: f.object_url,
         first_seen: isNew ? t : ex!.first_seen,
         last_seen: t,
@@ -298,17 +306,23 @@ export async function runAlertScan(force = false): Promise<void> {
         .update({ resolved_at: t, updated_at: t }).in('id', closeIds.slice(i, i + 300))
     }
 
-    // Push cảnh báo MỚI — gộp per kho, 1 thông báo/kho/lượt quét (không dội chuông N lần)
-    const byWh = new Map<string | null, (AlertCandidate & { id: string })[]>()
-    for (const a of newOnes) byWh.set(a.warehouse_id, [...(byWh.get(a.warehouse_id) ?? []), a])
-    for (const [wh, list] of byWh) {
+    // Push cảnh báo MỚI — gộp per (kho, rule): tiêu đề nêu RÕ TÊN KHO (user góp ý 06/08),
+    // tách theo rule để cài đặt chuông per-trường-hợp lọc được từng người (notification_prefs).
+    const byWhRule = new Map<string, (AlertCandidate & { id: string })[]>()
+    for (const a of newOnes) {
+      const k = `${a.warehouse_id ?? ''}|${a.rule}`
+      byWhRule.set(k, [...(byWhRule.get(k) ?? []), a])
+    }
+    for (const [, list] of byWhRule) {
+      const first = list[0]
       const crit = list.filter(a => a.severity === 'CRITICAL').length
-      await sendPushToPerm('alerts', 'view', wh, {
-        title: `${list.length} cảnh báo mới${crit ? ` (${crit} nghiêm trọng)` : ''}`,
-        body: list.slice(0, 3).map(a => `· ${a.title}`).join('\n'),
+      const whLabel = first.warehouse_name ?? (first.warehouse_id ? 'kho ?' : 'toàn hệ thống')
+      await sendPushToPerm('alerts', 'view', first.warehouse_id, {
+        title: `${whLabel}: ${list.length} cảnh báo mới${crit ? ` (${crit} nghiêm trọng)` : ''}`,
+        body: list.slice(0, 3).map(a => `· ${a.title}`).join('\n') + (list.length > 3 ? `\n… +${list.length - 3}` : ''),
         url: '/wms/alerts',
-        tag: `alerts-${wh ?? 'all'}`,
-      })
+        tag: `alerts-${first.warehouse_id ?? 'all'}-${first.rule}`,
+      }, first.rule)
       const ids = list.map(a => a.id)
       for (let i = 0; i < ids.length; i += 300) {
         await supabase.from('alert_events')

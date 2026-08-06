@@ -112,6 +112,7 @@ export async function sendPushToEmployees(employeeIds: string[], payload: PushPa
  */
 export async function sendPushToPerm(
   module: string, action: string, warehouseId: string | null, payload: PushPayload,
+  prefKey?: PrefKey,   // lọc theo cài đặt chuông per user (thiếu = gửi hết)
 ): Promise<{ sent: number; failed: number }> {
   try {
     // 1) Chức danh có quyền — JobTitle ít (vài chục dòng), nạp hết rồi lọc trong JS
@@ -148,8 +149,64 @@ export async function sendPushToPerm(
       }
       targets = emps.filter(e => e.warehouse_scope !== 'ASSIGNED' || allowed.has(e.id))
     }
-    return await sendPushToEmployees(targets.map(e => e.id), payload)
+    const targetIds = prefKey ? await filterByPref(targets.map(e => e.id), prefKey) : targets.map(e => e.id)
+    return await sendPushToEmployees(targetIds, payload)
   } catch (e) { console.error('[push] sendPushToPerm:', e); return { sent: 0, failed: 0 } }
+}
+
+// ── Cài đặt thông báo per user (nút chuông > tab Cài đặt — user chốt 06/08) ──
+// prefs jsonb key→bool, THIẾU KEY = BẬT. Cài đặt chỉ tắt CHUÔNG (push); feed/list vẫn đủ.
+export const PREF_KEYS = ['assign', 'reconcile', 'EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS'] as const
+export type PrefKey = typeof PREF_KEYS[number]
+
+/** Lọc danh sách nhân viên còn BẬT chuông cho trường hợp prefKey (thiếu dòng prefs = bật). */
+export async function filterByPref(employeeIds: string[], prefKey: PrefKey): Promise<string[]> {
+  try {
+    const ids = [...new Set(employeeIds.filter(Boolean))]
+    if (!ids.length) return []
+    const off = new Set<string>()
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('notification_prefs')
+        .select('employee_id, prefs').in('employee_id', ids.slice(i, i + 300)).limit(1000)
+      for (const r of (data ?? []) as { employee_id: string; prefs: Record<string, boolean> | null }[]) {
+        if (r.prefs?.[prefKey] === false) off.add(r.employee_id)
+      }
+    }
+    return ids.filter(id => !off.has(id))
+  } catch { return employeeIds }
+}
+
+/**
+ * Thông báo ĐÍCH DANH (giao việc…): LUÔN ghi feed cá nhân (tab "Cá nhân" trên chuông — lịch sử),
+ * và đổ chuông (Web Push) cho những người còn bật trường hợp `prefKey`. Không bao giờ throw.
+ */
+export async function notifyEmployees(
+  employeeIds: string[], kind: string, prefKey: PrefKey, payload: PushPayload,
+  opts?: { dedupeWindowMs?: number },   // giao N dòng song song (Promise.all) → chỉ 1 dòng feed/URL
+): Promise<void> {
+  try {
+    let ids = [...new Set(employeeIds.filter(Boolean))]
+    if (!ids.length) return
+    const t = new Date().toISOString()
+    if (opts?.dedupeWindowMs && payload.url) {
+      const since = new Date(Date.now() - opts.dedupeWindowMs).toISOString()
+      const { data: dups } = await supabase.from('user_notifications')
+        .select('employee_id').eq('kind', kind).eq('url', payload.url)
+        .in('employee_id', ids.slice(0, 300)).gte('created_at', since).limit(1000)
+      const seen = new Set((dups ?? []).map(d => d.employee_id as string))
+      ids = ids.filter(id => !seen.has(id))
+      if (!ids.length) return   // feed đã có dòng cho URL này — push cũng khỏi (tag gộp rồi)
+    }
+    const rows = ids.map(id => ({
+      id: randomUUID(), employee_id: id, kind,
+      title: payload.title, body: payload.body, url: payload.url ?? null,
+      created_at: t, updated_at: t,
+    }))
+    const { error } = await supabase.from('user_notifications').insert(rows)
+    if (error) console.error('[push] ghi feed lỗi:', error.message)
+    const pushIds = await filterByPref(ids, prefKey)
+    if (pushIds.length) await sendPushToEmployees(pushIds, payload)
+  } catch (e) { console.error('[push] notifyEmployees:', e) }
 }
 
 /** Đăng ký/ghi đè 1 thiết bị cho nhân viên (endpoint là khóa — đổi user trên cùng máy = chuyển chủ). */

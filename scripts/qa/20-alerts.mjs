@@ -47,6 +47,8 @@ const r1 = await openList()
 const hit1 = (r1.j?.data?.rows ?? []).find(a => (a.title ?? '').includes(PLATE))
 check('Xe 2h chưa ra → cảnh báo GATE_DWELL WARNING xuất hiện', r1.s === 200 && !!hit1 && hit1.severity === 'WARNING',
   `http=${r1.s} hit=${hit1 ? hit1.severity : 'KHÔNG THẤY'}`)
+check('Cảnh báo nêu RÕ TÊN KHO (user góp ý 06/08)', hit1?.warehouse_name === FIX.WH_QTY.name,
+  `warehouse_name=${hit1?.warehouse_name ?? 'null'}`)
 const row1 = await dbRow(KEY)
 check('Bảng alert_events có đúng 1 dòng dedup_key GATE|<id>', !!row1, row1?.dedup_key ?? 'null')
 

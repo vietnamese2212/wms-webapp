@@ -253,6 +253,13 @@ interface FillFilters {
   page: number
   pageSize: number
 }
+interface StocktakeCycleFilters {
+  search: string
+  warehouseId: string    // bắt buộc chọn kho mới tải (như Slotting)
+  cats: string[]         // Loại kho
+  abc: string[]          // hạng A/B/C — [] = tất cả
+  dueOnly: boolean       // chỉ mã đến hạn/quá hạn (mặc định bật)
+}
 interface AlertFilters {
   search: string
   warehouseId: string    // '' = mọi kho trong scope
@@ -320,6 +327,7 @@ interface WmsFilterState {
   weighTickets:      WeighTicketFilters
   controlTower:      ControlTowerFilters
   alerts:            AlertFilters
+  stocktakeCycle:    StocktakeCycleFilters
   slotting:          SlottingFilters
   fill:              FillFilters
   forklift:          ForkliftFilters
@@ -356,6 +364,7 @@ interface WmsFilterState {
   setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
   setControlTower:      (f: Partial<ControlTowerFilters>)     => void
   setAlerts:            (f: Partial<AlertFilters>)             => void
+  setStocktakeCycle:    (f: Partial<StocktakeCycleFilters>)    => void
   setSlotting:          (f: Partial<SlottingFilters>)          => void
   setFill:              (f: Partial<FillFilters>)              => void
   setForklift:          (f: Partial<ForkliftFilters>)          => void
@@ -418,6 +427,7 @@ function initialFilters() {
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     alerts:       { search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
+    stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
@@ -463,6 +473,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
       setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
       setAlerts:           (f) => set(s => ({ alerts:           { ...s.alerts,           ...f } })),
+      setStocktakeCycle:   (f) => set(s => ({ stocktakeCycle:   { ...s.stocktakeCycle,   ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setStocktakeHistory: (f) => set(s => ({ stocktakeHistory: { ...s.stocktakeHistory, ...f } })),

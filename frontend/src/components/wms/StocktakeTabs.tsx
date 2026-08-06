@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { ClipboardCheck, BarChart2, History } from 'lucide-react'
+import { ClipboardCheck, BarChart2, History, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Trần số id vị trí nhét được vào query string của API (đo 27/07: 800 id ≈ 32KB → Vercel 414
@@ -28,6 +28,9 @@ export function StocktakeTabs() {
         </NavLink>
         <NavLink to="/wms/stocktake/history" className={linkCls}>
           <History className="h-3.5 w-3.5" /> Lịch sử kiểm
+        </NavLink>
+        <NavLink to="/wms/stocktake/cycle" className={linkCls}>
+          <RotateCcw className="h-3.5 w-3.5" /> Luân phiên ABC
         </NavLink>
       </div>
     </div>

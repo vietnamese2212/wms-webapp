@@ -14,6 +14,7 @@ import * as controlTower from '../controllers/wms/controlTowerController'
 import * as slotting from '../controllers/wms/slottingController'
 import * as fill from '../controllers/wms/fillController'
 import * as alerts from '../controllers/wms/alertController'
+import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
@@ -136,6 +137,8 @@ router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSugge
 router.get('/inventory/facets',                   inventory.listFacets)
 router.get('/inventory/summary',                   inventory.summaryInventory)   // tổng hợp theo mã — phải trước /:id
 router.get('/inventory/export',                    requirePerm('inventory', 'export'), inventory.exportInventory)  // phải trước /:id
+// Kiểm kê luân phiên ABC (06/08) — chỉ đọc + prefill bộ lọc, không API write → stocktake.view
+router.get('/stocktake/cycle',                     requirePerm('stocktake', 'view'), cycleCount.getCycleCount)
 router.get('/inventory/stocktake-entries',         requirePerm('stocktake', 'view'), inventory.stocktakeEntries)   // phải trước /:id
 router.get('/inventory/stocktake-log',             requirePerm('stocktake', 'view'), inventory.stocktakeLog)       // lịch sử kiểm (phải trước /:id)
 router.get('/inventory',                          inventory.listInventory)

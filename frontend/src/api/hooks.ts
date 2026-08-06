@@ -5377,3 +5377,27 @@ export function useAckAlert() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
   })
 }
+
+// ─── Kiểm kê luân phiên ABC (Đợt 3 roadmap 06/08) ─────────────────────────────
+export interface CycleCountRow {
+  material_id: string; material_code: string; short_name: string | null; category: string | null
+  abc: 'A' | 'B' | 'C'; picks: number; stock_pallets: number; stock_cartons: number
+  cycle_days: number; last_counted_at: string | null; days_since: number | null
+  due_in: number; never_counted: boolean
+  loc_ids: string[]; loc_codes: string[]
+}
+export function useCycleCount(params?: { warehouse_id: string; categories?: string }) {
+  return useQuery({
+    queryKey: ['cycle-count', params],
+    enabled: !!params?.warehouse_id,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/stocktake/cycle', { params })
+      return data.data as {
+        rows: CycleCountRow[]
+        summary: { total: number; due: number; due_a: number; due_b: number; due_c: number; never: number }
+        cycle_days: Record<'A' | 'B' | 'C', number>
+        window_days: number
+      }
+    },
+  })
+}

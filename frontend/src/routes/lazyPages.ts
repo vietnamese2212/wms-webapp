@@ -38,6 +38,7 @@ const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const weighTickets       = () => import('@/pages/wms/WeighTickets')
 const controlTower       = () => import('@/pages/wms/ControlTower')
 const alertsPage         = () => import('@/pages/wms/Alerts')
+const stocktakeCycle     = () => import('@/pages/wms/StocktakeCycle')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const forklift           = () => import('@/pages/wms/Forklift')
@@ -81,6 +82,7 @@ export const Pages = {
   WeighTickets: lazyRetry(weighTickets),
   ControlTower: lazyRetry(controlTower),
   Alerts: lazyRetry(alertsPage),
+  StocktakeCycle: lazyRetry(stocktakeCycle),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   Forklift: lazyRetry(forklift),

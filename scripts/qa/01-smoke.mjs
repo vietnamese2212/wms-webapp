@@ -18,6 +18,11 @@ const GETS = [
   ['Materials',            '/masterdata/materials'],
   ['Warehouses',           '/masterdata/warehouses'],
   ['System settings',      '/wms/settings'],
+  // Lịch sử quét KHOẢNG RỘNG 90 ngày — bug 10/08: RPC get_outbound_scan_log (LANGUAGE sql,
+  // lọc ngày non-sargable, COUNT(*) OVER()) chết 500/8s khi bảng đạt 150k dòng; fix = plpgsql
+  // + cận ngày sargable (migration 20260810_scanlog_rpc_perf). Check này gác hồi quy 500;
+  // gác HIỆU NĂNG ở quy mô lớn = mục 'Lịch sử quét 90n' trong 06-readload (chạy tay/pre-go-live).
+  ['Scan-log 90 ngày',     `/wms/outbound/scan-log?from_date=${new Date(Date.now() - 90 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&to_date=${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&page=1&limit=100`],
 ]
 for (const [name, path] of GETS) {
   const r = await api(path)

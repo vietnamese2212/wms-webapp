@@ -27,6 +27,8 @@ const READS = [
   ['Tồn kho · TỔNG HỢP',   `/wms/inventory/summary?page=1&limit=200`],
   ['In tem · lịch sử',     `/wms/pallet-prints?page=1&page_size=50&date_from=${T}&date_to=${T}`],
   ['Kiểm kê · lịch sử',    `/wms/inventory/stocktake-log?page=1&page_size=200`],
+  // Khoảng RỘNG 90 ngày — gác hiệu năng RPC scan-log ở quy mô lớn (bug 10/08: 500/8s tại 150k dòng)
+  ['Lịch sử quét 90n',     `/wms/outbound/scan-log?from_date=${new Date(Date.now() - 90 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&to_date=${T}&page=1&limit=100`],
   ['Nghỉ phép',            `/hr/leaves?date_from=${Y0}&date_to=${T}&page=1&page_size=100`],
   ['Bảng công',            `/hr/attendance/matrix?date_from=${M0}&date_to=${T}&work_dates=${DATES}&page=1&page_size=100`],
   ['Xuất kho',             `/wms/outbound?page=1&limit=100`],

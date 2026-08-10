@@ -60,15 +60,19 @@ BEGIN
     CREATE TEMP TABLE IF NOT EXISTS _pool_rows(
       id text, remaining numeric, imported numeric, pdate text, ord int) ON COMMIT DROP;
     TRUNCATE _pool_rows;
+    -- FOR UPDATE không đứng chung window function → khóa ở subquery, đánh số ở ngoài
     INSERT INTO _pool_rows
-    SELECT e.id, e.cartons_remaining, e.cartons_imported,
-           to_char(e.production_date, 'YYYY-MM-DD'),
-           row_number() OVER (ORDER BY e.production_date ASC NULLS LAST, e.id)::int
-    FROM "InventoryEntry" e
-    WHERE e.pallet_code = p_material_code AND e.warehouse_id = p_warehouse_id::uuid
-      AND (p_mode <> 'QTY_DATE' OR p_chosen_date IS NULL
-           OR to_char(e.production_date, 'YYYY-MM-DD') = p_chosen_date)
-    FOR UPDATE OF e;
+    SELECT locked.id, locked.cartons_remaining, locked.cartons_imported,
+           to_char(locked.production_date, 'YYYY-MM-DD'),
+           row_number() OVER (ORDER BY locked.production_date ASC NULLS LAST, locked.id)::int
+    FROM (
+      SELECT e.id, e.cartons_remaining, e.cartons_imported, e.production_date
+      FROM "InventoryEntry" e
+      WHERE e.pallet_code = p_material_code AND e.warehouse_id = p_warehouse_id::uuid
+        AND (p_mode <> 'QTY_DATE' OR p_chosen_date IS NULL
+             OR to_char(e.production_date, 'YYYY-MM-DD') = p_chosen_date)
+      FOR UPDATE OF e
+    ) locked;
     SELECT COALESCE(SUM(remaining), 0), COUNT(*) > 0 INTO v_total, v_has_rows FROM _pool_rows;
 
     IF v_delta > 0 THEN

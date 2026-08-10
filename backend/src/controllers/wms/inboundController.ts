@@ -7,7 +7,7 @@ import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
-import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
@@ -409,10 +409,12 @@ export async function listOrders(req: Request, res: Response) {
       return q
     }
 
-    // Trần CỨNG: FE render toàn bộ phiếu ở client (bảng + SummaryBand cộng tổng) nên không thể
-    // kéo vô hạn. Vượt trần → BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
-    const { rows, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
-    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
+    // Trần theo BYTE, không theo dòng (chiến dịch 10/08 — cùng lớp với listGDOs: dòng phiếu nhập
+    // đo thật ≈ 1.550 B ⇒ trần dòng cũ 10.000 tương đương ~15MB vượt xa trần Vercel 4,5MB).
+    // Vượt → BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
+    const cap = rowCapForBytes(1600)
+    const { rows, truncated } = await fetchUpTo(buildQuery, cap)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(cap))
     const data = rows
 
     // Post-filter: TRANSFER luôn hiển thị bất kể category scope của user

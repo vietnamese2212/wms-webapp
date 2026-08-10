@@ -14,7 +14,9 @@ const GETS = [
   ['TMS transfer list',    `/tms/orders?source_type=TRANSFER&date_from=${FIX.DATE}`],
   ['TMS vehicle types',    '/tms/vehicle-types'],
   ['TMS transport cty',    '/tms/transport-companies'],
-  ['Gate registrations',   '/tms/gate-registrations'],
+  // Phải kèm ngày: không param = cả bảng → khi staging tích ≥3.352 bản ghi thì guard
+  // RANGE_TOO_WIDE trả 400 CHỦ ĐÍCH (đúng luật chặn-có-hướng-dẫn) — smoke đỏ oan (đo 10/08)
+  ['Gate registrations',   `/tms/gate-registrations?date=${FIX.EXEC_DATE}`],
   ['Materials',            '/masterdata/materials'],
   ['Warehouses',           '/masterdata/warehouses'],
   ['System settings',      '/wms/settings'],

@@ -8,7 +8,7 @@ import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue, safeSearch } from '../../utils/search'
 import { warehouseRequiresCartonScan, warehouseCartonScanPolicy } from '../../utils/cartonScan'
@@ -711,10 +711,12 @@ export async function listGDOs(req: Request, res: Response) {
       return q
     }
     if (buildQuery() === null) return ok(res, [])   // scope kho rỗng
-    // Trần dòng: FE render TOÀN BỘ chuyến ở client (bảng + SummaryBand cộng tổng) → vượt trần
-    // thì BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm (luật CLAUDE.md).
-    const { rows: data, truncated } = await fetchUpTo(buildQuery, LIST_ROW_CAP)
-    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(LIST_ROW_CAP))
+    // Trần theo BYTE, không theo dòng (đo 10/08 với 3 tháng dữ liệu: chuyến enrich ≈ 3.300 B/dòng
+    // — trần dòng cũ 10.000 tương đương ~33MB, và 1.450 chuyến/29 ngày đã 4,59MB vượt trần Vercel
+    // 4,5MB mà hàng rào KHÔNG chặn). Vượt → BÁO RÕ để user thu hẹp, KHÔNG cắt âm thầm.
+    const cap = rowCapForBytes(3300)
+    const { rows: data, truncated } = await fetchUpTo(buildQuery, cap)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(cap))
     const scoped = scopeCats
       ? (data ?? []).filter((g: { warehouse_type?: string | null }) => categoryAllowed(req, g.warehouse_type))
       : (data ?? [])

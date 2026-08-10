@@ -183,6 +183,34 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
   await restWrite('user_notifications', 'DELETE', `url=eq.${encodeURIComponent(url)}`).catch(() => {})
 }
 
+// [11] NGƯỠNG CẢNH BÁO TÙY BIẾN (SystemSetting alert_thresholds — user yêu cầu 10/08):
+// validator phải chặn bộ số vô nghĩa (crit lỏng hơn warn), nhận bộ hợp lệ, và GET trả đúng
+// giá trị đã lưu. Fixture: nhớ giá trị trước đó → trả lại nguyên trạng khi xong.
+{
+  const before = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value ?? null
+  const FULL = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180, TRIP_STUCK_HOURS: 6, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15 }
+
+  const bad1 = await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...FULL, PCT_CRIT: 30 } })   // crit > warn
+  check('Ngưỡng vô nghĩa (PCT_CRIT > PCT_WARN) → 400', bad1.s === 400 && bad1.j?.error?.code === 'INVALID_VALUE', `http=${bad1.s} code=${bad1.j?.error?.code}`)
+  const { PCT_WARN: _drop, ...missing } = FULL
+  const bad2 = await api('/wms/settings/alert_thresholds', 'PUT', { value: missing })                     // thiếu khóa
+  check('Thiếu khóa ngưỡng → 400', bad2.s === 400, `http=${bad2.s}`)
+  const bad3 = await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...FULL, GATE_WARN_MIN: -5 } })
+  check('Ngưỡng âm → 400', bad3.s === 400, `http=${bad3.s}`)
+
+  const good = { ...FULL, PCT_CRIT: 15, GATE_WARN_MIN: 120 }
+  const okr = await api('/wms/settings/alert_thresholds', 'PUT', { value: good })
+  check('Bộ ngưỡng hợp lệ → 200', okr.s === 200, `http=${okr.s} ${JSON.stringify(okr.j?.error ?? '')}`)
+  const after = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value
+  check('GET trả đúng ngưỡng vừa lưu (PCT_CRIT=15, GATE_WARN_MIN=120)',
+    after?.PCT_CRIT === 15 && after?.GATE_WARN_MIN === 120, JSON.stringify(after ?? null).slice(0, 120))
+
+  // Trả nguyên trạng: có giá trị cũ → ghi lại; chưa từng cấu hình → ghi bộ mặc định
+  // (không có route DELETE setting; mặc định = hành vi y hệt "chưa cấu hình").
+  const restore = await api('/wms/settings/alert_thresholds', 'PUT', { value: before ?? FULL })
+  check('Trả ngưỡng về nguyên trạng sau test', restore.s === 200, `http=${restore.s}`)
+}
+
 console.log('\n🧹 dọn…')
 await cleanup(me)
 const residue = (await restAll('push_subscriptions', `select=id&endpoint=like.*${TAG.toLowerCase()}*`)).length

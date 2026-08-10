@@ -7,7 +7,9 @@
 //   · %Date dùng DUY NHẤT computePctDate (luật CLAUDE.md) — RPC chỉ prefilter SIÊU TẬP.
 //   · Không pg_cron → quét LƯỜI kiểu cleanupOldPhotos: gọi khi có traffic, throttle 10'/instance.
 //   · Rule nào quét LỖI thì bỏ qua vòng đó (không resolve oan cảnh báo của rule đó).
-//   · Ngưỡng HARDCODE có chủ đích (CLAUDE.md #2 — chưa ai yêu cầu cấu hình): sửa ở THRESHOLDS.
+//   · Ngưỡng TÙY BIẾN qua SystemSetting `alert_thresholds` (user yêu cầu 10/08 — vd 10%→15%);
+//     THRESHOLDS = MẶC ĐỊNH khi chưa cấu hình. Sửa ở tab "Cài đặt ngưỡng" trang Thông báo
+//     (quyền wms_settings.manage_system); validator ở systemSettingController.
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { computePctDate, type SupplierOverride } from '../utils/shelfLife'
@@ -26,6 +28,35 @@ export const THRESHOLDS = {
   WEIGH_CRIT_PCT: 15,
   EXPIRY_WINDOW_DAYS: 120, // cửa sổ prefilter RPC (siêu tập — quyết định thật ở computePctDate)
 }
+export type AlertThresholds = typeof THRESHOLDS
+
+// 7 khóa cho phép tùy biến (TRIP_LATE_DAYS/EXPIRY_WINDOW_DAYS là prefilter nội bộ, không mở).
+export const ALERT_TH_CONFIG_KEYS = [
+  'PCT_WARN', 'PCT_CRIT', 'GATE_WARN_MIN', 'GATE_CRIT_MIN',
+  'TRIP_STUCK_HOURS', 'WEIGH_WARN_PCT', 'WEIGH_CRIT_PCT',
+] as const
+
+// Ngưỡng hiệu lực = mặc định đắp giá trị user lưu; cache 30s như getLabelFormat (mỗi lượt quét
+// 1 câu đọc là thừa — cờ đổi rất hiếm, TTL 30s đủ cho các instance serverless khác bắt kịp).
+let _thCache: { value: AlertThresholds; at: number } | null = null
+export async function getAlertThresholds(): Promise<AlertThresholds> {
+  if (_thCache && Date.now() - _thCache.at < 30_000) return _thCache.value
+  const t: AlertThresholds = { ...THRESHOLDS }
+  try {
+    const { data } = await supabase.from('SystemSetting').select('value').eq('key', 'alert_thresholds').maybeSingle()
+    const v = (data?.value ?? {}) as Record<string, unknown>
+    for (const k of ALERT_TH_CONFIG_KEYS) {
+      const n = Number(v[k])
+      if (Number.isFinite(n) && n > 0) t[k] = n
+    }
+  } catch { /* đọc lỗi → dùng mặc định, đừng làm chết lượt quét */ }
+  // Cửa sổ prefilter EXPIRY phải PHỦ ngưỡng cảnh báo: item %Date ≤ PCT_WARN còn tối đa
+  // PCT_WARN% × shelf-life ngày. 6×PCT_WARN giữ nguyên 120 ngày ở mặc định 20% và tự nới khi tăng.
+  t.EXPIRY_WINDOW_DAYS = Math.max(THRESHOLDS.EXPIRY_WINDOW_DAYS, Math.ceil(6 * t.PCT_WARN))
+  _thCache = { value: t, at: Date.now() }
+  return t
+}
+export function invalidateAlertThresholdsCache(): void { _thCache = null }
 
 export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
 export interface AlertCandidate {
@@ -50,8 +81,8 @@ const fmtDMY = (d: string | null | undefined) => {
 }
 
 // ── R1: Tồn cận %Date ────────────────────────────────────────────────────────
-async function ruleExpiry(): Promise<AlertCandidate[]> {
-  const { data, error } = await supabase.rpc('alerts_expiry_candidates', { p_days: THRESHOLDS.EXPIRY_WINDOW_DAYS })
+async function ruleExpiry(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const { data, error } = await supabase.rpc('alerts_expiry_candidates', { p_days: TH.EXPIRY_WINDOW_DAYS })
   if (error) throw new Error(error.message)
   type Cand = {
     warehouse_id: string | null; warehouse_name: string | null
@@ -69,7 +100,7 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
       { production_date: c.production_date, expiry_date: c.expiry_date, shelf_life_days: c.shelf_life_days, ncc_id: c.ncc_id },
       { shelf_life_days: c.mat_shelf_life_days, supplier_shelf_life_overrides: c.supplier_shelf_life_overrides },
     )
-    if (pct == null || pct > THRESHOLDS.PCT_WARN) continue
+    if (pct == null || pct > TH.PCT_WARN) continue
     const key = `EXPIRY|${c.warehouse_id ?? ''}|${c.material_id}`
     const cur = byKey.get(key)
     if (cur) {
@@ -79,12 +110,12 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
   }
   return [...byKey.entries()].map(([key, g]) => ({
     rule: 'EXPIRY' as const, dedup_key: key,
-    severity: g.worst <= THRESHOLDS.PCT_CRIT ? 'CRITICAL' as const : 'WARNING' as const,
+    severity: g.worst <= TH.PCT_CRIT ? 'CRITICAL' as const : 'WARNING' as const,
     warehouse_id: g.c.warehouse_id, category: g.c.category,
     title: `Tồn cận date: ${g.c.material_code ?? '?'} — %Date thấp nhất ${nf(g.worst)}%`,
     // Số lượng hiển thị PHẢI qua qtyLabel ("N thùng + M hộp") — luật BASE UNIT của CLAUDE.md;
     // ghi số base thô thì mã 1 CAR=48 HOP hiện "48" mà thực chất là 1 thùng (check-app 06/08).
-    detail: `${g.c.short_name ?? g.c.material_code ?? ''} tại ${g.c.warehouse_name ?? 'kho ?'}: ${g.lots} lô ≤ ${THRESHOLDS.PCT_WARN}%Date, ${qtyLabel(g.qty, g.c)} / ${g.pallets} pallet`,
+    detail: `${g.c.short_name ?? g.c.material_code ?? ''} tại ${g.c.warehouse_name ?? 'kho ?'}: ${g.lots} lô ≤ ${TH.PCT_WARN}%Date, ${qtyLabel(g.qty, g.c)} / ${g.pallets} pallet`,
     // Mở Tồn kho ĐÃ LỌC sẵn đúng mã + kho (user chốt 06/08) — bấm vào là thấy ngay lô nào cận date,
     // không phải tự gõ lại mã. Trang Inventory đọc 2 param này rồi xoá khỏi URL.
     object_url: `/wms/inventory?${g.c.warehouse_id ? `warehouse_id=${g.c.warehouse_id}&` : ''}search=${encodeURIComponent(g.c.material_code ?? '')}`,
@@ -92,8 +123,8 @@ async function ruleExpiry(): Promise<AlertCandidate[]> {
 }
 
 // ── R2: Xe nằm trong cổng quá lâu ────────────────────────────────────────────
-async function ruleGateDwell(): Promise<AlertCandidate[]> {
-  const cutWarn = new Date(Date.now() - THRESHOLDS.GATE_WARN_MIN * 60_000).toISOString()
+async function ruleGateDwell(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const cutWarn = new Date(Date.now() - TH.GATE_WARN_MIN * 60_000).toISOString()
   const floor48 = new Date(Date.now() - 48 * 3600_000).toISOString()
   const { data, error } = await supabase.from('gate_registrations')
     .select('id, license_plate, warehouse_id, warehouse_type, direction, content, entry_at, company_name_raw')
@@ -105,7 +136,7 @@ async function ruleGateDwell(): Promise<AlertCandidate[]> {
     const mins = Math.round((Date.now() - new Date(g.entry_at as string).getTime()) / 60_000)
     return {
       rule: 'GATE_DWELL' as const, dedup_key: `GATE|${g.id}`,
-      severity: mins >= THRESHOLDS.GATE_CRIT_MIN ? 'CRITICAL' as const : 'WARNING' as const,
+      severity: mins >= TH.GATE_CRIT_MIN ? 'CRITICAL' as const : 'WARNING' as const,
       warehouse_id: (g.warehouse_id as string | null) ?? null,
       category: (g.warehouse_type as string | null) ?? null,
       title: `Xe ${g.license_plate ?? '?'} trong cổng ${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}p chưa ra`,
@@ -116,9 +147,9 @@ async function ruleGateDwell(): Promise<AlertCandidate[]> {
 }
 
 // ── R3: Chuyến xuất trễ ngày / bắt đầu lâu chưa xong ─────────────────────────
-async function ruleTripLate(): Promise<AlertCandidate[]> {
+async function ruleTripLate(TH: AlertThresholds): Promise<AlertCandidate[]> {
   const today = vnToday()
-  const floor = new Date(Date.now() - THRESHOLDS.TRIP_LATE_DAYS * 86400_000)
+  const floor = new Date(Date.now() - TH.TRIP_LATE_DAYS * 86400_000)
     .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const out: AlertCandidate[] = []
 
@@ -140,7 +171,7 @@ async function ruleTripLate(): Promise<AlertCandidate[]> {
     })
   }
 
-  const cutStuck = new Date(Date.now() - THRESHOLDS.TRIP_STUCK_HOURS * 3600_000).toISOString()
+  const cutStuck = new Date(Date.now() - TH.TRIP_STUCK_HOURS * 3600_000).toISOString()
   const { data: stuck, error: e2 } = await supabase.from('GroupDeliveryOrder')
     .select('id, group_code, warehouse_id, warehouse_type, started_at, delivery_date')
     .eq('status', 'IN_PROGRESS').is('scan_completed_at', null)
@@ -162,7 +193,7 @@ async function ruleTripLate(): Promise<AlertCandidate[]> {
 }
 
 // ── R4: Lệch cân vs KL tính từ chuyến ────────────────────────────────────────
-async function ruleWeighDiff(): Promise<AlertCandidate[]> {
+async function ruleWeighDiff(TH: AlertThresholds): Promise<AlertCandidate[]> {
   const { data, error } = await supabase.from('WeighTicket')
     .select('id, ticket_no, license_plate, net_kg, gdo_id, weigh_date')
     .eq('weigh_date', vnToday()).eq('is_complete', true).not('gdo_id', 'is', null)
@@ -190,11 +221,11 @@ async function ruleWeighDiff(): Promise<AlertCandidate[]> {
     const kg = est.kg_actual ?? est.kg_planned
     if (!kg || kg <= 0) continue
     const diffPct = Math.abs(Number(tk.net_kg) - kg) / kg * 100
-    if (diffPct <= THRESHOLDS.WEIGH_WARN_PCT) continue
+    if (diffPct <= TH.WEIGH_WARN_PCT) continue
     const g = gdoById.get(tk.gdo_id)
     out.push({
       rule: 'WEIGH_DIFF', dedup_key: `WEIGH|${tk.id}`,
-      severity: diffPct > THRESHOLDS.WEIGH_CRIT_PCT ? 'CRITICAL' : 'WARNING',
+      severity: diffPct > TH.WEIGH_CRIT_PCT ? 'CRITICAL' : 'WARNING',
       warehouse_id: (g?.warehouse_id as string | null) ?? null,
       category: (g?.warehouse_type as string | null) ?? null,
       title: `Lệch cân ${nf(diffPct)}%: xe ${tk.license_plate ?? '?'} (phiếu ${tk.ticket_no ?? tk.id})`,
@@ -231,11 +262,13 @@ export async function runAlertScan(force = false): Promise<void> {
   if (Date.now() - _lastScanAt < min) return
   _lastScanAt = Date.now()
   try {
+    const TH = await getAlertThresholds()
     const found: AlertCandidate[] = []
     const okRules: AlertRule[] = []
     const runners: [AlertRule, () => Promise<AlertCandidate[]>][] = [
-      ['EXPIRY', ruleExpiry], ['GATE_DWELL', ruleGateDwell], ['TRIP_LATE', ruleTripLate],
-      ['WEIGH_DIFF', ruleWeighDiff], ['BE_ERRORS', ruleBeErrors],
+      ['EXPIRY', () => ruleExpiry(TH)], ['GATE_DWELL', () => ruleGateDwell(TH)],
+      ['TRIP_LATE', () => ruleTripLate(TH)], ['WEIGH_DIFF', () => ruleWeighDiff(TH)],
+      ['BE_ERRORS', ruleBeErrors],
     ]
     for (const [rule, fn] of runners) {
       try { found.push(...await fn()); okRules.push(rule) }

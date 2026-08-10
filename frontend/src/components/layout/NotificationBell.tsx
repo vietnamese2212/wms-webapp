@@ -22,9 +22,10 @@ const PREF_LABEL: { key: string; label: string; desc: string }[] = [
   { key: 'assign',     label: 'Được giao việc',      desc: 'Giao lệnh fill / giao lại dòng cho bạn' },
   { key: 'reconcile',  label: 'Cần xử lý SAP',       desc: 'SAP đổi dữ liệu sinh việc chờ xử (cần quyền reconcile)' },
   { key: 'EXPIRY',     label: 'Tồn cận date',        desc: 'Mã có lô %Date dưới ngưỡng trong kho của bạn' },
-  { key: 'GATE_DWELL', label: 'Xe trong cổng lâu',   desc: 'Xe vào cổng ≥90 phút chưa ra' },
-  { key: 'TRIP_LATE',  label: 'Chuyến trễ / kẹt',    desc: 'Chuyến trễ ngày xuất hoặc bắt đầu >6h chưa xong' },
-  { key: 'WEIGH_DIFF', label: 'Lệch cân',            desc: 'Phiếu cân lệch KL tính >5%' },
+  // Không ghi số ngưỡng cứng ở đây — ngưỡng chỉnh được ở tab "Cài đặt ngưỡng" trang Thông báo
+  { key: 'GATE_DWELL', label: 'Xe trong cổng lâu',   desc: 'Xe vào cổng quá ngưỡng thời gian chưa ra' },
+  { key: 'TRIP_LATE',  label: 'Chuyến trễ / kẹt',    desc: 'Chuyến trễ ngày xuất hoặc bắt đầu quá lâu chưa xong' },
+  { key: 'WEIGH_DIFF', label: 'Lệch cân',            desc: 'Phiếu cân lệch KL tính vượt ngưỡng' },
   { key: 'BE_ERRORS',  label: 'Lỗi hệ thống',        desc: 'Backend có lỗi 5xx trong 24h' },
 ]
 const SEV_DOT: Record<string, string> = { CRITICAL: 'bg-red-500', WARNING: 'bg-amber-500' }

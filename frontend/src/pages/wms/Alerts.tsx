@@ -2,17 +2,19 @@
 // chung nhau"): Cá nhân (feed việc đích danh của MÌNH — mọi user vào được) · Thông báo chung
 // (cảnh báo vận hành 5 rule quét sống — cần quyền alerts.view; tự đóng khi điều kiện hết,
 // Ack = "tôi biết rồi"). Layout theo skill table-format.
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User } from 'lucide-react'
+import type { AxiosError } from 'axios'
+import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, type AlertRow } from '@/api/hooks'
+import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -65,17 +67,19 @@ export default function Alerts() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canAlerts = can(perms, 'alerts', 'view')
+  const canTh = can(perms, 'wms_settings', 'manage_system')   // ngưỡng = cấu hình TOÀN hệ thống
   const f = useWmsFilterStore(s => s.alerts)
   const setF = useWmsFilterStore(s => s.setAlerts)
-  // ?tab=personal — deep-link từ nút chuông; không quyền xem tab Chung → ép về Cá nhân
+  // ?tab=personal — deep-link từ nút chuông; thiếu quyền tab nào → ép về Cá nhân
   const [urlTab] = useState(() => new URLSearchParams(window.location.search).get('tab'))
-  const tab: 'personal' | 'general' =
-    !canAlerts ? 'personal' : urlTab === 'personal' || urlTab === 'general' ? urlTab : f.tab
+  const wanted = urlTab === 'personal' || urlTab === 'general' ? urlTab : f.tab
+  const tab: 'personal' | 'general' | 'thresholds' =
+    (wanted === 'general' && !canAlerts) || (wanted === 'thresholds' && !canTh) ? 'personal' : wanted
 
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl">
       <BellRing className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {([['personal', 'Cá nhân', true], ['general', 'Thông báo chung', canAlerts]] as const).map(([k, label, show]) => show && (
+      {([['personal', 'Cá nhân', true], ['general', 'Thông báo chung', canAlerts], ['thresholds', 'Cài đặt ngưỡng', canTh]] as const).map(([k, label, show]) => show && (
         <button key={k} type="button"
           onClick={() => { window.history.replaceState(null, '', '/wms/alerts'); setF({ tab: k }) }}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors ${
@@ -87,6 +91,7 @@ export default function Alerts() {
     </div>
   )
   if (tab === 'personal') return <PersonalTab tabBar={tabBar} />
+  if (tab === 'thresholds') return <ThresholdsTab tabBar={tabBar} />
   return <GeneralTab tabBar={tabBar} />
 }
 
@@ -366,6 +371,118 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
         </div>
         <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
           1–{rows.length} / {data?.total ?? rows.length} cảnh báo · tự quét ~10 phút/lần, realtime khi có cảnh báo mới
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tab CÀI ĐẶT NGƯỠNG — cấu hình TOÀN hệ thống (wms_settings.manage_system) ────────────────
+// MIRROR mặc định BE (alertScanner.THRESHOLDS) — đổi mặc định phải đổi cả hai.
+const TH_DEFAULT = {
+  PCT_WARN: 20, PCT_CRIT: 10,
+  GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180,
+  TRIP_STUCK_HOURS: 6,
+  WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15,
+}
+type ThKey = keyof typeof TH_DEFAULT
+const toStrings = (t: Record<ThKey, number>) =>
+  Object.fromEntries(Object.entries(t).map(([k, v]) => [k, String(v)])) as Record<ThKey, string>
+
+function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
+  const settingsQ = useSystemSettings()
+  const upd = useUpdateSystemSetting()
+  const saved = useMemo(() => {
+    const v = (settingsQ.data ?? []).find(s => s.key === 'alert_thresholds')?.value as Partial<Record<ThKey, number>> | undefined
+    return { ...TH_DEFAULT, ...(v ?? {}) }
+  }, [settingsQ.data])
+  const [vals, setVals] = useState<Record<ThKey, string>>(() => toStrings(TH_DEFAULT))
+  const [err, setErr] = useState('')
+  const [okMsg, setOkMsg] = useState('')
+  useEffect(() => { setVals(toStrings(saved)) }, [saved])
+
+  function save() {
+    setErr(''); setOkMsg('')
+    const t = {} as Record<ThKey, number>
+    for (const k of Object.keys(TH_DEFAULT) as ThKey[]) {
+      const n = Number(vals[k])
+      if (!Number.isFinite(n) || n <= 0) { setErr('Mọi ngưỡng phải là số dương.'); return }
+      t[k] = n
+    }
+    // Ràng buộc chéo — mirror validator BE (systemSettingController.isAlertThresholds)
+    if (t.PCT_CRIT > t.PCT_WARN) return setErr('%Date: ngưỡng Nghiêm trọng phải ≤ ngưỡng Cảnh báo (%Date càng thấp càng nguy).')
+    if (t.PCT_WARN > 90) return setErr('%Date: ngưỡng Cảnh báo tối đa 90%.')
+    if (t.GATE_WARN_MIN < 15 || t.GATE_WARN_MIN > t.GATE_CRIT_MIN || t.GATE_CRIT_MIN > 2880) return setErr('Xe trong cổng: 15 phút ≤ Cảnh báo ≤ Nghiêm trọng ≤ 2880 phút.')
+    if (t.TRIP_STUCK_HOURS < 1 || t.TRIP_STUCK_HOURS > 72) return setErr('Chuyến bắt đầu chưa xong: 1–72 giờ.')
+    if (t.WEIGH_WARN_PCT > t.WEIGH_CRIT_PCT || t.WEIGH_CRIT_PCT > 100) return setErr('Lệch cân: Cảnh báo ≤ Nghiêm trọng ≤ 100%.')
+    upd.mutate({ key: 'alert_thresholds', value: t }, {
+      onSuccess: () => setOkMsg('Đã lưu — áp dụng từ lượt quét tiếp theo (tự quét ~10 phút/lần, hoặc bấm Quét lại ở tab Thông báo chung).'),
+      onError: (e) => setErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lưu thất bại — thử lại.'),
+    })
+  }
+
+  const row = (label: ReactNode, key: ThKey, unit: string) => (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-slate-600 w-56 shrink-0">{label}</span>
+      <Input type="number" inputMode="decimal" value={vals[key]} min={0}
+        onChange={e => setVals(v => ({ ...v, [key]: e.target.value }))}
+        className="h-8 w-24 text-xs tabular-nums" />
+      <span className="text-xs text-slate-400">{unit}</span>
+    </div>
+  )
+  const band = (title: string) => (
+    <div className="flex items-center gap-2 bg-slate-100 border-y border-slate-200 px-3 py-1.5 -mx-3">
+      <span className="w-1 h-3.5 bg-sky-500 rounded-sm" />
+      <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">{title}</span>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+        {tabBar}
+        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+          <div className="max-w-xl px-3 py-2 space-y-3">
+            <p className="text-[11px] text-slate-500 flex items-start gap-1.5">
+              <SlidersHorizontal className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-600" />
+              Ngưỡng kích hoạt cảnh báo — áp cho <b>toàn hệ thống</b> (mọi kho, mọi người). Bật/tắt chuông
+              của riêng bạn nằm ở nút chuông góc phải màn hình.
+            </p>
+            {err && <div className="rounded border border-red-200 bg-red-50 text-red-700 text-xs px-3 py-2">{err}</div>}
+            {okMsg && <div className="rounded border border-green-200 bg-green-50 text-green-700 text-xs px-3 py-2">{okMsg}</div>}
+
+            {band('Tồn cận date (%Date)')}
+            {row('Cảnh báo khi %Date còn ≤', 'PCT_WARN', '%')}
+            {row('Nghiêm trọng khi %Date còn ≤', 'PCT_CRIT', '%')}
+
+            {band('Xe trong cổng lâu')}
+            {row('Cảnh báo khi xe vào cổng chưa ra ≥', 'GATE_WARN_MIN', 'phút')}
+            {row('Nghiêm trọng khi ≥', 'GATE_CRIT_MIN', 'phút')}
+
+            {band('Chuyến trễ / kẹt')}
+            {row('Chuyến bắt đầu quá … giờ chưa hoàn thành', 'TRIP_STUCK_HOURS', 'giờ')}
+            <p className="text-[10px] text-slate-400">Chuyến trễ ngày xuất: cứ quá ngày là báo — không có ngưỡng chỉnh.</p>
+
+            {band('Lệch cân')}
+            {row('Cảnh báo khi |cân − KL tính| >', 'WEIGH_WARN_PCT', '%')}
+            {row('Nghiêm trọng khi >', 'WEIGH_CRIT_PCT', '%')}
+
+            <p className="text-[10px] text-slate-400">Lỗi hệ thống (backend 5xx trong 24h): có là báo — không có ngưỡng chỉnh.</p>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" disabled={upd.isPending || settingsQ.isLoading} onClick={save}>
+                {upd.isPending ? 'Đang lưu…' : 'Lưu ngưỡng'}
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={upd.isPending}
+                title="Điền lại bộ mặc định (vẫn phải bấm Lưu)"
+                onClick={() => { setVals(toStrings(TH_DEFAULT)); setErr(''); setOkMsg('') }}>
+                Về mặc định
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
+          Ngưỡng lưu per đơn vị (SystemSetting) · hiệu lực ≤ 30 giây sau khi lưu, thấy rõ ở lượt quét kế tiếp
         </div>
       </div>
     </div>

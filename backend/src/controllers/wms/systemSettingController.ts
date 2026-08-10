@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
 // SỔ CỜ (thêm cờ mới = thêm dòng vào KNOWN_SETTINGS + ghi chú ở đây):
@@ -23,6 +24,11 @@ import { ok, fail } from '../../utils/response'
 //     ĐỘC LẬP với Loại xe TMS (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế — dims không
 //     treo trên Loại xe). Ghi = wms_settings.manage_system (nút Lưu/Xóa trong dialog 3D gate quyền này).
 
+// - alert_thresholds: 7 ngưỡng của trung tâm cảnh báo (user yêu cầu tùy biến 10/08 — vd %Date 10→15):
+//     { PCT_WARN, PCT_CRIT, GATE_WARN_MIN, GATE_CRIT_MIN, TRIP_STUCK_HOURS, WEIGH_WARN_PCT, WEIGH_CRIT_PCT }.
+//     Chưa cấu hình = mặc định THRESHOLDS trong alertScanner. UI = tab "Cài đặt ngưỡng" trang Thông báo.
+//     Ràng buộc chéo: PCT_CRIT ≤ PCT_WARN (thấp hơn = nguy hơn) · GATE/WEIGH crit ≥ warn.
+
 export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
 export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
 export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
@@ -44,11 +50,29 @@ function isTruckModels(v: unknown): boolean {
   })
 }
 
+function isAlertThresholds(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  const keys = ALERT_TH_CONFIG_KEYS as readonly string[]
+  if (Object.keys(o).some(k => !keys.includes(k))) return false   // chỉ nhận đúng bộ khóa
+  if (!keys.every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number) && (o[k] as number) > 0)) return false
+  const t = o as Record<string, number>
+  if (!(t.PCT_CRIT <= t.PCT_WARN && t.PCT_WARN <= 90)) return false                                   // %Date: thấp = nguy
+  if (!(t.GATE_WARN_MIN >= 15 && t.GATE_WARN_MIN <= t.GATE_CRIT_MIN && t.GATE_CRIT_MIN <= 2880)) return false
+  if (!(t.TRIP_STUCK_HOURS >= 1 && t.TRIP_STUCK_HOURS <= 72)) return false
+  if (!(t.WEIGH_WARN_PCT <= t.WEIGH_CRIT_PCT && t.WEIGH_CRIT_PCT <= 100)) return false
+  return true
+}
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
   decimal_separator: { validate: v => v === 'dot' || v === 'comma', hint: "'dot' | 'comma'" },
   delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
+  alert_thresholds: {
+    validate: isAlertThresholds,
+    hint: 'đủ 7 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%)',
+  },
 }
 
 // Cờ label_format có cache ngắn (điểm quét đọc mỗi lần → không query DB liên tục; cờ đổi rất hiếm).
@@ -107,5 +131,6 @@ export async function updateSetting(req: Request, res: Response) {
   }, { onConflict: 'key' }).select('key, value, updated_by, updated_at').single()
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   _labelFormatCache = null; _dcCache = null   // đổi cờ → xoá cache để có hiệu lực ngay (không đợi TTL 30s)
+  invalidateAlertThresholdsCache()
   return ok(res, data)
 }

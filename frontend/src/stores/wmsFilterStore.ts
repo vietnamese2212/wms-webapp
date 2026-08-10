@@ -261,7 +261,7 @@ interface StocktakeCycleFilters {
   dueOnly: boolean       // chỉ mã đến hạn/quá hạn (mặc định bật)
 }
 interface AlertFilters {
-  tab: 'personal' | 'general'   // Cá nhân (feed của mình — mọi user) | Thông báo chung (cần alerts.view)
+  tab: 'personal' | 'general' | 'thresholds'   // Cá nhân (mọi user) | Thông báo chung (alerts.view) | Cài đặt ngưỡng (manage_system)
   search: string
   warehouseId: string    // '' = mọi kho trong scope
   rules: string[]        // loại cảnh báo (EXPIRY/GATE_DWELL/…) — [] = tất cả

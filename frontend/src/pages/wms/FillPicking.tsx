@@ -419,7 +419,7 @@ function DemandTab({ warehouseId, date, onlyShort, cats, dense, canPlan, canAssi
             <TableRow>
               {DEMAND_COLS.map((c, i) => (
                 <TableHead key={c.id}
-                  className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                   {c.id === 'sel' && canPlan ? (
                     <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
                       onChange={e => setSel(e.target.checked ? new Set(selectable.map(r => r.material_id)) : new Set())} />
@@ -697,7 +697,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
             <TableRow>
               {ORDER_COLS.map((c, i) => (
                 <TableHead key={c.id}
-                  className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}
+                  className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}
                   title={c.id === 'qty' ? QTY_CONVERTED_TIP : undefined}>
                   {c.label}
                   <span onPointerDown={e => startResize(i, e)}
@@ -908,7 +908,7 @@ function ReportTab({ warehouseId, from, to, dense }: {
             <TableRow>
               {REPORT_COLS.map((c, i) => (
                 <TableHead key={c.id}
-                  className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}
+                  className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}
                   title={c.id === 'qty' ? QTY_CONVERTED_TIP : undefined}>
                   {c.label}
                   <span onPointerDown={e => startResize(i, e)}

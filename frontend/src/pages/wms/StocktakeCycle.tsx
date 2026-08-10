@@ -141,7 +141,7 @@ export default function StocktakeCycle() {
               <TableRow>
                 {COLS.map((c, i) => (
                   <TableHead key={c.id}
-                    className={`relative text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                    className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.id === 'sel' ? (
                       <input type="checkbox" className="h-3 w-3 cursor-pointer" checked={allSel}
                         onChange={e => setSel(e.target.checked ? new Set(rows.map(r => r.material_id)) : new Set())} />

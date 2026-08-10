@@ -239,6 +239,16 @@ const RULES = [
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',
     count: (s) => countKeepMountedScannerWithoutActive(s),
   },
+  // `relative` đặt THẲNG lên <TableHead> đè mất `sticky top-0 z-10` của base (tailwind-merge giữ
+  // class position CUỐI) → header hết freeze khi cuộn — bẫy đã ghi memory sticky-header-relative-trap
+  // mà các module mới 04–06/08 vẫn đẻ 7 chỗ (Alerts/Fill×4/StocktakeCycle/TMSBookings — user bắt
+  // 10/08). Tay kéo cột KHÔNG cần relative: th sticky tự là containing block cho span absolute
+  // (mẫu đúng: Inbound đặt trần, Slotting bọc <span className="relative"> bên trong).
+  {
+    key: 'tablehead_relative_kills_sticky',
+    label: 'class `relative` trên <TableHead> — đè mất sticky top-0 của base, header hết freeze khi cuộn (relative đặt vào span con)',
+    count: (s) => countTableHeadRelative(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
@@ -329,6 +339,23 @@ function countKeepMountedScannerWithoutActive(sampleOut) {
         n++
         if (sampleOut && sampleOut.length < 5)
           sampleOut.push(`${f.slice(ROOT.length + 1)} — <QRScanner> trong overlay keep-mounted thiếu active=`)
+      }
+    }
+  }
+  return n
+}
+
+// Bắt className của <TableHead> (kể cả xuống dòng) chứa từ `relative` — position class truyền vào
+// đè `sticky` của base qua tailwind-merge nên header không còn dính khi cuộn.
+function countTableHeadRelative(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    for (const m of src.matchAll(/<TableHead\b[\s\S]{0,200}?className=\{?[`"]([^`"]*)[`"]/g)) {
+      if (/\brelative\b/.test(m[1])) {
+        n++
+        if (sampleOut && sampleOut.length < 5)
+          sampleOut.push(`${f.slice(ROOT.length + 1)}:${src.slice(0, m.index).split('\n').length}`)
       }
     }
   }

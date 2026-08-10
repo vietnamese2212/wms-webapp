@@ -3358,7 +3358,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                     <TableHeader>
                       <TableRow>
                         {TRANSFER_COLS.map((c, i) => (
-                          <TableHead key={c.label} className={`relative h-auto normal-case px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                          <TableHead key={c.label} className={`h-auto normal-case px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
                             {c.label}
                             {i > 0 && (
                               <span

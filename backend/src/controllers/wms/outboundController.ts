@@ -1368,28 +1368,23 @@ export async function quickExportGDO(req: Request, res: Response) {
     for (const row of itemRows) {
       const ctn = Number(row.cartons_ordered)
       const isSpecial = effectiveNoQr(matMap.get(row.material_code_raw)?.no_qr, whMode)
-      let invEntryId: string | null = null
       if (isSpecial) {
-        const r = await applySharedPoolDelta(row.material_code_raw, warehouse_id, ctn, whMode)
+        // MỘT RPC nguyên tử pool + item + vết quét (bug #6 10/08 — chiều xuôi kill giữa chừng
+        // là MẤT tồn âm thầm: đã trừ mà không có vết để hoàn)
+        const r = await applyPoolAtomic({
+          itemId: row.id, materialCode: row.material_code_raw, warehouseId: warehouse_id,
+          mode: whMode, newQty: ctn, itemStatus: 'COMPLETED',
+        })
         if (r.outcome !== 'OK') {
           failed.push({
             material_code: row.material_code_raw,
-            message: r.outcome === 'INSUFFICIENT' ? `còn ${qtyLabel(r.available, matMap.get(row.material_code_raw))}` : 'tồn đang bận (nhiều người thao tác)',
+            message: r.outcome === 'INSUFFICIENT' ? `còn ${qtyLabel(r.available ?? 0, matMap.get(row.material_code_raw))}` : 'tồn đang bận (nhiều người thao tác)',
           })
           continue
         }
-        invEntryId = r.invEntryId
+      } else {
+        await supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: now() }).eq('id', row.id)
       }
-      const t2 = now()
-      await Promise.all([
-        supabase.from('OutboundItem').update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 }).eq('id', row.id),
-        ...(isSpecial ? [supabase.from('OutboundScanEntry').insert({
-          id: randomUUID(), item_id: row.id,
-          inventory_entry_id: invEntryId,
-          pallet_code: row.material_code_raw, cartons_scanned: ctn,
-          is_loose_picking: false, scanned_at: t2, created_at: t2, updated_at: t2,
-        })] : []),
-      ])
     }
 
     if (failed.length) {
@@ -1500,36 +1495,25 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
       const isSpecial = effectiveNoQr(item.material?.no_qr_tracking, whMode)
       const matCode: string | null = isSpecial ? (item.material?.material_code ?? item.material_code_raw ?? null) : null
       const hasPool = isSpecial && !!item.material_id && !!matCode
-      const delta = ctn - (Number(item.cartons_scanned) || 0)
-      let invEntryId: string | null = null
       if (hasPool) {
-        const r = await applySharedPoolDelta(matCode!, gdo.warehouse_id as string, delta, whMode)
-        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode!, message: `còn ${qtyLabel(r.available, item.material ?? null)}` }); continue }
-        if (r.outcome === 'BUSY')         { failed.push({ material_code: matCode!, message: 'tồn đang bận (nhiều người thao tác)' }); continue }
-        invEntryId = r.invEntryId
-      }
-      const t2 = now()
-      // CAS claim: 2 người cùng bấm "Xuất luôn" → chỉ 1 request xử được item (chống trừ tồn ĐÔI).
-      const { data: claimed } = await supabase.from('OutboundItem')
-        .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 })
-        .eq('id', item.id).neq('status', 'COMPLETED').select('id')
-      if (!claimed?.length) {
-        // Thua đua (request kia vừa ghi nhận xong) → HOÀN lại phần tồn mình vừa trừ, không tính lỗi.
-        if (hasPool && delta !== 0) await applySharedPoolDelta(matCode!, gdo.warehouse_id as string, -delta, whMode)
-        continue
-      }
-      successCount++
-      if (isSpecial && matCode) {
-        const { data: existingScan } = await supabase.from('OutboundScanEntry').select('id').eq('item_id', item.id).maybeSingle()
-        if (existingScan) {
-          await supabase.from('OutboundScanEntry').update({ cartons_scanned: ctn, inventory_entry_id: invEntryId, updated_at: t2 }).eq('id', existingScan.id)
-        } else {
-          await supabase.from('OutboundScanEntry').insert({
-            id: randomUUID(), item_id: item.id, inventory_entry_id: invEntryId,
-            pallet_code: matCode, cartons_scanned: ctn, is_loose_picking: false,
-            scanned_at: t2, created_at: t2, updated_at: t2,
-          })
-        }
+        // MỘT RPC nguyên tử: khóa item TRƯỚC khi đụng pool nên claim thua đua = CLAIM_LOST và
+        // KHÔNG trừ tồn — thay hẳn cú CAS-claim + "hoàn bù" cũ (hoàn bù bị kill giữa chừng là
+        // nguồn hoàn đôi, bug #6 10/08).
+        const r = await applyPoolAtomic({
+          itemId: item.id, materialCode: matCode!, warehouseId: gdo.warehouse_id as string,
+          mode: whMode, newQty: ctn, itemStatus: 'COMPLETED', claimOnlyPending: true,
+        })
+        if (r.outcome === 'INSUFFICIENT') { failed.push({ material_code: matCode!, message: `còn ${qtyLabel(r.available ?? 0, item.material ?? null)}` }); continue }
+        if (r.outcome === 'CLAIM_LOST' || r.outcome === 'NOT_FOUND') continue   // thua đua — request kia đã xử, không đụng tồn
+        successCount++
+      } else {
+        const t2 = now()
+        // CAS claim cho mã thường (không pool): 2 người cùng bấm → chỉ 1 request xử được item
+        const { data: claimed } = await supabase.from('OutboundItem')
+          .update({ status: 'COMPLETED', cartons_scanned: ctn, updated_at: t2 })
+          .eq('id', item.id).neq('status', 'COMPLETED').select('id')
+        if (!claimed?.length) continue
+        successCount++
       }
     }
 
@@ -5513,98 +5497,28 @@ export async function getManualItemStock(req: Request, res: Response) {
 
 // ─── Manual complete item ─────────────────────────────────────
 
-// Áp delta vào tồn pool dùng chung (hàng no-QR/kho QTY: 1 dòng InventoryEntry pallet_code = mã hàng) —
-// optimistic-CAS + jitter, đọc lại remaining MỖI lần thử (nhiều đơn cùng xuất 1 mã → không retry thì ~nửa 409 oan).
-// INSUFFICIENT (thiếu tồn thật) KHÔNG retry; BUSY = CAS trượt hết 15 lần.
-// AN TOÀN ĐA-DÒNG: một mã pool có thể có NHIỀU dòng InventoryEntry cùng pallet_code trong 1 kho
-// (xuất hết → dòng cũ EXPORTED=0, rồi NHẬP LẠI → sinh dòng mới). maybeSingle sẽ lỗi với 2+ dòng → trả 0
-// → user "mất khả dụng". Nay GỘP qua mọi dòng: đọc tổng, trừ lần lượt các dòng còn tồn, hoàn vào 1 dòng.
-// Không có dòng nào: kho QTY (theo dõi số lượng) → tồn 0 → CHẶN xuất (delta>0); NONE/khác → OK (không theo dõi mã này).
-type PoolRow = { id: string; cartons_remaining: number; cartons_imported: number; status: string; production_date?: string | null }
-async function applyToPoolRow(row: PoolRow, take: number): Promise<boolean> {
-  // take>0: trừ · take<0: cộng lại. CAS theo cartons_remaining cũ (chống mất cập nhật khi đua).
-  const cur = Number(row.cartons_remaining)
-  const imported = Number(row.cartons_imported)
-  const next = cur - take
-  if (next < 0) return false
-  const { data: applied } = await supabase.from('InventoryEntry').update({
-    cartons_remaining: next,
-    status: next === 0 ? 'EXPORTED' : next < imported ? 'PARTIAL' : 'IN_STOCK',
-    updated_at: now(),
-  }).eq('id', row.id).eq('cartons_remaining', cur).select('id')
-  return !!applied?.length
-}
-async function applySharedPoolDelta(materialCode: string, warehouseId: string, delta: number, mode?: string | null,
-  productionDate?: string | null):
-  Promise<{ outcome: 'OK' | 'INSUFFICIENT' | 'BUSY'; invEntryId: string | null; available: number }> {
-  const isQtyDate = mode === 'QTY_DATE'
-  const dateOf = (r: PoolRow) => String(r.production_date ?? '').slice(0, 10)
-  const loadRows = async (): Promise<PoolRow[]> => {
-    // order NSX cũ trước ngay từ DB: kho QTY_DATE tích lũy 1 dòng/NSX — nếu vượt cap 1000 dòng/response
-    // thì phần bị cắt là NSX MỚI nhất (an toàn cho FEFO tiêu trước dòng cũ, không mất dòng cũ).
-    const { data } = await supabase.from('InventoryEntry')
-      .select('id, cartons_remaining, cartons_imported, status, production_date')
-      .eq('pallet_code', materialCode).eq('warehouse_id', warehouseId)
-      .order('production_date', { ascending: true })
-    let list = ((data ?? []) as PoolRow[])
-    // QTY_DATE + người xuất CHỌN NSX cụ thể → chỉ thao tác trên pool đúng NSX đó
-    if (isQtyDate && productionDate) list = list.filter(r => dateOf(r) === productionDate)
-    // QTY_DATE: FEFO — NSX cũ nhất trước (thiếu NSX xuống cuối); mode khác giữ thứ tự còn-nhiều-trước
-    if (isQtyDate) list.sort((a, b) => (dateOf(a) || '9999-99-99') < (dateOf(b) || '9999-99-99') ? -1 : 1)
-    return list
-  }
-  for (let attempt = 0; attempt < 15; attempt++) {
-    const rows = await loadRows()
-    const totalRemaining = rows.reduce((s, r) => s + Number(r.cartons_remaining), 0)
-    const primaryId = rows[0]?.id ?? null
-
-    if (delta === 0) return { outcome: 'OK', invEntryId: primaryId, available: totalRemaining }
-
-    if (delta < 0) {
-      // Hoàn tồn |delta|: cộng vào 1 dòng (ưu tiên dòng còn tồn, else dòng bất kỳ để hồi sinh).
-      // QTY_DATE: rows đã sort FEFO → hoàn vào NSX cũ nhất (đối xứng với chiều trừ).
-      if (rows.length === 0) return { outcome: 'OK', invEntryId: null, available: 0 }   // không có dòng để hoàn (untracked)
-      const target = rows.find(r => Number(r.cartons_remaining) > 0) ?? rows[0]
-      if (await applyToPoolRow(target, delta)) return { outcome: 'OK', invEntryId: target.id, available: totalRemaining - delta }
-      await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
-      continue
-    }
-
-    // delta > 0: trừ tồn
-    if (rows.length === 0) {
-      if (isQtyLike(mode)) return { outcome: 'INSUFFICIENT', invEntryId: null, available: 0 }   // QTY/QTY_DATE: chưa có tồn = 0 → chặn
-      return { outcome: 'OK', invEntryId: null, available: 0 }                                  // NONE/khác: không theo dõi
-    }
-    if (totalRemaining < delta) return { outcome: 'INSUFFICIENT', invEntryId: primaryId, available: totalRemaining }
-
-    // Trừ lần lượt từ các dòng còn tồn. QTY_DATE: theo FEFO (NSX cũ trước, đã sort ở loadRows);
-    // mode khác: còn-nhiều-trước như cũ. Nếu 1 dòng bị đua → hoàn lại phần đã trừ rồi retry cả lượt.
-    const withStock = rows.filter(r => Number(r.cartons_remaining) > 0)
-    if (!isQtyDate) withStock.sort((a, b) => Number(b.cartons_remaining) - Number(a.cartons_remaining))
-    let need = delta
-    let firstConsumed: string | null = null
-    let raced = false
-    for (const row of withStock) {
-      if (need <= 0) break
-      const take = Math.min(need, Number(row.cartons_remaining))
-      if (!(await applyToPoolRow(row, take))) { raced = true; break }
-      need -= take
-      if (!firstConsumed) firstConsumed = row.id
-    }
-    if (!raced && need <= 0) return { outcome: 'OK', invEntryId: firstConsumed ?? primaryId, available: totalRemaining - delta }
-    // Đua giữa chừng: hoàn trả phần đã trừ (retry đến khi trả xong để KHÔNG mất tồn) rồi thử lại cả lượt.
-    const consumed = delta - need
-    if (consumed > 0) {
-      for (let back = 0; back < 20; back++) {
-        const cur = await loadRows()
-        const t = cur.find(r => r.id === firstConsumed) ?? cur[0]
-        if (t && await applyToPoolRow(t, -consumed)) break
-        await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * 40)))
-      }
-    }
-    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
-  }
-  return { outcome: 'BUSY', invEntryId: null, available: 0 }
+// ── GHI NHẬN/HOÀN pool no-QR NGUYÊN TỬ (bug #6 10/08 — hoàn tồn khống dưới bão 504) ──
+// RPC outbound_pool_apply (migration 20260810d) gói TRỌN: khóa item → delta tính từ chính
+// cartons_scanned trong transaction → trừ/hoàn pool có khóa dòng → update item + vết quét.
+// Số truyền vào là TUYỆT ĐỐI (newQty) nên gọi lại lần 2 delta=0 — hoàn đôi bất khả thi;
+// Vercel kill giữa chừng = rollback trọn, pool và scanned không bao giờ lệch nhau.
+// Semantics pool GIỮ NGUYÊN applySharedPoolDelta cũ (đã gỡ 10/08): QTY/QTY_DATE thiếu →
+// INSUFFICIENT; NONE/không dòng → OK không đụng tồn; QTY_DATE trừ FEFO + lọc NSX chọn tay;
+// gộp đa-dòng cùng pallet_code (dòng EXPORTED nhập lại). claimOnlyPending=true thay cú
+// CAS-claim + hoàn-bù của "Xuất luôn" (thua đua = CLAIM_LOST, KHÔNG đụng tồn).
+type PoolApplyOutcome = { outcome: 'OK' | 'INSUFFICIENT' | 'CLAIM_LOST' | 'NOT_FOUND'; inv_entry_id?: string | null; available?: number }
+async function applyPoolAtomic(args: {
+  itemId: string; materialCode: string; warehouseId: string; mode?: string | null
+  newQty: number; itemStatus: string; chosenDate?: string | null; claimOnlyPending?: boolean
+}): Promise<PoolApplyOutcome> {
+  const { data, error } = await supabase.rpc('outbound_pool_apply', {
+    p_item_id: args.itemId, p_material_code: args.materialCode, p_warehouse_id: args.warehouseId,
+    p_mode: args.mode ?? null, p_new_qty: args.newQty, p_item_status: args.itemStatus,
+    p_chosen_date: args.chosenDate ?? null, p_claim_only_pending: args.claimOnlyPending ?? false,
+    p_touch_pool: true,
+  })
+  if (error) throw new Error(error.message)
+  return (data ?? { outcome: 'NOT_FOUND' }) as PoolApplyOutcome
 }
 
 export async function manualCompleteItem(req: Request, res: Response) {
@@ -5656,45 +5570,30 @@ export async function manualCompleteItem(req: Request, res: Response) {
     const gdoMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode
     const isSpecial = effectiveNoQr((item.material as any)?.no_qr_tracking, gdoMode)
     const specialMatCode: string | null = isSpecial ? ((item.material as any)?.material_code ?? item.material_code_raw ?? null) : null
-    let specialInvEntryId: string | null = null
-
-    if (isSpecial && item.material_id && gdo?.warehouse_id && specialMatCode) {
-      const oldCartons = Number(item.cartons_scanned) || 0
-      const delta = ctn - oldCartons   // >0: xuất thêm (trừ tồn) · <0: giảm (cộng lại) · =0: không đổi
-      // QTY_DATE: mặc định FEFO (NSX cũ nhất trước); người xuất CHỌN NSX → chỉ trừ pool NSX đó
-      const chosenDate = gdoMode === 'QTY_DATE' && production_date ? String(production_date).slice(0, 10) : null
-      const r = await applySharedPoolDelta(specialMatCode, gdo.warehouse_id as string, delta, gdoMode, chosenDate)
-      specialInvEntryId = r.invEntryId
-      if (r.outcome === 'INSUFFICIENT') {
-        const mu = (item.material ?? null) as MatUnitsQ | null
-        return fail(res, 400, 'INSUFFICIENT_STOCK',
-          `Không đủ tồn kho${chosenDate ? ` NSX ${chosenDate}` : ''} — còn ${qtyLabel(r.available, mu)}${oldCartons > 0 ? `, cần thêm ${qtyLabel(delta, mu)}` : ''}`)
-      }
-      if (r.outcome === 'BUSY') return fail(res, 409, 'STOCK_CHANGED', 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại')
-    }
 
     // Chỉ COMPLETED khi nhập đủ kế hoạch — thiếu thì IN_PROGRESS (giống hàng QR).
     // Muốn chốt đơn thiếu: sửa cartons_ordered xuống = thực xuất rồi mới hoàn thành.
     const newItemStatus = ctn >= Number(item.cartons_ordered) ? 'COMPLETED' : 'IN_PROGRESS'
     const t = now()
-    await supabase.from('OutboundItem')
-      .update({ status: newItemStatus, cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
 
-    // Upsert OutboundScanEntry cho no_qr items (1 dòng per item, pallet_code = material_code)
-    if (isSpecial && specialMatCode) {
-      const { data: existingScan } = await supabase.from('OutboundScanEntry')
-        .select('id').eq('item_id', itemId).maybeSingle()
-      if (existingScan) {
-        await supabase.from('OutboundScanEntry')
-          .update({ cartons_scanned: ctn, updated_at: t }).eq('id', existingScan.id)
-      } else {
-        await supabase.from('OutboundScanEntry').insert({
-          id: randomUUID(), item_id: itemId,
-          inventory_entry_id: specialInvEntryId,
-          pallet_code: specialMatCode, cartons_scanned: ctn,
-          is_loose_picking: false, scanned_at: t, created_at: t, updated_at: t,
-        })
+    if (isSpecial && item.material_id && gdo?.warehouse_id && specialMatCode) {
+      // MỘT RPC nguyên tử: pool + item.cartons_scanned + vết quét cùng transaction (bug #6 10/08 —
+      // trước đây 3 request rời, Vercel kill giữa chừng → lượt hoàn sau hoàn ĐÔI tồn khống)
+      const chosenDate = gdoMode === 'QTY_DATE' && production_date ? String(production_date).slice(0, 10) : null
+      const r = await applyPoolAtomic({
+        itemId, materialCode: specialMatCode, warehouseId: gdo.warehouse_id as string,
+        mode: gdoMode, newQty: ctn, itemStatus: newItemStatus, chosenDate,
+      })
+      if (r.outcome === 'INSUFFICIENT') {
+        const mu = (item.material ?? null) as MatUnitsQ | null
+        const oldCartons = Number(item.cartons_scanned) || 0
+        return fail(res, 400, 'INSUFFICIENT_STOCK',
+          `Không đủ tồn kho${chosenDate ? ` NSX ${chosenDate}` : ''} — còn ${qtyLabel(r.available ?? 0, mu)}${oldCartons > 0 ? `, cần thêm ${qtyLabel(ctn - oldCartons, mu)}` : ''}`)
       }
+      if (r.outcome === 'NOT_FOUND') return fail(res, 'Không tìm thấy mặt hàng', 404)
+    } else {
+      await supabase.from('OutboundItem')
+        .update({ status: newItemStatus, cartons_scanned: ctn, updated_at: t }).eq('id', itemId)
     }
 
     // Parallel: count pending items in DO + count pending DOs in GDO (gdoId đã biết từ params)

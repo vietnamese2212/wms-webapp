@@ -62,25 +62,28 @@ async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   })
 }
 
-function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gray'): HTMLCanvasElement {
-  const scale = Math.max(0.2, Math.min(3, targetW / img.width))
+// crop = phần khung hình lấy vào (tỷ lệ 0..1) — chữ date thường ở GIỮA khung khi user nhắm
+type CropFrac = { x: number; y: number; w: number; h: number }
+
+function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gray', crop?: CropFrac): HTMLCanvasElement {
+  const sx = Math.round(img.width * (crop?.x ?? 0))
+  const sy = Math.round(img.height * (crop?.y ?? 0))
+  const sw = Math.max(1, Math.round(img.width * (crop?.w ?? 1)))
+  const sh = Math.max(1, Math.round(img.height * (crop?.h ?? 1)))
+  const scale = Math.max(0.2, Math.min(4, targetW / sw))
   const c = document.createElement('canvas')
-  c.width = Math.round(img.width * scale)
-  c.height = Math.round(img.height * scale)
+  c.width = Math.round(sw * scale)
+  c.height = Math.round(sh * scale)
   const ctx = c.getContext('2d')
   if (!ctx) throw new Error('Không tạo được canvas')
   ctx.imageSmoothingEnabled = true
-  ctx.drawImage(img, 0, 0, c.width, c.height)
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height)
   const im = ctx.getImageData(0, 0, c.width, c.height)
   const px = im.data
-  const n = c.width * c.height
+  const W = c.width, H = c.height
+  const n = W * H
   const gray = new Uint8Array(n)
-  let sum = 0
-  for (let i = 0; i < n; i++) {
-    const g = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0
-    gray[i] = g
-    sum += g
-  }
+  for (let i = 0; i < n; i++) gray[i] = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0
   if (mode === 'gray') {
     for (let i = 0; i < n; i++) {
       px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = gray[i]
@@ -89,10 +92,30 @@ function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gr
     ctx.putImageData(im, 0, 0)
     return c
   }
-  const thr = (sum / n) * 0.82
+  // NHỊ PHÂN THÍCH NGHI (Bradley, cửa sổ ~W/16) thay ngưỡng toàn cục — thùng nền màu +
+  // màng bọc bóng loáng làm mean toàn ảnh vô nghĩa (ảnh user 11/08: rất nét vẫn trượt).
+  // Integral image → mean cục bộ O(1) per pixel.
+  const integ = new Float64Array((W + 1) * (H + 1))
+  for (let y = 0; y < H; y++) {
+    let rowSum = 0
+    for (let x = 0; x < W; x++) {
+      rowSum += gray[y * W + x]
+      integ[(y + 1) * (W + 1) + (x + 1)] = integ[y * (W + 1) + (x + 1)] + rowSum
+    }
+  }
+  const half = Math.max(8, (W / 32) | 0)
   const bin = new Uint8Array(n)
-  for (let i = 0; i < n; i++) bin[i] = gray[i] < thr ? 1 : 0
-  const W = c.width, H = c.height
+  for (let y = 0; y < H; y++) {
+    const y1 = Math.max(0, y - half), y2 = Math.min(H - 1, y + half)
+    for (let x = 0; x < W; x++) {
+      const x1 = Math.max(0, x - half), x2 = Math.min(W - 1, x + half)
+      const area = (x2 - x1 + 1) * (y2 - y1 + 1)
+      const s = integ[(y2 + 1) * (W + 1) + (x2 + 1)] - integ[y1 * (W + 1) + (x2 + 1)]
+        - integ[(y2 + 1) * (W + 1) + x1] + integ[y1 * (W + 1) + x1]
+      bin[y * W + x] = gray[y * W + x] < (s / area) * 0.88 ? 1 : 0
+    }
+  }
+  // GIÃN NỞ 4 hướng 1 vòng — chấm mực CIJ dính thành nét chữ
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const i = y * W + x
@@ -115,8 +138,13 @@ function getWorker(): Promise<TesseractWorker> {
     _worker = (async () => {
       const { createWorker } = await import('tesseract.js')
       const w = await createWorker('eng')
-      // Khóa bảng ký tự: chỉ những gì có trên dòng date in phun — độ chính xác font chấm nhảy vọt
-      await w.setParameters({ tessedit_char_whitelist: '0123456789:/NSXHD. ' })
+      // Khóa bảng ký tự về đúng tập trên dòng date in phun + PSM 6 (khối chữ đồng nhất —
+      // mặc định PSM 3 dò bố cục TRANG, rất tệ với 2 dòng chữ chấm rời) + khai DPI.
+      await w.setParameters({
+        tessedit_char_whitelist: '0123456789:/NSXHD. ',
+        tessedit_pageseg_mode: '6' as import('tesseract.js').PSM,   // PSM.SINGLE_BLOCK
+        user_defined_dpi: '300',
+      })
       return w
     })()
     _worker.catch(() => { _worker = null })   // lỗi nạp (mất mạng CDN) → lần sau thử lại
@@ -133,10 +161,12 @@ export function warmOcr(): void {
 // ĐA LƯỢT (11/08 chiều — tấm rất rõ vẫn trượt vì 1 lượt binary duy nhất): chạy tối đa 3
 // biến thể ảnh, DỪNG NGAY khi bóc được giờ. GỌI VỚI ẢNH GỐC full-res (đừng đưa ảnh đã nén
 // 1024px — chữ in phun bị nghiền nát trước khi OCR nhìn thấy; đó là bug gốc).
-const OCR_PASSES: { w: number; mode: 'binary' | 'gray' }[] = [
-  { w: 1600, mode: 'binary' },   // chấm mực CIJ chuẩn — dính nét, đọc nhanh nhất
-  { w: 1600, mode: 'gray' },     // nền bìa màu/loang — để Tesseract tự chọn ngưỡng
-  { w: 2400, mode: 'binary' },   // chữ nhỏ trong khung hình rộng — phóng to thêm
+const CENTER: CropFrac = { x: 0.12, y: 0.22, w: 0.76, h: 0.56 }   // vùng giữa khung — chỗ user nhắm chữ
+const OCR_PASSES: { w: number; mode: 'binary' | 'gray'; crop?: CropFrac }[] = [
+  { w: 1600, mode: 'binary' },                 // adaptive-binary toàn khung — chấm CIJ chuẩn
+  { w: 2000, mode: 'binary', crop: CENTER },   // chữ nhỏ trong khung rộng → cắt giữa + phóng to
+  { w: 1600, mode: 'gray' },                   // nền phức tạp — để Tesseract tự Otsu
+  { w: 2000, mode: 'gray', crop: CENTER },
 ]
 
 export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo> {
@@ -144,7 +174,7 @@ export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo>
     const [worker, img] = await Promise.all([getWorker(), loadImage(dataUrl)])
     let bestRaw = ''
     for (const p of OCR_PASSES) {
-      const { data } = await worker.recognize(preprocess(img, p.w, p.mode))
+      const { data } = await worker.recognize(preprocess(img, p.w, p.mode, p.crop))
       const raw = (data.text ?? '').trim()
       if (raw.length > bestRaw.length) bestRaw = raw
       const { time, nsxDate } = extractPrintInfo(raw)

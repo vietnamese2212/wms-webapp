@@ -389,10 +389,32 @@ export async function getRunBoard(req: Request, res: Response) {
   if (error) return fail(res, error.message, 500)
   const runs = data ?? []
   const agg = await aggRuns(runs.map(r => r.id as string))
+  const allPallets = [...agg.values()].flatMap(a => a.pallets)
+  await attachPhotoUrls(allPallets)
   return ok(res, runs.map(r => {
     const a = agg.get(r.id as string)
     return { ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0, pallets: a?.pallets ?? [] }
   }))
+}
+
+// GET /wms/packing-runs/:id — detail 1 trang: thông tin + toàn bộ pallet (packing.view)
+export async function getRun(req: Request, res: Response) {
+  const { id } = req.params
+  const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
+  if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  const scope = scopeWhIds(req)
+  if (scope !== null && !scope.includes(run.warehouse_id as string)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+  const agg = await aggRuns([id])
+  const a = agg.get(id)
+  await attachPhotoUrls(a?.pallets ?? [])
+  const live = run.status === 'OPEN'
+  return ok(res, {
+    ...run,
+    pallet_count: live ? (a?.pallet_count ?? 0) : (run.pallet_count ?? a?.pallet_count ?? 0),
+    qty_total: live ? (a?.qty_sum ?? 0) : (run.qty_total ?? a?.qty_sum ?? 0),
+    pallet_open: a?.pallet_open ?? 0,
+    pallets: a?.pallets ?? [],
+  })
 }
 
 // GET /wms/packing-runs — tra cứu sổ theo TRANG (phân trang server)
@@ -420,13 +442,18 @@ export async function listRuns(req: Request, res: Response) {
   const { data, count, error } = await q.order('run_date', { ascending: false })
     .order('start_at', { ascending: false }).range(from, from + pageSize - 1)
   if (error) return fail(res, error.message, 500)
-  // Trang MỞ chưa có tổng chốt → tính sống; trang ĐÃ ĐÓNG dùng số đã chốt lúc bấm Giờ kết thúc
+  // GỘP THEO SỔ (user chốt 11/08 chiều): trả kèm pallet của từng trang trên trang hiện tại
+  // (FE render bảng nhóm dòng). Trang MỞ → tổng tính SỐNG; trang ĐÓNG giữ số đã chốt.
   const rows = data ?? []
-  const openIds = rows.filter(r => r.status === 'OPEN').map(r => r.id as string)
-  const agg = await aggRuns(openIds)
+  const agg = await aggRuns(rows.map(r => r.id as string))
+  const allPallets = [...agg.values()].flatMap(a => a.pallets)
+  await attachPhotoUrls(allPallets)
   for (const r of rows) {
     const a = agg.get(r.id as string)
-    if (a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
+    ;(r as Record<string, unknown>).pallets = a?.pallets ?? []
+    ;(r as Record<string, unknown>).pallet_open = a?.pallet_open ?? 0
+    if (r.status === 'OPEN' && a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
+    else if (a && r.pallet_count == null) { r.qty_total = r.qty_total ?? a.qty_sum; r.pallet_count = a.pallet_count }
   }
   return ok(res, { rows, total: count ?? 0, page, pageSize })
 }

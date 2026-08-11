@@ -4,7 +4,7 @@
 // chụp ảnh → OCR Tesseract tại máy (bậc 0, miễn phí) điền sẵn → công nhân xác nhận;
 // đọc trượt thì gõ tay — ẢNH luôn được lưu làm bằng chứng truy vết.
 // Giờ bấm nút chỉ là giờ THAO TÁC (đối chiếu chéo, không phải giờ SX).
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
 import { NotebookPen, ScanLine, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -20,7 +20,7 @@ import { parseCodeFields } from '@/components/shared/palletLabel'
 import {
   usePackingLogs, useOpenPackingLog, useClosePackingLog,
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
-  usePackingRunBoard, usePackingRuns, useOpenPackingRun, useClosePackingRun,
+  usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
   useUpdatePackingRun, useCancelPackingRun, type PackingRun,
   useImportShifts, useMaterials,
 } from '@/api/hooks'
@@ -230,12 +230,21 @@ export default function Packing() {
   const [closeRunTarget, setCloseRunTarget] = useState<PackingRun | null>(null)
   const [editRunTarget, setEditRunTarget] = useState<PackingRun | null>(null)
   const [cancelRunTarget, setCancelRunTarget] = useState<PackingRun | null>(null)
+  const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [banner, setBanner] = useState('')
 
   function handleScan(raw: string) {
     playBeep()
     setShowScan(false)
     setPendingQR(normalizeQR(raw))
+  }
+
+  const runHandlers: RunTableHandlers = {
+    canRecord, canOpenRun, canEdit, canCancel, whName,
+    onScan: () => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) },
+    onDetail: r => setDetailRunId(r.id),
+    onCloseRun: setCloseRunTarget, onEditRun: setEditRunTarget, onCancelRun: setCancelRunTarget,
+    onClosePallet: setCloseTarget, onEditPallet: setEditTarget, onCancelPallet: setCancelTarget,
   }
 
   const tabBar = (
@@ -270,17 +279,11 @@ export default function Packing() {
           </div>
         )}
         {f.tab === 'board' ? (
-          <RunBoardTab runs={openRuns} loading={board.isLoading}
-            canRecord={canRecord} canOpenRun={canOpenRun} canCancel={canCancel}
-            whName={whName} whOpts={whOpts}
-            onScan={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}
-            onOpenRun={() => setOpenRunForm(true)}
-            onCloseRun={setCloseRunTarget} onEditRun={setEditRunTarget} onCancelRun={setCancelRunTarget}
-            onClosePallet={setCloseTarget} onCancelPallet={setCancelTarget} />
+          <BoardTab runs={openRuns} loading={board.isLoading} whOpts={whOpts}
+            canOpenRun={canOpenRun} onOpenRun={() => setOpenRunForm(true)} h={runHandlers} />
         ) : f.tab === 'runs' ? (
-          <RunsTab canOpenRun={canOpenRun} canExport={canExport} openCount={openRuns.length}
-            whName={whName} whOpts={whOpts}
-            onEditRun={setEditRunTarget} onCancelRun={setCancelRunTarget} onCloseRun={setCloseRunTarget} />
+          <RunsTab canExport={canExport} openCount={openRuns.length}
+            whName={whName} whOpts={whOpts} h={runHandlers} />
         ) : (
           <LogTab canEdit={canEdit} canCancel={canCancel} canExport={canExport} openCount={openPallets}
             whName={whName} whOpts={whOpts}
@@ -327,130 +330,249 @@ export default function Packing() {
       {cancelRunTarget && (
         <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={setBanner} />
       )}
+      {detailRunId && (
+        <RunDetailSheet id={detailRunId} whName={whName} canOpenRun={canOpenRun}
+          onDone={() => setDetailRunId(null)}
+          onCloseRun={setCloseRunTarget} onEditRun={setEditRunTarget} onCancelRun={setCancelRunTarget} />
+      )}
     </div>
   )
 }
 
-// ─── Tab BOARD — TRANG SỔ đang mở (1 card = 1 trang sản phẩm), lọc theo KHO ──
-// User chốt 11/08 chiều: phải "Mở trang sổ" (Kho/Ngày/Ca/Chu kỳ/Mã/Máy/Giờ BĐ) trước
-// rồi mới quét tem pallet; bấm "Giờ kết thúc" → đóng trang + tính TỔNG SẢN LƯỢNG.
-function RunBoardTab({ runs, loading, canRecord, canOpenRun, canCancel, whName, whOpts,
-  onScan, onOpenRun, onCloseRun, onEditRun, onCancelRun, onClosePallet, onCancelPallet }: {
-  runs: PackingRun[]; loading: boolean; canRecord: boolean; canOpenRun: boolean; canCancel: boolean
-  whName: Map<string, string>; whOpts: { value: string; label: string }[]
-  onScan: () => void; onOpenRun: () => void
+// ─── BẢNG GỘP THEO TRANG SỔ (table-format mục 10 — nhóm dòng đóng khung) ─────
+// Dòng đầu cụm = TRANG SỔ (bấm vào mở DETAIL), các dòng dưới = pallet của trang.
+// Dùng chung cho tab Đóng gói (trang MỞ) + tab Trang sổ (mọi trạng thái).
+const RUN_G_COLS = [
+  { id: 'main',    label: 'Trang sổ / Tem pallet', w: 240 },
+  { id: 'status',  label: 'Trạng thái',   w: 90 },
+  { id: 'wh',      label: 'Kho',          w: 115 },
+  { id: 'shift',   label: 'Ca',           w: 70 },
+  { id: 'cycle',   label: 'Chu kỳ',       w: 62 },
+  { id: 'machine', label: 'Máy',          w: 55 },
+  { id: 'qty',     label: 'Thùng',        w: 85 },
+  { id: 'time',    label: 'Giờ SX (BĐ → KT)', w: 160 },
+  { id: 'by',      label: 'Người',        w: 110 },
+  { id: 'photo',   label: 'Ảnh',          w: 75 },
+  { id: 'act',     label: '',             w: 116 },
+]
+const RUN_G_DEFAULTS = RUN_G_COLS.map(c => c.w)
+const RUN_STATUS_LABEL: Record<string, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã hủy' }
+const elapsedOf = (iso: string) => {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+  return mins < 60 ? `${mins}p` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}`
+}
+
+interface RunTableHandlers {
+  canRecord: boolean; canOpenRun: boolean; canEdit: boolean; canCancel: boolean
+  whName: Map<string, string>
+  onScan: () => void
+  onDetail: (r: PackingRun) => void
   onCloseRun: (r: PackingRun) => void; onEditRun: (r: PackingRun) => void; onCancelRun: (r: PackingRun) => void
-  onClosePallet: (l: PackingLog) => void; onCancelPallet: (l: PackingLog) => void
+  onClosePallet: (l: PackingLog) => void; onEditPallet: (l: PackingLog) => void; onCancelPallet: (l: PackingLog) => void
+}
+
+function RunGroupedTable({ runs, loading, emptyText, h }: {
+  runs: PackingRun[]; loading: boolean; emptyText: string; h: RunTableHandlers
+}) {
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths', RUN_G_DEFAULTS)
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [, tick] = useState(0)
+  useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
+  const N = RUN_G_COLS.length
+
+  return (
+    <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
+        style={{ width: totalWidth, minWidth: '100%' }}>
+        <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+        <TableHeader>
+          <TableRow>
+            {RUN_G_COLS.map((c, i) => (
+              <TableHead key={c.id}
+                className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                {c.label}
+                <span onPointerDown={e => startResize(i, e)}
+                  className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
+          ) : runs.length === 0 ? (
+            <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">{emptyText}</TableCell></TableRow>
+          ) : runs.map((r, gi) => {
+            const pallets = r.pallets ?? []
+            const cancelled = r.status === 'CANCELLED'
+            return (
+              <Fragment key={r.id}>
+                {gi > 0 && <tr><td colSpan={N} className="p-0 border-0"><div className="h-2.5" /></td></tr>}
+                {/* Dòng TRANG SỔ — bấm = mở detail */}
+                <TableRow onClick={() => h.onDetail(r)}
+                  className={`cursor-pointer bg-slate-50 hover:bg-sky-50 [&_td]:border-t [&_td]:!border-t-slate-300 ${pallets.length === 0 ? '[&_td]:!border-b-slate-300' : ''} ${cancelled ? 'text-slate-400 line-through' : ''}`}>
+                  <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-slate-50">
+                    <span className="font-mono text-[11px] font-semibold no-underline">{r.material_code}</span>
+                    <span className="ml-1.5 text-[9px] text-slate-400 no-underline">{pallets.length} pallet · {formatDate(r.run_date)}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[r.status]}`}>{RUN_STATUS_LABEL[r.status]}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={h.whName.get(r.warehouse_id) ?? ''}>{h.whName.get(r.warehouse_id) ?? r.warehouse_id}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{r.shift ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-semibold">{r.machine_code}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
+                    {isoToHHMM(r.start_at)}<span className="text-slate-400 font-normal"> → </span>
+                    {r.end_at ? isoToHHMM(r.end_at) : (r.status === 'OPEN' ? <span className="text-amber-600 font-normal">{elapsedOf(r.start_at)}</span> : '…')}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.opened_by_name ?? ''}>{r.opened_by_name ?? '—'}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-300">—</TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className="inline-flex gap-1">
+                      {r.status === 'OPEN' && h.canRecord && (
+                        <button type="button" title="Quét tem vào trang này" onClick={e => { e.stopPropagation(); h.onScan() }}
+                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanLine className="h-3.5 w-3.5" /></button>
+                      )}
+                      {r.status === 'OPEN' && h.canOpenRun && (
+                        <button type="button" title="Giờ kết thúc — đóng trang + tính tổng sản lượng" onClick={e => { e.stopPropagation(); h.onCloseRun(r) }}
+                          className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><StopCircle className="h-3.5 w-3.5" /></button>
+                      )}
+                      {!cancelled && h.canOpenRun && (
+                        <button type="button" title="Sửa trang sổ" onClick={e => { e.stopPropagation(); h.onEditRun(r) }}
+                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
+                      )}
+                      {!cancelled && h.canOpenRun && pallets.length === 0 && (
+                        <button type="button" title="Hủy trang (mở nhầm)" onClick={e => { e.stopPropagation(); h.onCancelRun(r) }}
+                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
+                      )}
+                    </span>
+                  </TableCell>
+                </TableRow>
+                {/* Dòng PALLET của trang */}
+                {pallets.map((l, pi) => (
+                  <TableRow key={l.id} className={`${pi === pallets.length - 1 ? '[&_td]:!border-b-slate-300' : ''} ${l.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}`}>
+                    <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                      <span className="inline-block w-4 text-slate-300 no-underline">└</span>
+                      <span className="font-mono text-[10px] truncate" title={l.pallet_code}>
+                        {parseCodeFields(l.pallet_code).seq ? `#${parseCodeFields(l.pallet_code).seq} · ` : ''}{l.pallet_code}
+                      </span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[l.status]}`}>{STATUS_LABEL[l.status]}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-300">—</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-300">—</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-300">—</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">{l.machine_code ?? '—'}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
+                      {l.qty_cartons != null ? Number(l.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
+                      {l.qty_source === 'MANUAL' && <span className="ml-1 text-[8px] px-1 rounded bg-amber-100 text-amber-800 no-underline">tay</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
+                      {l.prod_start_at || l.prod_end_at ? (
+                        <>
+                          {l.prod_start_at ? isoToHHMM(l.prod_start_at) : '—'} {SRC_BADGE(l.prod_start_src)}
+                          <span className="text-slate-400"> → </span>
+                          {l.prod_end_at ? isoToHHMM(l.prod_end_at) : '—'} {SRC_BADGE(l.prod_end_src)}
+                        </>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={l.packed_by_name ?? ''}>{l.packed_by_name ?? '—'}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {(l.photo_start_url || l.photo_end_url) ? (
+                        <span className="inline-flex gap-1">
+                          {l.photo_start_url && <img src={l.photo_start_url} alt="đầu" className="h-6 w-9 object-cover rounded cursor-zoom-in border border-slate-200" onClick={e => { e.stopPropagation(); setLightbox(l.photo_start_url!) }} />}
+                          {l.photo_end_url && <img src={l.photo_end_url} alt="cuối" className="h-6 w-9 object-cover rounded cursor-zoom-in border border-slate-200" onClick={e => { e.stopPropagation(); setLightbox(l.photo_end_url!) }} />}
+                        </span>
+                      ) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <span className="inline-flex gap-1">
+                        {l.status === 'OPEN' && h.canRecord && (
+                          <button type="button" title="Đóng pallet (pallet đầy)" onClick={e => { e.stopPropagation(); h.onClosePallet(l) }}
+                            className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><Check className="h-3.5 w-3.5" /></button>
+                        )}
+                        {l.status !== 'CANCELLED' && h.canEdit && (
+                          <button type="button" title="Sửa giờ SX / số thùng" onClick={e => { e.stopPropagation(); h.onEditPallet(l) }}
+                            className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
+                        )}
+                        {l.status !== 'CANCELLED' && h.canCancel && (
+                          <button type="button" title="Hủy dòng pallet" onClick={e => { e.stopPropagation(); h.onCancelPallet(l) }}
+                            className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
+                        )}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </Fragment>
+            )
+          })}
+        </TableBody>
+      </Table>
+      {lightbox && <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />}
+    </div>
+  )
+}
+
+// ─── Tab ĐÓNG GÓI — trang sổ đang MỞ, bảng chuẩn table-format + filter đầy đủ ─
+function BoardTab({ runs, loading, whOpts, canOpenRun, onOpenRun, h }: {
+  runs: PackingRun[]; loading: boolean; whOpts: { value: string; label: string }[]
+  canOpenRun: boolean; onOpenRun: () => void; h: RunTableHandlers
 }) {
   const f = useWmsFilterStore(s => s.packing)
   const setF = useWmsFilterStore(s => s.setPacking)
-  const [, tick] = useState(0)
-  useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
 
-  const elapsed = (iso: string) => {
-    const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
-    return mins < 60 ? `${mins}p` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}`
-  }
+  const filterDefs: FilterDef[] = [
+    { key: 'wh', label: 'Kho / Nhà máy', type: 'single', pinned: true, options: whOpts,
+      value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v }) },
+    { key: 'machine', label: 'Máy', type: 'text', value: f.machine, placeholder: 'VD: A',
+      onChange: (v: string) => setF({ machine: v }) },
+  ]
+  const term = f.search.trim().toLowerCase()
+  const mach = f.machine.trim().toUpperCase()
+  const filtered = runs.filter(r =>
+    (!mach || r.machine_code.toUpperCase().includes(mach))
+    && (!term
+      || r.material_code.toLowerCase().includes(term)
+      || (r.cycle ?? '').toLowerCase().includes(term)
+      || (r.opened_by_name ?? '').toLowerCase().includes(term)
+      || (r.pallets ?? []).some(l => l.pallet_code.toLowerCase().includes(term))))
+  const palletN = filtered.reduce((s, r) => s + (r.pallets ?? []).length, 0)
+  const openPallets = filtered.reduce((s, r) => s + (r.pallet_open ?? 0), 0)
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto p-3 pb-20 lg:pb-4">
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <span className="text-[10px] text-slate-500 shrink-0">Kho / Nhà máy</span>
-        <SingleSelect options={whOpts} value={f.warehouseId} onChange={v => setF({ warehouseId: v })}
-          placeholder="Mọi kho trong phạm vi" triggerClassName="h-9 sm:h-7 w-56 text-xs" />
-        <div className="flex-1" />
-        {canOpenRun && (
-          <Button size="sm" variant="outline" className="h-9 sm:h-7 text-xs border-sky-300 text-sky-700 hover:bg-sky-50" onClick={onOpenRun}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> Mở trang sổ
-          </Button>
-        )}
+    <>
+      <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SearchInput value={f.search} onChange={v => setF({ search: v })}
+            placeholder="Tìm mã SP / tem / chu kỳ / người mở…" className="flex-1 min-w-[120px]" />
+          <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
+          {canOpenRun && (
+            <Button size="sm" className="h-9 sm:h-7 text-[11px] bg-blue-600 hover:bg-blue-700" onClick={onOpenRun}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Mở trang sổ
+            </Button>
+          )}
+        </div>
+        <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
       </div>
-      {loading ? (
-        <p className="text-center py-10 text-xs text-slate-400">Đang tải…</p>
-      ) : runs.length === 0 ? (
-        <div className="text-center py-12 text-slate-400">
-          <NotebookPen className="h-8 w-8 mx-auto mb-2 opacity-40" />
-          <p className="text-sm">Chưa có trang sổ nào đang mở</p>
-          <p className="text-xs mt-1">
-            {canOpenRun ? 'Bấm "Mở trang sổ" (khai Kho · Ca · Mã · Máy · Giờ bắt đầu) rồi mới quét tem pallet'
-              : 'Người có quyền phải "Mở trang sổ" trước thì mới quét được tem pallet'}
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
-          {runs.map(r => (
-            <div key={r.id} className="rounded-lg border border-slate-200 bg-white">
-              <div className="flex items-start gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50 rounded-t-lg">
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-sm font-semibold text-slate-800 truncate">
-                    {r.material_code}
-                    <span className="ml-2 text-[10px] font-sans font-medium text-white bg-sky-600 rounded px-1.5 py-0.5">Máy {r.machine_code}</span>
-                  </p>
-                  <p className="text-[10px] text-slate-500 truncate">
-                    {whName.get(r.warehouse_id) ?? r.warehouse_id}
-                    {r.shift && <> · {r.shift}</>}
-                    {r.cycle && <> · CK {r.cycle}</>}
-                    <> · {formatDate(r.run_date)}</>
-                  </p>
-                </div>
-                <span className="text-[10px] font-semibold tabular-nums inline-flex items-center gap-0.5 text-slate-500 shrink-0">
-                  <Clock className="h-3 w-3" /> {isoToHHMM(r.start_at)} · {elapsed(r.start_at)}
-                </span>
-              </div>
-              <div className="px-3 py-2 space-y-1.5">
-                <div className="flex items-center gap-3 text-[11px]">
-                  <span className="text-slate-500">Pallet <b className="text-slate-800 tabular-nums">{r.pallet_count ?? 0}</b>{(r.pallet_open ?? 0) > 0 && <span className="text-amber-600"> ({r.pallet_open} mở)</span>}</span>
-                  <span className="text-slate-500">Σ thùng <b className="text-slate-800 tabular-nums">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</b></span>
-                </div>
-                {(r.pallets ?? []).length > 0 && (
-                  <div className="max-h-36 overflow-auto rounded border border-slate-100 divide-y divide-slate-50">
-                    {(r.pallets ?? []).map(l => (
-                      <div key={l.id} className="flex items-center gap-1.5 px-2 py-1 text-[10px]">
-                        <span className={`px-1 rounded-full text-[8px] shrink-0 ${STATUS_BADGE[l.status]}`}>{STATUS_LABEL[l.status]}</span>
-                        <span className="font-mono text-slate-600 truncate flex-1" title={l.pallet_code}>
-                          {parseCodeFields(l.pallet_code).seq ? `#${parseCodeFields(l.pallet_code).seq}` : l.pallet_code}
-                        </span>
-                        <span className="tabular-nums text-slate-500 shrink-0">{l.qty_cartons != null ? Number(l.qty_cartons).toLocaleString('vi-VN') : '—'} th</span>
-                        {l.prod_start_at && <span className="tabular-nums text-slate-400 shrink-0">{isoToHHMM(l.prod_start_at)}{l.prod_end_at ? `→${isoToHHMM(l.prod_end_at)}` : ''}</span>}
-                        {l.status === 'OPEN' && canRecord && (
-                          <button type="button" title="Đóng pallet" onClick={() => onClosePallet(l)}
-                            className="px-1 py-0.5 rounded border border-slate-200 text-green-700 hover:bg-green-50 shrink-0"><Check className="h-3 w-3" /></button>
-                        )}
-                        {l.status !== 'CANCELLED' && canCancel && (
-                          <button type="button" title="Hủy dòng pallet" onClick={() => onCancelPallet(l)}
-                            className="px-1 py-0.5 rounded border border-slate-200 text-slate-400 hover:text-red-600 shrink-0"><X className="h-3 w-3" /></button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  {canRecord && (
-                    <Button size="sm" className="h-8 text-[11px] flex-1 bg-blue-600 hover:bg-blue-700" onClick={onScan}>
-                      <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem
-                    </Button>
-                  )}
-                  {canOpenRun && (
-                    <Button size="sm" variant="outline" className="h-8 text-[11px] flex-1 border-green-300 text-green-700 hover:bg-green-50"
-                      onClick={() => onCloseRun(r)}>
-                      <StopCircle className="h-3.5 w-3.5 mr-1" /> Giờ kết thúc
-                    </Button>
-                  )}
-                  {canOpenRun && (
-                    <button type="button" title="Sửa trang sổ" onClick={() => onEditRun(r)}
-                      className="px-1.5 py-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
-                  )}
-                  {canOpenRun && (r.pallet_count ?? 0) === 0 && (
-                    <button type="button" title="Hủy trang (mở nhầm)" onClick={() => onCancelRun(r)}
-                      className="px-1.5 py-1.5 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+
+      <SummaryBand tiles={[
+        { label: 'Trang đang mở', value: filtered.length.toLocaleString('vi-VN'), accent: filtered.length > 0 },
+        { label: 'Pallet đã ghi', value: palletN.toLocaleString('vi-VN') },
+        { label: 'Pallet đang mở', value: openPallets.toLocaleString('vi-VN'), accent: openPallets > 0 },
+        { label: 'Σ thùng', value: filtered.reduce((s, r) => s + Number(r.qty_total ?? 0), 0).toLocaleString('vi-VN') },
+      ]} />
+
+      <RunGroupedTable runs={filtered} loading={loading} h={h}
+        emptyText={canOpenRun
+          ? 'Chưa có trang sổ nào đang mở — bấm "Mở trang sổ" (Kho · Ca · Mã · Máy) rồi mới quét tem pallet'
+          : 'Chưa có trang sổ nào đang mở — người có quyền phải "Mở trang sổ" trước thì mới quét được tem'} />
+      <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
+        {filtered.length} trang đang mở · bấm vào dòng trang sổ để xem chi tiết
+      </div>
+    </>
   )
 }
 
@@ -1012,33 +1134,16 @@ function RunCancelConfirm({ run, onDone, onError }: { run: PackingRun; onDone: (
   )
 }
 
-// ─── Tab TRANG SỔ — tra cứu sổ theo trang (table-format) ─────────────────────
-const RUN_COLS = [
-  { id: 'status',  label: 'Trạng thái',   w: 90 },
-  { id: 'date',    label: 'Ngày',         w: 90 },
-  { id: 'wh',      label: 'Kho',          w: 120 },
-  { id: 'shift',   label: 'Ca',           w: 70 },
-  { id: 'cycle',   label: 'Chu kỳ',       w: 70 },
-  { id: 'mat',     label: 'Mã SP',        w: 110 },
-  { id: 'machine', label: 'Máy',          w: 60 },
-  { id: 'time',    label: 'Giờ BĐ → KT',  w: 130 },
-  { id: 'pallet',  label: 'Pallet',       w: 70 },
-  { id: 'qty',     label: 'Tổng SL (thùng)', w: 110 },
-  { id: 'by',      label: 'Người mở',     w: 120 },
-  { id: 'note',    label: 'Ghi chú',      w: 140 },
-  { id: 'act',     label: '',             w: 90 },
-]
-const RUN_COL_DEFAULTS = RUN_COLS.map(c => c.w)
-const RUN_STATUS_LABEL: Record<string, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã hủy' }
+// ─── Tab TRANG SỔ — tra cứu sổ GỘP THEO TRANG (table-format, nhóm dòng) ──────
+const RUNS_PAGE_SIZE = 50   // mỗi trang kèm pallet — giữ payload gọn
 
-function RunsTab({ canOpenRun, canExport, openCount, whName, whOpts, onEditRun, onCancelRun, onCloseRun }: {
-  canOpenRun: boolean; canExport: boolean; openCount: number
+function RunsTab({ canExport, openCount, whName, whOpts, h }: {
+  canExport: boolean; openCount: number
   whName: Map<string, string>; whOpts: { value: string; label: string }[]
-  onEditRun: (r: PackingRun) => void; onCancelRun: (r: PackingRun) => void; onCloseRun: (r: PackingRun) => void
+  h: RunTableHandlers
 }) {
   const f = useWmsFilterStore(s => s.packing)
   const setF = useWmsFilterStore(s => s.setPacking)
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_runs_col_widths', RUN_COL_DEFAULTS)
   const [exporting, setExporting] = useState(false)
 
   const { data, isLoading } = usePackingRuns({
@@ -1048,7 +1153,7 @@ function RunsTab({ canOpenRun, canExport, openCount, whName, whOpts, onEditRun, 
     machine: f.machine || undefined,
     warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
-    page: f.runPage, pageSize: f.pageSize,
+    page: f.runPage, pageSize: RUNS_PAGE_SIZE,
   })
   const rows = data?.rows ?? []
   const total = data?.total ?? 0
@@ -1116,82 +1221,115 @@ function RunsTab({ canOpenRun, canExport, openCount, whName, whOpts, onEditRun, 
         { label: 'Thùng (trang này)', value: rows.reduce((s, r) => s + Number(r.qty_total ?? 0), 0).toLocaleString('vi-VN') },
       ]} />
 
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"
-          style={{ width: totalWidth, minWidth: '100%' }}>
-          <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
-          <TableHeader>
-            <TableRow>
-              {RUN_COLS.map((c, i) => (
-                <TableHead key={c.id}
-                  className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                  {c.label}
-                  <span onPointerDown={e => startResize(i, e)}
-                    className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" />
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={RUN_COLS.length} className="text-center py-8 text-xs text-slate-400">Đang tải…</TableCell></TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={RUN_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có trang sổ nào khớp bộ lọc</TableCell></TableRow>
-            ) : rows.map(r => (
-              <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
-                <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[r.status]}`}>{RUN_STATUS_LABEL[r.status]}</span>
-                </TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{formatDate(r.run_date)}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={whName.get(r.warehouse_id) ?? ''}>{whName.get(r.warehouse_id) ?? r.warehouse_id}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.shift ?? <span className="text-slate-300">—</span>}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.material_code}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.machine_code}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
-                  {isoToHHMM(r.start_at)}<span className="text-slate-400 font-normal"> → </span>{r.end_at ? isoToHHMM(r.end_at) : '…'}
-                </TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">{r.pallet_count ?? <span className="text-slate-300">—</span>}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
-                  {r.qty_total != null ? Number(r.qty_total).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
-                </TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.opened_by_name ?? ''}>{r.opened_by_name ?? '—'}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
-                <TableCell className="px-2 py-1 whitespace-nowrap">
-                  <span className="inline-flex gap-1">
-                    {r.status === 'OPEN' && canOpenRun && (
-                      <button type="button" title="Giờ kết thúc — đóng trang + tính tổng" onClick={e => { e.stopPropagation(); onCloseRun(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-green-700 hover:bg-green-50"><StopCircle className="h-3.5 w-3.5" /></button>
-                    )}
-                    {r.status !== 'CANCELLED' && canOpenRun && (
-                      <button type="button" title="Sửa trang sổ" onClick={e => { e.stopPropagation(); onEditRun(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
-                    )}
-                    {r.status !== 'CANCELLED' && canOpenRun && (
-                      <button type="button" title="Hủy trang (chỉ khi chưa có pallet)" onClick={e => { e.stopPropagation(); onCancelRun(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
-                    )}
-                  </span>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <RunGroupedTable runs={rows} loading={isLoading} h={h}
+        emptyText="Chưa có trang sổ nào khớp bộ lọc" />
       <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0 flex items-center gap-3">
         <span>1–{rows.length} / {total.toLocaleString('vi-VN')} trang sổ</span>
-        {total > f.pageSize && (
+        {total > RUNS_PAGE_SIZE && (
           <span className="inline-flex items-center gap-1">
             <button type="button" disabled={f.runPage <= 1} onClick={() => setF({ runPage: f.runPage - 1 })}
               className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">‹</button>
-            trang {f.runPage}/{Math.max(1, Math.ceil(total / f.pageSize))}
-            <button type="button" disabled={f.runPage >= Math.ceil(total / f.pageSize)} onClick={() => setF({ runPage: f.runPage + 1 })}
+            trang {f.runPage}/{Math.max(1, Math.ceil(total / RUNS_PAGE_SIZE))}
+            <button type="button" disabled={f.runPage >= Math.ceil(total / RUNS_PAGE_SIZE)} onClick={() => setF({ runPage: f.runPage + 1 })}
               className="px-1.5 py-0.5 rounded border border-slate-200 disabled:opacity-40">›</button>
           </span>
         )}
-        <span className="hidden sm:inline text-slate-400">1 trang sổ = 1 trang sản phẩm · Tổng SL = Σ thùng pallet, chốt khi bấm Giờ kết thúc</span>
+        <span className="hidden sm:inline text-slate-400">1 trang sổ = 1 trang sản phẩm · bấm dòng trang để xem chi tiết · Tổng SL chốt khi bấm Giờ kết thúc</span>
       </div>
     </>
+  )
+}
+
+// ─── Sheet DETAIL TRANG SỔ (bấm vào dòng trang) — đọc sống qua GET /:id ───────
+function RunDetailSheet({ id, whName, canOpenRun, onDone, onCloseRun, onEditRun, onCancelRun }: {
+  id: string; whName: Map<string, string>; canOpenRun: boolean
+  onDone: () => void
+  onCloseRun: (r: PackingRun) => void; onEditRun: (r: PackingRun) => void; onCancelRun: (r: PackingRun) => void
+}) {
+  const { data: run, isLoading } = usePackingRun(id)
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const DRow = ({ label, value }: { label: string; value: ReactNode }) => (
+    <div className="flex items-start gap-2 text-xs">
+      <span className="w-28 shrink-0 text-slate-400">{label}</span>
+      <span className="text-slate-700 min-w-0">{value}</span>
+    </div>
+  )
+  return (
+    <FormSheet open onClose={onDone} title={run ? `Trang sổ — ${run.material_code} · Máy ${run.machine_code}` : 'Trang sổ'}
+      footer={
+        <div className="flex gap-2 w-full">
+          <Button variant="outline" className="flex-1" onClick={onDone}>Đóng</Button>
+          {run && run.status === 'OPEN' && canOpenRun && (
+            <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={() => { onDone(); onCloseRun(run) }}>
+              <StopCircle className="h-3.5 w-3.5 mr-1" /> Giờ kết thúc
+            </Button>
+          )}
+          {run && run.status !== 'CANCELLED' && canOpenRun && (
+            <Button variant="outline" className="shrink-0" onClick={() => { onDone(); onEditRun(run) }}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {run && run.status !== 'CANCELLED' && canOpenRun && (run.pallets ?? []).length === 0 && (
+            <Button variant="outline" className="shrink-0 text-red-600 border-red-200" onClick={() => { onDone(); onCancelRun(run) }}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+      }>
+      {isLoading || !run ? (
+        <p className="text-center py-10 text-xs text-slate-400">Đang tải…</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${STATUS_BADGE[run.status]}`}>{RUN_STATUS_LABEL[run.status]}</span>
+            {run.status === 'OPEN' && <span className="text-[10px] text-slate-400">mở {elapsedOf(run.start_at)} trước</span>}
+          </div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 space-y-1">
+            <DRow label="Kho / Nhà máy" value={whName.get(run.warehouse_id) ?? run.warehouse_id} />
+            <DRow label="Ngày sản xuất" value={formatDate(run.run_date)} />
+            <DRow label="Ca sản xuất" value={run.shift ?? '—'} />
+            <DRow label="Chu kỳ" value={run.cycle ?? '—'} />
+            <DRow label="Mã sản phẩm" value={<b className="font-mono">{run.material_code}</b>} />
+            <DRow label="Máy" value={<b>{run.machine_code}</b>} />
+            <DRow label="Giờ bắt đầu" value={<span className="tabular-nums">{isoToHHMM(run.start_at)}</span>} />
+            <DRow label="Giờ kết thúc" value={<span className="tabular-nums">{run.end_at ? isoToHHMM(run.end_at) : 'chưa bấm'}</span>} />
+            <DRow label="Tổng sản lượng" value={<b className="tabular-nums">{Number(run.qty_total ?? 0).toLocaleString('vi-VN')} thùng</b>} />
+            <DRow label="Số pallet" value={<span className="tabular-nums">{run.pallet_count ?? 0}{(run.pallet_open ?? 0) > 0 ? ` (${run.pallet_open} đang mở)` : ''}</span>} />
+            <DRow label="Người mở" value={run.opened_by_name ?? '—'} />
+            {run.closed_by_name && <DRow label="Người đóng" value={run.closed_by_name} />}
+            {run.note && <DRow label="Ghi chú" value={run.note} />}
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-700 mb-1">Pallet trong trang ({(run.pallets ?? []).length})</p>
+            {(run.pallets ?? []).length === 0 ? (
+              <p className="text-[11px] text-slate-400">Chưa có pallet nào — quét tem để ghi vào trang</p>
+            ) : (
+              <div className="rounded border border-slate-200 divide-y divide-slate-100 max-h-72 overflow-auto">
+                {(run.pallets ?? []).map(l => (
+                  <div key={l.id} className={`px-2 py-1.5 text-[10px] flex items-center gap-2 ${l.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}`}>
+                    <span className={`px-1 rounded-full text-[8px] shrink-0 no-underline ${STATUS_BADGE[l.status]}`}>{STATUS_LABEL[l.status]}</span>
+                    <span className="font-mono truncate flex-1" title={l.pallet_code}>
+                      {parseCodeFields(l.pallet_code).seq ? `#${parseCodeFields(l.pallet_code).seq}` : l.pallet_code}
+                    </span>
+                    <span className="tabular-nums shrink-0">{l.qty_cartons != null ? `${Number(l.qty_cartons).toLocaleString('vi-VN')} th` : '—'}</span>
+                    <span className="tabular-nums text-slate-400 shrink-0">
+                      {l.prod_start_at ? isoToHHMM(l.prod_start_at) : '—'}→{l.prod_end_at ? isoToHHMM(l.prod_end_at) : '—'}
+                    </span>
+                    {(l.photo_start_url || l.photo_end_url) && (
+                      <span className="inline-flex gap-1 shrink-0">
+                        {l.photo_start_url && <img src={l.photo_start_url} alt="đầu" className="h-5 w-8 object-cover rounded cursor-zoom-in border border-slate-200" onClick={() => setLightbox(l.photo_start_url!)} />}
+                        {l.photo_end_url && <img src={l.photo_end_url} alt="cuối" className="h-5 w-8 object-cover rounded cursor-zoom-in border border-slate-200" onClick={() => setLightbox(l.photo_end_url!)} />}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {lightbox && <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />}
+        </div>
+      )}
+    </FormSheet>
   )
 }
 

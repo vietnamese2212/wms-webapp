@@ -5501,6 +5501,7 @@ function invalidatePacking(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['packing-logs'] })
   qc.invalidateQueries({ queryKey: ['packing-run-board'] })
   qc.invalidateQueries({ queryKey: ['packing-runs'] })
+  qc.invalidateQueries({ queryKey: ['packing-run'] })
 }
 export function useOpenPackingLog() {
   const qc = useQueryClient()
@@ -5571,6 +5572,16 @@ export function usePackingRunBoard(warehouseId = '', enabled = true) {
         params: { warehouse_id: warehouseId || undefined },
       })
       return data.data as PackingRun[]
+    },
+  })
+}
+export function usePackingRun(id: string | null) {
+  return useQuery({
+    queryKey: ['packing-run', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/packing-runs/${id}`)
+      return data.data as PackingRun
     },
   })
 }

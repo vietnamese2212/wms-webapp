@@ -242,6 +242,7 @@ router.post('/packing-logs/:id/cancel',requirePerm('packing', 'cancel'), packing
 // Trang sổ (packing_runs) — MỞ TRANG trước mới quét tem; mở/đóng/sửa/hủy = quyền open_run riêng
 router.get('/packing-runs/board',       requirePerm('packing', 'view'),     packing.getRunBoard)
 router.get('/packing-runs',             requirePerm('packing', 'view'),     packing.listRuns)
+router.get('/packing-runs/:id',         requirePerm('packing', 'view'),     packing.getRun)
 router.post('/packing-runs',            requirePerm('packing', 'open_run'), packing.openRun)
 router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
 router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)

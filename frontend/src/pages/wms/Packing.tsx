@@ -388,7 +388,7 @@ function RunBoardTab({ runs, loading, canRecord, canOpenRun, canCancel, whName, 
                   </p>
                   <p className="text-[10px] text-slate-500 truncate">
                     {whName.get(r.warehouse_id) ?? r.warehouse_id}
-                    {r.shift && <> · Ca {r.shift}</>}
+                    {r.shift && <> · {r.shift}</>}
                     {r.cycle && <> · CK {r.cycle}</>}
                     <> · {formatDate(r.run_date)}</>
                   </p>
@@ -502,7 +502,7 @@ function RecordSheet({ code, whName, onDone, onError }: {
   }
 
   const runLabel = (r: PackingRun) =>
-    `Máy ${r.machine_code} · ${whName.get(r.warehouse_id) ?? r.warehouse_id}${r.shift ? ` · Ca ${r.shift}` : ''}`
+    `Máy ${r.machine_code} · ${whName.get(r.warehouse_id) ?? r.warehouse_id}${r.shift ? ` · ${r.shift}` : ''}`
 
   return (
     <FormSheet open onClose={onDone} title="Ghi sổ đóng gói — pallet vừa quét"
@@ -863,7 +863,7 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
         <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs space-y-0.5">
           <p className="font-mono font-semibold text-slate-800">{run.material_code} · Máy {run.machine_code}</p>
           <p className="text-slate-500">
-            {run.shift && <>Ca {run.shift} · </>}{run.cycle && <>CK {run.cycle} · </>}
+            {run.shift && <>{run.shift} · </>}{run.cycle && <>CK {run.cycle} · </>}
             Bắt đầu {isoToHHMM(run.start_at)} ({formatDate(run.run_date)})
           </p>
           <p className="text-slate-600 pt-1">

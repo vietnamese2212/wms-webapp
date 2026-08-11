@@ -271,6 +271,16 @@ export const MODULES = {
       manage_item:    'Quản lý Hạng mục check list (tab Cài đặt)',
     },
   },
+  packing: {
+    page: 'Sổ đóng gói',
+    actions: {
+      view:   'Xem board đóng gói + sổ điện tử',
+      record: 'Quét tem mở / đóng pallet (ghi sổ tại xưởng)',
+      edit:   'Sửa giờ SX / số thùng / ghi chú sau khi đóng',
+      cancel: 'Hủy dòng sổ ghi nhầm',
+      export: 'Xuất Excel sổ đóng gói',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

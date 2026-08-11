@@ -5443,3 +5443,89 @@ export function useUpdateNotifyPrefs() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['notify-prefs'] }),
   })
 }
+
+// ─── SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08) — packing_logs ──────────────────────────────
+export interface PackingLog {
+  id: string
+  pallet_code: string
+  material_code: string | null
+  material_id: string | null
+  machine_code: string | null
+  warehouse_id: string | null
+  qty_cartons: number | null
+  qty_source: 'LABEL' | 'MANUAL'
+  status: 'OPEN' | 'CLOSED' | 'CANCELLED'
+  open_scan_at: string
+  close_scan_at: string | null
+  prod_start_at: string | null
+  prod_end_at: string | null
+  prod_start_src: 'OCR' | 'MANUAL' | null
+  prod_end_src: 'OCR' | 'MANUAL' | null
+  ocr_start_raw: string | null
+  ocr_end_raw: string | null
+  photo_start_url?: string | null
+  photo_end_url?: string | null
+  packed_by_name: string | null
+  note: string | null
+}
+export interface PackingProdTime { prod_at: string | null; src: 'OCR' | 'MANUAL' | null; ocr_raw?: string | null }
+
+export function usePackingBoard(enabled = true) {
+  return useQuery({
+    queryKey: ['packing-board'],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/packing-logs/board')
+      return data.data as PackingLog[]
+    },
+  })
+}
+export function usePackingLogs(params: {
+  status?: string; date_from?: string; date_to?: string; machine?: string; search?: string
+  page?: number; pageSize?: number
+}) {
+  return useQuery({
+    queryKey: ['packing-logs', params],
+    placeholderData: (prev) => prev,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/packing-logs', { params })
+      return data.data as { rows: PackingLog[]; total: number; page: number; pageSize: number }
+    },
+  })
+}
+function invalidatePacking(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['packing-board'] })
+  qc.invalidateQueries({ queryKey: ['packing-logs'] })
+}
+export function useOpenPackingLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { qr_code: string; photo_data?: string | null; prod_start_at?: string | null; prod_start_src?: string | null; ocr_raw?: string | null }) =>
+      apiClient.post('/wms/packing-logs/open', body).then(r => r.data.data as PackingLog),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useClosePackingLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; qty_cartons?: number | null; photo_data?: string | null; prod_end_at?: string | null; prod_end_src?: string | null; ocr_raw?: string | null; note?: string | null }) =>
+      apiClient.post(`/wms/packing-logs/${id}/close`, body).then(r => r.data.data as PackingLog),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useUpdatePackingLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; prod_start_at?: string | null; prod_end_at?: string | null; qty_cartons?: number; note?: string | null }) =>
+      apiClient.patch(`/wms/packing-logs/${id}`, body).then(r => r.data.data as PackingLog),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useCancelPackingLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) =>
+      apiClient.post(`/wms/packing-logs/${id}/cancel`, { note }).then(r => r.data.data),
+    onSettled: () => invalidatePacking(qc),
+  })
+}

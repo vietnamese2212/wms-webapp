@@ -11,7 +11,7 @@ import Login from '@/pages/Login'
 const {
   Dashboard, Inventory, Inbound, InboundDetail,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
-  Slotting, SlottingPlanDetail, Forklift, FillPicking, FillOrderDetail,
+  Slotting, SlottingPlanDetail, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
   Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
@@ -122,6 +122,9 @@ export default function App() {
 
         {/* WMS — xe nâng (check list an toàn + giờ vận hành) */}
         <Route path="/wms/forklift" element={<PermissionRoute module="forklift"><Forklift /></PermissionRoute>} />
+
+        {/* WMS — sổ đóng gói điện tử tại xưởng (quét tem + chụp date thùng) */}
+        <Route path="/wms/packing" element={<PermissionRoute module="packing"><Packing /></PermissionRoute>} />
 
         {/* WMS — settings */}
         <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />

@@ -268,6 +268,16 @@ interface AlertFilters {
   severity: string[]     // CRITICAL/WARNING — [] = cả hai
   status: string         // open (mặc định) | acked | resolved | all
 }
+interface PackingFilters {
+  tab: 'board' | 'log'   // Board đóng gói (pallet đang mở theo máy) | Sổ (lịch sử)
+  search: string
+  machine: string        // '' = mọi máy
+  status: string         // '' = tất cả | OPEN | CLOSED | CANCELLED
+  dateFrom: string
+  dateTo: string
+  page: number
+  pageSize: number
+}
 interface ForkliftFilters {
   tab: 'board' | 'report' | 'matrix' | 'summary' | 'detail' | 'settings'
   date: string          // ngày xem board check list (mặc định hôm nay)
@@ -332,6 +342,7 @@ interface WmsFilterState {
   slotting:          SlottingFilters
   fill:              FillFilters
   forklift:          ForkliftFilters
+  packing:           PackingFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   stocktakeHistory:  StocktakeHistoryFilters
@@ -369,6 +380,7 @@ interface WmsFilterState {
   setSlotting:          (f: Partial<SlottingFilters>)          => void
   setFill:              (f: Partial<FillFilters>)              => void
   setForklift:          (f: Partial<ForkliftFilters>)          => void
+  setPacking:           (f: Partial<PackingFilters>)           => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
@@ -427,6 +439,7 @@ function initialFilters() {
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
+    packing:      { tab: 'board' as const, search: '', machine: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200 },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
@@ -473,6 +486,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
       setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
       setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
+      setPacking:          (f) => set(s => ({ packing:          { ...s.packing,          ...f } })),
       setAlerts:           (f) => set(s => ({ alerts:           { ...s.alerts,           ...f } })),
       setStocktakeCycle:   (f) => set(s => ({ stocktakeCycle:   { ...s.stocktakeCycle,   ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),

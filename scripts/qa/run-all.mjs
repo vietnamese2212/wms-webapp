@@ -27,6 +27,7 @@ const steps = [
   ['19-push-notify.mjs'],         // Web Push /api/notify: vapid ổn định + RLS kín + subscribe idempotent + endpoint chết được đếm/dọn (06/08)
   ['20-alerts.mjs'],              // Trung tâm cảnh báo: xuất hiện → dedup → ack/unack → tự đóng → tái mở đợt mới (06/08)
   ['21-cycle-count.mjs'],         // Kiểm kê luân phiên ABC: hạng từ slotting_stats + oracle due_in tự tính lại (06/08)
+  ['22-packing.mjs'],             // Sổ đóng gói điện tử: mở→đóng→sửa→hủy + đua quét/đóng + luật giờ in phun (11/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

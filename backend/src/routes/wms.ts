@@ -16,6 +16,7 @@ import * as fill from '../controllers/wms/fillController'
 import * as alerts from '../controllers/wms/alertController'
 import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
+import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -230,6 +231,14 @@ router.get('/forklift-logs',        requirePerm('forklift', 'view'),           f
 router.get('/forklift-logs/:id',    requirePerm('forklift', 'view'),           forklift.getLog)
 router.delete('/forklift-logs/:id', requirePerm('forklift', 'delete_check'),   forklift.deleteLog)
 router.get('/forklift-report',      requirePerm('forklift', 'view'),           forklift.getReport)
+
+// ─── Sổ đóng gói điện tử (11/08) — /board đặt TRƯỚC route param nếu sau này có /:id ───
+router.get('/packing-logs/board',      requirePerm('packing', 'view'),   packing.getBoard)
+router.get('/packing-logs',            requirePerm('packing', 'view'),   packing.listLogs)
+router.post('/packing-logs/open',      requirePerm('packing', 'record'), packing.openLog)
+router.post('/packing-logs/:id/close', requirePerm('packing', 'record'), packing.closeLog)
+router.patch('/packing-logs/:id',      requirePerm('packing', 'edit'),   packing.updateLog)
+router.post('/packing-logs/:id/cancel',requirePerm('packing', 'cancel'), packing.cancelLog)
 router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)

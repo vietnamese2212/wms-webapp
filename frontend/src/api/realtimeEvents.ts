@@ -60,6 +60,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],
   forklift_checklist_items: [['forklift-items']],
   forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log'], ['forklift-logs-matrix']],
+  packing_logs:             [['packing-board'], ['packing-logs']],
   // `Employee` ĐÃ GỠ KHỎI BẢN ĐỒ (04/08): bảng nhân sự CỐ Ý không nằm trong publication realtime và
   // không có policy đọc cho `authenticated` — dữ liệu HR chỉ ra ngoài qua API đã cắt scope. Giữ dòng
   // map ở đây là lời hứa suông: sự kiện KHÔNG BAO GIỜ tới, người đọc code lại tưởng đã có realtime.

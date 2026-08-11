@@ -5470,18 +5470,20 @@ export interface PackingLog {
 }
 export interface PackingProdTime { prod_at: string | null; src: 'OCR' | 'MANUAL' | null; ocr_raw?: string | null }
 
-export function usePackingBoard(enabled = true) {
+export function usePackingBoard(warehouseId = '', enabled = true) {
   return useQuery({
-    queryKey: ['packing-board'],
+    queryKey: ['packing-board', warehouseId],
     enabled,
     queryFn: async () => {
-      const { data } = await apiClient.get('/wms/packing-logs/board')
+      const { data } = await apiClient.get('/wms/packing-logs/board', {
+        params: { warehouse_id: warehouseId || undefined },
+      })
       return data.data as PackingLog[]
     },
   })
 }
 export function usePackingLogs(params: {
-  status?: string; date_from?: string; date_to?: string; machine?: string; search?: string
+  status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
   page?: number; pageSize?: number
 }) {
   return useQuery({
@@ -5500,7 +5502,12 @@ function invalidatePacking(qc: ReturnType<typeof useQueryClient>) {
 export function useOpenPackingLog() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { qr_code: string; photo_data?: string | null; prod_start_at?: string | null; prod_start_src?: string | null; ocr_raw?: string | null }) =>
+    mutationFn: (body: {
+      qr_code: string; machine_code?: string | null; warehouse_id?: string | null; qty_cartons?: number | null
+      photo_data?: string | null; prod_start_at?: string | null; prod_start_src?: string | null; ocr_raw?: string | null
+      photo_end_data?: string | null; prod_end_at?: string | null; prod_end_src?: string | null; ocr_end_raw?: string | null
+      complete?: boolean
+    }) =>
       apiClient.post('/wms/packing-logs/open', body).then(r => r.data.data as PackingLog),
     onSettled: () => invalidatePacking(qc),
   })

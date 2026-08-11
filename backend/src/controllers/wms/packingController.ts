@@ -15,6 +15,29 @@ const PHOTO_BUCKET = 'packing-photos'
 const PHOTO_MAX_BYTES = 4 * 1024 * 1024
 const PAGE_MAX = 500
 
+// Dọn ảnh cũ 60 NGÀY như xe nâng (user chốt 11/08 "xóa tương tự giờ xe nâng") — dọn LƯỜI:
+// chạy khi có người ghi sổ, throttle 6h/instance, lô ≤200; xóa storage TRƯỚC rồi mới NULL
+// path (lỗi thì chờ lượt sau, không orphan); dòng sổ + giờ SX GIỮ NGUYÊN, chỉ gỡ ảnh.
+const PHOTO_RETENTION_DAYS = 60
+let _lastPhotoCleanupAt = 0
+async function cleanupOldPhotos(): Promise<void> {
+  if (Date.now() - _lastPhotoCleanupAt < 6 * 3600_000) return
+  _lastPhotoCleanupAt = Date.now()
+  const cutoff = new Date(Date.now() - PHOTO_RETENTION_DAYS * 86400_000).toISOString()
+  const { data } = await supabase.from('packing_logs')
+    .select('id, photo_start_path, photo_end_path')
+    .or('photo_start_path.not.is.null,photo_end_path.not.is.null')
+    .lt('open_scan_at', cutoff).order('open_scan_at').limit(200)
+  const rows = (data ?? []) as { id: string; photo_start_path: string | null; photo_end_path: string | null }[]
+  const paths = rows.flatMap(r => [r.photo_start_path, r.photo_end_path]).filter((p): p is string => !!p)
+  if (!paths.length) return
+  const { error: rmErr } = await supabase.storage.from(PHOTO_BUCKET).remove(paths)
+  if (rmErr) { console.error('[packing] dọn ảnh cũ lỗi:', rmErr.message); return }
+  await supabase.from('packing_logs').update({ photo_start_path: null, photo_end_path: null })
+    .in('id', rows.slice(0, 200).map(r => r.id))   // lô đã limit 200 — bound tường minh (ratchet unpaginated_in_query)
+  console.log(`[packing] đã dọn ${paths.length} ảnh cũ hơn ${cutoff.slice(0, 10)}`)
+}
+
 function scopeWhIds(req: Request): string[] | null {
   if (req.user?.warehouse_scope === 'NATIONAL') return null
   return req.user?.warehouse_ids ?? []
@@ -73,9 +96,12 @@ async function attachPhotoUrls(rows: LogRow[]): Promise<void> {
 }
 
 // GET /wms/packing-logs/board — pallet ĐANG MỞ (board theo máy), scope kho null-inclusive
+// ?warehouse_id= lọc theo kho (nhiều nhà máy cùng sản xuất — user chốt 11/08 "tách theo Kho")
 export async function getBoard(req: Request, res: Response) {
   let q = supabase.from('packing_logs').select('*').eq('status', 'OPEN')
     .order('open_scan_at', { ascending: true }).limit(300)
+  const wh = String(req.query.warehouse_id ?? '')
+  if (wh) q = q.eq('warehouse_id', wh)
   const scope = scopeWhIds(req)
   if (scope !== null) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scope.map(s => `"${s}"`).join(',')})`)
   const { data, error } = await q
@@ -93,6 +119,8 @@ export async function listLogs(req: Request, res: Response) {
 
   let q = supabase.from('packing_logs').select('*', { count: 'exact' })
   if (status && ['OPEN', 'CLOSED', 'CANCELLED'].includes(status)) q = q.eq('status', status)
+  const whF = String(req.query.warehouse_id ?? '')
+  if (whF) q = q.eq('warehouse_id', whF)
   if (date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from)) q = q.gte('open_scan_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
   if (date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to)) q = q.lt('open_scan_at', new Date(new Date(`${date_to}T00:00:00+07:00`).getTime() + 86400_000).toISOString())
   if (machine) q = q.eq('machine_code', machine)
@@ -110,10 +138,18 @@ export async function listLogs(req: Request, res: Response) {
   return ok(res, { rows: data ?? [], total: count ?? 0, page, pageSize })
 }
 
-// POST /wms/packing-logs/open — quét tem lúc BẮT ĐẦU xếp pallet (packing.record)
-// body: { qr_code, photo_data?, prod_start_at?, prod_start_src?, ocr_raw? }
+// POST /wms/packing-logs/open — GHI SỔ 1 PHIÊN (user chốt 11/08 sau test thật: chữ in phun
+// nằm mặt BÊN thùng nên pallet xếp xong vẫn chụp được cả thùng đáy — quét tem → chụp thùng
+// đầu → chụp thùng cuối → Lưu trong MỘT lần đứng tại pallet).
+// body: { qr_code, machine_code?, warehouse_id?, qty_cartons?,               ← sửa được (tem "AP" = máy A hoặc P)
+//         photo_data?, prod_start_at?, prod_start_src?, ocr_raw?,            ← thùng ĐẦU
+//         photo_end_data?, prod_end_at?, prod_end_src?, ocr_end_raw?,        ← thùng CUỐI
+//         complete? }  — true = đóng sổ luôn (CLOSED); false/thiếu = để MỞ, đóng sau từ board
 export async function openLog(req: Request, res: Response) {
-  const { qr_code, photo_data, prod_start_at, prod_start_src, ocr_raw } = req.body as Record<string, unknown>
+  const {
+    qr_code, machine_code, warehouse_id, qty_cartons, photo_data, prod_start_at, prod_start_src, ocr_raw,
+    photo_end_data, prod_end_at, prod_end_src, ocr_end_raw, complete,
+  } = req.body as Record<string, unknown>
   if (!qr_code || typeof qr_code !== 'string') return fail(res, 'Thiếu mã QR tem pallet', 400)
   const code = normalizeQR(qr_code)
   const parsed = parseInboundQR(code)
@@ -133,31 +169,62 @@ export async function openLog(req: Request, res: Response) {
     .select('material_code, material_id, machine, qty, warehouse_id')
     .eq('qr_code', code).order('created_at', { ascending: false }).limit(1).maybeSingle()
 
-  const prod = parseProdTime(prod_start_at, prod_start_at ? prod_start_src : null)
-  if (typeof prod === 'string') return fail(res, prod, 422)
-  const photo = decodePhotoDataUrl(photo_data)
-  if (typeof photo === 'string') return fail(res, photo, 422)
+  const prodS = parseProdTime(prod_start_at, prod_start_at ? prod_start_src : null)
+  if (typeof prodS === 'string') return fail(res, prodS, 422)
+  const prodE = parseProdTime(prod_end_at, prod_end_at ? prod_end_src : null)
+  if (typeof prodE === 'string') return fail(res, prodE, 422)
+  if (prodS.at && prodE.at && new Date(prodE.at) < new Date(prodS.at))
+    return fail(res, 422, 'TIME_ORDER', 'Giờ SX thùng cuối đang TRƯỚC giờ thùng đầu — kiểm tra lại (qua nửa đêm thì chỉnh ngày)')
+  const photoS = decodePhotoDataUrl(photo_data)
+  if (typeof photoS === 'string') return fail(res, photoS, 422)
+  const photoE = decodePhotoDataUrl(photo_end_data)
+  if (typeof photoE === 'string') return fail(res, photoE, 422)
+
+  // Máy/kho/SL sửa được tại chỗ (tem in "AP" = máy A hoặc P tùy tình huống; nhiều nhà máy
+  // cùng sản xuất nên phải khai đúng KHO). Kho khai phải nằm trong scope người ghi.
+  const machine = typeof machine_code === 'string' && machine_code.trim()
+    ? machine_code.trim().toUpperCase().slice(0, 10)
+    : ((label?.machine as string | null) ?? (parsed.machine_code || null))
+  let wh = typeof warehouse_id === 'string' && warehouse_id.trim()
+    ? warehouse_id.trim() : ((label?.warehouse_id as string | null) ?? null)
+  const scope = scopeWhIds(req)
+  if (wh && scope !== null && !scope.includes(wh)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+  let qty: number | null = label?.qty ?? null
+  let qtySource = 'LABEL'
+  if (qty_cartons !== undefined && qty_cartons !== null && qty_cartons !== '') {
+    const q = Number(qty_cartons)
+    if (!Number.isFinite(q) || q <= 0 || q > 100_000) return fail(res, 'Số thùng phải là số dương hợp lý', 422)
+    if (q !== Number(qty ?? 0)) qtySource = 'MANUAL'
+    qty = q
+  }
 
   const id = randomUUID()
-  const photoPath = photo ? await uploadPhoto(id, 'start', photo) : null
-  if (photo && !photoPath) return fail(res, 'Không lưu được ảnh — thử lại', 500)
+  const photoPathS = photoS ? await uploadPhoto(id, 'start', photoS) : null
+  const photoPathE = photoE ? await uploadPhoto(id, 'end', photoE) : null
+  if ((photoS && !photoPathS) || (photoE && !photoPathE)) return fail(res, 'Không lưu được ảnh — thử lại', 500)
 
+  const isComplete = complete === true
   const now = new Date().toISOString()
   const row = {
     id,
     pallet_code: code,
     material_code: label?.material_code ?? parsed.material_code ?? null,
     material_id: label?.material_id ?? null,
-    machine_code: (label?.machine as string | null) ?? (parsed.machine_code || null),
-    warehouse_id: (label?.warehouse_id as string | null) ?? null,
-    qty_cartons: label?.qty ?? null,
-    qty_source: 'LABEL',
-    status: 'OPEN',
+    machine_code: machine,
+    warehouse_id: wh,
+    qty_cartons: qty,
+    qty_source: qtySource,
+    status: isComplete ? 'CLOSED' : 'OPEN',
     open_scan_at: now,
-    prod_start_at: prod.at,
-    prod_start_src: prod.src,
+    close_scan_at: isComplete ? now : null,
+    prod_start_at: prodS.at,
+    prod_start_src: prodS.src,
     ocr_start_raw: typeof ocr_raw === 'string' ? ocr_raw.slice(0, 500) : null,
-    photo_start_path: photoPath,
+    photo_start_path: photoPathS,
+    prod_end_at: prodE.at,
+    prod_end_src: prodE.src,
+    ocr_end_raw: typeof ocr_end_raw === 'string' ? ocr_end_raw.slice(0, 500) : null,
+    photo_end_path: photoPathE,
     packed_by: req.user?.sub ?? null,
     packed_by_name: req.user?.name ?? null,
     created_at: now,
@@ -165,9 +232,10 @@ export async function openLog(req: Request, res: Response) {
   }
   const { data, error } = await supabase.from('packing_logs').insert(row).select('*').single()
   if (error) {
-    if (error.code === '23505') return fail(res, 409, 'ALREADY_LOGGED', 'Tem này vừa được người khác mở sổ')
+    if (error.code === '23505') return fail(res, 409, 'ALREADY_LOGGED', 'Tem này vừa được người khác ghi sổ')
     return fail(res, error.message, 500)
   }
+  try { await cleanupOldPhotos() } catch (e) { console.error('[packing] cleanup lỗi:', e) }
   await attachPhotoUrls([data as LogRow])
   return ok(res, data)
 }

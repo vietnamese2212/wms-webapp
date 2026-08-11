@@ -39,6 +39,25 @@ await cleanup()
     `src=${r.j?.data?.prod_start_src}`)
 }
 
+// [1b] GHI 1 PHIÊN TRỌN (user chốt 11/08 sau test thật): quét tem → 2 giờ thùng đầu/cuối →
+// complete:true = CLOSED luôn; máy trên tem sửa được (tem "AP" = máy A hoặc P)
+{
+  const r = await api('/wms/packing-logs/open', 'POST', {
+    qr_code: tem(4), machine_code: 'A', qty_cartons: 110, complete: true,
+    prod_start_at: iso(2, 44), prod_start_src: 'MANUAL', ocr_raw: '02:44 HSD:06/03/27 B/UR55',
+    prod_end_at: iso(2, 49), prod_end_src: 'MANUAL', ocr_end_raw: '02:49 HSD:06/03/27 B/UR55',
+  })
+  check('Ghi 1 phiên (complete) → CLOSED ngay', r.s === 200 && r.j?.data?.status === 'CLOSED', `http=${r.s} st=${r.j?.data?.status}`)
+  check('Máy override tem (M9→A) + đủ 2 giờ SX',
+    r.j?.data?.machine_code === 'A' && r.j?.data?.prod_start_at != null && r.j?.data?.prod_end_at != null,
+    `machine=${r.j?.data?.machine_code}`)
+  const bad = await api('/wms/packing-logs/open', 'POST', {
+    qr_code: tem(5), complete: true, prod_start_at: iso(3, 0), prod_start_src: 'MANUAL',
+    prod_end_at: iso(2, 0), prod_end_src: 'MANUAL',
+  })
+  check('1 phiên với giờ cuối < giờ đầu → 422 TIME_ORDER', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
+}
+
 // [2] tem đã có sổ SỐNG → 409 (thân thiện, nêu trạng thái)
 {
   const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1) })

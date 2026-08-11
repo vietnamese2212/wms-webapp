@@ -58,7 +58,7 @@ async function preprocess(dataUrl: string): Promise<HTMLCanvasElement> {
     i.onerror = () => reject(new Error('Không nạp được ảnh'))
     i.src = dataUrl
   })
-  const scale = Math.max(1, Math.min(3, 1400 / img.width))
+  const scale = Math.max(1, Math.min(3, 1000 / img.width))   // 1000px đủ cho chữ in phun, OCR nhanh hơn ~2×
   const c = document.createElement('canvas')
   c.width = Math.round(img.width * scale)
   c.height = Math.round(img.height * scale)
@@ -109,6 +109,12 @@ function getWorker(): Promise<TesseractWorker> {
     _worker.catch(() => { _worker = null })   // lỗi nạp (mất mạng CDN) → lần sau thử lại
   }
   return _worker
+}
+
+// Gọi khi MỞ TRANG sổ đóng gói: tải trước worker/wasm/langdata (vài MB từ CDN) trong lúc
+// công nhân chưa chụp — lần chụp đầu không phải chờ tải (user báo 11/08 "chụp và lưu rất lâu").
+export function warmOcr(): void {
+  void getWorker().catch(() => { /* mất mạng → lần chụp sẽ thử lại */ })
 }
 
 export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo> {

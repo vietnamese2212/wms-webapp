@@ -21,7 +21,9 @@ import {
   usePackingBoard, usePackingLogs, useOpenPackingLog, useClosePackingLog,
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
 } from '@/api/hooks'
-import { readCartonPrint } from '@/utils/cartonOcr'
+import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { normalizeQR } from '@/utils/qr'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -37,8 +39,8 @@ const dmyToIso = (dmy: string): string | null => {
 const apiMsg = (e: unknown, fb: string) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? fb
 
-// Nén ảnh client-side (mẫu Forklift) — mục tiêu ~300KB, trần BE 4MB
-const PHOTO_TARGET_BYTES = 400 * 1024
+// Nén ảnh client-side — CÙNG chuẩn ảnh xe nâng (user chốt 11/08): 1024px, mục tiêu 180KB
+const PHOTO_TARGET_BYTES = 180 * 1024
 const bytesOf = (dataUrl: string) => Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4)
 async function compressPhoto(file: File): Promise<string> {
   const url = await new Promise<string>((resolve, reject) => {
@@ -61,13 +63,13 @@ async function compressPhoto(file: File): Promise<string> {
     canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
     return canvas
   }
-  const canvas = draw(1280)
-  let out = canvas.toDataURL('image/jpeg', 0.75)
-  for (const q of [0.6, 0.5]) {
+  const canvas = draw(1024)
+  let out = canvas.toDataURL('image/jpeg', 0.7)
+  for (const q of [0.55, 0.45]) {
     if (bytesOf(out) <= PHOTO_TARGET_BYTES) break
     out = canvas.toDataURL('image/jpeg', q)
   }
-  if (bytesOf(out) > PHOTO_TARGET_BYTES) out = draw(900).toDataURL('image/jpeg', 0.55)
+  if (bytesOf(out) > PHOTO_TARGET_BYTES) out = draw(800).toDataURL('image/jpeg', 0.5)
   return out
 }
 
@@ -93,7 +95,7 @@ const SRC_BADGE = (src: string | null) =>
 // ─── Ô "chụp thùng + đọc giờ in phun" (dùng chung cho MỞ và ĐÓNG) ─────────────
 // Giá trị đẩy lên parent: photoData (đã nén) · iso (giờ SX từ date+time VN) · src (OCR nếu
 // giữ nguyên kết quả đọc, MANUAL nếu người dùng sửa/gõ) · raw (nguyên văn OCR — lưu DB).
-export interface ProdTimeValue { photoData: string | null; iso: string | null; src: 'OCR' | 'MANUAL' | null; raw: string | null }
+export interface ProdTimeValue { photoData: string | null; iso: string | null; src: 'OCR' | 'MANUAL' | null; raw: string | null; busy: boolean }
 function PhotoOcrField({ label, defaultDate, onValue }: {
   label: string
   defaultDate: string
@@ -118,9 +120,9 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
       if (!isNaN(d.getTime())) iso = d.toISOString()
     }
     const src: 'OCR' | 'MANUAL' | null = !iso ? null : (ocrTime && time === ocrTime ? 'OCR' : 'MANUAL')
-    onValue({ photoData, iso, src, raw: ocrRaw })
+    onValue({ photoData, iso, src, raw: ocrRaw, busy: busy !== null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [photoData, time, date, ocrTime, ocrRaw])
+  }, [photoData, time, date, ocrTime, ocrRaw, busy])
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -180,8 +182,14 @@ export default function Packing() {
   const f = useWmsFilterStore(s => s.packing)
   const setF = useWmsFilterStore(s => s.setPacking)
 
-  const board = usePackingBoard()
+  // Tải trước OCR (worker + dữ liệu nhận dạng) ngay khi mở trang — lần chụp đầu không phải chờ
+  useEffect(() => { warmOcr() }, [])
+
+  const board = usePackingBoard(f.warehouseId)
   const openRows = board.data ?? []
+  const { data: whs } = useScopedWarehouses(true)
+  const whName = useMemo(() => new Map((whs ?? []).map(w => [(w as { id: string }).id, (w as { id: string; name?: string }).name ?? ''])), [whs])
+  const whOpts = useMemo(() => (whs ?? []).map(w => ({ value: (w as { id: string }).id, label: (w as { id: string; name?: string }).name ?? '' })), [whs])
 
   // Quét mở pallet — overlay keep-mounted (chuẩn qr-scan-flow), camera tắt hẳn khi đóng
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
@@ -214,7 +222,7 @@ export default function Packing() {
       {canRecord && (
         <Button size="sm" className="h-8 mb-1 text-xs bg-blue-600 hover:bg-blue-700"
           onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}>
-          <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem — mở pallet
+          <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem — ghi sổ
         </Button>
       )}
     </div>
@@ -232,8 +240,10 @@ export default function Packing() {
         )}
         {f.tab === 'board'
           ? <BoardTab rows={openRows} loading={board.isLoading} canRecord={canRecord} canCancel={canCancel}
+              whName={whName} whOpts={whOpts}
               onClose={setCloseTarget} onCancel={setCancelTarget} />
           : <LogTab canEdit={canEdit} canCancel={canCancel} canExport={canExport} openCount={openRows.length}
+              whName={whName} whOpts={whOpts}
               onEdit={setEditTarget} onCancel={setCancelTarget} onCloseRow={setCloseTarget} />}
       </div>
 
@@ -241,7 +251,7 @@ export default function Packing() {
       {hasOpenedScan && (
         <div className={`fixed inset-0 z-50 bg-black/90 flex flex-col ${showScan ? '' : 'hidden'}`}>
           <div className="flex items-center justify-between px-4 py-2 text-white shrink-0">
-            <p className="text-sm font-semibold">Quét tem pallet — lúc BẮT ĐẦU xếp</p>
+            <p className="text-sm font-semibold">Quét tem pallet</p>
             <button type="button" onClick={() => setShowScan(false)} className="p-2"><X className="h-5 w-5" /></button>
           </div>
           <div className="flex-1 min-h-0">
@@ -251,8 +261,7 @@ export default function Packing() {
       )}
 
       {pendingQR && (
-        <OpenSheet code={pendingQR} openRows={openRows}
-          onCloseFirst={(log) => setCloseTarget(log)}
+        <RecordSheet code={pendingQR} whOpts={whOpts}
           onDone={() => setPendingQR(null)}
           onError={setBanner} />
       )}
@@ -269,11 +278,14 @@ export default function Packing() {
   )
 }
 
-// ─── Tab BOARD — pallet đang mở, nhóm theo máy ───────────────────────────────
-function BoardTab({ rows, loading, canRecord, canCancel, onClose, onCancel }: {
+// ─── Tab BOARD — pallet đang mở (chưa đóng sổ), nhóm theo máy, lọc theo KHO ──
+function BoardTab({ rows, loading, canRecord, canCancel, whName, whOpts, onClose, onCancel }: {
   rows: PackingLog[]; loading: boolean; canRecord: boolean; canCancel: boolean
+  whName: Map<string, string>; whOpts: { value: string; label: string }[]
   onClose: (l: PackingLog) => void; onCancel: (l: PackingLog) => void
 }) {
+  const f = useWmsFilterStore(s => s.packing)
+  const setF = useWmsFilterStore(s => s.setPacking)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
   const byMachine = useMemo(() => {
@@ -293,13 +305,18 @@ function BoardTab({ rows, loading, canRecord, canCancel, onClose, onCancel }: {
 
   return (
     <div className="flex-1 min-h-0 overflow-auto p-3 pb-20 lg:pb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-[10px] text-slate-500 shrink-0">Kho / Nhà máy</span>
+        <SingleSelect options={whOpts} value={f.warehouseId} onChange={v => setF({ warehouseId: v })}
+          placeholder="Mọi kho trong phạm vi" triggerClassName="h-9 sm:h-7 w-56 text-xs" />
+      </div>
       {loading ? (
         <p className="text-center py-10 text-xs text-slate-400">Đang tải…</p>
       ) : rows.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
           <NotebookPen className="h-8 w-8 mx-auto mb-2 opacity-40" />
-          <p className="text-sm">Chưa có pallet nào đang đóng gói</p>
-          {canRecord && <p className="text-xs mt-1">Bấm "Quét tem — mở pallet" khi đặt thùng đầu tiên</p>}
+          <p className="text-sm">Không có pallet nào đang treo sổ</p>
+          {canRecord && <p className="text-xs mt-1">Bấm "Quét tem" để ghi sổ pallet (quét → chụp thùng đầu → thùng cuối → Lưu)</p>}
         </div>
       ) : (
         <div className="space-y-4">
@@ -322,6 +339,7 @@ function BoardTab({ rows, loading, canRecord, canCancel, onClose, onCancel }: {
                         </span>
                       </div>
                       <p className="text-[10px] text-slate-500 truncate" title={l.pallet_code}>{l.pallet_code}</p>
+                      {l.warehouse_id && <p className="text-[10px] text-sky-700 truncate">{whName.get(l.warehouse_id) ?? ''}</p>}
                       <div className="flex items-center gap-2 text-[10px] text-slate-500">
                         <span>{l.qty_cartons != null ? `${Number(l.qty_cartons).toLocaleString('vi-VN')} thùng (chuẩn tem)` : 'SL: —'}</span>
                         {l.prod_start_at && (
@@ -354,41 +372,58 @@ function BoardTab({ rows, loading, canRecord, canCancel, onClose, onCancel }: {
   )
 }
 
-// ─── Sheet MỞ SỔ — sau khi quét tem ──────────────────────────────────────────
-function OpenSheet({ code, openRows, onCloseFirst, onDone, onError }: {
-  code: string; openRows: PackingLog[]
-  onCloseFirst: (l: PackingLog) => void
+// ─── Sheet GHI SỔ 1 PHIÊN — quét tem → chụp thùng đầu → chụp thùng cuối → Lưu ─
+// (user chốt 11/08 sau test thật: chữ in phun ở mặt BÊN thùng, pallet xếp xong vẫn
+// chụp được cả thùng đáy → ghi trọn trong 1 lần đứng tại pallet)
+function RecordSheet({ code, whOpts, onDone, onError }: {
+  code: string; whOpts: { value: string; label: string }[]
   onDone: () => void; onError: (m: string) => void
 }) {
   const openMut = useOpenPackingLog()
   const fields = useMemo(() => parseCodeFields(code), [code])
   const defaultDate = dmyToIso(fields.dateDisplay) ?? todayVN()
-  const [prod, setProd] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null })
-  // Máy này còn pallet đang mở? (dây chuyền liên tục — thường phải đóng pallet trước đã)
-  const prevOpen = useMemo(
-    () => openRows.find(r => r.machine_code && fields.machine && r.machine_code === fields.machine && r.pallet_code !== code) ?? null,
-    [openRows, fields.machine, code])
+  const [machine, setMachine] = useState(fields.machine ?? '')
+  const [whId, setWhId] = useState('')     // '' = theo tem (BE tự lấy kho gắn lúc in tem)
+  const [qty, setQty] = useState('')       // '' = theo số chuẩn của tem
+  const [prodS, setProdS] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
+  const [prodE, setProdE] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
+  const busy = prodS.busy || prodE.busy
 
-  function save() {
+  function save(complete: boolean) {
+    const q = qty.trim() === '' ? undefined : Number(qty.replace(',', '.'))
+    if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
     openMut.mutate({
       qr_code: code,
-      photo_data: prod.photoData,
-      prod_start_at: prod.iso,
-      prod_start_src: prod.iso ? prod.src : null,
-      ocr_raw: prod.raw,
+      machine_code: machine.trim() || null,
+      warehouse_id: whId || null,
+      qty_cartons: q,
+      photo_data: prodS.photoData,
+      prod_start_at: prodS.iso,
+      prod_start_src: prodS.iso ? prodS.src : null,
+      ocr_raw: prodS.raw,
+      photo_end_data: prodE.photoData,
+      prod_end_at: prodE.iso,
+      prod_end_src: prodE.iso ? prodE.src : null,
+      ocr_end_raw: prodE.raw,
+      complete,
     }, {
       onSuccess: () => onDone(),
-      onError: (e) => onError(apiMsg(e, 'Không mở được sổ — thử lại')),
+      onError: (e) => onError(apiMsg(e, 'Không ghi được sổ — thử lại')),
     })
   }
 
   return (
-    <FormSheet open onClose={onDone} title="Mở sổ đóng gói — pallet mới"
+    <FormSheet open onClose={onDone} title="Ghi sổ đóng gói — pallet vừa quét"
       footer={
         <div className="flex gap-2 w-full">
-          <Button variant="outline" className="flex-1" onClick={onDone}>Hủy</Button>
-          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending} onClick={save}>
-            {openMut.isPending ? 'Đang lưu…' : 'Mở sổ'}
+          <Button variant="outline" className="shrink-0" onClick={onDone}>Hủy</Button>
+          <Button variant="outline" className="flex-1" disabled={openMut.isPending || busy}
+            title="Pallet chưa xếp xong — lưu trước, đóng sổ sau từ board"
+            onClick={() => save(false)}>
+            Lưu — đóng sau
+          </Button>
+          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending || busy} onClick={() => save(true)}>
+            {openMut.isPending ? 'Đang lưu…' : busy ? 'Đang đọc ảnh…' : 'Lưu & Đóng sổ'}
           </Button>
         </div>
       }>
@@ -397,24 +432,31 @@ function OpenSheet({ code, openRows, onCloseFirst, onDone, onError }: {
           <p className="font-mono font-semibold text-slate-800 break-all">{code}</p>
           <p className="text-slate-500">
             Mã hàng <b className="text-slate-700">{fields.materialCode || '?'}</b>
-            {fields.machine && <> · Máy <b className="text-slate-700">{fields.machine}</b></>}
             {fields.seq && <> · Pallet <b className="text-slate-700">{fields.seq}</b></>}
             {fields.dateDisplay && <> · NSX tem {fields.dateDisplay}</>}
           </p>
         </div>
-        {prevOpen && (
-          <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 space-y-1.5">
-            <p className="flex items-start gap-1"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              Máy {fields.machine} còn pallet <b className="font-mono">{prevOpen.pallet_code.slice(0, 30)}…</b> ĐANG MỞ — dây chuyền liên tục thì đóng pallet đó trước.</p>
-            <Button size="sm" variant="outline" className="h-7 text-[11px] border-amber-300"
-              onClick={() => onCloseFirst(prevOpen)}>
-              <Check className="h-3 w-3 mr-1" /> Đóng pallet trước (tem này sẽ chờ)
-            </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <p className="text-xs font-medium text-slate-700 mb-1">Máy</p>
+            <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 text-sm" placeholder="VD: A" />
+            {fields.machine && fields.machine.length > 1 && machine === fields.machine && (
+              <p className="text-[10px] text-amber-700 mt-0.5">Tem in "{fields.machine}" — sửa thành máy thật ({fields.machine.split('').join(' hay ')})</p>
+            )}
           </div>
-        )}
-        <PhotoOcrField label="Chụp chữ date trên THÙNG ĐẦU TIÊN (giờ SX bắt đầu)" defaultDate={defaultDate} onValue={setProd} />
+          <div>
+            <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
+            <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 text-sm tabular-nums" placeholder="Theo tem" />
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-700 mb-1">Kho / Nhà máy</p>
+          <SingleSelect options={whOpts} value={whId} onChange={setWhId} placeholder="Theo tem (mặc định)" triggerClassName="w-full h-9" />
+        </div>
+        <PhotoOcrField label="① Chụp chữ date THÙNG ĐẦU (giờ SX bắt đầu)" defaultDate={defaultDate} onValue={setProdS} />
+        <PhotoOcrField label="② Chụp chữ date THÙNG CUỐI (giờ SX kết thúc)" defaultDate={defaultDate} onValue={setProdE} />
         <p className="text-[10px] text-slate-400">
-          Giờ sản xuất lấy từ CHỮ IN PHUN trên thùng (không phải giờ bấm nút). Chưa chụp được thì vẫn Mở sổ — bổ sung khi đóng hoặc sửa sau.
+          Giờ SX lấy từ CHỮ IN PHUN trên thùng (không phải giờ bấm nút). Ảnh lưu làm bằng chứng, giữ 60 ngày.
         </p>
       </div>
     </FormSheet>
@@ -428,7 +470,7 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
     ? new Date(log.prod_start_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     : (dmyToIso(parseCodeFields(log.pallet_code).dateDisplay) ?? todayVN())
   const [qty, setQty] = useState(log.qty_cartons != null ? String(log.qty_cartons) : '')
-  const [prod, setProd] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null })
+  const [prod, setProd] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
 
   function save() {
     const q = qty.trim() === '' ? null : Number(qty.replace(',', '.'))
@@ -451,8 +493,8 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
       footer={
         <div className="flex gap-2 w-full">
           <Button variant="outline" className="flex-1" onClick={onDone}>Hủy</Button>
-          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={closeMut.isPending} onClick={save}>
-            {closeMut.isPending ? 'Đang lưu…' : 'Đóng sổ'}
+          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={closeMut.isPending || prod.busy} onClick={save}>
+            {closeMut.isPending ? 'Đang lưu…' : prod.busy ? 'Đang đọc ảnh…' : 'Đóng sổ'}
           </Button>
         </div>
       }>
@@ -590,6 +632,7 @@ const LOG_COLS = [
   { id: 'status',  label: 'Trạng thái',    w: 90 },
   { id: 'pallet',  label: 'Tem pallet',    w: 220 },
   { id: 'mat',     label: 'Mã hàng',       w: 110 },
+  { id: 'wh',      label: 'Kho',           w: 110 },
   { id: 'machine', label: 'Máy',           w: 60 },
   { id: 'qty',     label: 'Số thùng',      w: 90 },
   { id: 'prod',    label: 'Giờ SX (in phun)', w: 200 },
@@ -601,8 +644,9 @@ const LOG_COLS = [
 ]
 const LOG_COL_DEFAULTS = LOG_COLS.map(c => c.w)
 
-function LogTab({ canEdit, canCancel, canExport, openCount, onEdit, onCancel, onCloseRow }: {
+function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEdit, onCancel, onCloseRow }: {
   canEdit: boolean; canCancel: boolean; canExport: boolean; openCount: number
+  whName: Map<string, string>; whOpts: { value: string; label: string }[]
   onEdit: (l: PackingLog) => void; onCancel: (l: PackingLog) => void; onCloseRow: (l: PackingLog) => void
 }) {
   const f = useWmsFilterStore(s => s.packing)
@@ -616,6 +660,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, onEdit, onCancel, on
     date_from: f.dateFrom || undefined,
     date_to: f.dateTo || undefined,
     machine: f.machine || undefined,
+    warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
     page: f.page, pageSize: f.pageSize,
   })
@@ -627,6 +672,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, onEdit, onCancel, on
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày mở sổ', type: 'daterange', pinned: true, from: f.dateFrom, to: f.dateTo,
       onChange: (from, to) => setF({ dateFrom: from, dateTo: to, page: 1 }) },
+    { key: 'wh', label: 'Kho / Nhà máy', type: 'single', options: whOpts,
+      value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v, page: 1 }) },
     { key: 'status', label: 'Trạng thái', type: 'single',
       options: [{ value: 'OPEN', label: 'Đang đóng' }, { value: 'CLOSED', label: 'Đã đóng' }, { value: 'CANCELLED', label: 'Đã hủy' }],
       value: f.status, onChange: (v: string) => setF({ status: v, page: 1 }) },
@@ -644,6 +691,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, onEdit, onCancel, on
         'Trạng thái': STATUS_LABEL[r.status] ?? r.status,
         'Tem pallet': r.pallet_code,
         'Mã hàng': r.material_code ?? '',
+        'Kho': r.warehouse_id ? (whName.get(r.warehouse_id) ?? '') : '',
         'Máy': r.machine_code ?? '',
         'Số thùng': r.qty_cartons ?? '',
         'Nguồn SL': r.qty_source === 'MANUAL' ? 'Nhập tay' : 'Theo tem',
@@ -713,6 +761,9 @@ function LogTab({ canEdit, canCancel, canExport, openCount, onEdit, onCancel, on
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate" title={r.pallet_code}>{r.pallet_code}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.material_code ?? '—'}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.warehouse_id ? whName.get(r.warehouse_id) ?? '' : ''}>
+                  {r.warehouse_id ? (whName.get(r.warehouse_id) ?? '—') : <span className="text-slate-300">—</span>}
+                </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.machine_code ?? '—'}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
                   {r.qty_cartons != null ? Number(r.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}

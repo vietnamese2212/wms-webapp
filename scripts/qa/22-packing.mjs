@@ -106,8 +106,9 @@ await cleanup()
 
 // [8] list + board: sổ lọc đúng trạng thái, tìm theo tem
 {
+  // 3 dòng CLOSED: tem1 (đóng thường) + tem2 (đua đóng) + tem4 (ghi 1 phiên complete)
   const closed = await api(`/wms/packing-logs?status=CLOSED&search=${TAG}&date_from=${today}&date_to=${today}`, 'GET')
-  check('Sổ lọc CLOSED thấy đủ 2 dòng vừa đóng', closed.s === 200 && (closed.j?.data?.rows ?? []).length === 2,
+  check('Sổ lọc CLOSED thấy đủ 3 dòng vừa đóng', closed.s === 200 && (closed.j?.data?.rows ?? []).length === 3,
     `http=${closed.s} n=${closed.j?.data?.rows?.length}`)
   const board = await api('/wms/packing-logs/board', 'GET')
   const mine = ((board.j?.data ?? [])).filter(r => String(r.pallet_code).includes(TAG))

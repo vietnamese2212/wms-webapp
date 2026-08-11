@@ -5448,6 +5448,7 @@ export function useUpdateNotifyPrefs() {
 export interface PackingLog {
   id: string
   pallet_code: string
+  run_id: string | null
   material_code: string | null
   material_id: string | null
   machine_code: string | null
@@ -5498,12 +5499,14 @@ export function usePackingLogs(params: {
 function invalidatePacking(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['packing-board'] })
   qc.invalidateQueries({ queryKey: ['packing-logs'] })
+  qc.invalidateQueries({ queryKey: ['packing-run-board'] })
+  qc.invalidateQueries({ queryKey: ['packing-runs'] })
 }
 export function useOpenPackingLog() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      qr_code: string; machine_code?: string | null; warehouse_id?: string | null; qty_cartons?: number | null
+      qr_code: string; run_id?: string | null; machine_code?: string | null; warehouse_id?: string | null; qty_cartons?: number | null
       photo_data?: string | null; prod_start_at?: string | null; prod_start_src?: string | null; ocr_raw?: string | null
       photo_end_data?: string | null; prod_end_at?: string | null; prod_end_src?: string | null; ocr_end_raw?: string | null
       complete?: boolean
@@ -5533,6 +5536,92 @@ export function useCancelPackingLog() {
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       apiClient.post(`/wms/packing-logs/${id}/cancel`, { note }).then(r => r.data.data),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+
+// ─── TRANG SỔ ĐÓNG GÓI (packing_runs — 11/08 chiều): mở trang trước → mới quét tem ───
+export interface PackingRun {
+  id: string
+  warehouse_id: string
+  run_date: string
+  shift: string | null
+  cycle: string | null
+  material_code: string
+  material_id: string | null
+  machine_code: string
+  start_at: string
+  end_at: string | null
+  qty_total: number | null
+  pallet_count: number | null
+  status: 'OPEN' | 'CLOSED' | 'CANCELLED'
+  opened_by_name: string | null
+  closed_by_name: string | null
+  note: string | null
+  // board/list đính kèm
+  pallet_open?: number
+  pallets?: PackingLog[]
+}
+export function usePackingRunBoard(warehouseId = '', enabled = true) {
+  return useQuery({
+    queryKey: ['packing-run-board', warehouseId],
+    enabled,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/packing-runs/board', {
+        params: { warehouse_id: warehouseId || undefined },
+      })
+      return data.data as PackingRun[]
+    },
+  })
+}
+export function usePackingRuns(params: {
+  status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
+  page?: number; pageSize?: number
+}) {
+  return useQuery({
+    queryKey: ['packing-runs', params],
+    placeholderData: (prev) => prev,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/packing-runs', { params })
+      return data.data as { rows: PackingRun[]; total: number; page: number; pageSize: number }
+    },
+  })
+}
+export function useOpenPackingRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      warehouse_id: string; run_date?: string; shift?: string | null; cycle?: string | null
+      material_code: string; material_id?: string | null; machine_code: string; start_at?: string | null; note?: string | null
+    }) =>
+      apiClient.post('/wms/packing-runs', body).then(r => r.data.data as PackingRun),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useClosePackingRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, end_at }: { id: string; end_at?: string | null }) =>
+      apiClient.post(`/wms/packing-runs/${id}/close`, { end_at }).then(r => r.data.data as PackingRun),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useUpdatePackingRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: {
+      id: string; shift?: string | null; cycle?: string | null; machine_code?: string
+      start_at?: string | null; end_at?: string | null; qty_total?: number; note?: string | null
+    }) =>
+      apiClient.patch(`/wms/packing-runs/${id}`, body).then(r => r.data.data as PackingRun),
+    onSettled: () => invalidatePacking(qc),
+  })
+}
+export function useCancelPackingRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) =>
+      apiClient.post(`/wms/packing-runs/${id}/cancel`, { note }).then(r => r.data.data),
     onSettled: () => invalidatePacking(qc),
   })
 }

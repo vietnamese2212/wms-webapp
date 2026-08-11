@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { normalizeQR, parseInboundQR } from '../../utils/qrParser'
+import { fetchAllByIdChunks } from '../../utils/pagination'
 
 // ─── SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08/2026) — số hóa sổ đóng gói viết tay tại xưởng ──
 // 1 pallet = 1 dòng packing_logs. Quét tem lúc BẮT ĐẦU xếp → mở sổ (OPEN);
@@ -169,6 +170,34 @@ export async function openLog(req: Request, res: Response) {
     .select('material_code, material_id, machine, qty, warehouse_id')
     .eq('qr_code', code).order('created_at', { ascending: false }).limit(1).maybeSingle()
 
+  // ── GATE TRANG SỔ (user chốt 11/08 chiều): quét tem CHỈ được khi có trang sổ đang MỞ
+  // khớp MÃ. Pallet kế thừa Kho + Máy của trang (tem in "AP" hết mơ hồ — máy khai ở trang).
+  const matCode = (label?.material_code as string | null) ?? parsed.material_code ?? null
+  const runIdBody = typeof (req.body as Record<string, unknown>).run_id === 'string'
+    ? String((req.body as Record<string, unknown>).run_id) : null
+  let run: { id: string; warehouse_id: string; material_code: string; machine_code: string; status: string } | null = null
+  if (runIdBody) {
+    const { data: r } = await supabase.from('packing_runs')
+      .select('id, warehouse_id, material_code, machine_code, status').eq('id', runIdBody).maybeSingle()
+    if (!r) return fail(res, 'Không tìm thấy trang sổ', 404)
+    if (r.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', 'Trang sổ này đã đóng/hủy — chọn trang đang mở')
+    if (matCode && r.material_code !== matCode)
+      return fail(res, 422, 'RUN_MATERIAL_MISMATCH', `Tem mã ${matCode} không khớp trang sổ (mã ${r.material_code})`)
+    run = r
+  } else {
+    let rq = supabase.from('packing_runs')
+      .select('id, warehouse_id, material_code, machine_code, status').eq('status', 'OPEN').limit(10)
+    if (matCode) rq = rq.eq('material_code', matCode)
+    const scopePre = scopeWhIds(req)
+    if (scopePre !== null) rq = rq.in('warehouse_id', scopePre.slice(0, 300))
+    const { data: candidates } = await rq
+    if (!candidates?.length)
+      return fail(res, 422, 'RUN_REQUIRED', `Chưa mở trang sổ cho mã ${matCode ?? '?'} — người có quyền phải "Mở trang sổ" (khai Kho/Ca/Máy) trước khi quét tem`)
+    if (candidates.length > 1)
+      return fail(res, 409, 'RUN_AMBIGUOUS', `Mã ${matCode ?? '?'} đang mở ${candidates.length} trang sổ (khác máy/kho) — chọn trang sổ trước khi quét`)
+    run = candidates[0]
+  }
+
   const prodS = parseProdTime(prod_start_at, prod_start_at ? prod_start_src : null)
   if (typeof prodS === 'string') return fail(res, prodS, 422)
   const prodE = parseProdTime(prod_end_at, prod_end_at ? prod_end_src : null)
@@ -180,13 +209,13 @@ export async function openLog(req: Request, res: Response) {
   const photoE = decodePhotoDataUrl(photo_end_data)
   if (typeof photoE === 'string') return fail(res, photoE, 422)
 
-  // Máy/kho/SL sửa được tại chỗ (tem in "AP" = máy A hoặc P tùy tình huống; nhiều nhà máy
-  // cùng sản xuất nên phải khai đúng KHO). Kho khai phải nằm trong scope người ghi.
+  // Máy + Kho KẾ THỪA từ trang sổ (khai lúc mở trang — tem "AP" hết mơ hồ); vẫn nhận
+  // machine_code override từ body cho ca đặc biệt. Kho của trang phải trong scope người quét.
   const machine = typeof machine_code === 'string' && machine_code.trim()
     ? machine_code.trim().toUpperCase().slice(0, 10)
-    : ((label?.machine as string | null) ?? (parsed.machine_code || null))
-  let wh = typeof warehouse_id === 'string' && warehouse_id.trim()
-    ? warehouse_id.trim() : ((label?.warehouse_id as string | null) ?? null)
+    : (run?.machine_code ?? (label?.machine as string | null) ?? (parsed.machine_code || null))
+  const wh = run?.warehouse_id
+    ?? (typeof warehouse_id === 'string' && warehouse_id.trim() ? warehouse_id.trim() : ((label?.warehouse_id as string | null) ?? null))
   const scope = scopeWhIds(req)
   if (wh && scope !== null && !scope.includes(wh)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   let qty: number | null = label?.qty ?? null
@@ -208,7 +237,8 @@ export async function openLog(req: Request, res: Response) {
   const row = {
     id,
     pallet_code: code,
-    material_code: label?.material_code ?? parsed.material_code ?? null,
+    run_id: run?.id ?? null,
+    material_code: matCode,
     material_id: label?.material_id ?? null,
     machine_code: machine,
     warehouse_id: wh,
@@ -321,6 +351,218 @@ export async function updateLog(req: Request, res: Response) {
   if (error) return fail(res, error.message, 500)
   await attachPhotoUrls([data as LogRow])
   return ok(res, data)
+}
+
+// ═══ TRANG SỔ ĐÓNG GÓI (packing_runs — user chốt 11/08 chiều) ═══════════════════
+// 1 dòng = 1 TRANG SẢN PHẨM trong sổ viết tay: Kho + Ngày + Ca + Chu kỳ + Mã + Máy +
+// Giờ bắt đầu; bấm "Giờ kết thúc" → CLOSED + tính TỔNG SẢN LƯỢNG = Σ thùng pallet đã ghi.
+// Quét tem chỉ được khi trang đang MỞ (gate ở openLog). Quyền: packing.open_run.
+
+type RunAgg = { pallet_count: number; pallet_open: number; qty_sum: number }
+
+// Σ thùng + đếm pallet SỐNG (không tính CANCELLED) của các trang — dùng cho board/list/close
+async function aggRuns(runIds: string[]): Promise<Map<string, RunAgg & { pallets: LogRow[] }>> {
+  const out = new Map<string, RunAgg & { pallets: LogRow[] }>()
+  if (!runIds.length) return out
+  const logs = await fetchAllByIdChunks(runIds, chunk =>
+    supabase.from('packing_logs').select('*').in('run_id', chunk).neq('status', 'CANCELLED').order('open_scan_at'))
+  for (const l of logs as (LogRow & { run_id: string })[]) {
+    const a = out.get(l.run_id) ?? { pallet_count: 0, pallet_open: 0, qty_sum: 0, pallets: [] }
+    a.pallet_count++
+    if (l.status === 'OPEN') a.pallet_open++
+    a.qty_sum += Number(l.qty_cartons ?? 0)
+    a.pallets.push(l)
+    out.set(l.run_id, a)
+  }
+  return out
+}
+
+// GET /wms/packing-runs/board — trang đang MỞ + pallet của từng trang (packing.view)
+export async function getRunBoard(req: Request, res: Response) {
+  let q = supabase.from('packing_runs').select('*').eq('status', 'OPEN')
+    .order('start_at', { ascending: true }).limit(200)
+  const wh = String(req.query.warehouse_id ?? '')
+  if (wh) q = q.eq('warehouse_id', wh)
+  const scope = scopeWhIds(req)
+  if (scope !== null) q = q.in('warehouse_id', scope.slice(0, 300))
+  const { data, error } = await q
+  if (error) return fail(res, error.message, 500)
+  const runs = data ?? []
+  const agg = await aggRuns(runs.map(r => r.id as string))
+  return ok(res, runs.map(r => {
+    const a = agg.get(r.id as string)
+    return { ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0, pallets: a?.pallets ?? [] }
+  }))
+}
+
+// GET /wms/packing-runs — tra cứu sổ theo TRANG (phân trang server)
+export async function listRuns(req: Request, res: Response) {
+  const { status, date_from, date_to, machine, material_code, search } = req.query as Record<string, string | undefined>
+  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(PAGE_MAX, Math.max(1, parseInt(String(req.query.pageSize ?? '200'), 10) || 200))
+
+  let q = supabase.from('packing_runs').select('*', { count: 'exact' })
+  if (status && ['OPEN', 'CLOSED', 'CANCELLED'].includes(status)) q = q.eq('status', status)
+  const whF = String(req.query.warehouse_id ?? '')
+  if (whF) q = q.eq('warehouse_id', whF)
+  if (date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from)) q = q.gte('run_date', date_from)
+  if (date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to)) q = q.lte('run_date', date_to)
+  if (machine) q = q.eq('machine_code', machine)
+  if (material_code) q = q.eq('material_code', material_code)
+  if (search && search.trim()) {
+    const term = search.trim().replace(/[%_,()]/g, ' ').slice(0, 60).trim()
+    if (term) q = q.or(`material_code.ilike.%${term}%,cycle.ilike.%${term}%,opened_by_name.ilike.%${term}%`)
+  }
+  const scope = scopeWhIds(req)
+  if (scope !== null) q = q.in('warehouse_id', scope.slice(0, 300))
+
+  const from = (page - 1) * pageSize
+  const { data, count, error } = await q.order('run_date', { ascending: false })
+    .order('start_at', { ascending: false }).range(from, from + pageSize - 1)
+  if (error) return fail(res, error.message, 500)
+  // Trang MỞ chưa có tổng chốt → tính sống; trang ĐÃ ĐÓNG dùng số đã chốt lúc bấm Giờ kết thúc
+  const rows = data ?? []
+  const openIds = rows.filter(r => r.status === 'OPEN').map(r => r.id as string)
+  const agg = await aggRuns(openIds)
+  for (const r of rows) {
+    const a = agg.get(r.id as string)
+    if (a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
+  }
+  return ok(res, { rows, total: count ?? 0, page, pageSize })
+}
+
+// POST /wms/packing-runs — MỞ TRANG SỔ (packing.open_run)
+// body: { warehouse_id, run_date?, shift?, cycle?, material_code, material_id?, machine_code, start_at?, note? }
+export async function openRun(req: Request, res: Response) {
+  const { warehouse_id, run_date, shift, cycle, material_code, material_id, machine_code, start_at, note } = req.body as Record<string, unknown>
+  if (!warehouse_id || typeof warehouse_id !== 'string') return fail(res, 'Chọn Kho / Nhà máy', 422)
+  if (!material_code || typeof material_code !== 'string' || !material_code.trim()) return fail(res, 'Chọn Mã sản phẩm', 422)
+  if (!machine_code || typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Nhập Máy', 422)
+  const scope = scopeWhIds(req)
+  if (scope !== null && !scope.includes(warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+  const dateVN = typeof run_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(run_date)
+    ? run_date : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  let startIso = new Date().toISOString()
+  if (start_at != null && start_at !== '') {
+    if (typeof start_at !== 'string' || isNaN(new Date(start_at).getTime())) return fail(res, 'Giờ bắt đầu không hợp lệ', 422)
+    startIso = new Date(start_at).toISOString()
+  }
+  const now = new Date().toISOString()
+  const { data, error } = await supabase.from('packing_runs').insert({
+    id: randomUUID(),
+    warehouse_id,
+    run_date: dateVN,
+    shift: typeof shift === 'string' && shift.trim() ? shift.trim().slice(0, 40) : null,
+    cycle: typeof cycle === 'string' && cycle.trim() ? cycle.trim().slice(0, 40) : null,
+    material_code: material_code.trim(),
+    material_id: typeof material_id === 'string' && material_id ? material_id : null,
+    machine_code: machine_code.trim().toUpperCase().slice(0, 10),
+    start_at: startIso,
+    status: 'OPEN',
+    opened_by: req.user?.sub ?? null,
+    opened_by_name: req.user?.name ?? null,
+    note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null,
+    created_at: now,
+    updated_at: now,
+  }).select('*').single()
+  if (error) {
+    if (error.code === '23505')
+      return fail(res, 409, 'RUN_DUP', 'Đã có trang sổ ĐANG MỞ cho Kho + Mã + Máy này — dùng trang đó hoặc đóng trước rồi mở trang mới')
+    return fail(res, error.message, 500)
+  }
+  return ok(res, data)
+}
+
+// POST /wms/packing-runs/:id/close — bấm "GIỜ KẾT THÚC" → CLOSED + TÍNH TỔNG SẢN LƯỢNG
+// body: { end_at? } — mặc định giờ bấm. CAS trên status: 2 người cùng bấm → 1 ăn.
+export async function closeRun(req: Request, res: Response) {
+  const { id } = req.params
+  const { end_at } = req.body as Record<string, unknown>
+  const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
+  if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (run.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', `Trang sổ đang ở trạng thái ${run.status}`)
+  let endIso = new Date().toISOString()
+  if (end_at != null && end_at !== '') {
+    if (typeof end_at !== 'string' || isNaN(new Date(end_at).getTime())) return fail(res, 'Giờ kết thúc không hợp lệ', 422)
+    endIso = new Date(end_at).toISOString()
+  }
+  if (new Date(endIso) < new Date(run.start_at as string))
+    return fail(res, 422, 'TIME_ORDER', 'Giờ kết thúc đang TRƯỚC giờ bắt đầu — kiểm tra lại (qua nửa đêm thì chỉnh ngày)')
+
+  const agg = await aggRuns([id])
+  const a = agg.get(id)
+  const now = new Date().toISOString()
+  const { data, error } = await supabase.from('packing_runs')
+    .update({
+      status: 'CLOSED',
+      end_at: endIso,
+      qty_total: a?.qty_sum ?? 0,
+      pallet_count: a?.pallet_count ?? 0,
+      closed_by: req.user?.sub ?? null,
+      closed_by_name: req.user?.name ?? null,
+      updated_at: now,
+    })
+    .eq('id', id).eq('status', 'OPEN').select('*')
+  if (error) return fail(res, error.message, 500)
+  if (!data?.length) return fail(res, 409, 'RUN_NOT_OPEN', 'Trang sổ vừa được người khác đóng')
+  return ok(res, { ...data[0], pallet_open: a?.pallet_open ?? 0 })
+}
+
+// PATCH /wms/packing-runs/:id — sửa trang (ca/chu kỳ/máy/giờ/tổng/ghi chú) — packing.open_run
+export async function updateRun(req: Request, res: Response) {
+  const { id } = req.params
+  const { shift, cycle, machine_code, start_at, end_at, qty_total, note } = req.body as Record<string, unknown>
+  const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
+  if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (run.status === 'CANCELLED') return fail(res, 409, 'CANCELLED', 'Trang sổ đã hủy — không sửa được')
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (shift !== undefined) patch.shift = typeof shift === 'string' && shift.trim() ? shift.trim().slice(0, 40) : null
+  if (cycle !== undefined) patch.cycle = typeof cycle === 'string' && cycle.trim() ? cycle.trim().slice(0, 40) : null
+  if (machine_code !== undefined) {
+    if (typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Máy không được trống', 422)
+    patch.machine_code = machine_code.trim().toUpperCase().slice(0, 10)
+  }
+  for (const [k, v] of [['start_at', start_at], ['end_at', end_at]] as const) {
+    if (v === undefined) continue
+    if (v === null || v === '') { if (k === 'end_at') patch.end_at = null; continue }   // giờ bắt đầu không cho xóa trống
+    if (typeof v !== 'string' || isNaN(new Date(v).getTime())) return fail(res, `Giờ ${k === 'start_at' ? 'bắt đầu' : 'kết thúc'} không hợp lệ`, 422)
+    patch[k] = new Date(v).toISOString()
+  }
+  const s = (patch.start_at ?? run.start_at) as string
+  const e = (patch.end_at !== undefined ? patch.end_at : run.end_at) as string | null
+  if (s && e && new Date(e) < new Date(s)) return fail(res, 422, 'TIME_ORDER', 'Giờ kết thúc đang TRƯỚC giờ bắt đầu')
+  if (qty_total !== undefined) {
+    const q = Number(qty_total)
+    if (!Number.isFinite(q) || q < 0 || q > 10_000_000) return fail(res, 'Tổng sản lượng phải là số không âm hợp lý', 422)
+    patch.qty_total = q
+  }
+  if (note !== undefined) patch.note = typeof note === 'string' ? note.trim().slice(0, 500) : null
+
+  const { data, error } = await supabase.from('packing_runs').update(patch).eq('id', id).select('*').single()
+  if (error) return fail(res, error.message, 500)
+  return ok(res, data)
+}
+
+// POST /wms/packing-runs/:id/cancel — hủy trang mở nhầm; CHẶN khi đã có pallet ghi vào
+export async function cancelRun(req: Request, res: Response) {
+  const { id } = req.params
+  const { note } = req.body as Record<string, unknown>
+  const { count } = await supabase.from('packing_logs')
+    .select('id', { count: 'exact', head: true }).eq('run_id', id).neq('status', 'CANCELLED')
+  if ((count ?? 0) > 0)
+    return fail(res, 409, 'RUN_HAS_PALLETS', `Trang sổ đã có ${count} pallet ghi vào — hủy từng pallet trước, hoặc bấm Giờ kết thúc để đóng trang`)
+  const now = new Date().toISOString()
+  const { data, error } = await supabase.from('packing_runs')
+    .update({
+      status: 'CANCELLED',
+      ...(typeof note === 'string' && note.trim() ? { note: note.trim().slice(0, 500) } : {}),
+      updated_at: now,
+    })
+    .eq('id', id).neq('status', 'CANCELLED').select('id')
+  if (error) return fail(res, error.message, 500)
+  if (!data?.length) return fail(res, 'Không tìm thấy trang sổ (hoặc đã hủy)', 404)
+  return ok(res, { id })
 }
 
 // POST /wms/packing-logs/:id/cancel — hủy dòng ghi nhầm (packing.cancel); giữ vết, không xóa

@@ -49,16 +49,21 @@ export function extractPrintInfo(raw: string): { time: string | null; nsxDate: s
   return { time, nsxDate }
 }
 
-// Tiền xử lý cho font chấm: phóng to → xám → nhị phân (ngưỡng dưới mean — mực tối hơn nền
-// bìa) → GIÃN NỞ 4 hướng 1 vòng cho các chấm dính liền thành nét chữ.
-async function preprocess(dataUrl: string): Promise<HTMLCanvasElement> {
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+// Tiền xử lý: phóng to → xám → (mode 'binary') nhị phân theo ngưỡng dưới mean + GIÃN NỞ
+// 4 hướng cho chấm mực dính thành nét; (mode 'gray') chỉ xám — để Tesseract tự Otsu, cứu
+// các ảnh nền màu (thùng cam/đỏ) mà ngưỡng toàn cục làm nát chữ (ảnh user 11/08 chiều:
+// tấm NSX:11/02/26 17:44 rất rõ vẫn trượt).
+async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
     const i = new Image()
     i.onload = () => resolve(i)
     i.onerror = () => reject(new Error('Không nạp được ảnh'))
     i.src = dataUrl
   })
-  const scale = Math.max(1, Math.min(3, 1000 / img.width))   // 1000px đủ cho chữ in phun, OCR nhanh hơn ~2×
+}
+
+function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gray'): HTMLCanvasElement {
+  const scale = Math.max(0.2, Math.min(3, targetW / img.width))
   const c = document.createElement('canvas')
   c.width = Math.round(img.width * scale)
   c.height = Math.round(img.height * scale)
@@ -75,6 +80,14 @@ async function preprocess(dataUrl: string): Promise<HTMLCanvasElement> {
     const g = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0
     gray[i] = g
     sum += g
+  }
+  if (mode === 'gray') {
+    for (let i = 0; i < n; i++) {
+      px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = gray[i]
+      px[i * 4 + 3] = 255
+    }
+    ctx.putImageData(im, 0, 0)
+    return c
   }
   const thr = (sum / n) * 0.82
   const bin = new Uint8Array(n)
@@ -117,13 +130,28 @@ export function warmOcr(): void {
   void getWorker().catch(() => { /* mất mạng → lần chụp sẽ thử lại */ })
 }
 
+// ĐA LƯỢT (11/08 chiều — tấm rất rõ vẫn trượt vì 1 lượt binary duy nhất): chạy tối đa 3
+// biến thể ảnh, DỪNG NGAY khi bóc được giờ. GỌI VỚI ẢNH GỐC full-res (đừng đưa ảnh đã nén
+// 1024px — chữ in phun bị nghiền nát trước khi OCR nhìn thấy; đó là bug gốc).
+const OCR_PASSES: { w: number; mode: 'binary' | 'gray' }[] = [
+  { w: 1600, mode: 'binary' },   // chấm mực CIJ chuẩn — dính nét, đọc nhanh nhất
+  { w: 1600, mode: 'gray' },     // nền bìa màu/loang — để Tesseract tự chọn ngưỡng
+  { w: 2400, mode: 'binary' },   // chữ nhỏ trong khung hình rộng — phóng to thêm
+]
+
 export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo> {
   try {
-    const [worker, canvas] = await Promise.all([getWorker(), preprocess(dataUrl)])
-    const { data } = await worker.recognize(canvas)
-    const raw = (data.text ?? '').trim()
-    const { time, nsxDate } = extractPrintInfo(raw)
-    return { raw, time, nsxDate, ok: true }
+    const [worker, img] = await Promise.all([getWorker(), loadImage(dataUrl)])
+    let bestRaw = ''
+    for (const p of OCR_PASSES) {
+      const { data } = await worker.recognize(preprocess(img, p.w, p.mode))
+      const raw = (data.text ?? '').trim()
+      if (raw.length > bestRaw.length) bestRaw = raw
+      const { time, nsxDate } = extractPrintInfo(raw)
+      if (time) return { raw, time, nsxDate, ok: true }
+    }
+    const { time, nsxDate } = extractPrintInfo(bestRaw)
+    return { raw: bestRaw, time, nsxDate, ok: true }
   } catch {
     return { raw: '', time: null, nsxDate: null, ok: false }
   }

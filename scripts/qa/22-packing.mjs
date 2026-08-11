@@ -1,142 +1,190 @@
-// GÓI 22 — SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08): vòng đời mở→đóng→sửa→hủy + chống đua +
-// luật giờ (prod_end ≥ prod_start, nguồn OCR/MANUAL) + unique 1-tem-1-dòng-sống.
-// KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh verify tay trên Preview.
+// GÓI 22 — SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08; v2 = TRANG SỔ cùng ngày): vòng đời TRANG SỔ
+// (mở → quét pallet → Giờ kết thúc tính tổng → sửa/hủy) + gate "mở sổ trước mới quét"
+// + chống đua (unique 1-trang-mở per kho+mã+máy; 1-tem-1-dòng-sống) + luật giờ.
+// KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh/OCR verify tay trên Preview.
 import { login, api, restAll, restWrite, check, finish, BASE } from './lib.mjs'
 
 const TAG = 'QAPACK'
+const WH = 'QAPACKWH'   // kho tổng hợp giả có TAG — packing_runs.warehouse_id là text, dọn theo TAG
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const ddmmyy = today.slice(8, 10) + today.slice(5, 7) + today.slice(2, 4)
-const tem = (n) => `${ddmmyy}_${TAG}${n}_C01_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
+const tem = (n, mat = `${TAG}${n}`) => `${ddmmyy}_${mat}_C01_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
 const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`).toISOString()
 
 async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
+  await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
 }
+const openRun = (mat, machine, extra = {}) =>
+  api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: mat, machine_code: machine, run_date: today, start_at: iso(7, 0), shift: 'Ca 1', cycle: '55', ...extra })
 
-console.log(`── SỔ ĐÓNG GÓI · ${BASE.replace('https://', '')} ──`)
+console.log(`── SỔ ĐÓNG GÓI (trang sổ) · ${BASE.replace('https://', '')} ──`)
 
 // [0] chưa đăng nhập → 401
 {
-  const r = await fetch(`${BASE}/api/wms/packing-logs/board`)
-  check('Chưa đăng nhập → board 401', r.status === 401, `http=${r.status}`)
+  const r = await fetch(`${BASE}/api/wms/packing-runs/board`)
+  check('Chưa đăng nhập → board trang sổ 401', r.status === 401, `http=${r.status}`)
 }
 
 await login()
 await cleanup()
 
-// [1] tem rác → 422; tem hợp lệ → mở sổ OPEN + tự điền từ QR
+// [1] GATE: chưa mở trang sổ → quét tem bị chặn 422 RUN_REQUIRED (user chốt 11/08 chiều)
 {
+  const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1) })
+  check('Quét khi CHƯA mở trang sổ → 422 RUN_REQUIRED', r.s === 422 && r.j?.error?.code === 'RUN_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
   const bad = await api('/wms/packing-logs/open', 'POST', { qr_code: 'khong-phai-tem' })
   check('Tem sai định dạng → 422', bad.s === 422, `http=${bad.s}`)
-
-  const r = await api('/wms/packing-logs/open', 'POST', {
-    qr_code: tem(1), prod_start_at: iso(8, 0), prod_start_src: 'MANUAL', ocr_raw: `${TAG} raw 08:00:00 533`,
-  })
-  check('Mở sổ tem hợp lệ → 200 OPEN', r.s === 200 && r.j?.data?.status === 'OPEN', `http=${r.s} st=${r.j?.data?.status}`)
-  check('Tự điền mã hàng + máy từ tem', r.j?.data?.material_code === `${TAG}1` && r.j?.data?.machine_code === 'M9',
-    `mat=${r.j?.data?.material_code} machine=${r.j?.data?.machine_code}`)
-  check('Giờ SX thùng đầu + nguồn lưu đúng', r.j?.data?.prod_start_at != null && r.j?.data?.prod_start_src === 'MANUAL',
-    `src=${r.j?.data?.prod_start_src}`)
 }
 
-// [1b] GHI 1 PHIÊN TRỌN (user chốt 11/08 sau test thật): quét tem → 2 giờ thùng đầu/cuối →
-// complete:true = CLOSED luôn; máy trên tem sửa được (tem "AP" = máy A hoặc P)
+// [2] MỞ TRANG SỔ: thiếu field → 422; mở OK → OPEN; mở trùng (kho+mã+máy) → 409; đua 2 mở → 1 thắng
+let runA = null
+{
+  const miss = await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: `${TAG}1` })
+  check('Mở trang thiếu Máy → 422', miss.s === 422, `http=${miss.s}`)
+  const r = await openRun(`${TAG}1`, 'A')
+  runA = r.j?.data
+  check('Mở trang sổ hợp lệ → 200 OPEN', r.s === 200 && runA?.status === 'OPEN', `http=${r.s} st=${runA?.status}`)
+  const dup = await openRun(`${TAG}1`, 'A')
+  check('Mở trùng kho+mã+máy đang MỞ → 409 RUN_DUP', dup.s === 409 && dup.j?.error?.code === 'RUN_DUP', `http=${dup.s} code=${dup.j?.error?.code}`)
+  const rs = await Promise.all([1, 2].map(() => openRun(`${TAG}2`, 'M9')))
+  const okN = rs.filter(x => x.s === 200).length
+  check('Đua 2 người cùng mở 1 trang → 1 thắng + 1 RUN_DUP', okN === 1 && rs.filter(x => x.s === 409).length === 1, rs.map(x => x.s).join(','))
+}
+
+// [3] QUÉT VÀO TRANG: tự khớp trang theo MÃ, pallet KẾ THỪA Máy + Kho của trang (tem in M9 → máy A)
 {
   const r = await api('/wms/packing-logs/open', 'POST', {
-    qr_code: tem(4), machine_code: 'A', qty_cartons: 110, complete: true,
+    qr_code: tem(1), prod_start_at: iso(8, 0), prod_start_src: 'MANUAL', ocr_raw: `${TAG} raw 08:00 533`,
+  })
+  check('Quét tem khi trang mở → 200 OPEN + gắn run_id', r.s === 200 && r.j?.data?.status === 'OPEN' && r.j?.data?.run_id === runA?.id,
+    `http=${r.s} run=${r.j?.data?.run_id === runA?.id}`)
+  check('Pallet kế thừa Máy A + Kho của trang (tem in M9)',
+    r.j?.data?.machine_code === 'A' && r.j?.data?.warehouse_id === WH,
+    `machine=${r.j?.data?.machine_code} wh=${r.j?.data?.warehouse_id}`)
+  const again = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1) })
+  check('Quét lại tem đang MỞ → 409 ALREADY_LOGGED', again.s === 409 && again.j?.error?.code === 'ALREADY_LOGGED', `http=${again.s} code=${again.j?.error?.code}`)
+}
+
+// [4] NHIỀU TRANG cùng mã (khác máy) → quét không chỉ định = 409 RUN_AMBIGUOUS; chỉ định run_id = OK
+let runB = null
+{
+  const rB = await openRun(`${TAG}1`, 'B')
+  runB = rB.j?.data
+  check('Mở trang 2 cùng mã khác máy → 200', rB.s === 200, `http=${rB.s}`)
+  const amb = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(6, `${TAG}1`) })
+  check('Quét khi mã mở 2 trang, không chỉ định → 409 RUN_AMBIGUOUS', amb.s === 409 && amb.j?.error?.code === 'RUN_AMBIGUOUS', `http=${amb.s} code=${amb.j?.error?.code}`)
+  const pick = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(6, `${TAG}1`), run_id: runB?.id, complete: true, qty_cartons: 20 })
+  check('Chỉ định run_id → 200, máy theo trang B', pick.s === 200 && pick.j?.data?.machine_code === 'B' && pick.j?.data?.status === 'CLOSED',
+    `http=${pick.s} machine=${pick.j?.data?.machine_code}`)
+  const wrong = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(3), run_id: runB?.id })
+  check('Tem mã khác trang chỉ định → 422 RUN_MATERIAL_MISMATCH', wrong.s === 422 && wrong.j?.error?.code === 'RUN_MATERIAL_MISMATCH', `http=${wrong.s} code=${wrong.j?.error?.code}`)
+}
+
+// [5] GHI 1 PHIÊN TRỌN (complete:true) + luật giờ TIME_ORDER
+{
+  await openRun(`${TAG}4`, 'M9')
+  const r = await api('/wms/packing-logs/open', 'POST', {
+    qr_code: tem(4), qty_cartons: 110, complete: true,
     prod_start_at: iso(2, 44), prod_start_src: 'MANUAL', ocr_raw: '02:44 HSD:06/03/27 B/UR55',
     prod_end_at: iso(2, 49), prod_end_src: 'MANUAL', ocr_end_raw: '02:49 HSD:06/03/27 B/UR55',
   })
-  check('Ghi 1 phiên (complete) → CLOSED ngay', r.s === 200 && r.j?.data?.status === 'CLOSED', `http=${r.s} st=${r.j?.data?.status}`)
-  check('Máy override tem (M9→A) + đủ 2 giờ SX',
-    r.j?.data?.machine_code === 'A' && r.j?.data?.prod_start_at != null && r.j?.data?.prod_end_at != null,
-    `machine=${r.j?.data?.machine_code}`)
+  check('Ghi 1 phiên (complete) → CLOSED ngay, đủ 2 giờ SX', r.s === 200 && r.j?.data?.status === 'CLOSED' && r.j?.data?.prod_end_at != null,
+    `http=${r.s} st=${r.j?.data?.status}`)
   const bad = await api('/wms/packing-logs/open', 'POST', {
-    qr_code: tem(5), complete: true, prod_start_at: iso(3, 0), prod_start_src: 'MANUAL',
-    prod_end_at: iso(2, 0), prod_end_src: 'MANUAL',
+    qr_code: tem(5, `${TAG}4`), complete: true,
+    prod_start_at: iso(3, 0), prod_start_src: 'MANUAL', prod_end_at: iso(2, 0), prod_end_src: 'MANUAL',
   })
-  check('1 phiên với giờ cuối < giờ đầu → 422 TIME_ORDER', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
+  check('1 phiên giờ cuối < giờ đầu → 422 TIME_ORDER', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
 }
 
-// [2] tem đã có sổ SỐNG → 409 (thân thiện, nêu trạng thái)
-{
-  const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1) })
-  check('Quét lại tem đang MỞ → 409 ALREADY_LOGGED', r.s === 409 && r.j?.error?.code === 'ALREADY_LOGGED', `http=${r.s} code=${r.j?.error?.code}`)
-}
-
-// [3] ĐUA mở: 2 người cùng quét 1 tem mới → đúng 1 thắng (unique WHERE status<>CANCELLED)
+// [6] ĐUA quét mở cùng 1 tem mới → đúng 1 thắng (unique 1-tem-1-dòng-sống)
 {
   const rs = await Promise.all([1, 2].map(() => api('/wms/packing-logs/open', 'POST', { qr_code: tem(2) })))
   const okN = rs.filter(r => r.s === 200).length
-  const dupN = rs.filter(r => r.s === 409).length
-  check('Đua 2 quét mở cùng tem → 1 thắng + 1 báo trùng', okN === 1 && dupN === 1, `ok=${okN} dup=${dupN}`)
+  check('Đua 2 quét mở cùng tem → 1 thắng + 1 báo trùng', okN === 1 && rs.filter(r => r.s === 409).length === 1, rs.map(r => r.s).join(','))
   const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}2*&status=neq.CANCELLED`)
   check('DB chỉ 1 dòng sổ sống cho tem đó', rows.length === 1, `rows=${rows.length}`)
 }
 
-// [4] luật giờ: đóng với giờ thùng cuối TRƯỚC giờ thùng đầu → 422 TIME_ORDER
+// [7] ĐÓNG PALLET: giờ cuối < giờ đầu → 422; đóng OK → CLOSED qty MANUAL; đóng lần 2 → 409 (CAS)
 {
-  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}1*&status=eq.OPEN`)
+  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}1_*&status=eq.OPEN`)
   const id = rows[0]?.id
-  const r = await api(`/wms/packing-logs/${id}/close`, 'POST', { prod_end_at: iso(7, 0), prod_end_src: 'MANUAL' })
-  check('Giờ cuối < giờ đầu → 422 TIME_ORDER', r.s === 422 && r.j?.error?.code === 'TIME_ORDER', `http=${r.s} code=${r.j?.error?.code}`)
-
-  // [5] đóng hợp lệ → CLOSED + số thùng nhập tay đánh dấu MANUAL
-  const ok1 = await api(`/wms/packing-logs/${id}/close`, 'POST', {
-    qty_cartons: 54, prod_end_at: iso(9, 3), prod_end_src: 'MANUAL', ocr_raw: `${TAG} raw 09:03:00 587`,
-  })
-  check('Đóng hợp lệ → CLOSED, qty=54 nguồn MANUAL',
+  const bad = await api(`/wms/packing-logs/${id}/close`, 'POST', { prod_end_at: iso(7, 0), prod_end_src: 'MANUAL' })
+  check('Đóng pallet giờ cuối < giờ đầu → 422 TIME_ORDER', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
+  const ok1 = await api(`/wms/packing-logs/${id}/close`, 'POST', { qty_cartons: 54, prod_end_at: iso(9, 3), prod_end_src: 'MANUAL' })
+  check('Đóng pallet hợp lệ → CLOSED qty=54 MANUAL',
     ok1.s === 200 && ok1.j?.data?.status === 'CLOSED' && Number(ok1.j?.data?.qty_cartons) === 54 && ok1.j?.data?.qty_source === 'MANUAL',
-    `http=${ok1.s} st=${ok1.j?.data?.status} qty=${ok1.j?.data?.qty_cartons} src=${ok1.j?.data?.qty_source}`)
-
-  // [6] đóng lại lần 2 → 409 NOT_OPEN (CAS trên status)
+    `http=${ok1.s} qty=${ok1.j?.data?.qty_cartons}`)
   const r2 = await api(`/wms/packing-logs/${id}/close`, 'POST', { qty_cartons: 54 })
-  check('Đóng lần 2 → 409 NOT_OPEN', r2.s === 409 && r2.j?.error?.code === 'NOT_OPEN', `http=${r2.s} code=${r2.j?.error?.code}`)
+  check('Đóng pallet lần 2 → 409 NOT_OPEN', r2.s === 409 && r2.j?.error?.code === 'NOT_OPEN', `http=${r2.s} code=${r2.j?.error?.code}`)
 }
 
-// [7] ĐUA đóng: 2 người cùng bấm Đóng 1 pallet → đúng 1 ăn
+// [8] HỦY TRANG có pallet → 409 RUN_HAS_PALLETS (bảo toàn sổ)
 {
-  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}2*&status=eq.OPEN`)
-  const id = rows[0]?.id
-  const rs = await Promise.all([1, 2].map(() => api(`/wms/packing-logs/${id}/close`, 'POST', { qty_cartons: 10 })))
-  const okN = rs.filter(r => r.s === 200).length
-  check('Đua 2 lần Đóng → 1 ăn + 1 NOT_OPEN', okN === 1 && rs.filter(r => r.s === 409).length === 1,
-    rs.map(r => r.s).join(','))
+  const r = await api(`/wms/packing-runs/${runA?.id}/cancel`, 'POST', {})
+  check('Hủy trang đã có pallet → 409 RUN_HAS_PALLETS', r.s === 409 && r.j?.error?.code === 'RUN_HAS_PALLETS', `http=${r.s} code=${r.j?.error?.code}`)
 }
 
-// [8] list + board: sổ lọc đúng trạng thái, tìm theo tem
+// [9] GIỜ KẾT THÚC: end<start → 422; đóng OK → CLOSED + TỔNG SẢN LƯỢNG = Σ pallet; đua 2 đóng → 1 ăn
 {
-  // 3 dòng CLOSED: tem1 (đóng thường) + tem2 (đua đóng) + tem4 (ghi 1 phiên complete)
-  const closed = await api(`/wms/packing-logs?status=CLOSED&search=${TAG}&date_from=${today}&date_to=${today}`, 'GET')
-  check('Sổ lọc CLOSED thấy đủ 3 dòng vừa đóng', closed.s === 200 && (closed.j?.data?.rows ?? []).length === 3,
-    `http=${closed.s} n=${closed.j?.data?.rows?.length}`)
-  const board = await api('/wms/packing-logs/board', 'GET')
-  const mine = ((board.j?.data ?? [])).filter(r => String(r.pallet_code).includes(TAG))
-  check('Board không còn pallet QA nào mở', board.s === 200 && mine.length === 0, `open=${mine.length}`)
+  const bad = await api(`/wms/packing-runs/${runA?.id}/close`, 'POST', { end_at: iso(6, 0) })
+  check('Giờ kết thúc < giờ bắt đầu → 422 TIME_ORDER', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
+  const rs = await Promise.all([1, 2].map(() => api(`/wms/packing-runs/${runA?.id}/close`, 'POST', { end_at: iso(16, 30) })))
+  const okR = rs.find(r => r.s === 200)
+  check('Đua 2 lần Giờ kết thúc → 1 ăn + 1 RUN_NOT_OPEN', !!okR && rs.filter(r => r.s === 409).length === 1, rs.map(r => r.s).join(','))
+  // trang A có đúng 1 pallet sống (tem1, qty 54) → tổng chốt phải = 54, đếm = 1
+  check('Tổng sản lượng chốt = Σ thùng pallet (54) + đếm pallet = 1',
+    Number(okR?.j?.data?.qty_total) === 54 && Number(okR?.j?.data?.pallet_count) === 1,
+    `qty_total=${okR?.j?.data?.qty_total} pallets=${okR?.j?.data?.pallet_count}`)
 }
 
-// [9] sửa sau đóng: giờ hợp lệ → nguồn thành MANUAL; end<start → 422
+// [10] Trang ĐÃ ĐÓNG không nhận quét nữa: đóng nốt trang B + trang M9 → quét mã đó lại bị RUN_REQUIRED
 {
-  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}1*&status=eq.CLOSED`)
-  const id = rows[0]?.id
-  const ok1 = await api(`/wms/packing-logs/${id}`, 'PATCH', { prod_start_at: iso(8, 5), note: `${TAG} sửa giờ` })
-  check('Sửa giờ đầu → 200 + nguồn MANUAL', ok1.s === 200 && ok1.j?.data?.prod_start_src === 'MANUAL', `http=${ok1.s} src=${ok1.j?.data?.prod_start_src}`)
-  const bad = await api(`/wms/packing-logs/${id}`, 'PATCH', { prod_end_at: iso(6, 0) })
-  check('Sửa giờ cuối < giờ đầu → 422', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s} code=${bad.j?.error?.code}`)
+  await api(`/wms/packing-runs/${runB?.id}/close`, 'POST', {})
+  const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(7, `${TAG}1`) })
+  check('Mọi trang của mã đã đóng → quét lại 422 RUN_REQUIRED', r.s === 422 && r.j?.error?.code === 'RUN_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
 }
 
-// [10] hủy giữ vết + tem được GIẢI PHÓNG (unique chỉ áp dòng sống)
+// [11] SỬA TRANG (PATCH): đổi ca/máy OK; end<start → 422; sửa dòng pallet sau đóng → nguồn MANUAL
 {
-  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}2*`)
-  const id = rows[0]?.id
-  const c = await api(`/wms/packing-logs/${id}/cancel`, 'POST', { note: `${TAG} ghi nhầm` })
-  check('Hủy dòng → 200', c.s === 200, `http=${c.s}`)
-  const again = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(2) })
-  check('Tem có dòng ĐÃ HỦY → mở sổ lại được (đợt mới)', again.s === 200 && again.j?.data?.status === 'OPEN', `http=${again.s}`)
+  const upd = await api(`/wms/packing-runs/${runA?.id}`, 'PATCH', { shift: 'Ca 2', machine_code: 'A2', note: `${TAG} sửa` })
+  check('Sửa trang (ca/máy) → 200', upd.s === 200 && upd.j?.data?.shift === 'Ca 2' && upd.j?.data?.machine_code === 'A2', `http=${upd.s}`)
+  const bad = await api(`/wms/packing-runs/${runA?.id}`, 'PATCH', { end_at: iso(5, 0) })
+  check('Sửa giờ kết thúc < bắt đầu → 422', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s}`)
+  const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}1_*&status=eq.CLOSED`)
+  const pe = await api(`/wms/packing-logs/${rows[0]?.id}`, 'PATCH', { prod_start_at: iso(8, 5) })
+  check('Sửa giờ pallet sau đóng → nguồn MANUAL', pe.s === 200 && pe.j?.data?.prod_start_src === 'MANUAL', `http=${pe.s} src=${pe.j?.data?.prod_start_src}`)
+}
+
+// [12] HỦY TRANG RỖNG được + tem/khóa unique được GIẢI PHÓNG
+{
+  const r9 = await openRun(`${TAG}9`, 'M9')
+  const c = await api(`/wms/packing-runs/${r9.j?.data?.id}/cancel`, 'POST', { note: `${TAG} mở nhầm` })
+  check('Hủy trang chưa có pallet → 200', c.s === 200, `http=${c.s}`)
+  const re = await openRun(`${TAG}9`, 'M9')
+  check('Khóa unique giải phóng sau hủy → mở lại được', re.s === 200, `http=${re.s}`)
+  await api(`/wms/packing-runs/${re.j?.data?.id}/cancel`, 'POST', {})
+}
+
+// [13] LIST + BOARD: lọc trạng thái đúng; board chỉ còn trang MỞ
+{
+  const closed = await api(`/wms/packing-runs?status=CLOSED&search=${TAG}&date_from=${today}&date_to=${today}`, 'GET')
+  const n = (closed.j?.data?.rows ?? []).filter(r => r.warehouse_id === WH).length
+  check('Tra cứu trang CLOSED thấy đủ 2 trang (A + B)', closed.s === 200 && n === 2, `http=${closed.s} n=${n}`)
+  const board = await api('/wms/packing-runs/board', 'GET')
+  const mine = (board.j?.data ?? []).filter(r => r.warehouse_id === WH)
+  // còn mở: trang QAPACK2 (đua mở) + QAPACK4 — board phải thấy đúng 2, kèm Σ sống
+  const r4 = mine.find(r => r.material_code === `${TAG}4`)
+  check('Board còn đúng 2 trang mở + Σ sống trang QAPACK4 = 110/1 pallet',
+    board.s === 200 && mine.length === 2 && Number(r4?.qty_total) === 110 && Number(r4?.pallet_count) === 1,
+    `n=${mine.length} qty4=${r4?.qty_total}`)
 }
 
 console.log('\n🧹 dọn…')
 await cleanup()
-const residue = (await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}*`)).length
-console.log(`residue=${residue}`)
+const residueL = (await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}*`)).length
+const residueR = (await restAll('packing_runs', `select=id&warehouse_id=eq.${WH}`)).length
+console.log(`residue logs=${residueL} runs=${residueR}`)
 finish('PACKING')

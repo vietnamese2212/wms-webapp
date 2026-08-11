@@ -21,7 +21,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
   forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
-  packing:           ['view', 'record', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): quét mở/đóng pallet ≠ sửa giờ-số sau đóng ≠ hủy dòng; export riêng theo luật 26/07
+  packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
   pallet_print:      ['view', 'generate', 'reprint', 'history', 'audit'],

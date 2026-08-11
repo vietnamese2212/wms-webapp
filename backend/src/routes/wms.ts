@@ -239,6 +239,13 @@ router.post('/packing-logs/open',      requirePerm('packing', 'record'), packing
 router.post('/packing-logs/:id/close', requirePerm('packing', 'record'), packing.closeLog)
 router.patch('/packing-logs/:id',      requirePerm('packing', 'edit'),   packing.updateLog)
 router.post('/packing-logs/:id/cancel',requirePerm('packing', 'cancel'), packing.cancelLog)
+// Trang sổ (packing_runs) — MỞ TRANG trước mới quét tem; mở/đóng/sửa/hủy = quyền open_run riêng
+router.get('/packing-runs/board',       requirePerm('packing', 'view'),     packing.getRunBoard)
+router.get('/packing-runs',             requirePerm('packing', 'view'),     packing.listRuns)
+router.post('/packing-runs',            requirePerm('packing', 'open_run'), packing.openRun)
+router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
+router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)
+router.post('/packing-runs/:id/cancel', requirePerm('packing', 'open_run'), packing.cancelRun)
 router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)

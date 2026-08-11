@@ -29,21 +29,20 @@ export interface ScanEngine {
 
 const WASM_WIDTH = 2560   // giải ở ~2560px — cân bằng tốc độ/độ xa cho tem nhỏ trên iPhone/desktop
 
-// Tạo engine: ưu tiên native (nếu hỗ trợ QR) → nếu không, nạp zxing-wasm.
-export async function createScanEngine(): Promise<ScanEngine> {
-  if (window.BarcodeDetector) {
-    try {
-      const formats = await window.BarcodeDetector.getSupportedFormats()
-      if (formats.includes('qr_code')) {
-        const det = new window.BarcodeDetector({ formats: ['qr_code'] })
-        return {
-          kind: 'native',
-          detect: async v => (await det.detect(v)).map(b => ({ text: b.rawValue, points: b.cornerPoints })),
-        }
-      }
-    } catch { /* rơi xuống wasm */ }
-  }
+async function createNative(): Promise<ScanEngine | null> {
+  if (!window.BarcodeDetector) return null
+  try {
+    const formats = await window.BarcodeDetector.getSupportedFormats()
+    if (!formats.includes('qr_code')) return null
+    const det = new window.BarcodeDetector({ formats: ['qr_code'] })
+    return {
+      kind: 'native',
+      detect: async v => (await det.detect(v)).map(b => ({ text: b.rawValue, points: b.cornerPoints })),
+    }
+  } catch { return null }
+}
 
+async function createWasm(): Promise<ScanEngine> {
   const [{ prepareZXingModule, readBarcodes }, wasmUrl] = await Promise.all([
     import('zxing-wasm/reader'),
     import('zxing-wasm/reader/zxing_reader.wasm?url').then(m => m.default),
@@ -71,6 +70,40 @@ export async function createScanEngine(): Promise<ScanEngine> {
         points: [r.position.topLeft, r.position.topRight, r.position.bottomRight, r.position.bottomLeft]
           .map(p => ({ x: p.x * inv, y: p.y * inv })),
       }))
+    },
+  }
+}
+
+// Tạo engine: native (nhanh, rẻ pin) + LƯỚI ZXING khi native bắt trượt (11/08 — user so với
+// Zalo: quét QR hiển thị trên MÀN HÌNH laptop, app "rất tồi" trong khi Zalo bắt ngay).
+// Nguyên nhân: BarcodeDetector của Chrome Android đi qua API barcode ĐỜI CŨ của Play Services,
+// kém hơn hẳn ML Kit đầy đủ (Zalo) với QR trên màn hình/tem xấu; trong khi zxing-wasm
+// tryHarder@2560 ĐO THẬT giải được cả khung nhiễm lưới pixel màn hình. Cách chữa: native chạy
+// mỗi khung như cũ; trượt liên tục ~12 khung (~0,6s) → nạp lười zxing rồi cứ 3 khung trượt
+// chen 1 nhịp wasm — bắt được là reset. iPhone/desktop không có native → thuần wasm như cũ.
+export async function createScanEngine(): Promise<ScanEngine> {
+  const native = await createNative()
+  if (!native) return createWasm()
+
+  let wasm: ScanEngine | null = null
+  let wasmLoading = false
+  let misses = 0
+  return {
+    kind: 'native',
+    detect: async (video) => {
+      const hits = await native.detect(video)
+      if (hits.length) { misses = 0; return hits }
+      misses++
+      if (misses >= 12 && !wasm && !wasmLoading) {
+        wasmLoading = true
+        createWasm().then(w => { wasm = w }).catch(() => { wasmLoading = false })   // lỗi nạp → thử lại lượt sau
+      }
+      if (wasm && misses % 3 === 0) {
+        const rescue = await wasm.detect(video)
+        if (rescue.length) misses = 0
+        return rescue
+      }
+      return []
     },
   }
 }

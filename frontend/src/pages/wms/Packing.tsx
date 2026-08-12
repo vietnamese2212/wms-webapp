@@ -851,7 +851,7 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
           <Input value={note} onChange={e => setNote(e.target.value)} className="h-9 text-sm" placeholder="Lý do sửa / ghi chú" />
         </div>
         <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-          Sửa tay sẽ đánh dấu nguồn giờ/số là "tay" — sổ phân biệt được dòng máy ghi và dòng người can thiệp.
+          Sửa tay sẽ đánh dấu nguồn giờ/số là "người" — sổ phân biệt được dòng máy đọc (AI/OCR) và dòng người can thiệp.
         </p>
       </div>
     </FormSheet>

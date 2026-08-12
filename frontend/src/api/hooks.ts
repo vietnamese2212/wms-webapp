@@ -5460,8 +5460,8 @@ export interface PackingLog {
   close_scan_at: string | null
   prod_start_at: string | null
   prod_end_at: string | null
-  prod_start_src: 'OCR' | 'MANUAL' | null
-  prod_end_src: 'OCR' | 'MANUAL' | null
+  prod_start_src: 'AI' | 'OCR' | 'MANUAL' | null
+  prod_end_src: 'AI' | 'OCR' | 'MANUAL' | null
   ocr_start_raw: string | null
   ocr_end_raw: string | null
   photo_start_url?: string | null

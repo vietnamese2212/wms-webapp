@@ -144,15 +144,17 @@ const STATUS_BADGE: Record<string, string> = {
   CANCELLED: 'bg-slate-200 text-slate-500',
 }
 const STATUS_LABEL: Record<string, string> = { OPEN: 'Đang đóng', CLOSED: 'Đã đóng', CANCELLED: 'Đã hủy' }
+// Nguồn kết quả giờ SX (user chốt 12/08 "bên cạnh kết quả là nguồn kết quả: AI đọc, OCR đọc hoặc người đọc")
 const SRC_BADGE = (src: string | null) =>
-  src === 'OCR' ? <span className="text-[8px] px-1 rounded bg-sky-100 text-sky-700" title="Đọc tự động từ ảnh chữ in phun">OCR</span>
-  : src === 'MANUAL' ? <span className="text-[8px] px-1 rounded bg-amber-100 text-amber-800" title="Nhập tay (có ảnh đối chứng nếu đã chụp)">tay</span>
+  src === 'AI' ? <span className="text-[8px] px-1 rounded bg-violet-100 text-violet-700" title="AI Vision (Gemini) đọc từ ảnh chữ in phun">AI</span>
+  : src === 'OCR' ? <span className="text-[8px] px-1 rounded bg-sky-100 text-sky-700" title="OCR (Tesseract tại máy) đọc từ ảnh chữ in phun">OCR</span>
+  : src === 'MANUAL' ? <span className="text-[8px] px-1 rounded bg-amber-100 text-amber-800" title="Người nhập tay (có ảnh đối chứng nếu đã chụp)">người</span>
   : null
 
 // ─── Ô "chụp thùng + đọc giờ in phun" (dùng chung cho MỞ và ĐÓNG) ─────────────
 // Giá trị đẩy lên parent: photoData (đã nén) · iso (giờ SX từ date+time VN) · src (OCR nếu
 // giữ nguyên kết quả đọc, MANUAL nếu người dùng sửa/gõ) · raw (nguyên văn OCR — lưu DB).
-export interface ProdTimeValue { photoData: string | null; iso: string | null; src: 'OCR' | 'MANUAL' | null; raw: string | null; busy: boolean }
+export interface ProdTimeValue { photoData: string | null; iso: string | null; src: 'AI' | 'OCR' | 'MANUAL' | null; raw: string | null; busy: boolean }
 function PhotoOcrField({ label, defaultDate, onValue }: {
   label: string
   defaultDate: string
@@ -177,10 +179,11 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
       const d = new Date(`${date}T${hh}:${t[2]}:${t[4] ?? '00'}+07:00`)
       if (!isNaN(d.getTime())) iso = d.toISOString()
     }
-    const src: 'OCR' | 'MANUAL' | null = !iso ? null : (ocrTime && time === ocrTime ? 'OCR' : 'MANUAL')
+    // Nguồn = engine đã đọc (AI/OCR) nếu người dùng GIỮ NGUYÊN kết quả; sửa/gõ tay = MANUAL
+    const src: 'AI' | 'OCR' | 'MANUAL' | null = !iso ? null : (ocrTime && time === ocrTime ? (engine ?? 'OCR') : 'MANUAL')
     onValue({ photoData, iso, src, raw: ocrRaw, busy: busy !== null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [photoData, time, date, ocrTime, ocrRaw, busy])
+  }, [photoData, time, date, ocrTime, ocrRaw, busy, engine])
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -215,7 +218,7 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
       <p className="text-xs font-medium text-slate-700">{label}</p>
       <label className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm cursor-pointer transition-colors ${photoData ? 'border-slate-200 text-slate-500 hover:bg-slate-50' : 'border-sky-400 bg-sky-50 text-sky-700 font-medium'}`}>
         <Camera className="h-4 w-4" />
-        {busy === 'photo' ? 'Đang xử lý ảnh…' : busy === 'ocr' ? 'Đang đọc chữ in phun…' : photoData ? 'Chụp lại' : 'Chụp vùng chữ date trên thùng'}
+        {busy === 'photo' ? 'Đang xử lý ảnh…' : busy === 'ocr' ? 'Đang đọc chữ (AI / OCR)…' : photoData ? 'Chụp lại' : 'Chụp vùng chữ date trên thùng'}
         <input type="file" accept="image/*" capture="environment" className="hidden" disabled={!!busy}
           onChange={e => { void handleFile(e.target.files?.[0]); e.target.value = '' }} />
       </label>
@@ -232,9 +235,14 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
         <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 w-36 text-sm" />
         <Input value={time} onChange={e => setTime(maskHHMM(e.target.value))} placeholder="HH:MM"
           inputMode="numeric" className={`h-9 w-24 text-sm tabular-nums text-center ${ocrTime && time === ocrTime ? 'border-sky-400 bg-sky-50 font-semibold' : ''}`} />
-        {ocrTime && time === ocrTime && (
-          <span className="text-[10px] text-sky-700 font-medium shrink-0">✓ đọc từ ảnh{engine === 'AI' ? ' (AI)' : ''}</span>
-        )}
+        {/* Nguồn kết quả LUÔN hiện cạnh ô giờ (user chốt 12/08): AI đọc / OCR đọc / người nhập */}
+        {time.trim() !== '' && (ocrTime && time === ocrTime ? (
+          engine === 'AI'
+            ? <span className="text-[10px] text-violet-700 font-medium shrink-0">✓ AI đọc</span>
+            : <span className="text-[10px] text-sky-700 font-medium shrink-0">✓ OCR đọc</span>
+        ) : (
+          <span className="text-[10px] text-amber-700 font-medium shrink-0">✎ người nhập</span>
+        ))}
       </div>
     </div>
   )
@@ -295,10 +303,11 @@ export default function Packing() {
   const tabBar = (
     <div className="flex items-center gap-1 border-b bg-white px-3 pt-2 shrink-0 sm:rounded-t-xl overflow-x-auto">
       <NotebookPen className="h-4 w-4 text-sky-600 shrink-0 mb-1.5 mr-0.5" />
-      {([['board', `Đóng gói${openRuns.length ? ` (${openRuns.length})` : ''}`], ['runs', 'Trang sổ'], ['log', 'Sổ pallet']] as const).map(([k, label]) => (
+      {/* 12/08 user chốt: tab "Trang sổ" GIỐNG HỆT "Đóng gói" → gộp làm 1 (filter trạng thái/ngày + export nằm luôn ở Đóng gói) */}
+      {([['board', `Đóng gói${openRuns.length ? ` (${openRuns.length} đang mở)` : ''}`], ['log', 'Sổ pallet']] as const).map(([k, label]) => (
         <button key={k} type="button" onClick={() => setF({ tab: k })}
           className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-            f.tab === k ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
+            (f.tab === k || (k === 'board' && f.tab !== 'log')) ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'
           }`}>
           {label}
         </button>
@@ -323,11 +332,9 @@ export default function Packing() {
             <button type="button" onClick={() => setBanner('')}><X className="h-3.5 w-3.5" /></button>
           </div>
         )}
-        {f.tab === 'board' ? (
-          <BoardTab runs={openRuns} loading={board.isLoading} whOpts={whOpts}
-            canOpenRun={canOpenRun} onOpenRun={() => setOpenRunForm(true)} h={runHandlers} />
-        ) : f.tab === 'runs' ? (
+        {f.tab !== 'log' ? (
           <RunsTab canExport={canExport} openCount={openRuns.length}
+            canOpenRun={canOpenRun} onOpenRun={() => setOpenRunForm(true)}
             whName={whName} whOpts={whOpts} h={runHandlers} />
         ) : (
           <LogTab canEdit={canEdit} canCancel={canCancel} canExport={canExport} openCount={openPallets}
@@ -519,66 +526,6 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
       </Table>
       {lightbox && <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </div>
-  )
-}
-
-// ─── Tab ĐÓNG GÓI — trang sổ đang MỞ, bảng chuẩn table-format + filter đầy đủ ─
-function BoardTab({ runs, loading, whOpts, canOpenRun, onOpenRun, h }: {
-  runs: PackingRun[]; loading: boolean; whOpts: { value: string; label: string }[]
-  canOpenRun: boolean; onOpenRun: () => void; h: RunTableHandlers
-}) {
-  const f = useWmsFilterStore(s => s.packing)
-  const setF = useWmsFilterStore(s => s.setPacking)
-
-  const filterDefs: FilterDef[] = [
-    { key: 'wh', label: 'Kho / Nhà máy', type: 'single', pinned: true, options: whOpts,
-      value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v }) },
-    { key: 'machine', label: 'Máy', type: 'text', value: f.machine, placeholder: 'VD: A',
-      onChange: (v: string) => setF({ machine: v }) },
-  ]
-  const term = f.search.trim().toLowerCase()
-  const mach = f.machine.trim().toUpperCase()
-  const filtered = runs.filter(r =>
-    (!mach || r.machine_code.toUpperCase().includes(mach))
-    && (!term
-      || r.material_code.toLowerCase().includes(term)
-      || (r.cycle ?? '').toLowerCase().includes(term)
-      || (r.opened_by_name ?? '').toLowerCase().includes(term)
-      || (r.pallets ?? []).some(l => l.pallet_code.toLowerCase().includes(term))))
-  const palletN = filtered.reduce((s, r) => s + (r.pallets ?? []).length, 0)
-  const openPallets = filtered.reduce((s, r) => s + (r.pallet_open ?? 0), 0)
-
-  return (
-    <>
-      <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 space-y-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <SearchInput value={f.search} onChange={v => setF({ search: v })}
-            placeholder="Tìm mã SP / tem / chu kỳ / người mở…" className="flex-1 min-w-[120px]" />
-          <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
-          {canOpenRun && (
-            <Button size="sm" className="h-9 sm:h-7 text-[11px] bg-blue-600 hover:bg-blue-700" onClick={onOpenRun}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Mở trang sổ
-            </Button>
-          )}
-        </div>
-        <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
-      </div>
-
-      <SummaryBand tiles={[
-        { label: 'Trang đang mở', value: filtered.length.toLocaleString('vi-VN'), accent: filtered.length > 0 },
-        { label: 'Pallet đã ghi', value: palletN.toLocaleString('vi-VN') },
-        { label: 'Pallet đang mở', value: openPallets.toLocaleString('vi-VN'), accent: openPallets > 0 },
-        { label: 'Σ thùng', value: filtered.reduce((s, r) => s + Number(r.qty_total ?? 0), 0).toLocaleString('vi-VN') },
-      ]} />
-
-      <RunGroupedTable runs={filtered} loading={loading} h={h}
-        emptyText={canOpenRun
-          ? 'Chưa có trang sổ nào đang mở — bấm "Mở trang sổ" (Kho · Ca · Mã · Máy) rồi mới quét tem pallet'
-          : 'Chưa có trang sổ nào đang mở — người có quyền phải "Mở trang sổ" trước thì mới quét được tem'} />
-      <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
-        {filtered.length} trang đang mở · bấm vào dòng trang sổ để xem chi tiết
-      </div>
-    </>
   )
 }
 
@@ -1143,8 +1090,11 @@ function RunCancelConfirm({ run, onDone, onError }: { run: PackingRun; onDone: (
 // ─── Tab TRANG SỔ — tra cứu sổ GỘP THEO TRANG (table-format, nhóm dòng) ──────
 const RUNS_PAGE_SIZE = 50   // mỗi trang kèm pallet — giữ payload gọn
 
-function RunsTab({ canExport, openCount, whName, whOpts, h }: {
+// Tab ĐÓNG GÓI duy nhất (12/08 gộp "Trang sổ" vào đây — 2 tab từng giống hệt nhau):
+// bảng trang sổ server-filter đầy đủ (trạng thái/ngày/kho/máy) + Mở trang sổ + export + phân trang.
+function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, h }: {
   canExport: boolean; openCount: number
+  canOpenRun: boolean; onOpenRun: () => void
   whName: Map<string, string>; whOpts: { value: string; label: string }[]
   h: RunTableHandlers
 }) {
@@ -1211,6 +1161,11 @@ function RunsTab({ canExport, openCount, whName, whOpts, h }: {
           <SearchInput value={f.search} onChange={v => setF({ search: v, runPage: 1 })}
             placeholder="Tìm mã SP / chu kỳ / người mở…" className="flex-1 min-w-[120px]" />
           <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
+          {canOpenRun && (
+            <Button size="sm" className="h-9 sm:h-7 text-[11px] bg-blue-600 hover:bg-blue-700" onClick={onOpenRun}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Mở trang sổ
+            </Button>
+          )}
           {canExport && (
             <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={exporting || !rows.length} onClick={exportExcel}>
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
@@ -1228,7 +1183,9 @@ function RunsTab({ canExport, openCount, whName, whOpts, h }: {
       ]} />
 
       <RunGroupedTable runs={rows} loading={isLoading} h={h}
-        emptyText="Chưa có trang sổ nào khớp bộ lọc" />
+        emptyText={canOpenRun
+          ? 'Chưa có trang sổ nào khớp bộ lọc — bấm "Mở trang sổ" (Kho · Ca · Mã · Máy) rồi mới quét được tem pallet'
+          : 'Chưa có trang sổ nào khớp bộ lọc — người có quyền phải "Mở trang sổ" trước thì mới quét được tem'} />
       <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0 flex items-center gap-3">
         <span>1–{rows.length} / {total.toLocaleString('vi-VN')} trang sổ</span>
         {total > RUNS_PAGE_SIZE && (

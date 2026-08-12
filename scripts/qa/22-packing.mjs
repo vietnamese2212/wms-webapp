@@ -182,6 +182,20 @@ let runB = null
     `n=${mine.length} qty4=${r4?.qty_total}`)
 }
 
+// [13b] NGUỒN GIỜ 'AI' (12/08 — nhãn nguồn AI/OCR/người): BE phải nhận src='AI' và lưu đúng
+{
+  await openRun(`${TAG}9`, 'M9')
+  const r = await api('/wms/packing-logs/open', 'POST', {
+    qr_code: tem(9), qty_cartons: 10, prod_start_at: iso(8, 0), prod_start_src: 'AI', complete: true,
+    prod_end_at: iso(9, 0), prod_end_src: 'MANUAL',
+  })
+  check('Nguồn giờ AI được nhận + lưu đúng (start=AI, end=MANUAL)',
+    r.s === 200 && r.j?.data?.prod_start_src === 'AI' && r.j?.data?.prod_end_src === 'MANUAL',
+    `http=${r.s} start=${r.j?.data?.prod_start_src} end=${r.j?.data?.prod_end_src}`)
+  const bad = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(9), prod_start_at: iso(8, 0), prod_start_src: 'ROBOT' })
+  check('Nguồn giờ lạ (ROBOT) → 422', bad.s === 422, `http=${bad.s}`)
+}
+
 // [14] AI VISION (12/08): key KHÔNG rò qua settings hở đọc; lỗi vision = 422 SẠCH (FE rơi về OCR, không 500)
 {
   // 14a. PUT /wms/settings/vision_api phải bị chặn (cửa ghi duy nhất = /wms/vision-config)

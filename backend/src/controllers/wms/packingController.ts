@@ -76,7 +76,7 @@ async function signPhotoUrls(paths: string[]): Promise<Map<string, string>> {
 function parseProdTime(at: unknown, src: unknown): { at: string | null; src: string | null } | string {
   if (at == null || at === '') return { at: null, src: null }
   if (typeof at !== 'string' || isNaN(new Date(at).getTime())) return 'Giờ sản xuất không hợp lệ (ISO)'
-  if (src !== 'OCR' && src !== 'MANUAL') return 'Nguồn giờ phải là OCR hoặc MANUAL'
+  if (src !== 'AI' && src !== 'OCR' && src !== 'MANUAL') return 'Nguồn giờ phải là AI, OCR hoặc MANUAL'
   return { at: new Date(at).toISOString(), src }
 }
 

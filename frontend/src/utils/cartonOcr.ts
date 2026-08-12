@@ -354,8 +354,15 @@ export function warmOcr(): void {
 // 1024px — chữ in phun bị nghiền nát trước khi OCR nhìn thấy; đó là bug gốc).
 const CENTER: CropFrac = { x: 0.12, y: 0.22, w: 0.76, h: 0.56 }   // vùng giữa khung — chỗ user nhắm chữ
 
+// NGÂN SÁCH THỜI GIAN (user báo 12/08 "cả 2 chỗ chụp đều chậm chạp"): ảnh khó từng chạy
+// HẾT 7–9 lượt full-res mới bỏ cuộc (30–60s). Quá hạn → dừng lượt còn lại, trả kết quả tốt
+// nhất đã có — người dùng gõ tay sớm thay vì ngồi chờ máy nghiền vô vọng.
+const OCR_BUDGET_MS = 12_000
+
 export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo> {
   try {
+    const t0 = Date.now()
+    const overBudget = () => Date.now() - t0 > OCR_BUDGET_MS
     const [worker, img] = await Promise.all([getWorker(), loadImage(dataUrl)])
     let bestRaw = ''
     const tryCanvas = async (canvas: HTMLCanvasElement): Promise<CartonPrintInfo | null> => {
@@ -367,10 +374,11 @@ export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo>
     }
     // Lượt ưu tiên: các DẢI MỰC IN tự dò — cắt trúng chữ, scale về cỡ đọc tốt, xoay bù
     // góc nghiêng ĐO ĐƯỢC (đo 12/08: ảnh thẳng/gần thẳng ăn ngay lượt đầu).
-    for (const b of detectInkBands(img)) {
+    bands: for (const b of detectInkBands(img)) {
       for (const [mode, rot] of [['binary', -b.angle], ['gray', -b.angle], ['binary', 0], ['gray', 0]] as ['binary' | 'gray', number][]) {
         const hit = await tryCanvas(prepBand(img, b, mode, rot))
         if (hit) return hit
+        if (overBudget()) break bands
       }
     }
     // Lượt toàn khung / cắt giữa (giữ từ bản trước — cứu khi dò dải trượt)
@@ -380,6 +388,7 @@ export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo>
       { w: 1600, mode: 'gray' },
     ]
     for (const p of fallbacks) {
+      if (overBudget()) break
       const hit = await tryCanvas(preprocess(img, p.w, p.mode, p.crop))
       if (hit) return hit
     }

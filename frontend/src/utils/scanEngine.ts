@@ -79,14 +79,25 @@ async function createWasm(): Promise<ScanEngine> {
 // Nguyên nhân: BarcodeDetector của Chrome Android đi qua API barcode ĐỜI CŨ của Play Services,
 // kém hơn hẳn ML Kit đầy đủ (Zalo) với QR trên màn hình/tem xấu; trong khi zxing-wasm
 // tryHarder@2560 ĐO THẬT giải được cả khung nhiễm lưới pixel màn hình. Cách chữa: native chạy
-// mỗi khung như cũ; trượt liên tục ~12 khung (~0,6s) → nạp lười zxing rồi cứ 3 khung trượt
-// chen 1 nhịp wasm — bắt được là reset. iPhone/desktop không có native → thuần wasm như cũ.
+// mỗi khung như cũ; trượt là chen nhịp wasm — bắt được là reset. iPhone/desktop không có
+// native → thuần wasm như cũ.
+// 12/08 tối (user so Nhập kho vs ô search + Sổ đóng gói): lưới zxing nạp NGAY khi tạo engine,
+// KHÔNG chờ trượt 6 khung mới bắt đầu tải — các màn quét mount LẠNH mỗi lần mở (dialog search,
+// overlay Packing stopOnScan) từng phải chịu 0,3s + thời gian tải wasm trước khi lưới cứu chạy
+// được, trong khi Nhập kho camera sống liên tục nên lưới luôn ấm sẵn → "Nhập bắt tốt hơn".
+// Asset wasm nằm trong precache PWA nên nạp trước gần như miễn phí; native vẫn là đường chính.
 export async function createScanEngine(): Promise<ScanEngine> {
   const native = await createNative()
   if (!native) return createWasm()
 
   let wasm: ScanEngine | null = null
   let wasmLoading = false
+  const loadWasm = () => {
+    if (wasm || wasmLoading) return
+    wasmLoading = true
+    createWasm().then(w => { wasm = w }).catch(() => { wasmLoading = false })   // lỗi nạp (mất mạng thoáng) → thử lại lượt sau
+  }
+  loadWasm()
   let misses = 0
   return {
     kind: 'native',
@@ -94,13 +105,10 @@ export async function createScanEngine(): Promise<ScanEngine> {
       const hits = await native.detect(video)
       if (hits.length) { misses = 0; return hits }
       misses++
-      // 12/08: user đo tem GIẤY chụp ảnh mở trên laptop — siết lưới nhạy hơn (6 khung ~0,3s
-      // là nạp zxing, chen mỗi 2 khung) vì đo thật zxing giải được cả khung nghiêng+nhăn+moiré
-      if (misses >= 6 && !wasm && !wasmLoading) {
-        wasmLoading = true
-        createWasm().then(w => { wasm = w }).catch(() => { wasmLoading = false })   // lỗi nạp → thử lại lượt sau
-      }
-      if (wasm && misses % 2 === 0) {
+      if (!wasm) loadWasm()
+      // lưới đã ấm sẵn → chen từ khung trượt thứ 2 (~0,1s), mỗi 2 khung 1 nhịp (đo thật 12/08:
+      // zxing giải được cả khung nghiêng+nhăn+moiré mà native trượt)
+      if (wasm && misses >= 2 && misses % 2 === 0) {
         const rescue = await wasm.detect(video)
         if (rescue.length) misses = 0
         return rescue

@@ -29,6 +29,7 @@ import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { normalizeQR } from '@/utils/qr'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -321,6 +322,18 @@ export default function Packing() {
     setShowScan(false)
     setPendingQR(normalizeQR(raw))
   }
+
+  // Súng PDA (keyboard-wedge, 12/08 — user so với Nhập kho: mọi màn quét khác đã nhận súng,
+  // riêng Sổ đóng gói chỉ có camera): bắn tem ở BẤT KỲ đâu trong trang (kể cả chưa mở camera)
+  // → vào thẳng RecordSheet như quét camera. Đang mở form khai/sửa thì nuốt (tránh đè dở dang);
+  // đang xem detail trang sổ thì đóng detail rồi vào form ghi (giống nút "Quét tem — thêm pallet").
+  const formSheetOpen = !!(pendingQR || closeTarget || editTarget || cancelTarget
+    || openRunForm || closeRunTarget || editRunTarget || cancelRunTarget)
+  useWedgeScanner(code => {
+    if (formSheetOpen) return
+    if (detailRunId) setDetailRunId(null)
+    handleScan(code)
+  }, canRecord)
 
   const runHandlers: RunTableHandlers = {
     canRecord, canOpenRun, canEdit, canCancel, whName,

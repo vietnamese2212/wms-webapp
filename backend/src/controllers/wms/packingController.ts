@@ -44,6 +44,13 @@ function scopeWhIds(req: Request): string[] | null {
   return req.user?.warehouse_ids ?? []
 }
 
+// Ghi theo id phải kiểm KHO CỦA BẢN GHI trong scope người gọi (chống IDOR cross-kho —
+// cùng họ lỗ hổng guardEntriesScope đã vá 23/07). null-inclusive như chiều đọc.
+function whOutOfScope(req: Request, wh: unknown): boolean {
+  const scope = scopeWhIds(req)
+  return scope !== null && typeof wh === 'string' && !!wh && !scope.includes(wh)
+}
+
 function decodePhotoDataUrl(raw: unknown): { buf: Buffer; contentType: string; ext: string } | string | null {
   if (raw == null || raw === '') return null
   if (typeof raw !== 'string') return 'Ảnh không hợp lệ'
@@ -278,6 +285,7 @@ export async function closeLog(req: Request, res: Response) {
 
   const { data: log } = await supabase.from('packing_logs').select('*').eq('id', id).maybeSingle()
   if (!log) return fail(res, 'Không tìm thấy dòng sổ', 404)
+  if (whOutOfScope(req, log.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   if (log.status !== 'OPEN') return fail(res, 409, 'NOT_OPEN', `Dòng sổ đang ở trạng thái ${log.status} — chỉ đóng được pallet ĐANG MỞ`)
 
   let qty: number | null = null
@@ -323,6 +331,7 @@ export async function updateLog(req: Request, res: Response) {
   const { prod_start_at, prod_end_at, qty_cartons, note } = req.body as Record<string, unknown>
   const { data: log } = await supabase.from('packing_logs').select('*').eq('id', id).maybeSingle()
   if (!log) return fail(res, 'Không tìm thấy dòng sổ', 404)
+  if (whOutOfScope(req, log.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   if (log.status === 'CANCELLED') return fail(res, 409, 'CANCELLED', 'Dòng sổ đã hủy — không sửa được')
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -507,6 +516,7 @@ export async function closeRun(req: Request, res: Response) {
   const { end_at } = req.body as Record<string, unknown>
   const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   if (run.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', `Trang sổ đang ở trạng thái ${run.status}`)
   let endIso = new Date().toISOString()
   if (end_at != null && end_at !== '') {
@@ -541,6 +551,7 @@ export async function updateRun(req: Request, res: Response) {
   const { shift, cycle, machine_code, start_at, end_at, qty_total, note } = req.body as Record<string, unknown>
   const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   if (run.status === 'CANCELLED') return fail(res, 409, 'CANCELLED', 'Trang sổ đã hủy — không sửa được')
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -575,6 +586,9 @@ export async function updateRun(req: Request, res: Response) {
 export async function cancelRun(req: Request, res: Response) {
   const { id } = req.params
   const { note } = req.body as Record<string, unknown>
+  const { data: run } = await supabase.from('packing_runs').select('id, warehouse_id').eq('id', id).maybeSingle()
+  if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   const { count } = await supabase.from('packing_logs')
     .select('id', { count: 'exact', head: true }).eq('run_id', id).neq('status', 'CANCELLED')
   if ((count ?? 0) > 0)
@@ -596,6 +610,9 @@ export async function cancelRun(req: Request, res: Response) {
 export async function cancelLog(req: Request, res: Response) {
   const { id } = req.params
   const { note } = req.body as Record<string, unknown>
+  const { data: log } = await supabase.from('packing_logs').select('id, warehouse_id').eq('id', id).maybeSingle()
+  if (!log) return fail(res, 'Không tìm thấy dòng sổ', 404)
+  if (whOutOfScope(req, log.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   const now = new Date().toISOString()
   const { data, error } = await supabase.from('packing_logs')
     .update({

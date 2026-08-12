@@ -2,7 +2,7 @@
 // (mở → quét pallet → Giờ kết thúc tính tổng → sửa/hủy) + gate "mở sổ trước mới quét"
 // + chống đua (unique 1-trang-mở per kho+mã+máy; 1-tem-1-dòng-sống) + luật giờ.
 // KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh/OCR verify tay trên Preview.
-import { login, api, restAll, restWrite, check, finish, BASE } from './lib.mjs'
+import { login, api, restAll, restWrite, check, finish, BASE, FIX } from './lib.mjs'
 
 const TAG = 'QAPACK'
 const WH = 'QAPACKWH'   // kho tổng hợp giả có TAG — packing_runs.warehouse_id là text, dọn theo TAG
@@ -243,6 +243,71 @@ let runB = null
   if (!hadKey) {
     const off = await api('/wms/vision-config', 'PUT', { api_key: null })
     check('Gỡ key → configured=false', off.s === 200 && off.j?.data?.configured === false, `http=${off.s}`)
+  }
+}
+
+// [15] IDOR CROSS-KHO (12/08 — bug thật: write theo id từng KHÔNG kiểm scope kho): user có đủ
+// quyền packing nhưng scope kho KHÁC → đóng/sửa/hủy pallet + trang sổ của kho khác phải 403.
+{
+  const T5 = `${TAG}SCP`
+  const cleanUser = async () => {
+    for (const e of await restAll('Employee', `select=id&employee_code=like.*${T5}*`)) {
+      await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`).catch(() => {})
+      await restWrite('Employee', 'DELETE', `id=eq.${e.id}`)
+    }
+    for (const j of await restAll('JobTitle', `select=id&name=like.*${T5}*`)) await restWrite('JobTitle', 'DELETE', `id=eq.${j.id}`)
+  }
+  const bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m).catch(() => null)
+  if (!bcrypt) console.log('ℹ️  bỏ qua [15] IDOR scope (không load được bcrypt của backend — chạy `npm i` trong backend)')
+  else {
+    await cleanUser()
+    const { randomUUID } = await import('crypto')
+    const now = () => new Date().toISOString()
+    const jid = randomUUID(), eid = randomUUID()
+    const pw = 'Qa' + randomUUID().slice(0, 10) + '!'   // dùng 1 lần, không in ra
+    await restWrite('JobTitle', 'POST', '', [{
+      id: jid, name: `${T5} chuc danh`,
+      module_permissions: { packing: ['view', 'record', 'edit', 'cancel', 'open_run'] }, updated_at: now(),
+    }])
+    // user gán kho THẬT (WH_QR) — mục tiêu nằm ở kho QAPACKWH ⇒ ngoài scope
+    await restWrite('Employee', 'POST', '', [{
+      id: eid, employee_code: `${T5}01`, name: `${T5} nv`, email: `${T5.toLowerCase()}01@test.local`,
+      password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: FIX.WH_QR.id,
+      warehouse_scope: 'ASSIGNED', updated_at: now(),
+    }])
+    await restWrite('UserWarehouseAccess', 'POST', '', [{ id: randomUUID(), employee_id: eid, warehouse_id: FIX.WH_QR.id }])
+    const lr = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: `${T5.toLowerCase()}01@test.local`, password: pw }) })
+    const tk = (await lr.json())?.data?.token
+    check('[15] login user scope hẹp (đủ quyền packing, kho khác)', !!tk, `http=${lr.status}`)
+    if (tk) {
+      // mục tiêu: 1 trang MỞ + 1 pallet MỞ ở kho QAPACKWH (admin tạo)
+      const r7 = await openRun(`${TAG}7`, 'M9')
+      const rid = r7.j?.data?.id
+      const p7 = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(3, `${TAG}7`) })
+      const lid = p7.j?.data?.id
+      const as5 = async (p, method, body) => {
+        const r = await fetch(`${BASE}/api${p}`, {
+          method, headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        })
+        return r.status
+      }
+      const hits = [
+        ['PATCH trang sổ', await as5(`/wms/packing-runs/${rid}`, 'PATCH', { shift: 'Ca 3' })],
+        ['Giờ kết thúc trang', await as5(`/wms/packing-runs/${rid}/close`, 'POST', {})],
+        ['Hủy trang', await as5(`/wms/packing-runs/${rid}/cancel`, 'POST', {})],
+        ['PATCH pallet', await as5(`/wms/packing-logs/${lid}`, 'PATCH', { qty_cartons: 1 })],
+        ['Đóng pallet', await as5(`/wms/packing-logs/${lid}/close`, 'POST', {})],
+        ['Hủy pallet', await as5(`/wms/packing-logs/${lid}/cancel`, 'POST', {})],
+      ]
+      check('[15] cả 6 cửa write theo id kho ngoài scope → 403 (chống IDOR cross-kho)',
+        hits.every(([, s]) => s === 403), hits.map(([n, s]) => `${n}=${s}`).join(' · '))
+      // dọn mục tiêu: hủy pallet rồi đóng trang bằng ADMIN (cleanup() cuối cùng vẫn quét lại theo TAG)
+      await api(`/wms/packing-logs/${lid}/cancel`, 'POST', {})
+      await api(`/wms/packing-runs/${rid}/cancel`, 'POST', {})
+    }
+    await cleanUser()
   }
 }
 

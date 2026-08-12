@@ -16,6 +16,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { parseCodeFields } from '@/components/shared/palletLabel'
 import {
   usePackingLogs, useOpenPackingLog, useClosePackingLog,
@@ -108,13 +109,14 @@ async function compressForVision(url: string): Promise<string> {
     i.onerror = () => reject(new Error('Ảnh hỏng'))
     i.src = url
   })
-  // 1600px JPEG 0.85 — đủ nét cho chữ in phun với model vision, ~300–500KB (trần JSON BE 8MB)
+  // 1600px JPEG 0.75 — giữ NÉT (độ phân giải quyết định đọc đúng), hạ quality để upload
+  // nhẹ hơn ~35% trên wifi xưởng (user 12/08 "muốn tốc độ đọc ảnh nhanh hơn nữa")
   const scale = Math.min(1, 1600 / Math.max(img.width, img.height))
   const canvas = document.createElement('canvas')
   canvas.width = Math.round(img.width * scale)
   canvas.height = Math.round(img.height * scale)
   canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.85)
+  return canvas.toDataURL('image/jpeg', 0.75)
 }
 async function visionRead(origUrl: string): Promise<{ time: string; nsxDate: string | null; raw: string | null } | null> {
   if (_visionOff) return null
@@ -128,6 +130,33 @@ async function visionRead(origUrl: string): Promise<{ time: string; nsxDate: str
     if (code === 'VISION_NOT_CONFIGURED') _visionOff = true
     return null   // rơi về OCR local — không chặn người dùng
   }
+}
+
+// Ảnh đã chụp của 1 dòng pallet — dùng trong sheet Sửa/Đóng (user 12/08: "trong detail của
+// pallet cũng cần xem được ảnh đã chụp"). URL signed 1h từ BE (photo_start_url/photo_end_url).
+function LogPhotos({ log }: { log: PackingLog }) {
+  const [full, setFull] = useState<string | null>(null)
+  if (!log.photo_start_url && !log.photo_end_url) return null
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-700 mb-1">Ảnh đã chụp</p>
+      <div className="flex gap-2">
+        {log.photo_start_url && (
+          <figure>
+            <img src={log.photo_start_url} alt="Thùng đầu" className="h-16 rounded border border-slate-200 object-cover cursor-zoom-in" onClick={() => setFull(log.photo_start_url!)} />
+            <figcaption className="text-[9px] text-slate-400 mt-0.5">Thùng đầu</figcaption>
+          </figure>
+        )}
+        {log.photo_end_url && (
+          <figure>
+            <img src={log.photo_end_url} alt="Thùng cuối" className="h-16 rounded border border-slate-200 object-cover cursor-zoom-in" onClick={() => setFull(log.photo_end_url!)} />
+            <figcaption className="text-[9px] text-slate-400 mt-0.5">Thùng cuối</figcaption>
+          </figure>
+        )}
+      </div>
+      {full && <PhotoLightbox url={full} onClose={() => setFull(null)} />}
+    </div>
+  )
 }
 
 function PhotoLightbox({ url, onClose }: { url: string; onClose: () => void }) {
@@ -190,12 +219,13 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
     setBusy('photo'); setOcrFail(false)
     try {
       const origUrl = await fileToDataUrl(file)          // ảnh GỐC full-res cho OCR
+      setBusy('ocr')
+      // TỐC ĐỘ (user 12/08): nén ảnh bằng chứng + gọi AI Vision SONG SONG (trước đây nối tiếp)
+      const visionP = visionRead(origUrl)                // AI Vision TRƯỚC — lỗi/hết quota → OCR local
       const data = await compressPhoto(origUrl)          // bản nén 1024px để lưu bằng chứng
       setPhotoData(data)
-      setBusy('ocr')
-      // AI Vision TRƯỚC (chính xác hơn hẳn với chữ nghiêng/nhỏ) — lỗi/hết quota → OCR local
       let t: string | null = null, nsx: string | null = null, raw: string | null = null, eng: 'AI' | 'OCR' | null = null
-      const v = await visionRead(origUrl)
+      const v = await visionP
       if (v) { eng = 'AI'; t = v.time; nsx = v.nsxDate; raw = v.raw }
       else {
         const info = await readCartonPrint(origUrl)
@@ -235,13 +265,14 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
         <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 w-36 text-sm" />
         <Input value={time} onChange={e => setTime(maskHHMM(e.target.value))} placeholder="HH:MM"
           inputMode="numeric" className={`h-9 w-24 text-sm tabular-nums text-center ${ocrTime && time === ocrTime ? 'border-sky-400 bg-sky-50 font-semibold' : ''}`} />
-        {/* Nguồn kết quả LUÔN hiện cạnh ô giờ (user chốt 12/08): AI đọc / OCR đọc / người nhập */}
+        {/* Nguồn kết quả LUÔN hiện cạnh ô giờ (user chốt 12/08): AI đọc / OCR đọc / người nhập
+            — icon Lucide đồng bộ symbol toàn app (không dùng ký tự ✓/✎ rời) */}
         {time.trim() !== '' && (ocrTime && time === ocrTime ? (
           engine === 'AI'
-            ? <span className="text-[10px] text-violet-700 font-medium shrink-0">✓ AI đọc</span>
-            : <span className="text-[10px] text-sky-700 font-medium shrink-0">✓ OCR đọc</span>
+            ? <span className="text-[10px] text-violet-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> AI đọc</span>
+            : <span className="text-[10px] text-sky-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> OCR đọc</span>
         ) : (
-          <span className="text-[10px] text-amber-700 font-medium shrink-0">✎ người nhập</span>
+          <span className="text-[10px] text-amber-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Pencil className="h-3 w-3" /> người nhập</span>
         ))}
       </div>
     </div>
@@ -316,7 +347,7 @@ export default function Packing() {
       {canRecord && (
         <Button size="sm" className="h-8 mb-1 text-xs bg-blue-600 hover:bg-blue-700 shrink-0"
           onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}>
-          <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem — ghi sổ
+          <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — ghi sổ</span>
         </Button>
       )}
     </div>
@@ -392,7 +423,9 @@ export default function Packing() {
 // ─── BẢNG GỘP THEO TRANG SỔ (table-format mục 10 — nhóm dòng đóng khung) ─────
 // Dòng đầu cụm = TRANG SỔ (bấm vào mở DETAIL), các dòng dưới = pallet của trang.
 // Dùng chung cho tab Đóng gói (trang MỞ) + tab Trang sổ (mọi trạng thái).
+// 12/08 user chốt: cột THAO TÁC đưa LÊN ĐẦU row cho dễ bấm (kéo ngang mới thấy nút = khó thao tác)
 const RUN_G_COLS = [
+  { id: 'act',     label: 'Thao tác',     w: 116 },
   { id: 'main',    label: 'Mã sản phẩm',  w: 130 },
   { id: 'status',  label: 'Trạng thái',   w: 88 },
   { id: 'date',    label: 'Ngày SX',      w: 82 },
@@ -406,7 +439,6 @@ const RUN_G_COLS = [
   { id: 'by',      label: 'Người mở',     w: 105 },
   { id: 'photo',   label: 'Ảnh',          w: 92 },
   { id: 'note',    label: 'Ghi chú',      w: 120 },
-  { id: 'act',     label: '',             w: 116 },
 ]
 const RUN_G_DEFAULTS = RUN_G_COLS.map(c => c.w)
 const RUN_STATUS_LABEL: Record<string, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã hủy' }
@@ -427,7 +459,7 @@ interface RunTableHandlers {
 function RunGroupedTable({ runs, loading, emptyText, h }: {
   runs: PackingRun[]; loading: boolean; emptyText: string; h: RunTableHandlers
 }) {
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths', RUN_G_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v2', RUN_G_DEFAULTS)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
@@ -464,7 +496,28 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
             return (
               <TableRow key={r.id} onClick={() => h.onDetail(r)}
                 className={`cursor-pointer hover:bg-sky-50 ${cancelled ? 'text-slate-400 line-through' : ''}`}>
+                  {/* Thao tác Ở ĐẦU row + sticky (user chốt 12/08 — khỏi kéo ngang mới thấy nút) */}
                   <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                    <span className="inline-flex gap-1">
+                      {r.status === 'OPEN' && h.canRecord && (
+                        <button type="button" title="Quét tem vào trang này" onClick={e => { e.stopPropagation(); h.onScan() }}
+                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanLine className="h-3.5 w-3.5" /></button>
+                      )}
+                      {r.status === 'OPEN' && h.canOpenRun && (
+                        <button type="button" title="Giờ kết thúc — đóng trang + tính tổng sản lượng" onClick={e => { e.stopPropagation(); h.onCloseRun(r) }}
+                          className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><StopCircle className="h-3.5 w-3.5" /></button>
+                      )}
+                      {!cancelled && h.canOpenRun && (
+                        <button type="button" title="Sửa trang sổ" onClick={e => { e.stopPropagation(); h.onEditRun(r) }}
+                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
+                      )}
+                      {!cancelled && h.canOpenRun && pallets.length === 0 && (
+                        <button type="button" title="Hủy trang (mở nhầm)" onClick={e => { e.stopPropagation(); h.onCancelRun(r) }}
+                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
                     <span className="font-mono text-[11px] font-semibold no-underline">{r.material_code}</span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -499,26 +552,6 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     ) : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <span className="inline-flex gap-1">
-                      {r.status === 'OPEN' && h.canRecord && (
-                        <button type="button" title="Quét tem vào trang này" onClick={e => { e.stopPropagation(); h.onScan() }}
-                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanLine className="h-3.5 w-3.5" /></button>
-                      )}
-                      {r.status === 'OPEN' && h.canOpenRun && (
-                        <button type="button" title="Giờ kết thúc — đóng trang + tính tổng sản lượng" onClick={e => { e.stopPropagation(); h.onCloseRun(r) }}
-                          className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><StopCircle className="h-3.5 w-3.5" /></button>
-                      )}
-                      {!cancelled && h.canOpenRun && (
-                        <button type="button" title="Sửa trang sổ" onClick={e => { e.stopPropagation(); h.onEditRun(r) }}
-                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
-                      )}
-                      {!cancelled && h.canOpenRun && pallets.length === 0 && (
-                        <button type="button" title="Hủy trang (mở nhầm)" onClick={e => { e.stopPropagation(); h.onCancelRun(r) }}
-                          className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
-                      )}
-                    </span>
-                  </TableCell>
                 </TableRow>
             )
           })}
@@ -557,6 +590,10 @@ function RecordSheet({ code, whName, onDone, onError }: {
     if (!run) { onError(candidates.length > 1 ? 'Chọn trang sổ trước khi lưu' : 'Chưa có trang sổ đang mở cho mã này'); return }
     const q = qty.trim() === '' ? undefined : Number(qty.replace(',', '.'))
     if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
+    // Giờ thùng cuối không được TRƯỚC thùng đầu — sản xuất qua nửa đêm thì đổi NGÀY ở ô ngày (user chốt 12/08)
+    if (prodS.iso && prodE.iso && prodE.iso < prodS.iso) {
+      onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày ở ô thùng cuối'); return
+    }
     openMut.mutate({
       qr_code: code,
       run_id: run.id,
@@ -625,8 +662,8 @@ function RecordSheet({ code, whName, onDone, onError }: {
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
           <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" placeholder="Theo tem" />
         </div>
-        <PhotoOcrField label="① Chụp chữ date THÙNG ĐẦU (giờ SX bắt đầu)" defaultDate={defaultDate} onValue={setProdS} />
-        <PhotoOcrField label="② Chụp chữ date THÙNG CUỐI (giờ SX kết thúc)" defaultDate={defaultDate} onValue={setProdE} />
+        <PhotoOcrField label="1 · Thùng ĐẦU — chụp chữ date (giờ SX bắt đầu)" defaultDate={defaultDate} onValue={setProdS} />
+        <PhotoOcrField label="2 · Thùng CUỐI — chụp chữ date (giờ SX kết thúc)" defaultDate={defaultDate} onValue={setProdE} />
         <p className="text-[10px] text-slate-400">
           Giờ SX lấy từ CHỮ IN PHUN trên thùng (không phải giờ bấm nút). Ảnh lưu làm bằng chứng, giữ 60 ngày.
         </p>
@@ -647,6 +684,9 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
   function save() {
     const q = qty.trim() === '' ? null : Number(qty.replace(',', '.'))
     if (q !== null && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
+    if (prod.iso && log.prod_start_at && prod.iso < log.prod_start_at) {
+      onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày ở ô ngày'); return
+    }
     closeMut.mutate({
       id: log.id,
       qty_cartons: q,
@@ -679,6 +719,7 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
             {log.prod_start_at && <> · SX từ <b className="text-slate-700 tabular-nums">{formatTimestampTime(log.prod_start_at)}</b></>}
           </p>
         </div>
+        <LogPhotos log={log} />
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng trên pallet</p>
           <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal"
@@ -720,6 +761,7 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
   function save() {
     const si = toIso(sd, st), ei = toIso(ed, et)
     if (si === 'ERR' || ei === 'ERR') { onError('Ngày/giờ SX không hợp lệ (giờ dạng HH:MM hoặc HH:MM:SS)'); return }
+    if (si && ei && ei < si) { onError('Giờ SX thùng CUỐI đang trước thùng ĐẦU — sản xuất qua ngày mới thì chỉnh lại Ngày'); return }
     const q = qty.trim() === '' ? undefined : Number(qty.replace(',', '.'))
     if (q !== undefined && (!Number.isFinite(q) || q <= 0)) { onError('Số thùng phải là số dương'); return }
     upd.mutate({
@@ -755,6 +797,7 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
       }>
       <div className="space-y-3">
         <p className="font-mono text-[11px] text-slate-500 break-all">{log.pallet_code}</p>
+        <LogPhotos log={log} />
         {timeRow('Giờ SX thùng đầu', sd, setSd, st, setSt)}
         {timeRow('Giờ SX thùng cuối', ed, setEd, et, setEt)}
         <div>
@@ -918,6 +961,10 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
   function save() {
     const endIso = hhmmToIso(date, time)
     if (!endIso) { onError('Giờ kết thúc dạng HH:MM (VD 16:45)'); return }
+    // Kết thúc không được TRƯỚC bắt đầu — chạy qua nửa đêm thì Ngày kết thúc = hôm sau (mặc định đã là hôm nay)
+    if (endIso < run.start_at) {
+      onError(`Giờ kết thúc đang TRƯỚC giờ bắt đầu (bắt đầu ${fmtDT(run.start_at)}) — sản xuất qua ngày mới thì chỉnh Ngày kết thúc`); return
+    }
     closeMut.mutate({ id: run.id, end_at: endIso }, {
       onSuccess: () => onDone(),
       onError: (e) => onError(apiMsg(e, 'Không đóng được trang sổ — thử lại')),
@@ -992,6 +1039,7 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
     else {
       ei = hhmmToIso(ed, et)
       if (!ei) { onError('Giờ kết thúc dạng HH:MM (hoặc để trống)'); return }
+      if (ei < si) { onError('Giờ kết thúc đang TRƯỚC giờ bắt đầu — sản xuất qua ngày mới thì chỉnh Ngày kết thúc'); return }
     }
     const q = qtyTotal.trim() === '' ? undefined : Number(qtyTotal.replace(',', '.'))
     if (q !== undefined && (!Number.isFinite(q) || q < 0)) { onError('Tổng sản lượng phải là số không âm'); return }
@@ -1161,16 +1209,10 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
           <SearchInput value={f.search} onChange={v => setF({ search: v, runPage: 1 })}
             placeholder="Tìm mã SP / chu kỳ / người mở…" className="flex-1 min-w-[120px]" />
           <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
-          {canOpenRun && (
-            <Button size="sm" className="h-9 sm:h-7 text-[11px] bg-blue-600 hover:bg-blue-700" onClick={onOpenRun}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Mở trang sổ
-            </Button>
-          )}
-          {canExport && (
-            <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={exporting || !rows.length} onClick={exportExcel}>
-              <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
-            </Button>
-          )}
+          <ActionCluster mobileInline items={[
+            ...(canOpenRun ? [{ key: 'open', icon: Plus, label: 'Mở trang sổ', tip: 'Mở trang sổ mới (Kho · Ca · Mã · Máy) — mở xong mới quét được tem', onClick: onOpenRun, primary: true, className: 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600' } satisfies ActionItem] : []),
+            ...(canExport ? [{ key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất danh sách trang sổ theo bộ lọc', onClick: exportExcel, disabled: !rows.length, busy: exporting, mobileHidden: true } satisfies ActionItem] : []),
+          ]} />
         </div>
         <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
       </div>
@@ -1207,7 +1249,7 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
 // User chốt 11/08 tối: mở 80% MÀN HÌNH — khối thông tin ~20% trên, BẢNG pallet 80% dưới.
 // Ngày hiện ĐẦY ĐỦ kèm giờ (1 chu kỳ có thể sản xuất LIỀN VÀI NGÀY).
 const fmtDT = (iso: string | null) => iso ? `${formatTimestampDate(iso, true)} ${isoToHHMM(iso)}` : ''
-const DETAIL_PALLET_COLS = ['Trạng thái', 'Tem pallet', 'Số thùng', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh', ''] as const
+const DETAIL_PALLET_COLS = ['Thao tác', 'Trạng thái', 'Tem pallet', 'Số thùng', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh'] as const
 
 function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; onDone: () => void }) {
   const { canOpenRun, whName } = h
@@ -1280,6 +1322,22 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                     {(run.pallets ?? []).map(l => (
                       <TableRow key={l.id} className={l.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
+                          <span className="inline-flex gap-1">
+                            {l.status === 'OPEN' && h.canRecord && (
+                              <button type="button" title="Đóng pallet (pallet đầy)" onClick={() => { onDone(); h.onClosePallet(l) }}
+                                className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><Check className="h-3.5 w-3.5" /></button>
+                            )}
+                            {l.status !== 'CANCELLED' && h.canEdit && (
+                              <button type="button" title="Sửa giờ SX / số thùng" onClick={() => { onDone(); h.onEditPallet(l) }}
+                                className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
+                            )}
+                            {l.status !== 'CANCELLED' && h.canCancel && (
+                              <button type="button" title="Hủy dòng pallet" onClick={() => { onDone(); h.onCancelPallet(l) }}
+                                className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
+                            )}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[l.status]}`}>{STATUS_LABEL[l.status]}</span>
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate max-w-[260px]" title={l.pallet_code}>
@@ -1307,22 +1365,6 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1 whitespace-nowrap">
-                          <span className="inline-flex gap-1">
-                            {l.status === 'OPEN' && h.canRecord && (
-                              <button type="button" title="Đóng pallet (pallet đầy)" onClick={() => { onDone(); h.onClosePallet(l) }}
-                                className="px-1.5 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"><Check className="h-3.5 w-3.5" /></button>
-                            )}
-                            {l.status !== 'CANCELLED' && h.canEdit && (
-                              <button type="button" title="Sửa giờ SX / số thùng" onClick={() => { onDone(); h.onEditPallet(l) }}
-                                className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
-                            )}
-                            {l.status !== 'CANCELLED' && h.canCancel && (
-                              <button type="button" title="Hủy dòng pallet" onClick={() => { onDone(); h.onCancelPallet(l) }}
-                                className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
-                            )}
-                          </span>
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1339,6 +1381,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
 
 // ─── Tab SỔ — lịch sử (table-format) ─────────────────────────────────────────
 const LOG_COLS = [
+  { id: 'act',     label: 'Thao tác',      w: 96 },
   { id: 'status',  label: 'Trạng thái',    w: 90 },
   { id: 'pallet',  label: 'Tem pallet',    w: 220 },
   { id: 'mat',     label: 'Mã hàng',       w: 110 },
@@ -1350,7 +1393,6 @@ const LOG_COLS = [
   { id: 'by',      label: 'Người đóng',    w: 120 },
   { id: 'photo',   label: 'Ảnh',           w: 90 },
   { id: 'note',    label: 'Ghi chú',       w: 140 },
-  { id: 'act',     label: '',              w: 80 },
 ]
 const LOG_COL_DEFAULTS = LOG_COLS.map(c => c.w)
 
@@ -1361,7 +1403,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
 }) {
   const f = useWmsFilterStore(s => s.packing)
   const setF = useWmsFilterStore(s => s.setPacking)
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_col_widths', LOG_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_col_widths_v2', LOG_COL_DEFAULTS)
   const [exporting, setExporting] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
 
@@ -1427,11 +1469,9 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
           <SearchInput value={f.search} onChange={v => setF({ search: v, page: 1 })}
             placeholder="Tìm tem / mã hàng / người đóng…" className="flex-1 min-w-[120px]" />
           <span className="sm:hidden"><FilterSheetButton defs={filterDefs} /></span>
-          {canExport && (
-            <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={exporting || !rows.length} onClick={exportExcel}>
-              <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
-            </Button>
-          )}
+          <ActionCluster mobileInline items={canExport ? [
+            { key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất sổ pallet theo bộ lọc', onClick: exportExcel, disabled: !rows.length, busy: exporting, mobileHidden: true } satisfies ActionItem,
+          ] : []} />
         </div>
         <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
       </div>
@@ -1466,7 +1506,24 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
               <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center py-8 text-xs text-slate-400">Chưa có dòng sổ nào khớp bộ lọc</TableCell></TableRow>
             ) : rows.map(r => (
               <TableRow key={r.id} className={r.status === 'CANCELLED' ? 'text-slate-400 line-through' : ''}>
+                {/* Thao tác Ở ĐẦU row + sticky (user chốt 12/08) */}
                 <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                  <span className="inline-flex gap-1">
+                    {r.status === 'OPEN' && canEdit && (
+                      <button type="button" title="Đóng pallet" onClick={e => { e.stopPropagation(); onCloseRow(r) }}
+                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Check className="h-3.5 w-3.5" /></button>
+                    )}
+                    {r.status !== 'CANCELLED' && canEdit && (
+                      <button type="button" title="Sửa giờ SX / số thùng" onClick={e => { e.stopPropagation(); onEdit(r) }}
+                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
+                    )}
+                    {r.status !== 'CANCELLED' && canCancel && (
+                      <button type="button" title="Hủy dòng" onClick={e => { e.stopPropagation(); onCancel(r) }}
+                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
+                    )}
+                  </span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
                   <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate" title={r.pallet_code}>{r.pallet_code}</TableCell>
@@ -1502,22 +1559,6 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                   ) : <span className="text-slate-300">—</span>}
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
-                <TableCell className="px-2 py-1 whitespace-nowrap">
-                  <span className="inline-flex gap-1">
-                    {r.status === 'OPEN' && canEdit && (
-                      <button type="button" title="Đóng pallet" onClick={e => { e.stopPropagation(); onCloseRow(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Check className="h-3.5 w-3.5" /></button>
-                    )}
-                    {r.status !== 'CANCELLED' && canEdit && (
-                      <button type="button" title="Sửa giờ SX / số thùng" onClick={e => { e.stopPropagation(); onEdit(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
-                    )}
-                    {r.status !== 'CANCELLED' && canCancel && (
-                      <button type="button" title="Hủy dòng" onClick={e => { e.stopPropagation(); onCancel(r) }}
-                        className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
-                    )}
-                  </span>
-                </TableCell>
               </TableRow>
             ))}
           </TableBody>

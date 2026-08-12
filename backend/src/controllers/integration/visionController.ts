@@ -155,7 +155,8 @@ async function callGemini(cfg: VisionCfg, key: string, parts: unknown[], timeout
       signal: ctrl.signal,
       body: JSON.stringify({
         contents: [{ parts }],
-        generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        // maxOutputTokens nhỏ (JSON trả ~60 token) — cắt đuôi sinh chữ thừa, phản hồi nhanh hơn
+        generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 300 },
       }),
     })
     if (!r.ok) {

@@ -536,7 +536,7 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     {isoToHHMM(r.start_at)}<span className="text-slate-400 font-normal"> → </span>
                     {r.end_at ? (
                       <>{endOtherDay && <span className="text-slate-400 font-normal">{formatTimestampDate(r.end_at, true)} </span>}{isoToHHMM(r.end_at)}</>
-                    ) : (r.status === 'OPEN' ? <span className="text-amber-600 font-normal">{elapsedOf(r.start_at)}</span> : '…')}
+                    ) : (r.status === 'OPEN' ? <span className="text-amber-600 font-normal" title={`Chưa bấm Giờ kết thúc — trang đã mở ${elapsedOf(r.start_at)}`}>mở {elapsedOf(r.start_at)}</span> : '…')}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.opened_by_name ?? ''}>{r.opened_by_name ?? '—'}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -1313,7 +1313,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           {/* Quét thêm pallet NGAY TỪ DETAIL (user 12/08 tối: "cần nút bấm để quét pallet thêm cho sổ") */}
           {run && run.status === 'OPEN' && h.canRecord && (
             <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onDone(); h.onScan() }}>
-              <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem — thêm pallet
+              <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — thêm pallet</span>
             </Button>
           )}
           {run && run.status === 'OPEN' && canOpenRun && (

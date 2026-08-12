@@ -15,35 +15,60 @@ export interface CartonPrintInfo {
   ok: boolean            // false = OCR lỗi/không chạy được (điền tay)
 }
 
-// Bóc giờ + ngày NSX từ text OCR — tách riêng để test được thuần túy
+// Bóc giờ + ngày NSX từ text OCR — tách riêng để test được thuần túy.
+// CHỐNG BẮT NHẦM (user báo 11/08 tối "bắt tùm lum"): (1) NGÀY bị OCR đọc `/`→`:` sẽ
+// giống hệt giờ ("NSX:11:02:26" đọc thành 11:02:26) → dò ngày bằng dấu phân cách
+// KHOAN DUNG [/:;.] rồi LOẠI mọi ứng viên giờ TRÙNG VÙNG với ngày; (2) 1 dòng nhiều
+// ứng viên → lấy ứng viên CUỐI (máy in phun in ngày trước, giờ sau).
 export function extractPrintInfo(raw: string): { time: string | null; nsxDate: string | null } {
   const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
-  const timeRe = /(\d{1,2})\s*[:;]\s*(\d{2})(?:\s*[:;]\s*(\d{2}))?/
-  const dateRe = /(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{2,4})/
+  const timeRe = /(\d{1,2})\s*[:;]\s*(\d{2})(?:\s*[:;]\s*(\d{2}))?/g
+  const dateRe = /(\d{1,2})\s*[/:;.]\s*(\d{1,2})\s*[/:;.]\s*(\d{2,4})/g
   let time: string | null = null
+  let timeStrong = false          // giờ từ dòng NSX hoặc có giây = đáng tin hơn giờ trôi nổi
   let nsxDate: string | null = null
+
   for (const line of lines) {
-    const isHsd = /HSD/i.test(line.replace(/\s+/g, ''))
-    const isNsx = /NSX/i.test(line.replace(/\s+/g, ''))
-    if (!isHsd) {
-      const t = timeRe.exec(line)
-      if (t) {
-        const hh = +t[1], mm = +t[2], ss = t[3] != null ? +t[3] : null
-        if (hh <= 23 && mm <= 59 && (ss == null || ss <= 59)) {
-          const val = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${ss != null ? ':' + String(ss).padStart(2, '0') : ''}`
-          if (isNsx || time == null) time = val   // dòng NSX thắng giờ đứng riêng
-        }
+    const compact = line.replace(/\s+/g, '')
+    const isHsd = /HSD/i.test(compact)
+    const isNsx = /NSX/i.test(compact)
+
+    // Vùng NGÀY trên dòng — khoan dung kể cả khi `/` bị đọc thành `:`, NHƯNG chuỗi
+    // toàn dấu `:` chỉ được coi là ngày khi đứng NGAY SAU nhãn NSX/HSD (nếu không sẽ
+    // nuốt nhầm giờ có giây "09:08:47" đứng riêng).
+    const dateSpans: [number, number][] = []
+    dateRe.lastIndex = 0
+    for (let d = dateRe.exec(line); d; d = dateRe.exec(line)) {
+      const dd = +d[1], mo = +d[2]
+      let yy = +d[3]
+      if (yy < 100) yy += 2000
+      if (!(dd >= 1 && dd <= 31 && mo >= 1 && mo <= 12 && yy >= 2020 && yy <= 2100)) continue
+      const hasSlash = d[0].includes('/') || d[0].includes('.')
+      const afterLabel = /(?:NSX|HSD)[\s:;.]*$/i.test(line.slice(0, d.index))
+      if (!hasSlash && !afterLabel) continue
+      dateSpans.push([d.index, d.index + d[0].length])
+      if (isNsx && !nsxDate)
+        nsxDate = `${yy}-${String(mo).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
+    }
+
+    if (isHsd) continue   // dòng HSD: không lấy giờ (giờ trên đó là hạn dùng, không phải giờ SX)
+
+    // Ứng viên giờ = mọi match KHÔNG chồng lên vùng ngày; lấy ứng viên CUỐI của dòng
+    let cand: { val: string; hasSec: boolean } | null = null
+    timeRe.lastIndex = 0
+    for (let t = timeRe.exec(line); t; t = timeRe.exec(line)) {
+      const start = t.index, end = t.index + t[0].length
+      if (dateSpans.some(([s, e]) => start < e && end > s)) continue
+      const hh = +t[1], mm = +t[2], ss = t[3] != null ? +t[3] : null
+      if (hh > 23 || mm > 59 || (ss != null && ss > 59)) continue
+      cand = {
+        val: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${ss != null ? ':' + String(ss).padStart(2, '0') : ''}`,
+        hasSec: ss != null,
       }
     }
-    if (isNsx) {
-      const d = dateRe.exec(line)
-      if (d) {
-        const dd = +d[1], mo = +d[2]
-        let yy = +d[3]
-        if (yy < 100) yy += 2000
-        if (dd >= 1 && dd <= 31 && mo >= 1 && mo <= 12 && yy >= 2020 && yy <= 2100)
-          nsxDate = `${yy}-${String(mo).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
-      }
+    if (cand) {
+      const strong = isNsx || cand.hasSec
+      if (time == null || (strong && !timeStrong)) { time = cand.val; timeStrong = strong }
     }
   }
   return { time, nsxDate }

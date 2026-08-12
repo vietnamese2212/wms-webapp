@@ -94,11 +94,13 @@ export async function createScanEngine(): Promise<ScanEngine> {
       const hits = await native.detect(video)
       if (hits.length) { misses = 0; return hits }
       misses++
-      if (misses >= 12 && !wasm && !wasmLoading) {
+      // 12/08: user đo tem GIẤY chụp ảnh mở trên laptop — siết lưới nhạy hơn (6 khung ~0,3s
+      // là nạp zxing, chen mỗi 2 khung) vì đo thật zxing giải được cả khung nghiêng+nhăn+moiré
+      if (misses >= 6 && !wasm && !wasmLoading) {
         wasmLoading = true
         createWasm().then(w => { wasm = w }).catch(() => { wasmLoading = false })   // lỗi nạp → thử lại lượt sau
       }
-      if (wasm && misses % 3 === 0) {
+      if (wasm && misses % 2 === 0) {
         const rescue = await wasm.detect(video)
         if (rescue.length) misses = 0
         return rescue

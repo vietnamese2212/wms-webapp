@@ -1310,6 +1310,12 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
       footer={
         <div className="flex gap-2 w-full">
           <Button variant="outline" className="flex-1" onClick={onDone}>Đóng</Button>
+          {/* Quét thêm pallet NGAY TỪ DETAIL (user 12/08 tối: "cần nút bấm để quét pallet thêm cho sổ") */}
+          {run && run.status === 'OPEN' && h.canRecord && (
+            <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onDone(); h.onScan() }}>
+              <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem — thêm pallet
+            </Button>
+          )}
           {run && run.status === 'OPEN' && canOpenRun && (
             <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={() => { onDone(); h.onCloseRun(run) }}>
               <StopCircle className="h-3.5 w-3.5 mr-1" /> Giờ kết thúc
@@ -1347,7 +1353,15 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           </div>
           {/* ~80% — BẢNG pallet của trang */}
           <div className="flex-1 min-h-0 flex flex-col">
-            <p className="text-xs font-medium text-slate-700 mb-1 shrink-0">Pallet trong trang ({(run.pallets ?? []).length})</p>
+            <div className="flex items-center gap-2 mb-1 shrink-0">
+              <p className="text-xs font-medium text-slate-700">Pallet trong trang ({(run.pallets ?? []).length})</p>
+              {run.status === 'OPEN' && h.canRecord && (
+                <button type="button" onClick={() => { onDone(); h.onScan() }}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 text-[11px] font-medium">
+                  <ScanLine className="h-3.5 w-3.5" /> Quét tem thêm pallet
+                </button>
+              )}
+            </div>
             {(run.pallets ?? []).length === 0 ? (
               <p className="text-[11px] text-slate-400">Chưa có pallet nào — quét tem để ghi vào trang</p>
             ) : (
@@ -1389,11 +1403,24 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                           {l.qty_cartons != null ? Number(l.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
                           {l.qty_source === 'MANUAL' && <span className="ml-1 text-[8px] px-1 rounded bg-amber-100 text-amber-800 no-underline">tay</span>}
                         </TableCell>
+                        {/* Ô giờ TRỐNG = nút "+ thêm giờ" inline (user 12/08 tối) — mở form Sửa điền luôn */}
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
-                          {l.prod_start_at ? <>{fmtDT(l.prod_start_at)} {SRC_BADGE(l.prod_start_src)}</> : <span className="text-slate-300">—</span>}
+                          {l.prod_start_at ? <>{fmtDT(l.prod_start_at)} {SRC_BADGE(l.prod_start_src)}</>
+                            : l.status !== 'CANCELLED' && h.canEdit ? (
+                              <button type="button" title="Thêm giờ SX thùng đầu" onClick={() => { onDone(); h.onEditPallet(l) }}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-400 hover:text-sky-700 hover:border-sky-300 no-underline">
+                                <Plus className="h-3 w-3" /> thêm giờ
+                              </button>
+                            ) : <span className="text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
-                          {l.prod_end_at ? <>{fmtDT(l.prod_end_at)} {SRC_BADGE(l.prod_end_src)}</> : <span className="text-slate-300">—</span>}
+                          {l.prod_end_at ? <>{fmtDT(l.prod_end_at)} {SRC_BADGE(l.prod_end_src)}</>
+                            : l.status !== 'CANCELLED' && h.canEdit ? (
+                              <button type="button" title="Thêm giờ SX thùng cuối" onClick={() => { onDone(); h.onEditPallet(l) }}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-400 hover:text-sky-700 hover:border-sky-300 no-underline">
+                                <Plus className="h-3 w-3" /> thêm giờ
+                              </button>
+                            ) : <span className="text-slate-300">—</span>}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums text-slate-400">
                           {fmtDT(l.open_scan_at)}{l.close_scan_at ? ` → ${isoToHHMM(l.close_scan_at)}` : ''}
@@ -1586,6 +1613,11 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                       {r.prod_end_at ? formatTimestampTime(r.prod_end_at) : '—'} {SRC_BADGE(r.prod_end_src)}
                       <span className="text-slate-400 font-normal ml-1">{r.prod_start_at ? formatTimestampDate(r.prod_start_at, true) : ''}</span>
                     </span>
+                  ) : r.status !== 'CANCELLED' && canEdit ? (
+                    <button type="button" title="Thêm giờ SX thùng đầu/cuối" onClick={e => { e.stopPropagation(); onEdit(r) }}
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-400 hover:text-sky-700 hover:border-sky-300 no-underline">
+                      <Plus className="h-3 w-3" /> thêm giờ
+                    </button>
                   ) : <span className="text-slate-300">—</span>}
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums text-slate-400">

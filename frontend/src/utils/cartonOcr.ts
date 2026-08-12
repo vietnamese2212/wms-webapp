@@ -90,19 +90,185 @@ async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 // crop = phần khung hình lấy vào (tỷ lệ 0..1) — chữ date thường ở GIỮA khung khi user nhắm
 type CropFrac = { x: number; y: number; w: number; h: number }
 
-function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gray', crop?: CropFrac): HTMLCanvasElement {
+// ── TỰ DÒ DẢI MỰC IN (12/08 — 2 ảnh thật của user trượt: chữ trên GIẤY KRAFT NÂU, chiếm
+// mảnh nhỏ của khung, hơi nghiêng). Thu nhỏ 640px → xám → nhị phân thích nghi → tìm DẢI
+// hàng nhiều nét đứt (chữ in; loại logo dải cao + bóng mép ít nét đứt); mỗi dải trả kèm
+// GÓC NGHIÊNG (hồi quy tâm mực theo cột — ảnh chụp tay hay nghiêng, Tesseract chịu kém)
+// và CHIỀU CAO DÒNG ước lượng (để scale về cỡ chữ ~38px Tesseract đọc tốt nhất).
+type InkBand = { crop: { x0: number; y0: number; w: number; h: number }; angle: number; lineH: number }
+
+function bradley(gray: Uint8Array, W: number, H: number, k: number, half: number): Uint8Array {
+  const integ = new Float64Array((W + 1) * (H + 1))
+  for (let y = 0; y < H; y++) {
+    let rs = 0
+    for (let x = 0; x < W; x++) {
+      rs += gray[y * W + x]
+      integ[(y + 1) * (W + 1) + (x + 1)] = integ[y * (W + 1) + (x + 1)] + rs
+    }
+  }
+  const bin = new Uint8Array(W * H)
+  for (let y = 0; y < H; y++) {
+    const y1 = Math.max(0, y - half), y2 = Math.min(H - 1, y + half)
+    for (let x = 0; x < W; x++) {
+      const x1 = Math.max(0, x - half), x2 = Math.min(W - 1, x + half)
+      const area = (x2 - x1 + 1) * (y2 - y1 + 1)
+      const s = integ[(y2 + 1) * (W + 1) + (x2 + 1)] - integ[y1 * (W + 1) + (x2 + 1)] - integ[(y2 + 1) * (W + 1) + x1] + integ[y1 * (W + 1) + x1]
+      bin[y * W + x] = gray[y * W + x] < (s / area) * k ? 1 : 0
+    }
+  }
+  return bin
+}
+
+function detectInkBands(img: HTMLImageElement): InkBand[] {
+  const W = 640
+  const scale = W / img.width
+  const H = Math.max(1, Math.round(img.height * scale))
+  const c = document.createElement('canvas')
+  c.width = W; c.height = H
+  const ctx = c.getContext('2d')
+  if (!ctx) return []
+  ctx.drawImage(img, 0, 0, W, H)
+  const px = ctx.getImageData(0, 0, W, H).data
+  const n = W * H
+  const gray = new Uint8Array(n)
+  for (let i = 0; i < n; i++) gray[i] = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0
+  const bin = bradley(gray, W, H, 0.82, 20)
+  const rowInk = new Float64Array(H)
+  const rowTrans = new Float64Array(H)
+  for (let y = 0; y < H; y++) {
+    let ink = 0, trans = 0, prev = 0
+    for (let x = 0; x < W; x++) {
+      const v = bin[y * W + x]
+      ink += v
+      if (v !== prev) trans++
+      prev = v
+    }
+    rowInk[y] = ink / W
+    rowTrans[y] = trans
+  }
+  const isTextRow = (y: number) => rowInk[y] > 0.005 && rowInk[y] < 0.25 && rowTrans[y] >= 12
+  const bands: { y0: number; y1: number; score: number }[] = []
+  let y0 = -1, gap = 0
+  const maxGap = Math.max(2, Math.round(H * 0.015))
+  for (let y = 0; y <= H; y++) {
+    if (y < H && isTextRow(y)) { if (y0 < 0) y0 = y; gap = 0 }
+    else if (y0 >= 0 && (++gap > maxGap || y === H)) {
+      const y1 = y - gap
+      const bh = y1 - y0 + 1
+      if (bh >= H * 0.008 && bh <= H * 0.16) {   // 2 dòng chữ in ≈ 2–8%H; logo/khối lớn bị loại
+        let score = 0
+        for (let yy = y0; yy <= y1; yy++) score += rowTrans[yy]
+        bands.push({ y0, y1, score })
+      }
+      y0 = -1; gap = 0
+    }
+  }
+  bands.sort((a, b) => b.score - a.score)
+  const inv = img.width / W
+  return bands.slice(0, 2).map(b => {
+    let x0 = W, x1 = 0
+    for (let yy = b.y0; yy <= b.y1; yy++)
+      for (let x = 0; x < W; x++)
+        if (bin[yy * W + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x }
+    if (x1 <= x0) { x0 = 0; x1 = W - 1 }
+    // góc nghiêng: hồi quy tuyến tính tâm mực theo cột
+    const xs: number[] = [], ys: number[] = []
+    for (let x = x0; x <= x1; x++) {
+      let sum = 0, cnt = 0
+      for (let yy = Math.max(0, b.y0 - 3); yy <= Math.min(H - 1, b.y1 + 3); yy++)
+        if (bin[yy * W + x]) { sum += yy; cnt++ }
+      if (cnt > 0) { xs.push(x); ys.push(sum / cnt) }
+    }
+    let angle = 0
+    if (xs.length > 20) {
+      const mx = xs.reduce((a, v) => a + v, 0) / xs.length
+      const my = ys.reduce((a, v) => a + v, 0) / ys.length
+      let num = 0, den = 0
+      for (let i = 0; i < xs.length; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2 }
+      if (den > 0) angle = Math.atan(num / den) * 180 / Math.PI
+      if (Math.abs(angle) > 15) angle = 0
+    }
+    const bh = b.y1 - b.y0 + 1
+    const padX = (x1 - x0 + 1) * 0.15 + 10
+    const padY = bh * 0.8 + 6
+    const crop = {
+      x0: Math.max(0, Math.round((x0 - padX) * inv)),
+      y0: Math.max(0, Math.round((b.y0 - padY) * inv)),
+      w: Math.round((x1 - x0 + 1 + padX * 2) * inv),
+      h: Math.round((bh + padY * 2) * inv),
+    }
+    crop.w = Math.min(crop.w, img.width - crop.x0)
+    crop.h = Math.min(crop.h, img.height - crop.y0)
+    return { crop, angle, lineH: (bh * inv) / 2.2 }
+  })
+}
+
+// Lượt DẢI MỰC: cắt đúng vùng chữ, scale về cỡ chữ ~38px, xoay bù góc đo được;
+// 'binary' = LÀM MỜ 3×3 nối chấm mực TRƯỚC nhị phân (dilation nhị phân khuếch đại vân giấy kraft).
+function prepBand(img: HTMLImageElement, band: InkBand, mode: 'binary' | 'gray', rotateDeg: number): HTMLCanvasElement {
+  const { x0, y0, w, h } = band.crop
+  const scale = Math.max(0.6, Math.min(3, 38 / Math.max(8, band.lineH)))
+  const outW = Math.max(8, Math.round(w * scale))
+  const outH = Math.max(8, Math.round(h * scale))
+  const p = document.createElement('canvas')
+  p.width = outW; p.height = outH
+  const pc = p.getContext('2d')
+  if (!pc) throw new Error('Không tạo được canvas')
+  pc.imageSmoothingEnabled = true
+  pc.fillStyle = '#fff'
+  pc.fillRect(0, 0, outW, outH)
+  pc.translate(outW / 2, outH / 2)
+  if (rotateDeg) pc.rotate(rotateDeg * Math.PI / 180)
+  pc.drawImage(img, x0, y0, w, h, -outW / 2, -outH / 2, outW, outH)
+  pc.setTransform(1, 0, 0, 1, 0, 0)
+  const im = pc.getImageData(0, 0, outW, outH)
+  const px = im.data
+  const n = outW * outH
+  let gray = new Uint8Array(n)
+  for (let i = 0; i < n; i++) gray[i] = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0
+  if (mode === 'gray') {
+    for (let i = 0; i < n; i++) { px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = gray[i]; px[i * 4 + 3] = 255 }
+  } else {
+    const blurred = new Uint8Array(n)   // box blur 3×3
+    for (let y = 0; y < outH; y++) {
+      for (let x = 0; x < outW; x++) {
+        let s = 0, cnt = 0
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const yy = y + dy, xx = x + dx
+          if (yy >= 0 && yy < outH && xx >= 0 && xx < outW) { s += gray[yy * outW + xx]; cnt++ }
+        }
+        blurred[y * outW + x] = (s / cnt) | 0
+      }
+    }
+    gray = blurred
+    const bin = bradley(gray, outW, outH, 0.9, Math.max(8, (outW / 32) | 0))
+    for (let i = 0; i < n; i++) { const v = bin[i] ? 0 : 255; px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = v; px[i * 4 + 3] = 255 }
+  }
+  pc.putImageData(im, 0, 0)
+  return p
+}
+
+function preprocess(img: HTMLImageElement, targetW: number, mode: 'binary' | 'gray', crop?: CropFrac, rotateDeg = 0): HTMLCanvasElement {
   const sx = Math.round(img.width * (crop?.x ?? 0))
   const sy = Math.round(img.height * (crop?.y ?? 0))
   const sw = Math.max(1, Math.round(img.width * (crop?.w ?? 1)))
   const sh = Math.max(1, Math.round(img.height * (crop?.h ?? 1)))
-  const scale = Math.max(0.2, Math.min(4, targetW / sw))
+  const scale = Math.max(0.2, Math.min(6, targetW / sw))
   const c = document.createElement('canvas')
   c.width = Math.round(sw * scale)
   c.height = Math.round(sh * scale)
   const ctx = c.getContext('2d')
   if (!ctx) throw new Error('Không tạo được canvas')
   ctx.imageSmoothingEnabled = true
+  if (rotateDeg) {   // ảnh chụp tay hay NGHIÊNG vài độ — Tesseract chịu kém, xoay bù thử lại
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.translate(c.width / 2, c.height / 2)
+    ctx.rotate(rotateDeg * Math.PI / 180)
+    ctx.translate(-c.width / 2, -c.height / 2)
+  }
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
   const im = ctx.getImageData(0, 0, c.width, c.height)
   const px = im.data
   const W = c.width, H = c.height
@@ -187,23 +353,35 @@ export function warmOcr(): void {
 // biến thể ảnh, DỪNG NGAY khi bóc được giờ. GỌI VỚI ẢNH GỐC full-res (đừng đưa ảnh đã nén
 // 1024px — chữ in phun bị nghiền nát trước khi OCR nhìn thấy; đó là bug gốc).
 const CENTER: CropFrac = { x: 0.12, y: 0.22, w: 0.76, h: 0.56 }   // vùng giữa khung — chỗ user nhắm chữ
-const OCR_PASSES: { w: number; mode: 'binary' | 'gray'; crop?: CropFrac }[] = [
-  { w: 1600, mode: 'binary' },                 // adaptive-binary toàn khung — chấm CIJ chuẩn
-  { w: 2000, mode: 'binary', crop: CENTER },   // chữ nhỏ trong khung rộng → cắt giữa + phóng to
-  { w: 1600, mode: 'gray' },                   // nền phức tạp — để Tesseract tự Otsu
-  { w: 2000, mode: 'gray', crop: CENTER },
-]
 
 export async function readCartonPrint(dataUrl: string): Promise<CartonPrintInfo> {
   try {
     const [worker, img] = await Promise.all([getWorker(), loadImage(dataUrl)])
     let bestRaw = ''
-    for (const p of OCR_PASSES) {
-      const { data } = await worker.recognize(preprocess(img, p.w, p.mode, p.crop))
+    const tryCanvas = async (canvas: HTMLCanvasElement): Promise<CartonPrintInfo | null> => {
+      const { data } = await worker.recognize(canvas)
       const raw = (data.text ?? '').trim()
       if (raw.length > bestRaw.length) bestRaw = raw
       const { time, nsxDate } = extractPrintInfo(raw)
-      if (time) return { raw, time, nsxDate, ok: true }
+      return time ? { raw, time, nsxDate, ok: true } : null
+    }
+    // Lượt ưu tiên: các DẢI MỰC IN tự dò — cắt trúng chữ, scale về cỡ đọc tốt, xoay bù
+    // góc nghiêng ĐO ĐƯỢC (đo 12/08: ảnh thẳng/gần thẳng ăn ngay lượt đầu).
+    for (const b of detectInkBands(img)) {
+      for (const [mode, rot] of [['binary', -b.angle], ['gray', -b.angle], ['binary', 0], ['gray', 0]] as ['binary' | 'gray', number][]) {
+        const hit = await tryCanvas(prepBand(img, b, mode, rot))
+        if (hit) return hit
+      }
+    }
+    // Lượt toàn khung / cắt giữa (giữ từ bản trước — cứu khi dò dải trượt)
+    const fallbacks: { w: number; mode: 'binary' | 'gray'; crop?: CropFrac }[] = [
+      { w: 1600, mode: 'binary' },
+      { w: 2000, mode: 'binary', crop: CENTER },
+      { w: 1600, mode: 'gray' },
+    ]
+    for (const p of fallbacks) {
+      const hit = await tryCanvas(preprocess(img, p.w, p.mode, p.crop))
+      if (hit) return hit
     }
     const { time, nsxDate } = extractPrintInfo(bestRaw)
     return { raw: bestRaw, time, nsxDate, ok: true }

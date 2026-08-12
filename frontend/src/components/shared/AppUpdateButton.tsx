@@ -16,10 +16,10 @@ import { APP_BUILD_SHA, hasNewVersion, forceUpdateApp, isLocalBuild, clearDeepUp
  * đổi sang màu nổi + chấm báo, để người dùng thấy mà không cần ai nhắc.
  * KHÔNG tự tải lại: đang giữa ca quét mà app tự reload là mất thao tác đang làm.
  */
-export function AppUpdateButton() {
+// Hook dò bản mới — dùng chung cho nút header VÀ banner tự bật (12/08: user 3 lần liền
+// test trên bản cũ mà không biết — icon nhỏ trên header không đủ đập vào mắt công nhân)
+function useAppOutdated(): boolean {
   const [outdated, setOutdated] = useState(false)
-  const [updating, setUpdating] = useState(false)
-
   useEffect(() => {
     if (isLocalBuild()) return
     let alive = true
@@ -42,6 +42,34 @@ export function AppUpdateButton() {
       document.removeEventListener('visibilitychange', onFocus)
     }
   }, [])
+  return outdated
+}
+
+// Banner TỰ BẬT khi có bản mới — nổi trên mọi trang, không chờ ai để ý icon.
+// Đóng được (X) cho ca đang dở tay; KHÔNG tự reload (mất thao tác đang làm).
+export function AppUpdateBanner() {
+  const outdated = useAppOutdated()
+  const [updating, setUpdating] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  if (!outdated || dismissed) return null
+  return (
+    <div className="fixed bottom-20 lg:bottom-4 left-1/2 -translate-x-1/2 z-[55] flex items-center gap-2 rounded-full bg-sky-600 text-white shadow-lg pl-4 pr-1.5 py-1.5 text-xs font-medium">
+      <span>Đã có bản mới của ứng dụng</span>
+      <button type="button" disabled={updating}
+        onClick={() => { setUpdating(true); void forceUpdateApp() }}
+        className="rounded-full bg-white text-sky-700 font-semibold px-3 py-1 hover:bg-sky-50 disabled:opacity-70 inline-flex items-center gap-1">
+        <RefreshCw className={`h-3.5 w-3.5 ${updating ? 'animate-spin' : ''}`} />
+        {updating ? 'Đang tải…' : 'Cập nhật ngay'}
+      </button>
+      <button type="button" aria-label="Để sau" onClick={() => setDismissed(true)}
+        className="p-1 rounded-full hover:bg-white/15">✕</button>
+    </div>
+  )
+}
+
+export function AppUpdateButton() {
+  const outdated = useAppOutdated()
+  const [updating, setUpdating] = useState(false)
 
   const run = async () => { setUpdating(true); await forceUpdateApp() }
 

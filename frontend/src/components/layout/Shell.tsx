@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
 import { OfflineBanner } from '@/offline/OfflineBanner'
+import { AppUpdateBanner } from '@/components/shared/AppUpdateButton'
 import { OfflineQueuePanel } from '@/offline/OfflineQueuePanel'
 import { initScanQueue } from '@/offline/scanQueue'
 
@@ -89,6 +90,7 @@ export function Shell() {
       </div>
       <BottomNav />
       <OfflineQueuePanel />
+      <AppUpdateBanner />
       <Toaster />
     </div>
   )

@@ -6,7 +6,7 @@
 // Giờ bấm nút chỉ là giờ THAO TÁC (đối chiếu chéo, không phải giờ SX).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { NotebookPen, ScanLine, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle } from 'lucide-react'
+import { NotebookPen, ScanLine, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -132,30 +132,19 @@ async function visionRead(origUrl: string): Promise<{ time: string; nsxDate: str
   }
 }
 
-// Ảnh đã chụp của 1 dòng pallet — dùng trong sheet Sửa/Đóng (user 12/08: "trong detail của
-// pallet cũng cần xem được ảnh đã chụp"). URL signed 1h từ BE (photo_start_url/photo_end_url).
-function LogPhotos({ log }: { log: PackingLog }) {
-  const [full, setFull] = useState<string | null>(null)
-  if (!log.photo_start_url && !log.photo_end_url) return null
+// SECTION-CARD "Thùng ĐẦU / Thùng CUỐI" — khung DÙNG CHUNG cho sheet Ghi sổ + Đóng + Sửa
+// (user 12/08 tối: "bố cục lại cho đẹp... Form thêm mới và edit giống nhau"): header có
+// thanh accent sky như section-band chuẩn app; thân = Ô ẢNH trái + Ngày/Giờ phải.
+function ProdSection({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <div>
-      <p className="text-xs font-medium text-slate-700 mb-1">Ảnh đã chụp</p>
-      <div className="flex gap-2">
-        {log.photo_start_url && (
-          <figure>
-            <img src={log.photo_start_url} alt="Thùng đầu" className="h-16 rounded border border-slate-200 object-cover cursor-zoom-in" onClick={() => setFull(log.photo_start_url!)} />
-            <figcaption className="text-[9px] text-slate-400 mt-0.5">Thùng đầu</figcaption>
-          </figure>
-        )}
-        {log.photo_end_url && (
-          <figure>
-            <img src={log.photo_end_url} alt="Thùng cuối" className="h-16 rounded border border-slate-200 object-cover cursor-zoom-in" onClick={() => setFull(log.photo_end_url!)} />
-            <figcaption className="text-[9px] text-slate-400 mt-0.5">Thùng cuối</figcaption>
-          </figure>
-        )}
+    <section className="rounded-lg border border-slate-200 overflow-hidden">
+      <div className="flex items-center gap-1.5 bg-slate-100 border-b border-slate-200 px-2.5 py-1.5">
+        <span className="h-3.5 w-1 rounded-full bg-sky-500 shrink-0" />
+        <p className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide">{title}</p>
+        {hint && <p className="text-[10px] text-slate-400 ml-auto normal-case">{hint}</p>}
       </div>
-      {full && <PhotoLightbox url={full} onClose={() => setFull(null)} />}
-    </div>
+      <div className="p-2.5 flex items-start gap-3">{children}</div>
+    </section>
   )
 }
 
@@ -184,8 +173,9 @@ const SRC_BADGE = (src: string | null) =>
 // Giá trị đẩy lên parent: photoData (đã nén) · iso (giờ SX từ date+time VN) · src (OCR nếu
 // giữ nguyên kết quả đọc, MANUAL nếu người dùng sửa/gõ) · raw (nguyên văn OCR — lưu DB).
 export interface ProdTimeValue { photoData: string | null; iso: string | null; src: 'AI' | 'OCR' | 'MANUAL' | null; raw: string | null; busy: boolean }
-function PhotoOcrField({ label, defaultDate, onValue }: {
-  label: string
+function PhotoOcrField({ title, hint, defaultDate, onValue }: {
+  title: string
+  hint?: string
   defaultDate: string
   onValue: (v: ProdTimeValue) => void
 }) {
@@ -244,38 +234,47 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
   }
 
   return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium text-slate-700">{label}</p>
-      <label className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm cursor-pointer transition-colors ${photoData ? 'border-slate-200 text-slate-500 hover:bg-slate-50' : 'border-sky-400 bg-sky-50 text-sky-700 font-medium'}`}>
-        <Camera className="h-4 w-4" />
-        {busy === 'photo' ? 'Đang xử lý ảnh…' : busy === 'ocr' ? 'Đang đọc chữ (AI / OCR)…' : photoData ? 'Chụp lại' : 'Chụp vùng chữ date trên thùng'}
+    <ProdSection title={title} hint={hint}>
+      {/* Ô ẢNH bên trái: chưa chụp = nút chụp nổi bật; đã chụp = thumbnail, bấm để CHỤP LẠI */}
+      <label className={`relative shrink-0 w-24 h-20 rounded-lg border border-dashed flex items-center justify-center cursor-pointer overflow-hidden transition-colors ${photoData ? 'border-slate-300' : 'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-100'}`}>
+        {photoData && <img src={photoData} alt="Ảnh date thùng" className="absolute inset-0 h-full w-full object-cover" />}
+        <span className={`relative z-10 flex flex-col items-center gap-0.5 ${photoData ? 'text-white bg-black/40 rounded px-1.5 py-0.5' : ''}`}>
+          <Camera className="h-4 w-4" />
+          <span className="text-[9px] font-medium leading-tight text-center">
+            {busy === 'photo' ? 'Đang xử lý…' : busy === 'ocr' ? 'Đang đọc…' : photoData ? 'Chụp lại' : 'Chụp chữ date'}
+          </span>
+        </span>
         <input type="file" accept="image/*" capture="environment" className="hidden" disabled={!!busy}
           onChange={e => { void handleFile(e.target.files?.[0]); e.target.value = '' }} />
       </label>
-      {photoData && (
-        <img src={photoData} alt="Ảnh date thùng" className="h-16 rounded border border-slate-200 object-cover cursor-zoom-in" onClick={() => setFull(true)} />
-      )}
-      {full && photoData && <PhotoLightbox url={photoData} onClose={() => setFull(false)} />}
-      {ocrFail && (
-        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
-          <AlertTriangle className="h-3 w-3 shrink-0" /> Không đọc được chữ — nhìn thùng gõ giờ vào (ảnh vẫn được lưu làm bằng chứng)
-        </p>
-      )}
-      <div className="flex items-center gap-2">
-        <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 w-36 text-sm" />
-        <Input value={time} onChange={e => setTime(maskHHMM(e.target.value))} placeholder="HH:MM"
-          inputMode="numeric" className={`h-9 w-24 text-sm tabular-nums text-center ${ocrTime && time === ocrTime ? 'border-sky-400 bg-sky-50 font-semibold' : ''}`} />
-        {/* Nguồn kết quả LUÔN hiện cạnh ô giờ (user chốt 12/08): AI đọc / OCR đọc / người nhập
-            — icon Lucide đồng bộ symbol toàn app (không dùng ký tự ✓/✎ rời) */}
+      {/* Ngày + Giờ bên phải */}
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 w-36 text-sm" />
+          <Input value={time} onChange={e => setTime(maskHHMM(e.target.value))} placeholder="HH:MM"
+            inputMode="numeric" className={`h-9 w-24 text-sm tabular-nums text-center ${ocrTime && time === ocrTime ? 'border-sky-400 bg-sky-50 font-semibold' : ''}`} />
+          {photoData && (
+            <button type="button" title="Xem ảnh lớn" onClick={() => setFull(true)}
+              className="p-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><ZoomIn className="h-3.5 w-3.5" /></button>
+          )}
+        </div>
+        {/* Nguồn kết quả LUÔN hiện dưới ô giờ (user chốt 12/08): AI đọc / OCR đọc / người nhập */}
         {time.trim() !== '' && (ocrTime && time === ocrTime ? (
           engine === 'AI'
-            ? <span className="text-[10px] text-violet-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> AI đọc</span>
-            : <span className="text-[10px] text-sky-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> OCR đọc</span>
+            ? <span className="text-[10px] text-violet-700 font-medium inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> AI đọc</span>
+            : <span className="text-[10px] text-sky-700 font-medium inline-flex items-center gap-0.5"><Check className="h-3 w-3" /> OCR đọc</span>
         ) : (
-          <span className="text-[10px] text-amber-700 font-medium shrink-0 inline-flex items-center gap-0.5"><Pencil className="h-3 w-3" /> người nhập</span>
+          <span className="text-[10px] text-amber-700 font-medium inline-flex items-center gap-0.5"><Pencil className="h-3 w-3" /> người nhập</span>
         ))}
+        {busy === 'ocr' && <p className="text-[10px] text-slate-400">Đang đọc chữ in phun (AI / OCR)…</p>}
+        {ocrFail && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3 shrink-0" /> Không đọc được chữ — nhìn thùng gõ giờ vào (ảnh vẫn được lưu làm bằng chứng)
+          </p>
+        )}
       </div>
-    </div>
+      {full && photoData && <PhotoLightbox url={photoData} onClose={() => setFull(false)} />}
+    </ProdSection>
   )
 }
 
@@ -662,8 +661,8 @@ function RecordSheet({ code, whName, onDone, onError }: {
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
           <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" placeholder="Theo tem" />
         </div>
-        <PhotoOcrField label="1 · Thùng ĐẦU — chụp chữ date (giờ SX bắt đầu)" defaultDate={defaultDate} onValue={setProdS} />
-        <PhotoOcrField label="2 · Thùng CUỐI — chụp chữ date (giờ SX kết thúc)" defaultDate={defaultDate} onValue={setProdE} />
+        <PhotoOcrField title="Thùng ĐẦU" hint="giờ SX bắt đầu — chữ in phun" defaultDate={defaultDate} onValue={setProdS} />
+        <PhotoOcrField title="Thùng CUỐI" hint="giờ SX kết thúc — chữ in phun" defaultDate={defaultDate} onValue={setProdE} />
         <p className="text-[10px] text-slate-400">
           Giờ SX lấy từ CHỮ IN PHUN trên thùng (không phải giờ bấm nút). Ảnh lưu làm bằng chứng, giữ 60 ngày.
         </p>
@@ -675,6 +674,7 @@ function RecordSheet({ code, whName, onDone, onError }: {
 // ─── Sheet ĐÓNG SỔ — pallet đầy ──────────────────────────────────────────────
 function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => void; onError: (m: string) => void }) {
   const closeMut = useClosePackingLog()
+  const [zoom, setZoom] = useState<string | null>(null)
   const startDate = log.prod_start_at
     ? new Date(log.prod_start_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
     : (dmyToIso(parseCodeFields(log.pallet_code).dateDisplay) ?? todayVN())
@@ -719,7 +719,21 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
             {log.prod_start_at && <> · SX từ <b className="text-slate-700 tabular-nums">{formatTimestampTime(log.prod_start_at)}</b></>}
           </p>
         </div>
-        <LogPhotos log={log} />
+        {/* Thùng ĐẦU đã ghi khi mở — cùng khung section với ô chụp thùng cuối (form đồng bộ) */}
+        <ProdSection title="Thùng ĐẦU" hint="đã ghi khi mở pallet">
+          {log.photo_start_url ? (
+            <img src={log.photo_start_url} alt="Thùng đầu" className="shrink-0 w-24 h-20 rounded-lg border border-slate-200 object-cover cursor-zoom-in" onClick={() => setZoom(log.photo_start_url!)} />
+          ) : (
+            <div className="shrink-0 w-24 h-20 rounded-lg border border-dashed border-slate-200 flex flex-col items-center justify-center gap-0.5 text-slate-300">
+              <Camera className="h-4 w-4" /><span className="text-[9px]">chưa có ảnh</span>
+            </div>
+          )}
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-sm tabular-nums font-semibold text-slate-700">{log.prod_start_at ? fmtDT(log.prod_start_at) : <span className="text-slate-300 font-normal">chưa có giờ</span>}</p>
+            {log.prod_start_src && <p className="text-[10px] text-slate-500 inline-flex items-center gap-1">Nguồn: {SRC_BADGE(log.prod_start_src)}</p>}
+          </div>
+        </ProdSection>
+        {zoom && <PhotoLightbox url={zoom} onClose={() => setZoom(null)} />}
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng trên pallet</p>
           <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal"
@@ -728,7 +742,7 @@ function CloseSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => v
             <p className="text-[10px] text-slate-400 mt-0.5">Số chuẩn theo tem: {Number(log.qty_cartons).toLocaleString('vi-VN')} — chỉ sửa khi pallet lẻ</p>
           )}
         </div>
-        <PhotoOcrField label="Chụp chữ date trên THÙNG CUỐI CÙNG (giờ SX kết thúc)" defaultDate={startDate} onValue={setProd} />
+        <PhotoOcrField title="Thùng CUỐI" hint="giờ SX kết thúc — chữ in phun" defaultDate={startDate} onValue={setProd} />
       </div>
     </FormSheet>
   )
@@ -775,14 +789,35 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
     })
   }
 
-  const timeRow = (label: string, d: string, setD: (v: string) => void, t: string, setT: (v: string) => void) => (
-    <div>
-      <p className="text-xs font-medium text-slate-700 mb-1">{label}</p>
-      <div className="flex items-center gap-2">
-        <Input type="date" value={d} onChange={e => setD(e.target.value)} className="h-9 w-36 text-sm" />
-        <Input value={t} onChange={e => setT(maskHHMM(e.target.value))} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
+  // CÙNG BỐ CỤC với form ghi mới (user chốt 12/08 "Form thêm mới và edit giống nhau"):
+  // section Thùng ĐẦU/CUỐI với ô ảnh trái (ảnh đã chụp, bấm phóng to) + Ngày/Giờ phải.
+  const [zoom, setZoom] = useState<string | null>(null)
+  const prodSec = (title: string, hint: string, url: string | null | undefined, src: string | null,
+    d: string, setD: (v: string) => void, t: string, setT: (v: string) => void) => (
+    <ProdSection title={title} hint={hint}>
+      {url ? (
+        <img src={url} alt={title} className="shrink-0 w-24 h-20 rounded-lg border border-slate-200 object-cover cursor-zoom-in" onClick={() => setZoom(url)} />
+      ) : (
+        <div className="shrink-0 w-24 h-20 rounded-lg border border-dashed border-slate-200 flex flex-col items-center justify-center gap-0.5 text-slate-300">
+          <Camera className="h-4 w-4" /><span className="text-[9px]">chưa có ảnh</span>
+        </div>
+      )}
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input type="date" value={d} onChange={e => setD(e.target.value)} className="h-9 w-36 text-sm" />
+          <Input value={t} onChange={e => setT(maskHHMM(e.target.value))} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
+          {url && (
+            <button type="button" title="Xem ảnh lớn" onClick={() => setZoom(url)}
+              className="p-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><ZoomIn className="h-3.5 w-3.5" /></button>
+          )}
+        </div>
+        {src && (
+          <p className="text-[10px] text-slate-500 inline-flex items-center gap-1">
+            Nguồn hiện tại: {SRC_BADGE(src)} <span className="text-slate-400">— đổi giờ sẽ chuyển thành "người"</span>
+          </p>
+        )}
       </div>
-    </div>
+    </ProdSection>
   )
 
   return (
@@ -796,10 +831,17 @@ function EditSheet({ log, onDone, onError }: { log: PackingLog; onDone: () => vo
         </div>
       }>
       <div className="space-y-3">
-        <p className="font-mono text-[11px] text-slate-500 break-all">{log.pallet_code}</p>
-        <LogPhotos log={log} />
-        {timeRow('Giờ SX thùng đầu', sd, setSd, st, setSt)}
-        {timeRow('Giờ SX thùng cuối', ed, setEd, et, setEt)}
+        {/* Khối thông tin pallet — CÙNG kiểu card với sheet ghi mới */}
+        <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs space-y-0.5">
+          <p className="font-mono font-semibold text-slate-800 break-all">{log.pallet_code}</p>
+          <p className="text-slate-500">
+            Mã hàng <b className="text-slate-700">{log.material_code ?? '?'}</b>
+            {log.machine_code && <> · Máy <b className="text-slate-700">{log.machine_code}</b></>}
+          </p>
+        </div>
+        {prodSec('Thùng ĐẦU', 'giờ SX bắt đầu — chữ in phun', log.photo_start_url, log.prod_start_src, sd, setSd, st, setSt)}
+        {prodSec('Thùng CUỐI', 'giờ SX kết thúc — chữ in phun', log.photo_end_url, log.prod_end_src, ed, setEd, et, setEt)}
+        {zoom && <PhotoLightbox url={zoom} onClose={() => setZoom(null)} />}
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
           <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" />

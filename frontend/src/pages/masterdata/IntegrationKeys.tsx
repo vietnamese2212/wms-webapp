@@ -86,7 +86,8 @@ function VisionConfigCard() {
           Ảnh chụp date thùng sẽ được đọc bằng <b>Google Gemini</b> (chính xác hơn hẳn OCR với chữ nghiêng/nhỏ).
           Key lỗi / hết quota / chưa cấu hình → app <b>tự rơi về OCR thường</b>, công nhân không bị chặn.
           Tạo key <b>miễn phí</b> tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">aistudio.google.com/apikey</a> (Google
-          AI Studio — bậc free ~1.000 ảnh/ngày với <code className="font-mono text-[11px]">gemini-2.5-flash-lite</code>, không cần thẻ). Hết hạn/bị khóa → dán key mới vào đây là xong.
+          AI Studio — bậc free ~1.000 ảnh/ngày, không cần thẻ; sản lượng lớn thì gắn billing vào project là hết trần, ~4–5đ/ảnh). Hết hạn/bị khóa → dán key mới vào đây là xong.
+          Model mặc định <code className="font-mono text-[11px]">gemini-flash-lite-latest</code> tự trỏ bản mới nhất; model nghỉ hưu → hệ thống <b>tự dò model sống</b> và lưu lại.
         </p>
         <div className="flex items-end gap-2 flex-wrap">
           <div className="space-y-1">
@@ -98,7 +99,7 @@ function VisionConfigCard() {
           <div className="space-y-1">
             <Label className="text-[11px]">Model</Label>
             <Input value={model || (cfg?.model ?? '')} onChange={e => setModel(e.target.value)}
-              placeholder="gemini-2.5-flash-lite" className="h-8 w-52 text-[12px] font-mono" />
+              placeholder="gemini-flash-lite-latest" className="h-8 w-52 text-[12px] font-mono" />
           </div>
           <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy || (!keyInput.trim() && !model.trim())}
             onClick={() => { setMsg(null); saveMut.mutate({ ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}), ...(model.trim() ? { model: model.trim() } : {}) }) }}>

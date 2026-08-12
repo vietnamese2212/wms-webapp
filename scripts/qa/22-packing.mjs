@@ -192,7 +192,8 @@ let runB = null
   check('Nguồn giờ AI được nhận + lưu đúng (start=AI, end=MANUAL)',
     r.s === 200 && r.j?.data?.prod_start_src === 'AI' && r.j?.data?.prod_end_src === 'MANUAL',
     `http=${r.s} start=${r.j?.data?.prod_start_src} end=${r.j?.data?.prod_end_src}`)
-  const bad = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(9), prod_start_at: iso(8, 0), prod_start_src: 'ROBOT' })
+  // tem KHÁC tem(9) — tem(9) đã ghi ở trên, nếu dùng lại sẽ 409 ALREADY_LOGGED trước khi tới validation nguồn
+  const bad = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(8, `${TAG}9`), prod_start_at: iso(8, 0), prod_start_src: 'ROBOT' })
   check('Nguồn giờ lạ (ROBOT) → 422', bad.s === 422, `http=${bad.s}`)
 }
 

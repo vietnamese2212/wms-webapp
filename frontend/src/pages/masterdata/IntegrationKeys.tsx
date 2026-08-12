@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
-import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen } from 'lucide-react'
+import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen, Sparkles } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin } from '@/config/permissions'
@@ -39,6 +39,89 @@ const ENDPOINT_DOCS: { path: string; scope: string; label: string; fields: strin
 ]
 const errMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Có lỗi xảy ra, thử lại'
+
+// ─── AI Vision (Sổ đóng gói) — key Gemini đặt Ở ĐÂY để "hết hạn thì thay" (user chốt 12/08) ──
+interface VisionCfg { configured: boolean; provider: string; model: string; key_tail: string | null }
+function VisionConfigCard() {
+  const qc = useQueryClient()
+  const [keyInput, setKeyInput] = useState('')
+  const [model, setModel] = useState('')
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const { data: cfg } = useQuery<VisionCfg>({
+    queryKey: ['vision-config'],
+    queryFn: () => apiClient.get('/wms/vision-config').then(r => r.data.data),
+  })
+
+  const saveMut = useMutation({
+    mutationFn: (body: { api_key?: string | null; model?: string }) =>
+      apiClient.put('/wms/vision-config', body).then(r => r.data.data as { configured: boolean }),
+    onSuccess: (d) => {
+      setKeyInput(''); setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử key' : 'Đã gỡ key — app quay về OCR thường' })
+      qc.invalidateQueries({ queryKey: ['vision-config'] })
+    },
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+  const testMut = useMutation({
+    mutationFn: () => apiClient.post('/wms/vision-config/test').then(r => r.data.data as { model: string; latency_ms: number }),
+    onSuccess: (d) => setMsg({ kind: 'ok', text: `Key hoạt động — ${d.model} phản hồi ${d.latency_ms}ms` }),
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+
+  const busy = saveMut.isPending || testMut.isPending
+  return (
+    <div className="shrink-0 mt-3 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm border-t sm:border-t-slate-200">
+      <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+          <Sparkles className="h-4 w-4 text-violet-500" /> AI Vision — đọc chữ in phun (Sổ đóng gói)
+        </span>
+        {cfg && (
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
+            {cfg.configured ? `Đang dùng · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
+          </span>
+        )}
+      </div>
+      <div className="px-3 py-2.5 space-y-2 text-[12px] text-slate-600">
+        <p>
+          Ảnh chụp date thùng sẽ được đọc bằng <b>Google Gemini</b> (chính xác hơn hẳn OCR với chữ nghiêng/nhỏ).
+          Key lỗi / hết quota / chưa cấu hình → app <b>tự rơi về OCR thường</b>, công nhân không bị chặn.
+          Tạo key <b>miễn phí</b> tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">aistudio.google.com/apikey</a> (Google
+          AI Studio — bậc free ~1.000 ảnh/ngày với <code className="font-mono text-[11px]">gemini-2.5-flash-lite</code>, không cần thẻ). Hết hạn/bị khóa → dán key mới vào đây là xong.
+        </p>
+        <div className="flex items-end gap-2 flex-wrap">
+          <div className="space-y-1">
+            <Label className="text-[11px]">API key (Gemini)</Label>
+            <Input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
+              placeholder={cfg?.configured ? `Đang dùng key ${cfg.key_tail} — dán key mới để thay` : 'Dán key AIza… vào đây'}
+              className="h-8 w-72 text-[12px] font-mono" autoComplete="off" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px]">Model</Label>
+            <Input value={model || (cfg?.model ?? '')} onChange={e => setModel(e.target.value)}
+              placeholder="gemini-2.5-flash-lite" className="h-8 w-52 text-[12px] font-mono" />
+          </div>
+          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy || (!keyInput.trim() && !model.trim())}
+            onClick={() => { setMsg(null); saveMut.mutate({ ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}), ...(model.trim() ? { model: model.trim() } : {}) }) }}>
+            {saveMut.isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={busy || !cfg?.configured}
+            onClick={() => { setMsg(null); testMut.mutate() }}>
+            {testMut.isPending ? 'Đang thử…' : 'Kiểm tra'}
+          </Button>
+          {cfg?.configured && (
+            <Button size="sm" variant="ghost" className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50" disabled={busy}
+              onClick={() => { setMsg(null); saveMut.mutate({ api_key: null }) }}>
+              Gỡ key
+            </Button>
+          )}
+        </div>
+        {msg && (
+          <div className={`rounded px-2 py-1.5 text-[12px] ${msg.kind === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{msg.text}</div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 type Confirm = { action: 'revoke' | 'delete'; ids: string[] }
 
@@ -237,6 +320,9 @@ export default function IntegrationKeys() {
         </div>
         <div className="border-t px-3 py-1.5 text-[10px] text-slate-400 shrink-0">{keys.length} key{selected.size > 0 ? ` · đã chọn ${selected.size}` : ''}</div>
       </div>
+
+      {/* AI Vision — key Gemini cho Sổ đóng gói (đặt cùng trang kết nối để Admin thay khi hết hạn) */}
+      <VisionConfigCard />
 
       {/* Form tạo key */}
       <FormSheet

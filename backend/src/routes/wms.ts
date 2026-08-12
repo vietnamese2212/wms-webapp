@@ -20,6 +20,7 @@ import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
+import * as vision from '../controllers/integration/visionController'
 import { inboundEmitter } from '../lib/events'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
@@ -64,6 +65,12 @@ router.get('/integration-keys',            integrationKeys.listKeys)
 router.post('/integration-keys',           integrationKeys.createKey)
 router.patch('/integration-keys/:id/revoke', integrationKeys.revokeKey)
 router.delete('/integration-keys/:id',       integrationKeys.deleteKey)   // xóa hẳn (chỉ key đã thu hồi)
+
+// AI Vision đọc chữ in phun (Sổ đóng gói) — key lưu MÃ HÓA, CHỈ superadmin (kiểm trong controller,
+// cùng trang Kết nối ERP). Key KHÔNG lộ qua GET /wms/settings (SECRET_SETTINGS đã lọc).
+router.get('/vision-config',       vision.getVisionConfig)
+router.put('/vision-config',       vision.saveVisionConfig)
+router.post('/vision-config/test', vision.testVisionConfig)
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)
@@ -233,6 +240,8 @@ router.delete('/forklift-logs/:id', requirePerm('forklift', 'delete_check'),   f
 router.get('/forklift-report',      requirePerm('forklift', 'view'),           forklift.getReport)
 
 // ─── Sổ đóng gói điện tử (11/08) — /board đặt TRƯỚC route param nếu sau này có /:id ───
+// AI Vision đọc date/giờ thùng — cùng ngữ cảnh quét ghi sổ; lỗi/chưa cấu hình = 422 → FE rơi về OCR local
+router.post('/packing/vision-ocr',     requirePerm('packing', 'record'), vision.visionOcr)
 router.get('/packing-logs/board',      requirePerm('packing', 'view'),   packing.getBoard)
 router.get('/packing-logs',            requirePerm('packing', 'view'),   packing.listLogs)
 router.post('/packing-logs/open',      requirePerm('packing', 'record'), packing.openLog)

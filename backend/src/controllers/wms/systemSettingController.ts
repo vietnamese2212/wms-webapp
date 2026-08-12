@@ -108,11 +108,15 @@ export async function wrongFormatHint(raw: string): Promise<string | null> {
     : 'Tem không đúng định dạng đơn vị: đơn vị này dùng tem gạch dưới ( _ ), tem vừa quét là tem chấm phẩy ( ; ). Kiểm tra lại tem.'
 }
 
+// Cờ chứa BÍ MẬT (key_enc AI Vision…) — ghi qua route riêng (visionController, superadmin),
+// TUYỆT ĐỐI không trả qua GET hở đọc này. PUT /wms/settings/<key> tự chặn (không trong KNOWN_SETTINGS).
+const SECRET_SETTINGS = new Set(['vision_api'])
+
 // GET /wms/settings — auth-only (mọi user đăng nhập đọc được: trang in tem/quét cần biết cờ)
 export async function listSettings(_req: Request, res: Response) {
   const { data, error } = await supabase.from('SystemSetting').select('key, value, updated_by, updated_at')
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
-  return ok(res, data ?? [])
+  return ok(res, (data ?? []).filter(r => !SECRET_SETTINGS.has((r as { key: string }).key)))
 }
 
 // PUT /wms/settings/:key — requirePerm wms_settings.manage_system

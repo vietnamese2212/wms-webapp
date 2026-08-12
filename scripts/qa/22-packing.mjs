@@ -182,6 +182,55 @@ let runB = null
     `n=${mine.length} qty4=${r4?.qty_total}`)
 }
 
+// [14] AI VISION (12/08): key KHÔNG rò qua settings hở đọc; lỗi vision = 422 SẠCH (FE rơi về OCR, không 500)
+{
+  // 14a. PUT /wms/settings/vision_api phải bị chặn (cửa ghi duy nhất = /wms/vision-config)
+  const viaSettings = await api('/wms/settings/vision_api', 'PUT', { value: { key_enc: 'x' } })
+  check('Ghi vision_api qua /wms/settings bị chặn 400 UNKNOWN_SETTING',
+    viaSettings.s === 400 && viaSettings.j?.error?.code === 'UNKNOWN_SETTING', `http=${viaSettings.s}`)
+
+  // 14b. Trước khi cấu hình: vision-ocr trả 422 VISION_NOT_CONFIGURED (không 500) — nhớ trạng thái để khôi phục
+  const pre = await api('/wms/vision-config', 'GET')
+  const hadKey = pre.j?.data?.configured === true
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  if (!hadKey) {
+    const r = await api('/wms/packing/vision-ocr', 'POST', { photo_data: tinyPng })
+    check('Chưa cấu hình → vision-ocr 422 VISION_NOT_CONFIGURED (FE rơi về OCR)',
+      r.s === 422 && r.j?.error?.code === 'VISION_NOT_CONFIGURED', `http=${r.s} code=${r.j?.error?.code}`)
+  }
+
+  // 14c. Key giả CHỈ lưu khi môi trường CHƯA cấu hình (không đè key thật của đơn vị)
+  if (!hadKey) {
+    const saved = await api('/wms/vision-config', 'PUT', { api_key: `${TAG}-dummy-key-0123456789abcdef` })
+    check('Lưu key AI Vision qua /wms/vision-config OK', saved.s === 200 && saved.j?.data?.configured === true, `http=${saved.s}`)
+
+    // 14d. Key giả gọi Google bị từ chối → 422 VISION_FAILED (không 500, không đổ error_logs)
+    const bad = await api('/wms/packing/vision-ocr', 'POST', { photo_data: tinyPng })
+    check('Key hỏng → vision-ocr 422 VISION_FAILED (không 500 — FE tự rơi về OCR)',
+      bad.s === 422 && bad.j?.error?.code === 'VISION_FAILED', `http=${bad.s} code=${bad.j?.error?.code} msg=${bad.j?.error?.message}`)
+  } else {
+    console.log('ℹ️  vision-config đã có key thật — bỏ qua kịch bản key giả (không đè key của đơn vị)')
+  }
+
+  // 14e. Key (thật hay giả) KHÔNG rò: settings hở đọc không thấy vision_api; GET config chỉ trả đuôi che
+  const settings = await api('/wms/settings', 'GET')
+  const leaked = (settings.j?.data ?? []).some(r => r.key === 'vision_api')
+  check('GET /wms/settings KHÔNG lộ vision_api (key mã hóa không rò cho user thường)', settings.s === 200 && !leaked, `leaked=${leaked}`)
+  const cfg = await api('/wms/vision-config', 'GET')
+  const body = JSON.stringify(cfg.j?.data ?? {})
+  check('GET /wms/vision-config chỉ trả đuôi che, không chứa key thô',
+    cfg.s === 200 && cfg.j?.data?.configured === true && !body.includes(`${TAG}-dummy-key`) && !/AIza[\w-]{20}/.test(body),
+    `body=${body.slice(0, 120)}`)
+  const badImg = await api('/wms/packing/vision-ocr', 'POST', { photo_data: 'khong-phai-anh' })
+  check('photo_data rác → 400 BAD_IMAGE', badImg.s === 400 && badImg.j?.error?.code === 'BAD_IMAGE', `http=${badImg.s}`)
+
+  // 14f. Khôi phục: gỡ key giả (chỉ khi chính test này lưu)
+  if (!hadKey) {
+    const off = await api('/wms/vision-config', 'PUT', { api_key: null })
+    check('Gỡ key → configured=false', off.s === 200 && off.j?.data?.configured === false, `http=${off.s}`)
+  }
+}
+
 console.log('\n🧹 dọn…')
 await cleanup()
 const residueL = (await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}*`)).length

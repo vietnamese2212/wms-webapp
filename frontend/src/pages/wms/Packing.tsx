@@ -25,6 +25,7 @@ import {
   useImportShifts, useMaterials,
 } from '@/api/hooks'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
+import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { normalizeQR } from '@/utils/qr'
@@ -96,6 +97,39 @@ async function compressPhoto(url: string): Promise<string> {
   return out
 }
 
+// ─── AI VISION (user chốt 12/08): "AI Vision trước, API hết hạn/lỗi thì chuyển OCR" ──
+// Gửi ảnh 1600px lên BE (POST /wms/packing/vision-ocr → Gemini, key cấu hình ở trang Kết nối ERP).
+// MỌI lỗi (chưa cấu hình / key hỏng / hết quota / mạng) → trả null để rơi về Tesseract local.
+let _visionOff = false   // 422 VISION_NOT_CONFIGURED → khỏi gọi lại cho tới lần tải app sau
+async function compressForVision(url: string): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image()
+    i.onload = () => resolve(i)
+    i.onerror = () => reject(new Error('Ảnh hỏng'))
+    i.src = url
+  })
+  // 1600px JPEG 0.85 — đủ nét cho chữ in phun với model vision, ~300–500KB (trần JSON BE 8MB)
+  const scale = Math.min(1, 1600 / Math.max(img.width, img.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(img.width * scale)
+  canvas.height = Math.round(img.height * scale)
+  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.85)
+}
+async function visionRead(origUrl: string): Promise<{ time: string; nsxDate: string | null; raw: string | null } | null> {
+  if (_visionOff) return null
+  try {
+    const photo = await compressForVision(origUrl)
+    const { data } = await apiClient.post('/wms/packing/vision-ocr', { photo_data: photo })
+    const d = data?.data as { time?: string | null; nsx_date?: string | null; raw?: string | null } | undefined
+    return d?.time ? { time: d.time, nsxDate: d.nsx_date ?? null, raw: d.raw ?? null } : null
+  } catch (e) {
+    const code = (e as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code
+    if (code === 'VISION_NOT_CONFIGURED') _visionOff = true
+    return null   // rơi về OCR local — không chặn người dùng
+  }
+}
+
 function PhotoLightbox({ url, onClose }: { url: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
@@ -129,6 +163,7 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
   const [ocrTime, setOcrTime] = useState<string | null>(null)   // giá trị OCR gốc — so để biết user có sửa không
   const [ocrRaw, setOcrRaw] = useState<string | null>(null)
   const [ocrFail, setOcrFail] = useState(false)
+  const [engine, setEngine] = useState<'AI' | 'OCR' | null>(null)   // nguồn đọc tự động (hiển thị badge)
   const [time, setTime] = useState('')                          // HH:MM hoặc HH:MM:SS
   const [date, setDate] = useState(defaultDate)
   const [full, setFull] = useState(false)
@@ -155,12 +190,20 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
       const data = await compressPhoto(origUrl)          // bản nén 1024px để lưu bằng chứng
       setPhotoData(data)
       setBusy('ocr')
-      const info = await readCartonPrint(origUrl)
-      setOcrRaw(info.raw || null)
-      if (info.ok && info.time) {
-        const t5 = info.time.slice(0, 5)                 // sổ chỉ ghi Giờ:Phút (user chốt)
+      // AI Vision TRƯỚC (chính xác hơn hẳn với chữ nghiêng/nhỏ) — lỗi/hết quota → OCR local
+      let t: string | null = null, nsx: string | null = null, raw: string | null = null, eng: 'AI' | 'OCR' | null = null
+      const v = await visionRead(origUrl)
+      if (v) { eng = 'AI'; t = v.time; nsx = v.nsxDate; raw = v.raw }
+      else {
+        const info = await readCartonPrint(origUrl)
+        raw = info.raw || null
+        if (info.ok && info.time) { eng = 'OCR'; t = info.time; nsx = info.nsxDate ?? null }
+      }
+      setOcrRaw(raw); setEngine(eng)
+      if (t) {
+        const t5 = t.slice(0, 5)                         // sổ chỉ ghi Giờ:Phút (user chốt)
         setOcrTime(t5); setTime(t5)
-        if (info.nsxDate) setDate(info.nsxDate)
+        if (nsx) setDate(nsx)
       } else {
         setOcrTime(null); setOcrFail(true)
       }
@@ -189,7 +232,9 @@ function PhotoOcrField({ label, defaultDate, onValue }: {
         <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 w-36 text-sm" />
         <Input value={time} onChange={e => setTime(maskHHMM(e.target.value))} placeholder="HH:MM"
           inputMode="numeric" className={`h-9 w-24 text-sm tabular-nums text-center ${ocrTime && time === ocrTime ? 'border-sky-400 bg-sky-50 font-semibold' : ''}`} />
-        {ocrTime && time === ocrTime && <span className="text-[10px] text-sky-700 font-medium shrink-0">✓ đọc từ ảnh</span>}
+        {ocrTime && time === ocrTime && (
+          <span className="text-[10px] text-sky-700 font-medium shrink-0">✓ đọc từ ảnh{engine === 'AI' ? ' (AI)' : ''}</span>
+        )}
       </div>
     </div>
   )

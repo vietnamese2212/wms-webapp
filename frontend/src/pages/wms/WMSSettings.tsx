@@ -24,7 +24,7 @@ import {
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting,
-  useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine,
+  useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
   type WarehouseZone, type UnitRow, type UnitRole,
 } from '@/api/hooks'
@@ -1508,119 +1508,91 @@ export default function WMSSettings() {
   )
 }
 
-// ─── Tab Máy theo Kho (user 13/08) ───────────────────────────────────────────
+// ─── Tab Máy theo Kho (user 13/08; đồng bộ khuôn tab KHU VỰC theo yêu cầu cùng ngày) ──
 // Máy THUỘC Kho — mỗi kho danh mục riêng. Kho có máy → Sổ đóng gói (mở/sửa trang) + Sinh tem
 // (theo NMSX) PHẢI chọn trong danh mục (BE 422 MACHINE_INVALID); kho chưa khai → điền tự do.
-function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string }[] }) {
+function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string; code?: string }[] }) {
   const [whId, setWhId] = useState('')
+  const [search, setSearch] = useState('')
   const { data: machines = [], isLoading } = useMachines(whId || undefined)
-  const { mutate: createM, isPending: creating } = useCreateMachine()
-  const { mutate: updateM, isPending: updating } = useUpdateMachine()
   const { mutate: deleteM, isPending: deleting } = useDeleteMachine()
-  const [newCode, setNewCode] = useState('')
-  const [newNote, setNewNote] = useState('')
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editCode, setEditCode] = useState('')
-  const [editNote, setEditNote] = useState('')
+  const [showDlg, setShowDlg] = useState(false)
+  const [editing, setEditing] = useState<WarehouseMachine | null>(null)
   const whName = new Map(warehouses.map(w => [w.id, w.name]))
-  const err = (title: string) => (e: unknown) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+  const term = search.trim().toLowerCase()
+  const filtered = term
+    ? machines.filter(m => m.code.toLowerCase().includes(term) || (m.note ?? '').toLowerCase().includes(term))
+    : machines
 
-  function handleAdd() {
-    if (!whId || !newCode.trim()) return
-    createM({ warehouse_id: whId, code: newCode.trim(), note: newNote.trim() || undefined }, {
-      onSuccess: () => { setNewCode(''); setNewNote('') },
-      onError: err('Không thêm được máy'),
-    })
-  }
-  function startEdit(m: { id: string; code: string; note: string | null }) {
-    setEditId(m.id); setEditCode(m.code); setEditNote(m.note ?? '')
-  }
-  function saveEdit() {
-    if (!editId || !editCode.trim()) return
-    updateM({ id: editId, code: editCode.trim(), note: editNote.trim() }, {
-      onSuccess: () => setEditId(null),
-      onError: err('Không sửa được máy'),
-    })
+  function handleDelete(m: WarehouseMachine) {
+    if (!confirm(`Xóa máy "${m.code}" (${whName.get(m.warehouse_id) ?? ''})?`)) return
+    deleteM(m.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được máy', description: apiMsg(e) }) })
   }
 
   return (
     <>
       <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
-        <div className="w-56">
-          <SingleSelect value={whId} onChange={setWhId} placeholder="Tất cả kho"
-            options={warehouses.map(w => ({ value: w.id, label: w.name }))} />
-        </div>
-        <p className="text-[10px] text-slate-500 min-w-0 flex-1">
-          Máy thuộc KHO — kho có danh mục máy thì Sổ đóng gói + Sinh tem <b>phải chọn</b> trong danh mục; kho chưa khai máy thì điền tự do.
-        </p>
+        <SingleSelect
+          options={warehouses.map(w => ({ value: w.id, label: w.name, sub: w.code }))}
+          value={whId} onChange={setWhId}
+          placeholder="Tất cả kho" searchPlaceholder="Tìm kho…"
+          triggerClassName="h-8 w-44 text-xs shrink-0"
+        />
+        <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên máy, ghi chú…" className="flex-1 min-w-[140px]" />
+        {canManage && (
+          <ActionCluster className="ml-auto shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm máy', tip: 'Thêm máy vào danh mục của 1 kho',
+            primary: true, variant: 'default',
+            onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
       </div>
-      {canManage && (
-        <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
-          <Input value={newCode} onChange={e => setNewCode(e.target.value.toUpperCase())} placeholder="Tên máy (VD: A, M1)"
-            className="h-8 text-xs w-36" disabled={!whId} />
-          <Input value={newNote} onChange={e => setNewNote(e.target.value)} placeholder="Ghi chú (tùy chọn)"
-            className="h-8 text-xs w-52" disabled={!whId} />
-          <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" disabled={!whId || !newCode.trim() || creating}
-            onClick={handleAdd}><Plus className="h-3.5 w-3.5 mr-1" />{creating ? 'Đang thêm…' : 'Thêm máy'}</Button>
-          {!whId && <span className="text-[10px] text-amber-600">Chọn kho trước rồi mới thêm máy</span>}
-        </div>
-      )}
-      <div className="flex-1 min-h-0 overflow-auto">
-        {isLoading ? <div className="p-6 text-center text-xs text-slate-400">Đang tải…</div> : (
-          <Table className="min-w-full">
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
+          <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+        ) : machines.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 space-y-2">
+            <Cog className="h-10 w-10 mx-auto opacity-30" />
+            <p className="text-sm">{whId ? 'Kho này chưa khai máy — Sổ đóng gói / Sinh tem đang cho điền máy tự do' : 'Chưa có máy nào'}</p>
+            {canManage && <p className="text-xs">Nhấn "Thêm máy" để khai máy đầu tiên — kho có danh mục máy thì các form PHẢI chọn trong danh mục</p>}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 text-sm">Không có máy khớp tìm kiếm</div>
+        ) : (
+          <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Máy</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
-                {canManage && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Thao tác</TableHead>}
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Kho</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên máy</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                {canManage && <TableHead className="px-2 py-1.5 w-16" />}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {machines.length === 0 && (
-                <TableRow><TableCell colSpan={5} className="px-2 py-6 text-center text-xs text-slate-400 whitespace-nowrap">
-                  {whId ? 'Kho này chưa khai máy — Sổ đóng gói/Sinh tem đang cho điền máy tự do' : 'Chưa có máy nào'}
-                </TableCell></TableRow>
-              )}
-              {machines.map(m => (
-                <TableRow key={m.id}>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{whName.get(m.warehouse_id) ?? m.warehouse_id}</TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">
-                    {editId === m.id
-                      ? <Input value={editCode} onChange={e => setEditCode(e.target.value.toUpperCase())} className="h-7 text-xs w-28" />
-                      : m.code}
-                  </TableCell>
-                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                    {editId === m.id
-                      ? <Input value={editNote} onChange={e => setEditNote(e.target.value)} className="h-7 text-xs w-44" />
-                      : (m.note || <span className="text-slate-300">—</span>)}
-                  </TableCell>
+              {filtered.map(m => (
+                <TableRow key={m.id} className={!m.is_active ? 'opacity-50' : 'hover:bg-slate-50'}>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{whName.get(m.warehouse_id) ?? m.warehouse_id}</TableCell>
+                  <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800 whitespace-nowrap">{m.code}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{m.note || <span className="text-slate-300">—</span>}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${m.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    <Badge variant={m.is_active ? 'default' : 'secondary'} className="text-xs">
                       {m.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                    </span>
+                    </Badge>
                   </TableCell>
                   {canManage && (
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      {editId === m.id ? (
-                        <div className="flex items-center gap-1">
-                          <Button size="sm" className="h-6 text-[10px] px-2 !min-h-0" disabled={updating || !editCode.trim()} onClick={saveEdit}>Lưu</Button>
-                          <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 !min-h-0" onClick={() => setEditId(null)}>Hủy</Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-0.5">
-                          <button className="text-slate-400 hover:text-blue-500 p-1" title="Sửa" onClick={() => startEdit(m)}>
-                            <Pencil className="h-3.5 w-3.5" /></button>
-                          <button className="text-slate-400 hover:text-amber-500 p-1" title={m.is_active ? 'Tạm dừng (khỏi hiện trong danh sách chọn)' : 'Bật lại'}
-                            disabled={updating}
-                            onClick={() => updateM({ id: m.id, is_active: !m.is_active }, { onError: err('Không đổi được trạng thái') })}>
-                            <Clock className="h-3.5 w-3.5" /></button>
-                          <button className="text-slate-400 hover:text-red-500 p-1" title="Xóa" disabled={deleting}
-                            onClick={() => { if (confirm(`Xóa máy "${m.code}"?`)) deleteM(m.id, { onError: err('Không xóa được máy') }) }}>
-                            <Trash2 className="h-3.5 w-3.5" /></button>
-                        </div>
-                      )}
+                      <div className="flex justify-end gap-0.5">
+                        <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" title="Sửa"
+                          onClick={e => { e.stopPropagation(); setEditing(m); setShowDlg(true) }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" title="Xóa" disabled={deleting}
+                          onClick={e => { e.stopPropagation(); handleDelete(m) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
@@ -1629,7 +1601,99 @@ function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses:
           </Table>
         )}
       </div>
-      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">{machines.length} máy{whId ? ` · ${whName.get(whId) ?? ''}` : ''}</div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">
+        1–{filtered.length} / {machines.length} máy{whId ? ` · ${whName.get(whId) ?? ''}` : ''} — kho có danh mục máy thì Sổ đóng gói + Sinh tem phải chọn trong danh mục; kho chưa khai thì điền tự do
+      </div>
+      {showDlg && (
+        <MachineDialog machine={editing} warehouseId={whId} warehouses={warehouses} open={showDlg} onClose={() => setShowDlg(false)} />
+      )}
     </>
+  )
+}
+
+// Form Thêm/Sửa máy — FormSheet như ZoneDialog (user 13/08 "Thêm máy mở ra form, đồng bộ như Khu vực")
+function MachineDialog({ machine, warehouseId, warehouses, open, onClose }: {
+  machine: WarehouseMachine | null; warehouseId: string
+  warehouses: { id: string; name: string; code?: string }[]; open: boolean; onClose: () => void
+}) {
+  const isEdit = !!machine
+  const [selectedWhId, setSelectedWhId] = useState(machine?.warehouse_id ?? warehouseId)
+  const [code, setCode] = useState(machine?.code ?? '')
+  const [note, setNote] = useState(machine?.note ?? '')
+  const [isActive, setIsActive] = useState(machine?.is_active ?? true)
+  const [err, setErr] = useState('')
+  const { mutate: create, isPending: creating } = useCreateMachine()
+  const { mutate: update, isPending: updating } = useUpdateMachine()
+  const isPending = creating || updating
+
+  function handleSubmit() {
+    setErr('')
+    if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
+    if (!code.trim()) { setErr('Tên máy là bắt buộc'); return }
+    if (isEdit) {
+      update({ id: machine.id, code: code.trim(), note: note.trim(), is_active: isActive },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    } else {
+      create({ warehouse_id: selectedWhId, code: code.trim(), note: note.trim() || undefined },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    }
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa máy' : 'Thêm máy'} widthClass="sm:max-w-lg" footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || (!isEdit && !selectedWhId)}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+
+        {/* Kho — khóa khi sửa (máy thuộc kho, đổi kho = xóa rồi thêm ở kho kia) */}
+        {isEdit ? (
+          <div className="space-y-1">
+            <Label className="text-xs">Kho</Label>
+            <p className="text-sm font-medium text-slate-700">{warehouses.find(w => w.id === machine.warehouse_id)?.name ?? '—'}</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
+            <Select value={selectedWhId || '__none__'} onValueChange={v => setSelectedWhId(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Chọn kho</SelectItem>
+                {warehouses.map(w => (
+                  <SelectItem key={w.id} value={w.id}>{w.name}{w.code ? ` (${w.code})` : ''}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <Label className="text-xs">Tên máy <span className="text-red-500">*</span></Label>
+          <Input value={code} onChange={e => setCode(e.target.value.toUpperCase().replace(/\s+/g, ''))} placeholder="VD: A, M1" maxLength={10} />
+          <p className="text-[10px] text-slate-400">In trên tem pallet (đoạn Máy) — tự viết HOA, tối đa 10 ký tự, không trùng trong cùng kho</p>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">Ghi chú</Label>
+          <Input value={note} onChange={e => setNote(e.target.value)} placeholder="VD: dây chuyền 180ml…" />
+        </div>
+
+        {isEdit && (
+          <div className="space-y-1">
+            <Label className="text-xs">Trạng thái</Label>
+            <Select value={isActive ? '1' : '0'} onValueChange={v => setIsActive(v === '1')}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Hoạt động</SelectItem>
+                <SelectItem value="0">Tạm dừng (khỏi hiện trong danh sách chọn — trang sổ cũ giữ nguyên)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+    </FormSheet>
   )
 }

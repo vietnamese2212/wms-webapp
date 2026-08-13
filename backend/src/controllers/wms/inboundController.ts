@@ -1455,34 +1455,10 @@ export async function scanQR(req: Request, res: Response) {
       }
     }
 
-    // ĐỐI CHIẾU SỔ ĐÓNG GÓI chiều ngược (user duyệt 13/08): kho quét nhập pallet KHÔNG có trong sổ,
-    // TRONG KHI mã này SX đang ghi sổ (7 ngày gần) → cảnh báo MỀM, không chặn nhập.
-    // CHỈ soi hàng XƯỞNG MỚI — cùng mã nhưng nguồn NGOÀI thì hợp lệ, KHÔNG báo oan (user chốt 13/08
-    // "NCC, trung chuyển, hàng return nhập mã có trong sổ nhưng không phải SX của nhà máy"):
-    //   · đơn NCC / TRANSFER (source_type ≠ FACTORY) → nguồn ngoài tường minh → bỏ qua;
-    //   · pallet mang NCC (resolvedNcc — chọn tay / tem đoạn 4 / kế thừa) → hàng NCC → bỏ qua;
-    //   · pallet ĐÃ TỪNG nhập (có InventoryEntry trước lần này) → hàng return / tồn quay vòng → bỏ qua;
-    //   · tem NGÀY SX CŨ (> 7 ngày — SX trước khi dùng sổ) → bỏ qua;
-    //   · mã không dùng sổ → không có dòng sổ nào của mã → im lặng.
-    try {
-      const prodOk = parsed.production_date && (Date.now() - parsed.production_date.getTime()) <= 7 * 86400_000
-      const isFactoryFresh = (order as { source_type?: string }).source_type === 'FACTORY' && !resolvedNcc
-      if (isFactoryFresh && prodOk && parsed.material_code) {
-        const { data: inBook } = await supabase.from('packing_logs').select('id')
-          .eq('pallet_code', parsed.pallet_code).neq('status', 'CANCELLED').limit(1)
-        if (!inBook?.length) {
-          // hàng return: chính pallet này đã có lịch sử nhập (kể cả đã xuất) → không phải hàng xưởng mới
-          const { data: prior } = await supabase.from('InventoryEntry').select('id')
-            .eq('pallet_code', parsed.pallet_code).neq('id', entryObj.id).limit(1)
-          if (!prior?.length) {
-            const since = new Date(Date.now() - 7 * 86400_000).toISOString()
-            const { data: matBook } = await supabase.from('packing_logs').select('id')
-              .eq('material_code', parsed.material_code).neq('status', 'CANCELLED').gte('open_scan_at', since).limit(1)
-            if (matBook?.length) warnings.push('Pallet CHƯA có trong Sổ đóng gói (mã này sản xuất đang ghi sổ) — kiểm tra nguồn pallet với xưởng. Nếu là hàng NCC/trả về, bỏ qua cảnh báo này.')
-          }
-        }
-      }
-    } catch { /* đối chiếu lỗi thì bỏ qua — không được chặn nhập */ }
+    // ĐỐI CHIẾU SỔ ĐÓNG GÓI: RULE user chốt 13/08 (vòng 3) — "CÓ trong sổ mà chưa nhập tồn → cảnh báo
+    // Ở SỔ ĐÓNG GÓI (rule PACKING_UNRECEIVED, alertScanner); KHÔNG có trong sổ thì KHÔNG SAO."
+    // ⇒ nhập kho KHÔNG cảnh báo pallet ngoài sổ (đã thử rồi gỡ: NCC/trung chuyển/hàng return
+    // nhập cùng mã là hợp lệ, mọi biến thể gate đều còn ca báo oan — QA 22 [18] gác chiều KHÔNG bắn).
 
     emitInboundChanged()
     ok(res, { entry, warnings })

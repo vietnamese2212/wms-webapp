@@ -6,6 +6,7 @@ import { Request, Response } from 'express'
 import { supabase } from '../lib/supabase'
 import { maskServerMessage } from '../utils/response'
 import { getVapid, sendPushToEmployees, upsertSubscription, PREF_KEYS } from '../services/pushService'
+import { getRetentionDays } from '../utils/settings'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
@@ -59,13 +60,13 @@ export async function unsubscribe(req: Request, res: Response) {
 // XOÁ THEO LÔ: câu `DELETE ... < cutoff` không giới hạn sẽ bắt MỘT người dùng gánh việc xoá hàng
 // trăm nghìn dòng khi app chạy quy mô lớn (check-app 06/08 nêu). Mỗi lượt tối đa BATCH dòng,
 // throttle 1h/instance → tồn đọng được dọn dần qua các lượt, không lượt nào treo lâu.
-const FEED_RETENTION_DAYS = 3
+// Số ngày giữ = cờ `retention_days.feed` (mặc định 3) — Cài đặt WMS › Hệ thống.
 const FEED_CLEAN_BATCH = 2000
 let _lastFeedCleanupAt = 0
 async function cleanupOldFeed(): Promise<void> {
   if (Date.now() - _lastFeedCleanupAt < 3600_000) return
   _lastFeedCleanupAt = Date.now()
-  const cutoff = new Date(Date.now() - FEED_RETENTION_DAYS * 86400_000).toISOString()
+  const cutoff = new Date(Date.now() - (await getRetentionDays()).feed * 86400_000).toISOString()
   const { data } = await supabase.from('user_notifications')
     .select('id').lt('created_at', cutoff).order('created_at').limit(FEED_CLEAN_BATCH)
   const ids = (data ?? []).map(r => r.id as string)

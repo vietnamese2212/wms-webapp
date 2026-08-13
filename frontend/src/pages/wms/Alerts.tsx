@@ -384,7 +384,7 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
 const TH_DEFAULT = {
   PCT_WARN: 20, PCT_CRIT: 10,
   GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180,
-  TRIP_STUCK_HOURS: 6,
+  TRIP_STUCK_HOURS: 6, TRIP_LATE_DAYS: 14,
   WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15,
   PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24,
 }
@@ -417,6 +417,7 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     if (t.PCT_WARN > 90) return setErr('%Date: ngưỡng Cảnh báo tối đa 90%.')
     if (t.GATE_WARN_MIN < 15 || t.GATE_WARN_MIN > t.GATE_CRIT_MIN || t.GATE_CRIT_MIN > 2880) return setErr('Xe trong cổng: 15 phút ≤ Cảnh báo ≤ Nghiêm trọng ≤ 2880 phút.')
     if (t.TRIP_STUCK_HOURS < 1 || t.TRIP_STUCK_HOURS > 72) return setErr('Chuyến bắt đầu chưa xong: 1–72 giờ.')
+    if (!Number.isInteger(t.TRIP_LATE_DAYS) || t.TRIP_LATE_DAYS < 1 || t.TRIP_LATE_DAYS > 180) return setErr('Chuyến trễ: cửa sổ soi ngược 1–180 ngày (số nguyên).')
     if (t.WEIGH_WARN_PCT > t.WEIGH_CRIT_PCT || t.WEIGH_CRIT_PCT > 100) return setErr('Lệch cân: Cảnh báo ≤ Nghiêm trọng ≤ 100%.')
     if (t.PACKING_UNRECV_WARN_H < 1 || t.PACKING_UNRECV_WARN_H > t.PACKING_UNRECV_CRIT_H || t.PACKING_UNRECV_CRIT_H > 168)
       return setErr('Sổ đóng gói — kho chưa nhận: 1 giờ ≤ Cảnh báo ≤ Nghiêm trọng ≤ 168 giờ.')
@@ -466,7 +467,8 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
 
             {band('Chuyến trễ / kẹt')}
             {row('Chuyến bắt đầu quá … giờ chưa hoàn thành', 'TRIP_STUCK_HOURS', 'giờ')}
-            <p className="text-[10px] text-slate-400">Chuyến trễ ngày xuất: cứ quá ngày là báo — không có ngưỡng chỉnh.</p>
+            {row('Chỉ soi chuyến trễ trong … ngày gần nhất', 'TRIP_LATE_DAYS', 'ngày')}
+            <p className="text-[10px] text-slate-400">Chuyến trễ ngày xuất: cứ quá ngày là báo; ô "ngày gần nhất" chỉ giới hạn soi ngược bao xa (chứng từ cũ hơn coi như đã xử lý ngoài hệ thống).</p>
 
             {band('Lệch cân')}
             {row('Cảnh báo khi |cân − KL tính| >', 'WEIGH_WARN_PCT', '%')}

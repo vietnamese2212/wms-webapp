@@ -79,6 +79,9 @@
 
 ## Trạng thái
 - [x] A-bug filter rule PACKING_UNRECEIVED — vá `ed4e8469`
+- [x] ĐỢT 1 (13/08): A1 superadmin theo CỘT `is_superadmin` (migration 20260813f + ratchet `superadmin_by_name` 0) · A2 %Date một nguồn (`pct_date_bands` + `pctDateCls`, sửa luôn calcPctAtScan sai nguồn — RPC 20260813g) · A3 lệch cân FE đọc `WEIGH_WARN_PCT`.
+- [x] ĐỢT 2 (13/08): B1 4 cờ tham số vận hành (`retention_days`, `cycle_count`, `inbound_edit_window_days`, `packing_max_materials_per_run`) — default+validator MỘT nguồn `backend/src/utils/settings.ts`, 7 điểm tiêu thụ BE + 2 FE đọc cờ, UI tab Hệ thống mục 4–7 · B2 `TRIP_LATE_DAYS` vào `alert_thresholds` (10 khóa) + ô UI tab Cài đặt ngưỡng · QA gói 23-settings round-trip + gói 21 hết hardcode chu kỳ.
+- [ ] B2 phần còn cân nhắc: cửa sổ gate 48h / BE_ERRORS 24h / packing window 7 ngày / EXPIRY_WINDOW — CHỐT GIỮ hardcode (biên kỹ thuật lượt quét, không phải chính sách — ghi chú tại alertScanner.ts).
 - [x] **ĐỢT 1 XONG 13/08 đêm (user duyệt "bắt đầu theo đề xuất"):**
   - A1 — superadmin theo CỘT `is_superadmin` (migration `20260813f`, ~18 chỗ BE + FE isAdmin, ratchet `superadmin_by_name` baseline 0)
   - A2 — %Date MỘT nguồn: helper `pctDateCls` + hook `usePctBands` (SystemSetting `pct_date_bands`, mặc định 60/30 — Tồn kho/Nhật ký quét/Kiểm kho đổi từ thang 70/40 sang 60/30 thống nhất); Nhật ký quét bỏ `calcPctAtScan` tự chế → `computePctDate` chung với nowMs = lúc quét (RPC `20260813g` trả expiry_date/entry_shelf/ncc/overrides)

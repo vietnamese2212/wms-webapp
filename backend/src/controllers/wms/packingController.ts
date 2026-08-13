@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { normalizeQR, parseInboundQR } from '../../utils/qrParser'
 import { fetchAllByIdChunks } from '../../utils/pagination'
 import { activeMachineCodes } from './machineController'
+import { getRetentionDays, getPackingMaxMaterials } from '../../utils/settings'
 
 // ─── SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08/2026) — số hóa sổ đóng gói viết tay tại xưởng ──
 // 1 pallet = 1 dòng packing_logs. Quét tem lúc BẮT ĐẦU xếp → mở sổ (OPEN);
@@ -17,15 +18,16 @@ const PHOTO_BUCKET = 'packing-photos'
 const PHOTO_MAX_BYTES = 4 * 1024 * 1024
 const PAGE_MAX = 500
 
-// Dọn ảnh cũ 60 NGÀY như xe nâng (user chốt 11/08 "xóa tương tự giờ xe nâng") — dọn LƯỜI:
+// Dọn ảnh cũ như xe nâng (user chốt 11/08 "xóa tương tự giờ xe nâng") — dọn LƯỜI:
 // chạy khi có người ghi sổ, throttle 6h/instance, lô ≤200; xóa storage TRƯỚC rồi mới NULL
 // path (lỗi thì chờ lượt sau, không orphan); dòng sổ + giờ SX GIỮ NGUYÊN, chỉ gỡ ảnh.
-const PHOTO_RETENTION_DAYS = 60
+// Số ngày giữ = cờ `retention_days.photos` (mặc định 60) — Cài đặt WMS › Hệ thống.
 let _lastPhotoCleanupAt = 0
 async function cleanupOldPhotos(): Promise<void> {
   if (Date.now() - _lastPhotoCleanupAt < 6 * 3600_000) return
   _lastPhotoCleanupAt = Date.now()
-  const cutoff = new Date(Date.now() - PHOTO_RETENTION_DAYS * 86400_000).toISOString()
+  const retentionDays = (await getRetentionDays()).photos
+  const cutoff = new Date(Date.now() - retentionDays * 86400_000).toISOString()
   const { data } = await supabase.from('packing_logs')
     .select('id, photo_start_path, photo_end_path')
     .or('photo_start_path.not.is.null,photo_end_path.not.is.null')
@@ -546,7 +548,9 @@ export async function openRun(req: Request, res: Response) {
     : (typeof material_code === 'string' && material_code.trim() ? [material_code.trim()] : [])
   if (!warehouse_id || typeof warehouse_id !== 'string') return fail(res, 'Chọn Kho / Nhà máy', 422)
   if (!codes.length) return fail(res, 'Chọn Mã sản phẩm', 422)
-  if (codes.length > 10) return fail(res, 'Tối đa 10 mã / 1 trang sổ', 422)
+  // Trần số mã / trang = cờ `packing_max_materials_per_run` (mặc định 10) — Cài đặt WMS › Hệ thống
+  const maxMats = await getPackingMaxMaterials()
+  if (codes.length > maxMats) return fail(res, `Tối đa ${maxMats} mã / 1 trang sổ`, 422)
   if (!machine_code || typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Nhập Máy', 422)
   const scope = scopeWhIds(req)
   if (scope !== null && !scope.includes(warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)

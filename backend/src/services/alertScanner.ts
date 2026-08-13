@@ -32,10 +32,18 @@ export const THRESHOLDS = {
 }
 export type AlertThresholds = typeof THRESHOLDS
 
-// 7 khóa cho phép tùy biến (TRIP_LATE_DAYS/EXPIRY_WINDOW_DAYS là prefilter nội bộ, không mở).
+// CỐ Ý KHÔNG cho cấu hình (audit hardcode 13/08 rà lại, giữ nguyên có lý do — đừng "dọn" thành cờ):
+// · EXPIRY_WINDOW_DAYS — prefilter, TỰ suy từ PCT_WARN ở dưới; cho chỉnh tay = user hạ nhầm rồi
+//   cảnh báo cận date im lặng biến mất (đúng lớp lỗi "rule chết câm" đã dính 06/08).
+// · Cửa sổ quét 48h (gate) / 24h (lỗi BE) / 7 ngày (pallet chưa nhận) — biên KỸ THUẬT của lượt quét
+//   lười, không phải chính sách; nới ra chỉ làm nặng mỗi lượt quét mà không đổi việc phải làm.
+
+// Khóa cho phép tùy biến (UI: tab "Cài đặt ngưỡng" trang Thông báo).
+// TRIP_LATE_DAYS mở từ 13/08 — "soi ngược bao xa" là CHÍNH SÁCH vận hành, kho tồn đọng nhiều
+// chứng từ cũ cần nới; các hằng còn lại CỐ Ý không mở, xem ghi chú dưới THRESHOLDS.
 export const ALERT_TH_CONFIG_KEYS = [
   'PCT_WARN', 'PCT_CRIT', 'GATE_WARN_MIN', 'GATE_CRIT_MIN',
-  'TRIP_STUCK_HOURS', 'WEIGH_WARN_PCT', 'WEIGH_CRIT_PCT',
+  'TRIP_STUCK_HOURS', 'TRIP_LATE_DAYS', 'WEIGH_WARN_PCT', 'WEIGH_CRIT_PCT',
   'PACKING_UNRECV_WARN_H', 'PACKING_UNRECV_CRIT_H',
 ] as const
 

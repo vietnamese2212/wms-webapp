@@ -73,6 +73,29 @@ function parseDc(v: unknown): DeliveryConf {
   return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1
 }
 
+// ── Tham số vận hành (đợt 2 chống hardcode 13/08) — MIRROR mặc định BE utils/settings.ts ──
+const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30 }
+const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
+const INB_WINDOW_DEFAULT = 2
+const PACK_MAX_DEFAULT = 10
+function numRec<T extends Record<string, number>>(v: unknown, def: T): T {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...def }
+  const o = v as Record<string, unknown>
+  const out = { ...def }
+  for (const k of Object.keys(def) as (keyof T)[]) {
+    const n = Number(o[k as string])
+    if (Number.isFinite(n) && n > 0) out[k] = n as T[keyof T]
+  }
+  return out
+}
+const recToStr = (o: Record<string, number>): Record<string, string> =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, String(v)]))
+// Ô nhập phải ra SỐ NGUYÊN trong khoảng — trả null để chặn trước khi gửi (BE vẫn là chốt cuối)
+const intIn = (s: string, min: number, max: number): number | null => {
+  const n = Number(s)
+  return Number.isInteger(n) && n >= min && n <= max ? n : null
+}
+
 function SystemTab({ canManage }: { canManage: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
@@ -81,36 +104,84 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const labelRow = settings.find(s => s.key === 'label_format')
   const dcRow    = settings.find(s => s.key === 'delivery_confirmation')
   const decRow   = settings.find(s => s.key === 'decimal_separator')
+  const retRow   = settings.find(s => s.key === 'retention_days')
+  const cycRow   = settings.find(s => s.key === 'cycle_count')
+  const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
+  const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
+  const srvRet   = numRec(retRow?.value, RET_DEFAULT)
+  const srvCyc   = numRec(cycRow?.value, CYC_DEFAULT)
+  const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
+  const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
   const [draftDc,    setDraftDc]    = useState<DeliveryConf>(srvDc)
   const [draftDec,   setDraftDec]   = useState(srvDec)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec])
+  const [draftRet,   setDraftRet]   = useState<Record<string, string>>(recToStr(srvRet))
+  const [draftCyc,   setDraftCyc]   = useState<Record<string, string>>(recToStr(srvCyc))
+  const [draftInb,   setDraftInb]   = useState(String(srvInb))
+  const [draftPack,  setDraftPack]  = useState(String(srvPack))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack])
   const [baseKey, setBaseKey] = useState(srvKey)
+  const syncDrafts = () => {
+    setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
+    setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
+    setDraftInb(String(srvInb)); setDraftPack(String(srvPack))
+  }
   useEffect(() => {
-    if (srvKey !== baseKey) { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setBaseKey(srvKey) }
+    if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srvKey])
 
   const labelDirty = draftLabel !== srvLabel
   const dcDirty    = JSON.stringify(draftDc) !== JSON.stringify(srvDc)
   const decDirty   = draftDec !== srvDec
-  const dirty      = labelDirty || dcDirty || decDirty
+  const retDirty   = JSON.stringify(draftRet) !== JSON.stringify(recToStr(srvRet))
+  const cycDirty   = JSON.stringify(draftCyc) !== JSON.stringify(recToStr(srvCyc))
+  const inbDirty   = draftInb !== String(srvInb)
+  const packDirty  = draftPack !== String(srvPack)
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty
 
   async function applyChanges() {
     setErr('')
+    // Kiểm nhanh phía FE (khoảng hợp lệ MIRROR validator BE) — chặn sớm cho thông báo rõ; BE vẫn là chốt cuối
+    let ret: { photos: number; feed: number; error_logs: number } | null = null
+    let cyc: { A: number; B: number; C: number; window_days: number } | null = null
+    let inb: number | null = null, pack: number | null = null
+    if (retDirty) {
+      const photos = intIn(draftRet.photos, 7, 730), feed = intIn(draftRet.feed, 1, 90), error_logs = intIn(draftRet.error_logs, 7, 365)
+      if (!photos || !feed || !error_logs) return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 (ngày, số nguyên).')
+      ret = { photos, feed, error_logs }
+    }
+    if (cycDirty) {
+      const A = intIn(draftCyc.A, 1, 365), B = intIn(draftCyc.B, 1, 365), C = intIn(draftCyc.C, 1, 365), window_days = intIn(draftCyc.window_days, 7, 365)
+      if (!A || !B || !C || !window_days) return setErr('Kiểm kê luân phiên: chu kỳ 1–365 ngày, cửa sổ phân hạng 7–365 ngày (số nguyên).')
+      if (!(A <= B && B <= C)) return setErr('Kiểm kê luân phiên: hạng A phải kiểm DÀY nhất — cần A ≤ B ≤ C.')
+      cyc = { A, B, C, window_days }
+    }
+    if (inbDirty) {
+      inb = intIn(draftInb, 1, 90)
+      if (!inb) return setErr('Cửa sổ sửa/xóa phiếu nhập: 1–90 ngày (số nguyên).')
+    }
+    if (packDirty) {
+      pack = intIn(draftPack, 1, 50)
+      if (!pack) return setErr('Sổ đóng gói: tối đa mã / trang sổ trong khoảng 1–50 (số nguyên).')
+    }
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
       if (dcDirty)    await save({ key: 'delivery_confirmation', value: draftDc })
       if (decDirty)   await save({ key: 'decimal_separator', value: draftDec })
+      if (ret)        await save({ key: 'retention_days', value: ret })
+      if (cyc)        await save({ key: 'cycle_count', value: cyc })
+      if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
+      if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
-  const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setErr('') }
+  const resetDraft = () => { syncDrafts(); setErr('') }
   const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
@@ -168,6 +239,74 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             <div className={`shrink-0 ${roClass}`}>
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
                 onChange={setDraftDec} searchable={false} triggerClassName="w-56" />
+            </div>
+          </div>
+
+          {/* 4. Kiểm kê luân phiên ABC — chu kỳ per hạng + cửa sổ phân hạng */}
+          <div className="flex items-start justify-between gap-4 py-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">4. Kiểm kê luân phiên ABC</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Chu kỳ kiểm theo hạng (A nhặt nhiều → kiểm dày nhất) + cửa sổ lượt nhặt để phân hạng. Áp cho tab Luân phiên ABC của Kiểm kho.</p>
+              {cycRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {cycRow.updated_by} · {formatDateTime(cycRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 flex items-center gap-3 flex-wrap ${roClass}`}>
+              {([['A', 'Hạng A'], ['B', 'Hạng B'], ['C', 'Hạng C'], ['window_days', 'Cửa sổ hạng']] as const).map(([k, lb]) => (
+                <label key={k} className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                  {lb}
+                  <Input type="number" inputMode="numeric" min={1} value={draftCyc[k]}
+                    onChange={e => setDraftCyc(d => ({ ...d, [k]: e.target.value }))}
+                    className="h-8 w-16 text-xs tabular-nums" />
+                  <span className="text-slate-400">ngày</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* 5. Thời gian lưu dữ liệu — dọn lười theo lô, quá hạn là gỡ dần */}
+          <div className="flex items-start justify-between gap-4 py-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">5. Thời gian lưu dữ liệu</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu GIỮ NGUYÊN, chỉ gỡ ảnh). Thông báo = feed Cá nhân nút chuông. Log lỗi = bảng error_logs cho digest.</p>
+              {retRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {retRow.updated_by} · {formatDateTime(retRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 flex items-center gap-3 flex-wrap ${roClass}`}>
+              {([['photos', 'Ảnh'], ['feed', 'Thông báo'], ['error_logs', 'Log lỗi']] as const).map(([k, lb]) => (
+                <label key={k} className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                  {lb}
+                  <Input type="number" inputMode="numeric" min={1} value={draftRet[k]}
+                    onChange={e => setDraftRet(d => ({ ...d, [k]: e.target.value }))}
+                    className="h-8 w-16 text-xs tabular-nums" />
+                  <span className="text-slate-400">ngày</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* 6. Cửa sổ tự sửa/xóa phiếu nhập */}
+          <div className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">6. Cửa sổ sửa/xóa phiếu nhập</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Người NHẬP tự sửa/xóa pallet của mình trong vòng bao nhiêu ngày. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).</p>
+              {inbRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {inbRow.updated_by} · {formatDateTime(inbRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 flex items-center gap-1.5 text-[11px] text-slate-600 ${roClass}`}>
+              <Input type="number" inputMode="numeric" min={1} value={draftInb}
+                onChange={e => setDraftInb(e.target.value)} className="h-8 w-16 text-xs tabular-nums" />
+              <span className="text-slate-400">ngày</span>
+            </div>
+          </div>
+
+          {/* 7. Sổ đóng gói — trần số mã / 1 trang sổ */}
+          <div className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">7. Sổ đóng gói — số mã tối đa / trang sổ</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy. Trần này chặn chọn quá tay khi mở trang.</p>
+              {packRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {packRow.updated_by} · {formatDateTime(packRow.updated_at)}</p>}
+            </div>
+            <div className={`shrink-0 flex items-center gap-1.5 text-[11px] text-slate-600 ${roClass}`}>
+              <Input type="number" inputMode="numeric" min={1} value={draftPack}
+                onChange={e => setDraftPack(e.target.value)} className="h-8 w-16 text-xs tabular-nums" />
+              <span className="text-slate-400">mã</span>
             </div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { Response } from 'express'
 import { supabase } from '../lib/supabase'
+import { getRetentionDays } from './settings'
 
 export const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data })
@@ -15,11 +16,12 @@ export function recordServerError(source: 'be' | 'fe', message: string, status?:
     void supabase.from('error_logs')
       .insert({ source, status: status ?? null, code: code ?? null, message: String(message).slice(0, 500), url: url ?? null, ua: ua ?? null })
       .then(() => {
-        // dọn lười: ~1% lượt ghi xoá log >30 ngày (bảng chỉ để digest — không cần giữ lâu)
+        // dọn lười: ~1% lượt ghi xoá log quá hạn — số ngày giữ = cờ `retention_days.error_logs`
+        // (mặc định 30; Cài đặt WMS › Hệ thống). Bảng chỉ để digest — không cần giữ lâu.
         if (Math.random() < 0.01) {
-          void supabase.from('error_logs')
-            .delete().lt('created_at', new Date(Date.now() - 30 * 86400_000).toISOString())
-            .then(() => {}, () => {})
+          void getRetentionDays().then(r => supabase.from('error_logs')
+            .delete().lt('created_at', new Date(Date.now() - r.error_logs * 86400_000).toISOString())
+            .then(() => {}, () => {})).catch(() => {})
         }
       }, () => { /* bảng chưa có (chưa apply migration) / DB sập — nuốt im, đừng đổ thêm dầu */ })
   } catch { /* không bao giờ để telemetry phá request thật */ }

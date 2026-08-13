@@ -8,7 +8,8 @@ import { login, api, restAll, restWrite, check, finish, FIX, BASE } from './lib.
 const t = () => new Date().toISOString()
 const TAG = 'SIMCYCLE'
 const WH = FIX.WH_QTY
-const CYCLE = { A: 7, B: 30, C: 90 }
+// Chu kỳ per hạng KHÔNG hardcode nữa (13/08: thành cờ `cycle_count`) — lấy từ chính response
+// `cycle_days` rồi kiểm NHẤT QUÁN nội tại (từng dòng khớp bảng chu kỳ API công bố).
 
 async function cleanup() {
   await restWrite('StocktakeLog', 'DELETE', `note=eq.${TAG}`).catch(() => {})
@@ -32,7 +33,11 @@ const r1 = await api(`/wms/stocktake/cycle?warehouse_id=${WH.id}`, 'GET')
 const rows = r1.j?.data?.rows ?? []
 const summary = r1.j?.data?.summary
 check('GET cycle → 200 + shape rows/summary', r1.s === 200 && Array.isArray(rows) && !!summary, `http=${r1.s} rows=${rows.length}`)
+const CYCLE = r1.j?.data?.cycle_days ?? { A: 7, B: 30, C: 90 }
 {
+  const cycleShapeOk = ['A', 'B', 'C'].every(k => Number.isInteger(CYCLE[k]) && CYCLE[k] >= 1)
+    && CYCLE.A <= CYCLE.B && CYCLE.B <= CYCLE.C
+  check('cycle_days API công bố hợp lệ (nguyên ≥1, A ≤ B ≤ C)', cycleShapeOk, JSON.stringify(CYCLE))
   const badAbc = rows.filter(r => !['A', 'B', 'C'].includes(r.abc))
   const badCycle = rows.filter(r => r.cycle_days !== CYCLE[r.abc])
   const badDue = rows.filter(r => !r.never_counted && r.days_since != null && r.due_in !== r.cycle_days - r.days_since)

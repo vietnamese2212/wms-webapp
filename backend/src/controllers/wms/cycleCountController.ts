@@ -12,6 +12,7 @@ import { maskServerMessage } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
+import { getCycleCountCfg } from '../../utils/settings'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
@@ -20,9 +21,8 @@ function fail(res: Response, status: number, code: string, message: string) {
   return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 
-// Chu kỳ kiểm theo hạng (ngày) — hardcode có chủ đích (CLAUDE.md #2), sửa ở đây
-export const CYCLE_DAYS: Record<'A' | 'B' | 'C', number> = { A: 7, B: 30, C: 90 }
-const ABC_WINDOW_DAYS = 30   // cửa sổ lượt nhặt để phân hạng (khớp mặc định trang Slotting)
+// Chu kỳ kiểm theo hạng + cửa sổ phân hạng = cờ `cycle_count` (mặc định A7/B30/C90, cửa sổ 30
+// ngày — Cài đặt WMS › Hệ thống, đợt 2 chống hardcode 13/08).
 
 function guardWarehouse(req: Request, res: Response, warehouseId: string): boolean {
   if (req.user?.warehouse_scope === 'ASSIGNED' && !(req.user.warehouse_ids ?? []).includes(warehouseId)) {
@@ -52,11 +52,12 @@ export async function getCycleCount(req: Request, res: Response) {
     if (reqCats.length > 0 && effCats.length === 0)
       return fail(res, 403, 'FORBIDDEN', 'Loại kho chọn ngoài phạm vi được phân quyền')
 
+    const cfg = await getCycleCountCfg()
     const [statsR, infoR] = await Promise.all([
       supabase.rpc('slotting_stats', {
         p_warehouse_id: warehouseId,
         p_categories: effCats.length > 0 ? effCats : null,
-        p_days: ABC_WINDOW_DAYS,
+        p_days: cfg.window_days,
       }),
       supabase.rpc('cycle_count_info', { p_warehouse_id: warehouseId }),
     ])
@@ -81,7 +82,7 @@ export async function getCycleCount(req: Request, res: Response) {
     // Chỉ mã ĐANG CÓ TỒN mới cần kiểm (kiểm kê là đếm tồn thật — mã 0 tồn không có gì để đếm)
     const rows = materials.filter(m => Number(m.stock_pallets) > 0).map(m => {
       const lastAt = lastByMat.get(m.material_id) ?? null
-      const cycle = CYCLE_DAYS[m.abc]
+      const cycle = cfg[m.abc]
       // KHÔNG thể "kiểm ở tương lai": lệch đồng hồ vài giây giữa máy ghi và server làm hiệu ÂM,
       // Math.floor(-0.001) = -1 ⇒ mã vừa kiểm xong hiện "kiểm 1 ngày trước" và due_in lệch 1 ngày
       // (check-app 06/08 bắt). Kẹp sàn 0.
@@ -111,8 +112,8 @@ export async function getCycleCount(req: Request, res: Response) {
         due_c: dueRows.filter(r => r.abc === 'C').length,
         never: rows.filter(r => r.never_counted).length,
       },
-      cycle_days: CYCLE_DAYS,
-      window_days: ABC_WINDOW_DAYS,
+      cycle_days: { A: cfg.A, B: cfg.B, C: cfg.C },
+      window_days: cfg.window_days,
     })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

@@ -25,6 +25,7 @@ import {
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
+  useSettingNumber,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -302,6 +303,9 @@ export default function InboundDetail() {
     setShowScan(true)
   }, true)
 
+  // Cửa sổ người nhập tự sửa/xóa = cờ `inbound_edit_window_days` (mặc định 2) — mirror gate BE checkDeletePermission
+  const editWindowDays = useSettingNumber('inbound_edit_window_days', 2)
+
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
     // Mã no-QR là pool dùng chung (có thể PARTIAL khi đã xuất 1 phần) — không chặn theo status; backend tự validate phần còn trống
@@ -310,7 +314,7 @@ export default function InboundDetail() {
     if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
-    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= editWindowDays
   }
 
   function canEditEntry(entry: PalletEntry): boolean {
@@ -320,7 +324,7 @@ export default function InboundDetail() {
     if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
-    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= editWindowDays
   }
 
   function toggleAll() {

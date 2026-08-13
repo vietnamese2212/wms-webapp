@@ -23,7 +23,7 @@ import {
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
   usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
   useUpdatePackingRun, useCancelPackingRun, type PackingRun,
-  useImportShifts, useMaterials, useMaterialsByCodes, useMachines,
+  useImportShifts, useMaterials, useMaterialsByCodes, useMachines, useSettingNumber,
 } from '@/api/hooks'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
@@ -982,6 +982,8 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   // DANH MỤC MÁY THEO KHO (user 13/08): kho có khai máy → PHẢI chọn trong danh mục (BE cũng chặn 422);
   // kho chưa khai → điền tự do như cũ. Đổi kho → máy đã chọn không thuộc danh mục kho mới thì xóa.
   const { data: whMachines } = useMachines(whId || undefined)
+  // Trần số mã / trang = cờ `packing_max_materials_per_run` (mặc định 10) — mirror gate BE openRun
+  const maxMats = useSettingNumber('packing_max_materials_per_run', 10)
   const machineOpts = useMemo(() => (whId ? (whMachines ?? []) : [])
     .filter(m => m.is_active).map(m => ({ value: m.code, label: m.code + (m.note ? ` — ${m.note}` : '') })), [whMachines, whId])
   useEffect(() => {
@@ -990,7 +992,7 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
 
   function addMat(v: string) {
     if (!v || sel.some(s => s.code === v)) return
-    if (sel.length >= 10) { onError('Tối đa 10 mã / 1 trang sổ'); return }
+    if (sel.length >= maxMats) { onError(`Tối đa ${maxMats} mã / 1 trang sổ`); return }
     const m = (mats.data ?? []).find(x => x.material_code === v)
     setSel(prev => [...prev, { code: v, id: m?.id ?? null, label: m ? `${m.material_code} — ${m.short_name ?? ''}` : v }])
   }

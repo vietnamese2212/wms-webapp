@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { getRetentionDays } from '../../utils/settings'
 
 // ─── Module XE NÂNG — check list an toàn hàng ngày + đồng hồ giờ vận hành ─────
 // Bảng: forklift_vehicles (danh mục xe) · forklift_checklist_items (hạng mục check
@@ -44,13 +45,14 @@ function decodePhotoDataUrl(raw: unknown): { buf: Buffer; contentType: string; e
 // lưu check list, tối đa 1 lần/6h/instance, mỗi lượt 1 lô ≤200 ảnh (chạy dần).
 // Thứ tự an toàn: xóa object storage TRƯỚC, xóa lỗi thì giữ photo_path lại chờ
 // lượt sau (không orphan ảnh); update KHÔNG đụng updated_at (giữ đúng "Lúc check").
-const PHOTO_RETENTION_DAYS = 60
+// Số ngày giữ ảnh = cờ `retention_days.photos` (mặc định 60) — Cài đặt WMS › Hệ thống.
 let _lastPhotoCleanupAt = 0
 
 async function cleanupOldPhotos(): Promise<void> {
   if (Date.now() - _lastPhotoCleanupAt < 6 * 3600_000) return
   _lastPhotoCleanupAt = Date.now()
-  const cutoff = new Date(Date.now() - PHOTO_RETENTION_DAYS * 86400_000)
+  const retentionDays = (await getRetentionDays()).photos
+  const cutoff = new Date(Date.now() - retentionDays * 86400_000)
     .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const { data } = await supabase.from('forklift_daily_logs')
     .select('id, photo_path')

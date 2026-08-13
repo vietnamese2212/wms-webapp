@@ -14,6 +14,7 @@ import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTy
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
+import { getInboundEditWindowDays } from '../../utils/settings'
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
@@ -1722,17 +1723,19 @@ async function checkDeletePermission(
     .from('Employee').select('id, warehouse_id').eq('id', employee_id).maybeSingle()
   if (!emp) return { allowed: true }
 
-  if (forceAllowed) return { allowed: true } // bypass creator/2-day check
+  if (forceAllowed) return { allowed: true } // bypass creator/window check
 
-  // Must be the importer + within 2 days
+  // Phải là NGƯỜI NHẬP + trong cửa sổ cho phép — số ngày = cờ `inbound_edit_window_days`
+  // (mặc định 2; Cài đặt WMS › Hệ thống). Quá hạn = chứng từ đã chốt, cần quyền force_*.
+  const windowDays = await getInboundEditWindowDays()
   const now = Date.now()
   for (const entry of entries) {
     if (entry.created_by !== employee_id) {
       return { allowed: false, reason: 'Bạn không có quyền xóa pallet của người khác' }
     }
     const importDate = new Date(entry.import_date ?? entry.created_at).getTime()
-    if ((now - importDate) / 86_400_000 > 2) {
-      return { allowed: false, reason: 'Chỉ có thể xóa pallet trong vòng 2 ngày sau khi nhập' }
+    if ((now - importDate) / 86_400_000 > windowDays) {
+      return { allowed: false, reason: `Chỉ có thể sửa/xóa pallet trong vòng ${windowDays} ngày sau khi nhập` }
     }
   }
   return { allowed: true }

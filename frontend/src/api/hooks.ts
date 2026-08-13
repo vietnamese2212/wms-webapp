@@ -512,6 +512,14 @@ export function useUpdateSystemSetting() {
   })
 }
 
+// Đọc 1 THAM SỐ VẬN HÀNH dạng số (đợt 2 chống hardcode 13/08) — fallback MIRROR mặc định BE
+// utils/settings.ts. Chưa tải xong / chưa cấu hình / giá trị bậy → dùng fallback (không chặn UI).
+export function useSettingNumber(key: string, fallback: number): number {
+  const { data } = useSystemSettings()
+  const v = Number(data?.find(s => s.key === key)?.value)
+  return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
 // Thang màu %Date toàn app (SystemSetting `pct_date_bands`, mặc định 60/30) — dùng cặp với
 // pctDateCls() ở utils/pctDateBands. Đây là NGUỒN DUY NHẤT của ngưỡng màu %Date hiển thị.
 export function usePctBands(): PctBands {

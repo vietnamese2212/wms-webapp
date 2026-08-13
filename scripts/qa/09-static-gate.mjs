@@ -271,6 +271,17 @@ const RULES = [
     label: 'class `relative` trên <TableHead> — đè mất sticky top-0 của base, header hết freeze khi cuộn (relative đặt vào span con)',
     count: (s) => countTableHeadRelative(s),
   },
+  // Component con khai TRONG body component cha (`function Tab(){ const Field = (...) => (...) }`)
+  // là TYPE MỚI mỗi lần render → React unmount/remount cả cụm. Cụm chỉ hiển thị thì vô hại, nhưng
+  // cụm có Ô NHẬP thì gõ 1 ký tự là focus văng về <body>, ký tự thứ 2 rơi mất — không lỗi biên dịch,
+  // không cảnh báo, tsc/build đều xanh (bug thật 13/08 ở tab Hệ thống: đo trên Preview
+  // document.activeElement = BODY ngay sau ký tự đầu). Cách đúng: đưa ra module-level và truyền props
+  // (mẫu: components/shared/SettingsForm.tsx). Baseline 0 — luật chỉ đếm ca CÓ ô nhập.
+  {
+    key: 'component_defined_inside_component',
+    label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',
+    count: (s) => countInnerComponentWithInput(s),
+  },
   {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
@@ -278,6 +289,24 @@ const RULES = [
     count: (s) => countUploadsMissingPreflight(s),
   },
 ]
+
+// Khai báo component trong body hàm khác = dòng thụt lề ≥2 space, `const <TênHoa> = (`. Chỉ tính vi
+// phạm khi thân nó (≤16 dòng đầu) có ô nhập — đó là ca làm mất focus. Cụm thuần hiển thị (Tile/Row/
+// Info) không đếm: remount vô hại, ép sửa chỉ tạo churn.
+function countInnerComponentWithInput(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/^\s{2,}const [A-Z][A-Za-z0-9]*\s*=\s*\(/.test(line)) return
+      const body = lines.slice(i, i + 16).join('\n')
+      if (!/<Input\b|<input\b|<textarea\b|<Textarea\b|onChange=/.test(body)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
 
 // Đếm số lần `inertReason` xuất hiện BÊN TRONG khai báo `const orderInfoJSX = (…)` của trang chi
 // tiết Xuất (khối đó bọc `hidden sm:block` nên mobile không thấy). Banner phải render ngoài khối.

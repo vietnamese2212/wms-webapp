@@ -7,12 +7,12 @@ import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -395,14 +395,17 @@ const toStrings = (t: Record<ThKey, number>) =>
 function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
   const settingsQ = useSystemSettings()
   const upd = useUpdateSystemSetting()
+  const thRow = (settingsQ.data ?? []).find(s => s.key === 'alert_thresholds')
   const saved = useMemo(() => {
-    const v = (settingsQ.data ?? []).find(s => s.key === 'alert_thresholds')?.value as Partial<Record<ThKey, number>> | undefined
+    const v = thRow?.value as Partial<Record<ThKey, number>> | undefined
     return { ...TH_DEFAULT, ...(v ?? {}) }
-  }, [settingsQ.data])
+  }, [thRow])
   const [vals, setVals] = useState<Record<ThKey, string>>(() => toStrings(TH_DEFAULT))
   const [err, setErr] = useState('')
   const [okMsg, setOkMsg] = useState('')
   useEffect(() => { setVals(toStrings(saved)) }, [saved])
+  const dirty = JSON.stringify(vals) !== JSON.stringify(toStrings(saved))
+  const set = (k: ThKey) => (v: string) => setVals(s => ({ ...s, [k]: v }))
 
   function save() {
     setErr(''); setOkMsg('')
@@ -427,71 +430,78 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     })
   }
 
-  const row = (label: ReactNode, key: ThKey, unit: string) => (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-slate-600 w-56 shrink-0">{label}</span>
-      <Input type="number" inputMode="decimal" value={vals[key]} min={0}
-        onChange={e => setVals(v => ({ ...v, [key]: e.target.value }))}
-        className="h-8 w-24 text-xs tabular-nums" />
-      <span className="text-xs text-slate-400">{unit}</span>
-    </div>
-  )
-  const band = (title: string) => (
-    <div className="flex items-center gap-2 bg-slate-100 border-y border-slate-200 px-3 py-1.5 -mx-3">
-      <span className="w-1 h-3.5 bg-sky-500 rounded-sm" />
-      <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">{title}</span>
-    </div>
-  )
-
+  // Cùng khuôn với Cài đặt WMS ▸ Hệ thống (components/shared/SettingsForm): cụm band + nhãn trên ô
+  // + diễn giải trong tooltip ⓘ + thanh Lưu dính đáy. 6 cụm → 3 cột × 2 hàng trên desktop.
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {tabBar}
-        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <div className="max-w-xl px-3 py-2 space-y-3">
-            <p className="text-[11px] text-slate-500 flex items-start gap-1.5">
-              <SlidersHorizontal className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-600" />
-              Ngưỡng kích hoạt cảnh báo — áp cho <b>toàn hệ thống</b> (mọi kho, mọi người). Bật/tắt chuông
-              của riêng bạn nằm ở nút chuông góc phải màn hình.
-            </p>
-            {err && <div className="rounded border border-red-200 bg-red-50 text-red-700 text-xs px-3 py-2">{err}</div>}
-            {okMsg && <div className="rounded border border-green-200 bg-green-50 text-green-700 text-xs px-3 py-2">{okMsg}</div>}
+        <div className="flex-1 min-h-0 overflow-auto p-3">
+          <p className="text-[11px] text-slate-500 flex items-start gap-1.5 mb-2">
+            <SlidersHorizontal className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-600" />
+            Ngưỡng kích hoạt cảnh báo — áp cho <b>toàn hệ thống</b> (mọi kho, mọi người). Bật/tắt chuông
+            của riêng bạn nằm ở nút chuông góc phải màn hình.
+          </p>
+          {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-2">{err}</p>}
+          {okMsg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mb-2">{okMsg}</p>}
 
-            {band('Tồn cận date (%Date)')}
-            {row('Cảnh báo khi %Date còn ≤', 'PCT_WARN', '%')}
-            {row('Nghiêm trọng khi %Date còn ≤', 'PCT_CRIT', '%')}
+          <div className={SETTINGS_GRID}>
+            <SettingGroup title="Tồn cận date (%Date)" meta={thRow}>
+              <SettingLabel text="Ngưỡng %Date còn lại" tip="%Date = phần hạn dùng còn lại. Càng thấp càng nguy, nên Nghiêm trọng phải ≤ Cảnh báo. Tối đa 90%." />
+              <div className="grid grid-cols-2 gap-1.5">
+                <SettingNum label="Cảnh báo khi ≤" unit="%" value={vals.PCT_WARN} onChange={set('PCT_WARN')} />
+                <SettingNum label="Nghiêm trọng khi ≤" unit="%" value={vals.PCT_CRIT} onChange={set('PCT_CRIT')} />
+              </div>
+            </SettingGroup>
 
-            {band('Xe trong cổng lâu')}
-            {row('Cảnh báo khi xe vào cổng chưa ra ≥', 'GATE_WARN_MIN', 'phút')}
-            {row('Nghiêm trọng khi ≥', 'GATE_CRIT_MIN', 'phút')}
+            <SettingGroup title="Xe trong cổng lâu" meta={thRow}>
+              <SettingLabel text="Thời gian xe đã vào chưa ra" tip="Tính từ lúc ghi nhận VÀO cổng. Cảnh báo ≤ Nghiêm trọng; khoảng cho phép 15–2880 phút." />
+              <div className="grid grid-cols-2 gap-1.5">
+                <SettingNum label="Cảnh báo khi ≥" unit="phút" value={vals.GATE_WARN_MIN} onChange={set('GATE_WARN_MIN')} />
+                <SettingNum label="Nghiêm trọng khi ≥" unit="phút" value={vals.GATE_CRIT_MIN} onChange={set('GATE_CRIT_MIN')} />
+              </div>
+            </SettingGroup>
 
-            {band('Chuyến trễ / kẹt')}
-            {row('Chuyến bắt đầu quá … giờ chưa hoàn thành', 'TRIP_STUCK_HOURS', 'giờ')}
-            {row('Chỉ soi chuyến trễ trong … ngày gần nhất', 'TRIP_LATE_DAYS', 'ngày')}
-            <p className="text-[10px] text-slate-400">Chuyến trễ ngày xuất: cứ quá ngày là báo; ô "ngày gần nhất" chỉ giới hạn soi ngược bao xa (chứng từ cũ hơn coi như đã xử lý ngoài hệ thống).</p>
+            <SettingGroup title="Chuyến trễ / kẹt" meta={thRow}>
+              <SettingLabel text="Chuyến kẹt & cửa sổ soi trễ" tip={'Chuyến trễ ngày xuất: cứ quá ngày là báo; ô "ngày gần nhất" chỉ giới hạn soi ngược bao xa (chứng từ cũ hơn coi như đã xử lý ngoài hệ thống). Chuyến kẹt: đã Bắt đầu quá số giờ này mà chưa Hoàn thành (1–72 giờ).'} />
+              <div className="grid grid-cols-2 gap-1.5">
+                <SettingNum label="Bắt đầu quá … chưa xong" unit="giờ" value={vals.TRIP_STUCK_HOURS} onChange={set('TRIP_STUCK_HOURS')} />
+                <SettingNum label="Chỉ soi trễ trong" unit="ngày" value={vals.TRIP_LATE_DAYS} onChange={set('TRIP_LATE_DAYS')} />
+              </div>
+            </SettingGroup>
 
-            {band('Lệch cân')}
-            {row('Cảnh báo khi |cân − KL tính| >', 'WEIGH_WARN_PCT', '%')}
-            {row('Nghiêm trọng khi >', 'WEIGH_CRIT_PCT', '%')}
+            <SettingGroup title="Lệch cân" meta={thRow}>
+              <SettingLabel text="Lệch |cân − KL tính|" tip="KL tính = Σ số lượng ÷ đơn vị/thùng × khối lượng mã. Cảnh báo ≤ Nghiêm trọng ≤ 100%." />
+              <div className="grid grid-cols-2 gap-1.5">
+                <SettingNum label="Cảnh báo khi >" unit="%" value={vals.WEIGH_WARN_PCT} onChange={set('WEIGH_WARN_PCT')} />
+                <SettingNum label="Nghiêm trọng khi >" unit="%" value={vals.WEIGH_CRIT_PCT} onChange={set('WEIGH_CRIT_PCT')} />
+              </div>
+            </SettingGroup>
 
-            {band('Sổ đóng gói — kho chưa nhận')}
-            {row('Cảnh báo khi pallet SX ghi sổ quá … giờ kho chưa quét nhập', 'PACKING_UNRECV_WARN_H', 'giờ')}
-            {row('Nghiêm trọng khi quá', 'PACKING_UNRECV_CRIT_H', 'giờ')}
+            <SettingGroup title="Sổ đóng gói — kho chưa nhận" meta={thRow}>
+              <SettingLabel text="Pallet ghi sổ mà kho chưa quét nhập" tip="Tính từ lúc SX ghi pallet vào Sổ đóng gói. Chiều ngược lại (pallet nhập kho mà không có trong sổ) KHÔNG cảnh báo — hàng NCC/trung chuyển/return đều hợp lệ. Cảnh báo ≤ Nghiêm trọng ≤ 168 giờ." />
+              <div className="grid grid-cols-2 gap-1.5">
+                <SettingNum label="Cảnh báo khi quá" unit="giờ" value={vals.PACKING_UNRECV_WARN_H} onChange={set('PACKING_UNRECV_WARN_H')} />
+                <SettingNum label="Nghiêm trọng khi quá" unit="giờ" value={vals.PACKING_UNRECV_CRIT_H} onChange={set('PACKING_UNRECV_CRIT_H')} />
+              </div>
+            </SettingGroup>
 
-            <p className="text-[10px] text-slate-400">Lỗi hệ thống (backend 5xx trong 24h): có là báo — không có ngưỡng chỉnh.</p>
-
-            <div className="flex items-center gap-2 pt-1">
-              <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" disabled={upd.isPending || settingsQ.isLoading} onClick={save}>
-                {upd.isPending ? 'Đang lưu…' : 'Lưu ngưỡng'}
-              </Button>
-              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={upd.isPending}
-                title="Điền lại bộ mặc định (vẫn phải bấm Lưu)"
-                onClick={() => { setVals(toStrings(TH_DEFAULT)); setErr(''); setOkMsg('') }}>
-                Về mặc định
-              </Button>
-            </div>
+            <SettingGroup title="Lỗi hệ thống">
+              <SettingLabel text="Lỗi backend 5xx trong 24h" tip="Cửa sổ soi 24h là ràng buộc kỹ thuật của bảng error_logs, không phải chính sách nên không mở ra chỉnh." />
+              <p className="text-[10px] text-slate-500">Có lỗi là báo — không có ngưỡng chỉnh.</p>
+            </SettingGroup>
           </div>
         </div>
+
+        <SettingSaveBar dirty={dirty} saving={upd.isPending || settingsQ.isLoading} onSave={save}
+          onReset={() => { setVals(toStrings(saved)); setErr(''); setOkMsg('') }}
+          extra={
+            <Button size="sm" variant="outline" disabled={upd.isPending}
+              title="Điền lại bộ mặc định (vẫn phải bấm Lưu)"
+              onClick={() => { setVals(toStrings(TH_DEFAULT)); setErr(''); setOkMsg('') }}>
+              Về mặc định
+            </Button>
+          } />
         <div className="border-t px-3 py-1.5 text-[10px] text-slate-500 shrink-0">
           Ngưỡng lưu per đơn vị (SystemSetting) · hiệu lực ≤ 30 giây sau khi lưu, thấy rõ ở lượt quét kế tiếp
         </div>

@@ -1,6 +1,6 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, Info } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/components/ui/use-toast'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -183,82 +184,33 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     } catch (e) { setErr(apiMsg(e)) }
   }
   const resetDraft = () => { syncDrafts(); setErr('') }
-  const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
-
-  // Khuôn form CẤU HÌNH kiểu Blue Yonder (user chốt 13/08): cụm có band tiêu đề · NHÃN NẰM TRÊN Ô
-  // (không nhãn-trái/ô-phải — màn 1900px sẽ có cả gang tay trắng ở giữa) · lưới 3 cột × 2 HÀNG ·
-  // chữ nhỏ, mật độ dày · DIỄN GIẢI nằm trong TOOLTIP ⓘ cạnh nhãn, không phải đoạn văn dưới ô.
-  const Group = ({ title, meta, children }: { title: string; meta?: { updated_by?: string | null; updated_at?: string }; children: ReactNode }) => (
-    <section className="border border-slate-200 rounded-lg overflow-hidden bg-white h-full">
-      <div className="flex items-center gap-1.5 bg-slate-100 border-b border-slate-200 px-2 py-1">
-        <span className="w-1 h-3 bg-sky-500 rounded-sm shrink-0" />
-        <span className="text-[9px] font-semibold text-slate-600 uppercase tracking-wide truncate">{title}</span>
-        {meta?.updated_by && meta.updated_at && (
-          <span className="ml-auto text-[9px] text-slate-400 whitespace-nowrap hidden lg:inline">
-            {meta.updated_by} · {formatDateTime(meta.updated_at)}
-          </span>
-        )}
-      </div>
-      <div className={`px-2 py-2 space-y-2 ${roClass}`}>{children}</div>
-    </section>
-  )
-  // Nhãn + ⓘ tooltip (diễn giải KHÔNG chiếm chỗ trong form — user chốt 13/08)
-  const Lbl = ({ text, tip }: { text: string; tip?: ReactNode }) => (
-    <span className="flex items-center gap-1 mb-0.5">
-      <span className="text-[10px] font-medium text-slate-700 truncate">{text}</span>
-      {tip && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="shrink-0 cursor-help text-slate-400 hover:text-sky-600" aria-label="Giải thích">
-              <Info className="h-3 w-3" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-[280px] text-[11px] leading-snug">{tip}</TooltipContent>
-        </Tooltip>
-      )}
-    </span>
-  )
-  const Field = ({ label, tip, children }: { label: string; tip?: ReactNode; children: ReactNode }) => (
-    <div><Lbl text={label} tip={tip} />{children}</div>
-  )
-  // Ô SỐ nằm ngang (Hạng A/B/C, Ảnh/Thông báo/Log): nhãn phụ 9px, ô h-7, đơn vị bên phải
-  const NumCell = ({ label, unit, value, onChange }: { label?: string; unit: string; value: string; onChange: (v: string) => void }) => (
-    <label className="block min-w-0">
-      {label && <span className="block text-[9px] text-slate-500 mb-0.5 truncate">{label}</span>}
-      <span className="flex items-center gap-1">
-        <Input type="number" inputMode="numeric" min={1} value={value}
-          onChange={e => onChange(e.target.value)} className="h-7 w-full min-w-0 text-[11px] tabular-nums px-1.5" />
-        <span className="text-[9px] text-slate-400 shrink-0">{unit}</span>
-      </span>
-    </label>
-  )
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0 overflow-auto p-3">
         {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{err}</p>}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-          <Group title="Định dạng & nhập liệu" meta={labelRow}>
-            <Field label="Định dạng tem pallet" tip="Chỉ áp cho chiều IN tem từ app. Chiều quét nhận vẫn theo định dạng của đơn vị.">
+        <div className={SETTINGS_GRID}>
+          <SettingGroup readOnly={!canManage} title="Định dạng & nhập liệu" meta={labelRow}>
+            <SettingField label="Định dạng tem pallet" tip="Chỉ áp cho chiều IN tem từ app. Chiều quét nhận vẫn theo định dạng của đơn vị.">
               <SingleSelect options={LABEL_FORMAT_OPTS} value={draftLabel}
                 onChange={setDraftLabel} searchable={false} triggerClassName="w-full" />
-            </Field>
-            <Field label="Dấu thập phân" tip="Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.">
+            </SettingField>
+            <SettingField label="Dấu thập phân" tip="Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.">
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
                 onChange={setDraftDec} searchable={false} triggerClassName="w-full" />
-            </Field>
-          </Group>
+            </SettingField>
+          </SettingGroup>
 
-          <Group title="Xác nhận giao hàng" meta={dcRow}>
-            <Field label="Tạo booking Chuyển kho khi xuất" tip={'"Không" → xuất kho KHÔNG tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên dưới.'}>
+          <SettingGroup readOnly={!canManage} title="Xác nhận giao hàng" meta={dcRow}>
+            <SettingField label="Tạo booking Chuyển kho khi xuất" tip={'"Không" → xuất kho KHÔNG tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên dưới.'}>
               <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
                 onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-full" />
-            </Field>
+            </SettingField>
             {draftDc.enabled && (
-              <Field label="Hình thức kho nhận"
+              <SettingField label="Hình thức kho nhận"
                 tip={draftDc.modes.length
                   ? `Đang tạo booking cho kho nhận dạng: ${draftDc.modes.join(', ')}`
                   : 'Chưa chọn hình thức nào → sẽ KHÔNG tạo booking cho chuyến nào cả.'}>
@@ -266,63 +218,51 @@ function SystemTab({ canManage }: { canManage: boolean }) {
                   selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
                   searchable={false} width="w-full" />
                 {!draftDc.modes.length && <span className="text-[9px] text-amber-600">Chưa chọn → không tạo booking</span>}
-              </Field>
+              </SettingField>
             )}
-          </Group>
+          </SettingGroup>
 
-          <Group title="Kiểm kê luân phiên ABC" meta={cycRow}>
+          <SettingGroup readOnly={!canManage} title="Kiểm kê luân phiên ABC" meta={cycRow}>
             <div>
-              <Lbl text="Chu kỳ kiểm theo hạng" tip="Hạng A nhặt nhiều nhất nên kiểm dày nhất. Bắt buộc A ≤ B ≤ C. Áp cho tab Luân phiên ABC của Kiểm kho." />
+              <SettingLabel text="Chu kỳ kiểm theo hạng" tip="Hạng A nhặt nhiều nhất nên kiểm dày nhất. Bắt buộc A ≤ B ≤ C. Áp cho tab Luân phiên ABC của Kiểm kho." />
               <div className="grid grid-cols-3 gap-1.5">
-                <NumCell label="Hạng A" unit="ngày" value={draftCyc.A} onChange={v => setDraftCyc(d => ({ ...d, A: v }))} />
-                <NumCell label="Hạng B" unit="ngày" value={draftCyc.B} onChange={v => setDraftCyc(d => ({ ...d, B: v }))} />
-                <NumCell label="Hạng C" unit="ngày" value={draftCyc.C} onChange={v => setDraftCyc(d => ({ ...d, C: v }))} />
+                <SettingNum label="Hạng A" unit="ngày" value={draftCyc.A} onChange={v => setDraftCyc(d => ({ ...d, A: v }))} />
+                <SettingNum label="Hạng B" unit="ngày" value={draftCyc.B} onChange={v => setDraftCyc(d => ({ ...d, B: v }))} />
+                <SettingNum label="Hạng C" unit="ngày" value={draftCyc.C} onChange={v => setDraftCyc(d => ({ ...d, C: v }))} />
               </div>
             </div>
-            <Field label="Cửa sổ lượt nhặt để phân hạng" tip="Số ngày lấy lượt nhặt gần đây làm căn cứ xếp hạng ABC.">
-              <div className="w-20"><NumCell unit="ngày" value={draftCyc.window_days} onChange={v => setDraftCyc(d => ({ ...d, window_days: v }))} /></div>
-            </Field>
-          </Group>
+            <SettingField label="Cửa sổ lượt nhặt để phân hạng" tip="Số ngày lấy lượt nhặt gần đây làm căn cứ xếp hạng ABC.">
+              <div className="w-20"><SettingNum unit="ngày" value={draftCyc.window_days} onChange={v => setDraftCyc(d => ({ ...d, window_days: v }))} /></div>
+            </SettingField>
+          </SettingGroup>
 
-          <Group title="Thời gian lưu dữ liệu" meta={retRow}>
+          <SettingGroup readOnly={!canManage} title="Thời gian lưu dữ liệu" meta={retRow}>
             <div>
-              <Lbl text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày." />
+              <SettingLabel text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày." />
               <div className="grid grid-cols-3 gap-1.5">
-                <NumCell label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
-                <NumCell label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
-                <NumCell label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
+                <SettingNum label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
+                <SettingNum label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
+                <SettingNum label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
               </div>
             </div>
-          </Group>
+          </SettingGroup>
 
-          <Group title="Nhập kho" meta={inbRow}>
-            <Field label="Cửa sổ tự sửa/xóa pallet" tip="Người NHẬP tự sửa/xóa pallet của mình trong bấy nhiêu ngày kể từ ngày nhập. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).">
-              <div className="w-20"><NumCell unit="ngày" value={draftInb} onChange={setDraftInb} /></div>
-            </Field>
-          </Group>
+          <SettingGroup readOnly={!canManage} title="Nhập kho" meta={inbRow}>
+            <SettingField label="Cửa sổ tự sửa/xóa pallet" tip="Người NHẬP tự sửa/xóa pallet của mình trong bấy nhiêu ngày kể từ ngày nhập. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).">
+              <div className="w-20"><SettingNum unit="ngày" value={draftInb} onChange={setDraftInb} /></div>
+            </SettingField>
+          </SettingGroup>
 
-          <Group title="Sổ đóng gói" meta={packRow}>
-            <Field label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
-              <div className="w-20"><NumCell unit="mã" value={draftPack} onChange={setDraftPack} /></div>
-            </Field>
-          </Group>
+          <SettingGroup readOnly={!canManage} title="Sổ đóng gói" meta={packRow}>
+            <SettingField label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
+              <div className="w-20"><SettingNum unit="mã" value={draftPack} onChange={setDraftPack} /></div>
+            </SettingField>
+          </SettingGroup>
         </div>
       </div>
 
       {/* Thanh Lưu dính đáy — stage rồi mới áp dụng */}
-      {canManage && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5 flex items-center gap-3">
-          <span className={`text-[11px] ${dirty ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
-            {dirty ? '● Có thay đổi chưa lưu' : 'Đã lưu'}
-          </span>
-          <div className="ml-auto flex gap-2">
-            <Button variant="outline" size="sm" disabled={!dirty || isPending} onClick={resetDraft}>Hoàn tác</Button>
-            <Button size="sm" disabled={!dirty || isPending} onClick={applyChanges}>
-              {isPending ? 'Đang lưu…' : 'Lưu thay đổi'}
-            </Button>
-          </div>
-        </div>
-      )}
+      {canManage && <SettingSaveBar dirty={dirty} saving={isPending} onReset={resetDraft} onSave={applyChanges} />}
     </div>
   )
 }

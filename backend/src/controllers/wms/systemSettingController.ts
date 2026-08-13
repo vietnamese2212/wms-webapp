@@ -61,6 +61,7 @@ function isAlertThresholds(v: unknown): boolean {
   if (!(t.GATE_WARN_MIN >= 15 && t.GATE_WARN_MIN <= t.GATE_CRIT_MIN && t.GATE_CRIT_MIN <= 2880)) return false
   if (!(t.TRIP_STUCK_HOURS >= 1 && t.TRIP_STUCK_HOURS <= 72)) return false
   if (!(t.WEIGH_WARN_PCT <= t.WEIGH_CRIT_PCT && t.WEIGH_CRIT_PCT <= 100)) return false
+  if (!(t.PACKING_UNRECV_WARN_H >= 1 && t.PACKING_UNRECV_WARN_H <= t.PACKING_UNRECV_CRIT_H && t.PACKING_UNRECV_CRIT_H <= 168)) return false
   return true
 }
 
@@ -71,7 +72,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
   alert_thresholds: {
     validate: isAlertThresholds,
-    hint: 'đủ 7 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%)',
+    hint: 'đủ 9 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ)',
   },
 }
 

@@ -27,6 +27,7 @@ const PREF_LABEL: { key: string; label: string; desc: string }[] = [
   { key: 'TRIP_LATE',  label: 'Chuyến trễ / kẹt',    desc: 'Chuyến trễ ngày xuất hoặc bắt đầu quá lâu chưa xong' },
   { key: 'WEIGH_DIFF', label: 'Lệch cân',            desc: 'Phiếu cân lệch KL tính vượt ngưỡng' },
   { key: 'BE_ERRORS',  label: 'Lỗi hệ thống',        desc: 'Backend có lỗi 5xx trong 24h' },
+  { key: 'PACKING_UNRECEIVED', label: 'Sổ đóng gói — kho chưa nhận', desc: 'Pallet SX ghi sổ quá ngưỡng giờ mà kho chưa quét nhập' },
 ]
 const SEV_DOT: Record<string, string> = { CRITICAL: 'bg-red-500', WARNING: 'bg-amber-500' }
 

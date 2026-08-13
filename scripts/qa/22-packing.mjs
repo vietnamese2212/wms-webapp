@@ -289,15 +289,22 @@ let runB = null
   const { randomUUID } = await import('crypto')
   const invId = randomUUID()
   const matPool = (await restAll('Material', `select=id&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  // kho nhập 5 thùng trong khi sổ ghi 7 → phải nổi LỆCH SL (user duyệt 13/08: "số lượng chưa khớp
+  // của pallet đó thì cũng đưa vào theo dõi ở sổ")
   await restWrite('InventoryEntry', 'POST', null, {
     id: invId, material_id: matPool?.id ?? null, pallet_code: temX2, warehouse_id: FIX.WH_QR.id, location_id: null,
-    cartons_imported: 7, cartons_remaining: 7, cartons_reserved: 0, status: 'IN_STOCK', stack_layer: 1,
+    cartons_imported: 5, cartons_remaining: 5, cartons_reserved: 0, status: 'IN_STOCK', stack_layer: 1,
     import_date: today, notes: `${TAG} recon`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   })
   const q1 = await api(`/wms/packing-logs?search=${TAG}X2&received=YES`, 'GET')
   const hit = (q1.j?.data?.rows ?? []).find(r => r.pallet_code === temX2)
   check('[16] Kho quét nhập xong → pallet sang ĐÃ NHẬN kèm giờ kho nhận',
     q1.s === 200 && !!hit && !!hit.received_at, `http=${q1.s} received_at=${hit?.received_at ?? 'null'}`)
+  const qd = await api(`/wms/packing-logs?search=${TAG}X2&received=DIFF`, 'GET')
+  const dHit = (qd.j?.data?.rows ?? []).find(r => r.pallet_code === temX2)
+  check('[16] Sổ ghi 7 / kho nhập 5 → nổi LỆCH SL (filter DIFF + diff_count + received_qty)',
+    qd.s === 200 && !!dHit && dHit.is_qty_diff === true && Number(dHit.received_qty) === 5 && Number(qd.j?.data?.diff_count) >= 1,
+    `http=${qd.s} diff_count=${qd.j?.data?.diff_count} received_qty=${dHit?.received_qty}`)
   await restWrite('InventoryEntry', 'DELETE', `id=eq.${invId}`)
 
   await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', {})

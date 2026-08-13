@@ -110,13 +110,19 @@ async function attachReceived(rows: LogRow[]): Promise<void> {
   const codes = [...new Set(rows.map(r => r.pallet_code))]
   if (!codes.length) return
   const entries = await fetchAllByIdChunks(codes, chunk =>
-    supabase.from('InventoryEntry').select('pallet_code, created_at').in('pallet_code', chunk))
-  const m = new Map<string, string>()
-  for (const e of entries as { pallet_code: string; created_at: string }[]) {
+    supabase.from('InventoryEntry').select('pallet_code, created_at, cartons_imported').in('pallet_code', chunk))
+  const m = new Map<string, { at: string; qty: number | null }>()
+  for (const e of entries as { pallet_code: string; created_at: string; cartons_imported: number | null }[]) {
     const cur = m.get(e.pallet_code)
-    if (!cur || e.created_at < cur) m.set(e.pallet_code, e.created_at)
+    if (!cur || e.created_at < cur.at) m.set(e.pallet_code, { at: e.created_at, qty: e.cartons_imported })
   }
-  for (const r of rows as (LogRow & { received_at?: string | null })[]) r.received_at = m.get(r.pallet_code) ?? null
+  for (const r of rows as (LogRow & { qty_cartons?: number | null; received_at?: string | null; received_qty?: number | null; is_qty_diff?: boolean })[]) {
+    const hit = m.get(r.pallet_code)
+    r.received_at = hit?.at ?? null
+    r.received_qty = hit?.qty ?? null
+    // lệch SL (user duyệt 13/08): kho đã nhận + cả 2 bên có số + khác nhau
+    r.is_qty_diff = !!hit && r.qty_cartons != null && Number(hit.qty ?? NaN) !== Number(r.qty_cartons)
+  }
 }
 
 // GET /wms/packing-logs/board — pallet ĐANG MỞ (board theo máy), scope kho null-inclusive
@@ -157,16 +163,17 @@ export async function listLogs(req: Request, res: Response) {
     p_to: date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to) ? new Date(new Date(`${date_to}T00:00:00+07:00`).getTime() + 86400_000).toISOString() : null,
     p_machine: machine || null,
     p_search: term || null,
-    p_received: received === 'YES' || received === 'NO' ? received : null,
+    p_received: received === 'YES' || received === 'NO' || received === 'DIFF' ? received : null,
     p_page: page, p_size: pageSize,
   })
   if (error) return fail(res, error.message, 500)
-  const out = (data ?? {}) as { rows?: LogRow[]; total?: number; received_count?: number; missing_count?: number }
+  const out = (data ?? {}) as { rows?: LogRow[]; total?: number; received_count?: number; missing_count?: number; diff_count?: number }
   const rows = out.rows ?? []
   await attachPhotoUrls(rows)
   return ok(res, {
     rows, total: out.total ?? 0, page, pageSize,
     received_count: out.received_count ?? 0, missing_count: out.missing_count ?? 0,
+    diff_count: out.diff_count ?? 0,
   })
 }
 

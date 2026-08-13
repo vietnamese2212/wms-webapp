@@ -27,6 +27,7 @@ const RULE_LABEL: Record<string, string> = {
   TRIP_LATE:  'Chuyến trễ / kẹt',
   WEIGH_DIFF: 'Lệch cân',
   BE_ERRORS:  'Lỗi hệ thống',
+  PACKING_UNRECEIVED: 'Sổ đóng gói — kho chưa nhận',
 }
 const RULE_BADGE: Record<string, string> = {
   EXPIRY:     'bg-amber-100 text-amber-800',
@@ -34,6 +35,7 @@ const RULE_BADGE: Record<string, string> = {
   TRIP_LATE:  'bg-violet-100 text-violet-700',
   WEIGH_DIFF: 'bg-rose-100 text-rose-700',
   BE_ERRORS:  'bg-slate-200 text-slate-700',
+  PACKING_UNRECEIVED: 'bg-teal-100 text-teal-700',
 }
 const SEV_BADGE: Record<string, string> = {
   CRITICAL: 'bg-red-100 text-red-700',
@@ -384,6 +386,7 @@ const TH_DEFAULT = {
   GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180,
   TRIP_STUCK_HOURS: 6,
   WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15,
+  PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24,
 }
 type ThKey = keyof typeof TH_DEFAULT
 const toStrings = (t: Record<ThKey, number>) =>
@@ -415,6 +418,8 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     if (t.GATE_WARN_MIN < 15 || t.GATE_WARN_MIN > t.GATE_CRIT_MIN || t.GATE_CRIT_MIN > 2880) return setErr('Xe trong cổng: 15 phút ≤ Cảnh báo ≤ Nghiêm trọng ≤ 2880 phút.')
     if (t.TRIP_STUCK_HOURS < 1 || t.TRIP_STUCK_HOURS > 72) return setErr('Chuyến bắt đầu chưa xong: 1–72 giờ.')
     if (t.WEIGH_WARN_PCT > t.WEIGH_CRIT_PCT || t.WEIGH_CRIT_PCT > 100) return setErr('Lệch cân: Cảnh báo ≤ Nghiêm trọng ≤ 100%.')
+    if (t.PACKING_UNRECV_WARN_H < 1 || t.PACKING_UNRECV_WARN_H > t.PACKING_UNRECV_CRIT_H || t.PACKING_UNRECV_CRIT_H > 168)
+      return setErr('Sổ đóng gói — kho chưa nhận: 1 giờ ≤ Cảnh báo ≤ Nghiêm trọng ≤ 168 giờ.')
     upd.mutate({ key: 'alert_thresholds', value: t }, {
       onSuccess: () => setOkMsg('Đã lưu — áp dụng từ lượt quét tiếp theo (tự quét ~10 phút/lần, hoặc bấm Quét lại ở tab Thông báo chung).'),
       onError: (e) => setErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lưu thất bại — thử lại.'),
@@ -466,6 +471,10 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
             {band('Lệch cân')}
             {row('Cảnh báo khi |cân − KL tính| >', 'WEIGH_WARN_PCT', '%')}
             {row('Nghiêm trọng khi >', 'WEIGH_CRIT_PCT', '%')}
+
+            {band('Sổ đóng gói — kho chưa nhận')}
+            {row('Cảnh báo khi pallet SX ghi sổ quá … giờ kho chưa quét nhập', 'PACKING_UNRECV_WARN_H', 'giờ')}
+            {row('Nghiêm trọng khi quá', 'PACKING_UNRECV_CRIT_H', 'giờ')}
 
             <p className="text-[10px] text-slate-400">Lỗi hệ thống (backend 5xx trong 24h): có là báo — không có ngưỡng chỉnh.</p>
 

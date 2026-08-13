@@ -26,6 +26,8 @@ export const THRESHOLDS = {
   TRIP_STUCK_HOURS: 6,   // chuyến bắt đầu > 6h chưa hoàn thành
   WEIGH_WARN_PCT: 5,     // |cân − KL tính| > 5% (khớp cột đỏ trang Phiếu cân)
   WEIGH_CRIT_PCT: 15,
+  PACKING_UNRECV_WARN_H: 12,  // pallet SX ghi sổ đóng gói > 12h mà kho CHƯA quét nhận (user duyệt 13/08)
+  PACKING_UNRECV_CRIT_H: 24,
   EXPIRY_WINDOW_DAYS: 120, // cửa sổ prefilter RPC (siêu tập — quyết định thật ở computePctDate)
 }
 export type AlertThresholds = typeof THRESHOLDS
@@ -34,6 +36,7 @@ export type AlertThresholds = typeof THRESHOLDS
 export const ALERT_TH_CONFIG_KEYS = [
   'PCT_WARN', 'PCT_CRIT', 'GATE_WARN_MIN', 'GATE_CRIT_MIN',
   'TRIP_STUCK_HOURS', 'WEIGH_WARN_PCT', 'WEIGH_CRIT_PCT',
+  'PACKING_UNRECV_WARN_H', 'PACKING_UNRECV_CRIT_H',
 ] as const
 
 // Ngưỡng hiệu lực = mặc định đắp giá trị user lưu; cache 30s như getLabelFormat (mỗi lượt quét
@@ -58,7 +61,7 @@ export async function getAlertThresholds(): Promise<AlertThresholds> {
 }
 export function invalidateAlertThresholdsCache(): void { _thCache = null }
 
-export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS'
+export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS' | 'PACKING_UNRECEIVED'
 export interface AlertCandidate {
   rule: AlertRule
   dedup_key: string
@@ -252,6 +255,24 @@ async function ruleBeErrors(): Promise<AlertCandidate[]> {
   }]
 }
 
+// ── R6: Pallet SX ghi sổ đóng gói quá hạn mà kho CHƯA quét nhận (user duyệt 13/08) ──
+// Gộp PER KHO (nhà máy) — tránh trăm alert lẻ mỗi pallet; RPC làm NOT EXISTS trong SQL.
+// Tự đóng khi kho quét nhận hết / pallet ra khỏi cửa sổ 7 ngày.
+async function rulePackingUnreceived(TH: AlertThresholds): Promise<AlertCandidate[]> {
+  const { data, error } = await supabase.rpc('alerts_packing_unreceived', { p_hours: TH.PACKING_UNRECV_WARN_H, p_window_days: 7 })
+  if (error) throw new Error(error.message)
+  type Row = { warehouse_id: string | null; n: number; oldest_hours: number }
+  return ((data ?? []) as Row[]).map(r => ({
+    rule: 'PACKING_UNRECEIVED' as const,
+    dedup_key: `PACKUNRECV|${r.warehouse_id ?? ''}`,
+    severity: Number(r.oldest_hours) >= TH.PACKING_UNRECV_CRIT_H ? 'CRITICAL' as const : 'WARNING' as const,
+    warehouse_id: r.warehouse_id, category: null,
+    title: `Sổ đóng gói: ${Number(r.n).toLocaleString('vi-VN')} pallet SX ghi sổ > ${TH.PACKING_UNRECV_WARN_H}h kho chưa nhận`,
+    detail: `Pallet lâu nhất đã ${nf(Number(r.oldest_hours))}h chưa được kho quét nhập — đối chiếu với xưởng (hàng thất lạc / quên quét nhập).`,
+    object_url: '/wms/packing?tab=log&received=NO',   // mở Sổ pallet đã LỌC sẵn "SX tạo — kho chưa nhận"
+  }))
+}
+
 // ── Đồng bộ vòng đời + push cảnh báo MỚI ─────────────────────────────────────
 const SCAN_INTERVAL_MS = 10 * 60_000
 const FORCE_INTERVAL_MS = 20_000   // nút "Quét lại" / QA — vẫn đủ chặn spam liên hồi
@@ -269,6 +290,7 @@ export async function runAlertScan(force = false): Promise<void> {
       ['EXPIRY', () => ruleExpiry(TH)], ['GATE_DWELL', () => ruleGateDwell(TH)],
       ['TRIP_LATE', () => ruleTripLate(TH)], ['WEIGH_DIFF', () => ruleWeighDiff(TH)],
       ['BE_ERRORS', ruleBeErrors],
+      ['PACKING_UNRECEIVED', () => rulePackingUnreceived(TH)],
     ]
     for (const [rule, fn] of runners) {
       try { found.push(...await fn()); okRules.push(rule) }

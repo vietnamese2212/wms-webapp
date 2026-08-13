@@ -5469,6 +5469,8 @@ export interface PackingLog {
   packed_by_name: string | null
   note: string | null
   received_at?: string | null   // đối chiếu SX↔Kho: kho quét nhập lần đầu lúc nào (null = CHƯA nhận)
+  received_qty?: number | null  // số thùng kho NHẬP (entry đầu tiên) — so với qty_cartons sổ ghi
+  is_qty_diff?: boolean         // kho đã nhận + 2 bên đều có số + KHÁC nhau → theo dõi lệch
 }
 export interface PackingProdTime { prod_at: string | null; src: 'OCR' | 'MANUAL' | null; ocr_raw?: string | null }
 
@@ -5486,7 +5488,7 @@ export function usePackingBoard(warehouseId = '', enabled = true) {
 }
 export function usePackingLogs(params: {
   status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
-  received?: string   // 'YES' | 'NO' — kho đã/chưa quét nhận pallet
+  received?: string   // 'YES' | 'NO' | 'DIFF' (đã nhận nhưng LỆCH số lượng) — đối chiếu SX↔Kho
   page?: number; pageSize?: number
 }) {
   return useQuery({
@@ -5496,7 +5498,7 @@ export function usePackingLogs(params: {
       const { data } = await apiClient.get('/wms/packing-logs', { params })
       return data.data as {
         rows: PackingLog[]; total: number; page: number; pageSize: number
-        received_count: number; missing_count: number   // đếm theo BỘ LỌC (loại dòng hủy)
+        received_count: number; missing_count: number; diff_count: number   // đếm theo BỘ LỌC (loại dòng hủy)
       }
     },
   })

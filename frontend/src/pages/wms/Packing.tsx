@@ -323,6 +323,20 @@ export default function Packing() {
     setPendingQR(normalizeQR(raw))
   }
 
+  // Deep-link từ trung tâm cảnh báo (rule PACKING_UNRECEIVED): ?tab=log&received=NO → mở Sổ pallet
+  // đã lọc sẵn "SX tạo — kho chưa nhận" rồi xóa param khỏi URL (mẫu Inventory/EXPIRY 06/08).
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const tab = sp.get('tab'); const received = sp.get('received')
+    if (!tab && !received) return
+    setF({
+      ...(tab === 'log' || tab === 'board' ? { tab: tab as 'log' | 'board' } : {}),
+      ...(received === 'NO' || received === 'YES' || received === 'DIFF' ? { received, page: 1 } : {}),
+    })
+    window.history.replaceState(null, '', window.location.pathname)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Súng PDA (keyboard-wedge, 12/08 — user so với Nhập kho: mọi màn quét khác đã nhận súng,
   // riêng Sổ đóng gói chỉ có camera): bắn tem ở BẤT KỲ đâu trong trang (kể cả chưa mở camera)
   // → vào thẳng RecordSheet như quét camera. Đang mở form khai/sửa thì nuốt (tránh đè dở dang);
@@ -1472,9 +1486,15 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                           {l.received_at ? (
-                            <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(l.received_at)} ${formatTimestampTime(l.received_at)}`}>
-                              <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(l.received_at, true)}
-                            </span>
+                            l.is_qty_diff ? (
+                              <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${Number(l.received_qty ?? 0).toLocaleString('vi-VN')} thùng ≠ sổ ghi ${Number(l.qty_cartons ?? 0).toLocaleString('vi-VN')}`}>
+                                <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {Number(l.received_qty ?? 0).toLocaleString('vi-VN')}
+                              </span>
+                            ) : (
+                              <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(l.received_at)} ${formatTimestampTime(l.received_at)}`}>
+                                <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(l.received_at, true)}
+                              </span>
+                            )
                           ) : l.status !== 'CANCELLED' ? (
                             <span className="text-amber-600 no-underline" title="SX đã ghi sổ nhưng kho CHƯA quét nhập">chưa nhận</span>
                           ) : <span className="text-slate-300">—</span>}
@@ -1582,7 +1602,11 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       onChange: (v: string) => setF({ machine: v, page: 1 }) },
     // ĐỐI CHIẾU SX↔KHO (user 13/08): quét sổ = SX xác nhận pallet đã sinh; kho quét nhập = xác nhận lần 2
     { key: 'received', label: 'Kho nhận', type: 'single',
-      options: [{ value: 'YES', label: 'Kho đã nhận' }, { value: 'NO', label: 'SX tạo — kho CHƯA nhận' }],
+      options: [
+        { value: 'YES', label: 'Kho đã nhận' },
+        { value: 'NO', label: 'SX tạo — kho CHƯA nhận' },
+        { value: 'DIFF', label: 'Đã nhận nhưng LỆCH số lượng' },
+      ],
       value: f.received, onChange: (v: string) => setF({ received: v, page: 1 }) },
   ]
 
@@ -1598,6 +1622,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         'Mã hàng': r.material_code ?? '',
         'Tên hàng': r.material_code ? (matName.get(r.material_code) ?? '') : '',
         'Kho nhận lúc': r.received_at ? `${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}` : (r.status !== 'CANCELLED' ? 'CHƯA NHẬN' : ''),
+        'SL kho nhập': r.received_qty ?? '',
+        'Lệch SL': r.is_qty_diff ? 'LỆCH' : '',
         'Kho': r.warehouse_id ? (whName.get(r.warehouse_id) ?? '') : '',
         'Máy': r.machine_code ?? '',
         'Số thùng': r.qty_cartons ?? '',
@@ -1636,6 +1662,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         { label: 'Dòng sổ (bộ lọc)', value: total.toLocaleString('vi-VN') },
         { label: 'Kho đã nhận', value: (data?.received_count ?? 0).toLocaleString('vi-VN') },
         { label: 'Chưa nhận (SX đã tạo)', value: (data?.missing_count ?? 0).toLocaleString('vi-VN'), accent: (data?.missing_count ?? 0) > 0 },
+        { label: 'Lệch SL sổ ↔ kho', value: (data?.diff_count ?? 0).toLocaleString('vi-VN'), accent: (data?.diff_count ?? 0) > 0 },
         { label: 'Thùng (trang này)', value: closed.reduce((s, r) => s + Number(r.qty_cartons ?? 0), 0).toLocaleString('vi-VN') },
         { label: 'Giờ nhập tay (trang)', value: closed.length ? `${manualN}/${closed.length}` : '0' },
       ]} />
@@ -1690,9 +1717,15 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
                   {r.received_at ? (
-                    <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}`}>
-                      <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(r.received_at, true)} {formatTimestampTime(r.received_at).slice(0, 5)}
-                    </span>
+                    r.is_qty_diff ? (
+                      <span className="text-red-600 font-semibold no-underline" title={`Kho nhập ${Number(r.received_qty ?? 0).toLocaleString('vi-VN')} thùng ≠ sổ ghi ${Number(r.qty_cartons ?? 0).toLocaleString('vi-VN')} — đối chiếu với xưởng`}>
+                        <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />lệch: kho {Number(r.received_qty ?? 0).toLocaleString('vi-VN')}
+                      </span>
+                    ) : (
+                      <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}${r.received_qty != null ? ` — ${Number(r.received_qty).toLocaleString('vi-VN')} thùng` : ''}`}>
+                        <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(r.received_at, true)} {formatTimestampTime(r.received_at).slice(0, 5)}
+                      </span>
+                    )
                   ) : r.status !== 'CANCELLED' ? (
                     <span className="text-amber-600 no-underline" title="SX đã ghi sổ pallet này nhưng kho CHƯA quét nhập">chưa nhận</span>
                   ) : <span className="text-slate-300">—</span>}

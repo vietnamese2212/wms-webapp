@@ -123,8 +123,11 @@ export function SingleSelect({
                     />
                     {o.node ?? (
                       <>
-                        <span className="text-[11px] text-slate-700 flex-1 truncate" title={o.label}>{o.label}</span>
-                        {o.sub && <span className="text-[10px] text-slate-400 font-mono shrink-0">{o.sub}</span>}
+                        <span className="text-[11px] text-slate-700 flex-1 min-w-0 truncate" title={o.label}>{o.label}</span>
+                        {/* sub co được và cắt bớt: mã phụ ngắn vẫn hiện đủ, còn chuỗi dài (vd mẫu tem)
+                            KHÔNG được đẩy mất NHÃN CHÍNH khi menu hẹp — lỗi thật 13/08 ở ô chọn định
+                            dạng tem sau khi form cấu hình chuyển sang lưới 3 cột. */}
+                        {o.sub && <span className="text-[10px] text-slate-400 font-mono max-w-[55%] truncate" title={o.sub}>{o.sub}</span>}
                       </>
                     )}
                   </label>

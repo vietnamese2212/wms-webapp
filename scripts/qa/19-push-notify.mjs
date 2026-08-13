@@ -188,8 +188,9 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
 // giá trị đã lưu. Fixture: nhớ giá trị trước đó → trả lại nguyên trạng khi xong.
 {
   const before = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value ?? null
-  // 13/08: thêm 2 ngưỡng PACKING_UNRECV (sổ đóng gói — kho chưa nhận) — validator đòi ĐỦ 9 khóa
-  const FULL = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180, TRIP_STUCK_HOURS: 6, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15, PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24 }
+  // 13/08: thêm 2 ngưỡng PACKING_UNRECV (sổ đóng gói — kho chưa nhận) + TRIP_LATE_DAYS (cửa sổ soi
+  // chuyến trễ, gỡ hardcode) — validator đòi ĐỦ 10 khóa, thiếu 1 là 400.
+  const FULL = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180, TRIP_STUCK_HOURS: 6, TRIP_LATE_DAYS: 14, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15, PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24 }
 
   const bad1 = await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...FULL, PCT_CRIT: 30 } })   // crit > warn
   check('Ngưỡng vô nghĩa (PCT_CRIT > PCT_WARN) → 400', bad1.s === 400 && bad1.j?.error?.code === 'INVALID_VALUE', `http=${bad1.s} code=${bad1.j?.error?.code}`)

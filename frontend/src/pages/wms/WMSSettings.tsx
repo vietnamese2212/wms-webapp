@@ -42,14 +42,16 @@ function apiMsg(err: unknown) {
 // ─── Tab Hệ thống (SystemSetting — cờ hành vi per-DB, multi-tenant silo) ─────
 // Cờ theo KHÁC BIỆT giữa các đơn vị, không theo tên đơn vị. Sổ cờ: backend systemSettingController.
 
+// `sub` để NGẮN — trong lưới 3 cột menu chỉ rộng ~450px, chuỗi dài sẽ nuốt chỗ của nhãn chính.
+// Ví dụ đầy đủ nằm ở tooltip ⓘ của nhãn (chuẩn form cấu hình: diễn giải vào tooltip).
 const LABEL_FORMAT_OPTS = [
-  { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_Máy_STT_NMSX — vd 070526_510000127_C05_M1_001_B' },
-  { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26' },
+  { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_…' },
+  { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã;QA;Lô;NSX;HSD…' },
 ]
 
 const DEC_SEP_OPTS = [
-  { value: 'dot',   label: 'Dấu chấm ( . )',  sub: 'vd 1.5 kg · 0.00005' },
-  { value: 'comma', label: 'Dấu phẩy ( , )',  sub: 'vd 1,5 kg · 0,00005 (chuẩn VN, khớp file Excel)' },
+  { value: 'dot',   label: 'Dấu chấm ( . )',  sub: '1.5 kg' },
+  { value: 'comma', label: 'Dấu phẩy ( , )',  sub: '1,5 kg' },
 ]
 
 // Cờ xác nhận giao hàng — quyết định xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào.
@@ -194,11 +196,16 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
         <div className={SETTINGS_GRID}>
           <SettingGroup readOnly={!canManage} title="Định dạng & nhập liệu" meta={labelRow}>
-            <SettingField label="Định dạng tem pallet" tip="Chỉ áp cho chiều IN tem từ app. Chiều quét nhận vẫn theo định dạng của đơn vị.">
+            <SettingField label="Định dạng tem pallet"
+              tip={<>Chỉ áp cho chiều IN tem từ app. Chiều quét nhận vẫn theo định dạng của đơn vị.<br />
+                <b>Gạch dưới:</b> ddmmyy_Mã_ChuKỳ_Máy_STT_NMSX — vd 070526_510000127_C05_M1_001_B<br />
+                <b>Chấm phẩy:</b> Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26</>}>
               <SingleSelect options={LABEL_FORMAT_OPTS} value={draftLabel}
                 onChange={setDraftLabel} searchable={false} triggerClassName="w-full" />
             </SettingField>
-            <SettingField label="Dấu thập phân" tip="Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.">
+            <SettingField label="Dấu thập phân"
+              tip={<>Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.<br />
+                Dấu phẩy là chuẩn VN, khớp file Excel (vd 1,5 kg · 0,00005).</>}>
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
                 onChange={setDraftDec} searchable={false} triggerClassName="w-full" />
             </SettingField>

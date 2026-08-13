@@ -298,7 +298,7 @@ function countInnerComponentWithInput(sampleOut) {
   for (const f of filesOf('frontend/src', ['.tsx'])) {
     const lines = readFileSync(f, 'utf8').split(/\r?\n/)
     lines.forEach((line, i) => {
-      if (!/^\s{2,}const [A-Z][A-Za-z0-9]*\s*=\s*\(/.test(line)) return
+      if (!/^\s{2,}(const [A-Z][A-Za-z0-9]*\s*=\s*\(|function [A-Z][A-Za-z0-9]*\s*\()/.test(line)) return
       const body = lines.slice(i, i + 16).join('\n')
       if (!/<Input\b|<input\b|<textarea\b|<Textarea\b|onChange=/.test(body)) return
       n++

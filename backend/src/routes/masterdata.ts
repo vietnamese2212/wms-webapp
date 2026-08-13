@@ -4,6 +4,7 @@ import * as location    from '../controllers/masterdata/locationController'
 import * as manufacturer from '../controllers/masterdata/manufacturerController'
 import * as material    from '../controllers/masterdata/materialController'
 import * as shiftQa     from '../controllers/masterdata/shiftQaController'
+import * as machine     from '../controllers/wms/machineController'
 import * as department  from '../controllers/masterdata/departmentController'
 import * as employee    from '../controllers/masterdata/employeeController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
@@ -58,6 +59,13 @@ router.delete('/materials/:id',     requirePerm('materials', 'delete'), material
 router.get('/import-shifts',        shiftQa.listImportShifts)
 router.post('/import-shifts',       requirePerm('wms_settings', 'manage_shift'), shiftQa.createImportShift)
 router.put('/import-shifts/:id',    requirePerm('wms_settings', 'manage_shift'), shiftQa.updateImportShift)
+
+// Máy theo Kho (danh mục — Sổ đóng gói + In tem validate máy ở đây, user 13/08)
+// GET hở đọc user đăng nhập (form trang sổ / sinh tem cần); write = wms_settings.manage_machine
+router.get('/machines',             machine.listMachines)   // ?warehouse_id=
+router.post('/machines',            requirePerm('wms_settings', 'manage_machine'), machine.createMachine)
+router.put('/machines/:id',         requirePerm('wms_settings', 'manage_machine'), machine.updateMachine)
+router.delete('/machines/:id',      requirePerm('wms_settings', 'manage_machine'), machine.deleteMachine)
 
 // QAStatus (Tình trạng QA)
 router.get('/qa-statuses',          shiftQa.listQAStatuses)

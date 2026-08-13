@@ -20,7 +20,7 @@ import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
   useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
-  useTransportCompanies, useSystemSettings, type PalletPrintRow,
+  useTransportCompanies, useSystemSettings, useMachines, type PalletPrintRow,
 } from '@/api/hooks'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
@@ -310,6 +310,16 @@ export default function PalletLabels() {
 
   // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
   const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
+  // DANH MỤC MÁY theo kho NMSX (user 13/08): kho có khai máy → ô Máy thành dropdown PHẢI chọn;
+  // chưa khai (hoặc NMSX 'O'/trống) → điền tự do như cũ. Chỉ áp form V1 hàng thành phẩm (không NCC).
+  const { data: nmsxMachines } = useMachines(nmsxWarehouseId ?? undefined)
+  const nmsxMachineOpts = useMemo(() => (nmsxWarehouseId ? (nmsxMachines ?? []) : [])
+    .filter(m => m.is_active).map(m => ({ value: m.code, label: m.code + (m.note ? ` — ${m.note}` : '') })), [nmsxMachines, nmsxWarehouseId])
+  useEffect(() => {
+    // đổi NMSX → máy đang điền không thuộc danh mục kho mới thì xóa (khỏi sinh tem máy lạ)
+    if (nmsxMachineOpts.length && machine && !nmsxMachineOpts.some(o => o.value === machine)) setMachine('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nmsxMachineOpts])
   // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
   useEffect(() => {
     if (!mat) return
@@ -1083,7 +1093,13 @@ export default function PalletLabels() {
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                    {nmsxMachineOpts.length ? (
+                      /* Kho NMSX đã khai danh mục máy (Cài đặt WMS → Máy) → PHẢI chọn trong danh mục (user 13/08) */
+                      <SingleSelect options={nmsxMachineOpts} value={machine} onChange={setMachine}
+                        placeholder="Chọn máy…" triggerClassName="h-8 w-full" />
+                    ) : (
+                      <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                    )}
                   </div>
                 </div>
               )}

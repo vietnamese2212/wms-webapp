@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -24,6 +24,7 @@ import {
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting,
+  useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
   type WarehouseZone, type UnitRow, type UnitRole,
 } from '@/api/hooks'
@@ -953,6 +954,7 @@ export default function WMSSettings() {
   const canManageZone      = admin || can(perms, 'wms_settings', 'manage_zone')
   const canManageShift     = admin || can(perms, 'wms_settings', 'manage_shift')
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
+  const canManageMachine   = admin || can(perms, 'wms_settings', 'manage_machine')
   const canManageSystem    = admin || can(perms, 'wms_settings', 'manage_system')
   const visibleTabs = [
     canManageWarehouse && 'warehouses',
@@ -961,6 +963,7 @@ export default function WMSSettings() {
     canManageZone      && 'zones',
     canManageShift     && 'shifts',
     canManageQA        && 'qa',
+    canManageMachine   && 'machines',
     canManageSystem    && 'system',
   ].filter(Boolean) as string[]
   const defaultTab = visibleTabs[0]
@@ -1116,6 +1119,7 @@ export default function WMSSettings() {
             {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
             {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
             {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
+            {canManageMachine   && <TabsTrigger value="machines"   className="gap-1.5 text-xs"><Cog className="h-3.5 w-3.5" /> Máy</TabsTrigger>}
             {canManageSystem    && <TabsTrigger value="system"     className="gap-1.5 text-xs"><SlidersHorizontal className="h-3.5 w-3.5" /> Hệ thống</TabsTrigger>}
           </TabsList>
         </div>
@@ -1472,6 +1476,11 @@ export default function WMSSettings() {
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />
         </TabsContent>
 
+        {/* ── Tab: Máy theo Kho (user 13/08 — Sổ đóng gói + Sinh tem validate máy ở đây) ── */}
+        <TabsContent value="machines" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <MachineTab canManage={canManageMachine} warehouses={allWh as { id: string; name: string }[]} />
+        </TabsContent>
+
         {/* ── Tab: Hệ thống (cờ SystemSetting) ── */}
         <TabsContent value="system" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <SystemTab canManage={canManageSystem} />
@@ -1496,5 +1505,131 @@ export default function WMSSettings() {
       )}
      </div>
     </div>
+  )
+}
+
+// ─── Tab Máy theo Kho (user 13/08) ───────────────────────────────────────────
+// Máy THUỘC Kho — mỗi kho danh mục riêng. Kho có máy → Sổ đóng gói (mở/sửa trang) + Sinh tem
+// (theo NMSX) PHẢI chọn trong danh mục (BE 422 MACHINE_INVALID); kho chưa khai → điền tự do.
+function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string }[] }) {
+  const [whId, setWhId] = useState('')
+  const { data: machines = [], isLoading } = useMachines(whId || undefined)
+  const { mutate: createM, isPending: creating } = useCreateMachine()
+  const { mutate: updateM, isPending: updating } = useUpdateMachine()
+  const { mutate: deleteM, isPending: deleting } = useDeleteMachine()
+  const [newCode, setNewCode] = useState('')
+  const [newNote, setNewNote] = useState('')
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editCode, setEditCode] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const whName = new Map(warehouses.map(w => [w.id, w.name]))
+  const err = (title: string) => (e: unknown) => toast({ variant: 'destructive', title, description: apiMsg(e) })
+
+  function handleAdd() {
+    if (!whId || !newCode.trim()) return
+    createM({ warehouse_id: whId, code: newCode.trim(), note: newNote.trim() || undefined }, {
+      onSuccess: () => { setNewCode(''); setNewNote('') },
+      onError: err('Không thêm được máy'),
+    })
+  }
+  function startEdit(m: { id: string; code: string; note: string | null }) {
+    setEditId(m.id); setEditCode(m.code); setEditNote(m.note ?? '')
+  }
+  function saveEdit() {
+    if (!editId || !editCode.trim()) return
+    updateM({ id: editId, code: editCode.trim(), note: editNote.trim() }, {
+      onSuccess: () => setEditId(null),
+      onError: err('Không sửa được máy'),
+    })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <div className="w-56">
+          <SingleSelect value={whId} onChange={setWhId} placeholder="Tất cả kho"
+            options={warehouses.map(w => ({ value: w.id, label: w.name }))} />
+        </div>
+        <p className="text-[10px] text-slate-500 min-w-0 flex-1">
+          Máy thuộc KHO — kho có danh mục máy thì Sổ đóng gói + Sinh tem <b>phải chọn</b> trong danh mục; kho chưa khai máy thì điền tự do.
+        </p>
+      </div>
+      {canManage && (
+        <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+          <Input value={newCode} onChange={e => setNewCode(e.target.value.toUpperCase())} placeholder="Tên máy (VD: A, M1)"
+            className="h-8 text-xs w-36" disabled={!whId} />
+          <Input value={newNote} onChange={e => setNewNote(e.target.value)} placeholder="Ghi chú (tùy chọn)"
+            className="h-8 text-xs w-52" disabled={!whId} />
+          <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" disabled={!whId || !newCode.trim() || creating}
+            onClick={handleAdd}><Plus className="h-3.5 w-3.5 mr-1" />{creating ? 'Đang thêm…' : 'Thêm máy'}</Button>
+          {!whId && <span className="text-[10px] text-amber-600">Chọn kho trước rồi mới thêm máy</span>}
+        </div>
+      )}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {isLoading ? <div className="p-6 text-center text-xs text-slate-400">Đang tải…</div> : (
+          <Table className="min-w-full">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Máy</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Ghi chú</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Trạng thái</TableHead>
+                {canManage && <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Thao tác</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {machines.length === 0 && (
+                <TableRow><TableCell colSpan={5} className="px-2 py-6 text-center text-xs text-slate-400 whitespace-nowrap">
+                  {whId ? 'Kho này chưa khai máy — Sổ đóng gói/Sinh tem đang cho điền máy tự do' : 'Chưa có máy nào'}
+                </TableCell></TableRow>
+              )}
+              {machines.map(m => (
+                <TableRow key={m.id}>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{whName.get(m.warehouse_id) ?? m.warehouse_id}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">
+                    {editId === m.id
+                      ? <Input value={editCode} onChange={e => setEditCode(e.target.value.toUpperCase())} className="h-7 text-xs w-28" />
+                      : m.code}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    {editId === m.id
+                      ? <Input value={editNote} onChange={e => setEditNote(e.target.value)} className="h-7 text-xs w-44" />
+                      : (m.note || <span className="text-slate-300">—</span>)}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${m.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {m.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                    </span>
+                  </TableCell>
+                  {canManage && (
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {editId === m.id ? (
+                        <div className="flex items-center gap-1">
+                          <Button size="sm" className="h-6 text-[10px] px-2 !min-h-0" disabled={updating || !editCode.trim()} onClick={saveEdit}>Lưu</Button>
+                          <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 !min-h-0" onClick={() => setEditId(null)}>Hủy</Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-0.5">
+                          <button className="text-slate-400 hover:text-blue-500 p-1" title="Sửa" onClick={() => startEdit(m)}>
+                            <Pencil className="h-3.5 w-3.5" /></button>
+                          <button className="text-slate-400 hover:text-amber-500 p-1" title={m.is_active ? 'Tạm dừng (khỏi hiện trong danh sách chọn)' : 'Bật lại'}
+                            disabled={updating}
+                            onClick={() => updateM({ id: m.id, is_active: !m.is_active }, { onError: err('Không đổi được trạng thái') })}>
+                            <Clock className="h-3.5 w-3.5" /></button>
+                          <button className="text-slate-400 hover:text-red-500 p-1" title="Xóa" disabled={deleting}
+                            onClick={() => { if (confirm(`Xóa máy "${m.code}"?`)) deleteM(m.id, { onError: err('Không xóa được máy') }) }}>
+                            <Trash2 className="h-3.5 w-3.5" /></button>
+                        </div>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">{machines.length} máy{whId ? ` · ${whName.get(whId) ?? ''}` : ''}</div>
+    </>
   )
 }

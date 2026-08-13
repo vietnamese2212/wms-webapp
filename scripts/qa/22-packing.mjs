@@ -16,6 +16,7 @@ async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})         // [17] tem mã THẬT (không mang TAG)
   await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})   // [16] giả lập kho nhận
+  await restWrite('warehouse_machines', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})   // [19] danh mục máy
 }
 const openRun = (mat, machine, extra = {}) =>
   api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: mat, machine_code: machine, run_date: today, start_at: iso(7, 0), shift: 'Ca 1', cycle: '55', ...extra })
@@ -446,6 +447,37 @@ let runB = null
     for (const t of [temIn, temOut])
       await restWrite('InventoryEntry', 'DELETE', `pallet_code=eq.${encodeURIComponent(t)}`).catch(() => {})
   }
+}
+
+// [19] DANH MỤC MÁY THEO KHO (user 13/08 tối): kho có setup máy → mở/sửa trang sổ PHẢI chọn máy
+// trong danh mục (422 MACHINE_INVALID); kho chưa setup (hoặc máy toàn tạm dừng) → điền tự do.
+{
+  const un = await fetch(`${BASE}/api/masterdata/machines`)
+  check('[19] chưa đăng nhập → GET machines 401', un.status === 401, `http=${un.status}`)
+
+  const mc = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'm9', note: `${TAG} may` })
+  const mid = mc.j?.data?.id
+  check('[19] tạo máy cho kho (code tự UPPERCASE)', mc.s === 200 && mc.j?.data?.code === 'M9', `http=${mc.s} code=${mc.j?.data?.code}`)
+  const dup = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'M9' })
+  check('[19] máy trùng tên trong kho → 409', dup.s === 409, `http=${dup.s}`)
+
+  const bad = await openRun(`${TAG}M`, 'ZZ')
+  check('[19] kho CÓ danh mục: mở trang máy LẠ → 422 MACHINE_INVALID',
+    bad.s === 422 && bad.j?.error?.code === 'MACHINE_INVALID', `http=${bad.s} code=${bad.j?.error?.code}`)
+  const good = await openRun(`${TAG}M`, 'M9')
+  const gid = good.j?.data?.id
+  check('[19] máy ĐÚNG danh mục → mở được', good.s === 200, `http=${good.s}`)
+  const patchBad = await api(`/wms/packing-runs/${gid}`, 'PATCH', { machine_code: 'ZZ' })
+  check('[19] sửa trang sang máy lạ → 422', patchBad.s === 422 && patchBad.j?.error?.code === 'MACHINE_INVALID', `http=${patchBad.s}`)
+  if (gid) await api(`/wms/packing-runs/${gid}/cancel`, 'POST')
+
+  // máy TẠM DỪNG = coi như kho không còn danh mục sống → điền tự do trở lại
+  await api(`/masterdata/machines/${mid}`, 'PUT', { is_active: false })
+  const free = await openRun(`${TAG}M`, 'ZZ')
+  check('[19] danh mục toàn máy tạm dừng → điền tự do trở lại', free.s === 200, `http=${free.s}`)
+  if (free.j?.data?.id) await api(`/wms/packing-runs/${free.j.data.id}/cancel`, 'POST')
+  const del = await api(`/masterdata/machines/${mid}`, 'DELETE')
+  check('[19] xóa máy → 200', del.s === 200, `http=${del.s}`)
 }
 
 console.log('\n🧹 dọn…')

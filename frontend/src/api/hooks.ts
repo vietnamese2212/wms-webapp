@@ -452,6 +452,43 @@ export function useQAStatuses() {
   })
 }
 
+// Máy theo Kho (user 13/08 — Sổ đóng gói + In tem validate máy ở đây). Đọc hở user đăng nhập;
+// ghi = wms_settings.manage_machine. Kho có máy → form phải chọn trong danh mục; chưa setup → điền tự do.
+export interface WarehouseMachine { id: string; warehouse_id: string; code: string; note: string | null; is_active: boolean; created_at: string }
+export function useMachines(warehouseId?: string) {
+  return useQuery({
+    queryKey: ['machines', warehouseId ?? ''],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/machines', { params: warehouseId ? { warehouse_id: warehouseId } : {} })
+      return data.data as WarehouseMachine[]
+    },
+  })
+}
+export function useCreateMachine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; code: string; note?: string }) =>
+      apiClient.post('/masterdata/machines', body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }),
+  })
+}
+export function useUpdateMachine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; code?: string; note?: string; is_active?: boolean }) =>
+      apiClient.put(`/masterdata/machines/${id}`, body).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }),
+  })
+}
+export function useDeleteMachine() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/masterdata/machines/${id}`).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }),
+  })
+}
+
 // Cờ hệ thống (SystemSetting — multi-tenant silo, cờ theo khác biệt). Đọc hở user đăng nhập; ghi = wms_settings.manage_system
 export interface SystemSetting { key: string; value: unknown; updated_by: string | null; updated_at: string }
 export function useSystemSettings() {

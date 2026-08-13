@@ -231,7 +231,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `materials` | Mã hàng | Mã hàng (+ Nhà sản xuất) | view, create, edit, delete |
 | `pallet_print` | In tem pallet | In tem pallet | view, **mỗi tab 1 quyền (02/07)**: generate=tab Sinh tem mới, reprint=tab In lại từ tồn kho + nút In lại trong Lịch sử, history=tab Lịch sử in, audit=tab Truy cứu |
 | `pallet_ops` | Dồn / Tách pallet | Dồn / Tách pallet | view, merge, ungroup, split |
-| `wms_settings` | Cài đặt WMS | Cài đặt WMS (kho, loại kho, khu vực, ca nhập, QA, **Hệ thống**) | view, manage_warehouse, manage_type, manage_zone, manage_shift, manage_qa, **manage_system**=tab Hệ thống (cờ `label_format` định dạng tem in — multi-tenant) |
+| `wms_settings` | Cài đặt WMS | Cài đặt WMS (kho, loại kho, khu vực, ca nhập, QA, **Máy**, **Hệ thống**) | view, manage_warehouse, manage_type, manage_zone, manage_shift, manage_qa, **manage_machine**=tab Máy (danh mục máy THEO KHO, bảng `warehouse_machines` — user 13/08: kho có setup máy thì Sổ đóng gói mở/sửa trang 422 `MACHINE_INVALID` nếu máy ngoài danh mục + form thành dropdown; In tem Sinh tem V1 dropdown máy theo kho NMSX; kho chưa setup → điền tự do; GET /masterdata/machines hở đọc user đăng nhập), **manage_system**=tab Hệ thống (cờ `label_format` định dạng tem in — multi-tenant) |
 | `employees` | Sơ đồ tổ chức (xem) | Sơ đồ tổ chức + xem DS nhân sự | view |
 | `user_admin` | Quản lý người dùng | Quản lý người dùng | view, create, edit, set_password, delete, manage_roles |
 | `work_skill` | Vị trí & Skill | trong Quản lý người dùng (gán skill) | view, manage, assign |

@@ -23,7 +23,7 @@ import {
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
   usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
   useUpdatePackingRun, useCancelPackingRun, type PackingRun,
-  useImportShifts, useMaterials, useMaterialsByCodes,
+  useImportShifts, useMaterials, useMaterialsByCodes, useMachines,
 } from '@/api/hooks'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
@@ -978,6 +978,14 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const [machine, setMachine] = useState('')
   const [startTime, setStartTime] = useState(nowHHMM())
   const [note, setNote] = useState('')
+  // DANH MỤC MÁY THEO KHO (user 13/08): kho có khai máy → PHẢI chọn trong danh mục (BE cũng chặn 422);
+  // kho chưa khai → điền tự do như cũ. Đổi kho → máy đã chọn không thuộc danh mục kho mới thì xóa.
+  const { data: whMachines } = useMachines(whId || undefined)
+  const machineOpts = useMemo(() => (whId ? (whMachines ?? []) : [])
+    .filter(m => m.is_active).map(m => ({ value: m.code, label: m.code + (m.note ? ` — ${m.note}` : '') })), [whMachines, whId])
+  useEffect(() => {
+    if (machineOpts.length && machine && !machineOpts.some(o => o.value === machine)) setMachine('')
+  }, [machineOpts, machine])
 
   function addMat(v: string) {
     if (!v || sel.some(s => s.code === v)) return
@@ -1069,8 +1077,17 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Máy *</p>
-          <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 w-32 text-sm" placeholder="VD: A" />
-          <p className="text-[10px] text-slate-400 mt-0.5">Tem in "AP" thì khai đúng máy thật (A hay P) — pallet quét vào trang sẽ theo máy này</p>
+          {machineOpts.length ? (
+            <>
+              <SingleSelect options={machineOpts} value={machine} onChange={setMachine} placeholder="Chọn máy…" triggerClassName="w-full h-9" />
+              <p className="text-[10px] text-slate-400 mt-0.5">Kho này đã khai danh mục máy (Cài đặt WMS → Máy) — chỉ chọn được máy trong danh mục</p>
+            </>
+          ) : (
+            <>
+              <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 w-32 text-sm" placeholder="VD: A" />
+              <p className="text-[10px] text-slate-400 mt-0.5">Tem in "AP" thì khai đúng máy thật (A hay P) — pallet quét vào trang sẽ theo máy này</p>
+            </>
+          )}
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Ghi chú</p>
@@ -1158,6 +1175,15 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
   const [ed, setEd] = useState(e0.d); const [et, setEt] = useState(e0.t)
   const [qtyTotal, setQtyTotal] = useState(run.qty_total != null ? String(run.qty_total) : '')
   const [note, setNote] = useState(run.note ?? '')
+  // kho có danh mục máy → sửa máy cũng phải chọn trong danh mục (máy hiện tại của trang nếu lạc
+  // danh mục thì vẫn ghim vào options để hiển thị — BE sẽ chặn khi đổi sang giá trị lạ)
+  const { data: whMachines } = useMachines(run.warehouse_id)
+  const editMachineOpts = useMemo(() => {
+    const opts = (whMachines ?? []).filter(m => m.is_active).map(m => ({ value: m.code, label: m.code + (m.note ? ` — ${m.note}` : '') }))
+    if (opts.length && run.machine_code && !opts.some(o => o.value === run.machine_code))
+      opts.unshift({ value: run.machine_code, label: `${run.machine_code} (ngoài danh mục — chỉ xem)` })
+    return opts
+  }, [whMachines, run.machine_code])
 
   function save() {
     if (!machine.trim()) { onError('Máy không được trống'); return }
@@ -1206,7 +1232,11 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Máy</p>
-          <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 w-32 text-sm" />
+          {editMachineOpts.length ? (
+            <SingleSelect options={editMachineOpts} value={machine} onChange={setMachine} placeholder="Chọn máy…" triggerClassName="w-full h-9" />
+          ) : (
+            <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 w-32 text-sm" />
+          )}
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Giờ bắt đầu</p>

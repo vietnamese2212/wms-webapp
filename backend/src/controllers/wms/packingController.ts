@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { normalizeQR, parseInboundQR } from '../../utils/qrParser'
 import { fetchAllByIdChunks } from '../../utils/pagination'
+import { activeMachineCodes } from './machineController'
 
 // ─── SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08/2026) — số hóa sổ đóng gói viết tay tại xưởng ──
 // 1 pallet = 1 dòng packing_logs. Quét tem lúc BẮT ĐẦU xếp → mở sổ (OPEN);
@@ -548,6 +549,11 @@ export async function openRun(req: Request, res: Response) {
   if (!machine_code || typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Nhập Máy', 422)
   const scope = scopeWhIds(req)
   if (scope !== null && !scope.includes(warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+  // DANH MỤC MÁY THEO KHO (user 13/08): kho có setup máy → máy PHẢI thuộc danh mục; chưa setup → điền tự do
+  const machineCatalog = await activeMachineCodes(warehouse_id)
+  if (machineCatalog.length && !machineCatalog.includes(machine_code.trim().toUpperCase()))
+    return fail(res, 422, 'MACHINE_INVALID',
+      `Máy "${machine_code.trim()}" không có trong danh mục máy của kho — chọn 1 trong: ${machineCatalog.slice(0, 15).join(', ')}`)
   const dateVN = typeof run_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(run_date)
     ? run_date : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   let startIso = new Date().toISOString()
@@ -631,7 +637,13 @@ export async function updateRun(req: Request, res: Response) {
   if (cycle !== undefined) patch.cycle = typeof cycle === 'string' && cycle.trim() ? cycle.trim().slice(0, 40) : null
   if (machine_code !== undefined) {
     if (typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Máy không được trống', 422)
-    patch.machine_code = machine_code.trim().toUpperCase().slice(0, 10)
+    const mc = machine_code.trim().toUpperCase().slice(0, 10)
+    // kho có danh mục máy → sửa máy cũng phải chọn trong danh mục (user 13/08)
+    const machineCatalog = await activeMachineCodes(String(run.warehouse_id))
+    if (machineCatalog.length && !machineCatalog.includes(mc))
+      return fail(res, 422, 'MACHINE_INVALID',
+        `Máy "${mc}" không có trong danh mục máy của kho — chọn 1 trong: ${machineCatalog.slice(0, 15).join(', ')}`)
+    patch.machine_code = mc
   }
   for (const [k, v] of [['start_at', start_at], ['end_at', end_at]] as const) {
     if (v === undefined) continue

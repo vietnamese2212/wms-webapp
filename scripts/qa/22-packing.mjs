@@ -2,7 +2,7 @@
 // (mở → quét pallet → Giờ kết thúc tính tổng → sửa/hủy) + gate "mở sổ trước mới quét"
 // + chống đua (unique 1-trang-mở per kho+mã+máy; 1-tem-1-dòng-sống) + luật giờ.
 // KHÔNG gửi ảnh trong QA (tránh residue storage) — đường ảnh/OCR verify tay trên Preview.
-import { login, api, restAll, restWrite, check, finish, BASE, FIX } from './lib.mjs'
+import { login, api, restAll, restWrite, check, finish, resolveFixtures, BASE, FIX } from './lib.mjs'
 
 const TAG = 'QAPACK'
 const WH = 'QAPACKWH'   // kho tổng hợp giả có TAG — packing_runs.warehouse_id là text, dọn theo TAG
@@ -391,6 +391,85 @@ let runB = null
       await api(`/wms/packing-runs/${rid}/cancel`, 'POST', {})
     }
     await cleanUser()
+  }
+}
+
+// [18] CẢNH BÁO NHẬP NGOÀI SỔ (user 13/08 vòng 2): CHỈ hàng XƯỞNG MỚI (đơn FACTORY, pallet chưa từng
+// nhập, không mang NCC) mới cảnh báo "chưa có trong Sổ đóng gói" — NCC / hàng return / pallet đã ghi
+// sổ nhập cùng mã KHÔNG bị báo oan.
+{
+  await resolveFixtures()
+  const stF = await api('/wms/settings')
+  const lblFlag = (stF.j?.data ?? []).find(s => s.key === 'label_format')?.value ?? 'underscore'
+  if (!FIX.MAT_POOL_ID || !FIX.LOC_QR_ID || lblFlag !== 'underscore')
+    console.log(`ℹ️  bỏ qua [18] (fixture mat=${!!FIX.MAT_POOL_ID} loc=${!!FIX.LOC_QR_ID} flag=${lblFlag} — cần tem V1)`)
+  else {
+    const { randomUUID } = await import('crypto')
+    const nowIso = new Date().toISOString()
+    const temIn = tem(31, FIX.MAT_POOL), temOut = tem(32, FIX.MAT_POOL)
+    const temNcc = tem(33, FIX.MAT_POOL), temRet = tem(34, FIX.MAT_POOL)
+    const priorId = randomUUID(), nccId = randomUUID()
+    const orderIds = []
+    const mkOrder = async (extra = {}) => {
+      const c = await api('/wms/inbound-orders', 'POST', {
+        warehouse_id: FIX.WH_QR.id, material_id: FIX.MAT_POOL_ID, planned_cartons: 20,
+        source_type: 'FACTORY', notes: `${TAG} warn`, ...extra,
+      })
+      const o = c.j?.data?.order ?? c.j?.data
+      if (o?.id) orderIds.push(o.id)
+      return o
+    }
+    const scanWarn = async (oid, qr) => {
+      const r = await api(`/wms/inbound-orders/${oid}/scan`, 'POST', { qr_code: qr, location_id: FIX.LOC_QR_ID, cartons_override: 5 })
+      return { s: r.s, warn: (r.j?.data?.warnings ?? []).some(w => String(w).includes('Sổ đóng gói')) }
+    }
+    // sổ đang ghi mã pool: mở trang QAPACKWH + ghi 1 pallet (temIn)
+    const r18 = await openRun(FIX.MAT_POOL, 'MW')
+    const rid18 = r18.j?.data?.id
+    const l18 = await api('/wms/packing-logs/open', 'POST', { qr_code: temIn, complete: true, qty_cartons: 5 })
+    const lid18 = l18.j?.data?.id
+    // hàng return: temRet ĐÃ có lịch sử nhập (pallet xuất đi rồi quay về — EXPORTED không vướng unique sống)
+    await restWrite('InventoryEntry', 'POST', null, {
+      id: priorId, material_id: FIX.MAT_POOL_ID, pallet_code: temRet, warehouse_id: FIX.WH_QR.id, location_id: null,
+      cartons_imported: 5, cartons_remaining: 0, cartons_reserved: 0, status: 'EXPORTED', stack_layer: 1,
+      import_date: today, notes: `${TAG} return`, created_at: nowIso, updated_at: nowIso,
+    })
+    await restWrite('TransportCompany', 'POST', null, {
+      id: nccId, name: `${TAG} NCC`, code: `${TAG}NC`, type: 'NCC', updated_at: nowIso,
+    })
+    const oF = await mkOrder()
+    const oN = await mkOrder({ source_type: 'NCC', ncc_id: nccId })
+    check('[18] tạo phiếu FACTORY + NCC tại kho QR', !!oF?.id && !!oN?.id, `F=${!!oF?.id} N=${!!oN?.id}`)
+    if (oF?.id && oN?.id) {
+      const a = await scanWarn(oF.id, temOut)
+      check('[18] FACTORY quét pallet LẠ (mã đang ghi sổ) → CÓ cảnh báo sổ', a.s === 200 && a.warn, `http=${a.s} warn=${a.warn}`)
+      const b = await scanWarn(oF.id, temIn)
+      check('[18] pallet ĐÃ ghi sổ → KHÔNG cảnh báo', b.s === 200 && !b.warn, `http=${b.s} warn=${b.warn}`)
+      const c = await scanWarn(oN.id, temNcc)
+      check('[18] đơn NCC nhập cùng mã → KHÔNG cảnh báo (nguồn ngoài)', c.s === 200 && !c.warn, `http=${c.s} warn=${c.warn}`)
+      const d = await scanWarn(oF.id, temRet)
+      check('[18] hàng RETURN (pallet đã từng nhập) → KHÔNG cảnh báo', d.s === 200 && !d.warn, `http=${d.s} warn=${d.warn}`)
+    }
+    // filter Chu kỳ mới của tab Trang sổ (user 13/08): khớp partial + không khớp thì rỗng
+    const fcHit = await api(`/wms/packing-runs?cycle=55&warehouse_id=${WH}`)
+    const fcMiss = await api(`/wms/packing-runs?cycle=zz9x&warehouse_id=${WH}`)
+    check('[18] filter Chu kỳ: khớp thấy trang, không khớp rỗng',
+      fcHit.s === 200 && (fcHit.j?.data?.rows ?? []).some(r => r.id === rid18)
+        && fcMiss.s === 200 && !(fcMiss.j?.data?.rows ?? []).some(r => r.id === rid18),
+      `hit=${(fcHit.j?.data?.rows ?? []).length} miss=${(fcMiss.j?.data?.rows ?? []).length}`)
+    // dọn: pallet quét + phiếu → xóa/hủy; entry return giả; NCC giả; pallet sổ + trang sổ
+    for (const oid of orderIds) {
+      const g = await api(`/wms/inbound-orders/${oid}`)
+      for (const e of (g.j?.data?.inventory_entries ?? [])) await api(`/wms/inbound-orders/${oid}/entries/${e.id}`, 'DELETE', {})
+      await api(`/wms/inbound-orders/${oid}/cancel`, 'POST')
+    }
+    await restWrite('InventoryEntry', 'DELETE', `id=eq.${priorId}`).catch(() => {})
+    await restWrite('TransportCompany', 'DELETE', `id=eq.${nccId}`).catch(() => {})
+    if (lid18) await api(`/wms/packing-logs/${lid18}/cancel`, 'POST')
+    if (rid18) await api(`/wms/packing-runs/${rid18}/cancel`, 'POST')
+    // các tem [18] mang mã THẬT (không TAG trong pallet_code) — quét phòng thủ residue theo đúng 4 tem
+    for (const t of [temIn, temOut, temNcc, temRet])
+      await restWrite('InventoryEntry', 'DELETE', `pallet_code=eq.${encodeURIComponent(t)}`).catch(() => {})
   }
 }
 

@@ -474,7 +474,7 @@ export async function getRun(req: Request, res: Response) {
 
 // GET /wms/packing-runs — tra cứu sổ theo TRANG (phân trang server)
 export async function listRuns(req: Request, res: Response) {
-  const { status, date_from, date_to, machine, material_code, search } = req.query as Record<string, string | undefined>
+  const { status, date_from, date_to, machine, cycle, material_code, search } = req.query as Record<string, string | undefined>
   const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
   const pageSize = Math.min(PAGE_MAX, Math.max(1, parseInt(String(req.query.pageSize ?? '200'), 10) || 200))
 
@@ -485,6 +485,10 @@ export async function listRuns(req: Request, res: Response) {
   if (date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from)) q = q.gte('run_date', date_from)
   if (date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to)) q = q.lte('run_date', date_to)
   if (machine) q = q.eq('machine_code', machine)
+  if (cycle && cycle.trim()) {
+    const cyc = cycle.trim().replace(/[%\\]/g, ' ').slice(0, 40).trim()
+    if (cyc) q = q.ilike('cycle', `%${cyc}%`)
+  }
   if (material_code) q = q.eq('material_code', material_code)
   if (search && search.trim()) {
     // GIỮ `_` (tem V1) — nó chỉ là wildcard 1 ký tự trong ilike; vẫn strip ký tự phá cú pháp .or()

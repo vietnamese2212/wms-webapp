@@ -38,6 +38,26 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+// ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
+// KHÔNG thêm state riêng: tháng chỉ là CÁCH NHẬP NHANH của chính bộ lọc khoảng ngày
+// (chọn tháng = set dateFrom/dateTo trọn tháng; giá trị chip SUY NGƯỢC từ khoảng ngày)
+// → không bao giờ mâu thuẫn kiểu "chip tháng 7 nhưng khoảng ngày tháng 8".
+// Tháng tính theo NGÀY VN (todayVN), ngày cuối tháng = toán lịch thuần, không qua toISOString (bẫy lệch -1).
+const monthOpts = (n = 13): { value: string; label: string }[] => {
+  const [y, m] = todayVN().split('-').map(Number)
+  return Array.from({ length: n }, (_, i) => {
+    const t = y * 12 + (m - 1) - i
+    const yy = Math.floor(t / 12), mo = (t % 12) + 1
+    const mm = String(mo).padStart(2, '0')
+    return { value: `${yy}-${mm}`, label: `Tháng ${mm}/${yy}` }
+  })
+}
+const monthRange = (ym: string): { from: string; to: string } => {
+  const [y, m] = ym.split('-').map(Number)
+  return { from: `${ym}-01`, to: `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}` }
+}
+const monthOf = (from: string, to: string): string =>
+  from && to && from.endsWith('-01') && monthRange(from.slice(0, 7)).to === to ? from.slice(0, 7) : ''
 const dmyToIso = (dmy: string): string | null => {
   const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((dmy ?? '').trim())
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null
@@ -1264,6 +1284,7 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
     date_from: f.dateFrom || undefined,
     date_to: f.dateTo || undefined,
     machine: f.machine || undefined,
+    cycle: f.cycle || undefined,
     warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
     page: f.runPage, pageSize: RUNS_PAGE_SIZE,
@@ -1274,6 +1295,11 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày sản xuất', type: 'daterange', pinned: true, from: f.dateFrom, to: f.dateTo,
       onChange: (from, to) => setF({ dateFrom: from, dateTo: to, runPage: 1 }) },
+    // Tháng SX = cách nhập nhanh của chính khoảng ngày trên (chọn tháng → set trọn tháng;
+    // chip suy ngược — chọn khoảng ngày lẻ tay thì chip tháng tự biến mất, không mâu thuẫn)
+    { key: 'month', label: 'Tháng sản xuất', type: 'single', options: monthOpts(),
+      value: monthOf(f.dateFrom, f.dateTo),
+      onChange: (v: string) => setF(v ? { dateFrom: monthRange(v).from, dateTo: monthRange(v).to, runPage: 1 } : { dateFrom: '', dateTo: '', runPage: 1 }) },
     { key: 'wh', label: 'Kho / Nhà máy', type: 'single', options: whOpts,
       value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v, runPage: 1 }) },
     { key: 'status', label: 'Trạng thái', type: 'single',
@@ -1281,6 +1307,8 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
       value: f.runStatus, onChange: (v: string) => setF({ runStatus: v, runPage: 1 }) },
     { key: 'machine', label: 'Máy', type: 'text', value: f.machine, placeholder: 'VD: A',
       onChange: (v: string) => setF({ machine: v, runPage: 1 }) },
+    { key: 'cycle', label: 'Chu kỳ', type: 'text', value: f.cycle, placeholder: 'VD: 55',
+      onChange: (v: string) => setF({ cycle: v, runPage: 1 }) },
   ]
 
   async function exportExcel() {
@@ -1604,6 +1632,10 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày mở sổ', type: 'daterange', pinned: true, from: f.dateFrom, to: f.dateTo,
       onChange: (from, to) => setF({ dateFrom: from, dateTo: to, page: 1 }) },
+    // Tháng SX = chọn nhanh trọn tháng cho khoảng ngày trên (quét mở pallet = lúc SX)
+    { key: 'month', label: 'Tháng sản xuất', type: 'single', options: monthOpts(),
+      value: monthOf(f.dateFrom, f.dateTo),
+      onChange: (v: string) => setF(v ? { dateFrom: monthRange(v).from, dateTo: monthRange(v).to, page: 1 } : { dateFrom: '', dateTo: '', page: 1 }) },
     { key: 'wh', label: 'Kho / Nhà máy', type: 'single', options: whOpts,
       value: f.warehouseId, onChange: (v: string) => setF({ warehouseId: v, page: 1 }) },
     { key: 'status', label: 'Trạng thái', type: 'single',

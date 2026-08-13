@@ -5594,7 +5594,7 @@ export function usePackingRun(id: string | null) {
   })
 }
 export function usePackingRuns(params: {
-  status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
+  status?: string; date_from?: string; date_to?: string; machine?: string; cycle?: string; warehouse_id?: string; search?: string
   page?: number; pageSize?: number
 }) {
   return useQuery({

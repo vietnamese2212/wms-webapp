@@ -434,6 +434,11 @@ let runB = null
       fcHit.s === 200 && (fcHit.j?.data?.rows ?? []).some(r => r.id === rid18)
         && fcMiss.s === 200 && !(fcMiss.j?.data?.rows ?? []).some(r => r.id === rid18),
       `hit=${(fcHit.j?.data?.rows ?? []).length} miss=${(fcMiss.j?.data?.rows ?? []).length}`)
+    // KHÓA SHAPE (check-app dữ liệu lớn 13/08): list trang sổ KHÔNG được trả pallet rows
+    // (payload 2,2MB@60 pallet/trang, trang thật 100-150 pallet vượt trần 4,5MB) — chỉ pallet_count
+    check('[18] list trang sổ trả pallet_count, KHÔNG kèm mảng pallets (chống phình payload)',
+      (fcHit.j?.data?.rows ?? []).every(r => !('pallets' in r) && r.pallet_count != null),
+      (fcHit.j?.data?.rows ?? []).slice(0, 1).map(r => `keys=${Object.keys(r).length} pallets=${'pallets' in r}`).join(''))
     // tab Sổ pallet cũng lọc được Chu kỳ (recon v3 join trang — user 13/08 "bộ filter đầy đủ")
     const flHit = await api(`/wms/packing-logs?cycle=55&warehouse_id=${WH}`)
     const flMiss = await api(`/wms/packing-logs?cycle=zz9x&warehouse_id=${WH}`)

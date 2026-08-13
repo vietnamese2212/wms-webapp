@@ -417,11 +417,16 @@ export async function updateLog(req: Request, res: Response) {
 type RunAgg = { pallet_count: number; pallet_open: number; qty_sum: number }
 
 // Σ thùng + đếm pallet SỐNG (không tính CANCELLED) của các trang — dùng cho board/list/close
-async function aggRuns(runIds: string[]): Promise<Map<string, RunAgg & { pallets: LogRow[] }>> {
+// full=false (mặc định — list/board): CHỈ kéo 3 cột đếm/cộng, KHÔNG trả pallets về client.
+// Check-app 13/08 dữ liệu lớn đo được: trang list 50 trang × 60 pallet kèm `select('*')`
+// = 2,2MB/response (trang thật 100-150 pallet sẽ VƯỢT trần 4,5MB Vercel) — trong khi bảng
+// nhóm FE chỉ dùng pallet_count. full=true chỉ cho getRun (detail cần pallet + ảnh).
+async function aggRuns(runIds: string[], full = false): Promise<Map<string, RunAgg & { pallets: LogRow[] }>> {
   const out = new Map<string, RunAgg & { pallets: LogRow[] }>()
   if (!runIds.length) return out
   const logs = await fetchAllByIdChunks(runIds, chunk =>
-    supabase.from('packing_logs').select('*').in('run_id', chunk).neq('status', 'CANCELLED').order('open_scan_at'))
+    supabase.from('packing_logs').select(full ? '*' : 'run_id, status, qty_cartons')
+      .in('run_id', chunk).neq('status', 'CANCELLED').order('open_scan_at'))
   for (const l of logs as (LogRow & { run_id: string })[]) {
     const a = out.get(l.run_id) ?? { pallet_count: 0, pallet_open: 0, qty_sum: 0, pallets: [] }
     a.pallet_count++
@@ -444,12 +449,10 @@ export async function getRunBoard(req: Request, res: Response) {
   const { data, error } = await q
   if (error) return fail(res, error.message, 500)
   const runs = data ?? []
-  const agg = await aggRuns(runs.map(r => r.id as string))
-  const allPallets = [...agg.values()].flatMap(a => a.pallets)
-  await attachPhotoUrls(allPallets)
+  const agg = await aggRuns(runs.map(r => r.id as string))   // slim — board không cần pallet rows
   return ok(res, runs.map(r => {
     const a = agg.get(r.id as string)
-    return { ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0, pallets: a?.pallets ?? [] }
+    return { ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0 }
   }))
 }
 
@@ -460,7 +463,7 @@ export async function getRun(req: Request, res: Response) {
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
   const scope = scopeWhIds(req)
   if (scope !== null && !scope.includes(run.warehouse_id as string)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
-  const agg = await aggRuns([id])
+  const agg = await aggRuns([id], true)   // detail: đủ pallet rows + ảnh
   const a = agg.get(id)
   await attachPhotoUrls(a?.pallets ?? [])
   await attachReceived(a?.pallets ?? [])   // đối chiếu: pallet nào kho ĐÃ quét nhập (xác nhận lần 2)
@@ -520,15 +523,13 @@ export async function listRuns(req: Request, res: Response) {
   // GỘP THEO SỔ (user chốt 11/08 chiều): trả kèm pallet của từng trang trên trang hiện tại
   // (FE render bảng nhóm dòng). Trang MỞ → tổng tính SỐNG; trang ĐÓNG giữ số đã chốt.
   const rows = data ?? []
-  const agg = await aggRuns(rows.map(r => r.id as string))
-  const allPallets = [...agg.values()].flatMap(a => a.pallets)
-  await attachPhotoUrls(allPallets)
+  const agg = await aggRuns(rows.map(r => r.id as string))   // slim — list KHÔNG trả pallet rows (payload)
   for (const r of rows) {
     const a = agg.get(r.id as string)
-    ;(r as Record<string, unknown>).pallets = a?.pallets ?? []
     ;(r as Record<string, unknown>).pallet_open = a?.pallet_open ?? 0
     if (r.status === 'OPEN' && a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
     else if (a && r.pallet_count == null) { r.qty_total = r.qty_total ?? a.qty_sum; r.pallet_count = a.pallet_count }
+    else if (!a && r.pallet_count == null) r.pallet_count = 0
   }
   return ok(res, { rows, total: count ?? 0, page, pageSize })
 }

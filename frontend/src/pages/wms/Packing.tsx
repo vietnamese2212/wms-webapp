@@ -539,7 +539,8 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
           ) : runs.length === 0 ? (
             <TableRow><TableCell colSpan={N} className="text-center py-8 text-xs text-slate-400">{emptyText}</TableCell></TableRow>
           ) : runs.map(r => {
-            const pallets = r.pallets ?? []
+            // list/board không còn trả pallet rows (payload 2,2MB dữ liệu lớn) — đếm bằng pallet_count server
+            const palletN = Number(r.pallet_count ?? r.pallets?.length ?? 0)
             const cancelled = r.status === 'CANCELLED'
             // chu kỳ có thể chạy LIỀN VÀI NGÀY (user chốt) — giờ kết thúc khác ngày thì kèm ngày
             const endOtherDay = r.end_at && formatTimestampDate(r.end_at, true) !== formatTimestampDate(r.start_at, true)
@@ -561,7 +562,7 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                         <button type="button" title="Sửa trang sổ" onClick={e => { e.stopPropagation(); h.onEditRun(r) }}
                           className="px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /></button>
                       )}
-                      {!cancelled && h.canOpenRun && pallets.length === 0 && (
+                      {!cancelled && h.canOpenRun && palletN === 0 && (
                         <button type="button" title="Hủy trang (mở nhầm)" onClick={e => { e.stopPropagation(); h.onCancelRun(r) }}
                           className="px-1.5 py-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200"><X className="h-3.5 w-3.5" /></button>
                       )}
@@ -586,7 +587,7 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-semibold">{r.machine_code}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
-                    {(r.pallet_count ?? pallets.length).toLocaleString('vi-VN')}
+                    {palletN.toLocaleString('vi-VN')}
                     {(r.pallet_open ?? 0) > 0 && <span className="text-amber-600"> ({r.pallet_open} mở)</span>}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</TableCell>

@@ -355,7 +355,7 @@ export async function undoOp(req: Request, res: Response) {
 
     // Hoàn tác = nghịch đảo của thao tác → đòi ĐÚNG quyền của loại op đó (route chỉ chặn
     // anyOf(merge|ungroup|split) — người chỉ có split không được undo op MERGE của người khác).
-    if (req.user?.name !== 'Admin') {
+    if (req.user?.is_superadmin !== true) {
       const needAction = op.type === 'MERGE' ? 'merge' : op.type === 'UNGROUP' ? 'ungroup' : op.type === 'SPLIT' ? 'split' : null
       const p = req.user?.module_permissions ?? {}
       if (needAction && !p['pallet_ops']?.includes(needAction))

@@ -4,9 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 function isSuperadmin(req: Request): boolean {
-  // Khớp middleware/authController (is_superadmin = employee_code==='ADMIN' || name==='Admin')
-  const u = (req as { user?: { name?: string; is_superadmin?: boolean } }).user
-  return u?.is_superadmin === true || u?.name === 'Admin'
+  // Cờ is_superadmin trong token = cột Employee.is_superadmin (migration 20260813f) — không so tên
+  const u = (req as { user?: { is_superadmin?: boolean } }).user
+  return u?.is_superadmin === true
 }
 const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / chức danh & phân quyền'
 
@@ -15,7 +15,7 @@ const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / ch�
 function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = req.user
-  if (u?.name === 'Admin') return null
+  if (u?.is_superadmin === true) return null
   const mine: Record<string, string[]> = u?.module_permissions ?? {}
   for (const [mod, actions] of Object.entries(perms ?? {})) {
     for (const a of (actions ?? [])) {

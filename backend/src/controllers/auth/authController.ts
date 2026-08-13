@@ -44,7 +44,7 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
     ncc_id:             emp.ncc_id ?? null,
-    is_superadmin:      emp.employee_code === 'ADMIN' || emp.name === 'Admin',   // middleware bypass đọc từ token — khớp điều kiện resolve quyền
+    is_superadmin:      emp.is_superadmin === true,   // NGUỒN = cột Employee.is_superadmin (migration 20260813f) — hết so tên 'Admin'
   }
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }
@@ -75,6 +75,7 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
     ncc_id:             emp.ncc_id ?? null,
+    is_superadmin:      emp.is_superadmin === true,   // FE isAdmin đọc cờ này (không so tên)
   }
 }
 
@@ -90,7 +91,7 @@ export async function login(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps, error: lookupErr } = await supabase.from('Employee')
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
       .ilike('email', escapeLikeEmail(email))
       .limit(1)
 
@@ -129,9 +130,9 @@ export async function login(req: Request, res: Response) {
         : Promise.resolve(null),
     ])
 
-    // Resolve module_permissions: superadmin (employee_code=ADMIN hoặc name=Admin) gets all; else dùng job_title
+    // Resolve module_permissions: superadmin (cột Employee.is_superadmin) gets all; else dùng job_title
     let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    const isSuperAdmin = emp.is_superadmin === true
     if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
@@ -152,7 +153,7 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,7 +175,7 @@ export async function me(req: Request, res: Response) {
     ])
 
     let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    const isSuperAdmin = emp.is_superadmin === true
     if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {

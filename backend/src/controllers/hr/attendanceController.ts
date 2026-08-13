@@ -5,11 +5,11 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 
-type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null }
+type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 const now = () => new Date().toISOString()
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const hasAttEdit = (u: ReqUser) => u.name === 'Admin' || !!u.module_permissions?.attendance?.includes('edit')
+const hasAttEdit = (u: ReqUser) => u.is_superadmin === true || !!u.module_permissions?.attendance?.includes('edit')
 const SEL = 'id, employee_id, warehouse_id, work_date, kind, ot_hours, early_leave_hours, note, created_at, updated_at'
 const KINDS = ['CA1', 'CA2', 'CA3', 'HC', 'LEAVE']
 
@@ -29,7 +29,7 @@ async function employeeIdsOfWarehouse(warehouse_id: string | string[]): Promise<
 // và ĐƠN NGHỈ PHÉP (kèm lý do) của TOÀN CÔNG TY — verify runtime 26/07 đã rò thật.
 async function scopedEmployeeIds(req: Request, warehouse_id?: string): Promise<{ empIds: string[] | null; forbidden?: string }> {
   const u = userOf(req)
-  const national = u.name === 'Admin' || u.warehouse_scope === 'NATIONAL'
+  const national = u.is_superadmin === true || u.warehouse_scope === 'NATIONAL'
   if (national) return { empIds: warehouse_id ? await employeeIdsOfWarehouse(warehouse_id) : null }
 
   const myWhs = u.warehouse_ids ?? []

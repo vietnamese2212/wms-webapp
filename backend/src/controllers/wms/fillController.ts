@@ -66,7 +66,7 @@ const selfId = (req: Request): string | null =>
   req.user?.sub && UUID_RE.test(req.user.sub) ? req.user.sub : null
 const mayFill = (req: Request, action: string): boolean => {
   const perms = req.user?.module_permissions ?? {}
-  const isAdmin = req.user?.is_superadmin === true || req.user?.name === 'Admin'
+  const isAdmin = req.user?.is_superadmin === true
   return isAdmin || (perms.fill ?? []).includes(action)
 }
 

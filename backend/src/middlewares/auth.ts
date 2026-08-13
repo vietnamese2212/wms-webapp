@@ -11,14 +11,13 @@ export interface JwtPayload {
   warehouse_ids:      string[]
   module_permissions: Record<string, string[]>
   ncc_id:             string | null
-  is_superadmin?:     boolean   // cùng điều kiện với lúc phát token (employee_code=ADMIN hoặc name=Admin)
+  is_superadmin?:     boolean   // NGUỒN = cột Employee.is_superadmin (migration 20260813f), authController nhét lúc phát token
 }
 
-// Bypass phân quyền phải KHỚP điều kiện nhận diện superadmin lúc phát token (authController):
-// trước đây chỉ xét name==='Admin' → superadmin theo employee_code=ADMIN nhưng tên khác sẽ
-// phụ thuộc hoàn toàn ALL_PERMISSIONS (thiếu key BE là mất quyền âm thầm). Token cũ (7 ngày)
-// chưa có is_superadmin → giữ fallback name==='Admin'.
-const isSuperadminReq = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
+// Bypass phân quyền đọc cờ is_superadmin trong token — KHÔNG so tên (audit hardcode 13/08:
+// so tên 'Admin' nghĩa là đổi tên hiển thị tài khoản = mất quyền âm thầm). Token 24h nên mọi
+// token đang sống đều đã mang is_superadmin từ đợt vá 26/07.
+const isSuperadminReq = (req: Request) => req.user?.is_superadmin === true
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace

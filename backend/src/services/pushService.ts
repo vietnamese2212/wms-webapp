@@ -107,7 +107,7 @@ export async function sendPushToEmployees(employeeIds: string[], payload: PushPa
 
 /**
  * Gửi tới mọi nhân viên CÓ QUYỀN (module, action) và thấy được kho warehouseId
- * (null = mọi kho). Superadmin (name='Admin'/employee_code='ADMIN') luôn nhận.
+ * (null = mọi kho). Superadmin (cột Employee.is_superadmin) luôn nhận.
  * Dùng cho thông báo "có việc cần xử" không gắn đích danh (vd task Cần xử lý SAP).
  */
 interface PermEmp { id: string; warehouse_scope: string | null }
@@ -140,7 +140,7 @@ async function permTargets(module: string, action: string): Promise<PermTargets>
     emps.push(...((data ?? []) as PermEmp[]))
   }
   const { data: admins } = await supabase.from('Employee')
-    .select('id, warehouse_scope').or('name.eq.Admin,employee_code.eq.ADMIN').eq('is_active', true).limit(10)
+    .select('id, warehouse_scope').eq('is_superadmin', true).eq('is_active', true).limit(10)
   for (const a of (admins ?? []) as PermEmp[]) if (!emps.some(e => e.id === a.id)) emps.push(a)
 
   // Kho được gán của những người scope ASSIGNED — nạp 1 lượt cho MỌI kho (thay vì mỗi kho 1 query)

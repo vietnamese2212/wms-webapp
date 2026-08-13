@@ -19,8 +19,10 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
   useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials, useMaterialsByIds,
-  fetchScanLogExport, useScanLogSearch,
+  fetchScanLogExport, useScanLogSearch, usePctBands,
 } from '@/api/hooks'
+import { computePctDate, resolveShelfLife } from '@/utils/shelfLife'
+import { pctDateCls } from '@/utils/pctDateBands'
 import type { ScanLogParams } from '@/api/hooks'
 import { qtyLabel, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -76,28 +78,34 @@ const SCANLOG_COL_DEFAULTS = [
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-function calcExpiryDate(prodDate: string | null, shelfDays: number | null): string | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const prod = new Date(prodDate)
-  if (isNaN(prod.getTime())) return null
-  return new Date(prod.getTime() + shelfDays * 86_400_000)
+// %Date TẠI THỜI ĐIỂM QUÉT — dùng computePctDate CHUNG (utils/shelfLife) với nowMs = lúc quét.
+// Trước 13/08 trang này tự tính bằng m.shelf_life_days nên bỏ qua HSD tường minh tem V2 +
+// shelf-life theo LÔ/NCC → ra số KHÁC trang Tồn kho (audit hardcode 13/08). RPC 20260813g trả
+// đủ nguyên liệu thô (entry_shelf_life_days / expiry_date / ncc_id / overrides).
+type PctRow = {
+  production_date: string | null; scanned_at: string; shelf_life_days: number | null
+  entry_shelf_life_days?: number | null; expiry_date?: string | null; ncc_id?: string | null
+  supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null
+}
+function rowPctAtScan(row: PctRow): number | null {
+  const scanMs = new Date(row.scanned_at).getTime()
+  if (isNaN(scanMs)) return null
+  return computePctDate(
+    { production_date: row.production_date, expiry_date: row.expiry_date, shelf_life_days: row.entry_shelf_life_days, ncc_id: row.ncc_id },
+    { shelf_life_days: row.shelf_life_days, supplier_shelf_life_overrides: row.supplier_shelf_life_overrides },
+    scanMs,
+  )
+}
+// HSD hiển thị: tem V2 mang HSD tường minh; tem V1 suy NSX + shelf-life hiệu lực (lô → NCC → mặc định)
+function rowExpiry(row: PctRow): string | null {
+  if (row.expiry_date) return row.expiry_date
+  if (!row.production_date) return null
+  const prod = new Date(row.production_date)
+  const shelf = resolveShelfLife(row.entry_shelf_life_days,
+    { shelf_life_days: row.shelf_life_days, supplier_shelf_life_overrides: row.supplier_shelf_life_overrides }, row.ncc_id)
+  if (isNaN(prod.getTime()) || shelf <= 0) return null
+  return new Date(prod.getTime() + shelf * 86_400_000)
     .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-}
-
-function calcPctAtScan(prodDate: string | null, shelfDays: number | null, scannedAt: string): number | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const prod = new Date(prodDate)
-  const scan = new Date(scannedAt)
-  if (isNaN(prod.getTime()) || isNaN(scan.getTime())) return null
-  const totalMs  = shelfDays * 86_400_000
-  const remaining = prod.getTime() + totalMs - scan.getTime()
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
-}
-
-function datePctCls(pct: number): string {
-  if (pct >= 70) return 'text-green-600 font-semibold'
-  if (pct >= 40) return 'text-amber-600 font-semibold'
-  return 'text-red-600 font-semibold'
 }
 
 function FmtTs({ ts }: { ts: string | null }) {
@@ -132,6 +140,7 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
 
 export default function OutboundScanLog() {
   const navigate = useNavigate()
+  const pctBands = usePctBands()
   const [page, setPage]                 = useState(1)
   const [pageSize, setPageSize]         = useState(500)
   const [exporting, setExporting]       = useState(false)
@@ -280,8 +289,8 @@ export default function OutboundScanLog() {
       const all = await fetchScanLogExport(buildParams(filters))
       const fmtTs = (ts: string | null) => ts ? `${formatTimestampDate(ts, true)} ${formatTimestampTime(ts)}` : ''
       const sheet = all.map(row => {
-        const expiry = calcExpiryDate(row.production_date, row.shelf_life_days)
-        const pct    = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+        const expiry = rowExpiry(row)
+        const pct    = rowPctAtScan(row)
         return {
           'Ngày xuất': row.delivery_date ? formatDate(row.delivery_date) : '',
           'Kho': row.warehouse_name ?? '', 'Loại hàng': row.material_category ?? '',
@@ -422,8 +431,8 @@ export default function OutboundScanLog() {
             </TableHeader>
             <TableBody>
               {rows.map(row => {
-                const expiryDate = calcExpiryDate(row.production_date, row.shelf_life_days)
-                const pct        = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+                const expiryDate = rowExpiry(row)
+                const pct        = rowPctAtScan(row)
                 // Kết quả SEARCH TỔNG: click dòng → mở thẳng đơn xuất (RPC search trả gdo_id/item_id)
                 const openable = searchMode && !!row.gdo_id
                 return (
@@ -458,7 +467,7 @@ export default function OutboundScanLog() {
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right whitespace-nowrap">
                       {pct !== null
-                        ? <span className={datePctCls(pct)}>{pct}%</span>
+                        ? <span className={`${pctDateCls(pct, pctBands)} font-semibold`}>{pct}%</span>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>

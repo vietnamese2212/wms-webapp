@@ -23,7 +23,7 @@ type TodayStats = {
 }
 
 function scopeWhIds(req: Request): string[] | null {
-  if (req.user?.name === 'Admin' || req.user?.warehouse_scope === 'NATIONAL') return null
+  if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return null
   const ids = req.user?.warehouse_ids ?? []
   return ids.length ? ids : null
 }

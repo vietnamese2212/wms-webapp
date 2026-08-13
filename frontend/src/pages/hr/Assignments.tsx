@@ -35,21 +35,21 @@ import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatt
 const SHIFT_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC' }
 const shiftOf = (t: string | null) => (t ? SHIFT_LABEL[t] ?? t : '')
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-// ngày VN + n ngày (mặc định filter "đến ngày")
+// ngÃ y VN + n ngÃ y (máº·c Ä‘á»‹nh filter "Ä‘áº¿n ngÃ y")
 const DATE_PLUS = (days: number) => { const d = new Date(`${TODAY()}T00:00:00+07:00`); d.setDate(d.getDate() + days); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
 const SCOPE_KEY = 'hr_assign_scope'
 
-// nhãn "Vị trí phân công": {Chức danh}_{Ca}_{Vị trí}  →  "Lái xe nâng_HC_Pallet"
+// nhÃ£n "Vá»‹ trÃ­ phÃ¢n cÃ´ng": {Chá»©c danh}_{Ca}_{Vá»‹ trÃ­}  â†’  "LÃ¡i xe nÃ¢ng_HC_Pallet"
 function positionLabel(jobTitle: string | null, skillName: string, shiftTag: string | null) {
   return [jobTitle, shiftOf(shiftTag), skillName].filter(Boolean).join('_')
 }
 
-// Ô số lượng: gõ tay được + nút tăng/giảm
+// Ã” sá»‘ lÆ°á»£ng: gÃµ tay Ä‘Æ°á»£c + nÃºt tÄƒng/giáº£m
 function QtyCell({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
   const set = (v: number) => onChange(Math.max(0, Math.min(99, v)))
   return (
     <div className="inline-flex items-center gap-1">
-      <button type="button" disabled={disabled || value <= 0} onClick={() => set(value - 1)} className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">−</button>
+      <button type="button" disabled={disabled || value <= 0} onClick={() => set(value - 1)} className="h-6 w-6 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 leading-none">âˆ’</button>
       <input type="number" min={0} max={99} value={value || ''} placeholder="0" disabled={disabled}
         onChange={e => set(Number(e.target.value) || 0)}
         className="w-12 h-6 text-center text-xs rounded border border-slate-200 focus:border-sky-500 outline-none disabled:bg-slate-50" />
@@ -62,8 +62,8 @@ export default function Assignments() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canCreate = can(perms, 'work_assignment', 'create')
-  const admin = isAdmin(user?.name)
-  // Tab Layout / Quy tắc ca = quyền riêng (ẩn tab nếu thiếu). Admin thấy hết.
+  const admin = isAdmin(user)
+  // Tab Layout / Quy táº¯c ca = quyá»n riÃªng (áº©n tab náº¿u thiáº¿u). Admin tháº¥y háº¿t.
   const canManageLayout     = admin || can(perms, 'work_assignment', 'manage_layout')
   const canManageShiftRules = admin || can(perms, 'work_assignment', 'manage_shift_rules')
 
@@ -73,11 +73,11 @@ export default function Assignments() {
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex items-center gap-3">
-          <h1 className="text-base font-semibold text-slate-800">Phân công lịch làm việc</h1>
+          <h1 className="text-base font-semibold text-slate-800">PhÃ¢n cÃ´ng lá»‹ch lÃ m viá»‡c</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-            <button onClick={() => setTab('daily')} className={`px-3 py-1.5 ${tab === 'daily' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Phân công</button>
+            <button onClick={() => setTab('daily')} className={`px-3 py-1.5 ${tab === 'daily' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>PhÃ¢n cÃ´ng</button>
             {canManageLayout && <button onClick={() => setTab('layout')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'layout' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Layout</button>}
-            {canManageShiftRules && <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy tắc ca</button>}
+            {canManageShiftRules && <button onClick={() => setTab('rules')} className={`px-3 py-1.5 border-l border-slate-200 ${tab === 'rules' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Quy táº¯c ca</button>}
           </div>
         </div>
         <div className="flex-1 min-h-0 flex flex-col">
@@ -89,8 +89,8 @@ export default function Assignments() {
   )
 }
 
-// ════════ TAB QUY TẮC CA (nghỉ giữa ca — không hardcode) ════════
-const RULE_SHIFTS = [{ v: 'CA1', l: 'Ca 1' }, { v: 'CA2', l: 'Ca 2' }, { v: 'CA3', l: 'Ca 3' }, { v: 'HC', l: 'Hành chính' }]
+// â•â•â•â•â•â•â•â• TAB QUY Táº®C CA (nghá»‰ giá»¯a ca â€” khÃ´ng hardcode) â•â•â•â•â•â•â•â•
+const RULE_SHIFTS = [{ v: 'CA1', l: 'Ca 1' }, { v: 'CA2', l: 'Ca 2' }, { v: 'CA3', l: 'Ca 3' }, { v: 'HC', l: 'HÃ nh chÃ­nh' }]
 const ruleLabel = (v: string) => RULE_SHIFTS.find(s => s.v === v)?.l ?? v
 function ShiftRulesTab({ canManage }: { canManage: boolean }) {
   const { data: rules = [], isLoading } = useShiftRules()
@@ -106,30 +106,30 @@ function ShiftRulesTab({ canManage }: { canManage: boolean }) {
     catch (e) { setErr(String((e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? (e as { message?: string })?.message ?? e)) }
   }
 
-  // gom theo from_shift để hiển thị "làm X → cấm Y, Z"
+  // gom theo from_shift Ä‘á»ƒ hiá»ƒn thá»‹ "lÃ m X â†’ cáº¥m Y, Z"
   const byFrom = new Map<string, typeof rules>()
   for (const r of rules) { const a = byFrom.get(r.from_shift) ?? []; a.push(r); byFrom.set(r.from_shift, a) }
 
   return (
     <div className="p-3 space-y-3 max-w-3xl">
-      <p className="text-xs text-slate-500">Luật nghỉ giữa ca: làm <b>ca hôm trước</b> thì hôm sau <b>KHÔNG được</b> làm ca đã cấm (auto-xếp sẽ tránh). Sửa ở đây, không cần đụng code.</p>
+      <p className="text-xs text-slate-500">Luáº­t nghá»‰ giá»¯a ca: lÃ m <b>ca hÃ´m trÆ°á»›c</b> thÃ¬ hÃ´m sau <b>KHÃ”NG Ä‘Æ°á»£c</b> lÃ m ca Ä‘Ã£ cáº¥m (auto-xáº¿p sáº½ trÃ¡nh). Sá»­a á»Ÿ Ä‘Ã¢y, khÃ´ng cáº§n Ä‘á»¥ng code.</p>
       {canManage && (
         <div className="flex flex-wrap items-center gap-2 border border-slate-200 rounded-lg p-2 bg-slate-50/50">
-          <span className="text-xs font-medium text-slate-600">Thêm luật: làm</span>
+          <span className="text-xs font-medium text-slate-600">ThÃªm luáº­t: lÃ m</span>
           <select value={from} onChange={e => setFrom(e.target.value)} className="border border-slate-200 rounded-md px-2 text-xs h-7 bg-white">{RULE_SHIFTS.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}</select>
-          <span className="text-xs text-slate-600">hôm trước → hôm sau KHÔNG được</span>
+          <span className="text-xs text-slate-600">hÃ´m trÆ°á»›c â†’ hÃ´m sau KHÃ”NG Ä‘Æ°á»£c</span>
           <select value={to} onChange={e => setTo(e.target.value)} className="border border-slate-200 rounded-md px-2 text-xs h-7 bg-white">{RULE_SHIFTS.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}</select>
-          <Button size="sm" className="h-7" onClick={add} disabled={from === to || create.isPending}><Plus className="h-4 w-4 mr-1" />Thêm</Button>
+          <Button size="sm" className="h-7" onClick={add} disabled={from === to || create.isPending}><Plus className="h-4 w-4 mr-1" />ThÃªm</Button>
         </div>
       )}
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
-      {isLoading ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p>
-      : rules.length === 0 ? <p className="text-xs text-slate-400 py-6 text-center">Chưa có luật nào — auto-xếp không ràng buộc ca.</p>
+      {isLoading ? <p className="text-xs text-slate-400 py-6 text-center">Äang táº£iâ€¦</p>
+      : rules.length === 0 ? <p className="text-xs text-slate-400 py-6 text-center">ChÆ°a cÃ³ luáº­t nÃ o â€” auto-xáº¿p khÃ´ng rÃ ng buá»™c ca.</p>
       : (
         <div className="space-y-2">
           {[...byFrom.entries()].map(([f, rs]) => (
             <div key={f} className="border border-slate-200 rounded-lg p-2">
-              <div className="text-xs"><span className="text-slate-500">Làm</span> <b className="text-slate-700">{ruleLabel(f)}</b> <span className="text-slate-500">hôm trước → hôm sau không được:</span></div>
+              <div className="text-xs"><span className="text-slate-500">LÃ m</span> <b className="text-slate-700">{ruleLabel(f)}</b> <span className="text-slate-500">hÃ´m trÆ°á»›c â†’ hÃ´m sau khÃ´ng Ä‘Æ°á»£c:</span></div>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {rs.map(r => (
                   <span key={r.id} className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded px-2 py-0.5">
@@ -146,18 +146,18 @@ function ShiftRulesTab({ canManage }: { canManage: boolean }) {
   )
 }
 
-// ════════ TAB PHÂN CÔNG (danh sách phiếu → chi tiết) ════════
+// â•â•â•â•â•â•â•â• TAB PHÃ‚N CÃ”NG (danh sÃ¡ch phiáº¿u â†’ chi tiáº¿t) â•â•â•â•â•â•â•â•
 const SHEET_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
-  { id: 'date',    label: 'Ngày',       w: 116 },
+  { id: 'date',    label: 'NgÃ y',       w: 116 },
   { id: 'wh',      label: 'Kho',        w: 130 },
   { id: 'layout',  label: 'Layout',     w: 180 },
-  { id: 'leave',   label: 'Nghỉ phép',  w: 78, align: 'right' },
-  { id: 'req',     label: 'Yêu cầu',    w: 78, align: 'right' },
-  { id: 'got',     label: 'Đáp ứng',    w: 78, align: 'right' },
-  { id: 'diff',    label: 'Chênh lệch', w: 90, align: 'right' },
-  { id: 'status',  label: 'Trạng thái', w: 104 },
-  { id: 'created', label: 'Tạo',        w: 116 },
-  { id: 'updated', label: 'Sửa',        w: 116 },
+  { id: 'leave',   label: 'Nghá»‰ phÃ©p',  w: 78, align: 'right' },
+  { id: 'req',     label: 'YÃªu cáº§u',    w: 78, align: 'right' },
+  { id: 'got',     label: 'ÄÃ¡p á»©ng',    w: 78, align: 'right' },
+  { id: 'diff',    label: 'ChÃªnh lá»‡ch', w: 90, align: 'right' },
+  { id: 'status',  label: 'Tráº¡ng thÃ¡i', w: 104 },
+  { id: 'created', label: 'Táº¡o',        w: 116 },
+  { id: 'updated', label: 'Sá»­a',        w: 116 },
 ]
 const SHEET_COL_DEFAULTS = SHEET_COLS.map(c => c.w)
 const sheetKey = (status: 'DRAFT' | 'PUBLISHED'): RowStatusKey => status === 'PUBLISHED' ? 'full' : 'pending'
@@ -167,7 +167,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const whNameById = useMemo(() => new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name])), [warehouses])
   const { assignment: af, setAssignment } = useWmsFilterStore()
   const { search, warehouseId, layoutId, dateFrom } = af
-  const [dateTo, setDateTo] = useState<string>(DATE_PLUS(15))   // luôn mặc định +15, không nhớ giá trị cũ
+  const [dateTo, setDateTo] = useState<string>(DATE_PLUS(15))   // luÃ´n máº·c Ä‘á»‹nh +15, khÃ´ng nhá»› giÃ¡ trá»‹ cÅ©
   const [sel, setSel] = useState<string | null>(null)
   const [openCreate, setOpenCreate] = useState(false)
   const { widths: colW, startResize, totalWidth } = useColumnResize('assignment_col_widths', SHEET_COL_DEFAULTS)
@@ -188,13 +188,13 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   const totalLeave = filtered.reduce((n, s) => n + (s.total_on_leave || 0), 0)
 
   const filterDefs: FilterDef[] = [
-    { key: 'wh', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
+    { key: 'wh', label: 'Kho', type: 'single', allLabel: 'Táº¥t cáº£ kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })),
       value: warehouseId, onChange: v => setAssignment({ warehouseId: v, layoutId: '' }) },
-    { key: 'layout', label: 'Layout', type: 'single', allLabel: 'Tất cả layout',
-      options: layouts.map(l => ({ value: l.id, label: warehouseId ? l.name : `${l.name} · ${whNameById.get(l.warehouse_id) ?? '—'}` })),
+    { key: 'layout', label: 'Layout', type: 'single', allLabel: 'Táº¥t cáº£ layout',
+      options: layouts.map(l => ({ value: l.id, label: warehouseId ? l.name : `${l.name} Â· ${whNameById.get(l.warehouse_id) ?? 'â€”'}` })),
       value: layoutId, onChange: v => setAssignment({ layoutId: v }) },
-    { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
+    { key: 'date', label: 'NgÃ y', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (f, t) => { setAssignment({ dateFrom: f }); setDateTo(t) } },
   ]
 
@@ -212,19 +212,19 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
       {/* Toolbar */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <SearchInput value={search} onChange={v => setAssignment({ search: v })} placeholder="Tìm kho, layout..." className="flex-1 min-w-[140px]" />
+          <SearchInput value={search} onChange={v => setAssignment({ search: v })} placeholder="TÃ¬m kho, layout..." className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          {/* Mobile: SavedViews + action GOM 1 hÃ ng (PDA); desktop sm:contents â†’ nhÆ° cÅ© */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="assignment" currentFilters={viewSnapshot} activeId={activeViewId} onApply={f => setAssignment(f as Partial<typeof af>)} />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
-            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+            title={dense ? 'Äang: dÃ y Â· báº¥m Ä‘á»ƒ thoÃ¡ng' : 'Äang: thoÃ¡ng Â· báº¥m Ä‘á»ƒ dÃ y'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {canCreate && (
             <ActionCluster className="shrink-0" mobileInline items={[{
-              key: 'create', icon: Plus, label: 'Tạo phiếu', tip: 'Tạo phiếu phân công mới (Kho → Layout → Ngày)',
+              key: 'create', icon: Plus, label: 'Táº¡o phiáº¿u', tip: 'Táº¡o phiáº¿u phÃ¢n cÃ´ng má»›i (Kho â†’ Layout â†’ NgÃ y)',
               primary: true, variant: 'default',
               onClick: () => setOpenCreate(true),
             } satisfies ActionItem]} />
@@ -235,15 +235,15 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
       </div>
 
       <SummaryBand tiles={[
-        { label: 'Tổng phiếu', value: filtered.length },
-        { label: 'Đã phát hành', value: published },
-        { label: 'Nháp', value: filtered.length - published },
-        { label: 'Tổng nghỉ phép', value: totalLeave, accent: totalLeave > 0 },
+        { label: 'Tá»•ng phiáº¿u', value: filtered.length },
+        { label: 'ÄÃ£ phÃ¡t hÃ nh', value: published },
+        { label: 'NhÃ¡p', value: filtered.length - published },
+        { label: 'Tá»•ng nghá»‰ phÃ©p', value: totalLeave, accent: totalLeave > 0 },
       ]} />
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {isLoading ? <div className="p-4"><TableSkeleton rows={6} cols={6} /></div>
-        : filtered.length === 0 ? <EmptyState icon={CalendarDays} title="Chưa có phiếu nào — bấm 'Tạo phiếu'" />
+        : filtered.length === 0 ? <EmptyState icon={CalendarDays} title="ChÆ°a cÃ³ phiáº¿u nÃ o â€” báº¥m 'Táº¡o phiáº¿u'" />
         : (
           <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
             <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
@@ -252,7 +252,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
                 {SHEET_COLS.map((c, i) => (
                   <TableHead key={c.id} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'date' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                     {c.label}
-                    {i > 0 && <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />}
+                    {i > 0 && <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()} className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="KÃ©o Ä‘á»ƒ chá»‰nh Ä‘á»™ rá»™ng cá»™t" />}
                   </TableHead>
                 ))}
               </TableRow>
@@ -263,15 +263,15 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
                 return (
                   <TableRow key={s.id} onClick={() => setSel(s.id)} className={`cursor-pointer ${rowText(sheetKey(s.status))} ${dense ? '' : '[&_td]:py-2.5'}`}>
                     <TableCell className="px-2 py-1 text-[10px] font-semibold tabular-nums whitespace-nowrap sticky left-0 z-10 bg-white">{formatDate(s.work_date)}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.warehouse_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.layout_name ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_on_leave || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.warehouse_name ?? <span className="text-slate-300">â€”</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate">{s.layout_name ?? <span className="text-slate-300">â€”</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_on_leave || <span className="text-slate-300">â€”</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_required}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{s.total_assigned}</TableCell>
                     <TableCell className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${diff < 0 ? 'text-red-600' : ''}`}>{diff > 0 ? `+${diff}` : diff}</TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap"><span className={`text-[9px] px-1.5 py-0.5 rounded-full ${s.status === 'PUBLISHED' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{s.status === 'PUBLISHED' ? 'Đã phát hành' : 'Nháp'}</span></TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.created_at ? <div className="leading-tight"><div className="text-[10px]">{s.created_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.created_at, true)}</div></div> : <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.updated_at ? <div className="leading-tight"><div className="text-[10px]">{s.updated_by ?? <span className="text-slate-300">—</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.updated_at, true)}</div></div> : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap"><span className={`text-[9px] px-1.5 py-0.5 rounded-full ${s.status === 'PUBLISHED' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{s.status === 'PUBLISHED' ? 'ÄÃ£ phÃ¡t hÃ nh' : 'NhÃ¡p'}</span></TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.created_at ? <div className="leading-tight"><div className="text-[10px]">{s.created_by ?? <span className="text-slate-300">â€”</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.created_at, true)}</div></div> : <span className="text-slate-300">â€”</span>}</TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">{s.updated_at ? <div className="leading-tight"><div className="text-[10px]">{s.updated_by ?? <span className="text-slate-300">â€”</span>}</div><div className="text-[9px] text-slate-400">{formatTimestampDate(s.updated_at, true)}</div></div> : <span className="text-slate-300">â€”</span>}</TableCell>
                   </TableRow>
                 )
               })}
@@ -281,7 +281,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
       </div>
 
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
-        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} phiếu` : '0 phiếu'}
+        {filtered.length > 0 ? `1â€“${filtered.length} / ${filtered.length} phiáº¿u` : '0 phiáº¿u'}
       </div>
 
       {openCreate && <CreateSheetDialog warehouses={warehouses as { id: string; name: string; code?: string }[]} defaultWh={warehouseId} onClose={() => setOpenCreate(false)} onCreated={id => { setOpenCreate(false); setSel(id) }} />}
@@ -289,7 +289,7 @@ function DailyTab({ canCreate, perms }: { canCreate: boolean; perms: ModulePermi
   )
 }
 
-// ─── Dialog tạo phiếu mới (Kho → Layout → Ngày); trùng ngày+layout → chặn + cảnh báo ───
+// â”€â”€â”€ Dialog táº¡o phiáº¿u má»›i (Kho â†’ Layout â†’ NgÃ y); trÃ¹ng ngÃ y+layout â†’ cháº·n + cáº£nh bÃ¡o â”€â”€â”€
 function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
   warehouses: { id: string; name: string; code?: string }[]; defaultWh: string; onClose: () => void; onCreated: (id: string) => void
 }) {
@@ -302,7 +302,7 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
   const upsert = useUpsertSheet()
   useEffect(() => { if (layoutId && !layouts.some(l => l.id === layoutId)) setLayoutId('') }, [layouts, layoutId])
 
-  // Kiểm tra trùng NGAY khi chọn ngày + layout (chặn trước, không đợi bấm)
+  // Kiá»ƒm tra trÃ¹ng NGAY khi chá»n ngÃ y + layout (cháº·n trÆ°á»›c, khÃ´ng Ä‘á»£i báº¥m)
   const { data: sameDay = [] } = useSheets({ layout_id: layoutId || undefined, date_from: date, date_to: date }, !!(layoutId && date))
   const dup = !!(layoutId && date) && sameDay.some(s => s.layout_id === layoutId && s.work_date === date)
   const layoutName = layouts.find(l => l.id === layoutId)?.name ?? ''
@@ -323,39 +323,39 @@ function CreateSheetDialog({ warehouses, defaultWh, onClose, onCreated }: {
     <FormSheet
       open
       onClose={onClose}
-      title="Tạo phiếu phân công"
+      title="Táº¡o phiáº¿u phÃ¢n cÃ´ng"
       widthClass="sm:max-w-lg"
       footer={<>
-        <Button size="sm" variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
-        <Button size="sm" className="h-8" onClick={submit} disabled={!wh || !layoutId || dup || saving}>{saving ? 'Đang tạo…' : 'Tạo phiếu'}</Button>
+        <Button size="sm" variant="outline" className="h-8" onClick={onClose}>Há»§y</Button>
+        <Button size="sm" className="h-8" onClick={submit} disabled={!wh || !layoutId || dup || saving}>{saving ? 'Äang táº¡oâ€¦' : 'Táº¡o phiáº¿u'}</Button>
       </>}
     >
       <div className="space-y-3">
         <div>
           <label className="text-xs font-medium text-slate-600 block mb-1">Kho</label>
-          <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={v => { setWh(v); setLayoutId('') }} allLabel="Chọn kho" placeholder="Chọn kho" triggerClassName="w-full" />
+          <WarehouseSingleSelect warehouses={warehouses} value={wh} onChange={v => { setWh(v); setLayoutId('') }} allLabel="Chá»n kho" placeholder="Chá»n kho" triggerClassName="w-full" />
         </div>
         <div>
           <label className="text-xs font-medium text-slate-600 block mb-1">Layout</label>
           <SingleSelect
             options={layouts.map(l => ({ value: l.id, label: l.name }))}
             value={layoutId} onChange={setLayoutId} disabled={!wh}
-            placeholder={wh ? 'Chọn layout…' : 'Chọn kho trước'} searchPlaceholder="Tìm layout…"
+            placeholder={wh ? 'Chá»n layoutâ€¦' : 'Chá»n kho trÆ°á»›c'} searchPlaceholder="TÃ¬m layoutâ€¦"
             triggerClassName="w-full h-9" />
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">Ngày</label>
+          <label className="text-xs font-medium text-slate-600 block mb-1">NgÃ y</label>
           <Input type="date" min={TODAY()} value={date} onChange={e => setDate(e.target.value)} className="h-9 text-xs" />
         </div>
         {dup
-          ? <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ Ngày <b>{formatDate(date)}</b> đã có phiếu cho layout <b>{layoutName}</b> — không thể tạo trùng.</div>
-          : err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">⚠ {err}</div>}
+          ? <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">âš  NgÃ y <b>{formatDate(date)}</b> Ä‘Ã£ cÃ³ phiáº¿u cho layout <b>{layoutName}</b> â€” khÃ´ng thá»ƒ táº¡o trÃ¹ng.</div>
+          : err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">âš  {err}</div>}
       </div>
     </FormSheet>
   )
 }
 
-// ─── Chi tiết 1 phiếu: bước Yêu cầu nhân lực → Kết quả phân công ─────────────
+// â”€â”€â”€ Chi tiáº¿t 1 phiáº¿u: bÆ°á»›c YÃªu cáº§u nhÃ¢n lá»±c â†’ Káº¿t quáº£ phÃ¢n cÃ´ng â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; warehouses: { id: string; name: string }[]; perms: ModulePermissions | null; onBack: () => void }) {
   const { data: sheet, refetch } = useSheet(sheetId)
   const qc = useQueryClient()
@@ -373,8 +373,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   const [err, setErr] = useState<string | null>(null)
   const [step, setStep] = useState<'demand' | 'result'>('demand')
   const [assigning, setAssigning] = useState(false)
-  const [showImg, setShowImg] = useState(false)   // xem lịch (ảnh) để chụp/tải gửi
-  const currentUserId = useAuthStore(s => s.user?.id ?? null)   // để gạch chân tên người đang đăng nhập
+  const [showImg, setShowImg] = useState(false)   // xem lá»‹ch (áº£nh) Ä‘á»ƒ chá»¥p/táº£i gá»­i
+  const currentUserId = useAuthStore(s => s.user?.id ?? null)   // Ä‘á»ƒ gáº¡ch chÃ¢n tÃªn ngÆ°á»i Ä‘ang Ä‘Äƒng nháº­p
   const [demands, setDemands] = useState<Record<string, number>>({})
   const [demandNotes, setDemandNotes] = useState<Record<string, string>>({})
 
@@ -386,12 +386,12 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?.id, sheet?.demands])
 
-  if (!sheet) return <div className="p-3 space-y-2"><Button size="sm" variant="ghost" className="h-7" onClick={onBack}>← Danh sách</Button><p className="text-xs text-slate-400 py-8 text-center">Đang tải phiếu…</p></div>
+  if (!sheet) return <div className="p-3 space-y-2"><Button size="sm" variant="ghost" className="h-7" onClick={onBack}>â† Danh sÃ¡ch</Button><p className="text-xs text-slate-400 py-8 text-center">Äang táº£i phiáº¿uâ€¦</p></div>
 
   const published = sheet.status === 'PUBLISHED'
-  const locked = published   // đã phát hành → khóa sửa/tự xếp; phải Hoàn tác mới sửa
+  const locked = published   // Ä‘Ã£ phÃ¡t hÃ nh â†’ khÃ³a sá»­a/tá»± xáº¿p; pháº£i HoÃ n tÃ¡c má»›i sá»­a
   const skillById = new Map(sheet.skills.map(s => [s.id, s]))
-  const labelOf = (id: string | null) => { const s = id ? skillById.get(id) : null; return s ? positionLabel(s.job_title, s.name, s.shift_tag) : '— Chưa phân —' }
+  const labelOf = (id: string | null) => { const s = id ? skillById.get(id) : null; return s ? positionLabel(s.job_title, s.name, s.shift_tag) : 'â€” ChÆ°a phÃ¢n â€”' }
   const whName = warehouses.find(w => w.id === sheet.warehouse_id)?.name ?? ''
   const noteBySkill = new Map(sheet.demands.map(d => [d.skill_id, d.note]))
   const shiftBySkill = new Map(sheet.skills.map(s => [s.id, s.shift_tag]))
@@ -406,7 +406,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     setErr(null)
     try {
       const list = demandList()
-      // 2 thao tác độc lập → chạy song song cho nhanh
+      // 2 thao tÃ¡c Ä‘á»™c láº­p â†’ cháº¡y song song cho nhanh
       await Promise.all([
         upsert.mutateAsync({ layout_id: sheet!.layout_id!, work_date: sheet!.work_date, demands: list }),
         setLayoutSkills.mutateAsync({ layout_id: sheet!.layout_id!, skills: list.map((d, i) => ({ skill_id: d.skill_id, required_count: d.required_count, sort_order: i, note: d.note })) }),
@@ -414,12 +414,12 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
   async function runAuto() {
-    if (locked) return   // đã phát hành → không cho tự xếp (phải Hoàn tác)
+    if (locked) return   // Ä‘Ã£ phÃ¡t hÃ nh â†’ khÃ´ng cho tá»± xáº¿p (pháº£i HoÃ n tÃ¡c)
     setErr(null); setAssigning(true)
     try {
-      // gộp lưu yêu cầu + tự xếp trong 1 request
+      // gá»™p lÆ°u yÃªu cáº§u + tá»± xáº¿p trong 1 request
       await auto.mutateAsync({ sheetId: sheet!.id, demands: demandList() })
-      await refetch()   // chờ tải lại kết quả trước khi chuyển bước (tránh hiện "chưa có kết quả")
+      await refetch()   // chá» táº£i láº¡i káº¿t quáº£ trÆ°á»›c khi chuyá»ƒn bÆ°á»›c (trÃ¡nh hiá»‡n "chÆ°a cÃ³ káº¿t quáº£")
       setStep('result')
     } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
     finally { setAssigning(false) }
@@ -427,7 +427,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   async function changePositions(employee_id: string, skill_ids: string[]) {
     if (locked) return
     setErr(null)
-    // Cập nhật cache NGAY (optimistic) → chips đổi tức thì, không chờ mạng
+    // Cáº­p nháº­t cache NGAY (optimistic) â†’ chips Ä‘á»•i tá»©c thÃ¬, khÃ´ng chá» máº¡ng
     const emp = sheet!.assignments.find(a => a.employee_id === employee_id)?.employee ?? null
     qc.setQueryData<SheetDetail>(['hr-sheet', sheetId], old => {
       if (!old) return old
@@ -441,26 +441,26 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
     catch (e) { setErr(String((e as { message?: string })?.message ?? e)); refetch() }
   }
   async function onDelete() {
-    if (!confirm('Xóa phiếu phân công này?')) return
+    if (!confirm('XÃ³a phiáº¿u phÃ¢n cÃ´ng nÃ y?')) return
     try { await del.mutateAsync(sheet!.id); onBack() } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
-  // Phát hành (nếu chưa) rồi mở lịch — không cho xem lịch khi chưa phát hành
+  // PhÃ¡t hÃ nh (náº¿u chÆ°a) rá»“i má»Ÿ lá»‹ch â€” khÃ´ng cho xem lá»‹ch khi chÆ°a phÃ¡t hÃ nh
   async function publishAndView() {
     setErr(null)
     try { if (!published) await publish.mutateAsync({ id: sheet!.id, publish: true }); setShowImg(true) }
     catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
 
-  // thứ tự vị trí: ca (CA1<CA2<CA3) trên cùng, rồi HC, rồi khác — trong cùng nhóm theo sort_order
+  // thá»© tá»± vá»‹ trÃ­: ca (CA1<CA2<CA3) trÃªn cÃ¹ng, rá»“i HC, rá»“i khÃ¡c â€” trong cÃ¹ng nhÃ³m theo sort_order
   const SHIFT_RANK: Record<string, number> = { CA1: 0, CA2: 1, CA3: 2, HC: 3 }
   const order = new Map(sheet.skills.map((s, i) => [s.id, (SHIFT_RANK[s.shift_tag ?? ''] ?? 4) * 1000 + i]))
-  // cho LỊCH (Xem lịch): mỗi vị trí = 1 dòng (người 2 vị trí → 2 dòng)
+  // cho Lá»ŠCH (Xem lá»‹ch): má»—i vá»‹ trÃ­ = 1 dÃ²ng (ngÆ°á»i 2 vá»‹ trÃ­ â†’ 2 dÃ²ng)
   const rank = (a: SheetDetail['assignments'][number]) => a.status === 'ASSIGNED' ? (order.get(a.skill_id ?? '') ?? 99999) : a.status === 'UNASSIGNED' ? 100000 : 200000
   const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? ''))
-  const posCount = new Map<string, number>()   // số vị trí ASSIGNED của mỗi người → ★ nếu ≥2
+  const posCount = new Map<string, number>()   // sá»‘ vá»‹ trÃ­ ASSIGNED cá»§a má»—i ngÆ°á»i â†’ â˜… náº¿u â‰¥2
   for (const a of sheet.assignments) if (a.status === 'ASSIGNED' && a.skill_id) posCount.set(a.employee_id, (posCount.get(a.employee_id) ?? 0) + 1)
 
-  // gom theo NGƯỜI (1 người có thể nhiều vị trí) — dùng cho bảng Kết quả (sửa tay)
+  // gom theo NGÆ¯á»œI (1 ngÆ°á»i cÃ³ thá»ƒ nhiá»u vá»‹ trÃ­) â€” dÃ¹ng cho báº£ng Káº¿t quáº£ (sá»­a tay)
   const empMap = new Map<string, EmpRow>()
   for (const a of sheet.assignments) {
     let g = empMap.get(a.employee_id)
@@ -474,93 +474,93 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
 
   const diff = totalAssigned - totalRequired
 
-  // Cụm action của phiếu (chuẩn ActionCluster) — điều kiện render/quyền/disabled giữ nguyên như nút cũ
+  // Cá»¥m action cá»§a phiáº¿u (chuáº©n ActionCluster) â€” Ä‘iá»u kiá»‡n render/quyá»n/disabled giá»¯ nguyÃªn nhÆ° nÃºt cÅ©
   const actionItems: ActionItem[] = []
   if (step === 'demand' && canCreate) {
     actionItems.push({
-      key: 'save', icon: Save, label: 'Lưu',
-      tip: locked ? 'Đã phát hành — bấm Hoàn tác để sửa' : 'Lưu yêu cầu nhân lực vào layout',
+      key: 'save', icon: Save, label: 'LÆ°u',
+      tip: locked ? 'ÄÃ£ phÃ¡t hÃ nh â€” báº¥m HoÃ n tÃ¡c Ä‘á»ƒ sá»­a' : 'LÆ°u yÃªu cáº§u nhÃ¢n lá»±c vÃ o layout',
       disabled: locked, busy: upsert.isPending || setLayoutSkills.isPending,
       onClick: () => { void saveLayout() },
     })
     actionItems.push({
-      key: 'auto', icon: Wand2, label: 'Tự xếp người', primary: true, variant: 'default',
-      tip: locked ? 'Đã phát hành — bấm Hoàn tác để sửa'
-        : totalRequired === 0 ? 'Nhập số lượng yêu cầu trước khi tự xếp'
-        : 'Lưu yêu cầu + tự động xếp người vào vị trí',
+      key: 'auto', icon: Wand2, label: 'Tá»± xáº¿p ngÆ°á»i', primary: true, variant: 'default',
+      tip: locked ? 'ÄÃ£ phÃ¡t hÃ nh â€” báº¥m HoÃ n tÃ¡c Ä‘á»ƒ sá»­a'
+        : totalRequired === 0 ? 'Nháº­p sá»‘ lÆ°á»£ng yÃªu cáº§u trÆ°á»›c khi tá»± xáº¿p'
+        : 'LÆ°u yÃªu cáº§u + tá»± Ä‘á»™ng xáº¿p ngÆ°á»i vÃ o vá»‹ trÃ­',
       disabled: locked || totalRequired === 0, busy: assigning,
       onClick: () => { void runAuto() },
     })
   }
   if (step === 'result' && canPublish && !published && hasResult)
     actionItems.push({
-      key: 'publish', icon: Send, label: 'Phát hành', primary: true, variant: 'default',
-      tip: 'Phát hành phiếu rồi mở lịch (ảnh) để chia sẻ', busy: publish.isPending,
+      key: 'publish', icon: Send, label: 'PhÃ¡t hÃ nh', primary: true, variant: 'default',
+      tip: 'PhÃ¡t hÃ nh phiáº¿u rá»“i má»Ÿ lá»‹ch (áº£nh) Ä‘á»ƒ chia sáº»', busy: publish.isPending,
       onClick: () => { void publishAndView() },
     })
   if (step === 'result' && published && hasResult)
     actionItems.push({
-      key: 'view-img', icon: ImageIcon, label: 'Xem lịch', primary: true,
-      tip: 'Xem lịch dạng ảnh để chia sẻ/tải về',
+      key: 'view-img', icon: ImageIcon, label: 'Xem lá»‹ch', primary: true,
+      tip: 'Xem lá»‹ch dáº¡ng áº£nh Ä‘á»ƒ chia sáº»/táº£i vá»',
       onClick: () => setShowImg(true),
     })
   if (step === 'result' && canPublish && published)
     actionItems.push({
-      key: 'unpublish', icon: Undo2, label: 'Hoàn tác', tip: 'Hoàn tác phát hành để sửa lại phiếu',
+      key: 'unpublish', icon: Undo2, label: 'HoÃ n tÃ¡c', tip: 'HoÃ n tÃ¡c phÃ¡t hÃ nh Ä‘á»ƒ sá»­a láº¡i phiáº¿u',
       disabled: publish.isPending,
       onClick: () => publish.mutate({ id: sheet.id, publish: false }),
     })
   if (canDelete)
     actionItems.push({
-      key: 'delete', icon: Trash2, label: 'Xóa phiếu', tip: 'Xóa phiếu phân công này (không hoàn tác được)',
+      key: 'delete', icon: Trash2, label: 'XÃ³a phiáº¿u', tip: 'XÃ³a phiáº¿u phÃ¢n cÃ´ng nÃ y (khÃ´ng hoÃ n tÃ¡c Ä‘Æ°á»£c)',
       danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
       onClick: () => { void onDelete() },
     })
 
   return (
     <div className="flex flex-col h-full">
-      {/* ── Header gọn (shrink-0) ── */}
+      {/* â”€â”€ Header gá»n (shrink-0) â”€â”€ */}
       <div className="border-b border-slate-200 px-3 py-2 shrink-0 space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" variant="ghost" className="h-7 -ml-1" onClick={onBack}>← Danh sách</Button>
+          <Button size="sm" variant="ghost" className="h-7 -ml-1" onClick={onBack}>â† Danh sÃ¡ch</Button>
           <span className="text-sm font-semibold text-slate-800">{sheet.layout_name}</span>
-          <Badge variant={published ? 'success' : 'warning'}>{published ? 'Đã phát hành' : 'Nháp'}</Badge>
+          <Badge variant={published ? 'success' : 'warning'}>{published ? 'ÄÃ£ phÃ¡t hÃ nh' : 'NhÃ¡p'}</Badge>
         </div>
         <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-slate-500">
-          <span className="tabular-nums">{formatDate(sheet.work_date)} · {whName}</span>
-          <span>Yêu cầu <b className="text-slate-700 tabular-nums">{totalRequired}</b></span>
-          <span>Đáp ứng <b className="text-slate-700 tabular-nums">{totalAssigned}</b></span>
-          <span>Chênh <b className={`tabular-nums ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>{diff > 0 ? `+${diff}` : diff}</b></span>
+          <span className="tabular-nums">{formatDate(sheet.work_date)} Â· {whName}</span>
+          <span>YÃªu cáº§u <b className="text-slate-700 tabular-nums">{totalRequired}</b></span>
+          <span>ÄÃ¡p á»©ng <b className="text-slate-700 tabular-nums">{totalAssigned}</b></span>
+          <span>ChÃªnh <b className={`tabular-nums ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>{diff > 0 ? `+${diff}` : diff}</b></span>
           <div className="flex-1" />
-          {sheet.updated_by && <span className="text-slate-400">Sửa: {sheet.updated_by}{sheet.updated_at && ` · ${formatDateTime(sheet.updated_at)}`}</span>}
+          {sheet.updated_by && <span className="text-slate-400">Sá»­a: {sheet.updated_by}{sheet.updated_at && ` Â· ${formatDateTime(sheet.updated_at)}`}</span>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
-            <button onClick={() => setStep('demand')} className={`px-3 py-1 ${step === 'demand' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>1. Yêu cầu nhân lực</button>
-            <button onClick={() => hasResult && setStep('result')} disabled={!hasResult} className={`px-3 py-1 border-l border-slate-200 ${step === 'result' ? 'bg-sky-600 text-white' : hasResult ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-300'}`}>2. Kết quả phân công</button>
+            <button onClick={() => setStep('demand')} className={`px-3 py-1 ${step === 'demand' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>1. YÃªu cáº§u nhÃ¢n lá»±c</button>
+            <button onClick={() => hasResult && setStep('result')} disabled={!hasResult} className={`px-3 py-1 border-l border-slate-200 ${step === 'result' ? 'bg-sky-600 text-white' : hasResult ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-300'}`}>2. Káº¿t quáº£ phÃ¢n cÃ´ng</button>
           </div>
           <div className="flex-1" />
           <ActionCluster className="shrink-0" items={actionItems} />
         </div>
         {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5">{err}</div>}
-        {assigning && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded px-3 py-1.5 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Đang tự xếp người…</div>}
-        {locked && <div className="text-[11px] text-slate-600 bg-slate-100 border border-slate-200 rounded px-3 py-1.5">🔒 Đã phát hành — đã khóa. Bấm <b>Hoàn tác</b> để sửa.</div>}
+        {assigning && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded px-3 py-1.5 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Äang tá»± xáº¿p ngÆ°á»iâ€¦</div>}
+        {locked && <div className="text-[11px] text-slate-600 bg-slate-100 border border-slate-200 rounded px-3 py-1.5">ðŸ”’ ÄÃ£ phÃ¡t hÃ nh â€” Ä‘Ã£ khÃ³a. Báº¥m <b>HoÃ n tÃ¡c</b> Ä‘á»ƒ sá»­a.</div>}
       </div>
 
-      {/* ── Bảng (chiếm phần còn lại, sticky header) ── */}
+      {/* â”€â”€ Báº£ng (chiáº¿m pháº§n cÃ²n láº¡i, sticky header) â”€â”€ */}
       <div className="flex-1 min-h-0 overflow-auto">
         {step === 'demand' ? (
-          sheet.skills.length === 0 ? <p className="text-xs text-slate-400 p-4 text-center">Layout chưa có vị trí nào.</p>
+          sheet.skills.length === 0 ? <p className="text-xs text-slate-400 p-4 text-center">Layout chÆ°a cÃ³ vá»‹ trÃ­ nÃ o.</p>
           : (
             <table className="w-full text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[9px] uppercase tracking-wide text-slate-500 shadow-sm">
                 <tr>
-                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Vị trí</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chức danh</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap w-36">Số lượng</th>
-                  <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Đáp ứng</th>
-                  <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Thiếu</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ghi chú</th>
+                  <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Vá»‹ trÃ­</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chá»©c danh</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap w-36">Sá»‘ lÆ°á»£ng</th>
+                  <th className="text-right px-2 py-2 font-medium whitespace-nowrap">ÄÃ¡p á»©ng</th>
+                  <th className="text-right px-2 py-2 font-medium whitespace-nowrap">Thiáº¿u</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ghi chÃº</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -571,11 +571,11 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                   return (
                     <tr key={s.id} className="hover:bg-slate-50">
                       <td className="px-3 py-1 text-[10px] text-slate-700 whitespace-nowrap">{s.name}{s.shift_tag && <span className="text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
-                      <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{s.job_title ?? '—'}</td>
+                      <td className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{s.job_title ?? 'â€”'}</td>
                       <td className="px-2 py-1"><QtyCell value={req} disabled={!canCreate || locked} onChange={v => setDemands(prev => ({ ...prev, [s.id]: v }))} /></td>
-                      <td className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{hasResult ? got : '—'}</td>
-                      <td className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${hasResult && short > 0 ? 'text-red-600' : 'text-slate-400'}`}>{hasResult ? (short || '—') : '—'}</td>
-                      <td className="px-2 py-1"><Input value={demandNotes[s.id] ?? ''} disabled={!canCreate || locked} onChange={e => setDemandNotes(prev => ({ ...prev, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs min-w-[120px]" /></td>
+                      <td className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">{hasResult ? got : 'â€”'}</td>
+                      <td className={`px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap ${hasResult && short > 0 ? 'text-red-600' : 'text-slate-400'}`}>{hasResult ? (short || 'â€”') : 'â€”'}</td>
+                      <td className="px-2 py-1"><Input value={demandNotes[s.id] ?? ''} disabled={!canCreate || locked} onChange={e => setDemandNotes(prev => ({ ...prev, [s.id]: e.target.value }))} placeholder="â€”" className="h-6 text-xs min-w-[120px]" /></td>
                     </tr>
                   )
                 })}
@@ -583,17 +583,17 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
             </table>
           )
         ) : (
-          !hasResult ? <p className="text-xs text-slate-400 p-4 text-center">Chưa có kết quả — sang bước 1 và bấm "Tự xếp người".</p>
+          !hasResult ? <p className="text-xs text-slate-400 p-4 text-center">ChÆ°a cÃ³ káº¿t quáº£ â€” sang bÆ°á»›c 1 vÃ  báº¥m "Tá»± xáº¿p ngÆ°á»i".</p>
           : (
             <table className="w-full text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[9px] uppercase tracking-wide text-slate-500 shadow-sm">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium whitespace-nowrap w-10">STT</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Họ và tên</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Vị trí phân công</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ghi chú</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap w-24">Trạng thái</th>
-                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chức danh</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Há» vÃ  tÃªn</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Vá»‹ trÃ­ phÃ¢n cÃ´ng</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Ghi chÃº</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap w-24">Tráº¡ng thÃ¡i</th>
+                  <th className="text-left px-2 py-2 font-medium whitespace-nowrap">Chá»©c danh</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -602,9 +602,9 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                   return (
                     <tr key={g.eid} className={`${rowCls} hover:bg-slate-50`}>
                       <td className="px-3 py-1.5 text-[10px] tabular-nums whitespace-nowrap align-top">{i + 1}</td>
-                      <td className="px-2 py-1.5 text-[10px] font-medium whitespace-nowrap align-top">{g.employee?.name ?? '—'}<span className="text-slate-400 font-normal ml-1">{g.employee?.employee_code}</span></td>
+                      <td className="px-2 py-1.5 text-[10px] font-medium whitespace-nowrap align-top">{g.employee?.name ?? 'â€”'}<span className="text-slate-400 font-normal ml-1">{g.employee?.employee_code}</span></td>
                       <td className="px-2 py-1.5 text-[10px] align-top">
-                        {g.leave ? <span className="italic whitespace-nowrap">Nghỉ phép</span>
+                        {g.leave ? <span className="italic whitespace-nowrap">Nghá»‰ phÃ©p</span>
                           : canEdit && !locked ? (
                             <div className="flex flex-wrap items-center gap-1">
                               {g.positions.map(s => (
@@ -614,7 +614,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                                 </span>
                               ))}
                               <Select key={g.positions.join(',')} onValueChange={v => { if (v) changePositions(g.eid, [...g.positions, v]) }}>
-                                <SelectTrigger className="h-6 w-auto gap-1 px-1.5 text-[10px] text-slate-500 border-slate-200"><SelectValue placeholder="+ Thêm…" /></SelectTrigger>
+                                <SelectTrigger className="h-6 w-auto gap-1 px-1.5 text-[10px] text-slate-500 border-slate-200"><SelectValue placeholder="+ ThÃªmâ€¦" /></SelectTrigger>
                                 <SelectContent>
                                   {sheet.skills.filter(s => !g.positions.includes(s.id)).map(s => {
                                     const cnt = assignedBySkill.get(s.id) ?? 0
@@ -624,19 +624,19 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
                                   })}
                                 </SelectContent>
                               </Select>
-                              {!g.positions.length && <span className="text-slate-400">Chưa phân</span>}
+                              {!g.positions.length && <span className="text-slate-400">ChÆ°a phÃ¢n</span>}
                             </div>
                           ) : (
                             g.positions.length
                               ? <span className="whitespace-nowrap">{g.positions.map(labelOf).join(', ')}{g.manual && <span className="text-sky-500 ml-1">(tay)</span>}</span>
-                              : <span className="whitespace-nowrap">— Chưa phân —</span>
+                              : <span className="whitespace-nowrap">â€” ChÆ°a phÃ¢n â€”</span>
                           )}
                       </td>
-                      <td className="px-2 py-1.5 text-[10px] text-slate-500 whitespace-nowrap align-top">{g.positions.map(s => noteBySkill.get(s)).filter(Boolean).join('; ') || '—'}</td>
+                      <td className="px-2 py-1.5 text-[10px] text-slate-500 whitespace-nowrap align-top">{g.positions.map(s => noteBySkill.get(s)).filter(Boolean).join('; ') || 'â€”'}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap align-top">
-                        {g.leave ? <Badge variant="slate">Nghỉ phép</Badge> : g.positions.length ? <Badge variant="info">Đã xếp{g.positions.length > 1 ? ` (${g.positions.length})` : ''}</Badge> : <Badge variant="warning">Chưa phân</Badge>}
+                        {g.leave ? <Badge variant="slate">Nghá»‰ phÃ©p</Badge> : g.positions.length ? <Badge variant="info">ÄÃ£ xáº¿p{g.positions.length > 1 ? ` (${g.positions.length})` : ''}</Badge> : <Badge variant="warning">ChÆ°a phÃ¢n</Badge>}
                       </td>
-                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap align-top">{g.employee?.job_title ?? '—'}</td>
+                      <td className="px-2 py-1.5 text-[10px] whitespace-nowrap align-top">{g.employee?.job_title ?? 'â€”'}</td>
                     </tr>
                   )
                 })}
@@ -651,8 +651,8 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   )
 }
 
-// ─── Nội dung phiếu (giống mẫu Lịch làm việc) — mỗi VỊ TRÍ 1 dòng ───
-// nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
+// â”€â”€â”€ Ná»™i dung phiáº¿u (giá»‘ng máº«u Lá»‹ch lÃ m viá»‡c) â€” má»—i Vá»Š TRÃ 1 dÃ²ng â”€â”€â”€
+// ná»n dÃ²ng theo ca: Ca 2 = vÃ ng nháº¡t, Ca 3 = Ä‘á» nháº¡t; cÃ²n láº¡i tráº¯ng/zebra
 const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
 type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
 type DocProps = {
@@ -661,7 +661,7 @@ type DocProps = {
   noteBySkill: Map<string, string | null>; shiftBySkill: Map<string, string | null>
   currentUserId: string | null
 }
-// Phiếu → ẢNH bằng Canvas 2D (chuẩn xác màu/viền/KHÔNG wrap trên MỌI máy; html-to-image lỗi trên mobile)
+// Phiáº¿u â†’ áº¢NH báº±ng Canvas 2D (chuáº©n xÃ¡c mÃ u/viá»n/KHÃ”NG wrap trÃªn Má»ŒI mÃ¡y; html-to-image lá»—i trÃªn mobile)
 type DocRow = { stt: string; name: string; job: string; pos: string; note: string; bg: string; multi: boolean; isMe: boolean }
 function buildDocRows(p: DocProps): DocRow[] {
   return p.sortedAsg.map((a, i) => {
@@ -669,9 +669,9 @@ function buildDocRows(p: DocProps): DocRow[] {
     const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#ffffff')
     return {
       stt: String(i + 1),
-      name: a.employee?.name ?? '—',
-      job: a.employee?.job_title ?? '—',
-      pos: a.status === 'LEAVE' ? 'Nghỉ phép' : a.skill_id ? p.labelOf(a.skill_id) : 'Chưa phân công',
+      name: a.employee?.name ?? 'â€”',
+      job: a.employee?.job_title ?? 'â€”',
+      pos: a.status === 'LEAVE' ? 'Nghá»‰ phÃ©p' : a.skill_id ? p.labelOf(a.skill_id) : 'ChÆ°a phÃ¢n cÃ´ng',
       note: a.skill_id ? (p.noteBySkill.get(a.skill_id) ?? '') : '',
       bg,
       multi: a.status === 'ASSIGNED' && (p.posCount.get(a.employee_id) ?? 0) >= 2,
@@ -682,7 +682,7 @@ function buildDocRows(p: DocProps): DocRow[] {
 function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   const rows = buildDocRows(p)
   const S = 2, FS = 13, TITLE = 16, SUB = 13, padX = 10, padY = 8
-  const cols = ['STT', 'Họ và Tên', 'Vị trí phân công', 'Note', 'Chức danh']
+  const cols = ['STT', 'Há» vÃ  TÃªn', 'Vá»‹ trÃ­ phÃ¢n cÃ´ng', 'Note', 'Chá»©c danh']
   const m = document.createElement('canvas').getContext('2d')!
   const cellFont = `${FS}px Arial`, headFont = `600 ${FS}px Arial`, boldFont = `700 ${FS}px Arial`
   const tw = (t: string, f: string) => { m.font = f; return m.measureText(t).width }
@@ -697,23 +697,23 @@ function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   })
   const rowH = FS + padY * 2, headerH = 58
   let tableW = colW.reduce((a, b) => a + b, 0)
-  const titleW = Math.ceil(tw('BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT', `700 ${TITLE}px Arial`))
+  const titleW = Math.ceil(tw('Báº¢NG PHÃ‚N CÃ”NG Lá»ŠCH LÃ€M VIá»†C CHI TIáº¾T', `700 ${TITLE}px Arial`))
   const W = Math.max(tableW, titleW + 24, 340)
-  if (W > tableW) { colW[2] += W - tableW; tableW = W }   // nới cột Vị trí cho khớp bề rộng
+  if (W > tableW) { colW[2] += W - tableW; tableW = W }   // ná»›i cá»™t Vá»‹ trÃ­ cho khá»›p bá» rá»™ng
   const H = headerH + rowH * (rows.length + 1) + 4
   const cv = document.createElement('canvas')
   cv.width = Math.round(W * S); cv.height = Math.round(H * S)
   const ctx = cv.getContext('2d')!
   ctx.scale(S, S); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H); ctx.textBaseline = 'middle'
-  // logo + tiêu đề
+  // logo + tiÃªu Ä‘á»
   ctx.fillStyle = '#e11d48'; ctx.fillRect(0, 2, 46, 32)
   ctx.fillStyle = '#ffffff'; ctx.font = '800 italic 15px Arial'; ctx.textAlign = 'center'; ctx.fillText('lof', 23, 18)
   ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'
-  ctx.font = `700 ${TITLE}px Arial`; ctx.fillText('BẢNG PHÂN CÔNG LỊCH LÀM VIỆC CHI TIẾT', W / 2, 11)
+  ctx.font = `700 ${TITLE}px Arial`; ctx.fillText('Báº¢NG PHÃ‚N CÃ”NG Lá»ŠCH LÃ€M VIá»†C CHI TIáº¾T', W / 2, 11)
   ctx.font = `${SUB}px Arial`
-  ctx.fillText(`Ngày: ${formatDate(p.sheet.work_date)}    |    Bộ phận: ${p.sheet.layout_name ?? ''}`, W / 2, 30)
+  ctx.fillText(`NgÃ y: ${formatDate(p.sheet.work_date)}    |    Bá»™ pháº­n: ${p.sheet.layout_name ?? ''}`, W / 2, 30)
   ctx.fillText(`Kho: ${p.whName}`, W / 2, 46)
-  // bảng
+  // báº£ng
   const drawRow = (y: number, cells: string[], bg: string, head: boolean, multi: boolean, me: boolean) => {
     ctx.fillStyle = bg; ctx.fillRect(0, y, tableW, rowH)
     let x = 0
@@ -726,7 +726,7 @@ function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
       if (!head && ci === 1) {
         const nameW = tw(cells[1], me ? boldFont : cellFont)
         if (me) { ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(tx, ty + 8); ctx.lineTo(tx + nameW, ty + 8); ctx.stroke() }
-        if (multi) { ctx.fillStyle = '#e11d48'; ctx.font = cellFont; ctx.fillText('★', tx + nameW + 4, ty) }
+        if (multi) { ctx.fillStyle = '#e11d48'; ctx.font = cellFont; ctx.fillText('â˜…', tx + nameW + 4, ty) }
       }
       x += colW[ci]
     }
@@ -737,7 +737,7 @@ function drawScheduleCanvas(p: DocProps): HTMLCanvasElement {
   return cv
 }
 
-// Xem LỊCH (ảnh canvas) → CHIA SẺ thẳng (Zalo…) hoặc tải ảnh. Thấy sao gửi vậy (cùng 1 canvas).
+// Xem Lá»ŠCH (áº£nh canvas) â†’ CHIA Sáºº tháº³ng (Zaloâ€¦) hoáº·c táº£i áº£nh. Tháº¥y sao gá»­i váº­y (cÃ¹ng 1 canvas).
 function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [img, setImg] = useState('')
@@ -761,44 +761,44 @@ function ImagePreview({ onClose, ...props }: DocProps & { onClose: () => void })
     try {
       const blob = await getBlob(); if (!blob) return
       const file = new File([blob], fileName, { type: 'image/png' })
-      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Lịch phân công' })
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Lá»‹ch phÃ¢n cÃ´ng' })
       else saveFile(blob)
-    } catch { /* user huỷ */ } finally { setSaving(false) }
+    } catch { /* user huá»· */ } finally { setSaving(false) }
   }
   async function download() { setSaving(true); try { const b = await getBlob(); if (b) saveFile(b) } finally { setSaving(false) } }
   return (
     <div className="fixed inset-0 z-50 bg-black/60 overflow-auto" onClick={onClose}>
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-slate-900 text-white px-3 py-2 text-xs">
-        <span className="truncate">{canShare ? '📤 Bấm Chia sẻ để gửi thẳng (Zalo…)' : '📸 Tải ảnh để gửi'}</span>
+        <span className="truncate">{canShare ? 'ðŸ“¤ Báº¥m Chia sáº» Ä‘á»ƒ gá»­i tháº³ng (Zaloâ€¦)' : 'ðŸ“¸ Táº£i áº£nh Ä‘á»ƒ gá»­i'}</span>
         <div className="flex items-center gap-2 shrink-0">
-          {canShare && <button onClick={share} disabled={saving} className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 disabled:opacity-60 rounded px-2 py-1"><Share2 className="h-3.5 w-3.5" />{saving ? '…' : 'Chia sẻ'}</button>}
-          <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />Tải ảnh</button>
-          <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />Đóng</button>
+          {canShare && <button onClick={share} disabled={saving} className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-500 disabled:opacity-60 rounded px-2 py-1"><Share2 className="h-3.5 w-3.5" />{saving ? 'â€¦' : 'Chia sáº»'}</button>}
+          <button onClick={download} disabled={saving} className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded px-2 py-1"><ImageIcon className="h-3.5 w-3.5" />Táº£i áº£nh</button>
+          <button onClick={onClose} className="inline-flex items-center gap-1 bg-white/15 hover:bg-white/25 rounded px-2 py-1"><X className="h-3.5 w-3.5" />ÄÃ³ng</button>
         </div>
       </div>
       <div className="p-2 sm:p-4" onClick={e => e.stopPropagation()}>
-        {img && <img src={img} alt="Lịch phân công" className="block mx-auto w-full sm:w-[80vw] sm:max-w-[1100px] h-auto rounded-lg shadow-lg bg-white" />}
+        {img && <img src={img} alt="Lá»‹ch phÃ¢n cÃ´ng" className="block mx-auto w-full sm:w-[80vw] sm:max-w-[1100px] h-auto rounded-lg shadow-lg bg-white" />}
       </div>
     </div>
   )
 }
 
-// ════════ TAB LAYOUT (quản lý mẫu theo Kho) ════════
+// â•â•â•â•â•â•â•â• TAB LAYOUT (quáº£n lÃ½ máº«u theo Kho) â•â•â•â•â•â•â•â•
 function LayoutTab({ canCreate }: { canCreate: boolean }) {
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const saved = (() => { try { return JSON.parse(localStorage.getItem(SCOPE_KEY) || '{}') } catch { return {} } })()
   const [wh, setWh] = useState<string>(saved.wh ?? '')
   const { data: layouts = [], isLoading } = useLayouts(wh || undefined, !!wh)
   const del = useDeleteLayout()
-  const [form, setForm] = useState<{ id: string | null } | null>(null)  // null=đóng · {id:null}=tạo · {id}=sửa
+  const [form, setForm] = useState<{ id: string | null } | null>(null)  // null=Ä‘Ã³ng Â· {id:null}=táº¡o Â· {id}=sá»­a
   const [err, setErr] = useState<string | null>(null)
 
   const whById = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
   const whName = whById.get(wh) ?? ''
-  useEffect(() => { setForm(null) }, [wh])   // đổi kho → đóng form
+  useEffect(() => { setForm(null) }, [wh])   // Ä‘á»•i kho â†’ Ä‘Ã³ng form
 
   async function removeLayout(id: string, name: string) {
-    if (!confirm(`Xóa layout "${name}"?`)) return
+    if (!confirm(`XÃ³a layout "${name}"?`)) return
     setErr(null)
     try { await del.mutateAsync(id); setForm(null) } catch (e) { setErr(String((e as { message?: string })?.message ?? e)) }
   }
@@ -806,11 +806,11 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   return (
     <div className="p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-40" />
+        <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={wh} onChange={setWh} placeholder="Chá»n khoâ€¦" triggerClassName="w-40" />
         <div className="flex-1" />
         {canCreate && wh && (
           <ActionCluster className="shrink-0" items={[{
-            key: 'create-layout', icon: Plus, label: 'Tạo layout', tip: 'Tạo layout mẫu mới cho kho đang chọn',
+            key: 'create-layout', icon: Plus, label: 'Táº¡o layout', tip: 'Táº¡o layout máº«u má»›i cho kho Ä‘ang chá»n',
             primary: true, variant: 'default',
             onClick: () => setForm({ id: null }),
           } satisfies ActionItem]} />
@@ -819,29 +819,29 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
       {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
 
       {!wh ? (
-        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Layers className="h-8 w-8" /><p className="text-sm">Chọn <b>Kho</b> để quản lý layout</p></div>
-      ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Đang tải…</p>
-      : layouts.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Kho này chưa có layout nào. Bấm <b>Tạo layout</b> để thêm.</p>
+        <div className="flex flex-col items-center justify-center text-slate-400 gap-2 py-16"><Layers className="h-8 w-8" /><p className="text-sm">Chá»n <b>Kho</b> Ä‘á»ƒ quáº£n lÃ½ layout</p></div>
+      ) : isLoading ? <p className="text-xs text-slate-400 py-8 text-center">Äang táº£iâ€¦</p>
+      : layouts.length === 0 ? <p className="text-xs text-slate-400 py-8 text-center">Kho nÃ y chÆ°a cÃ³ layout nÃ o. Báº¥m <b>Táº¡o layout</b> Ä‘á»ƒ thÃªm.</p>
       : (
         <div className="max-w-3xl border border-slate-200 rounded-lg">
           <Table className="min-w-full">
             <TableHeader>
               <TableRow>
                 <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Kho</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">Tên layout</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Vị trí</TableHead>
-                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Người</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap">TÃªn layout</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">Vá»‹ trÃ­</TableHead>
+                <TableHead className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right">NgÆ°á»i</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {layouts.map(l => (
                 <TableRow key={l.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setForm({ id: l.id })}>
-                  <TableCell className="px-2 py-1.5 text-xs text-slate-600 whitespace-nowrap">{whById.get(l.warehouse_id) ?? whName ?? <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1.5 text-xs text-slate-600 whitespace-nowrap">{whById.get(l.warehouse_id) ?? whName ?? <span className="text-slate-300">â€”</span>}</TableCell>
                   <TableCell className="px-2 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />{l.name}</span>
                   </TableCell>
-                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.positions || <span className="text-slate-300">—</span>}</TableCell>
-                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.people || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.positions || <span className="text-slate-300">â€”</span>}</TableCell>
+                  <TableCell className="px-2 py-1.5 text-xs text-right tabular-nums whitespace-nowrap">{l.people || <span className="text-slate-300">â€”</span>}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -859,8 +859,8 @@ function LayoutTab({ canCreate }: { canCreate: boolean }) {
   )
 }
 
-// Form layout (DÙNG CHUNG Tạo & Sửa): Tên + Ghi chú + (1) chọn chức danh → (2) gom skill (kèm cấp dưới) → số người.
-// Tạo: create rồi setJts/setSkills theo id mới. Sửa: update name/note + setJts/setSkills.
+// Form layout (DÃ™NG CHUNG Táº¡o & Sá»­a): TÃªn + Ghi chÃº + (1) chá»n chá»©c danh â†’ (2) gom skill (kÃ¨m cáº¥p dÆ°á»›i) â†’ sá»‘ ngÆ°á»i.
+// Táº¡o: create rá»“i setJts/setSkills theo id má»›i. Sá»­a: update name/note + setJts/setSkills.
 function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSaved, onDelete }: {
   warehouseId: string; warehouseName: string; layoutId: string | null
   onClose: () => void; onSaved: () => void; onDelete?: () => void
@@ -887,11 +887,11 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
     setName(layout.name); setNote(layout.note ?? ''); setCounts(m); setNotes(n); setJtSel(layout.job_title_ids ?? [])
   }, [layout])
 
-  // danh mục skill của các chức danh đã chọn (gồm cả skill kế thừa từ cấp dưới, gộp theo skill_id)
+  // danh má»¥c skill cá»§a cÃ¡c chá»©c danh Ä‘Ã£ chá»n (gá»“m cáº£ skill káº¿ thá»«a tá»« cáº¥p dÆ°á»›i, gá»™p theo skill_id)
   const { data: catalog = [] } = useSkills({ job_title_ids: jts.join(','), with_descendants: true }, jts.length > 0)
 
   async function submit() {
-    if (!name.trim()) { setErr('Nhập tên layout'); return }
+    if (!name.trim()) { setErr('Nháº­p tÃªn layout'); return }
     setSaving(true); setErr(null)
     try {
       const catalogIds = new Set(catalog.map(s => s.id))
@@ -910,63 +910,63 @@ function LayoutFormDialog({ warehouseId, warehouseName, layoutId, onClose, onSav
   return (
     <FormSheet
       open onClose={onClose}
-      title={isEdit ? 'Sửa layout' : 'Tạo layout mới'}
+      title={isEdit ? 'Sá»­a layout' : 'Táº¡o layout má»›i'}
       widthClass="sm:max-w-3xl"
       footer={<>
-        {isEdit && onDelete && <Button variant="outline" className="h-8 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 mr-1" />Xóa</Button>}
-        <Button variant="outline" className="h-8" onClick={onClose}>Hủy</Button>
-        <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? 'Đang lưu…' : (isEdit ? 'Lưu' : 'Tạo')}</Button>
+        {isEdit && onDelete && <Button variant="outline" className="h-8 text-red-600" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 mr-1" />XÃ³a</Button>}
+        <Button variant="outline" className="h-8" onClick={onClose}>Há»§y</Button>
+        <Button className="h-8" onClick={submit} disabled={!name.trim() || saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? 'Äang lÆ°uâ€¦' : (isEdit ? 'LÆ°u' : 'Táº¡o')}</Button>
       </>}
     >
-        {isEdit && !layout ? <p className="text-xs text-slate-400 py-6 text-center">Đang tải…</p> : (
+        {isEdit && !layout ? <p className="text-xs text-slate-400 py-6 text-center">Äang táº£iâ€¦</p> : (
         <div className="space-y-3">
           {err && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{err}</div>}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-500">Kho</label>
-              <div className="text-sm font-medium text-slate-700 mt-1">{warehouseName || '—'}</div>
+              <div className="text-sm font-medium text-slate-700 mt-1">{warehouseName || 'â€”'}</div>
             </div>
             <div>
-              <label className="text-xs text-slate-500">Tên layout *</label>
-              <Input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="VD: Ca ngày SX" className="h-8 text-sm mt-0.5" />
+              <label className="text-xs text-slate-500">TÃªn layout *</label>
+              <Input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="VD: Ca ngÃ y SX" className="h-8 text-sm mt-0.5" />
             </div>
           </div>
           <div>
-            <label className="text-xs text-slate-500">Ghi chú</label>
-            <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Ghi chú layout (không bắt buộc)" className="h-8 text-sm mt-0.5" />
+            <label className="text-xs text-slate-500">Ghi chÃº</label>
+            <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Ghi chÃº layout (khÃ´ng báº¯t buá»™c)" className="h-8 text-sm mt-0.5" />
           </div>
 
-          {/* Bước 1: chọn chức danh */}
+          {/* BÆ°á»›c 1: chá»n chá»©c danh */}
           <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-600">1. Chọn chức danh (gọi nhóm người cho layout)</p>
-            <MultiSelectFilter label="Chức danh" width="w-64" searchable={false}
+            <p className="text-[11px] font-semibold text-slate-600">1. Chá»n chá»©c danh (gá»i nhÃ³m ngÆ°á»i cho layout)</p>
+            <MultiSelectFilter label="Chá»©c danh" width="w-64" searchable={false}
               options={jobTitles.map(j => ({ value: j.id, label: j.name }))}
               selected={jts} onChange={setJtSel} />
           </div>
 
-          {/* Bước 2: bảng vị trí — số lượng — ghi chú */}
+          {/* BÆ°á»›c 2: báº£ng vá»‹ trÃ­ â€” sá»‘ lÆ°á»£ng â€” ghi chÃº */}
           <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-600">2. Vị trí & số người mặc định (để trống = không dùng)</p>
-            {jts.length === 0 ? <p className="text-xs text-slate-400">Chọn chức danh ở bước 1 để hiện danh mục vị trí.</p>
-            : catalog.length === 0 ? <p className="text-xs text-slate-400">Chức danh đã chọn chưa có vị trí/skill nào.</p>
+            <p className="text-[11px] font-semibold text-slate-600">2. Vá»‹ trÃ­ & sá»‘ ngÆ°á»i máº·c Ä‘á»‹nh (Ä‘á»ƒ trá»‘ng = khÃ´ng dÃ¹ng)</p>
+            {jts.length === 0 ? <p className="text-xs text-slate-400">Chá»n chá»©c danh á»Ÿ bÆ°á»›c 1 Ä‘á»ƒ hiá»‡n danh má»¥c vá»‹ trÃ­.</p>
+            : catalog.length === 0 ? <p className="text-xs text-slate-400">Chá»©c danh Ä‘Ã£ chá»n chÆ°a cÃ³ vá»‹ trÃ­/skill nÃ o.</p>
             : (
               <div className="border border-slate-200 rounded-lg overflow-auto bg-white max-h-[38vh]">
                 <table className="w-full text-xs min-w-max">
                   <thead className="bg-slate-50 text-[10px] text-slate-500">
                     <tr>
-                      <th className="text-left px-2 py-1.5 font-medium">Vị trí</th>
-                      <th className="text-left px-2 py-1.5 font-medium">Chức danh</th>
-                      <th className="text-left px-2 py-1.5 font-medium w-36">Số lượng</th>
-                      <th className="text-left px-2 py-1.5 font-medium">Ghi chú</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Vá»‹ trÃ­</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Chá»©c danh</th>
+                      <th className="text-left px-2 py-1.5 font-medium w-36">Sá»‘ lÆ°á»£ng</th>
+                      <th className="text-left px-2 py-1.5 font-medium">Ghi chÃº</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {catalog.map(s => (
                       <tr key={s.id} className="hover:bg-slate-50/60">
                         <td className="px-2 py-1 text-slate-700">{s.name}{s.shift_tag && <span className="text-[10px] text-slate-400 ml-1">{shiftOf(s.shift_tag)}</span>}</td>
-                        <td className="px-2 py-1 text-slate-500">{s.job_title ?? '—'}</td>
+                        <td className="px-2 py-1 text-slate-500">{s.job_title ?? 'â€”'}</td>
                         <td className="px-2 py-1"><QtyCell value={counts[s.id] ?? 0} onChange={v => setCounts(p => ({ ...p, [s.id]: v }))} /></td>
-                        <td className="px-2 py-1"><Input value={notes[s.id] ?? ''} onChange={e => setNotes(p => ({ ...p, [s.id]: e.target.value }))} placeholder="—" className="h-6 text-xs" /></td>
+                        <td className="px-2 py-1"><Input value={notes[s.id] ?? ''} onChange={e => setNotes(p => ({ ...p, [s.id]: e.target.value }))} placeholder="â€”" className="h-6 text-xs" /></td>
                       </tr>
                     ))}
                   </tbody>

@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useManualLooseItem, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useManualLooseItem, useItemInventory, usePctBands, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -365,6 +366,7 @@ export default function LoosePickingItemDetail() {
   const { vehicles } = useActiveLoosePickingStore()
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const pctBands = usePctBands()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
@@ -757,9 +759,7 @@ export default function LoosePickingItemDetail() {
                           <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
-                                <span className={`text-xs font-bold tabular-nums ${
-                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                }`}>{row.pct_date}%</span>
+                                <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
                               ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
                               {row.is_qa && (
                                 <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
@@ -889,9 +889,7 @@ export default function LoosePickingItemDetail() {
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             {se.pct_date !== null ? (
-                              <span className={`text-[10px] font-bold tabular-nums ${
-                                se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                              }`}>{se.pct_date}%</span>
+                              <span className={`text-[10px] font-bold tabular-nums ${pctDateCls(se.pct_date, pctBands)}`}>{se.pct_date}%</span>
                             ) : <span className="text-[10px] text-slate-300">—</span>}
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 
-type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[] }
+type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[]; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 
 const LEAVE_SELECT = 'id, employee_id, warehouse_id, date_from, date_to, leave_type, reason, status, approved_by, approved_at, created_at, updated_at'
@@ -137,7 +137,7 @@ async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, 
 // Non-admin chỉ được thao tác đơn của CHÍNH MÌNH hoặc cấp dưới (chức danh dưới + chung kho).
 async function guardLeaveTarget(req: Request, res: Response, empId?: string | null): Promise<boolean> {
   const u = userOf(req)
-  if (u.name === 'Admin') return true
+  if (u.is_superadmin === true) return true
   if (!empId) { fail(res, 'Thiếu nhân viên', 400); return false }
   if (empId === u.sub) return true
   const ctx = await approverContext(u.sub)
@@ -148,7 +148,7 @@ async function guardLeaveTarget(req: Request, res: Response, empId?: string | nu
 }
 // SỬA/XÓA: lấy employee_id của đơn rồi áp guardLeaveTarget.
 async function guardLeaveScope(req: Request, res: Response, leaveId: string): Promise<boolean> {
-  if (userOf(req).name === 'Admin') return true
+  if (userOf(req).is_superadmin === true) return true
   const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', leaveId).maybeSingle()
   const empId = (lv as { employee_id: string } | null)?.employee_id
   if (!empId) { fail(res, 'Không tìm thấy đơn', 404); return false }
@@ -160,7 +160,7 @@ async function guardLeaveScope(req: Request, res: Response, leaveId: string): Pr
 // (dữ liệu cá nhân) nên lệch luật giữa 2 đường là rò dữ liệu.
 async function leaveScopeEmpIds(req: Request, warehouse_id?: string): Promise<string[] | null | 'FORBIDDEN'> {
   const uL = userOf(req)
-  if (uL.name === 'Admin' || uL.warehouse_scope === 'NATIONAL') return null
+  if (uL.is_superadmin === true || uL.warehouse_scope === 'NATIONAL') return null
   const myWhs = (uL.warehouse_ids ?? []) as string[]
   if (warehouse_id && !myWhs.includes(warehouse_id)) return 'FORBIDDEN'
   const whIds = warehouse_id ? [warehouse_id] : myWhs
@@ -342,8 +342,8 @@ export async function decideLeave(req: Request, res: Response) {
     if (status !== 'APPROVED' && status !== 'REJECTED') return fail(res, 'status phải là APPROVED hoặc REJECTED', 400)
     const u = userOf(req)
 
-    // chỉ cấp trên trực tiếp (theo chức danh) + chung kho, hoặc Admin
-    if (u.name !== 'Admin') {
+    // chỉ cấp trên trực tiếp (theo chức danh) + chung kho, hoặc superadmin
+    if (u.is_superadmin !== true) {
       const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', id).maybeSingle()
       const empId = (lv as { employee_id: string } | null)?.employee_id
       if (!empId) return fail(res, 'Không tìm thấy đơn', 404)

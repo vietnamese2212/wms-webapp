@@ -12,7 +12,7 @@ import { encryptSecret, decryptSecret } from '../../utils/secretBox'
 //   cấu trúc value có 'provider' để sau này thêm Groq/Mistral mà không đổi schema.
 // - Endpoint đọc trả 422 (KHÔNG 5xx) khi lỗi/hết quota → FE rơi về Tesseract, không đổ error_logs.
 
-const isSuper = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
+const isSuper = (req: Request) => req.user?.is_superadmin === true
 
 const VISION_KEY = 'vision_api'
 // Alias '-latest' của Google TỰ TRỎ bản flash-lite mới nhất — model tên cụ thể sẽ nghỉ hưu

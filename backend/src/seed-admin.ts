@@ -60,6 +60,7 @@ async function run() {
       warehouse_scope:    'NATIONAL',
       allowed_categories: ['Thành phẩm', 'POSM', 'Raw', 'Giấy', 'Thùng'],
       is_active:          true,
+      is_superadmin:      true,   // nguồn quyền superadmin = cột này (migration 20260813f)
       updated_at:         now,
     }).eq('id', found.id)
 
@@ -76,6 +77,7 @@ async function run() {
       warehouse_scope:    'NATIONAL',
       allowed_categories: ['Thành phẩm', 'POSM', 'Raw', 'Giấy', 'Thùng'],
       is_active:          true,
+      is_superadmin:      true,   // nguồn quyền superadmin = cột này (migration 20260813f)
       created_at:         now,
       updated_at:         now,
     })

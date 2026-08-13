@@ -21,6 +21,7 @@ export interface User {
   warehouse_ids?:      string[]
   allowed_modules?:    AppModule[]
   module_permissions?: ModulePermissions
+  is_superadmin?:      boolean   // từ cột Employee.is_superadmin qua /auth/login + /auth/me — isAdmin() đọc cờ này
 }
 
 // ─── Permission masterdata ────────────────────────────────────────────────────

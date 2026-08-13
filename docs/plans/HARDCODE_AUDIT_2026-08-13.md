@@ -79,4 +79,9 @@
 
 ## Trạng thái
 - [x] A-bug filter rule PACKING_UNRECEIVED — vá `ed4e8469`
-- [ ] Các mục còn lại: CHỜ user chốt thứ tự (đề xuất: A1+A2+A3 trước — rủi ro sai số liệu/quyền; rồi B1+B2 — hạ tầng SystemSetting có sẵn; A7 trước khi deploy đơn vị 2)
+- [x] **ĐỢT 1 XONG 13/08 đêm (user duyệt "bắt đầu theo đề xuất"):**
+  - A1 — superadmin theo CỘT `is_superadmin` (migration `20260813f`, ~18 chỗ BE + FE isAdmin, ratchet `superadmin_by_name` baseline 0)
+  - A2 — %Date MỘT nguồn: helper `pctDateCls` + hook `usePctBands` (SystemSetting `pct_date_bands`, mặc định 60/30 — Tồn kho/Nhật ký quét/Kiểm kho đổi từ thang 70/40 sang 60/30 thống nhất); Nhật ký quét bỏ `calcPctAtScan` tự chế → `computePctDate` chung với nowMs = lúc quét (RPC `20260813g` trả expiry_date/entry_shelf/ncc/overrides)
+  - A3 — 2 màn lệch cân (Phiếu cân + detail chuyến) đọc `WEIGH_WARN_PCT` từ alert_thresholds qua `useWeighWarnPct`
+- [ ] Đợt 2: B1+B2 (config hóa retention/cycle-count/ngưỡng alert sót — hạ tầng SystemSetting có sẵn)
+- [ ] Đợt 3: A5 (cờ danh mục thay so chuỗi tiếng Việt) + A7 (gỡ hardcode LOF — bắt buộc trước deploy đơn vị 2) + A6 (TODAY đóng băng) + A8 (lễ VN)

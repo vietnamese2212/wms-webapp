@@ -24,7 +24,7 @@ import {
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
   useInventorySummary, type InventorySummaryGroup, fetchInventoryExport, fetchAllInventorySummary,
-  useSystemSettings,
+  useSystemSettings, usePctBands,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -33,6 +33,7 @@ import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { saveWorkbook } from '@/utils/saveExcel'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
@@ -42,12 +43,6 @@ import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 function formatLoc(loc: { location_code: string } | null): string {
   if (!loc) return '—'
   return loc.location_code
-}
-
-function datePctCls(pct: number): string {
-  if (pct >= 70) return 'text-green-600 font-semibold'
-  if (pct >= 40) return 'text-amber-600 font-semibold'
-  return 'text-red-600 font-semibold'
 }
 
 // Nền dòng: dữ liệu KHÔNG tô màu theo trạng thái. Dòng đang xem (selected) nền xanh đậm để chữ
@@ -1500,6 +1495,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const remaining = e.cartons_remaining ?? e.cartons_imported
   const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
   const pct       = computePctDate(e, e.material)
+  const pctBands  = usePctBands()
 
   // BASE UNIT: delta gửi đi = SỐ BASE (nhập theo thùng → × hệ_số); mã có entry bắt SỐ NGUYÊN
   const adjFactor = hasEntry(e.material) && adjUnit === 'entry' ? Number(e.material!.units_per_carton) : 1
@@ -1582,7 +1578,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
             <Row label="NCC" value={e.ncc.name} />
           )}
           {pct !== null && (
-            <Row label="% Date còn" value={`${pct}%`} cls={datePctCls(pct)} bold />
+            <Row label="% Date còn" value={`${pct}%`} cls={pctDateCls(pct, pctBands)} bold />
           )}
         </Section>
 

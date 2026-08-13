@@ -35,7 +35,7 @@ export async function logPrints(req: Request, res: Response) {
     const printMode = mode === 'REPRINT' ? 'REPRINT' : 'GENERATE'
     // Quyền theo mode: sinh tem mới cần 'generate', in lại cần 'reprint'
     const action = printMode === 'REPRINT' ? 'reprint' : 'generate'
-    const isAdmin = req.user?.name === 'Admin'
+    const isAdmin = req.user?.is_superadmin === true
     if (!isAdmin && !req.user?.module_permissions?.['pallet_print']?.includes(action)) {
       return fail(res, printMode === 'REPRINT' ? 'Bạn không có quyền in lại' : 'Bạn không có quyền sinh tem mới', 403)
     }

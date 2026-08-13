@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   useWarehouses, useLocationsReal,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry, fetchAllStocktakeEntries,
+  usePctBands,
   type StocktakeEntryRow,
 } from '@/api/hooks'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
@@ -23,6 +24,7 @@ import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucid
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
 
@@ -96,6 +98,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
   const pct       = entry ? computePctDate(entry, entry.material) : null
   const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
+  const pctBands  = usePctBands()
 
   return (
     <div className="fixed inset-0 z-50 w-full lg:static lg:inset-auto lg:z-auto lg:w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-xl lg:shadow-none">
@@ -187,7 +190,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
                 )}
               {pct !== null && (
                 <DR label="%Date" value={`${pct}%`}
-                  cls={pct >= 70 ? 'text-green-600 font-semibold' : pct >= 40 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'} />
+                  cls={`${pctDateCls(pct, pctBands)} font-semibold`} />
               )}
             </Sec>
 

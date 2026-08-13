@@ -6,7 +6,7 @@ import { hashApiKey } from '../../middlewares/apiKey'
 import { encryptSecret, decryptSecret } from '../../utils/secretBox'
 
 // Quản lý API key — CHỈ superadmin (khóa cấp tài khoản, không phải quyền nghiệp vụ thường).
-const isSuper = (req: Request) => req.user?.is_superadmin === true || req.user?.name === 'Admin'
+const isSuper = (req: Request) => req.user?.is_superadmin === true
 
 const VALID_SCOPES = ['materials:read', 'inventory:read', 'inbound:read', 'outbound:read', 'scans:read', 'weigh:write', '*']
 

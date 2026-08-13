@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
-import { useWeighTickets, useWeighTicketWarehouses, useMatchWeighTicket, useGDOs, type WeighTicket } from '@/api/hooks'
+import { useWeighTickets, useWeighTicketWarehouses, useMatchWeighTicket, useGDOs, useWeighWarnPct, type WeighTicket } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -66,6 +66,7 @@ export default function WeighTickets() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const canMatch = can(perms, 'weigh_station', 'match')
+  const weighWarnPct = useWeighWarnPct()   // ngưỡng lệch cân đỏ — cùng nguồn tab Cài đặt ngưỡng
 
   const filters = useWmsFilterStore(s => s.weighTickets)
   const setF    = useWmsFilterStore(s => s.setWeighTickets)
@@ -190,7 +191,7 @@ export default function WeighTickets() {
                       title={(r.est_items_missing ?? 0) > 0 ? `Thiếu KL (kg/thùng) ${r.est_items_missing}/${r.est_items_total} mã — số tính chưa trọn` : undefined}>
                       {est != null ? <>{kg(est)}{(r.est_items_missing ?? 0) > 0 && <span className="text-amber-500">*</span>}</> : <span className="text-slate-300">—</span>}
                     </TableCell>
-                    <TableCell className={`px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap ${diff != null ? (estIncomplete ? 'text-slate-400' : Math.abs(diffPct ?? 0) > 5 ? 'text-red-600' : 'text-green-700') : ''}`}
+                    <TableCell className={`px-2 py-1 text-[10px] font-semibold tabular-nums text-right whitespace-nowrap ${diff != null ? (estIncomplete ? 'text-slate-400' : Math.abs(diffPct ?? 0) > weighWarnPct ? 'text-red-600' : 'text-green-700') : ''}`}
                       title={estIncomplete ? `Chưa đối chiếu được: còn ${r.est_items_missing}/${r.est_items_total} mã chưa khai KL (kg/thùng) nên "KL tính" thiếu hụt — khai KL cho các mã đó rồi xem lại` : undefined}>
                       {diff != null
                         ? <>{diff >= 0 ? '+' : ''}{kg(Math.round(diff * 10) / 10)} ({diffPct!.toFixed(1)}%){estIncomplete && <span className="text-amber-500">*</span>}</>

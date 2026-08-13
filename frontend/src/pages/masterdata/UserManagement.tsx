@@ -38,9 +38,9 @@ import { JobTitleSkillSection, EmployeeSkillSection } from './hrSkillSections'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 
-// Màu badge Loại kho theo cờ per-loại (LookupValue.meta) — whTypeBadgeCls từ utils/cargoCategory
+// MÃ u badge Loáº¡i kho theo cá» per-loáº¡i (LookupValue.meta) â€” whTypeBadgeCls tá»« utils/cargoCategory
 
-// ─── Set password dialog ──────────────────────────────────────────────────────
+// â”€â”€â”€ Set password dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: boolean; onClose: () => void }) {
   const [password, setPassword] = useState('')
@@ -54,15 +54,15 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự'); return }
-    if (password !== confirm) { setError('Xác nhận mật khẩu không khớp'); return }
+    if (password.length < 6) { setError('Máº­t kháº©u pháº£i cÃ³ Ã­t nháº¥t 6 kÃ½ tá»±'); return }
+    if (password !== confirm) { setError('XÃ¡c nháº­n máº­t kháº©u khÃ´ng khá»›p'); return }
     setSaving(true)
     try {
       await apiClient.patch(`/masterdata/employees/${emp.id}/set-password`, { password })
       setSuccess(true)
     } catch (err) {
       const msg = (err as AxiosError<{ error: { message: string } }>)
-        ?.response?.data?.error?.message ?? 'Lỗi đặt mật khẩu'
+        ?.response?.data?.error?.message ?? 'Lá»—i Ä‘áº·t máº­t kháº©u'
       setError(msg)
     } finally {
       setSaving(false)
@@ -75,7 +75,7 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-slate-500" />
-            Đặt mật khẩu — {emp.name}
+            Äáº·t máº­t kháº©u â€” {emp.name}
           </DialogTitle>
         </DialogHeader>
         {success ? (
@@ -83,29 +83,29 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 mx-auto">
               <Check className="h-6 w-6 text-green-600" />
             </div>
-            <p className="text-sm text-slate-700">Đặt mật khẩu thành công!</p>
-            <p className="text-xs text-slate-500">Nhân viên có thể đăng nhập bằng tên đăng nhập và mật khẩu mới.</p>
-            <Button size="sm" onClick={() => { reset(); onClose() }}>Đóng</Button>
+            <p className="text-sm text-slate-700">Äáº·t máº­t kháº©u thÃ nh cÃ´ng!</p>
+            <p className="text-xs text-slate-500">NhÃ¢n viÃªn cÃ³ thá»ƒ Ä‘Äƒng nháº­p báº±ng tÃªn Ä‘Äƒng nháº­p vÃ  máº­t kháº©u má»›i.</p>
+            <Button size="sm" onClick={() => { reset(); onClose() }}>ÄÃ³ng</Button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3 py-1">
             <div className="space-y-1">
-              <Label className="text-xs">Mật khẩu mới</Label>
+              <Label className="text-xs">Máº­t kháº©u má»›i</Label>
               <Input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="Tối thiểu 6 ký tự" autoComplete="new-password" />
+                placeholder="Tá»‘i thiá»ƒu 6 kÃ½ tá»±" autoComplete="new-password" />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Xác nhận mật khẩu</Label>
+              <Label className="text-xs">XÃ¡c nháº­n máº­t kháº©u</Label>
               <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
-                placeholder="Nhập lại mật khẩu" autoComplete="new-password" />
+                placeholder="Nháº­p láº¡i máº­t kháº©u" autoComplete="new-password" />
             </div>
             {error && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{error}</p>
             )}
             <DialogFooter>
-              <Button type="button" variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => { reset(); onClose() }}>Huá»·</Button>
               <Button type="submit" size="sm" disabled={saving || !password || !confirm}>
-                {saving ? 'Đang lưu…' : 'Đặt mật khẩu'}
+                {saving ? 'Äang lÆ°uâ€¦' : 'Äáº·t máº­t kháº©u'}
               </Button>
             </DialogFooter>
           </form>
@@ -115,7 +115,7 @@ function SetPasswordDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: 
   )
 }
 
-// ─── Confirm delete dialog ────────────────────────────────────────────────────
+// â”€â”€â”€ Confirm delete dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open: boolean; onClose: () => void }) {
   const { mutate: del, isPending } = useDeleteEmployee()
@@ -130,7 +130,7 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
       },
       onError: (err) => {
         const msg = (err as AxiosError<{ error: { message: string } }>)
-          ?.response?.data?.error?.message ?? 'Lỗi xóa nhân viên'
+          ?.response?.data?.error?.message ?? 'Lá»—i xÃ³a nhÃ¢n viÃªn'
         setError(msg)
       },
     })
@@ -142,14 +142,14 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-700">
-              <Trash2 className="h-4 w-4" /> Đã ẩn nhân viên
+              <Trash2 className="h-4 w-4" /> ÄÃ£ áº©n nhÃ¢n viÃªn
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600 py-2">
-            <span className="font-semibold">{emp.name}</span> có lịch sử hoạt động trong hệ thống nên được ẩn khỏi danh sách thay vì xóa hẳn. Dữ liệu lịch sử vẫn được giữ lại.
+            <span className="font-semibold">{emp.name}</span> cÃ³ lá»‹ch sá»­ hoáº¡t Ä‘á»™ng trong há»‡ thá»‘ng nÃªn Ä‘Æ°á»£c áº©n khá»i danh sÃ¡ch thay vÃ¬ xÃ³a háº³n. Dá»¯ liá»‡u lá»‹ch sá»­ váº«n Ä‘Æ°á»£c giá»¯ láº¡i.
           </p>
           <DialogFooter>
-            <Button size="sm" onClick={onClose}>Đóng</Button>
+            <Button size="sm" onClick={onClose}>ÄÃ³ng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -161,22 +161,22 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-red-700">
-            <Trash2 className="h-4 w-4" /> Xóa nhân viên
+            <Trash2 className="h-4 w-4" /> XÃ³a nhÃ¢n viÃªn
           </DialogTitle>
         </DialogHeader>
         <div className="py-2 space-y-3">
           <p className="text-sm text-slate-700">
-            Bạn có chắc muốn xóa <span className="font-semibold">{emp.name}</span> ({emp.employee_code})?
-            Hành động này không thể hoàn tác.
+            Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a <span className="font-semibold">{emp.name}</span> ({emp.employee_code})?
+            HÃ nh Ä‘á»™ng nÃ y khÃ´ng thá»ƒ hoÃ n tÃ¡c.
           </p>
           {error && (
             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{error}</p>
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Hủy</Button>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>Há»§y</Button>
           <Button variant="destructive" size="sm" onClick={handleDelete} disabled={isPending}>
-            {isPending ? 'Đang xóa…' : 'Xóa'}
+            {isPending ? 'Äang xÃ³aâ€¦' : 'XÃ³a'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -184,13 +184,13 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
   )
 }
 
-// ─── Employee form dialog ─────────────────────────────────────────────────────
+// â”€â”€â”€ Employee form dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null; open: boolean; onClose: () => void }) {
   const isEdit = !!emp
   const me = useAuthStore(s => s.user)
-  const fullEdit = isAdmin(me?.name)          // chỉ Admin được sửa toàn bộ hồ sơ
-  const skillOnly = isEdit && !fullEdit        // non-admin: chỉ chỉnh Kỹ năng / Vị trí
+  const fullEdit = isAdmin(me)          // chá»‰ Admin Ä‘Æ°á»£c sá»­a toÃ n bá»™ há»“ sÆ¡
+  const skillOnly = isEdit && !fullEdit        // non-admin: chá»‰ chá»‰nh Ká»¹ nÄƒng / Vá»‹ trÃ­
 
   const { data: departments = [] } = useDepartments()
   const [deptId, setDeptId]   = useState(emp?.department_id ?? '')
@@ -217,11 +217,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
 
   const selectedDeptName = departments.find(d => d.id === deptId)?.name ?? ''
   const selectedJtName   = jobTitles.find(jt => jt.id === jobTitleId)?.name ?? ''
-  const isDriverRole     = selectedDeptName === 'Đơn vị vận tải' && selectedJtName === 'Lái xe'
-  const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
+  const isDriverRole     = selectedDeptName === 'ÄÆ¡n vá»‹ váº­n táº£i' && selectedJtName === 'LÃ¡i xe'
+  const isDispatcherRole = selectedDeptName === 'ÄÆ¡n vá»‹ váº­n táº£i' && !!jobTitleId && !isDriverRole
 
-  // Chỉ gọi khi thực sự cần gán xe cho tài khoản Lái xe — trước đây các trường hợp còn lại
-  // truyền params `undefined` nên vẫn tải TOÀN BỘ đội xe (953 xe ≈ 439KB) mà không dùng đến.
+  // Chá»‰ gá»i khi thá»±c sá»± cáº§n gÃ¡n xe cho tÃ i khoáº£n LÃ¡i xe â€” trÆ°á»›c Ä‘Ã¢y cÃ¡c trÆ°á»ng há»£p cÃ²n láº¡i
+  // truyá»n params `undefined` nÃªn váº«n táº£i TOÃ€N Bá»˜ Ä‘á»™i xe (953 xe â‰ˆ 439KB) mÃ  khÃ´ng dÃ¹ng Ä‘áº¿n.
   const { data: allVehicles = [] } = useTmsVehicles(
     isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined,
     !!(isDriverRole && nccId && !isEdit),
@@ -236,7 +236,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     setJobTitleId('')
   }, [deptId])
 
-  // Khi tạo mới (không có emp), mặc định chọn tất cả loại kho
+  // Khi táº¡o má»›i (khÃ´ng cÃ³ emp), máº·c Ä‘á»‹nh chá»n táº¥t cáº£ loáº¡i kho
   useEffect(() => {
     if (!isEdit && !defaultCatApplied.current && categoryOptions.length > 0) {
       defaultCatApplied.current = true
@@ -275,7 +275,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       phone: phone || undefined,
       department_id: deptId || null,
       job_title_id: jobTitleId || null,
-      // Dọn giá trị ngoài danh mục hiện hành (taxonomy cũ NVL/Bao bì còn sót trong DB)
+      // Dá»n giÃ¡ trá»‹ ngoÃ i danh má»¥c hiá»‡n hÃ nh (taxonomy cÅ© NVL/Bao bÃ¬ cÃ²n sÃ³t trong DB)
       allowed_categories: categoryOptions.length > 0
         ? categories.filter(c => categoryOptions.includes(c))
         : categories,
@@ -284,7 +284,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
       ncc_id: (isDriverRole || isDispatcherRole) ? (nccId || null) : null,
       is_driver: isDriverRole,
     }
-    // Biển số khóa khi edit driver — không gửi employee_code (đổi qua TMS Settings)
+    // Biá»ƒn sá»‘ khÃ³a khi edit driver â€” khÃ´ng gá»­i employee_code (Ä‘á»•i qua TMS Settings)
     if (!lockDriverPlate) {
       payload.employee_code = isDriverRole ? (selectedVehicle?.license_plate ?? empCode) : empCode
     }
@@ -309,21 +309,21 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
     return (
       <FormSheet
         open={open} onClose={onClose}
-        title={<span className="flex items-center gap-2 text-green-700"><Check className="h-5 w-5" /> Tạo tài khoản thành công</span>}
-        footer={<Button onClick={onClose}>Đóng</Button>}
+        title={<span className="flex items-center gap-2 text-green-700"><Check className="h-5 w-5" /> Táº¡o tÃ i khoáº£n thÃ nh cÃ´ng</span>}
+        footer={<Button onClick={onClose}>ÄÃ³ng</Button>}
       >
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              Tài khoản <span className="font-semibold text-slate-800">{createdInfo.name}</span> đã được tạo.
-              Cấp thông tin đăng nhập dưới đây cho nhân viên:
+              TÃ i khoáº£n <span className="font-semibold text-slate-800">{createdInfo.name}</span> Ä‘Ã£ Ä‘Æ°á»£c táº¡o.
+              Cáº¥p thÃ´ng tin Ä‘Äƒng nháº­p dÆ°á»›i Ä‘Ã¢y cho nhÃ¢n viÃªn:
             </p>
             <div className="rounded-lg border border-slate-200 bg-slate-50 divide-y divide-slate-200">
               <div className="flex items-center justify-between px-3 py-2.5">
-                <span className="text-xs text-slate-500">Tên đăng nhập</span>
+                <span className="text-xs text-slate-500">TÃªn Ä‘Äƒng nháº­p</span>
                 <span className="text-sm font-mono font-semibold text-slate-800">{createdInfo.login}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2.5">
-                <span className="text-xs text-slate-500">Mật khẩu tạm</span>
+                <span className="text-xs text-slate-500">Máº­t kháº©u táº¡m</span>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-mono font-semibold text-slate-800 tracking-widest">
                     {createdInfo.password}
@@ -338,30 +338,30 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
               </div>
             </div>
             <p className="text-[11px] text-slate-400">
-              Nhân viên nên đổi mật khẩu sau lần đăng nhập đầu tiên.
+              NhÃ¢n viÃªn nÃªn Ä‘á»•i máº­t kháº©u sau láº§n Ä‘Äƒng nháº­p Ä‘áº§u tiÃªn.
             </p>
           </div>
       </FormSheet>
     )
   }
 
-  // Non-admin: chỉ cho chỉnh Kỹ năng / Vị trí, không sửa hồ sơ
+  // Non-admin: chá»‰ cho chá»‰nh Ká»¹ nÄƒng / Vá»‹ trÃ­, khÃ´ng sá»­a há»“ sÆ¡
   if (skillOnly && emp) {
     return (
       <FormSheet
         open={open} onClose={onClose}
-        title={`Kỹ năng / Vị trí — ${emp.name}`}
-        footer={<Button variant="outline" onClick={onClose}>Đóng</Button>}
+        title={`Ká»¹ nÄƒng / Vá»‹ trÃ­ â€” ${emp.name}`}
+        footer={<Button variant="outline" onClick={onClose}>ÄÃ³ng</Button>}
       >
           <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <p className="font-medium text-slate-800">{emp.name}</p>
-              <p className="text-xs text-slate-500">{emp.employee_code} · {emp.dept?.name ?? '—'} · {emp.job_title?.name ?? '—'}</p>
+              <p className="text-xs text-slate-500">{emp.employee_code} Â· {emp.dept?.name ?? 'â€”'} Â· {emp.job_title?.name ?? 'â€”'}</p>
             </div>
             {emp.job_title_id
               ? <EmployeeSkillSection employeeId={emp.id} />
-              : <p className="text-xs text-amber-600">Nhân viên chưa có chức danh — không thể gán kỹ năng.</p>}
-            <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa được hồ sơ. Bạn chỉ chỉnh Kỹ năng / Vị trí.</p>
+              : <p className="text-xs text-amber-600">NhÃ¢n viÃªn chÆ°a cÃ³ chá»©c danh â€” khÃ´ng thá»ƒ gÃ¡n ká»¹ nÄƒng.</p>}
+            <p className="text-[11px] text-slate-400">Chá»‰ Admin má»›i sá»­a Ä‘Æ°á»£c há»“ sÆ¡. Báº¡n chá»‰ chá»‰nh Ká»¹ nÄƒng / Vá»‹ trÃ­.</p>
           </div>
       </FormSheet>
     )
@@ -370,11 +370,11 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   return (
     <FormSheet
       open={open} onClose={onClose}
-      title={isEdit ? 'Sửa nhân viên' : 'Thêm nhân viên'}
+      title={isEdit ? 'Sá»­a nhÃ¢n viÃªn' : 'ThÃªm nhÃ¢n viÃªn'}
       footer={<>
-        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button variant="outline" onClick={onClose}>Huá»·</Button>
         <Button onClick={handleSubmit} disabled={isPending || !showRestOfForm || !name || (isDriverRole ? (!isEdit && !driverVehicleId) : !empCode)}>
-          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo nhân viên'}
+          {isPending ? 'Äang lÆ°uâ€¦' : isEdit ? 'LÆ°u' : 'Táº¡o nhÃ¢n viÃªn'}
         </Button>
       </>}
     >
@@ -383,40 +383,40 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
 
-          {/* Phòng ban + Chức danh — luôn hiển thị đầu tiên */}
+          {/* PhÃ²ng ban + Chá»©c danh â€” luÃ´n hiá»ƒn thá»‹ Ä‘áº§u tiÃªn */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs">Phòng ban</Label>
+              <Label className="text-xs">PhÃ²ng ban</Label>
               <SingleSelect
                 value={deptId || '__none__'}
                 onChange={v => setDeptId(v === '__none__' ? '' : v)}
-                placeholder="Chọn phòng ban"
-                searchPlaceholder="Tìm phòng ban…"
-                options={[{ value: '__none__', label: '— Không chọn —' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
+                placeholder="Chá»n phÃ²ng ban"
+                searchPlaceholder="TÃ¬m phÃ²ng banâ€¦"
+                options={[{ value: '__none__', label: 'â€” KhÃ´ng chá»n â€”' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Chức danh (template)</Label>
+              <Label className="text-xs">Chá»©c danh (template)</Label>
               <SingleSelect
                 value={jobTitleId || '__none__'}
                 onChange={v => setJobTitleId(v === '__none__' ? '' : v)}
                 disabled={!deptId && !jobTitleId}
-                placeholder="Chọn chức danh"
-                searchPlaceholder="Tìm chức danh…"
-                options={[{ value: '__none__', label: '— Không chọn —' }, ...jobTitles.map(jt => ({ value: jt.id, label: jt.name }))]}
+                placeholder="Chá»n chá»©c danh"
+                searchPlaceholder="TÃ¬m chá»©c danhâ€¦"
+                options={[{ value: '__none__', label: 'â€” KhÃ´ng chá»n â€”' }, ...jobTitles.map(jt => ({ value: jt.id, label: jt.name }))]}
               />
             </div>
           </div>
 
           {!isEdit && !showRestOfForm && (
-            <p className="text-xs text-center text-slate-400 py-2">Chọn phòng ban và chức danh để tiếp tục</p>
+            <p className="text-xs text-center text-slate-400 py-2">Chá»n phÃ²ng ban vÃ  chá»©c danh Ä‘á»ƒ tiáº¿p tá»¥c</p>
           )}
 
           {showRestOfForm && (
             <>
               {(isDriverRole || isDispatcherRole) && (
                 <div className="space-y-1">
-                  <Label className="text-xs">Công ty vận tải (ĐVVT) *</Label>
+                  <Label className="text-xs">CÃ´ng ty váº­n táº£i (ÄVVT) *</Label>
                   <SingleSelect
                     value={nccId || '__none__'}
                     onChange={v => {
@@ -425,23 +425,23 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       if (isDriverRole) setDriverVehicleId('')
                     }}
                     disabled={lockDriverPlate}
-                    placeholder="— Chọn công ty —"
-                    searchPlaceholder="Tìm ĐVVT…"
-                    options={[{ value: '__none__', label: '— Chọn công ty —' }, ...(transportCompanies as { id: string; name: string }[]).map(tc => ({ value: tc.id, label: tc.name }))]}
+                    placeholder="â€” Chá»n cÃ´ng ty â€”"
+                    searchPlaceholder="TÃ¬m ÄVVTâ€¦"
+                    options={[{ value: '__none__', label: 'â€” Chá»n cÃ´ng ty â€”' }, ...(transportCompanies as { id: string; name: string }[]).map(tc => ({ value: tc.id, label: tc.name }))]}
                   />
                   {lockDriverPlate && (
-                    <p className="text-[10px] text-slate-400">Đổi biển số qua Cài đặt TMS → thông tin sẽ tự cập nhật</p>
+                    <p className="text-[10px] text-slate-400">Äá»•i biá»ƒn sá»‘ qua CÃ i Ä‘áº·t TMS â†’ thÃ´ng tin sáº½ tá»± cáº­p nháº­t</p>
                   )}
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs">Họ tên *</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyễn Văn A" />
+                  <Label className="text-xs">Há» tÃªn *</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nguyá»…n VÄƒn A" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">{isDriverRole ? 'Biển số xe *' : 'Mã NV *'}</Label>
+                  <Label className="text-xs">{isDriverRole ? 'Biá»ƒn sá»‘ xe *' : 'MÃ£ NV *'}</Label>
                   {isDriverRole && lockDriverPlate ? (
                     <Input value={emp?.employee_code ?? ''} disabled className="bg-slate-50 cursor-not-allowed" />
                   ) : isDriverRole ? (
@@ -449,35 +449,35 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                       value={driverVehicleId || '__none__'}
                       onChange={v => setDriverVehicleId(v === '__none__' ? '' : v)}
                       disabled={!nccId}
-                      placeholder={nccId ? 'Chọn biển số xe' : 'Chọn ĐVVT trước'}
-                      searchPlaceholder="Tìm biển số…"
-                      options={[{ value: '__none__', label: '— Chọn biển số xe —' }, ...(allVehicles as TmsVehicle[]).map(v => ({ value: v.id, label: v.license_plate }))]}
+                      placeholder={nccId ? 'Chá»n biá»ƒn sá»‘ xe' : 'Chá»n ÄVVT trÆ°á»›c'}
+                      searchPlaceholder="TÃ¬m biá»ƒn sá»‘â€¦"
+                      options={[{ value: '__none__', label: 'â€” Chá»n biá»ƒn sá»‘ xe â€”' }, ...(allVehicles as TmsVehicle[]).map(v => ({ value: v.id, label: v.license_plate }))]}
                     />
                   ) : (
                     <Input value={empCode} onChange={e => setEmpCode(e.target.value)} placeholder="NV001" />
                   )}
                   {lockDriverPlate && (
-                    <p className="text-[10px] text-slate-400">Đổi qua Cài đặt TMS</p>
+                    <p className="text-[10px] text-slate-400">Äá»•i qua CÃ i Ä‘áº·t TMS</p>
                   )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs">Tên đăng nhập</Label>
+                  <Label className="text-xs">TÃªn Ä‘Äƒng nháº­p</Label>
                   <Input type="text" value={email} onChange={e => setEmail(e.target.value)}
-                    placeholder="Email hoặc tên bất kỳ"
+                    placeholder="Email hoáº·c tÃªn báº¥t ká»³"
                     disabled={lockIdentity} className={lockIdentity ? 'bg-slate-50 cursor-not-allowed' : ''} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">SĐT</Label>
+                  <Label className="text-xs">SÄT</Label>
                   <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" />
                 </div>
               </div>
 
               <div className="rounded-lg border border-slate-200 p-3 space-y-3 bg-slate-50">
                 <div className="space-y-1">
-                  <Label className="text-xs">Loại hàng được phép</Label>
+                  <Label className="text-xs">Loáº¡i hÃ ng Ä‘Æ°á»£c phÃ©p</Label>
                   <div className="flex gap-2 flex-wrap">
                     {categoryOptions.map(cat => (
                       <button key={cat} type="button" onClick={() => toggleCategory(cat)}
@@ -492,21 +492,21 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">Phạm vi kho</Label>
+                  <Label className="text-xs">Pháº¡m vi kho</Label>
                   <SingleSelect
                     value={scope}
                     onChange={v => setScope(v as 'NATIONAL'|'ASSIGNED')}
                     searchable={false}
                     options={[
-                      { value: 'NATIONAL', label: 'Toàn quốc (tất cả kho)' },
-                      { value: 'ASSIGNED', label: 'Kho được chỉ định' },
+                      { value: 'NATIONAL', label: 'ToÃ n quá»‘c (táº¥t cáº£ kho)' },
+                      { value: 'ASSIGNED', label: 'Kho Ä‘Æ°á»£c chá»‰ Ä‘á»‹nh' },
                     ]}
                   />
                 </div>
 
                 {scope === 'ASSIGNED' && (
                   <div className="space-y-1">
-                    <Label className="text-xs">Kho được phép</Label>
+                    <Label className="text-xs">Kho Ä‘Æ°á»£c phÃ©p</Label>
                     <WarehouseMultiSelect
                       warehouses={warehouses as { id: string; code: string; name: string }[]}
                       selected={warehouseIds}
@@ -529,7 +529,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
                   <input id="is-active" type="checkbox" checked={isActive}
                     onChange={e => setIsActive(e.target.checked)}
                     className="h-4 w-4 rounded accent-blue-600" />
-                  <Label htmlFor="is-active" className="text-sm cursor-pointer">Tài khoản đang hoạt động</Label>
+                  <Label htmlFor="is-active" className="text-sm cursor-pointer">TÃ i khoáº£n Ä‘ang hoáº¡t Ä‘á»™ng</Label>
                 </div>
               )}
             </>
@@ -539,7 +539,7 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   )
 }
 
-// ─── Department form dialog ───────────────────────────────────────────────────
+// â”€â”€â”€ Department form dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null; open: boolean; onClose: () => void }) {
   const isEdit = !!dept
@@ -565,11 +565,11 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
   return (
     <FormSheet
       open={open} onClose={onClose}
-      title={isEdit ? 'Sửa phòng ban' : 'Thêm phòng ban'}
+      title={isEdit ? 'Sá»­a phÃ²ng ban' : 'ThÃªm phÃ²ng ban'}
       footer={<>
-        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button variant="outline" onClick={onClose}>Huá»·</Button>
         <Button onClick={handleSubmit} disabled={isPending || !name || !code}>
-          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          {isPending ? 'Äang lÆ°uâ€¦' : isEdit ? 'LÆ°u' : 'Táº¡o'}
         </Button>
       </>}
     >
@@ -578,19 +578,19 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
           <div className="space-y-1">
-            <Label className="text-xs">Tên phòng ban *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Kho, Bảo vệ, QA…" />
+            <Label className="text-xs">TÃªn phÃ²ng ban *</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Kho, Báº£o vá»‡, QAâ€¦" />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Mã *</Label>
-            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="KHO, BV, QA…" />
+            <Label className="text-xs">MÃ£ *</Label>
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="KHO, BV, QAâ€¦" />
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="dept-active" type="checkbox" checked={isActive}
                 onChange={e => setIsActive(e.target.checked)}
                 className="h-4 w-4 rounded accent-blue-600" />
-              <Label htmlFor="dept-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+              <Label htmlFor="dept-active" className="text-sm cursor-pointer">Äang hoáº¡t Ä‘á»™ng</Label>
             </div>
           )}
         </div>
@@ -598,13 +598,13 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
   )
 }
 
-// ─── Job title form dialog ────────────────────────────────────────────────────
+// â”€â”€â”€ Job title form dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: boolean; onClose: () => void }) {
   const isEdit = !!jt
   const me = useAuthStore(s => s.user)
-  const fullEdit = isAdmin(me?.name)            // chỉ Admin sửa tên/phòng ban/phân quyền
-  const skillOnly = isEdit && !fullEdit          // non-admin: chỉ Danh mục Vị trí/Skill (chức danh cấp dưới)
+  const fullEdit = isAdmin(me)            // chá»‰ Admin sá»­a tÃªn/phÃ²ng ban/phÃ¢n quyá»n
+  const skillOnly = isEdit && !fullEdit          // non-admin: chá»‰ Danh má»¥c Vá»‹ trÃ­/Skill (chá»©c danh cáº¥p dÆ°á»›i)
   const { data: departments = [] } = useDepartments()
 
   const [name,       setName]       = useState(jt?.name          ?? '')
@@ -645,21 +645,21 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     }
   }
 
-  // Non-admin: chỉ cho sửa Danh mục Vị trí/Skill (BE đã chặn chỉ chức danh cấp dưới)
+  // Non-admin: chá»‰ cho sá»­a Danh má»¥c Vá»‹ trÃ­/Skill (BE Ä‘Ã£ cháº·n chá»‰ chá»©c danh cáº¥p dÆ°á»›i)
   if (skillOnly && jt) {
     return (
       <FormSheet
         open={open} onClose={onClose}
-        title={`Vị trí / Skill — ${jt.name}`}
-        footer={<Button variant="outline" onClick={onClose}>Đóng</Button>}
+        title={`Vá»‹ trÃ­ / Skill â€” ${jt.name}`}
+        footer={<Button variant="outline" onClick={onClose}>ÄÃ³ng</Button>}
       >
           <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <p className="font-medium text-slate-800">{jt.name}</p>
-              <p className="text-xs text-slate-500">{jt.department?.name ?? '—'}</p>
+              <p className="text-xs text-slate-500">{jt.department?.name ?? 'â€”'}</p>
             </div>
             <JobTitleSkillSection jobTitleId={jt.id} />
-            <p className="text-[11px] text-slate-400">Chỉ Admin mới sửa tên/phòng ban/phân quyền. Bạn chỉ chỉnh Danh mục Vị trí/Skill của chức danh cấp dưới.</p>
+            <p className="text-[11px] text-slate-400">Chá»‰ Admin má»›i sá»­a tÃªn/phÃ²ng ban/phÃ¢n quyá»n. Báº¡n chá»‰ chá»‰nh Danh má»¥c Vá»‹ trÃ­/Skill cá»§a chá»©c danh cáº¥p dÆ°á»›i.</p>
           </div>
       </FormSheet>
     )
@@ -668,11 +668,11 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   return (
     <FormSheet
       open={open} onClose={onClose}
-      title={isEdit ? 'Sửa chức danh' : 'Thêm chức danh'}
+      title={isEdit ? 'Sá»­a chá»©c danh' : 'ThÃªm chá»©c danh'}
       footer={<>
-        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button variant="outline" onClick={onClose}>Huá»·</Button>
         <Button onClick={handleSubmit} disabled={isPending || !name || !deptId}>
-          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          {isPending ? 'Äang lÆ°uâ€¦' : isEdit ? 'LÆ°u' : 'Táº¡o'}
         </Button>
       </>}
     >
@@ -681,28 +681,28 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{apiError}</div>
           )}
           <div className="space-y-1">
-            <Label className="text-xs">Tên chức danh *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Thủ kho, Lái xe nâng…" />
+            <Label className="text-xs">TÃªn chá»©c danh *</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Thá»§ kho, LÃ¡i xe nÃ¢ngâ€¦" />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Phòng ban *</Label>
+            <Label className="text-xs">PhÃ²ng ban *</Label>
             <SingleSelect
               value={deptId || '__none__'}
               onChange={v => setDeptId(v === '__none__' ? '' : v)}
-              placeholder="Chọn phòng ban"
-              searchPlaceholder="Tìm phòng ban…"
-              options={[{ value: '__none__', label: '— Chọn phòng ban —' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
+              placeholder="Chá»n phÃ²ng ban"
+              searchPlaceholder="TÃ¬m phÃ²ng banâ€¦"
+              options={[{ value: '__none__', label: 'â€” Chá»n phÃ²ng ban â€”' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
             />
           </div>
 
           <div className="space-y-2">
             <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
-              <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền module
+              <ShieldCheck className="h-3.5 w-3.5" /> PhÃ¢n quyá»n module
             </p>
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
               {PERMISSION_PAGES.map(({ page, modules }) => {
                 const mods = modules.map(k => [k, MODULES[k]] as [ModuleKey, typeof MODULES[ModuleKey]])
-                const multi = mods.length > 1                                            // trang nhiều tab
+                const multi = mods.length > 1                                            // trang nhiá»u tab
                 const pageHasAny = mods.some(([k]) => (modulePerms[k]?.length ?? 0) > 0)
                 const isAll = mods.every(([k, d]) => Object.keys(d.actions).every(a => (modulePerms[k] ?? []).includes(a)))
                 return (
@@ -724,7 +724,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                             : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                         }`}
                       >
-                        Tất cả
+                        Táº¥t cáº£
                       </button>
                     </div>
                     <div className={multi ? 'space-y-2' : ''}>
@@ -753,9 +753,9 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                             })}
                           </div>
                         )
-                        // Trang đơn (1 module): hiện thẳng lưới action.
+                        // Trang Ä‘Æ¡n (1 module): hiá»‡n tháº³ng lÆ°á»›i action.
                         if (!multi) return <div key={modKey}>{actionsGrid}</div>
-                        // Trang nhiều tab: mỗi tab = card riêng có băng tiêu đề (accent sky) để tách bạch.
+                        // Trang nhiá»u tab: má»—i tab = card riÃªng cÃ³ bÄƒng tiÃªu Ä‘á» (accent sky) Ä‘á»ƒ tÃ¡ch báº¡ch.
                         return (
                           <div key={modKey} className="rounded-md border border-slate-200 bg-white overflow-hidden">
                             <div className="flex items-center justify-between border-l-[3px] border-sky-500 bg-slate-100 px-2 py-1">
@@ -767,7 +767,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                                   tabAll ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'
                                 }`}
                               >
-                                Tất cả
+                                Táº¥t cáº£
                               </button>
                             </div>
                             <div className="px-2.5 py-2">{actionsGrid}</div>
@@ -792,7 +792,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               <input id="jt-active" type="checkbox" checked={isActive}
                 onChange={e => setIsActive(e.target.checked)}
                 className="h-4 w-4 rounded accent-blue-600" />
-              <Label htmlFor="jt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
+              <Label htmlFor="jt-active" className="text-sm cursor-pointer">Äang hoáº¡t Ä‘á»™ng</Label>
             </div>
           )}
         </div>
@@ -800,7 +800,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   )
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Main page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function UserManagement() {
   const user = useAuthStore(s => s.user)
@@ -810,13 +810,13 @@ export default function UserManagement() {
   const canEditEmp   = can(perms, 'user_admin', 'edit')
   const canSetPwd    = can(perms, 'user_admin', 'set_password')
   const canDeleteEmp = can(perms, 'user_admin', 'delete')
-  // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
-  // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
-  const isAdminUser    = isAdmin(user?.name)
-  // "Quản lý skill" = có bất kỳ quyền ghi danh mục Vị trí/Skill (create/edit/delete)
+  // Cáº¥u trÃºc phÃ²ng ban/chá»©c danh & phÃ¢n quyá»n: chá»‰ Admin. Danh má»¥c Vá»‹ trÃ­/Skill: Admin hoáº·c ngÆ°á»i cÃ³
+  // work_skill.manage cho chá»©c danh Cáº¤P DÆ¯á»šI mÃ¬nh (theo sÆ¡ Ä‘á»“ chá»©c danh).
+  const isAdminUser    = isAdmin(user)
+  // "Quáº£n lÃ½ skill" = cÃ³ báº¥t ká»³ quyá»n ghi danh má»¥c Vá»‹ trÃ­/Skill (create/edit/delete)
   const canManageSkill = can(perms, 'work_skill', 'create') || can(perms, 'work_skill', 'edit') || can(perms, 'work_skill', 'delete')
   const { data: allJts = [] } = useJobTitles()
-  const { data: allWarehouses = [] } = useWarehouses()   // ô chọn Kho lấy từ danh mục gốc
+  const { data: allWarehouses = [] } = useWarehouses()   // Ã´ chá»n Kho láº¥y tá»« danh má»¥c gá»‘c
   const subordinateJtIds = (() => {
     const set = new Set<string>()
     const myJt = user?.job_title_id
@@ -840,7 +840,7 @@ export default function UserManagement() {
   const setFilterDeptJt = (v: string) => setUserAdmin({ jtDept: v })
   const [dense, setDense] = useState(() => localStorage.getItem('user_admin_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('user_admin_density', d ? '0' : '1'); return !d })
-  // Cột tab Nhân viên: mỗi giá trị 1 cột (không xếp chồng 2 dòng) — gọn, không wrap
+  // Cá»™t tab NhÃ¢n viÃªn: má»—i giÃ¡ trá»‹ 1 cá»™t (khÃ´ng xáº¿p chá»“ng 2 dÃ²ng) â€” gá»n, khÃ´ng wrap
   const EMP_COL_DEFAULTS = [170, 110, 150, 110, 130, 140, 150, 180, 95, 90]
   const { widths: empColW, startResize: empStartResize, totalWidth: empTotalWidth } = useColumnResize('user_admin_col_widths', EMP_COL_DEFAULTS)
   const empViewSnapshot = { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter }
@@ -864,10 +864,10 @@ export default function UserManagement() {
 
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
-  // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
+  // Tab Chá»©c danh: chá»‰ hiá»‡n chá»©c danh Ä‘Æ°á»£c phÃ©p sá»­a (Admin: táº¥t cáº£ Â· non-admin: chá»‰ cáº¥p dÆ°á»›i mÃ¬nh)
   const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
-  // Phân trang SERVER + MỌI bộ lọc xuống server. Đo thật 28/07: trả cả bảng thì 3.000 nhân sự
-  // = 2.495KB/lần gọi, và lọc trên tập đã tải sau phân trang = lọc trong 1 trang (ra thiếu).
+  // PhÃ¢n trang SERVER + Má»ŒI bá»™ lá»c xuá»‘ng server. Äo tháº­t 28/07: tráº£ cáº£ báº£ng thÃ¬ 3.000 nhÃ¢n sá»±
+  // = 2.495KB/láº§n gá»i, vÃ  lá»c trÃªn táº­p Ä‘Ã£ táº£i sau phÃ¢n trang = lá»c trong 1 trang (ra thiáº¿u).
   const { data: empPage, isLoading, isError, error } = useEmployeesPaged({
     department_id:   filterDept === '__all__' ? undefined : filterDept,
     job_title_id:    filterJt   === '__all__' ? undefined : filterJt,
@@ -881,35 +881,35 @@ export default function UserManagement() {
   const employees   = empPage?.rows ?? []
   const empTotal    = empPage?.total ?? 0
   const empPages    = Math.max(1, Math.ceil(empTotal / ua.pageSize))
-  // Ô chọn lấy từ DANH MỤC gốc (chức danh / kho), KHÔNG dẫn xuất từ trang đang xem — sau khi
-  // phân trang thì tập đang tải chỉ còn 100 dòng, dẫn xuất ra là mất phần lớn lựa chọn.
+  // Ã” chá»n láº¥y tá»« DANH Má»¤C gá»‘c (chá»©c danh / kho), KHÃ”NG dáº«n xuáº¥t tá»« trang Ä‘ang xem â€” sau khi
+  // phÃ¢n trang thÃ¬ táº­p Ä‘ang táº£i chá»‰ cÃ²n 100 dÃ²ng, dáº«n xuáº¥t ra lÃ  máº¥t pháº§n lá»›n lá»±a chá»n.
   const jtOptions = allJts.map(j => ({ id: j.id, label: j.name }))
     .sort((a, b) => a.label.localeCompare(b.label))
   const whOptions = (allWarehouses as { id: string; name: string; code?: string }[])
     .map(w => ({ id: w.id, label: w.name, sub: w.code }))
     .sort((a, b) => a.label.localeCompare(b.label))
 
-  // Filter danh sách nhân viên — FilterBar chuẩn (Kho · Phòng ban · Chức danh · Tình trạng)
+  // Filter danh sÃ¡ch nhÃ¢n viÃªn â€” FilterBar chuáº©n (Kho Â· PhÃ²ng ban Â· Chá»©c danh Â· TÃ¬nh tráº¡ng)
   const empFilterDefs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Táº¥t cáº£ kho',
       value: filterWh === '__all__' ? '' : filterWh, onChange: v => { setFilterWh(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: whOptions.map(o => ({ value: o.id, label: o.label })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
+    { key: 'dept', label: 'PhÃ²ng ban', type: 'single', allLabel: 'Táº¥t cáº£ phÃ²ng ban',
       value: filterDept === '__all__' ? '' : filterDept,
       onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__'); setUserAdmin({ page: 1 }) },
       options: departments.map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chá»©c danh', type: 'single', allLabel: 'Táº¥t cáº£ chá»©c danh',
       value: filterJt === '__all__' ? '' : filterJt, onChange: v => { setFilterJt(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: jtOptions.map(o => ({ value: o.id, label: o.label })) },
-    { key: 'status', label: 'Tình trạng', type: 'single', allLabel: 'Đang hoạt động',
+    { key: 'status', label: 'TÃ¬nh tráº¡ng', type: 'single', allLabel: 'Äang hoáº¡t Ä‘á»™ng',
       value: statusFilter === 'active' ? '' : statusFilter,
       onChange: v => { setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'); setUserAdmin({ page: 1 }) },
-      options: [{ value: 'hidden', label: 'Đang ẩn' }, { value: 'all', label: 'Toàn bộ' }] },
+      options: [{ value: 'hidden', label: 'Äang áº©n' }, { value: 'all', label: 'ToÃ n bá»™' }] },
   ]
 
-  // Filter tab Chức danh — FilterBar chuẩn (Phòng ban), state lưu store thay cho useState
+  // Filter tab Chá»©c danh â€” FilterBar chuáº©n (PhÃ²ng ban), state lÆ°u store thay cho useState
   const jtFilterDefs: FilterDef[] = [
-    { key: 'jtDept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
+    { key: 'jtDept', label: 'PhÃ²ng ban', type: 'single', allLabel: 'Táº¥t cáº£ phÃ²ng ban',
       value: filterDeptJt === '__all__' ? '' : filterDeptJt, onChange: v => setFilterDeptJt(v || '__all__'),
       options: departments.map(d => ({ value: d.id, label: d.name })) },
   ]
@@ -917,42 +917,42 @@ export default function UserManagement() {
   return (
     <div className="flex flex-col h-full p-2 gap-1.5 max-w-7xl mx-auto w-full">
       <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
-        {/* Tiêu đề + tab trên CÙNG 1 hàng để tối ưu chiều cao, dành đất cho bảng */}
+        {/* TiÃªu Ä‘á» + tab trÃªn CÃ™NG 1 hÃ ng Ä‘á»ƒ tá»‘i Æ°u chiá»u cao, dÃ nh Ä‘áº¥t cho báº£ng */}
         <div className="shrink-0 flex items-center gap-3 mb-1.5">
           <h1 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
             <User2 className="h-4 w-4 text-slate-500" />
-            <span className="hidden md:inline">Quản lý nhân sự &amp; phân quyền</span>
+            <span className="hidden md:inline">Quáº£n lÃ½ nhÃ¢n sá»± &amp; phÃ¢n quyá»n</span>
           </h1>
           <TabsList className="shrink-0">
             <TabsTrigger value="employees" className="gap-1.5">
-              <User2 className="h-3.5 w-3.5" /> Nhân viên
+              <User2 className="h-3.5 w-3.5" /> NhÃ¢n viÃªn
             </TabsTrigger>
             <TabsTrigger value="departments" className="gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Phòng ban
+              <Building2 className="h-3.5 w-3.5" /> PhÃ²ng ban
             </TabsTrigger>
             <TabsTrigger value="job-titles" className="gap-1.5">
-              <Briefcase className="h-3.5 w-3.5" /> Chức danh
+              <Briefcase className="h-3.5 w-3.5" /> Chá»©c danh
             </TabsTrigger>
           </TabsList>
         </div>
 
-        {/* ── Tab: Nhân viên ── */}
+        {/* â”€â”€ Tab: NhÃ¢n viÃªn â”€â”€ */}
         <TabsContent value="employees" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
-            <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên, mã, đăng nhập…" className="flex-1 min-w-[200px]" />
+            <SearchInput value={search} onChange={setSearch} placeholder="TÃ¬m tÃªn, mÃ£, Ä‘Äƒng nháº­pâ€¦" className="flex-1 min-w-[200px]" />
             <FilterSheetButton defs={empFilterDefs} className="sm:hidden" />
-            {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+            {/* Mobile: SavedViews + action GOM 1 hÃ ng (PDA); desktop sm:contents â†’ nhÆ° cÅ© */}
             <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <SavedViews module="user_admin" currentFilters={empViewSnapshot} activeId={empActiveViewId}
               onApply={(fl) => setUserAdmin(fl as Partial<typeof ua>)} />
             <button type="button" onClick={toggleDense}
               className="hidden sm:inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
-              title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+              title={dense ? 'Äang: dÃ y Â· báº¥m Ä‘á»ƒ thoÃ¡ng' : 'Äang: thoÃ¡ng Â· báº¥m Ä‘á»ƒ dÃ y'}>
               {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
             </button>
             <ActionCluster className="shrink-0" mobileInline items={[
               ...(canCreateEmp ? [{
-                key: 'create', icon: Plus, label: 'Thêm nhân viên', tip: 'Tạo tài khoản nhân viên mới',
+                key: 'create', icon: Plus, label: 'ThÃªm nhÃ¢n viÃªn', tip: 'Táº¡o tÃ i khoáº£n nhÃ¢n viÃªn má»›i',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingEmp(null); setShowEmpDlg(true) },
               } satisfies ActionItem] : []),
@@ -961,30 +961,30 @@ export default function UserManagement() {
           </div>
           <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
-          {/* 3 ô đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm ở FE là đếm trang đang xem */}
+          {/* 3 Ã´ Ä‘áº¿m trÃªn TOÃ€N Bá»˜ bá»™ lá»c (BE tráº£) â€” Ä‘áº¿m á»Ÿ FE lÃ  Ä‘áº¿m trang Ä‘ang xem */}
           <SummaryBand compact className="shrink-0 rounded-lg" tiles={[
-            { label: 'Đang hoạt động', value: empPage?.active ?? 0, accent: true },
-            { label: 'Tạm dừng', value: empPage?.paused ?? 0 },
-            { label: 'Đã ẩn', value: empPage?.hidden ?? 0 },
+            { label: 'Äang hoáº¡t Ä‘á»™ng', value: empPage?.active ?? 0, accent: true },
+            { label: 'Táº¡m dá»«ng', value: empPage?.paused ?? 0 },
+            { label: 'ÄÃ£ áº©n', value: empPage?.hidden ?? 0 },
           ]} />
 
           {isError && (
             <div className="shrink-0 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-              Lỗi tải dữ liệu: {(error as { message?: string })?.message ?? 'Không kết nối được backend'}
+              Lá»—i táº£i dá»¯ liá»‡u: {(error as { message?: string })?.message ?? 'KhÃ´ng káº¿t ná»‘i Ä‘Æ°á»£c backend'}
             </div>
           )}
 
           <div className="flex gap-3 items-stretch flex-1 min-h-0">
             <Card className="flex-1 min-w-0 flex flex-col">
               {isLoading ? (
-                <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+                <div className="p-8 text-center text-sm text-slate-400">Äang táº£iâ€¦</div>
               ) : employees.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <User2 className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm">Chưa có nhân viên nào</p>
+                  <p className="text-sm">ChÆ°a cÃ³ nhÃ¢n viÃªn nÃ o</p>
                   {canCreateEmp && (
                     <Button size="sm" variant="outline" onClick={() => { setEditingEmp(null); setShowEmpDlg(true) }}>
-                      <Plus className="h-4 w-4 mr-1" /> Thêm nhân viên đầu tiên
+                      <Plus className="h-4 w-4 mr-1" /> ThÃªm nhÃ¢n viÃªn Ä‘áº§u tiÃªn
                     </Button>
                   )}
                 </div>
@@ -994,12 +994,12 @@ export default function UserManagement() {
                     <colgroup>{empColW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
                     <TableHeader>
                       <TableRow>
-                        {['Họ tên', 'Mã NV', 'Đăng nhập', 'SĐT', 'Phòng ban', 'Chức danh', 'Loại hàng', 'Kho', 'Trạng thái', ''].map((lbl, i) => (
+                        {['Há» tÃªn', 'MÃ£ NV', 'ÄÄƒng nháº­p', 'SÄT', 'PhÃ²ng ban', 'Chá»©c danh', 'Loáº¡i hÃ ng', 'Kho', 'Tráº¡ng thÃ¡i', ''].map((lbl, i) => (
                           <TableHead key={i} className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                             {lbl}
                             {i < 9 && (
                               <span onPointerDown={e => empStartResize(i, e)} onClick={e => e.stopPropagation()}
-                                className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                                className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="KÃ©o Ä‘á»ƒ chá»‰nh Ä‘á»™ rá»™ng cá»™t" />
                             )}
                           </TableHead>
                         ))}
@@ -1018,24 +1018,24 @@ export default function UserManagement() {
                             <span className={`font-medium block truncate ${isDeleted ? 'line-through text-slate-400' : 'text-slate-800'}`} title={emp.name}>{emp.name}</span>
                           </TableCell>
                           <TableCell className="px-2 font-mono font-semibold text-slate-600 truncate" title={emp.employee_code}>{emp.employee_code}</TableCell>
-                          <TableCell className="px-2 text-slate-600 truncate" title={emp.email ?? '—'}>{emp.email ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-2 text-slate-600 truncate" title={emp.phone ?? '—'}>{emp.phone ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-2 text-slate-700 truncate" title={emp.dept?.name ?? '—'}>{emp.dept?.name ?? <span className="text-slate-300">—</span>}</TableCell>
-                          <TableCell className="px-2 text-slate-600 truncate" title={emp.job_title?.name ?? '—'}>{emp.job_title?.name ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.email ?? 'â€”'}>{emp.email ?? <span className="text-slate-300">â€”</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.phone ?? 'â€”'}>{emp.phone ?? <span className="text-slate-300">â€”</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-700 truncate" title={emp.dept?.name ?? 'â€”'}>{emp.dept?.name ?? <span className="text-slate-300">â€”</span>}</TableCell>
+                          <TableCell className="px-2 text-slate-600 truncate" title={emp.job_title?.name ?? 'â€”'}>{emp.job_title?.name ?? <span className="text-slate-300">â€”</span>}</TableCell>
                           <TableCell className="px-2" title={cats.join(', ')}>
                             <div className="flex gap-1 overflow-hidden">
-                              {cats.length === 0 ? <span className="text-slate-300">—</span> : cats.map(cat => (
+                              {cats.length === 0 ? <span className="text-slate-300">â€”</span> : cats.map(cat => (
                                 <span key={cat} className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium
                                   ${whTypeBadgeCls(cat, whTypeMeta)}`}>{cat}</span>
                               ))}
                             </div>
                           </TableCell>
                           <TableCell className="px-2"
-                            title={emp.warehouse_scope === 'NATIONAL' ? 'Toàn quốc' : whList.map(wa => wa.warehouse?.name ?? wa.warehouse_id).join(', ')}>
+                            title={emp.warehouse_scope === 'NATIONAL' ? 'ToÃ n quá»‘c' : whList.map(wa => wa.warehouse?.name ?? wa.warehouse_id).join(', ')}>
                             {emp.warehouse_scope === 'NATIONAL' ? (
-                              <span className="text-blue-600 font-medium">Toàn quốc</span>
+                              <span className="text-blue-600 font-medium">ToÃ n quá»‘c</span>
                             ) : whList.length === 0 ? (
-                              <span className="text-amber-600">Chưa gán kho</span>
+                              <span className="text-amber-600">ChÆ°a gÃ¡n kho</span>
                             ) : (
                               <div className="flex gap-1 overflow-hidden">
                                 {whList.map(wa => (
@@ -1048,17 +1048,17 @@ export default function UserManagement() {
                           </TableCell>
                           <TableCell className="px-2">
                             {isDeleted ? (
-                              <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">Đã ẩn</Badge>
+                              <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">ÄÃ£ áº©n</Badge>
                             ) : (
                               <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[9px]">
-                                {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                                {emp.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}
                               </Badge>
                             )}
                           </TableCell>
                           <TableCell className="px-2 py-2">
                             {isDeleted ? (
                               canDeleteEmp && (
-                                <button title="Khôi phục"
+                                <button title="KhÃ´i phá»¥c"
                                   disabled={restoring}
                                   className="text-slate-400 hover:text-green-600 transition-colors p-1 disabled:opacity-50"
                                   onClick={e => { e.stopPropagation(); restore(emp.id) }}>
@@ -1068,21 +1068,21 @@ export default function UserManagement() {
                             ) : (
                               <div className="flex items-center gap-1">
                                 {canSetPwd && (
-                                  <button title="Đặt mật khẩu"
+                                  <button title="Äáº·t máº­t kháº©u"
                                     className="text-slate-400 hover:text-amber-500 transition-colors p-1"
                                     onClick={e => { e.stopPropagation(); setPwdEmp(emp) }}>
                                     <KeyRound className="h-3.5 w-3.5" />
                                   </button>
                                 )}
                                 {canEditEmp && (
-                                  <button title="Sửa thông tin"
+                                  <button title="Sá»­a thÃ´ng tin"
                                     className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                     onClick={e => { e.stopPropagation(); setEditingEmp(emp); setShowEmpDlg(true) }}>
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
                                 )}
                                 {canDeleteEmp && emp.id !== user?.id && (
-                                  <button title="Xóa nhân viên"
+                                  <button title="XÃ³a nhÃ¢n viÃªn"
                                     className="text-slate-400 hover:text-red-500 transition-colors p-1"
                                     onClick={e => { e.stopPropagation(); setConfirmDeleteEmp(emp) }}>
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -1099,7 +1099,7 @@ export default function UserManagement() {
                   <PagerNav page={ua.page} totalPages={empPages} onPage={p => { setUserAdmin({ page: p }); setSelectedEmp(null) }} />
                 </div>
               )}
-              <ListFooter page={ua.page} pageSize={ua.pageSize} total={empTotal} unit="nhân viên"
+              <ListFooter page={ua.page} pageSize={ua.pageSize} total={empTotal} unit="nhÃ¢n viÃªn"
                 onPageSize={n => setUserAdmin({ pageSize: n, page: 1 })} />
             </Card>
             {selectedEmp && (
@@ -1108,30 +1108,30 @@ export default function UserManagement() {
                   <span className="font-semibold text-slate-700">{selectedEmp.name}</span>
                   <button onClick={() => setSelectedEmp(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-                {/* Thao tác nhanh — khỏi phải kéo ngang bảng để thấy cột action */}
+                {/* Thao tÃ¡c nhanh â€” khá»i pháº£i kÃ©o ngang báº£ng Ä‘á»ƒ tháº¥y cá»™t action */}
                 {(selectedEmp.deleted_at
                   ? canDeleteEmp
                   : (canSetPwd || canEditEmp || (canDeleteEmp && selectedEmp.id !== user?.id))) && (
                   <div className="border-b pb-2">
                     <ActionCluster className="justify-start" items={selectedEmp.deleted_at
                       ? (canDeleteEmp ? [{
-                          key: 'restore', icon: RotateCcw, label: 'Khôi phục', tip: 'Khôi phục nhân viên đã ẩn về danh sách',
+                          key: 'restore', icon: RotateCcw, label: 'KhÃ´i phá»¥c', tip: 'KhÃ´i phá»¥c nhÃ¢n viÃªn Ä‘Ã£ áº©n vá» danh sÃ¡ch',
                           primary: true, busy: restoring,
                           className: 'border-green-300 text-green-700 hover:bg-green-50',
                           onClick: () => restore(selectedEmp.id),
                         } satisfies ActionItem] : [])
                       : [
                           ...(canEditEmp ? [{
-                            key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa thông tin nhân viên',
+                            key: 'edit', icon: Pencil, label: 'Sá»­a', tip: 'Sá»­a thÃ´ng tin nhÃ¢n viÃªn',
                             primary: true, variant: 'default',
                             onClick: () => { setEditingEmp(selectedEmp); setShowEmpDlg(true) },
                           } satisfies ActionItem] : []),
                           ...(canSetPwd ? [{
-                            key: 'password', icon: KeyRound, label: 'Mật khẩu', tip: 'Đặt mật khẩu đăng nhập mới',
+                            key: 'password', icon: KeyRound, label: 'Máº­t kháº©u', tip: 'Äáº·t máº­t kháº©u Ä‘Äƒng nháº­p má»›i',
                             onClick: () => setPwdEmp(selectedEmp),
                           } satisfies ActionItem] : []),
                           ...(canDeleteEmp && selectedEmp.id !== user?.id ? [{
-                            key: 'delete', icon: Trash2, label: 'Xóa', tip: 'Xóa nhân viên (không hoàn tác được)',
+                            key: 'delete', icon: Trash2, label: 'XÃ³a', tip: 'XÃ³a nhÃ¢n viÃªn (khÃ´ng hoÃ n tÃ¡c Ä‘Æ°á»£c)',
                             danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50',
                             onClick: () => setConfirmDeleteEmp(selectedEmp),
                           } satisfies ActionItem] : []),
@@ -1139,31 +1139,31 @@ export default function UserManagement() {
                     } />
                   </div>
                 )}
-                <div><span className="text-slate-400">Mã NV:</span> <span className="font-mono font-medium">{selectedEmp.employee_code}</span></div>
-                <div><span className="text-slate-400">Đăng nhập:</span> <span className="font-medium">{selectedEmp.email ?? '—'}</span></div>
-                <div><span className="text-slate-400">SĐT:</span> <span className="font-medium">{selectedEmp.phone ?? '—'}</span></div>
-                <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedEmp.dept?.name ?? '—'}</span></div>
-                <div><span className="text-slate-400">Chức danh:</span> <span className="font-medium">{selectedEmp.job_title?.name ?? '—'}</span></div>
-                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedEmp.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div><span className="text-slate-400">MÃ£ NV:</span> <span className="font-mono font-medium">{selectedEmp.employee_code}</span></div>
+                <div><span className="text-slate-400">ÄÄƒng nháº­p:</span> <span className="font-medium">{selectedEmp.email ?? 'â€”'}</span></div>
+                <div><span className="text-slate-400">SÄT:</span> <span className="font-medium">{selectedEmp.phone ?? 'â€”'}</span></div>
+                <div><span className="text-slate-400">PhÃ²ng ban:</span> <span className="font-medium">{selectedEmp.dept?.name ?? 'â€”'}</span></div>
+                <div><span className="text-slate-400">Chá»©c danh:</span> <span className="font-medium">{selectedEmp.job_title?.name ?? 'â€”'}</span></div>
+                <div><span className="text-slate-400">Tráº¡ng thÃ¡i:</span> <span className="font-medium">{selectedEmp.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
-                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedEmp.created_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedEmp.created_at ? formatDateTime(selectedEmp.created_at) : '—'}</span></div>
-                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedEmp.updated_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedEmp.updated_at ? formatDateTime(selectedEmp.updated_at) : '—'}</span></div>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Táº¡o / Sá»­a</p>
+                  <div><span className="text-slate-400">NgÆ°á»i táº¡o:</span> <span className="font-medium">{selectedEmp.created_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» táº¡o:</span> <span className="font-medium">{selectedEmp.created_at ? formatDateTime(selectedEmp.created_at) : 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÆ°á»i sá»­a:</span> <span className="font-medium">{selectedEmp.updated_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» sá»­a:</span> <span className="font-medium">{selectedEmp.updated_at ? formatDateTime(selectedEmp.updated_at) : 'â€”'}</span></div>
                 </div>
               </Card>
             )}
           </div>
         </TabsContent>
 
-        {/* ── Tab: Phòng ban ── */}
+        {/* â”€â”€ Tab: PhÃ²ng ban â”€â”€ */}
         <TabsContent value="departments" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex items-center justify-between flex-wrap gap-1.5">
-            <p className="text-xs text-slate-500">{departments.length} phòng ban</p>
+            <p className="text-xs text-slate-500">{departments.length} phÃ²ng ban</p>
             <ActionCluster className="shrink-0 justify-end" items={[
               ...(isAdminUser ? [{
-                key: 'create', icon: Plus, label: 'Thêm phòng ban', tip: 'Tạo phòng ban mới',
+                key: 'create', icon: Plus, label: 'ThÃªm phÃ²ng ban', tip: 'Táº¡o phÃ²ng ban má»›i',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingDept(null); setShowDeptDlg(true) },
               } satisfies ActionItem] : []),
@@ -1174,10 +1174,10 @@ export default function UserManagement() {
               {departments.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Building2 className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm">Chưa có phòng ban nào</p>
+                  <p className="text-sm">ChÆ°a cÃ³ phÃ²ng ban nÃ o</p>
                   {isAdminUser && (
                     <Button size="sm" variant="outline" onClick={() => { setEditingDept(null); setShowDeptDlg(true) }}>
-                      <Plus className="h-4 w-4 mr-1" /> Thêm phòng ban đầu tiên
+                      <Plus className="h-4 w-4 mr-1" /> ThÃªm phÃ²ng ban Ä‘áº§u tiÃªn
                     </Button>
                   )}
                 </div>
@@ -1186,9 +1186,9 @@ export default function UserManagement() {
                   <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên phòng ban</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">MÃ£</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">TÃªn phÃ²ng ban</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tráº¡ng thÃ¡i</TableHead>
                         <TableHead className="px-2 py-1.5 w-12" />
                       </TableRow>
                     </TableHeader>
@@ -1201,12 +1201,12 @@ export default function UserManagement() {
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
                           <TableCell className="px-2 py-1.5">
                             <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-[9px]">
-                              {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                              {d.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {isAdminUser && (
-                              <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                              <button title="Sá»­a" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingDept(d); setShowDeptDlg(true) }}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -1222,31 +1222,31 @@ export default function UserManagement() {
             {selectedDept && (
               <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">{selectedDept.code} — {selectedDept.name}</span>
+                  <span className="font-semibold text-slate-700">{selectedDept.code} â€” {selectedDept.name}</span>
                   <button onClick={() => setSelectedDept(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedDept.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div><span className="text-slate-400">Tráº¡ng thÃ¡i:</span> <span className="font-medium">{selectedDept.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
-                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedDept.created_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedDept.created_at ? formatDateTime(selectedDept.created_at) : '—'}</span></div>
-                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedDept.updated_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedDept.updated_at ? formatDateTime(selectedDept.updated_at) : '—'}</span></div>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Táº¡o / Sá»­a</p>
+                  <div><span className="text-slate-400">NgÆ°á»i táº¡o:</span> <span className="font-medium">{selectedDept.created_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» táº¡o:</span> <span className="font-medium">{selectedDept.created_at ? formatDateTime(selectedDept.created_at) : 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÆ°á»i sá»­a:</span> <span className="font-medium">{selectedDept.updated_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» sá»­a:</span> <span className="font-medium">{selectedDept.updated_at ? formatDateTime(selectedDept.updated_at) : 'â€”'}</span></div>
                 </div>
               </Card>
             )}
           </div>
         </TabsContent>
 
-        {/* ── Tab: Chức danh ── */}
+        {/* â”€â”€ Tab: Chá»©c danh â”€â”€ */}
         <TabsContent value="job-titles" className="flex-1 min-h-0 data-[state=active]:flex flex-col space-y-2">
           <div className="shrink-0 flex gap-2 flex-wrap items-center">
             <FilterSheetButton defs={jtFilterDefs} className="sm:hidden" />
-            <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chức danh</span>
-            {/* Mobile: cluster chia sẻ hàng với nút Lọc (PDA) — mobileInline */}
+            <span className="text-xs text-slate-500 mr-auto">{visibleJobTitles.length} chá»©c danh</span>
+            {/* Mobile: cluster chia sáº» hÃ ng vá»›i nÃºt Lá»c (PDA) â€” mobileInline */}
             <ActionCluster className="shrink-0 justify-end" mobileInline items={[
               ...(isAdminUser ? [{
-                key: 'create', icon: Plus, label: 'Thêm chức danh', tip: 'Tạo chức danh mới',
+                key: 'create', icon: Plus, label: 'ThÃªm chá»©c danh', tip: 'Táº¡o chá»©c danh má»›i',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingJt(null); setShowJtDlg(true) },
               } satisfies ActionItem] : []),
@@ -1258,10 +1258,10 @@ export default function UserManagement() {
               {visibleJobTitles.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Briefcase className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm">Chưa có chức danh nào</p>
+                  <p className="text-sm">ChÆ°a cÃ³ chá»©c danh nÃ o</p>
                   {isAdminUser && (
                     <Button size="sm" variant="outline" onClick={() => { setEditingJt(null); setShowJtDlg(true) }}>
-                      <Plus className="h-4 w-4 mr-1" /> Thêm chức danh đầu tiên
+                      <Plus className="h-4 w-4 mr-1" /> ThÃªm chá»©c danh Ä‘áº§u tiÃªn
                     </Button>
                   )}
                 </div>
@@ -1270,9 +1270,9 @@ export default function UserManagement() {
                   <Table className="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:text-[10px]">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Chức danh</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Phòng ban</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Chá»©c danh</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">PhÃ²ng ban</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tráº¡ng thÃ¡i</TableHead>
                         <TableHead className="px-2 py-1.5 w-12" />
                       </TableRow>
                     </TableHeader>
@@ -1282,15 +1282,15 @@ export default function UserManagement() {
                           className={`cursor-pointer ${selectedJt?.id === jt.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setSelectedJt(prev => prev?.id === jt.id ? null : jt)}>
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
-                          <TableCell className="px-2 py-1.5 text-slate-600 truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1.5 text-slate-600 truncate" title={jt.department?.name ?? 'â€”'}>{jt.department?.name ?? 'â€”'}</TableCell>
                           <TableCell className="px-2 py-1.5">
                             <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-[9px]">
-                              {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                              {jt.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}
                             </Badge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {canEditJt(jt.id) && (
-                              <button title="Sửa" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
+                              <button title="Sá»­a" className="text-slate-400 hover:text-blue-500 transition-colors p-1"
                                 onClick={e => { e.stopPropagation(); setEditingJt(jt); setShowJtDlg(true) }}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -1309,14 +1309,14 @@ export default function UserManagement() {
                   <span className="font-semibold text-slate-700">{selectedJt.name}</span>
                   <button onClick={() => setSelectedJt(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-                <div><span className="text-slate-400">Phòng ban:</span> <span className="font-medium">{selectedJt.department?.name ?? '—'}</span></div>
-                <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedJt.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
+                <div><span className="text-slate-400">PhÃ²ng ban:</span> <span className="font-medium">{selectedJt.department?.name ?? 'â€”'}</span></div>
+                <div><span className="text-slate-400">Tráº¡ng thÃ¡i:</span> <span className="font-medium">{selectedJt.is_active ? 'Hoáº¡t Ä‘á»™ng' : 'Táº¡m dá»«ng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>
-                  <div><span className="text-slate-400">Người tạo:</span> <span className="font-medium">{selectedJt.created_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ tạo:</span> <span className="font-medium">{selectedJt.created_at ? formatDateTime(selectedJt.created_at) : '—'}</span></div>
-                  <div><span className="text-slate-400">Người sửa:</span> <span className="font-medium">{selectedJt.updated_by ?? '—'}</span></div>
-                  <div><span className="text-slate-400">Ngày giờ sửa:</span> <span className="font-medium">{selectedJt.updated_at ? formatDateTime(selectedJt.updated_at) : '—'}</span></div>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Táº¡o / Sá»­a</p>
+                  <div><span className="text-slate-400">NgÆ°á»i táº¡o:</span> <span className="font-medium">{selectedJt.created_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» táº¡o:</span> <span className="font-medium">{selectedJt.created_at ? formatDateTime(selectedJt.created_at) : 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÆ°á»i sá»­a:</span> <span className="font-medium">{selectedJt.updated_by ?? 'â€”'}</span></div>
+                  <div><span className="text-slate-400">NgÃ y giá» sá»­a:</span> <span className="font-medium">{selectedJt.updated_at ? formatDateTime(selectedJt.updated_at) : 'â€”'}</span></div>
                 </div>
               </Card>
             )}

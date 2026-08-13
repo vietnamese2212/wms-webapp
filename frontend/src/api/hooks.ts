@@ -1,4 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import { parsePctBands, type PctBands } from '@/utils/pctDateBands'
 import {
   mockInventory, mockTransactions, mockVehicles,
   mockEmployees,
@@ -508,6 +510,28 @@ export function useUpdateSystemSetting() {
       apiClient.put(`/wms/settings/${key}`, { value }).then(r => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['system-settings'] }),
   })
+}
+
+// Thang màu %Date toàn app (SystemSetting `pct_date_bands`, mặc định 60/30) — dùng cặp với
+// pctDateCls() ở utils/pctDateBands. Đây là NGUỒN DUY NHẤT của ngưỡng màu %Date hiển thị.
+export function usePctBands(): PctBands {
+  const { data } = useSystemSettings()
+  return useMemo(
+    () => parsePctBands(data?.find(s => s.key === 'pct_date_bands')?.value),
+    [data],
+  )
+}
+
+// Ngưỡng LỆCH CÂN (%) tô đỏ — đọc từ `alert_thresholds` (tab Cài đặt ngưỡng trang Thông báo),
+// CÙNG nguồn với rule cảnh báo WEIGH_DIFF (audit 13/08: trước đó Phiếu cân + detail chuyến tô đỏ
+// theo 5% CỨNG, admin đổi ngưỡng cảnh báo mà màu không theo). Mặc định mirror BE THRESHOLDS = 5.
+export function useWeighWarnPct(): number {
+  const { data } = useSystemSettings()
+  return useMemo(() => {
+    const th = data?.find(s => s.key === 'alert_thresholds')?.value as Record<string, unknown> | undefined
+    const n = Number(th?.WEIGH_WARN_PCT)
+    return Number.isFinite(n) && n > 0 ? n : 5
+  }, [data])
 }
 
 // Ca nhập — tạo/sửa (gate wms_settings.manage_global ở BE)
@@ -3283,6 +3307,12 @@ export type OutboundScanLogEntry = {
   base_unit?: string | null
   entry_unit?: string | null
   units_per_carton?: number | null
+  // %Date đúng nguồn (migration 20260813g): nguyên liệu thô để FE tính computePctDate CHUNG
+  // (HSD tường minh tem V2 + shelf-life theo LÔ + override NCC) với nowMs = thời điểm quét
+  entry_shelf_life_days?: number | null
+  expiry_date?: string | null
+  ncc_id?: string | null
+  supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null
   // Chỉ có ở SEARCH TỔNG (search_outbound_scan_log) — click dòng kết quả → mở đơn xuất
   gdo_id?: string | null
   item_id?: string | null

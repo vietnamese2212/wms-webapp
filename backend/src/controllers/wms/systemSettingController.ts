@@ -29,6 +29,12 @@ import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../serv
 //     Chưa cấu hình = mặc định THRESHOLDS trong alertScanner. UI = tab "Cài đặt ngưỡng" trang Thông báo.
 //     Ràng buộc chéo: PCT_CRIT ≤ PCT_WARN (thấp hơn = nguy hơn) · GATE/WEIGH crit ≥ warn.
 
+// - pct_date_bands: { good, low } — THANG MÀU %Date hiển thị TOÀN APP (audit hardcode 13/08: trước
+//     đó 3 thang mâu thuẫn 70/40 · 60/30 · 20/10 rải 12 chỗ FE). pct > good = xanh · > low = vàng ·
+//     còn lại đỏ. Chưa cấu hình = mặc định { good: 60, low: 30 } (khớp thang họ Xuất/Nhặt lẻ cũ).
+//     FE đọc qua usePctBands() + pctDateCls() (utils/pctDateBands) — thêm chỗ hiển thị %Date mới
+//     BẮT BUỘC dùng cặp này, KHÔNG tự viết ternary ngưỡng.
+
 export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
 export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
 export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
@@ -65,8 +71,18 @@ function isAlertThresholds(v: unknown): boolean {
   return true
 }
 
+function isPctDateBands(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return false
+  const good = o.good, low = o.low
+  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return false
+  return low > 0 && low <= good && good <= 100
+}
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
+  pct_date_bands: { validate: isPctDateBands, hint: '{ good: number, low: number } với 0 < low ≤ good ≤ 100 — %Date > good xanh, > low vàng, còn lại đỏ' },
   decimal_separator: { validate: v => v === 'dot' || v === 'comma', hint: "'dot' | 'comma'" },
   delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },

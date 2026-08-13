@@ -406,6 +406,8 @@ export function canAccessAny(
   return modules.some(m => canAccess(perms, m))
 }
 
-export function isAdmin(name?: string | null): boolean {
-  return name === 'Admin'
+// Superadmin đọc CỜ is_superadmin trên user (nguồn = cột Employee.is_superadmin, BE nhét vào
+// /auth/login + /auth/me) — KHÔNG so tên 'Admin' (đổi tên hiển thị là mất quyền âm thầm).
+export function isAdmin(user?: { is_superadmin?: boolean } | null): boolean {
+  return user?.is_superadmin === true
 }

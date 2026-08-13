@@ -537,7 +537,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     const inputList = orders as any[]
 
     // Chặn ngày quá khứ với user thường; superadmin được back-date (nhập bù dữ liệu cũ).
-    if (user?.name !== 'Admin') {
+    if (user?.is_superadmin !== true) {
       const today = todayVN()
       const pastDated = inputList.filter(o => o.date && o.date < today).map(o => o.order_code || o.date)
       if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)

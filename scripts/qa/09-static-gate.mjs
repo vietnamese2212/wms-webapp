@@ -220,6 +220,17 @@ const RULES = [
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /['"](FG0\d|PM0\d|RM0\d|PK0\d)['"]/.test(line), s),
   },
+  // SUPERADMIN = CỜ is_superadmin (cột Employee → JWT, migration 20260813f) — audit hardcode 13/08
+  // dọn ~18 chỗ BE + FE isAdmin từng so TÊN 'Admin'/'ADMIN': đổi tên hiển thị tài khoản là mất quyền
+  // âm thầm, và tên là dữ liệu người dùng sửa được — không bao giờ là căn cứ quyền. Baseline 0.
+  // (employeeController còn 1 guard chặn ĐẶT TÊN tài khoản mới = 'Admin' — so biến trần, không khớp mẫu này.)
+  {
+    key: 'superadmin_by_name',
+    label: "nhận diện superadmin bằng so TÊN (.name === 'Admin' / .employee_code === 'ADMIN' / name.eq.Admin) — phải đọc cờ is_superadmin",
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\.name\s*[!=]==\s*'Admin'|\.employee_code\s*[!=]==\s*'ADMIN'|name\.eq\.Admin/.test(line), s),
+  },
   // Đổi VỊ TRÍ pallet phải đi qua RPC `move_pallets_to_location` — RPC khoá dòng Location rồi mới
   // đếm sức chứa DƯỚI LOCK. Ghi thẳng `location_id` bằng UPDATE là bỏ qua hàng rào đó: hai người
   // cùng dồn vào một ô 1 slot thì cả hai cùng "thành công", và tồn kho ghi 2 pallet ở chỗ chỉ chứa

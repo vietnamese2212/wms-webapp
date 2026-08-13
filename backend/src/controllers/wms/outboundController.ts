@@ -2108,7 +2108,7 @@ export async function patchGDO(req: Request, res: Response) {
     // - status=COMPLETED (nút "Hoàn thành chuyến") → outbound.complete — trước đây đi ké `edit`
     //   khiến người có edit hoàn thành được chuyến dù không được cấp quyền Hoàn thành.
     // - Thay đổi khác (đổi ngày giao, PAUSED/IN_PROGRESS) → outbound.edit.
-    if (req.user?.name !== 'Admin') {
+    if (req.user?.is_superadmin !== true) {
       const p = req.user?.module_permissions ?? {}
       const wantsComplete = status === 'COMPLETED'
       const changesOther = delivery_date !== undefined || (status !== undefined && status !== 'COMPLETED')

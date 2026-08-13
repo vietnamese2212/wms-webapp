@@ -924,7 +924,7 @@ export async function updatePlan(req: Request, res: Response) {
     // kiểm đúng quyền theo status ở đây (đừng để người chỉ có complete hủy được kế hoạch)
     {
       const need = status === 'COMPLETED' ? 'complete' : status === 'CANCELLED' ? 'cancel' : 'reopen'
-      const isAdmin = req.user?.is_superadmin === true || req.user?.name === 'Admin'
+      const isAdmin = req.user?.is_superadmin === true
       if (!isAdmin && !(req.user?.module_permissions?.slotting ?? []).includes(need)) {
         const label = need === 'complete' ? 'hoàn thành' : need === 'cancel' ? 'hủy' : 'mở lại'
         return fail(res, 403, 'FORBIDDEN', `Không có quyền ${label} kế hoạch sắp xếp`)

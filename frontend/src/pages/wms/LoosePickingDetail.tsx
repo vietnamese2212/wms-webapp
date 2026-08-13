@@ -9,7 +9,8 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useItemInventory, useOutboundShortages, useGdoPickSuggestions, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
@@ -76,6 +77,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
   const { data: inventoryData = [], isLoading } = useItemInventory(gdoId, itemId)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [detailId, setDetailId] = useState<string | null>(null)
+  const pctBands = usePctBands()
 
   const sorted = [...inventoryData].sort((a: ItemInventoryEntry, b: ItemInventoryEntry) => {
     if (a.pct_date === null && b.pct_date === null) return 0
@@ -150,9 +152,7 @@ function InventoryModal({ gdoId, itemId, matCode, matName, mat, onClose }: {
                           <TableCell className="px-3 py-1.5">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
-                                <span className={`text-xs font-bold tabular-nums ${
-                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                }`}>{row.pct_date}%</span>
+                                <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
                               ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
                               {row.is_qa && (
                                 <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
@@ -212,6 +212,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
   deliveryDate?: string | null
 }) {
   const navigate = useNavigate()
+  const pctBands = usePctBands()
   // Cảnh báo thiếu tồn theo (kho, ngày giao) — badge cuối cột Mã hàng (đồng bộ Xuất)
   const { data: shortages = [] } = useOutboundShortages(warehouseId, deliveryDate)
   const shortageByMat = new Map(shortages.map(s => [s.material_id, s]))
@@ -378,9 +379,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                               <div key={si} className="text-[10px]">
                                 <span className={`font-mono font-semibold ${si === 0 ? 'text-sky-700' : 'text-slate-500'}`}>{s.location_code ?? '—'}</span>
                                 {s.pct_date != null && (
-                                  <span className={`ml-1 font-bold tabular-nums ${
-                                    s.pct_date <= 30 ? 'text-red-600' : s.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                  }`}>{s.pct_date}%</span>
+                                  <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                                 )}
                                 <span className="ml-1 text-slate-400 tabular-nums">{qtyEntryText(s.available, item.material)}th</span>
                               </div>
@@ -462,9 +461,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                                   </td>
                                   <td className="pr-3 py-0.5">
                                     {se.pct_date !== null && se.pct_date !== undefined ? (
-                                      <span className={`text-[10px] font-bold tabular-nums ${
-                                        se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                      }`}>{se.pct_date}%</span>
+                                      <span className={`text-[10px] font-bold tabular-nums ${pctDateCls(se.pct_date, pctBands)}`}>{se.pct_date}%</span>
                                     ) : <span className="text-[10px] text-slate-300">—</span>}
                                   </td>
                                   <td className="pr-3 py-0.5">

@@ -6,7 +6,7 @@ import type { Request } from 'express'
  * Chuẩn hoá giá trị cũ còn trong JWT (migration 20260702_normalize_allowed_categories dọn DB).
  */
 export function scopeCategoriesOf(req: Request): string[] | null {
-  if (req.user?.name === 'Admin' || req.user?.warehouse_scope === 'NATIONAL') return null
+  if (req.user?.is_superadmin === true || req.user?.warehouse_scope === 'NATIONAL') return null
   const raw = req.user?.allowed_categories ?? []
   if (raw.length === 0) return null
   const out = new Set<string>()

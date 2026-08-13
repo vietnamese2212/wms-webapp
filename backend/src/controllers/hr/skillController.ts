@@ -37,8 +37,8 @@ async function scopeJobTitleIds(rootJtId: string): Promise<string[]> {
 // Non-superadmin chỉ được sửa Danh mục Vị trí/Skill của chức danh CẤP DƯỚI mình.
 // Trả Set chức danh được phép (cấp dưới, KHÔNG gồm chức danh của chính mình); null = superadmin (không giới hạn).
 async function writableJobTitleIds(req: Request): Promise<Set<string> | null> {
-  const u = (req as { user?: { name?: string; sub?: string } }).user
-  if (u?.name === 'Admin') return null
+  const u = (req as { user?: { is_superadmin?: boolean; sub?: string } }).user
+  if (u?.is_superadmin === true) return null
   const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
   const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
   if (!jtId) return new Set<string>()
@@ -49,8 +49,8 @@ async function writableJobTitleIds(req: Request): Promise<Set<string> | null> {
 // Nhân viên caller quản được (CHÍNH MÌNH + cấp dưới theo sơ đồ) — giới hạn xem/gán skill của
 // NHÂN VIÊN đích (khác writableJobTitleIds chỉ cấp-dưới cho sửa DANH MỤC skill). null = superadmin.
 async function manageableJobTitleIds(req: Request): Promise<Set<string> | null> {
-  const u = (req as { user?: { name?: string; is_superadmin?: boolean; sub?: string } }).user
-  if (u?.is_superadmin || u?.name === 'Admin') return null
+  const u = (req as { user?: { is_superadmin?: boolean; sub?: string } }).user
+  if (u?.is_superadmin === true) return null
   const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
   const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
   if (!jtId) return new Set<string>()

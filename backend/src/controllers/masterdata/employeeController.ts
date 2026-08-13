@@ -8,9 +8,8 @@ import { safeSearch } from '../../utils/search'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
-  // Khớp middleware/authController: token set is_superadmin = (employee_code==='ADMIN' || name==='Admin').
-  // Trước chỉ xét name → superadmin-by-code bị chặn oan; nay gộp is_superadmin.
-  return req.user?.is_superadmin === true || req.user?.name === 'Admin'
+  // Cờ is_superadmin trong token = cột Employee.is_superadmin (migration 20260813f) — không so tên
+  return req.user?.is_superadmin === true
 }
 
 // Chống leo thang: non-superadmin không được gán cho tài khoản/chức danh quyền mà CHÍNH
@@ -31,8 +30,8 @@ async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boo
   if (isSuperadmin(req)) return false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data } = await supabase.from('Employee')
-    .select('name, employee_code').eq('id', req.params.id).maybeSingle()
-  if (data?.name === 'Admin' || data?.employee_code === 'ADMIN') {
+    .select('is_superadmin').eq('id', req.params.id).maybeSingle()
+  if (data?.is_superadmin === true) {
     fail(res, 'Chỉ Admin mới được thao tác trên tài khoản Admin', 403)
     return true
   }
@@ -59,7 +58,7 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = req.user
   if (!u) return new Set<string>()
-  if (u.name === 'Admin') return null
+  if (u.is_superadmin === true) return null
 
   const self: string = u.sub
   const allowed = new Set<string>([self]) // luôn thấy chính mình

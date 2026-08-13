@@ -22,33 +22,33 @@ import type { AxiosError } from 'axios'
 const TH = 'text-[9px] font-medium text-slate-500 py-1.5 whitespace-nowrap'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 
-// Cá»™t kÃ©o giÃ£n Ä‘Æ°á»£c (Manhattan) â€” id khá»›p render bÃªn dÆ°á»›i
+// Cột kéo giãn được (Manhattan) — id khớp render bên dưới
 const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'idx',   label: '#' },
-  { id: 'date',  label: 'NgÃ y' },
+  { id: 'date',  label: 'Ngày' },
   { id: 'wh',    label: 'Kho' },
   { id: 'po',    label: 'PO' },
   { id: 'ncc',   label: 'NCC' },
-  { id: 'cat',   label: 'Loáº¡i hÃ ng' },
-  { id: 'mcode', label: 'MÃ£ hÃ ng' },
-  { id: 'mname', label: 'TÃªn hÃ ng' },
-  { id: 'unit',  label: 'ÄVT' },
-  // DÃ²ng = 1 MÃƒ, sá»‘ theo ÄVT cá»§a mÃ£ Ä‘Ã³ (cá»™t ÄVT bÃªn cáº¡nh) â€” mÃ£ tÃ­nh KG/cÃ¡i KHÃ”NG pháº£i "thÃ¹ng"
+  { id: 'cat',   label: 'Loại hàng' },
+  { id: 'mcode', label: 'Mã hàng' },
+  { id: 'mname', label: 'Tên hàng' },
+  { id: 'unit',  label: 'ĐVT' },
+  // Dòng = 1 MÃ, số theo ĐVT của mã đó (cột ĐVT bên cạnh) — mã tính KG/cái KHÔNG phải "thùng"
   { id: 'plan',  label: 'KH',      align: 'right' },
-  { id: 'act',   label: 'Thá»±c táº¿', align: 'right' },
+  { id: 'act',   label: 'Thực tế', align: 'right' },
   { id: 'pct',   label: '% TT/KH',        align: 'right' },
-  { id: 'note',  label: 'Ghi chÃº' },
+  { id: 'note',  label: 'Ghi chú' },
 ]
 const COL_DEFAULTS = [44, 92, 120, 100, 160, 96, 104, 190, 60, 92, 104, 80, 96]
 
-/** Tráº¡ng thÃ¡i dÃ²ng bÃ¡o cÃ¡o â†’ mÃ u chá»¯ (KHÃ”NG fill ná»n). */
+/** Trạng thái dòng báo cáo → màu chữ (KHÔNG fill nền). */
 function reportKey(row: InboundReportRow): RowStatusKey {
-  if (row.note === 'PhÃ¡t sinh') return 'inProgress'           // cam
+  if (row.note === 'Phát sinh') return 'inProgress'           // cam
   const pct = row.pct ?? 0
-  if (row.actual_boxes === 0 && row.planned_boxes > 0) return 'paused'  // Ä‘á» â€” chÆ°a nháº­p
-  if (pct >= 100) return 'assigned'                            // xanh lÃ¡ â€” Ä‘áº¡t
-  if (pct > 0) return 'inProgress'                             // cam â€” má»™t pháº§n
-  return 'pending'                                             // xÃ¡m
+  if (row.actual_boxes === 0 && row.planned_boxes > 0) return 'paused'  // đỏ — chưa nhập
+  if (pct >= 100) return 'assigned'                            // xanh lá — đạt
+  if (pct > 0) return 'inProgress'                             // cam — một phần
+  return 'pending'                                             // xám
 }
 
 export default function TMSReport() {
@@ -86,7 +86,7 @@ export default function TMSReport() {
       setEditingPoId(null)
     } catch (e) {
       const err = e as AxiosError<{ error?: { message?: string } }>
-      setPoError(err.response?.data?.error?.message || 'KhÃ´ng lÆ°u Ä‘Æ°á»£c sá»‘ PO')
+      setPoError(err.response?.data?.error?.message || 'Không lưu được số PO')
     } finally {
       setPoSaving(false)
     }
@@ -110,17 +110,17 @@ export default function TMSReport() {
   const overallPct = summary.totalPlan > 0
     ? Math.round(summary.totalActual / summary.totalPlan * 100) : 0
 
-  // â”€â”€â”€ Filter chip bar (Manhattan) â”€â”€â”€
+  // ─── Filter chip bar (Manhattan) ───
   const filterDefs: FilterDef[] = [
-    { key: 'date', label: 'Khoáº£ng ngÃ y', type: 'daterange', from: dateFrom, to: dateTo,
+    { key: 'date', label: 'Khoảng ngày', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (from, to) => setInboundReport({ dateFrom: from, dateTo: to }) },
-    { key: 'warehouse', label: 'Kho', type: 'single', options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })), value: warehouseId, allLabel: 'Táº¥t cáº£ kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })), value: warehouseId, allLabel: 'Tất cả kho',
       onChange: v => setInboundReport({ warehouseId: v }) },
-    { key: 'category', label: 'Loáº¡i hÃ ng', type: 'multi', options: categoryOptions, selected: selCategories, searchable: false,
+    { key: 'category', label: 'Loại hàng', type: 'multi', options: categoryOptions, selected: selCategories, searchable: false,
       onChange: v => setInboundReport({ selCategories: v }) },
   ]
 
-  // â”€â”€â”€ Saved views â”€â”€â”€
+  // ─── Saved views ───
   const viewSnapshot = useMemo(() => ({ dateFrom, dateTo, warehouseId, selCategories }), [dateFrom, dateTo, warehouseId, selCategories])
   const savedViews = useSavedViewsStore(s => s.views['tms_report'] ?? [])
   const activeViewId = useMemo(() => {
@@ -130,18 +130,18 @@ export default function TMSReport() {
 
   function exportExcel() {
     const data = filteredRows.map(r => ({
-      'NgÃ y':             r.date,
+      'Ngày':             r.date,
       'Kho':              r.warehouse_name,
       'PO':               r.po_number,
-      'NCC':              r.ncc_code ? `${r.ncc_code} â€” ${r.ncc_name}` : r.ncc_name,
-      'Loáº¡i hÃ ng':        r.material_category || '',
-      'MÃ£ hÃ ng':          r.material_code,
-      'TÃªn hÃ ng':         r.material_name,
-      'ÄVT':              r.unit,
-      'KH (theo ÄVT)':      r.planned_boxes,
-      'Thá»±c táº¿ (theo ÄVT)': r.actual_boxes,
+      'NCC':              r.ncc_code ? `${r.ncc_code} — ${r.ncc_name}` : r.ncc_name,
+      'Loại hàng':        r.material_category || '',
+      'Mã hàng':          r.material_code,
+      'Tên hàng':         r.material_name,
+      'ĐVT':              r.unit,
+      'KH (theo ĐVT)':      r.planned_boxes,
+      'Thực tế (theo ĐVT)': r.actual_boxes,
       '% TT/KH':          r.pct != null ? r.pct / 100 : null,
-      'Ghi chÃº':          r.note || '',
+      'Ghi chú':          r.note || '',
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(data))
     const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1')
@@ -150,7 +150,7 @@ export default function TMSReport() {
       if (cell) cell.z = '0%'
     }
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'BC Nháº­p hÃ ng')
+    XLSX.utils.book_append_sheet(wb, ws, 'BC Nhập hàng')
     saveWorkbook(wb, `bao_cao_nhap_${dateFrom}_${dateTo}.xlsx`)
   }
 
@@ -160,10 +160,10 @@ export default function TMSReport() {
       {/* Toolbar */}
       <div className="shrink-0 border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">BÃ¡o cÃ¡o nháº­p hÃ ng</span>
+          <span className="text-sm font-semibold text-slate-700 shrink-0">Báo cáo nhập hàng</span>
           <div className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-          {/* Mobile: SavedViews + action GOM 1 hÃ ng (PDA); desktop sm:contents â†’ nhÆ° cÅ© */}
+          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews
             module="tms_report"
@@ -173,15 +173,15 @@ export default function TMSReport() {
           />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
-            title={dense ? 'Äang: dÃ y Â· báº¥m Ä‘á»ƒ thoÃ¡ng' : 'Äang: thoÃ¡ng Â· báº¥m Ä‘á»ƒ dÃ y'}>
+            title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <ActionCluster className="shrink-0" mobileInline items={[
-            // Xuáº¥t file = mang dá»¯ liá»‡u ra ngoÃ i â†’ quyá»n RIÃŠNG tms_plan.export
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG tms_plan.export
             ...(can(perms, 'tms_plan', 'export') ? [{
-              key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuáº¥t bÃ¡o cÃ¡o Ä‘ang lá»c ra file Excel',
+              key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
               primary: true, disabled: filteredRows.length === 0,
-              mobileHidden: true, // export Excel khÃ´ng dÃ¹ng trÃªn Ä‘iá»‡n thoáº¡i
+              mobileHidden: true, // export Excel không dùng trên điện thoại
               onClick: exportExcel,
             } satisfies ActionItem] : []),
           ]} />
@@ -199,14 +199,14 @@ export default function TMSReport() {
 
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
-        { label: 'DÃ²ng', value: filteredRows.length },
-        // Ã” Tá»”NG gá»™p má»i mÃ£ (thÃ¹ng + KG/cÃ¡i) â†’ nhÃ£n quy Ä‘á»•i (luáº­t 1b CLAUDE.md)
-        { label: 'KH (quy Ä‘á»•i)', value: summary.totalPlan.toLocaleString('vi-VN') },
-        { label: 'Thá»±c (quy Ä‘á»•i)', value: summary.totalActual.toLocaleString('vi-VN') },
+        { label: 'Dòng', value: filteredRows.length },
+        // Ô TỔNG gộp mọi mã (thùng + KG/cái) → nhãn quy đổi (luật 1b CLAUDE.md)
+        { label: 'KH (quy đổi)', value: summary.totalPlan.toLocaleString('vi-VN') },
+        { label: 'Thực (quy đổi)', value: summary.totalActual.toLocaleString('vi-VN') },
         { label: '% TT/KH', value: `${overallPct}%`, accent: overallPct >= 100 },
       ]} />
 
-      {/* Table â€” cá»™t kÃ©o giÃ£n Ä‘Æ°á»£c (colgroup + table-fixed), scroll ngang á»Ÿ Ä‘Ã¡y */}
+      {/* Table — cột kéo giãn được (colgroup + table-fixed), scroll ngang ở đáy */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100" style={{ width: totalWidth, minWidth: '100%' }}>
           <colgroup>
@@ -223,7 +223,7 @@ export default function TMSReport() {
                       onPointerDown={e => startResize(i, e)}
                       onClick={e => e.stopPropagation()}
                       className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
-                      title="KÃ©o Ä‘á»ƒ chá»‰nh Ä‘á»™ rá»™ng cá»™t"
+                      title="Kéo để chỉnh độ rộng cột"
                     />
                   )}
                 </TableHead>
@@ -233,12 +233,12 @@ export default function TMSReport() {
           <TableBody className={dense ? '' : '[&_td]:!py-2.5'}>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">Äang táº£i...</TableCell>
+                <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">Đang tải...</TableCell>
               </TableRow>
             ) : filteredRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={COLS.length} className="text-center text-xs text-slate-400 py-10">
-                  {dateFrom && dateTo ? 'KhÃ´ng cÃ³ dá»¯ liá»‡u' : 'Chá»n khoáº£ng ngÃ y Ä‘á»ƒ xem bÃ¡o cÃ¡o'}
+                  {dateFrom && dateTo ? 'Không có dữ liệu' : 'Chọn khoảng ngày để xem báo cáo'}
                 </TableCell>
               </TableRow>
             ) : filteredRows.map((row, i) => {
@@ -248,7 +248,7 @@ export default function TMSReport() {
                   <TableCell className={`${TD} px-0 text-center text-slate-400 tabular-nums sticky left-0 z-10 bg-white`}>{i + 1}</TableCell>
                   <TableCell className={`${TD} font-mono`}>{formatDate(row.date)}</TableCell>
                   <TableCell className={`${TD} truncate`}>{row.warehouse_name}</TableCell>
-                  {/* PO â€” click to edit inline (chá»‰ vá»›i plan line rows) */}
+                  {/* PO — click to edit inline (chỉ với plan line rows) */}
                   <TableCell className={`${TD} font-mono`}>
                     {editingPoId === row.plan_line_id && canEditPo ? (
                       <div className="flex items-center gap-0.5">
@@ -274,36 +274,36 @@ export default function TMSReport() {
                         className="text-left hover:text-blue-600 underline-offset-2 hover:underline"
                         onClick={() => { setEditingPoId(row.plan_line_id!); setEditingPoValue(row.po_number || '') }}
                       >
-                        {row.po_number || <span className="text-slate-300">â€”</span>}
+                        {row.po_number || <span className="text-slate-300">—</span>}
                       </button>
                     ) : (
-                      <span className="text-slate-300">{row.po_number || 'â€”'}</span>
+                      <span className="text-slate-300">{row.po_number || '—'}</span>
                     )}
                   </TableCell>
                   <TableCell className={`${TD} truncate`} title={row.ncc_code ? `${row.ncc_code} ${row.ncc_name}` : row.ncc_name || ''}>
                     {row.ncc_code
                       ? <><span className="font-mono font-semibold">{row.ncc_code}</span><span className="text-slate-400 ml-1">{row.ncc_name}</span></>
-                      : <span className="text-slate-300">â€”</span>}
+                      : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={TD}>
-                    {row.material_category || <span className="text-slate-300">â€”</span>}
+                    {row.material_category || <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} font-mono font-semibold`}>{row.material_code}</TableCell>
                   <TableCell className={`${TD} truncate`} title={row.material_name}>{row.material_name}</TableCell>
-                  <TableCell className={`${TD} text-slate-400`}>{row.unit || 'â€”'}</TableCell>
+                  <TableCell className={`${TD} text-slate-400`}>{row.unit || '—'}</TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
-                    {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : <span className="text-slate-300">â€”</span>}
+                    {row.planned_boxes > 0 ? row.planned_boxes.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
                     {row.actual_boxes > 0 ? row.actual_boxes.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) : <span className="text-slate-300">0</span>}
                   </TableCell>
                   <TableCell className={`${TD} tabular-nums font-semibold text-right`}>
-                    {row.pct != null ? `${row.pct}%` : <span className="text-slate-300">â€”</span>}
+                    {row.pct != null ? `${row.pct}%` : <span className="text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className={TD}>
-                    {row.note === 'PhÃ¡t sinh'
-                      ? <span className="font-semibold">PhÃ¡t sinh</span>
-                      : <span className="text-slate-300">â€”</span>}
+                    {row.note === 'Phát sinh'
+                      ? <span className="font-semibold">Phát sinh</span>
+                      : <span className="text-slate-300">—</span>}
                   </TableCell>
                 </TableRow>
               )
@@ -312,9 +312,9 @@ export default function TMSReport() {
         </Table>
       </div>
 
-      {/* Footer Ä‘áº¿m báº£n ghi */}
+      {/* Footer đếm bản ghi */}
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {filteredRows.length > 0 ? `1â€“${filteredRows.length} / ${filteredRows.length} dÃ²ng` : (dateFrom && dateTo ? '0 dÃ²ng' : 'Chá»n khoáº£ng ngÃ y Ä‘á»ƒ xem bÃ¡o cÃ¡o')}
+        {filteredRows.length > 0 ? `1–${filteredRows.length} / ${filteredRows.length} dòng` : (dateFrom && dateTo ? '0 dòng' : 'Chọn khoảng ngày để xem báo cáo')}
       </div>
      </div>
     </div>

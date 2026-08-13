@@ -11,7 +11,7 @@ export function MobileNav() {
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
   const admin = isAdmin(user)
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
-  // NhÃ³m phá»¥ Äáº¦U TIÃŠN (khÃ´ng pháº£i váº­n hÃ nh, khÃ´ng pháº£i Tá»•ng quan) â†’ chÃ¨n váº¡ch ngÄƒn Ä‘á»ƒ Æ°u tiÃªn váº­n hÃ nh
+  // Nhóm phụ ĐẦU TIÊN (không phải vận hành, không phải Tổng quan) → chèn vạch ngăn để ưu tiên vận hành
   const firstSecondaryLabel = NAV_GROUPS.find(g => !g.operational && g.label !== NAV_GROUPS[0].label)?.label
 
   return (
@@ -27,7 +27,7 @@ export function MobileNav() {
         </div>
       </div>
 
-      {/* Nav â€” váº­n hÃ nh (WMS/TMS/HR) lÃªn Ä‘áº§u, ngÄƒn cÃ¡ch vá»›i nhÃ³m phá»¥ (BÃ¡o cÃ¡o/Cáº¥u hÃ¬nh/Quáº£n trá»‹) */}
+      {/* Nav — vận hành (WMS/TMS/HR) lên đầu, ngăn cách với nhóm phụ (Báo cáo/Cấu hình/Quản trị) */}
       <nav className="flex-1 overflow-y-auto py-4 px-4 space-y-5">
         {NAV_GROUPS.map((group) => {
           const visibleItems = group.items.filter(item => {
@@ -89,7 +89,7 @@ export function MobileNav() {
           }
         >
           <Settings className="h-4 w-4" />
-          CÃ i Ä‘áº·t
+          Cài đặt
         </NavLink>
         <div className="border-t border-white/10" />
         {user && (

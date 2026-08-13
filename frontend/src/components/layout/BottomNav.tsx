@@ -4,13 +4,13 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { canAccess, isAdmin, type ModuleKey, type ModulePermissions } from '@/config/permissions'
 
-// Thanh dÆ°á»›i mobile = lá»‘i táº¯t Váº¬N HÃ€NH chÃ­nh (menu Ä‘áº§y Ä‘á»§ á»Ÿ drawer â˜°)
+// Thanh dưới mobile = lối tắt VẬN HÀNH chính (menu đầy đủ ở drawer ☰)
 const ALL_TABS: { to: string; icon: React.ElementType; label: string; end?: boolean; module?: ModuleKey }[] = [
-  { to: '/wms/inbound',      icon: PackagePlus,     label: 'Nháº­p kho',  module: 'inbound' },
-  { to: '/wms/outbound',     icon: PackageMinus,    label: 'Xuáº¥t kho',  module: 'outbound' },
-  { to: '/wms/loosepicking', icon: Scissors,        label: 'Nháº·t láº»',  module: 'loosepicking' },
-  { to: '/tms/bookings',     icon: ClipboardList,   label: 'Káº¿ hoáº¡ch',  module: 'tms_plan' },
-  { to: '/tms/gate',         icon: ShieldCheck,     label: 'ÄÄƒng kÃ½',  module: 'gate_registration' },
+  { to: '/wms/inbound',      icon: PackagePlus,     label: 'Nhập kho',  module: 'inbound' },
+  { to: '/wms/outbound',     icon: PackageMinus,    label: 'Xuất kho',  module: 'outbound' },
+  { to: '/wms/loosepicking', icon: Scissors,        label: 'Nhặt lẻ',  module: 'loosepicking' },
+  { to: '/tms/bookings',     icon: ClipboardList,   label: 'Kế hoạch',  module: 'tms_plan' },
+  { to: '/tms/gate',         icon: ShieldCheck,     label: 'Đăng ký',  module: 'gate_registration' },
   { to: '/',                 icon: LayoutDashboard, label: 'Dashboard', end: true },
 ]
 

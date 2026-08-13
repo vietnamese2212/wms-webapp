@@ -220,6 +220,17 @@ const RULES = [
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /['"](FG0\d|PM0\d|RM0\d|PK0\d)['"]/.test(line), s),
   },
+  // MOJIBAKE — tiếng Việt UTF-8 bị double-encode (bug thật 13/08 đêm: PowerShell 5.1 Get-Content
+  // đọc file UTF-8 không BOM bằng codepage ANSI rồi ghi lại → 10 file nát font, tsc/build VẪN XANH
+  // nên không tự lộ, user nhìn màn hình mới thấy). Dấu vết = 'á' theo sau bởi U+00BA/U+00BB
+  // (byte 0xE1 0xBA/0xBB của khối chữ Việt bị đọc nhầm) — tiếng Việt thật KHÔNG BAO GIỜ có cặp này.
+  // Pattern dựng bằng escape để chính file này không tự khớp. Rewrite text hàng loạt: dùng Node utf8.
+  {
+    key: 'mojibake_double_utf8',
+    label: 'chuỗi mojibake (UTF-8 tiếng Việt bị đọc nhầm ANSI rồi ghi đè) — font nát mà build vẫn xanh',
+    count: (s) => countMatches(['backend/src', 'frontend/src', 'scripts'], ['.ts', '.tsx', '.mjs'],
+      (line) => new RegExp('á[º»]').test(line), s),
+  },
   // SUPERADMIN = CỜ is_superadmin (cột Employee → JWT, migration 20260813f) — audit hardcode 13/08
   // dọn ~18 chỗ BE + FE isAdmin từng so TÊN 'Admin'/'ADMIN': đổi tên hiển thị tài khoản là mất quyền
   // âm thầm, và tên là dữ liệu người dùng sửa được — không bao giờ là căn cứ quyền. Baseline 0.

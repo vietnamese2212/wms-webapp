@@ -61,7 +61,10 @@ export async function getAlertThresholds(): Promise<AlertThresholds> {
 }
 export function invalidateAlertThresholdsCache(): void { _thCache = null }
 
-export type AlertRule = 'EXPIRY' | 'GATE_DWELL' | 'TRIP_LATE' | 'WEIGH_DIFF' | 'BE_ERRORS' | 'PACKING_UNRECEIVED'
+// Sổ rule DUY NHẤT — alertController lấy danh sách filter từ đây (bug 13/08: RULES chép tay thiếu
+// PACKING_UNRECEIVED → filter rule mới bị lọc rớt âm thầm). Thêm rule mới = thêm vào mảng này.
+export const ALERT_RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED'] as const
+export type AlertRule = typeof ALERT_RULES[number]
 export interface AlertCandidate {
   rule: AlertRule
   dedup_key: string

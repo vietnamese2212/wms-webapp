@@ -5,7 +5,7 @@ import { maskServerMessage } from '../../utils/response'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
-import { runAlertScan } from '../../services/alertScanner'
+import { runAlertScan, ALERT_RULES } from '../../services/alertScanner'
 
 function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
@@ -15,7 +15,7 @@ function fail(res: Response, status: number, code: string, message: string) {
 }
 const now = () => new Date().toISOString()
 
-const RULES = ['EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS']
+const RULES: readonly string[] = ALERT_RULES
 
 // GET /wms/alerts?status=open|acked|resolved|all&rule=&severity=&warehouse_id=&fresh=1
 export async function listAlerts(req: Request, res: Response) {

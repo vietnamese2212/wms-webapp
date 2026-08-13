@@ -145,7 +145,7 @@ export async function getBoard(req: Request, res: Response) {
 // 13/08: đi qua RPC packing_logs_recon — rows + total + đếm ĐÃ/CHƯA kho nhận CÙNG MỘT WHERE
 // (filter "chưa nhận" phải join InventoryEntry trong SQL, không lọc được sau phân trang).
 export async function listLogs(req: Request, res: Response) {
-  const { status, date_from, date_to, machine, search, received } = req.query as Record<string, string | undefined>
+  const { status, date_from, date_to, machine, cycle, search, received } = req.query as Record<string, string | undefined>
   const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
   const pageSize = Math.min(PAGE_MAX, Math.max(1, parseInt(String(req.query.pageSize ?? '200'), 10) || 200))
   const whF = String(req.query.warehouse_id ?? '')
@@ -162,6 +162,7 @@ export async function listLogs(req: Request, res: Response) {
     p_from: date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from) ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : null,
     p_to: date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to) ? new Date(new Date(`${date_to}T00:00:00+07:00`).getTime() + 86400_000).toISOString() : null,
     p_machine: machine || null,
+    p_cycle: cycle?.trim() ? cycle.trim().replace(/[%\\]/g, ' ').slice(0, 40).trim() || null : null,   // chu kỳ của TRANG (recon v3 join run)
     p_search: term || null,
     p_received: received === 'YES' || received === 'NO' || received === 'DIFF' ? received : null,
     p_page: page, p_size: pageSize,

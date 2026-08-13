@@ -5487,7 +5487,7 @@ export function usePackingBoard(warehouseId = '', enabled = true) {
   })
 }
 export function usePackingLogs(params: {
-  status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
+  status?: string; date_from?: string; date_to?: string; machine?: string; cycle?: string; warehouse_id?: string; search?: string
   received?: string   // 'YES' | 'NO' | 'DIFF' (đã nhận nhưng LỆCH số lượng) — đối chiếu SX↔Kho
   page?: number; pageSize?: number
 }) {

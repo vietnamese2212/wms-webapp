@@ -433,6 +433,13 @@ let runB = null
       fcHit.s === 200 && (fcHit.j?.data?.rows ?? []).some(r => r.id === rid18)
         && fcMiss.s === 200 && !(fcMiss.j?.data?.rows ?? []).some(r => r.id === rid18),
       `hit=${(fcHit.j?.data?.rows ?? []).length} miss=${(fcMiss.j?.data?.rows ?? []).length}`)
+    // tab Sổ pallet cũng lọc được Chu kỳ (recon v3 join trang — user 13/08 "bộ filter đầy đủ")
+    const flHit = await api(`/wms/packing-logs?cycle=55&warehouse_id=${WH}`)
+    const flMiss = await api(`/wms/packing-logs?cycle=zz9x&warehouse_id=${WH}`)
+    check('[18] filter Chu kỳ tab Sổ pallet: khớp thấy pallet, không khớp rỗng',
+      flHit.s === 200 && (flHit.j?.data?.rows ?? []).some(r => r.id === lid18)
+        && flMiss.s === 200 && !(flMiss.j?.data?.rows ?? []).some(r => r.id === lid18),
+      `hit=${(flHit.j?.data?.rows ?? []).length} miss=${(flMiss.j?.data?.rows ?? []).length}`)
     if (lid18) await api(`/wms/packing-logs/${lid18}/cancel`, 'POST')
     if (rid18) await api(`/wms/packing-runs/${rid18}/cancel`, 'POST')
     // các tem [18] mang mã THẬT (không TAG trong pallet_code) — quét phòng thủ residue theo đúng tem

@@ -1618,6 +1618,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
     date_from: f.dateFrom || undefined,
     date_to: f.dateTo || undefined,
     machine: f.machine || undefined,
+    cycle: f.cycle || undefined,
     warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
     received: f.received || undefined,
@@ -1643,6 +1644,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       value: f.status, onChange: (v: string) => setF({ status: v, page: 1 }) },
     { key: 'machine', label: 'Máy', type: 'text', value: f.machine, placeholder: 'VD: M1',
       onChange: (v: string) => setF({ machine: v, page: 1 }) },
+    { key: 'cycle', label: 'Chu kỳ', type: 'text', value: f.cycle, placeholder: 'VD: 55',
+      onChange: (v: string) => setF({ cycle: v, page: 1 }) },
     // ĐỐI CHIẾU SX↔KHO (user 13/08): quét sổ = SX xác nhận pallet đã sinh; kho quét nhập = xác nhận lần 2
     { key: 'received', label: 'Kho nhận', type: 'single',
       options: [

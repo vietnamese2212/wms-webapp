@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
@@ -185,130 +185,115 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+
+  // Khuôn form CẤU HÌNH kiểu Blue Yonder (user chốt 13/08): cụm có band tiêu đề · NHÃN NẰM TRÊN Ô
+  // (không nhãn-trái/ô-phải — màn 1900px sẽ có cả gang tay trắng ở giữa) · nhiều cột dùng hết bề
+  // ngang · mật độ dày, mô tả là dòng phụ 10px chứ không phải đoạn văn cạnh tranh với nhãn.
+  const Group = ({ title, meta, children, span }: { title: string; meta?: { updated_by?: string | null; updated_at?: string } ; children: ReactNode; span?: boolean }) => (
+    <section className={`border border-slate-200 rounded-lg overflow-hidden bg-white ${span ? 'xl:col-span-2' : ''}`}>
+      <div className="flex items-center gap-2 bg-slate-100 border-b border-slate-200 px-2.5 py-1.5">
+        <span className="w-1 h-3.5 bg-sky-500 rounded-sm shrink-0" />
+        <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide truncate">{title}</span>
+        {meta?.updated_by && meta.updated_at && (
+          <span className="ml-auto text-[9px] text-slate-400 whitespace-nowrap hidden sm:inline">
+            {meta.updated_by} · {formatDateTime(meta.updated_at)}
+          </span>
+        )}
+      </div>
+      <div className={`px-2.5 py-2.5 space-y-2.5 ${roClass}`}>{children}</div>
+    </section>
+  )
+  // 1 ô cấu hình: nhãn nhỏ phía trên, control ngay dưới, chú thích 10px dưới cùng
+  const Field = ({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) => (
+    <div>
+      <p className="text-[11px] font-medium text-slate-700 mb-1">{label}</p>
+      {children}
+      {hint && <p className="text-[10px] text-slate-400 mt-1 leading-snug">{hint}</p>}
+    </div>
+  )
+  // Cụm ô SỐ nằm ngang (Hạng A/B/C, Ảnh/Thông báo/Log) — nhãn trên, đơn vị nhỏ bên dưới
+  const NumCell = ({ label, unit, value, onChange }: { label: string; unit: string; value: string; onChange: (v: string) => void }) => (
+    <label className="block">
+      <span className="block text-[10px] text-slate-500 mb-0.5 truncate">{label}</span>
+      <span className="flex items-center gap-1">
+        <Input type="number" inputMode="numeric" min={1} value={value}
+          onChange={e => onChange(e.target.value)} className="h-8 w-full min-w-0 text-xs tabular-nums" />
+        <span className="text-[10px] text-slate-400 shrink-0">{unit}</span>
+      </span>
+    </label>
+  )
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto p-4">
+      <div className="flex-1 min-h-0 overflow-auto p-3">
         {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{err}</p>}
 
-        <div className="divide-y divide-slate-100 border-y border-slate-100">
-          {/* 1. Định dạng tem pallet */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">1. Định dạng tem pallet</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.</p>
-              {labelRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {labelRow.updated_by} · {formatDateTime(labelRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 ${roClass}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+          <Group title="Định dạng & nhập liệu" meta={labelRow}>
+            <Field label="Định dạng tem pallet" hint="Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.">
               <SingleSelect options={LABEL_FORMAT_OPTS} value={draftLabel}
-                onChange={setDraftLabel} searchable={false} triggerClassName="w-56" />
-            </div>
-          </div>
-
-          {/* 2. Xác nhận giao hàng */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">2. Xác nhận giao hàng</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên.</p>
-              {dcRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 flex flex-col items-end gap-1.5 ${roClass}`}>
-              <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
-                onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-56" />
-              {draftDc.enabled && (
-                <>
-                  <MultiSelectFilter label="Hình thức kho nhận" options={DC_MODE_OPTS}
-                    selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
-                    searchable={false} width="w-56" />
-                  <p className="text-[10px] text-right max-w-[14rem] break-words">
-                    {draftDc.modes.length
-                      ? <span className="text-slate-500">Đã chọn: {draftDc.modes.join(', ')}</span>
-                      : <span className="text-amber-600">Chưa chọn → không tạo booking</span>}
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* 3. Dấu thập phân — ô nhập số (KG/decimal) ở các form; app chặn dấu còn lại */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">3. Dấu thập phân</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.</p>
-              {decRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {decRow.updated_by} · {formatDateTime(decRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 ${roClass}`}>
+                onChange={setDraftLabel} searchable={false} triggerClassName="w-full" />
+            </Field>
+            <Field label="Dấu thập phân" hint="Ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng — chọn dấu nào thì app CHẶN dấu còn lại.">
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
-                onChange={setDraftDec} searchable={false} triggerClassName="w-56" />
-            </div>
-          </div>
+                onChange={setDraftDec} searchable={false} triggerClassName="w-full" />
+            </Field>
+          </Group>
 
-          {/* 4. Kiểm kê luân phiên ABC — chu kỳ per hạng + cửa sổ phân hạng */}
-          <div className="flex items-start justify-between gap-4 py-3 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">4. Kiểm kê luân phiên ABC</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Chu kỳ kiểm theo hạng (A nhặt nhiều → kiểm dày nhất) + cửa sổ lượt nhặt để phân hạng. Áp cho tab Luân phiên ABC của Kiểm kho.</p>
-              {cycRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {cycRow.updated_by} · {formatDateTime(cycRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 flex items-center gap-3 flex-wrap ${roClass}`}>
-              {([['A', 'Hạng A'], ['B', 'Hạng B'], ['C', 'Hạng C'], ['window_days', 'Cửa sổ hạng']] as const).map(([k, lb]) => (
-                <label key={k} className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                  {lb}
-                  <Input type="number" inputMode="numeric" min={1} value={draftCyc[k]}
-                    onChange={e => setDraftCyc(d => ({ ...d, [k]: e.target.value }))}
-                    className="h-8 w-16 text-xs tabular-nums" />
-                  <span className="text-slate-400">ngày</span>
-                </label>
-              ))}
-            </div>
-          </div>
+          <Group title="Xác nhận giao hàng" meta={dcRow}>
+            <Field label="Tạo booking Chuyển kho khi xuất" hint={'"Không" → không tạo booking. "Có" → tạo theo hình thức kho nhận chọn bên dưới.'}>
+              <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
+                onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-full" />
+            </Field>
+            {draftDc.enabled && (
+              <Field label="Hình thức kho nhận"
+                hint={draftDc.modes.length
+                  ? <span>Đã chọn: {draftDc.modes.join(', ')}</span>
+                  : <span className="text-amber-600">Chưa chọn → không tạo booking</span>}>
+                <MultiSelectFilter label="Hình thức kho nhận" options={DC_MODE_OPTS}
+                  selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
+                  searchable={false} width="w-full" />
+              </Field>
+            )}
+          </Group>
 
-          {/* 5. Thời gian lưu dữ liệu — dọn lười theo lô, quá hạn là gỡ dần */}
-          <div className="flex items-start justify-between gap-4 py-3 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">5. Thời gian lưu dữ liệu</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu GIỮ NGUYÊN, chỉ gỡ ảnh). Thông báo = feed Cá nhân nút chuông. Log lỗi = bảng error_logs cho digest.</p>
-              {retRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {retRow.updated_by} · {formatDateTime(retRow.updated_at)}</p>}
+          <Group title="Kiểm kê luân phiên ABC" meta={cycRow}>
+            <div>
+              <p className="text-[11px] font-medium text-slate-700 mb-1">Chu kỳ kiểm theo hạng</p>
+              <div className="grid grid-cols-3 gap-2">
+                <NumCell label="Hạng A" unit="ngày" value={draftCyc.A} onChange={v => setDraftCyc(d => ({ ...d, A: v }))} />
+                <NumCell label="Hạng B" unit="ngày" value={draftCyc.B} onChange={v => setDraftCyc(d => ({ ...d, B: v }))} />
+                <NumCell label="Hạng C" unit="ngày" value={draftCyc.C} onChange={v => setDraftCyc(d => ({ ...d, C: v }))} />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1 leading-snug">Hạng A nhặt nhiều nhất → kiểm dày nhất. Bắt buộc A ≤ B ≤ C.</p>
             </div>
-            <div className={`shrink-0 flex items-center gap-3 flex-wrap ${roClass}`}>
-              {([['photos', 'Ảnh'], ['feed', 'Thông báo'], ['error_logs', 'Log lỗi']] as const).map(([k, lb]) => (
-                <label key={k} className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                  {lb}
-                  <Input type="number" inputMode="numeric" min={1} value={draftRet[k]}
-                    onChange={e => setDraftRet(d => ({ ...d, [k]: e.target.value }))}
-                    className="h-8 w-16 text-xs tabular-nums" />
-                  <span className="text-slate-400">ngày</span>
-                </label>
-              ))}
-            </div>
-          </div>
+            <Field label="Cửa sổ lượt nhặt để phân hạng" hint="Số ngày lấy lượt nhặt làm căn cứ xếp hạng ABC.">
+              <div className="w-24"><NumCell label="" unit="ngày" value={draftCyc.window_days} onChange={v => setDraftCyc(d => ({ ...d, window_days: v }))} /></div>
+            </Field>
+          </Group>
 
-          {/* 6. Cửa sổ tự sửa/xóa phiếu nhập */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">6. Cửa sổ sửa/xóa phiếu nhập</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Người NHẬP tự sửa/xóa pallet của mình trong vòng bao nhiêu ngày. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).</p>
-              {inbRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {inbRow.updated_by} · {formatDateTime(inbRow.updated_at)}</p>}
+          <Group title="Thời gian lưu dữ liệu" meta={retRow}>
+            <div className="grid grid-cols-3 gap-2">
+              <NumCell label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
+              <NumCell label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
+              <NumCell label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
             </div>
-            <div className={`shrink-0 flex items-center gap-1.5 text-[11px] text-slate-600 ${roClass}`}>
-              <Input type="number" inputMode="numeric" min={1} value={draftInb}
-                onChange={e => setDraftInb(e.target.value)} className="h-8 w-16 text-xs tabular-nums" />
-              <span className="text-slate-400">ngày</span>
-            </div>
-          </div>
+            <p className="text-[10px] text-slate-400 leading-snug">
+              Ảnh = check xe nâng + chữ in phun Sổ đóng gói (số liệu GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân nút chuông · Log lỗi = bảng error_logs cho digest.
+            </p>
+          </Group>
 
-          {/* 7. Sổ đóng gói — trần số mã / 1 trang sổ */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">7. Sổ đóng gói — số mã tối đa / trang sổ</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy. Trần này chặn chọn quá tay khi mở trang.</p>
-              {packRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {packRow.updated_by} · {formatDateTime(packRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 flex items-center gap-1.5 text-[11px] text-slate-600 ${roClass}`}>
-              <Input type="number" inputMode="numeric" min={1} value={draftPack}
-                onChange={e => setDraftPack(e.target.value)} className="h-8 w-16 text-xs tabular-nums" />
-              <span className="text-slate-400">mã</span>
-            </div>
-          </div>
+          <Group title="Nhập kho" meta={inbRow}>
+            <Field label="Cửa sổ tự sửa/xóa pallet" hint="Người NHẬP tự sửa/xóa pallet của mình trong bấy nhiêu ngày. Quá hạn phải nhờ người có quyền force.">
+              <div className="w-24"><NumCell label="" unit="ngày" value={draftInb} onChange={setDraftInb} /></div>
+            </Field>
+          </Group>
+
+          <Group title="Sổ đóng gói" meta={packRow}>
+            <Field label="Số mã tối đa / trang sổ" hint="Một trang ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
+              <div className="w-24"><NumCell label="" unit="mã" value={draftPack} onChange={setDraftPack} /></div>
+            </Field>
+          </Group>
         </div>
       </div>
 

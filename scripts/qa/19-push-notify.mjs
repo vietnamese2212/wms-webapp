@@ -188,7 +188,8 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
 // giá trị đã lưu. Fixture: nhớ giá trị trước đó → trả lại nguyên trạng khi xong.
 {
   const before = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value ?? null
-  const FULL = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180, TRIP_STUCK_HOURS: 6, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15 }
+  // 13/08: thêm 2 ngưỡng PACKING_UNRECV (sổ đóng gói — kho chưa nhận) — validator đòi ĐỦ 9 khóa
+  const FULL = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180, TRIP_STUCK_HOURS: 6, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15, PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24 }
 
   const bad1 = await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...FULL, PCT_CRIT: 30 } })   // crit > warn
   check('Ngưỡng vô nghĩa (PCT_CRIT > PCT_WARN) → 400', bad1.s === 400 && bad1.j?.error?.code === 'INVALID_VALUE', `http=${bad1.s} code=${bad1.j?.error?.code}`)
@@ -205,9 +206,9 @@ check('Response vapid-key không chứa private key', !JSON.stringify(k1.j ?? {}
   check('GET trả đúng ngưỡng vừa lưu (PCT_CRIT=15, GATE_WARN_MIN=120)',
     after?.PCT_CRIT === 15 && after?.GATE_WARN_MIN === 120, JSON.stringify(after ?? null).slice(0, 120))
 
-  // Trả nguyên trạng: có giá trị cũ → ghi lại; chưa từng cấu hình → ghi bộ mặc định
-  // (không có route DELETE setting; mặc định = hành vi y hệt "chưa cấu hình").
-  const restore = await api('/wms/settings/alert_thresholds', 'PUT', { value: before ?? FULL })
+  // Trả nguyên trạng: có giá trị cũ → ghi lại (đắp lên FULL — giá trị cũ có thể thiếu 2 khóa mới,
+  // validator giờ đòi đủ 9); chưa từng cấu hình → ghi bộ mặc định.
+  const restore = await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...FULL, ...(before ?? {}) } })
   check('Trả ngưỡng về nguyên trạng sau test', restore.s === 200, `http=${restore.s}`)
 }
 

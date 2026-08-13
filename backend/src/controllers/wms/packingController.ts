@@ -143,7 +143,10 @@ export async function listLogs(req: Request, res: Response) {
   const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
   const pageSize = Math.min(PAGE_MAX, Math.max(1, parseInt(String(req.query.pageSize ?? '200'), 10) || 200))
   const whF = String(req.query.warehouse_id ?? '')
-  const term = search?.trim() ? search.trim().replace(/[%_,(){}\\]/g, ' ').slice(0, 60).trim() : ''
+  // GIỮ dấu `_` — tem pallet V1 đầy `_`; trong LIKE nó là wildcard 1 ký tự nên vẫn khớp nguyên văn
+  // (strip `_` như trước = băm nát tem, search tem không bao giờ trúng). RPC nhận term qua PARAM
+  // nên không cần sạch cú pháp or-string; chỉ bỏ % (match-all) + backslash (escape).
+  const term = search?.trim() ? search.trim().replace(/[%\\]/g, ' ').slice(0, 60).trim() : ''
   const scope = scopeWhIds(req)
 
   const { data, error } = await supabase.rpc('packing_logs_recon', {
@@ -466,7 +469,8 @@ export async function listRuns(req: Request, res: Response) {
   if (machine) q = q.eq('machine_code', machine)
   if (material_code) q = q.eq('material_code', material_code)
   if (search && search.trim()) {
-    const term = search.trim().replace(/[%_,(){}\\]/g, ' ').slice(0, 60).trim()
+    // GIỮ `_` (tem V1) — nó chỉ là wildcard 1 ký tự trong ilike; vẫn strip ký tự phá cú pháp .or()
+    const term = search.trim().replace(/[%,(){}\\]/g, ' ').slice(0, 60).trim()
     if (term) {
       const orParts = [
         `material_code.ilike.%${term}%`,

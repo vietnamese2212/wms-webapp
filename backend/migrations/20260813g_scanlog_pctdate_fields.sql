@@ -7,6 +7,10 @@
 
 DROP FUNCTION IF EXISTS public.get_outbound_scan_log(text,text,text,text,text,text,text,text,text,text,text,text,text,integer,integer,text);
 DROP FUNCTION IF EXISTS public.search_outbound_scan_log(text,text,text,integer,integer);
+-- Xác chết overload 10 tham số đời trước 20260702 còn sót — 2 overload cùng tên làm lời gọi
+-- positional/psql ambiguous (bài học packing recon 20260813c). PostgREST gọi theo TÊN tham số nên
+-- chưa nổ, nhưng là mìn chờ — dọn hẳn.
+DROP FUNCTION IF EXISTS public.get_outbound_scan_log(text,text,text,text,text,text,text,text,integer,integer);
 
 CREATE FUNCTION public.get_outbound_scan_log(
   p_from_date text DEFAULT NULL, p_to_date text DEFAULT NULL, p_warehouse_ids text DEFAULT NULL,

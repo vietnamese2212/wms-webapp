@@ -28,10 +28,10 @@ async function readSetting<T>(key: string, fallback: T, parse: (raw: unknown) =>
 /** Gọi khi PUT /wms/settings — cờ đổi có hiệu lực ngay, không đợi hết TTL. */
 export function invalidateSettingsCache(): void { cache.clear() }
 
-const int = (v: unknown, min: number, max: number): number | null => {
-  const n = Number(v)
-  return Number.isInteger(n) && n >= min && n <= max ? n : null
-}
+// Đòi ĐÚNG kiểu number — Number() ép kiểu quá dễ dãi (`Number([10])`=10, `Number('5')`=5) nên
+// validator từng cho mảng/chuỗi lọt và giá trị THÔ được lưu nguyên (QA 23 bắt ngay lượt đầu 13/08).
+const int = (v: unknown, min: number, max: number): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : null
 
 // ── retention_days — thời gian GIỮ dữ liệu ────────────────────────────────────
 export interface RetentionDays { photos: number; feed: number; error_logs: number }

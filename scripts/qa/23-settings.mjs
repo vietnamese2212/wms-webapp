@@ -6,6 +6,11 @@
 // cờ bí mật (vision_api) không lộ qua GET hở đọc.
 import { login, api, check, finish, BASE } from './lib.mjs'
 
+// So sánh GIÁ TRỊ, không so thứ tự khóa — jsonb của Postgres tự đảo thứ tự key khi lưu
+// ({photos,feed} lưu ra {feed,photos}), so JSON.stringify thô là fail oan (bắt lượt chạy đầu).
+const canon = (v) => JSON.stringify(v && typeof v === 'object' && !Array.isArray(v)
+  ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v)
+
 console.log(`── THAM SỐ VẬN HÀNH SystemSetting · ${BASE.replace('https://', '')} ──`)
 
 // [0] gác chung trước khi login
@@ -56,14 +61,14 @@ for (const [key, valid, invalids, def] of CASES) {
   const put = await api(`/wms/settings/${key}`, 'PUT', { value: valid })
   check(`${key}: PUT hợp lệ → 200`, put.s === 200, `http=${put.s} ${JSON.stringify(put.j?.error ?? '').slice(0, 120)}`)
   const got = ((await api('/wms/settings', 'GET')).j?.data ?? []).find(s => s.key === key)?.value
-  check(`${key}: GET trả đúng giá trị vừa lưu`, JSON.stringify(got) === JSON.stringify(valid), JSON.stringify(got))
+  check(`${key}: GET trả đúng giá trị vừa lưu`, canon(got) === canon(valid), JSON.stringify(got))
   for (const bad of invalids) {
     const r = await api(`/wms/settings/${key}`, 'PUT', { value: bad })
     check(`${key}: PUT bậy ${JSON.stringify(bad).slice(0, 45)} → 400`, r.s === 400, `http=${r.s}`)
   }
   // Bậy bị chặn thì giá trị ĐANG LƯU phải còn nguyên (400 không được ghi đè một phần)
   const still = ((await api('/wms/settings', 'GET')).j?.data ?? []).find(s => s.key === key)?.value
-  check(`${key}: sau loạt PUT bậy giá trị lưu KHÔNG đổi`, JSON.stringify(still) === JSON.stringify(valid), JSON.stringify(still))
+  check(`${key}: sau loạt PUT bậy giá trị lưu KHÔNG đổi`, canon(still) === canon(valid), JSON.stringify(still))
   // Khôi phục
   const restore = before.has(key) ? before.get(key) : def
   const rr = await api(`/wms/settings/${key}`, 'PUT', { value: restore })

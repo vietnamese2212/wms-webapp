@@ -28,7 +28,7 @@ import {
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
-import { useScopedWarehouses } from '@/hooks/useUserScope'
+import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { normalizeQR } from '@/utils/qr'
 import { unlockAudio, playBeep } from '@/utils/audio'
@@ -370,12 +370,8 @@ export default function Packing() {
         </button>
       ))}
       <div className="flex-1" />
-      {canRecord && (
-        <Button size="sm" className="h-8 mb-1 text-xs bg-blue-600 hover:bg-blue-700 shrink-0"
-          onClick={() => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) }}>
-          <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — ghi sổ</span>
-        </Button>
-      )}
+      {/* 13/08 user bỏ nút "Quét tem — ghi sổ" cấp trang: quét là việc CỦA TỪNG TRANG SỔ —
+          nút quét nằm ở row (cột Thao tác) + trong detail trang; súng PDA vẫn bắn ở bất kỳ đâu */}
     </div>
   )
 
@@ -472,7 +468,7 @@ const RUN_G_COLS = [
   { id: 'qty',     label: 'Tổng SL (thùng)', w: 100 },
   { id: 'time',    label: 'Giờ BĐ → KT',  w: 165 },
   { id: 'by',      label: 'Người mở',     w: 105 },
-  { id: 'photo',   label: 'Ảnh',          w: 92 },
+  // 13/08 user bỏ cột Ảnh ở bảng TRANG SỔ ngoài cùng — ảnh là dữ liệu cấp PALLET, xem trong detail/Sổ pallet
   { id: 'note',    label: 'Ghi chú',      w: 120 },
 ]
 const RUN_G_DEFAULTS = RUN_G_COLS.map(c => c.w)
@@ -494,8 +490,7 @@ interface RunTableHandlers {
 function RunGroupedTable({ runs, loading, emptyText, h }: {
   runs: PackingRun[]; loading: boolean; emptyText: string; h: RunTableHandlers
 }) {
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v3', RUN_G_DEFAULTS)
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v4', RUN_G_DEFAULTS)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
   const matName = useMatNames(runs.flatMap(runCodes))
@@ -526,7 +521,6 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
           ) : runs.map(r => {
             const pallets = r.pallets ?? []
             const cancelled = r.status === 'CANCELLED'
-            const thumbs = pallets.flatMap(l => [l.photo_start_url, l.photo_end_url]).filter((u): u is string => !!u)
             // chu kỳ có thể chạy LIỀN VÀI NGÀY (user chốt) — giờ kết thúc khác ngày thì kèm ngày
             const endOtherDay = r.end_at && formatTimestampDate(r.end_at, true) !== formatTimestampDate(r.start_at, true)
             return (
@@ -583,24 +577,12 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     ) : (r.status === 'OPEN' ? <span className="text-amber-600 font-normal" title={`Chưa bấm Giờ kết thúc — trang đã mở ${elapsedOf(r.start_at)}`}>mở {elapsedOf(r.start_at)}</span> : '…')}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.opened_by_name ?? ''}>{r.opened_by_name ?? '—'}</TableCell>
-                  <TableCell className="px-2 py-1 whitespace-nowrap">
-                    {thumbs.length ? (
-                      <span className="inline-flex items-center gap-1">
-                        {thumbs.slice(0, 2).map((u, i) => (
-                          <img key={i} src={u} alt="ảnh thùng" className="h-6 w-9 object-cover rounded cursor-zoom-in border border-slate-200"
-                            onClick={e => { e.stopPropagation(); setLightbox(u) }} />
-                        ))}
-                        {thumbs.length > 2 && <span className="text-[9px] text-slate-400 no-underline">+{thumbs.length - 2}</span>}
-                      </span>
-                    ) : <span className="text-slate-300">—</span>}
-                  </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
                 </TableRow>
             )
           })}
         </TableBody>
       </Table>
-      {lightbox && <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   )
 }
@@ -618,12 +600,27 @@ function RecordSheet({ code, whName, onDone, onError }: {
   const fields = useMemo(() => parseCodeFields(code), [code])
   const defaultDate = dmyToIso(fields.dateDisplay) ?? todayVN()
   const allRuns = usePackingRunBoard('')   // mọi trang đang MỞ trong scope (không dính filter kho của board)
+  // khớp theo MẢNG mã (13/08 — trang nhiều mã): tem mã PHỤ cũng phải thấy trang, như gate BE
   const candidates = useMemo(
-    () => (allRuns.data ?? []).filter(r => r.material_code === (fields.materialCode || '')),
+    () => (allRuns.data ?? []).filter(r => runCodes(r).includes(fields.materialCode || '')),
     [allRuns.data, fields.materialCode])
   const [runId, setRunId] = useState('')
   const run = candidates.find(r => r.id === runId) ?? (candidates.length === 1 ? candidates[0] : null)
   const [qty, setQty] = useState('')       // '' = theo số chuẩn của tem
+  // SỐ THÙNG TỰ ĐIỀN THEO QUY CÁCH (user 13/08 "sao không thấy số thùng tự nhảy theo quy cách"):
+  // override thùng/pallet theo KHO của trang sổ → fallback quy cách chung của mã
+  const { data: matRows } = useMaterialsByCodes(fields.materialCode ? [fields.materialCode] : [])
+  const specQty = useMemo(() => {
+    const mat = (matRows ?? [])[0]
+    if (!mat) return null
+    const ov = (mat.warehouse_pallet_overrides ?? []).find(o => o.warehouse_id === run?.warehouse_id)
+    const n = Number(ov?.cartons_per_pallet ?? mat.cartons_per_pallet ?? 0)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }, [matRows, run?.warehouse_id])
+  const qtyTouched = useRef(false)
+  useEffect(() => {
+    if (!qtyTouched.current && specQty != null) setQty(String(specQty))
+  }, [specQty])
   const [prodS, setProdS] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
   const [prodE, setProdE] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
   const busy = prodS.busy || prodE.busy
@@ -703,7 +700,13 @@ function RecordSheet({ code, whName, onDone, onError }: {
         )}
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Số thùng</p>
-          <Input value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" placeholder="Theo tem" />
+          <Input value={qty} onChange={e => { qtyTouched.current = true; setQty(e.target.value) }}
+            inputMode="decimal" className="h-9 w-32 text-sm tabular-nums" placeholder="Theo tem / quy cách" />
+          {specQty != null && (
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              Tự điền theo quy cách {Number(specQty).toLocaleString('vi-VN')} thùng/pallet — sửa nếu pallet lẻ
+            </p>
+          )}
         </div>
         <PhotoOcrField title="Thùng ĐẦU" hint="giờ SX bắt đầu — chữ in phun" defaultDate={defaultDate} onValue={setProdS} />
         <PhotoOcrField title="Thùng CUỐI" hint="giờ SX kết thúc — chữ in phun" defaultDate={defaultDate} onValue={setProdE} />
@@ -941,8 +944,12 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const [date, setDate] = useState(todayVN())
   const [shift, setShift] = useState('')
   const [cycle, setCycle] = useState('')
+  // Loại kho để LỌC danh sách mã cho đúng (user 13/08) — hook SCOPED theo quyền loại hàng
+  const whTypes = useScopedWhTypes()
+  const catOpts = useMemo(() => (whTypes.data ?? []).map(t => ({ value: t.value, label: t.value })), [whTypes.data])
+  const [cat, setCat] = useState('')
   const [matSearch, setMatSearch] = useState('')
-  const mats = useMaterials({ search: matSearch || undefined, limit: 50 })
+  const mats = useMaterials({ search: matSearch || undefined, category: cat || undefined, limit: 50 })
   // 13/08 user chốt: 1 số loại hàng có 2-3 mã SX CHUNG 1 chu kỳ + 1 máy → 1 trang sổ ghi NHIỀU mã
   const [sel, setSel] = useState<{ code: string; id: string | null; label: string }[]>([])
   const matOpts = useMemo(() => (mats.data ?? [])
@@ -1017,6 +1024,10 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
             <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ</p>
             <Input value={cycle} onChange={e => setCycle(e.target.value)} className="h-9 text-sm" placeholder="VD: 55" />
           </div>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-700 mb-1">Loại kho <span className="font-normal text-slate-400">(lọc danh sách mã bên dưới)</span></p>
+          <SingleSelect options={catOpts} value={cat} onChange={setCat} placeholder="Tất cả loại kho…" triggerClassName="w-full h-9" />
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Mã sản phẩm * <span className="font-normal text-slate-400">(chọn được nhiều — hàng 2-3 mã SX chung 1 máy)</span></p>

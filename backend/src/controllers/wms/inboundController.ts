@@ -1456,16 +1456,22 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     // ĐỐI CHIẾU SỔ ĐÓNG GÓI chiều ngược (user duyệt 13/08): kho quét nhập pallet KHÔNG có trong sổ,
-    // TRONG KHI mã này SX đang ghi sổ (7 ngày gần) → cảnh báo MỀM, không chặn nhập. Mã không dùng
-    // sổ (NCC, kho không SX) không có dòng sổ nào → im lặng, không báo oan.
+    // TRONG KHI mã này SX đang ghi sổ (7 ngày gần) → cảnh báo MỀM, không chặn nhập.
+    // KHÔNG báo oan 3 trường hợp (user hỏi 13/08 "NCC, trung chuyển có bị cảnh báo không?"):
+    //   · hàng NCC / mã không dùng sổ → không có dòng sổ nào của mã → im lặng;
+    //   · TRUNG CHUYỂN (source_type TRANSFER) → pallet đã qua 1 lần nhập, không phải hàng xưởng mới → bỏ qua;
+    //   · tem NGÀY SX CŨ (> 7 ngày — SX trước khi dùng sổ / hàng tồn quay vòng) → bỏ qua.
     try {
-      const { data: inBook } = await supabase.from('packing_logs').select('id')
-        .eq('pallet_code', parsed.pallet_code).neq('status', 'CANCELLED').limit(1)
-      if (!inBook?.length && parsed.material_code) {
-        const since = new Date(Date.now() - 7 * 86400_000).toISOString()
-        const { data: matBook } = await supabase.from('packing_logs').select('id')
-          .eq('material_code', parsed.material_code).neq('status', 'CANCELLED').gte('open_scan_at', since).limit(1)
-        if (matBook?.length) warnings.push('Pallet CHƯA có trong Sổ đóng gói (mã này sản xuất đang ghi sổ) — kiểm tra nguồn pallet với xưởng.')
+      const prodOk = parsed.production_date && (Date.now() - parsed.production_date.getTime()) <= 7 * 86400_000
+      if ((order as { source_type?: string }).source_type !== 'TRANSFER' && prodOk && parsed.material_code) {
+        const { data: inBook } = await supabase.from('packing_logs').select('id')
+          .eq('pallet_code', parsed.pallet_code).neq('status', 'CANCELLED').limit(1)
+        if (!inBook?.length) {
+          const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+          const { data: matBook } = await supabase.from('packing_logs').select('id')
+            .eq('material_code', parsed.material_code).neq('status', 'CANCELLED').gte('open_scan_at', since).limit(1)
+          if (matBook?.length) warnings.push('Pallet CHƯA có trong Sổ đóng gói (mã này sản xuất đang ghi sổ) — kiểm tra nguồn pallet với xưởng.')
+        }
       }
     } catch { /* đối chiếu lỗi thì bỏ qua — không được chặn nhập */ }
 

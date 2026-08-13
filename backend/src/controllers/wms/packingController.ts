@@ -261,6 +261,17 @@ export async function openLog(req: Request, res: Response) {
   if (wh && scope !== null && !scope.includes(wh)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   let qty: number | null = label?.qty ?? null
   let qtySource = 'LABEL'
+  // Tem không có trong lịch sử in (tem đợt cũ) → tự điền theo QUY CÁCH thùng/pallet của mã
+  // (override theo KHO của trang → quy cách chung) — user 13/08 "số thùng phải tự nhảy theo quy cách"
+  if (qty == null && matCode) {
+    const { data: matSpec } = await supabase.from('Material')
+      .select('cartons_per_pallet, warehouse_pallet_overrides').eq('material_code', matCode).maybeSingle()
+    if (matSpec) {
+      const ovs = (matSpec.warehouse_pallet_overrides ?? []) as { warehouse_id: string; cartons_per_pallet: number }[]
+      const n = Number(ovs.find(o => o.warehouse_id === wh)?.cartons_per_pallet ?? matSpec.cartons_per_pallet ?? 0)
+      if (Number.isFinite(n) && n > 0) { qty = n; qtySource = 'SPEC' }
+    }
+  }
   if (qty_cartons !== undefined && qty_cartons !== null && qty_cartons !== '') {
     const q = Number(qty_cartons)
     if (!Number.isFinite(q) || q <= 0 || q > 100_000) return fail(res, 'Số thùng phải là số dương hợp lý', 422)

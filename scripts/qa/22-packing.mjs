@@ -13,6 +13,7 @@ const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${Str
 
 async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
+  await restWrite('packing_logs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})         // [17] tem mã THẬT (không mang TAG)
   await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})   // [16] giả lập kho nhận
 }
@@ -309,6 +310,23 @@ let runB = null
 
   await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', {})
   if (yWin?.id) await api(`/wms/packing-runs/${yWin.id}/cancel`, 'POST', {})
+}
+
+// [17] SỐ THÙNG TỰ ĐIỀN THEO QUY CÁCH khi tem KHÔNG có lịch sử in (user 13/08 "số thùng phải
+// tự nhảy theo quy cách") — nguồn SPEC (không phải MANUAL); dùng mã THẬT có khai quy cách.
+{
+  const mp = (await restAll('Material', `select=material_code,cartons_per_pallet&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  if (!mp?.cartons_per_pallet) console.log('ℹ️  bỏ qua [17] — mã fixture chưa khai quy cách thùng/pallet')
+  else {
+    await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [FIX.MAT_POOL], machine_code: 'MQ' })
+    const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(1, FIX.MAT_POOL) })
+    check('[17] Tem không có lịch sử in → Số thùng TỰ ĐIỀN theo quy cách (nguồn SPEC)',
+      r.s === 200 && Number(r.j?.data?.qty_cartons) === Number(mp.cartons_per_pallet) && r.j?.data?.qty_source === 'SPEC',
+      `http=${r.s} qty=${r.j?.data?.qty_cartons} src=${r.j?.data?.qty_source} spec=${mp.cartons_per_pallet}`)
+    if (r.j?.data?.id) await api(`/wms/packing-logs/${r.j.data.id}/cancel`, 'POST', {})
+    const mq = await restAll('packing_runs', `select=id&warehouse_id=eq.${WH}&machine_code=eq.MQ&status=eq.OPEN`)
+    for (const rr of mq) await api(`/wms/packing-runs/${rr.id}/cancel`, 'POST', {})
+  }
 }
 
 // [15] IDOR CROSS-KHO (12/08 — bug thật: write theo id từng KHÔNG kiểm scope kho): user có đủ

@@ -5454,7 +5454,7 @@ export interface PackingLog {
   machine_code: string | null
   warehouse_id: string | null
   qty_cartons: number | null
-  qty_source: 'LABEL' | 'MANUAL'
+  qty_source: 'LABEL' | 'SPEC' | 'MANUAL'   // SPEC = tự điền theo quy cách thùng/pallet (tem không có lịch sử in)
   status: 'OPEN' | 'CLOSED' | 'CANCELLED'
   open_scan_at: string
   close_scan_at: string | null

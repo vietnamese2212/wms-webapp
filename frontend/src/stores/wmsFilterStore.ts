@@ -280,6 +280,7 @@ interface PackingFilters {
   pageSize: number
   runStatus: string      // filter trạng thái riêng của tab Trang sổ (khỏi giằng với tab Sổ pallet)
   runPage: number
+  received: string       // '' = tất cả | YES = kho đã nhận | NO = SX tạo mà kho CHƯA nhận (đối chiếu 13/08)
 }
 interface ForkliftFilters {
   tab: 'board' | 'report' | 'matrix' | 'summary' | 'detail' | 'settings'
@@ -442,7 +443,7 @@ function initialFilters() {
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
                     onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
-    packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1 },
+    packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },

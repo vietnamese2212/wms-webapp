@@ -23,7 +23,7 @@ import {
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
   usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
   useUpdatePackingRun, useCancelPackingRun, type PackingRun,
-  useImportShifts, useMaterials,
+  useImportShifts, useMaterials, useMaterialsByCodes,
 } from '@/api/hooks'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
@@ -436,9 +436,18 @@ export default function Packing() {
 // Dòng đầu cụm = TRANG SỔ (bấm vào mở DETAIL), các dòng dưới = pallet của trang.
 // Dùng chung cho tab Đóng gói (trang MỞ) + tab Trang sổ (mọi trạng thái).
 // 12/08 user chốt: cột THAO TÁC đưa LÊN ĐẦU row cho dễ bấm (kéo ngang mới thấy nút = khó thao tác)
+// mã của 1 trang sổ (13/08: 1 trang ghi được NHIỀU mã — material_codes; dòng cũ chỉ có material_code)
+const runCodes = (r: PackingRun): string[] => (r.material_codes?.length ? r.material_codes : [r.material_code])
+// Tra TÊN hàng cho các mã đang hiện trên màn (user 13/08 "table cần thể hiện tên hàng") —
+// tra đúng mã trên trang qua useMaterialsByCodes (chuẩn catalogue, KHÔNG nạp cả danh mục)
+function useMatNames(codes: string[]): Map<string, string> {
+  const { data } = useMaterialsByCodes(codes)
+  return useMemo(() => new Map((data ?? []).map(m => [m.material_code, m.short_name ?? m.material_description ?? ''])), [data])
+}
+
 const RUN_G_COLS = [
   { id: 'act',     label: 'Thao tác',     w: 116 },
-  { id: 'main',    label: 'Mã sản phẩm',  w: 130 },
+  { id: 'main',    label: 'Mã · Tên hàng', w: 190 },
   { id: 'status',  label: 'Trạng thái',   w: 88 },
   { id: 'date',    label: 'Ngày SX',      w: 82 },
   { id: 'wh',      label: 'Kho',          w: 115 },
@@ -471,10 +480,11 @@ interface RunTableHandlers {
 function RunGroupedTable({ runs, loading, emptyText, h }: {
   runs: PackingRun[]; loading: boolean; emptyText: string; h: RunTableHandlers
 }) {
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v2', RUN_G_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v3', RUN_G_DEFAULTS)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
+  const matName = useMatNames(runs.flatMap(runCodes))
   const N = RUN_G_COLS.length
 
   return (
@@ -530,7 +540,14 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     </span>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <span className="font-mono text-[11px] font-semibold no-underline">{r.material_code}</span>
+                    <div className="leading-tight">
+                      {runCodes(r).map(c => (
+                        <div key={c} className="truncate" title={`${c} — ${matName.get(c) ?? ''}`}>
+                          <span className="font-mono text-[11px] font-semibold no-underline">{c}</span>
+                          {matName.get(c) && <span className="ml-1 text-[9px] text-slate-400 no-underline">{matName.get(c)}</span>}
+                        </div>
+                      ))}
+                    </div>
                   </TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full no-underline ${STATUS_BADGE[r.status]}`}>{RUN_STATUS_LABEL[r.status]}</span>
@@ -912,9 +929,8 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const [cycle, setCycle] = useState('')
   const [matSearch, setMatSearch] = useState('')
   const mats = useMaterials({ search: matSearch || undefined, limit: 50 })
-  const [matCode, setMatCode] = useState('')
-  const [matId, setMatId] = useState<string | null>(null)
-  const [matLabel, setMatLabel] = useState<string | undefined>(undefined)
+  // 13/08 user chốt: 1 số loại hàng có 2-3 mã SX CHUNG 1 chu kỳ + 1 máy → 1 trang sổ ghi NHIỀU mã
+  const [sel, setSel] = useState<{ code: string; id: string | null; label: string }[]>([])
   const matOpts = useMemo(() => (mats.data ?? [])
     .filter(m => !m.is_non_stock)
     .map(m => ({ value: m.material_code, label: `${m.material_code} — ${m.short_name ?? m.material_description ?? ''}` })), [mats.data])
@@ -922,15 +938,22 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const [startTime, setStartTime] = useState(nowHHMM())
   const [note, setNote] = useState('')
 
+  function addMat(v: string) {
+    if (!v || sel.some(s => s.code === v)) return
+    if (sel.length >= 10) { onError('Tối đa 10 mã / 1 trang sổ'); return }
+    const m = (mats.data ?? []).find(x => x.material_code === v)
+    setSel(prev => [...prev, { code: v, id: m?.id ?? null, label: m ? `${m.material_code} — ${m.short_name ?? ''}` : v }])
+  }
+
   function save() {
     if (!whId) { onError('Chọn Kho / Nhà máy'); return }
-    if (!matCode) { onError('Chọn Mã sản phẩm'); return }
+    if (!sel.length) { onError('Chọn Mã sản phẩm'); return }
     if (!machine.trim()) { onError('Nhập Máy'); return }
     const startIso = hhmmToIso(date, startTime)
     if (!startIso) { onError('Giờ bắt đầu dạng HH:MM (VD 07:30)'); return }
     openMut.mutate({
       warehouse_id: whId, run_date: date, shift: shift || null, cycle: cycle.trim() || null,
-      material_code: matCode, material_id: matId, machine_code: machine.trim(),
+      material_codes: sel.map(s => s.code), material_id: sel[0]?.id ?? null, machine_code: machine.trim(),
       start_at: startIso, note: note.trim() || null,
     }, {
       onSuccess: () => onDone(),
@@ -950,7 +973,7 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
       }>
       <div className="space-y-3">
         <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
-          1 trang sổ = 1 trang sản phẩm trong sổ viết tay. Mở trang xong công nhân mới quét được tem pallet của mã này; bấm "Giờ kết thúc" để đóng trang và tính tổng sản lượng.
+          1 trang sổ = 1 trang sản phẩm trong sổ viết tay — hàng có 2-3 mã SX chung 1 chu kỳ + 1 máy thì chọn đủ các mã vào CÙNG trang. Mở trang xong công nhân mới quét được tem pallet của các mã này; bấm "Giờ kết thúc" để đóng trang và tính tổng sản lượng.
         </p>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Kho / Nhà máy *</p>
@@ -982,16 +1005,22 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
           </div>
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-700 mb-1">Mã sản phẩm *</p>
-          <SingleSelect options={matOpts} value={matCode}
-            onChange={v => {
-              setMatCode(v)
-              const m = (mats.data ?? []).find(x => x.material_code === v)
-              setMatId(m?.id ?? null)
-              setMatLabel(m ? `${m.material_code} — ${m.short_name ?? ''}` : v)
-            }}
-            serverSearch onSearchChange={setMatSearch} loading={mats.isLoading} selectedLabel={matLabel}
-            placeholder="Gõ mã / tên để tìm…" triggerClassName="w-full h-9" />
+          <p className="text-xs font-medium text-slate-700 mb-1">Mã sản phẩm * <span className="font-normal text-slate-400">(chọn được nhiều — hàng 2-3 mã SX chung 1 máy)</span></p>
+          {sel.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {sel.map(s => (
+                <span key={s.code} className="inline-flex items-center gap-1 max-w-full rounded-full bg-sky-50 border border-sky-200 text-sky-800 text-[11px] pl-2 pr-1 py-0.5">
+                  <span className="truncate" title={s.label}>{s.label}</span>
+                  <button type="button" title="Bỏ mã này" onClick={() => setSel(prev => prev.filter(x => x.code !== s.code))}
+                    className="shrink-0 rounded-full p-0.5 hover:bg-sky-100"><X className="h-3 w-3" /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <SingleSelect options={matOpts.filter(o => !sel.some(s => s.code === o.value))} value=""
+            onChange={addMat}
+            serverSearch onSearchChange={setMatSearch} loading={mats.isLoading} selectedLabel={undefined}
+            placeholder={sel.length ? 'Thêm mã nữa…' : 'Gõ mã / tên để tìm…'} triggerClassName="w-full h-9" />
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Máy *</p>
@@ -1304,12 +1333,23 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
 // User chốt 11/08 tối: mở 80% MÀN HÌNH — khối thông tin ~20% trên, BẢNG pallet 80% dưới.
 // Ngày hiện ĐẦY ĐỦ kèm giờ (1 chu kỳ có thể sản xuất LIỀN VÀI NGÀY).
 const fmtDT = (iso: string | null) => iso ? `${formatTimestampDate(iso, true)} ${isoToHHMM(iso)}` : ''
-const DETAIL_PALLET_COLS = ['Thao tác', 'Trạng thái', 'Tem pallet', 'Số thùng', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh'] as const
+const DETAIL_PALLET_COLS = ['Thao tác', 'Trạng thái', 'Tem pallet', 'Mã hàng', 'Số thùng', 'Kho nhận', 'Giờ SX thùng đầu', 'Giờ SX thùng cuối', 'Quét lúc', 'Người', 'Ảnh'] as const
 
 function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; onDone: () => void }) {
   const { canOpenRun, whName } = h
   const { data: run, isLoading } = usePackingRun(id)
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const codes = run ? runCodes(run) : []
+  const matName = useMatNames(codes)
+  // trang nhiều mã → sản lượng TÁCH THEO MÃ (tính sống từ pallet, không đụng qty_total đã chốt)
+  const perMat = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const l of run?.pallets ?? []) {
+      if (l.status === 'CANCELLED' || !l.material_code) continue
+      m.set(l.material_code, (m.get(l.material_code) ?? 0) + Number(l.qty_cartons ?? 0))
+    }
+    return m
+  }, [run?.pallets])
   const Info = ({ label, value }: { label: string; value: ReactNode }) => (
     <div className="min-w-0">
       <p className="text-[9px] uppercase tracking-wide text-slate-400">{label}</p>
@@ -1318,7 +1358,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
   )
   return (
     <FormSheet open onClose={onDone} widthClass="sm:max-w-[80vw]"
-      title={run ? <>Trang sổ — <span className="font-mono">{run.material_code}</span> · Máy {run.machine_code}
+      title={run ? <>Trang sổ — <span className="font-mono">{runCodes(run).join(' + ')}</span> · Máy {run.machine_code}
         <span className={`ml-2 align-middle text-[10px] font-normal px-2 py-0.5 rounded-full ${STATUS_BADGE[run.status]}`}>{RUN_STATUS_LABEL[run.status]}</span></> : 'Trang sổ'}
       footer={
         <div className="flex gap-2 w-full">
@@ -1353,12 +1393,22 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           {/* ~20% — thông tin trang sổ (band ngang, gọn) */}
           <div className="shrink-0 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-2" style={{ maxHeight: '20vh', overflowY: 'auto' }}>
             <Info label="Kho / Nhà máy" value={whName.get(run.warehouse_id) ?? run.warehouse_id} />
+            <Info label={codes.length > 1 ? `Mã sản phẩm (${codes.length})` : 'Mã sản phẩm'} value={
+              <span title={codes.map(c => `${c} — ${matName.get(c) ?? ''}`).join(' · ')}>
+                {codes.map(c => matName.get(c) ? `${c} ${matName.get(c)}` : c).join(' · ')}
+              </span>
+            } />
             <Info label="Ngày sản xuất" value={formatDate(run.run_date)} />
             <Info label="Ca sản xuất" value={run.shift ?? '—'} />
             <Info label="Chu kỳ" value={run.cycle ?? '—'} />
             <Info label="Giờ bắt đầu" value={<span className="tabular-nums">{fmtDT(run.start_at)}</span>} />
             <Info label="Giờ kết thúc" value={<span className="tabular-nums">{run.end_at ? fmtDT(run.end_at) : (run.status === 'OPEN' ? `chưa bấm · mở ${elapsedOf(run.start_at)}` : '—')}</span>} />
-            <Info label="Tổng sản lượng" value={<b className="tabular-nums">{Number(run.qty_total ?? 0).toLocaleString('vi-VN')} thùng</b>} />
+            <Info label="Tổng sản lượng" value={
+              <b className="tabular-nums" title={codes.length > 1 ? codes.map(c => `${c}: ${(perMat.get(c) ?? 0).toLocaleString('vi-VN')} thùng`).join(' · ') : undefined}>
+                {Number(run.qty_total ?? 0).toLocaleString('vi-VN')} thùng
+                {codes.length > 1 && <span className="ml-1 font-normal text-slate-500">({codes.map(c => `${c.slice(-4)}: ${(perMat.get(c) ?? 0).toLocaleString('vi-VN')}`).join(' · ')})</span>}
+              </b>
+            } />
             <Info label="Số pallet" value={<span className="tabular-nums">{run.pallet_count ?? 0}{(run.pallet_open ?? 0) > 0 ? ` (${run.pallet_open} đang mở)` : ''}</span>} />
             <Info label="Người mở" value={run.opened_by_name ?? '—'} />
             <Info label="Người đóng" value={run.closed_by_name ?? '—'} />
@@ -1412,9 +1462,22 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate max-w-[260px]" title={l.pallet_code}>
                           {parseCodeFields(l.pallet_code).seq ? <b>#{parseCodeFields(l.pallet_code).seq}</b> : null} {l.pallet_code}
                         </TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={l.material_code ? `${l.material_code} — ${matName.get(l.material_code) ?? ''}` : ''}>
+                          <span className="font-mono font-semibold">{l.material_code ?? '—'}</span>
+                          {l.material_code && matName.get(l.material_code) && <span className="ml-1 text-[9px] text-slate-400 no-underline">{matName.get(l.material_code)}</span>}
+                        </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
                           {l.qty_cartons != null ? Number(l.qty_cartons).toLocaleString('vi-VN') : <span className="text-slate-300">—</span>}
                           {l.qty_source === 'MANUAL' && <span className="ml-1 text-[8px] px-1 rounded bg-amber-100 text-amber-800 no-underline">tay</span>}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                          {l.received_at ? (
+                            <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(l.received_at)} ${formatTimestampTime(l.received_at)}`}>
+                              <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(l.received_at, true)}
+                            </span>
+                          ) : l.status !== 'CANCELLED' ? (
+                            <span className="text-amber-600 no-underline" title="SX đã ghi sổ nhưng kho CHƯA quét nhập">chưa nhận</span>
+                          ) : <span className="text-slate-300">—</span>}
                         </TableCell>
                         {/* Ô giờ TRỐNG = nút "+ thêm giờ" inline (user 12/08 tối) — mở form Sửa điền luôn */}
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
@@ -1467,6 +1530,8 @@ const LOG_COLS = [
   { id: 'status',  label: 'Trạng thái',    w: 90 },
   { id: 'pallet',  label: 'Tem pallet',    w: 220 },
   { id: 'mat',     label: 'Mã hàng',       w: 110 },
+  { id: 'name',    label: 'Tên hàng',      w: 150 },
+  { id: 'recv',    label: 'Kho nhận',      w: 118 },   // đối chiếu SX↔Kho: kho quét nhập = xác nhận lần 2
   { id: 'wh',      label: 'Kho',           w: 110 },
   { id: 'machine', label: 'Máy',           w: 60 },
   { id: 'qty',     label: 'Số thùng',      w: 90 },
@@ -1485,7 +1550,7 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
 }) {
   const f = useWmsFilterStore(s => s.packing)
   const setF = useWmsFilterStore(s => s.setPacking)
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_col_widths_v2', LOG_COL_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_col_widths_v3', LOG_COL_DEFAULTS)
   const [exporting, setExporting] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
 
@@ -1496,12 +1561,14 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
     machine: f.machine || undefined,
     warehouse_id: f.warehouseId || undefined,
     search: f.search || undefined,
+    received: f.received || undefined,
     page: f.page, pageSize: f.pageSize,
   })
   const rows = data?.rows ?? []
   const total = data?.total ?? 0
   const closed = rows.filter(r => r.status === 'CLOSED')
   const manualN = closed.filter(r => r.prod_start_src === 'MANUAL' || r.prod_end_src === 'MANUAL').length
+  const matName = useMatNames(rows.map(r => r.material_code ?? '').filter(Boolean))
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày mở sổ', type: 'daterange', pinned: true, from: f.dateFrom, to: f.dateTo,
@@ -1513,6 +1580,10 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       value: f.status, onChange: (v: string) => setF({ status: v, page: 1 }) },
     { key: 'machine', label: 'Máy', type: 'text', value: f.machine, placeholder: 'VD: M1',
       onChange: (v: string) => setF({ machine: v, page: 1 }) },
+    // ĐỐI CHIẾU SX↔KHO (user 13/08): quét sổ = SX xác nhận pallet đã sinh; kho quét nhập = xác nhận lần 2
+    { key: 'received', label: 'Kho nhận', type: 'single',
+      options: [{ value: 'YES', label: 'Kho đã nhận' }, { value: 'NO', label: 'SX tạo — kho CHƯA nhận' }],
+      value: f.received, onChange: (v: string) => setF({ received: v, page: 1 }) },
   ]
 
   async function exportExcel() {
@@ -1525,6 +1596,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
         'Trạng thái': STATUS_LABEL[r.status] ?? r.status,
         'Tem pallet': r.pallet_code,
         'Mã hàng': r.material_code ?? '',
+        'Tên hàng': r.material_code ? (matName.get(r.material_code) ?? '') : '',
+        'Kho nhận lúc': r.received_at ? `${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}` : (r.status !== 'CANCELLED' ? 'CHƯA NHẬN' : ''),
         'Kho': r.warehouse_id ? (whName.get(r.warehouse_id) ?? '') : '',
         'Máy': r.machine_code ?? '',
         'Số thùng': r.qty_cartons ?? '',
@@ -1561,6 +1634,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       <SummaryBand tiles={[
         { label: 'Đang mở', value: openCount.toLocaleString('vi-VN'), accent: openCount > 0 },
         { label: 'Dòng sổ (bộ lọc)', value: total.toLocaleString('vi-VN') },
+        { label: 'Kho đã nhận', value: (data?.received_count ?? 0).toLocaleString('vi-VN') },
+        { label: 'Chưa nhận (SX đã tạo)', value: (data?.missing_count ?? 0).toLocaleString('vi-VN'), accent: (data?.missing_count ?? 0) > 0 },
         { label: 'Thùng (trang này)', value: closed.reduce((s, r) => s + Number(r.qty_cartons ?? 0), 0).toLocaleString('vi-VN') },
         { label: 'Giờ nhập tay (trang)', value: closed.length ? `${manualN}/${closed.length}` : '0' },
       ]} />
@@ -1610,6 +1685,18 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono truncate" title={r.pallet_code}>{r.pallet_code}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-mono font-semibold">{r.material_code ?? '—'}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.material_code ? matName.get(r.material_code) ?? '' : ''}>
+                  {r.material_code ? (matName.get(r.material_code) ?? <span className="text-slate-300">—</span>) : <span className="text-slate-300">—</span>}
+                </TableCell>
+                <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                  {r.received_at ? (
+                    <span className="text-green-700 no-underline" title={`Kho quét nhập lúc ${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}`}>
+                      <Check className="inline h-3 w-3 mr-0.5 -mt-0.5" />{formatTimestampDate(r.received_at, true)} {formatTimestampTime(r.received_at).slice(0, 5)}
+                    </span>
+                  ) : r.status !== 'CANCELLED' ? (
+                    <span className="text-amber-600 no-underline" title="SX đã ghi sổ pallet này nhưng kho CHƯA quét nhập">chưa nhận</span>
+                  ) : <span className="text-slate-300">—</span>}
+                </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.warehouse_id ? whName.get(r.warehouse_id) ?? '' : ''}>
                   {r.warehouse_id ? (whName.get(r.warehouse_id) ?? '—') : <span className="text-slate-300">—</span>}
                 </TableCell>

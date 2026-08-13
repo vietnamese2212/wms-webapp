@@ -103,6 +103,22 @@ async function attachPhotoUrls(rows: LogRow[]): Promise<void> {
   }
 }
 
+// ĐỐI CHIẾU SX ↔ KHO (13/08): quét ghi sổ = xác nhận LẦN 1 (SX đã sinh pallet), kho quét nhập =
+// xác nhận LẦN 2 — pallet "kho đã nhận" = tồn tại InventoryEntry cùng pallet_code (2 chiều đều
+// đã normalizeQR nên so bằng thẳng; nhập rồi xuất vẫn tính ĐÃ NHẬN).
+async function attachReceived(rows: LogRow[]): Promise<void> {
+  const codes = [...new Set(rows.map(r => r.pallet_code))]
+  if (!codes.length) return
+  const entries = await fetchAllByIdChunks(codes, chunk =>
+    supabase.from('InventoryEntry').select('pallet_code, created_at').in('pallet_code', chunk))
+  const m = new Map<string, string>()
+  for (const e of entries as { pallet_code: string; created_at: string }[]) {
+    const cur = m.get(e.pallet_code)
+    if (!cur || e.created_at < cur) m.set(e.pallet_code, e.created_at)
+  }
+  for (const r of rows as (LogRow & { received_at?: string | null })[]) r.received_at = m.get(r.pallet_code) ?? null
+}
+
 // GET /wms/packing-logs/board — pallet ĐANG MỞ (board theo máy), scope kho null-inclusive
 // ?warehouse_id= lọc theo kho (nhiều nhà máy cùng sản xuất — user chốt 11/08 "tách theo Kho")
 export async function getBoard(req: Request, res: Response) {
@@ -119,31 +135,36 @@ export async function getBoard(req: Request, res: Response) {
 }
 
 // GET /wms/packing-logs — sổ (phân trang server; vài trăm dòng/ngày)
-// query: status | date_from/date_to (ngày VN trên open_scan_at) | machine | search | page/pageSize
+// query: status | date_from/date_to (ngày VN trên open_scan_at) | machine | search | received (YES/NO) | page/pageSize
+// 13/08: đi qua RPC packing_logs_recon — rows + total + đếm ĐÃ/CHƯA kho nhận CÙNG MỘT WHERE
+// (filter "chưa nhận" phải join InventoryEntry trong SQL, không lọc được sau phân trang).
 export async function listLogs(req: Request, res: Response) {
-  const { status, date_from, date_to, machine, search } = req.query as Record<string, string | undefined>
+  const { status, date_from, date_to, machine, search, received } = req.query as Record<string, string | undefined>
   const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
   const pageSize = Math.min(PAGE_MAX, Math.max(1, parseInt(String(req.query.pageSize ?? '200'), 10) || 200))
-
-  let q = supabase.from('packing_logs').select('*', { count: 'exact' })
-  if (status && ['OPEN', 'CLOSED', 'CANCELLED'].includes(status)) q = q.eq('status', status)
   const whF = String(req.query.warehouse_id ?? '')
-  if (whF) q = q.eq('warehouse_id', whF)
-  if (date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from)) q = q.gte('open_scan_at', new Date(`${date_from}T00:00:00+07:00`).toISOString())
-  if (date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to)) q = q.lt('open_scan_at', new Date(new Date(`${date_to}T00:00:00+07:00`).getTime() + 86400_000).toISOString())
-  if (machine) q = q.eq('machine_code', machine)
-  if (search && search.trim()) {
-    const term = search.trim().replace(/[%_,()]/g, ' ').slice(0, 60)
-    if (term.trim()) q = q.or(`pallet_code.ilike.%${term.trim()}%,material_code.ilike.%${term.trim()}%,packed_by_name.ilike.%${term.trim()}%`)
-  }
+  const term = search?.trim() ? search.trim().replace(/[%_,(){}\\]/g, ' ').slice(0, 60).trim() : ''
   const scope = scopeWhIds(req)
-  if (scope !== null) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scope.map(s => `"${s}"`).join(',')})`)
 
-  const from = (page - 1) * pageSize
-  const { data, count, error } = await q.order('open_scan_at', { ascending: false }).range(from, from + pageSize - 1)
+  const { data, error } = await supabase.rpc('packing_logs_recon', {
+    p_status: status && ['OPEN', 'CLOSED', 'CANCELLED'].includes(status) ? status : null,
+    p_wh: whF || null,
+    p_scope: scope,   // null = NATIONAL; mảng = null-inclusive trong SQL
+    p_from: date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from) ? new Date(`${date_from}T00:00:00+07:00`).toISOString() : null,
+    p_to: date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to) ? new Date(new Date(`${date_to}T00:00:00+07:00`).getTime() + 86400_000).toISOString() : null,
+    p_machine: machine || null,
+    p_search: term || null,
+    p_received: received === 'YES' || received === 'NO' ? received : null,
+    p_page: page, p_size: pageSize,
+  })
   if (error) return fail(res, error.message, 500)
-  await attachPhotoUrls((data ?? []) as LogRow[])
-  return ok(res, { rows: data ?? [], total: count ?? 0, page, pageSize })
+  const out = (data ?? {}) as { rows?: LogRow[]; total?: number; received_count?: number; missing_count?: number }
+  const rows = out.rows ?? []
+  await attachPhotoUrls(rows)
+  return ok(res, {
+    rows, total: out.total ?? 0, page, pageSize,
+    received_count: out.received_count ?? 0, missing_count: out.missing_count ?? 0,
+  })
 }
 
 // POST /wms/packing-logs/open — GHI SỔ 1 PHIÊN (user chốt 11/08 sau test thật: chữ in phun
@@ -182,19 +203,22 @@ export async function openLog(req: Request, res: Response) {
   const matCode = (label?.material_code as string | null) ?? parsed.material_code ?? null
   const runIdBody = typeof (req.body as Record<string, unknown>).run_id === 'string'
     ? String((req.body as Record<string, unknown>).run_id) : null
-  let run: { id: string; warehouse_id: string; material_code: string; machine_code: string; status: string } | null = null
+  type RunPick = { id: string; warehouse_id: string; material_code: string; material_codes: string[] | null; machine_code: string; status: string }
+  // 13/08: 1 trang sổ ghi được NHIỀU mã (SX chung chu kỳ+máy) — khớp theo MẢNG material_codes
+  const codesOf = (r: RunPick) => (r.material_codes?.length ? r.material_codes : [r.material_code])
+  let run: RunPick | null = null
   if (runIdBody) {
     const { data: r } = await supabase.from('packing_runs')
-      .select('id, warehouse_id, material_code, machine_code, status').eq('id', runIdBody).maybeSingle()
+      .select('id, warehouse_id, material_code, material_codes, machine_code, status').eq('id', runIdBody).maybeSingle()
     if (!r) return fail(res, 'Không tìm thấy trang sổ', 404)
     if (r.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', 'Trang sổ này đã đóng/hủy — chọn trang đang mở')
-    if (matCode && r.material_code !== matCode)
-      return fail(res, 422, 'RUN_MATERIAL_MISMATCH', `Tem mã ${matCode} không khớp trang sổ (mã ${r.material_code})`)
+    if (matCode && !codesOf(r).includes(matCode))
+      return fail(res, 422, 'RUN_MATERIAL_MISMATCH', `Tem mã ${matCode} không khớp trang sổ (mã ${codesOf(r).join(', ')})`)
     run = r
   } else {
     let rq = supabase.from('packing_runs')
-      .select('id, warehouse_id, material_code, machine_code, status').eq('status', 'OPEN').limit(10)
-    if (matCode) rq = rq.eq('material_code', matCode)
+      .select('id, warehouse_id, material_code, material_codes, machine_code, status').eq('status', 'OPEN').limit(10)
+    if (matCode) rq = rq.contains('material_codes', [matCode])
     const scopePre = scopeWhIds(req)
     if (scopePre !== null) rq = rq.in('warehouse_id', scopePre.slice(0, 300))
     const { data: candidates } = await rq
@@ -416,6 +440,7 @@ export async function getRun(req: Request, res: Response) {
   const agg = await aggRuns([id])
   const a = agg.get(id)
   await attachPhotoUrls(a?.pallets ?? [])
+  await attachReceived(a?.pallets ?? [])   // đối chiếu: pallet nào kho ĐÃ quét nhập (xác nhận lần 2)
   const live = run.status === 'OPEN'
   return ok(res, {
     ...run,
@@ -441,8 +466,21 @@ export async function listRuns(req: Request, res: Response) {
   if (machine) q = q.eq('machine_code', machine)
   if (material_code) q = q.eq('material_code', material_code)
   if (search && search.trim()) {
-    const term = search.trim().replace(/[%_,()]/g, ' ').slice(0, 60).trim()
-    if (term) q = q.or(`material_code.ilike.%${term}%,cycle.ilike.%${term}%,opened_by_name.ilike.%${term}%`)
+    const term = search.trim().replace(/[%_,(){}\\]/g, ' ').slice(0, 60).trim()
+    if (term) {
+      const orParts = [
+        `material_code.ilike.%${term}%`,
+        `material_codes.cs.{${term.toUpperCase()}}`,   // mã PHỤ trong trang nhiều mã — khớp nguyên phần tử
+        `cycle.ilike.%${term}%`,
+        `opened_by_name.ilike.%${term}%`,
+      ]
+      // TEM PALLET → trang sổ chứa nó (user 13/08): tra dòng sổ theo tem trước, đưa run_id vào or
+      const { data: palletHits } = await supabase.from('packing_logs').select('run_id')
+        .ilike('pallet_code', `%${term}%`).not('run_id', 'is', null).limit(50)
+      const runIds = [...new Set((palletHits ?? []).map(h => h.run_id as string))]
+      if (runIds.length) orParts.push(`id.in.(${runIds.join(',')})`)
+      q = q.or(orParts.join(','))
+    }
   }
   const scope = scopeWhIds(req)
   if (scope !== null) q = q.in('warehouse_id', scope.slice(0, 300))
@@ -468,11 +506,18 @@ export async function listRuns(req: Request, res: Response) {
 }
 
 // POST /wms/packing-runs — MỞ TRANG SỔ (packing.open_run)
-// body: { warehouse_id, run_date?, shift?, cycle?, material_code, material_id?, machine_code, start_at?, note? }
+// body: { warehouse_id, run_date?, shift?, cycle?, material_codes[] (hoặc material_code cũ),
+//         material_id?, machine_code, start_at?, note? }
+// 13/08: 1 trang ghi NHIỀU mã (SX chung chu kỳ+máy) — insert qua RPC packing_open_run
+// (advisory lock per kho+máy chặn 2 trang MỞ có mã GIAO NHAU; unique index cũ chỉ bắt mã đầu).
 export async function openRun(req: Request, res: Response) {
-  const { warehouse_id, run_date, shift, cycle, material_code, material_id, machine_code, start_at, note } = req.body as Record<string, unknown>
+  const { warehouse_id, run_date, shift, cycle, material_code, material_codes, material_id, machine_code, start_at, note } = req.body as Record<string, unknown>
+  const codes = Array.isArray(material_codes)
+    ? material_codes.filter((c): c is string => typeof c === 'string' && !!c.trim()).map(c => c.trim())
+    : (typeof material_code === 'string' && material_code.trim() ? [material_code.trim()] : [])
   if (!warehouse_id || typeof warehouse_id !== 'string') return fail(res, 'Chọn Kho / Nhà máy', 422)
-  if (!material_code || typeof material_code !== 'string' || !material_code.trim()) return fail(res, 'Chọn Mã sản phẩm', 422)
+  if (!codes.length) return fail(res, 'Chọn Mã sản phẩm', 422)
+  if (codes.length > 10) return fail(res, 'Tối đa 10 mã / 1 trang sổ', 422)
   if (!machine_code || typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Nhập Máy', 422)
   const scope = scopeWhIds(req)
   if (scope !== null && !scope.includes(warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
@@ -483,28 +528,28 @@ export async function openRun(req: Request, res: Response) {
     if (typeof start_at !== 'string' || isNaN(new Date(start_at).getTime())) return fail(res, 'Giờ bắt đầu không hợp lệ', 422)
     startIso = new Date(start_at).toISOString()
   }
-  const now = new Date().toISOString()
-  const { data, error } = await supabase.from('packing_runs').insert({
-    id: randomUUID(),
-    warehouse_id,
-    run_date: dateVN,
-    shift: typeof shift === 'string' && shift.trim() ? shift.trim().slice(0, 40) : null,
-    cycle: typeof cycle === 'string' && cycle.trim() ? cycle.trim().slice(0, 40) : null,
-    material_code: material_code.trim(),
-    material_id: typeof material_id === 'string' && material_id ? material_id : null,
-    machine_code: machine_code.trim().toUpperCase().slice(0, 10),
-    start_at: startIso,
-    status: 'OPEN',
-    opened_by: req.user?.sub ?? null,
-    opened_by_name: req.user?.name ?? null,
-    note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null,
-    created_at: now,
-    updated_at: now,
-  }).select('*').single()
+  const { data, error } = await supabase.rpc('packing_open_run', {
+    p: {
+      warehouse_id,
+      run_date: dateVN,
+      shift: typeof shift === 'string' ? shift : null,
+      cycle: typeof cycle === 'string' ? cycle : null,
+      material_codes: codes,
+      material_id: typeof material_id === 'string' && material_id ? material_id : null,
+      machine_code: machine_code.trim(),
+      start_at: startIso,
+      opened_by: req.user?.sub ?? null,
+      opened_by_name: req.user?.name ?? null,
+      note: typeof note === 'string' ? note : null,
+    },
+  })
   if (error) {
+    const m = error.message ?? ''
+    if (m.includes('PACKDUP:')) return fail(res, 409, 'RUN_DUP', m.split('PACKDUP:')[1])
+    if (m.includes('PACKOPEN:')) return fail(res, m.split('PACKOPEN:')[1], 422)
     if (error.code === '23505')
       return fail(res, 409, 'RUN_DUP', 'Đã có trang sổ ĐANG MỞ cho Kho + Mã + Máy này — dùng trang đó hoặc đóng trước rồi mở trang mới')
-    return fail(res, error.message, 500)
+    return fail(res, m, 500)
   }
   return ok(res, data)
 }

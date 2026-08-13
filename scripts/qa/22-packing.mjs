@@ -14,6 +14,7 @@ const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${Str
 async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
   await restWrite('packing_runs', 'DELETE', `warehouse_id=eq.${WH}`).catch(() => {})
+  await restWrite('InventoryEntry', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})   // [16] giả lập kho nhận
 }
 const openRun = (mat, machine, extra = {}) =>
   api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: mat, machine_code: machine, run_date: today, start_at: iso(7, 0), shift: 'Ca 1', cycle: '55', ...extra })
@@ -244,6 +245,63 @@ let runB = null
     const off = await api('/wms/vision-config', 'PUT', { api_key: null })
     check('Gỡ key → configured=false', off.s === 200 && off.j?.data?.configured === false, `http=${off.s}`)
   }
+}
+
+// [16] NHIỀU MÃ / 1 TRANG SỔ + SEARCH TEM + ĐỐI CHIẾU SX↔KHO (user 13/08):
+// 1 số hàng có 2-3 mã SX chung 1 chu kỳ + 1 máy → 1 trang nhiều mã; search tem ra trang chứa nó;
+// quét sổ = xác nhận LẦN 1, kho quét nhập = LẦN 2 → lọc "SX tạo mà kho CHƯA nhận".
+{
+  const temX2 = tem(5, `${TAG}X2`)
+  const multi = await api('/wms/packing-runs', 'POST', {
+    warehouse_id: WH, material_codes: [`${TAG}X1`, `${TAG}X2`], machine_code: 'MX', run_date: today, start_at: iso(7, 0),
+  })
+  const mrun = multi.j?.data
+  check('[16] Mở trang 2 mã → 200 + material_codes đủ 2 (primary = mã đầu)',
+    multi.s === 200 && (mrun?.material_codes ?? []).length === 2 && mrun?.material_code === `${TAG}X1`,
+    `http=${multi.s} codes=${JSON.stringify(mrun?.material_codes)}`)
+
+  const p2 = await api('/wms/packing-logs/open', 'POST', { qr_code: temX2, qty_cartons: 7, complete: true })
+  check('[16] Quét tem mã THỨ HAI → tự khớp trang nhiều mã + kế thừa máy',
+    p2.s === 200 && p2.j?.data?.run_id === mrun?.id && p2.j?.data?.machine_code === 'MX', `http=${p2.s} machine=${p2.j?.data?.machine_code}`)
+
+  const ovl = await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}X2`, `${TAG}X3`], machine_code: 'MX' })
+  check('[16] Mở trang có mã GIAO NHAU cùng kho+máy → 409 RUN_DUP',
+    ovl.s === 409 && ovl.j?.error?.code === 'RUN_DUP', `http=${ovl.s} code=${ovl.j?.error?.code}`)
+
+  // đua 2 mở giao nhau nhưng KHÁC mã đầu — unique index cũ không bắt được, phải nhờ advisory lock trong RPC
+  const rs = await Promise.all([
+    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y1`, `${TAG}Y9`], machine_code: 'MY' }),
+    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y9`], machine_code: 'MY' }),
+  ])
+  check('[16] Đua 2 mở trang mã giao nhau (khác mã đầu) → 1 thắng + 1 RUN_DUP',
+    rs.filter(r => r.s === 200).length === 1 && rs.filter(r => r.s === 409).length === 1, rs.map(r => r.s).join(','))
+  const yWin = rs.find(r => r.s === 200)?.j?.data
+
+  const sr = await api(`/wms/packing-runs?search=${encodeURIComponent(temX2)}`, 'GET')
+  check('[16] Search theo TEM PALLET → ra trang sổ chứa tem đó',
+    sr.s === 200 && (sr.j?.data?.rows ?? []).some(r => r.id === mrun?.id), `http=${sr.s} n=${(sr.j?.data?.rows ?? []).length}`)
+
+  const q0 = await api(`/wms/packing-logs?search=${TAG}X2&received=NO`, 'GET')
+  check('[16] Pallet SX ghi sổ, kho chưa quét → nằm danh sách CHƯA NHẬN + missing_count đếm đúng',
+    q0.s === 200 && (q0.j?.data?.rows ?? []).some(r => r.pallet_code === temX2) && Number(q0.j?.data?.missing_count) >= 1,
+    `http=${q0.s} missing=${q0.j?.data?.missing_count}`)
+
+  const { randomUUID } = await import('crypto')
+  const invId = randomUUID()
+  const matPool = (await restAll('Material', `select=id&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  await restWrite('InventoryEntry', 'POST', null, {
+    id: invId, material_id: matPool?.id ?? null, pallet_code: temX2, warehouse_id: FIX.WH_QR.id, location_id: null,
+    cartons_imported: 7, cartons_remaining: 7, cartons_reserved: 0, status: 'IN_STOCK', stack_layer: 1,
+    import_date: today, notes: `${TAG} recon`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  })
+  const q1 = await api(`/wms/packing-logs?search=${TAG}X2&received=YES`, 'GET')
+  const hit = (q1.j?.data?.rows ?? []).find(r => r.pallet_code === temX2)
+  check('[16] Kho quét nhập xong → pallet sang ĐÃ NHẬN kèm giờ kho nhận',
+    q1.s === 200 && !!hit && !!hit.received_at, `http=${q1.s} received_at=${hit?.received_at ?? 'null'}`)
+  await restWrite('InventoryEntry', 'DELETE', `id=eq.${invId}`)
+
+  await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', {})
+  if (yWin?.id) await api(`/wms/packing-runs/${yWin.id}/cancel`, 'POST', {})
 }
 
 // [15] IDOR CROSS-KHO (12/08 — bug thật: write theo id từng KHÔNG kiểm scope kho): user có đủ

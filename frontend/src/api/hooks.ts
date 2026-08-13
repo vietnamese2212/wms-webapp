@@ -5468,6 +5468,7 @@ export interface PackingLog {
   photo_end_url?: string | null
   packed_by_name: string | null
   note: string | null
+  received_at?: string | null   // đối chiếu SX↔Kho: kho quét nhập lần đầu lúc nào (null = CHƯA nhận)
 }
 export interface PackingProdTime { prod_at: string | null; src: 'OCR' | 'MANUAL' | null; ocr_raw?: string | null }
 
@@ -5485,6 +5486,7 @@ export function usePackingBoard(warehouseId = '', enabled = true) {
 }
 export function usePackingLogs(params: {
   status?: string; date_from?: string; date_to?: string; machine?: string; warehouse_id?: string; search?: string
+  received?: string   // 'YES' | 'NO' — kho đã/chưa quét nhận pallet
   page?: number; pageSize?: number
 }) {
   return useQuery({
@@ -5492,7 +5494,10 @@ export function usePackingLogs(params: {
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/packing-logs', { params })
-      return data.data as { rows: PackingLog[]; total: number; page: number; pageSize: number }
+      return data.data as {
+        rows: PackingLog[]; total: number; page: number; pageSize: number
+        received_count: number; missing_count: number   // đếm theo BỘ LỌC (loại dòng hủy)
+      }
     },
   })
 }
@@ -5549,6 +5554,7 @@ export interface PackingRun {
   shift: string | null
   cycle: string | null
   material_code: string
+  material_codes?: string[] | null   // 1 trang ghi NHIỀU mã (13/08) — material_code = mã đầu
   material_id: string | null
   machine_code: string
   start_at: string
@@ -5603,7 +5609,7 @@ export function useOpenPackingRun() {
   return useMutation({
     mutationFn: (body: {
       warehouse_id: string; run_date?: string; shift?: string | null; cycle?: string | null
-      material_code: string; material_id?: string | null; machine_code: string; start_at?: string | null; note?: string | null
+      material_codes: string[]; material_id?: string | null; machine_code: string; start_at?: string | null; note?: string | null
     }) =>
       apiClient.post('/wms/packing-runs', body).then(r => r.data.data as PackingRun),
     onSettled: () => invalidatePacking(qc),

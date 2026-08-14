@@ -42,12 +42,22 @@ Trần chống nhầm (thùng >100k, sản lượng >10tr) và format mã tự s
 
 | # | Trạng thái | Cách xử |
 |---|---|---|
-| 4 hardcode LOF | ✅ XONG | gom vào `org_profile` (email liên hệ · mã trạm cân · ánh xạ mã nhà máy cũ→mới · cỡ thùng giả định) + CORS đọc ENV `CORS_ORIGINS`. **Mặc định = đúng giá trị đang chạy** nên đơn vị 1 không đổi hành vi |
-| 1 lễ/Tết | ✅ XONG | `vn_holidays` khai theo năm ("YYYY-MM-DD Tên", mỗi dòng một ngày). Năm KHÔNG khai vẫn tự tính bằng lịch âm như cũ |
+| 4 hardcode LOF | ✅ XONG | gom vào `org_profile` (email kỹ thuật push · ánh xạ mã nhà máy cũ→mới · cỡ thùng giả định) + CORS đọc ENV `CORS_ORIGINS`. **Mặc định = đúng giá trị đang chạy** nên đơn vị 1 không đổi hành vi |
+| 1 lễ/Tết | ✅ XONG | `vn_holidays` khai theo năm, soạn bằng **ô chọn ngày + tên** (mỗi ngày 1 dòng) + nút "Nạp lịch tự tính" để sửa từ bản app đang suy. Năm KHÔNG khai vẫn tự tính bằng lịch âm như cũ |
 | 2 ca làm việc | ⚠️ LÀM MỘT NỬA | gom 7 chỗ khai ca → `frontend/src/config/shifts.ts`, giữ nguyên 100% nhãn/màu/thứ tự. **Chưa** thành danh mục động: thuật toán phân ca (tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua") gắn chặt đúng 4 mã — cần việc riêng, đo lại với HR |
 | 3 tên tiếng Việt | ✅ XONG | cờ `JobTitle.is_driver` + `Department.is_carrier` (migration `20260814_role_flags`, backfill theo tên đang dùng + DO-block gác) · ô tick trong form Chức danh/Phòng ban · ratchet `role_by_vietnamese_name` baseline 0 |
 | 6 thang màu | ✅ phần MÂU THUẪN | dwell Giám sát vận hành đọc `GATE_WARN_MIN`/`GATE_CRIT_MIN` (90 vàng · 180 đỏ) thay 90/45 tự đặt. Các thang còn lại đo chỉ số KHÁC NHAU (sức chứa · tỷ lệ fill · tuân thủ · bao phủ · chính xác) → mỗi cái một ngưỡng là đúng, **không gộp** |
 | 5 giờ công 8h · 7 `ACTIVE_STATUSES` · 8 danh mục nhỏ · 9 `const TODAY` | ⏳ còn | gom khi đụng vào từng file (giá trị thấp, churn cao nếu sweep ngay) |
+
+## VÒNG 2 — user phản biện ngay trong ngày (14/08 chiều)
+
+| Điểm user bắt | Xử |
+|---|---|
+| **"Mã trạm cân là setting CHUNG, nhưng tôi lấy dữ liệu nhiều trạm ở nhiều kho"** | ĐÚNG — và nguy hiểm hơn vẻ ngoài: `source_id` phần mềm cân là autonumber đếm từ 1 ở MỖI trạm, hai trạm cùng mã sẽ **đè phiếu của nhau** qua khóa upsert `(station_code, source_id)`, mất phiếu âm thầm. ⇒ **GỠ hẳn `weigh_station_code` khỏi `org_profile`**; mã trạm do agent từng trạm khai và **bắt buộc** (thiếu → 400); thêm chặn **1 mã trạm không được dùng cho 2 kho** (409 `STATION_CODE_CONFLICT`) làm lưới bắt "cài agent mới quên đổi mã". Migration `20260814b` dọn khóa cũ khỏi giá trị đang lưu. Gói QA **24-weigh-station** gác |
+| **"Email `wms@lof.vn` đâu có tồn tại, chưa hiểu để làm gì"** | Đó là **VAPID subject** (chuẩn Web Push): địa chỉ liên hệ kỹ thuật khai với dịch vụ push của trình duyệt, không nhận thư, người dùng không thấy. Đổi nhãn thành "Email kỹ thuật (thông báo đẩy)" + tooltip nói rõ; và **làm ô có tác dụng thật** — lưu `org_profile` giờ ghi luôn `push_config.subject` (trước đó khóa push sinh 1 lần rồi giữ subject cũ mãi ⇒ ô ma). Nên điền hòm thư quản trị CÓ THẬT |
+| **"Ngày nghỉ khai tay trông vẫn manual quá, gõ sai là hỏng"** | ĐÚNG — textarea "YYYY-MM-DD Tên" là bề mặt dễ hỏng nhất trong cả tab. Đổi thành trình soạn theo NĂM: mỗi ngày 1 dòng (**ô chọn ngày** + ô tên + nút xóa), nút **"Nạp lịch tự tính"** đổ ra 10 ngày app đang suy để sửa theo công bố, **"Bỏ khai năm"** trả về tự tính. Lỗi bắt tại chỗ (viền đỏ + câu tiếng Việt: trùng ngày / sai năm / thiếu tên), không còn "dòng số N sai" |
+
+**Bài học chung:** config hóa không chỉ là "đưa hằng số ra khỏi code" — phải hỏi **đơn vị cấu hình đúng là gì** (hệ thống? kho? trạm? thiết bị?). Đặt sai tầng thì cấu hình vừa vô dụng vừa tạo đường hỏng dữ liệu. Và bề mặt nhập liệu tự do (textarea) chỉ dùng khi không có cấu trúc — có cấu trúc thì phải có ô đúng kiểu.
 
 **Ghi chú `SPECIAL_VTYPES`**: đo lại thì `'Chỉ trả pallet'` / `'Khác'` KHÔNG phải tên trong danh mục Loại xe (bảng `VehicleType` chỉ có XE 4 PALLET · XE CONTAINER · …) — đây là 2 lựa chọn ảo của riêng màn Đăng ký cổng, không ai đổi tên được ⇒ không thuộc lớp lỗi "so tên danh mục", giữ nguyên.
 

@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SettingLabel } from '@/components/shared/SettingsForm'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatDateTime } from '@/utils/formatters'
 
@@ -40,12 +42,26 @@ const ENDPOINT_DOCS: { path: string; scope: string; label: string; fields: strin
 const errMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Có lỗi xảy ra, thử lại'
 
-// ─── AI Vision (Sổ đóng gói) — key Gemini đặt Ở ĐÂY để "hết hạn thì thay" (user chốt 12/08) ──
-interface VisionCfg { configured: boolean; provider: string; model: string; key_tail: string | null }
+// ─── AI Vision (Sổ đóng gói) — key AI đặt Ở ĐÂY để "hết hạn thì thay" (user chốt 12/08) ──
+// 14/08: chọn được NHÀ CUNG CẤP (Gemini / GPT). Form rút còn ĐÚNG 3 ô — Tên AI · Model · API key —
+// mọi diễn giải nằm trong tooltip ⓘ (user chốt: "đưa các diễn giải vào tooltip thôi, để đơn giản").
+interface VisionCfg {
+  configured: boolean; provider: string; model: string; key_tail: string | null
+  providers?: string[]; default_models?: Record<string, string>
+}
+const AI_PROVIDERS = [
+  { value: 'gemini', label: 'Google Gemini', sub: 'có bậc miễn phí' },
+  { value: 'openai', label: 'OpenAI GPT',    sub: 'trả theo lượt dùng' },
+]
+const AI_KEY_PAGE: Record<string, string> = {
+  gemini: 'aistudio.google.com/apikey',
+  openai: 'platform.openai.com/api-keys',
+}
 function VisionConfigCard() {
   const qc = useQueryClient()
   const [keyInput, setKeyInput] = useState('')
   const [model, setModel] = useState('')
+  const [provider, setProvider] = useState('')
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
   const { data: cfg } = useQuery<VisionCfg>({
@@ -54,10 +70,11 @@ function VisionConfigCard() {
   })
 
   const saveMut = useMutation({
-    mutationFn: (body: { api_key?: string | null; model?: string }) =>
+    mutationFn: (body: { api_key?: string | null; model?: string; provider?: string }) =>
       apiClient.put('/wms/vision-config', body).then(r => r.data.data as { configured: boolean }),
     onSuccess: (d) => {
-      setKeyInput(''); setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử key' : 'Đã gỡ key — app quay về OCR thường' })
+      setKeyInput(''); setModel(''); setProvider('')
+      setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử key' : 'Đã gỡ key — app quay về OCR thường' })
       qc.invalidateQueries({ queryKey: ['vision-config'] })
     },
     onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
@@ -69,6 +86,10 @@ function VisionConfigCard() {
   })
 
   const busy = saveMut.isPending || testMut.isPending
+  const curProvider = provider || cfg?.provider || 'gemini'
+  const providerLabel = AI_PROVIDERS.find(p => p.value === curProvider)?.label ?? curProvider
+  // Đổi nhà cung cấp mà chưa gõ model → hiện model mặc định của bên đó (BE cũng tự đắp y hệt)
+  const modelShown = model || (provider && provider !== cfg?.provider ? (cfg?.default_models?.[provider] ?? '') : (cfg?.model ?? ''))
   return (
     <div className="shrink-0 mt-3 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm border-t sm:border-t-slate-200">
       <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap">
@@ -77,32 +98,45 @@ function VisionConfigCard() {
         </span>
         {cfg && (
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
-            {cfg.configured ? `Đang dùng · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
+            {cfg.configured ? `Đang dùng · ${providerLabel} · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
           </span>
         )}
       </div>
       <div className="px-3 py-2.5 space-y-2 text-[12px] text-slate-600">
-        <p>
-          Ảnh chụp date thùng sẽ được đọc bằng <b>Google Gemini</b> (chính xác hơn hẳn OCR với chữ nghiêng/nhỏ).
-          Key lỗi / hết quota / chưa cấu hình → app <b>tự rơi về OCR thường</b>, công nhân không bị chặn.
-          Tạo key <b>miễn phí</b> tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">aistudio.google.com/apikey</a> (Google
-          AI Studio — bậc free ~1.000 ảnh/ngày, không cần thẻ; sản lượng lớn thì gắn billing vào project là hết trần, ~4–5đ/ảnh). Hết hạn/bị khóa → dán key mới vào đây là xong.
-          Model mặc định <code className="font-mono text-[11px]">gemini-flash-lite-latest</code> tự trỏ bản mới nhất; model nghỉ hưu → hệ thống <b>tự dò model sống</b> và lưu lại.
-        </p>
         <div className="flex items-end gap-2 flex-wrap">
-          <div className="space-y-1">
-            <Label className="text-[11px]">API key (Gemini)</Label>
+          <div>
+            <SettingLabel text="Tên AI" tip={<>Bên nào đọc ảnh chữ in phun trên thùng.<br />
+              <b>Google Gemini</b> — có bậc miễn phí ~1.000 ảnh/ngày, không cần thẻ.<br />
+              <b>OpenAI GPT</b> — trả tiền theo lượt dùng, cần gắn billing.<br />
+              Đổi bên nào cũng dùng chung một cách đọc; key lỗi / hết hạn mức → app <b>tự rơi về OCR thường</b>, công nhân không bị chặn.</>} />
+            <div className="w-44">
+              <SingleSelect options={AI_PROVIDERS} value={curProvider} onChange={setProvider} searchable={false} triggerClassName="w-full" />
+            </div>
+          </div>
+          <div>
+            <SettingLabel text="Model" tip={<>Tên model của nhà cung cấp. Để trống = dùng mặc định
+              ({cfg?.default_models?.[curProvider] ?? '—'}). Model nghỉ hưu / gõ sai → hệ thống <b>tự dò model còn sống</b> của chính key đó rồi lưu lại,
+              không cần ai sửa tay.</>} />
+            <Input value={modelShown} onChange={e => setModel(e.target.value)}
+              placeholder={cfg?.default_models?.[curProvider] ?? ''} className="h-8 w-52 text-[12px] font-mono" />
+          </div>
+          <div>
+            <SettingLabel text="API key" tip={<>Lấy key tại <b>{AI_KEY_PAGE[curProvider]}</b>. Key được lưu <b>mã hóa</b>, không hiện lại
+              và không lộ qua API đọc chung. Hết hạn / bị khóa → dán key mới vào đây là xong, không cần sửa gì khác.</>} />
             <Input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
-              placeholder={cfg?.configured ? `Đang dùng key ${cfg.key_tail} — dán key mới để thay` : 'Dán key AIza… vào đây'}
+              placeholder={cfg?.configured ? `Đang dùng key ${cfg.key_tail} — dán key mới để thay` : 'Dán key vào đây'}
               className="h-8 w-72 text-[12px] font-mono" autoComplete="off" />
           </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Model</Label>
-            <Input value={model || (cfg?.model ?? '')} onChange={e => setModel(e.target.value)}
-              placeholder="gemini-flash-lite-latest" className="h-8 w-52 text-[12px] font-mono" />
-          </div>
-          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy || (!keyInput.trim() && !model.trim())}
-            onClick={() => { setMsg(null); saveMut.mutate({ ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}), ...(model.trim() ? { model: model.trim() } : {}) }) }}>
+          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700"
+            disabled={busy || (!keyInput.trim() && !model.trim() && (!provider || provider === cfg?.provider))}
+            onClick={() => {
+              setMsg(null)
+              saveMut.mutate({
+                ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}),
+                ...(model.trim() ? { model: model.trim() } : {}),
+                ...(provider ? { provider } : {}),
+              })
+            }}>
             {saveMut.isPending ? 'Đang lưu…' : 'Lưu'}
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={busy || !cfg?.configured}

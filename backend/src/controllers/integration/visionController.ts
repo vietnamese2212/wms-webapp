@@ -8,26 +8,38 @@ import { encryptSecret, decryptSecret } from '../../utils/secretBox'
 // - Key lưu MÃ HÓA (secretBox — cùng cơ chế API key ERP) trong SystemSetting key 'vision_api';
 //   listSettings đã LỌC key này khỏi GET /wms/settings (route hở đọc) — KHÔNG lộ cho user thường.
 // - PUT /wms/settings/vision_api cũng bị chặn sẵn (không nằm trong KNOWN_SETTINGS → UNKNOWN_SETTING).
-// - Provider mặc định Gemini (bậc miễn phí 2.5-flash-lite ~1.000 ảnh/ngày, không cần thẻ);
-//   cấu trúc value có 'provider' để sau này thêm Groq/Mistral mà không đổi schema.
+// - NHÀ CUNG CẤP chọn được (14/08, user hỏi "dùng API của GPT được không"): `gemini` (Google
+//   AI Studio — có bậc MIỄN PHÍ ~1.000 ảnh/ngày, không cần thẻ) hoặc `openai` (GPT — trả tiền theo
+//   dùng). Cùng một prompt, cùng một shape JSON trả về, nên đổi nhà cung cấp KHÔNG đụng luồng quét.
 // - Endpoint đọc trả 422 (KHÔNG 5xx) khi lỗi/hết quota → FE rơi về Tesseract, không đổ error_logs.
 
 const isSuper = (req: Request) => req.user?.is_superadmin === true
 
 const VISION_KEY = 'vision_api'
-// Alias '-latest' của Google TỰ TRỎ bản flash-lite mới nhất — model tên cụ thể sẽ nghỉ hưu
-// (đo thật 12/08: 'gemini-2.5-flash-lite' trả 404 "no longer available to new users").
-const DEFAULT_MODEL = 'gemini-flash-lite-latest'
 
-interface VisionCfg { provider: string; model: string; key_enc: string }
+export const VISION_PROVIDERS = ['gemini', 'openai'] as const
+export type VisionProvider = typeof VISION_PROVIDERS[number]
+const isProvider = (v: unknown): v is VisionProvider =>
+  typeof v === 'string' && (VISION_PROVIDERS as readonly string[]).includes(v)
+
+// Model mặc định mỗi nhà cung cấp. Gemini: alias '-latest' TỰ TRỎ bản flash-lite mới nhất — model
+// tên cụ thể sẽ nghỉ hưu (đo thật 12/08: 'gemini-2.5-flash-lite' trả 404 "no longer available to
+// new users"). OpenAI: bản mini có vision, rẻ nhất trong nhóm đọc ảnh.
+const DEFAULT_MODEL: Record<VisionProvider, string> = {
+  gemini: 'gemini-flash-lite-latest',
+  openai: 'gpt-4o-mini',
+}
+
+interface VisionCfg { provider: VisionProvider; model: string; key_enc: string }
 
 let _cfgCache: { cfg: VisionCfg | null; at: number } | null = null
 async function getCfg(): Promise<VisionCfg | null> {
   if (_cfgCache && Date.now() - _cfgCache.at < 30_000) return _cfgCache.cfg
   const { data } = await supabase.from('SystemSetting').select('value').eq('key', VISION_KEY).maybeSingle()
   const v = data?.value as Partial<VisionCfg> | null
+  const prov: VisionProvider = isProvider(v?.provider) ? v.provider : 'gemini'
   const cfg = v && typeof v.key_enc === 'string' && v.key_enc
-    ? { provider: v.provider ?? 'gemini', model: v.model ?? DEFAULT_MODEL, key_enc: v.key_enc }
+    ? { provider: prov, model: v.model ?? DEFAULT_MODEL[prov], key_enc: v.key_enc }
     : null
   _cfgCache = { cfg, at: Date.now() }
   return cfg
@@ -42,16 +54,20 @@ export async function getVisionConfig(req: Request, res: Response) {
   return ok(res, {
     configured: !!key,
     provider: cfg?.provider ?? 'gemini',
-    model: cfg?.model ?? DEFAULT_MODEL,
+    model: cfg?.model ?? DEFAULT_MODEL.gemini,
     key_tail: key ? `••••${key.slice(-4)}` : null,
+    providers: VISION_PROVIDERS,
+    default_models: DEFAULT_MODEL,
   })
 }
 
-// PUT /wms/vision-config — { api_key?: string | null, model?: string }.
-// api_key = null → GỠ cấu hình (app quay về thuần OCR). Bỏ trống api_key → chỉ đổi model.
+// PUT /wms/vision-config — { api_key?: string | null, model?: string, provider?: 'gemini'|'openai' }.
+// api_key = null → GỠ cấu hình (app quay về thuần OCR). Bỏ trống api_key → chỉ đổi model/nhà cung cấp.
 export async function saveVisionConfig(req: Request, res: Response) {
   if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
-  const { api_key, model } = req.body as { api_key?: string | null; model?: string }
+  const { api_key, model, provider } = req.body as { api_key?: string | null; model?: string; provider?: string }
+  if (provider !== undefined && !isProvider(provider))
+    return fail(res, `Nhà cung cấp AI không hợp lệ (chỉ nhận: ${VISION_PROVIDERS.join(', ')})`, 400)
   const now = new Date().toISOString()
 
   if (api_key === null) {
@@ -62,7 +78,11 @@ export async function saveVisionConfig(req: Request, res: Response) {
   }
 
   const cur = await getCfg()
-  const m = (model ?? cur?.model ?? DEFAULT_MODEL).trim()
+  const prov: VisionProvider = isProvider(provider) ? provider : (cur?.provider ?? 'gemini')
+  // Đổi nhà cung cấp mà không khai model → lấy model mặc định của nhà cung cấp MỚI
+  // (giữ model cũ là chắc chắn 404: tên model Gemini không tồn tại bên OpenAI và ngược lại).
+  const fallbackModel = prov === cur?.provider ? (cur?.model ?? DEFAULT_MODEL[prov]) : DEFAULT_MODEL[prov]
+  const m = (model?.trim() || fallbackModel).trim()
   if (!/^[\w.-]{3,80}$/.test(m)) return fail(res, 'Tên model không hợp lệ', 400)
 
   let keyEnc = cur?.key_enc ?? null
@@ -76,13 +96,13 @@ export async function saveVisionConfig(req: Request, res: Response) {
 
   const { error } = await supabase.from('SystemSetting').upsert({
     key: VISION_KEY,
-    value: { provider: 'gemini', model: m, key_enc: keyEnc },
+    value: { provider: prov, model: m, key_enc: keyEnc },
     updated_by: req.user?.name ?? null,
     updated_at: now,
   }, { onConflict: 'key' })
   if (error) return fail(res, error.message, 500)
   _cfgCache = null
-  return ok(res, { configured: true, provider: 'gemini', model: m })
+  return ok(res, { configured: true, provider: prov, model: m })
 }
 
 // ─── Gọi Gemini ───────────────────────────────────────────────────────────────
@@ -96,10 +116,36 @@ const OCR_PROMPT = `Ảnh chụp chữ IN PHUN (dot-matrix) trên thùng carton 
 
 interface GeminiResult { time: string | null; nsx: string | null; hsd: string | null; raw: string | null }
 
+// Đầu vào CHUNG cho mọi nhà cung cấp — mỗi hàm call tự dựng payload theo định dạng của mình.
+interface VisionInput { prompt: string; image?: { mime: string; b64: string } }
+
 // TỰ CHỮA MODEL NGHỈ HƯU (đo thật 12/08 — Google 404 model cũ với user mới, tài liệu ngoài lỗi thời
 // rất nhanh): gặp 404 → hỏi ListModels bằng CHÍNH key đó → chọn flash-lite/flash còn sống → thử lại
 // + LƯU model mới vào config. Model sau này nghỉ hưu tiếp cũng tự chữa, không cần ai sửa tay.
-async function discoverModel(key: string): Promise<string | null> {
+async function discoverModel(provider: VisionProvider, key: string): Promise<string | null> {
+  return provider === 'openai' ? discoverOpenAIModel(key) : discoverGeminiModel(key)
+}
+
+// OpenAI cũng có ListModels — lọc bản đọc được ảnh, ưu tiên bản "mini" (rẻ nhất trong nhóm vision).
+async function discoverOpenAIModel(key: string): Promise<string | null> {
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 10_000)
+    const r = await fetch('https://api.openai.com/v1/models', {
+      headers: { Authorization: `Bearer ${key}` }, signal: ctrl.signal,
+    })
+    clearTimeout(timer)
+    if (!r.ok) return null
+    const j = await r.json() as { data?: Array<{ id?: string }> }
+    const ids = (j.data ?? []).map(m => m.id ?? '')
+      .filter(id => /^(gpt-\d|gpt-4o|o\d)/.test(id))
+      .filter(id => !/audio|realtime|transcribe|tts|embed|moderation|search|instruct/.test(id))
+    const pick = (re: RegExp) => ids.filter(id => re.test(id)).sort().reverse()[0] ?? null
+    return pick(/mini/) ?? ids.sort().reverse()[0] ?? null
+  } catch { return null }
+}
+
+async function discoverGeminiModel(key: string): Promise<string | null> {
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10_000)
@@ -131,20 +177,69 @@ async function persistModel(model: string) {
   _cfgCache = null
 }
 
-// Gọi Gemini; model 404 (nghỉ hưu/sai tên) → tự dò model sống, thử lại 1 lần, lưu nếu ăn.
-async function callGeminiHealing(cfg: VisionCfg, key: string, parts: unknown[], timeoutMs: number): Promise<{ text: string; model: string } | { err: string }> {
-  const r1 = await callGemini(cfg, key, parts, timeoutMs)
+// Gọi AI; model 404 (nghỉ hưu/sai tên) → tự dò model sống, thử lại 1 lần, lưu nếu ăn.
+async function callAiHealing(cfg: VisionCfg, key: string, input: VisionInput, timeoutMs: number): Promise<{ text: string; model: string } | { err: string }> {
+  const call = cfg.provider === 'openai' ? callOpenAI : callGemini
+  const r1 = await call(cfg, key, input, timeoutMs)
   if (!('err' in r1)) return { ...r1, model: cfg.model }
   if (!r1.retired) return r1
-  const m2 = await discoverModel(key)
+  const m2 = await discoverModel(cfg.provider, key)
   if (!m2 || m2 === cfg.model) return r1
-  const r2 = await callGemini({ ...cfg, model: m2 }, key, parts, timeoutMs)
+  const r2 = await call({ ...cfg, model: m2 }, key, input, timeoutMs)
   if ('err' in r2) return r1   // model dò cũng hỏng → trả lỗi gốc cho dễ hiểu
   await persistModel(m2).catch(() => {})
   return { ...r2, model: m2 }
 }
 
-async function callGemini(cfg: VisionCfg, key: string, parts: unknown[], timeoutMs: number): Promise<{ text: string } | { err: string; retired?: boolean }> {
+// ─── OpenAI (GPT) ─────────────────────────────────────────────────────────────
+// Cùng prompt, cùng shape JSON như Gemini nên luồng quét không cần biết đang dùng bên nào.
+async function callOpenAI(cfg: VisionCfg, key: string, input: VisionInput, timeoutMs: number): Promise<{ text: string } | { err: string; retired?: boolean }> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const content: unknown[] = [{ type: 'text', text: input.prompt }]
+    if (input.image) content.push({ type: 'image_url', image_url: { url: `data:${input.image.mime};base64,${input.image.b64}` } })
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: cfg.model,
+        temperature: 0,
+        max_completion_tokens: 300,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content }],
+      }),
+    })
+    if (!r.ok) {
+      const body = await r.text().catch(() => '')
+      let msg = `GPT trả ${r.status}`
+      let retired = r.status === 404
+      try {
+        const j = JSON.parse(body) as { error?: { message?: string; code?: string } }
+        const code = j.error?.code ?? ''
+        if (r.status === 429 || code === 'insufficient_quota')
+          msg = 'Hết hạn mức GPT (kiểm tra billing của tài khoản OpenAI) hoặc gọi quá nhanh'
+        else if (r.status === 401 || r.status === 403) msg = 'API key bị OpenAI từ chối — kiểm tra key ở trang Kết nối ERP'
+        else if (j.error?.message) msg = `GPT ${r.status}: ${j.error.message.slice(0, 160)}`
+        if (code === 'model_not_found') retired = true
+      } catch { /* body không phải JSON */ }
+      return { err: msg, retired }
+    }
+    const j = await r.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const text = j.choices?.[0]?.message?.content ?? ''
+    if (!text) return { err: 'GPT không trả nội dung' }
+    return { text }
+  } catch (e) {
+    return { err: (e as Error).name === 'AbortError' ? 'AI Vision quá thời gian chờ' : `Không gọi được AI Vision: ${(e as Error).message}` }
+  } finally { clearTimeout(timer) }
+}
+
+// ─── Gemini ───────────────────────────────────────────────────────────────────
+async function callGemini(cfg: VisionCfg, key: string, input: VisionInput, timeoutMs: number): Promise<{ text: string } | { err: string; retired?: boolean }> {
+  const parts: unknown[] = input.image
+    ? [{ inlineData: { mimeType: input.image.mime, data: input.image.b64 } }, { text: input.prompt }]
+    : [{ text: input.prompt }]
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cfg.model}:generateContent?key=${encodeURIComponent(key)}`
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
@@ -197,9 +292,9 @@ export async function testVisionConfig(req: Request, res: Response) {
   const key = cfg ? decryptSecret(cfg.key_enc) : null
   if (!cfg || !key) return fail(res, 422, 'VISION_NOT_CONFIGURED', 'Chưa cấu hình API key AI Vision')
   const t0 = Date.now()
-  const r = await callGeminiHealing(cfg, key, [{ text: 'Trả về đúng JSON: {"ok": true}' }], 15_000)
+  const r = await callAiHealing(cfg, key, { prompt: 'Trả về đúng JSON: {"ok": true}' }, 15_000)
   if ('err' in r) return fail(res, 422, 'VISION_FAILED', r.err)
-  return ok(res, { ok: true, model: r.model, healed: r.model !== cfg.model, latency_ms: Date.now() - t0 })
+  return ok(res, { ok: true, provider: cfg.provider, model: r.model, healed: r.model !== cfg.model, latency_ms: Date.now() - t0 })
 }
 
 // POST /wms/packing/vision-ocr — { photo_data: dataURL } → { time, nsx_date, hsd_date, raw }.
@@ -214,10 +309,7 @@ export async function visionOcr(req: Request, res: Response) {
   const key = cfg ? decryptSecret(cfg.key_enc) : null
   if (!cfg || !key) return fail(res, 422, 'VISION_NOT_CONFIGURED', 'Chưa cấu hình AI Vision (trang Kết nối ERP)')
 
-  const r = await callGeminiHealing(cfg, key, [
-    { inlineData: { mimeType: m[1], data: m[2] } },
-    { text: OCR_PROMPT },
-  ], 25_000)
+  const r = await callAiHealing(cfg, key, { prompt: OCR_PROMPT, image: { mime: m[1], b64: m[2] } }, 25_000)
   if ('err' in r) return fail(res, 422, 'VISION_FAILED', r.err)
 
   let parsed: GeminiResult
@@ -231,6 +323,6 @@ export async function visionOcr(req: Request, res: Response) {
     nsx_date: dmyToIso(parsed.nsx),
     hsd_date: dmyToIso(parsed.hsd),
     raw: typeof parsed.raw === 'string' ? parsed.raw.slice(0, 500) : null,
-    engine: 'gemini', model: r.model,
+    engine: cfg.provider, model: r.model,
   })
 }

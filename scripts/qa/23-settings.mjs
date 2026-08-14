@@ -35,6 +35,25 @@ await login()
   check('GET hở đọc KHÔNG lộ cờ bí mật vision_api', r.s === 200 && !leaked, `http=${r.s} leaked=${leaked}`)
 }
 
+// Cấu hình AI Vision (nhà cung cấp Gemini/GPT — 14/08): CHỈ bắn giá trị BẬY để không đụng key thật
+// đang cấu hình trên staging. Nhà cung cấp ngoài sổ phải bị chặn, không được âm thầm nhận rồi lưu.
+{
+  for (const [label, body] of [
+    ['provider lạ "claude"', { provider: 'claude' }],
+    ['provider rỗng', { provider: '' }],
+    ['provider là số', { provider: 3 }],
+  ]) {
+    const r = await api('/wms/vision-config', 'PUT', body)
+    check(`vision-config: ${label} → 400`, r.s === 400, `http=${r.s}`)
+  }
+  const g = await api('/wms/vision-config', 'GET')
+  const d = g.j?.data ?? {}
+  check('vision-config: GET nêu đủ nhà cung cấp hỗ trợ + KHÔNG lộ key',
+    g.s === 200 && Array.isArray(d.providers) && d.providers.includes('gemini') && d.providers.includes('openai')
+      && !('key_enc' in d) && !('api_key' in d),
+    `providers=${JSON.stringify(d.providers)}`)
+}
+
 // Giá trị gốc để khôi phục (null = chưa cấu hình)
 const before = new Map(((await api('/wms/settings', 'GET')).j?.data ?? []).map(s => [s.key, s.value]))
 

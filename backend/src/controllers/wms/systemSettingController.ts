@@ -4,7 +4,7 @@ import { ok, fail } from '../../utils/response'
 import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
-  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile,
+  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -40,6 +40,9 @@ import {
 // - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
 // - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
 // - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
+// - vn_holidays: LỊCH NGHỈ LỄ theo năm — { "2026": [{date,name}] }. Năm khai ở đây dùng ĐÚNG danh sách
+//     khai (công bố của Chính phủ đổi hàng năm: nghỉ bù, Tết 5/7/9 ngày); năm không khai vẫn tự tính
+//     bằng thuật toán âm lịch cũ ⇒ chưa cấu hình = hành vi không đổi.
 // - org_profile: NHẬN DIỆN & THAM SỐ RIÊNG CỦA ĐƠN VỊ (14/08) — { contact_email (subject Web Push),
 //     weigh_station_code (trạm cân mặc định), nmsx_alias (gộp mã nhà máy cũ→mới), assumed_carton_mm
 //     (cỡ thùng giả định khi mã chưa khai) }. Trước đây là hằng số của riêng LOF nằm rải 4 chỗ code.
@@ -121,6 +124,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   packing_max_materials_per_run: {
     validate: v => parsePackingMaxMaterials(v) !== null,
     hint: 'số nguyên 1–50 (mã / trang sổ)',
+  },
+  vn_holidays: {
+    validate: v => parseVnHolidays(v) !== null,
+    hint: '{ "2026": [{ date: "2026-01-01", name: "Tết Dương lịch" }] } — năm KHÔNG khai thì dùng lịch tự tính (âm lịch + 4 lễ dương)',
   },
   org_profile: {
     validate: v => parseOrgProfile(v) !== null,

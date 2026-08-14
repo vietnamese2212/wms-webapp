@@ -55,6 +55,17 @@ const CASES = [
      { good: 120, low: 25 },                              // good > 100
      { good: 65, low: 25, la: 1 }],                       // khóa lạ
     { good: 60, low: 30 }],
+  // vn_holidays (14/08) — lịch nghỉ lễ khai tay theo năm; mặc định {} = năm nào cũng tự tính như cũ
+  ['vn_holidays',
+    { 2026: [{ date: '2026-01-01', name: 'Tết Dương lịch' }, { date: '2026-09-02', name: 'Quốc khánh' }] },
+    [{ 2026: [{ date: '2025-01-01', name: 'Sai năm' }] },                    // ngày không thuộc năm khai
+     { 2026: [{ date: '2026-02-31', name: 'Ngày không có thật' }] },         // 31/02
+     { 2026: [{ date: '01-01-2026', name: 'Sai định dạng' }] },
+     { 2026: [{ date: '2026-01-01', name: 'A' }, { date: '2026-01-01', name: 'B' }] },  // trùng ngày
+     { 2026: [{ date: '2026-01-01' }] },                                     // thiếu tên
+     { 1999: [{ date: '1999-01-01', name: 'Ngoài khoảng năm' }] },
+     { 2026: 'không phải mảng' }],
+    {}],
   // org_profile (14/08) — nhận diện & tham số riêng đơn vị; mặc định = đúng giá trị đơn vị 1 đang chạy
   ['org_profile',
     { contact_email: 'wms@donvi2.vn', weigh_station_code: 'CN02', nmsx_alias: { B: 'P' }, assumed_carton_mm: { l: 400, w: 300, h: 200 } },

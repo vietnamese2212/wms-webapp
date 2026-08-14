@@ -121,6 +121,45 @@ function aliasFromStr(s: string): Record<string, string> | null {
   }
   return out
 }
+// ── vn_holidays — lịch nghỉ lễ KHAI TAY theo năm. Ô nhập dạng văn bản, mỗi dòng "YYYY-MM-DD Tên"
+// (khai vài chục ngày/năm, dựng bảng CRUD riêng là thừa). Năm KHÔNG khai → app tự tính như cũ.
+type HolidayMap = Record<string, { date: string; name: string }[]>
+function holidaysToText(h: HolidayMap): string {
+  return Object.keys(h).sort().flatMap(y => h[y].map(i => `${i.date} ${i.name}`)).join('\n')
+}
+/** Văn bản → { năm: [{date,name}] }. Trả null kèm số dòng hỏng để báo lỗi rõ. */
+function holidaysFromText(text: string): { value: HolidayMap } | { errLine: number } {
+  const out: HolidayMap = {}
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const m = /^(\d{4}-\d{2}-\d{2})\s+(.+)$/.exec(line)
+    if (!m) return { errLine: i + 1 }
+    const [, date, name] = m
+    const [y, mo, d] = date.split('-').map(Number)
+    const chk = new Date(Date.UTC(y, mo - 1, d))
+    if (chk.getUTCFullYear() !== y || chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== d) return { errLine: i + 1 }
+    const year = date.slice(0, 4)
+    out[year] = out[year] ?? []
+    if (out[year].some(x => x.date === date)) return { errLine: i + 1 }   // trùng ngày
+    out[year].push({ date, name: name.trim().slice(0, 80) })
+  }
+  return { value: out }
+}
+function parseHolidays(v: unknown): HolidayMap {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: HolidayMap = {}
+  for (const [year, list] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue
+    out[year] = list
+      .filter((it): it is { date: string; name: string } =>
+        !!it && typeof (it as { date?: unknown }).date === 'string' && typeof (it as { name?: unknown }).name === 'string')
+      .map(it => ({ date: it.date, name: it.name }))
+  }
+  return out
+}
+
 function parseOrg(v: unknown): OrgProfileValue {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return ORG_DEFAULT
   const o = v as Record<string, unknown>
@@ -151,6 +190,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
   const orgRow   = settings.find(s => s.key === 'org_profile')
+  const holRow   = settings.find(s => s.key === 'vn_holidays')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -159,6 +199,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
   const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
   const srvOrg   = parseOrg(orgRow?.value)
+  const srvHol   = parseHolidays(holRow?.value)
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
@@ -173,12 +214,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
   })
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg])
+  const [draftHol, setDraftHol] = useState(holidaysToText(srvHol))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
-    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg))
+    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(holidaysToText(srvHol))
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -193,7 +235,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty
+  const holDirty   = draftHol.trim() !== holidaysToText(srvHol).trim()
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty
 
   async function applyChanges() {
     setErr('')
@@ -232,6 +275,12 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (!l || !w || !h) return setErr('Đơn vị: cỡ thùng giả định phải là số nguyên 1–5000 mm cho cả D, R, C.')
       org = { contact_email: email, weigh_station_code: station, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
     }
+    let hol: HolidayMap | null = null
+    if (holDirty) {
+      const r = holidaysFromText(draftHol)
+      if ('errLine' in r) return setErr(`Lịch nghỉ lễ — dòng ${r.errLine} sai: mỗi dòng viết "YYYY-MM-DD Tên ngày lễ", ngày phải có thật và không trùng trong cùng năm.`)
+      hol = r.value
+    }
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
       if (dcDirty)    await save({ key: 'delivery_confirmation', value: draftDc })
@@ -241,6 +290,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
       if (org)        await save({ key: 'org_profile', value: org })
+      if (hol)        await save({ key: 'vn_holidays', value: hol })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
@@ -322,6 +372,23 @@ function SystemTab({ canManage }: { canManage: boolean }) {
           <SettingGroup readOnly={!canManage} title="Sổ đóng gói" meta={packRow}>
             <SettingField label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
               <div className="w-20"><SettingNum unit="mã" value={draftPack} onChange={setDraftPack} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Lịch nghỉ lễ — công bố đổi hàng năm, trước 14/08 phải sửa code mới đúng */}
+          <SettingGroup readOnly={!canManage} title="Lịch nghỉ lễ" meta={holRow}>
+            <SettingField label="Ngày nghỉ khai tay"
+              tip='Mỗi dòng viết "YYYY-MM-DD Tên ngày lễ". NĂM NÀO CÓ KHAI thì bảng công dùng đúng danh sách khai (kể cả nghỉ bù, Tết dài ngắn theo công bố); năm không khai vẫn tự tính bằng lịch âm + 4 lễ dương như trước. Ngày lễ = không tính là ngày cần chấm công.'>
+              <textarea value={draftHol} onChange={e => setDraftHol(e.target.value)} rows={4} spellCheck={false}
+                placeholder={'2026-01-01 Tết Dương lịch\n2026-02-17 Tết Nguyên đán (mùng 1)'}
+                className="w-full rounded-md border border-slate-200 px-1.5 py-1 text-[11px] font-mono leading-snug focus:outline-none focus:ring-1 focus:ring-sky-400" />
+              <span className="text-[9px] text-slate-400">
+                {(() => { const r = holidaysFromText(draftHol); return 'errLine' in r
+                  ? `⚠ dòng ${r.errLine} chưa đúng dạng`
+                  : Object.keys(r.value).length
+                    ? `${Object.entries(r.value).map(([y, l]) => `${y}: ${l.length} ngày`).join(' · ')}`
+                    : 'chưa khai năm nào — app tự tính lịch lễ' })()}
+              </span>
             </SettingField>
           </SettingGroup>
 

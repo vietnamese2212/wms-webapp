@@ -121,3 +121,39 @@ export function parseOrgProfile(raw: unknown): OrgProfile | null {
   return { contact_email: email, weigh_station_code: station, nmsx_alias, assumed_carton_mm: { l, w, h } }
 }
 export const getOrgProfile = () => readSetting('org_profile', ORG_PROFILE_DEFAULT, parseOrgProfile)
+
+// ── vn_holidays — LỊCH NGHỈ LỄ theo NĂM (đợt 3 chống hardcode 14/08) ──────────
+// FE có sẵn thuật toán âm lịch (Tết, Giỗ Tổ) + 4 lễ dương cố định, nhưng SỐ NGÀY NGHỈ THẬT do
+// Chính phủ công bố lại HÀNG NĂM (nghỉ bù cuối tuần, Tết 5/7/9 ngày…) — trước 14/08 muốn đúng
+// phải sửa code. Nay: năm nào KHAI ở đây thì dùng ĐÚNG danh sách khai; năm KHÔNG khai vẫn chạy
+// thuật toán cũ ⇒ chưa cấu hình gì thì hành vi y như trước.
+export interface HolidayItem { date: string; name: string }
+export type VnHolidays = Record<string, HolidayItem[]>   // '2026' → danh sách ngày nghỉ của năm đó
+export const VN_HOLIDAYS_DEFAULT: VnHolidays = {}
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+export function parseVnHolidays(raw: unknown): VnHolidays | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (Object.keys(o).length > 20) return null
+  const out: VnHolidays = {}
+  for (const [year, list] of Object.entries(o)) {
+    if (!/^\d{4}$/.test(year) || Number(year) < 2000 || Number(year) > 2100) return null
+    if (!Array.isArray(list) || list.length > 60) return null
+    const items: HolidayItem[] = []
+    for (const it of list) {
+      if (!it || typeof it !== 'object' || Array.isArray(it)) return null
+      const d = (it as Record<string, unknown>).date, n = (it as Record<string, unknown>).name
+      if (typeof d !== 'string' || !ISO_DATE.test(d) || d.slice(0, 4) !== year) return null
+      // ngày phải TỒN TẠI trên lịch (31-02 khớp regex nhưng không có thật)
+      const [y, m, dd] = d.split('-').map(Number)
+      const chk = new Date(Date.UTC(y, m - 1, dd))
+      if (chk.getUTCFullYear() !== y || chk.getUTCMonth() !== m - 1 || chk.getUTCDate() !== dd) return null
+      if (typeof n !== 'string' || !n.trim() || n.length > 80) return null
+      if (items.some(x => x.date === d)) return null      // trùng ngày trong cùng năm
+      items.push({ date: d, name: n.trim() })
+    }
+    out[year] = items
+  }
+  return out
+}
+export const getVnHolidays = () => readSetting('vn_holidays', VN_HOLIDAYS_DEFAULT, parseVnHolidays)

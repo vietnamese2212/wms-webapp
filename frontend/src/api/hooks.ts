@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { ASSUMED_CARTON } from '@/utils/loadPlan'
+import type { HolidayOverrides } from '@/utils/vnHolidays'
 import { parsePctBands, type PctBands } from '@/utils/pctDateBands'
 import {
   mockInventory, mockTransactions, mockVehicles,
@@ -529,6 +530,27 @@ export function usePctBands(): PctBands {
     () => parsePctBands(data?.find(s => s.key === 'pct_date_bands')?.value),
     [data],
   )
+}
+
+// Lịch nghỉ lễ KHAI TAY theo năm (SystemSetting `vn_holidays`, tab Hệ thống) — truyền vào
+// getHoliday(ds, overrides). Chưa khai năm nào thì năm đó vẫn tự tính bằng thuật toán âm lịch.
+export function useHolidayOverrides(): HolidayOverrides {
+  const { data } = useSystemSettings()
+  return useMemo(() => {
+    const v = data?.find(s => s.key === 'vn_holidays')?.value
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+    const out: HolidayOverrides = {}
+    for (const [year, list] of Object.entries(v as Record<string, unknown>)) {
+      if (!Array.isArray(list)) continue
+      const m: Record<string, string> = {}
+      for (const it of list) {
+        const d = (it as { date?: unknown })?.date, n = (it as { name?: unknown })?.name
+        if (typeof d === 'string' && typeof n === 'string') m[d] = n
+      }
+      out[year] = m
+    }
+    return out
+  }, [data])
 }
 
 // Cỡ thùng GIẢ ĐỊNH cho mã chưa khai kích thước (sơ đồ xếp xe 3D) — đọc `org_profile`

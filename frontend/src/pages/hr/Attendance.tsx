@@ -18,7 +18,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
   useDepartments, useJobTitles, useAttendanceMatrix,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
-  useLeaves,
+  useLeaves, useHolidayOverrides,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -26,15 +26,11 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
 import { getHoliday } from '@/utils/vnHolidays'
 import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
+import { ATTENDANCE_KINDS, shiftOptions, shiftLabel, shiftShort, shiftCell } from '@/config/shifts'
 
-const KINDS: { value: string; label: string }[] = [
-  { value: 'CA1', label: 'Ca 1' },
-  { value: 'CA2', label: 'Ca 2' },
-  { value: 'CA3', label: 'Ca 3' },
-  { value: 'HC',  label: 'Hành chính' },
-  { value: 'LEAVE', label: 'Nghỉ phép' },
-]
-const kindLabel = (k: string) => KINDS.find(o => o.value === k)?.label ?? k
+// Ca làm việc: MỘT nguồn ở config/shifts.ts (mã · nhãn · thứ tự · màu) — xem ghi chú ở file đó
+const KINDS = shiftOptions(ATTENDANCE_KINDS)
+const kindLabel = shiftLabel
 const kindVariant = (k: string): 'info' | 'success' | 'warning' | 'slate' =>
   k === 'LEAVE' ? 'slate' : k === 'HC' ? 'success' : 'info'
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -54,15 +50,7 @@ function eachDate(from: string, to: string): string[] {
   return out
 }
 
-// màu ô lịch theo loại công
-const KIND_CELL: Record<string, string> = {
-  CA1:   'bg-sky-100 text-sky-700',
-  CA2:   'bg-indigo-100 text-indigo-700',
-  CA3:   'bg-violet-100 text-violet-700',
-  HC:    'bg-green-100 text-green-700',
-  LEAVE: 'bg-slate-200 text-slate-600',
-}
-const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
+// màu ô lịch + nhãn ngắn theo loại công — lấy từ sổ ca dùng chung
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 const dowOf = (ds: string) => DOW[(new Date(`${ds}T00:00:00`).getDay() + 6) % 7]
 
@@ -136,6 +124,7 @@ function MySection() {
     return m
   }, [myLeaves])
 
+  const holidayOverrides = useHolidayOverrides()   // lịch nghỉ lễ khai tay (tab Hệ thống)
   const today = TODAY()
   const [sel, setSel]     = useState<string | null>(null)
   const [kind, setKind]   = useState('CA1')
@@ -154,7 +143,7 @@ function MySection() {
 
   const selEntry = sel ? byDate.get(sel) : undefined
   const selLeave = sel ? leaveByDate.get(sel) : undefined
-  const selHoliday = sel ? getHoliday(sel) : null
+  const selHoliday = sel ? getHoliday(sel, holidayOverrides) : null
   const isPast = !!sel && sel < today
   const approvedLeave = selLeave === 'APPROVED'                 // đã duyệt nghỉ → khỏi chấm công
   const locked = (isPast && !canEditPast) || approvedLeave
@@ -210,14 +199,14 @@ function MySection() {
               const isFuture = ds > today
               const isSel = ds === sel
               const cong = e ? toCong(rowTotal(e)) : 0
-              const hol = getHoliday(ds)
+              const hol = getHoliday(ds, holidayOverrides)
               return (
                 <button key={ds} type="button" disabled={isFuture}
                   onClick={() => setSel(ds)}
                   className={`relative min-h-[58px] rounded-lg border p-1 text-left flex flex-col transition-colors
                     ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
                     ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
-                    ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
+                    ${e ? shiftCell(e.kind) : 'bg-white'}`}>
                   <div className="flex items-center justify-between gap-0.5">
                     <span className={`text-[11px] font-semibold leading-none ${hol ? 'text-red-600' : isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
                     <span className="flex items-center gap-0.5">
@@ -228,7 +217,7 @@ function MySection() {
                   </div>
                   {e && (
                     <div className="mt-auto flex items-end justify-between gap-0.5 leading-none">
-                      <span className="text-[10px] font-medium">{KIND_SHORT[e.kind]}{(e.ot_hours > 0 || e.early_leave_hours > 0) && <span className="text-[8px] text-slate-500 ml-0.5">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</span>}</span>
+                      <span className="text-[10px] font-medium">{shiftShort(e.kind)}{(e.ot_hours > 0 || e.early_leave_hours > 0) && <span className="text-[8px] text-slate-500 ml-0.5">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</span>}</span>
                       {e.kind !== 'LEAVE' && <span className="text-xs font-bold tabular-nums">{cong}</span>}
                     </div>
                   )}
@@ -237,7 +226,7 @@ function MySection() {
             })}
           </div>
           <div className="flex flex-wrap gap-2 mt-2 items-center">
-            {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
+            {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${shiftCell(k.value)}`}>{k.label}</span>)}
             <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><CheckCircle2 className="h-3 w-3 text-slate-500" /> Nghỉ đã duyệt</span>
             <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><Clock className="h-3 w-3 text-amber-500" /> Chờ duyệt</span>
           </div>
@@ -357,9 +346,10 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const [dense, setDense] = useState(() => localStorage.getItem('attendance_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('attendance_density', d ? '0' : '1'); return !d })
 
+  const holidayOverrides = useHolidayOverrides()
   const dates = useMemo(() => eachDate(from, to), [from, to])
   // ngày cần chấm công = trong khoảng, đã qua (≤ hôm nay), không phải Chủ nhật, không phải ngày lễ
-  const isWorkDay = (ds: string) => ds <= today && dowOf(ds) !== 'CN' && !getHoliday(ds)
+  const isWorkDay = (ds: string) => ds <= today && dowOf(ds) !== 'CN' && !getHoliday(ds, holidayOverrides)
 
   // TRANG = NGƯỜI. Đo thật 28/07: trả cả bảng thì 3.000 NV × 28 ngày = 82.914 dòng = 44MB /
   // 18,9s ⇒ vượt trần 4,5MB response của Vercel từ khoảng ~290 NV. Nay chỉ tải công của người
@@ -428,7 +418,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   function exportExcel() {
     const sheet = filtered.map((r: AttendanceRow) => ({
       'Ngày': formatDate(r.work_date), 'Nhân viên': r.employee?.name ?? '', 'Mã NV': r.employee?.employee_code ?? '',
-      'Chức danh': r.employee?.job_title ?? '', 'Loại': KIND_SHORT[r.kind] ?? r.kind,
+      'Chức danh': r.employee?.job_title ?? '', 'Loại': shiftShort(r.kind),
       'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
@@ -529,9 +519,9 @@ function MatrixTable({ emps, dates, isWorkDay, dense }: { emps: MatrixRow[]; dat
                 const e = g.byDate.get(d)
                 if (e) {
                   return (
-                    <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${KIND_CELL[e.kind]}`}>
+                    <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${shiftCell(e.kind)}`}>
                       <div className="leading-none">
-                        <div className="text-[10px] font-medium">{KIND_SHORT[e.kind]}</div>
+                        <div className="text-[10px] font-medium">{shiftShort(e.kind)}</div>
                         {(e.ot_hours > 0 || e.early_leave_hours > 0) && <div className="text-[8px] text-slate-500">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</div>}
                       </div>
                     </td>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react'
+import { shiftShort, shiftRank, shiftOptions, shiftPrintBg } from '@/config/shifts'
 import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Wand2, Send, Trash2, CalendarDays, Save, Layers, X, Loader2, Image as ImageIcon, Share2, Rows3, AlignJustify, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -32,8 +33,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatDateTime, formatTimestampDate } from '@/utils/formatters'
 
-const SHIFT_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC' }
-const shiftOf = (t: string | null) => (t ? SHIFT_LABEL[t] ?? t : '')
+// nhãn ca lấy từ sổ ca dùng chung (config/shifts.ts) — ô ma trận dùng nhãn NGẮN
+const shiftOf = (t: string | null) => (t ? shiftShort(t) : '')
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ngày VN + n ngày (mặc định filter "đến ngày")
 const DATE_PLUS = (days: number) => { const d = new Date(`${TODAY()}T00:00:00+07:00`); d.setDate(d.getDate() + days); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) }
@@ -90,7 +91,7 @@ export default function Assignments() {
 }
 
 // ════════ TAB QUY TẮC CA (nghỉ giữa ca — không hardcode) ════════
-const RULE_SHIFTS = [{ v: 'CA1', l: 'Ca 1' }, { v: 'CA2', l: 'Ca 2' }, { v: 'CA3', l: 'Ca 3' }, { v: 'HC', l: 'Hành chính' }]
+const RULE_SHIFTS = shiftOptions().map(o => ({ v: o.value, l: o.label }))
 const ruleLabel = (v: string) => RULE_SHIFTS.find(s => s.v === v)?.l ?? v
 function ShiftRulesTab({ canManage }: { canManage: boolean }) {
   const { data: rules = [], isLoading } = useShiftRules()
@@ -452,8 +453,7 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
   }
 
   // thứ tự vị trí: ca (CA1<CA2<CA3) trên cùng, rồi HC, rồi khác — trong cùng nhóm theo sort_order
-  const SHIFT_RANK: Record<string, number> = { CA1: 0, CA2: 1, CA3: 2, HC: 3 }
-  const order = new Map(sheet.skills.map((s, i) => [s.id, (SHIFT_RANK[s.shift_tag ?? ''] ?? 4) * 1000 + i]))
+  const order = new Map(sheet.skills.map((s, i) => [s.id, Math.min(shiftRank(s.shift_tag ?? ''), 4) * 1000 + i]))
   // cho LỊCH (Xem lịch): mỗi vị trí = 1 dòng (người 2 vị trí → 2 dòng)
   const rank = (a: SheetDetail['assignments'][number]) => a.status === 'ASSIGNED' ? (order.get(a.skill_id ?? '') ?? 99999) : a.status === 'UNASSIGNED' ? 100000 : 200000
   const sortedAsg = [...sheet.assignments].sort((x, y) => rank(x) - rank(y) || (x.employee?.name ?? '').localeCompare(y.employee?.name ?? ''))
@@ -653,7 +653,6 @@ function SheetPanel({ sheetId, warehouses, perms, onBack }: { sheetId: string; w
 
 // ─── Nội dung phiếu (giống mẫu Lịch làm việc) — mỗi VỊ TRÍ 1 dòng ───
 // nền dòng theo ca: Ca 2 = vàng nhạt, Ca 3 = đỏ nhạt; còn lại trắng/zebra
-const PRINT_ROW_BG: Record<string, string> = { CA2: '#fef3c7', CA3: '#fee2e2' }
 type EmpRow = { eid: string; employee: SheetDetail['assignments'][number]['employee']; positions: string[]; leave: boolean; manual: boolean }
 type DocProps = {
   sheet: SheetDetail; whName: string; labelOf: (id: string | null) => string
@@ -666,7 +665,7 @@ type DocRow = { stt: string; name: string; job: string; pos: string; note: strin
 function buildDocRows(p: DocProps): DocRow[] {
   return p.sortedAsg.map((a, i) => {
     const tag = a.skill_id ? p.shiftBySkill.get(a.skill_id) : null
-    const bg = (a.status === 'ASSIGNED' && tag && PRINT_ROW_BG[tag]) ? PRINT_ROW_BG[tag] : (i % 2 ? '#f8fafc' : '#ffffff')
+    const bg = (a.status === 'ASSIGNED' && tag && shiftPrintBg(tag)) ? shiftPrintBg(tag)! : (i % 2 ? '#f8fafc' : '#ffffff')
     return {
       stt: String(i + 1),
       name: a.employee?.name ?? '—',

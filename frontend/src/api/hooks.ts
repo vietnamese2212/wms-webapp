@@ -532,6 +532,17 @@ export function usePctBands(): PctBands {
   )
 }
 
+// Ngưỡng thời gian xe NẰM TRONG CỔNG (phút) — cùng nguồn với rule cảnh báo GATE_DWELL, để màn
+// Giám sát vận hành tô màu khớp với ngưỡng admin đã đặt. Mặc định mirror BE THRESHOLDS = 90/180.
+export function useGateDwellThresholds(): { warn: number; crit: number } {
+  const { data } = useSystemSettings()
+  return useMemo(() => {
+    const th = data?.find(s => s.key === 'alert_thresholds')?.value as Record<string, unknown> | undefined
+    const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : d)
+    return { warn: num(th?.GATE_WARN_MIN, 90), crit: num(th?.GATE_CRIT_MIN, 180) }
+  }, [data])
+}
+
 // Lịch nghỉ lễ KHAI TAY theo năm (SystemSetting `vn_holidays`, tab Hệ thống) — truyền vào
 // getHoliday(ds, overrides). Chưa khai năm nào thì năm đó vẫn tự tính bằng thuật toán âm lịch.
 export function useHolidayOverrides(): HolidayOverrides {

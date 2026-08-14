@@ -7,7 +7,7 @@ import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale } from 'lucide
 import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { useControlTower, useMaterials, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
+import { useControlTower, useMaterials, useGateDwellThresholds, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
@@ -22,10 +22,13 @@ function dwellMinutes(entryAt: string | null, now: Date): number | null {
   if (isNaN(t)) return null
   return Math.max(0, Math.floor((now.getTime() - t) / 60000))
 }
-function dwellClass(mins: number | null): string {
+// Màu thời gian xe nằm trong cổng — dùng CHÍNH ngưỡng đã cấu hình của rule cảnh báo GATE_DWELL
+// (tab Cài đặt ngưỡng). Trước 14/08 màn này tô ĐỎ từ 90 phút trong khi hệ thống mới coi 90 là
+// "cảnh báo" và 180 mới "nghiêm trọng" ⇒ hai nơi nói khác nhau về cùng một con số.
+function dwellClass(mins: number | null, warn: number, crit: number): string {
   if (mins == null) return 'text-slate-400'
-  if (mins > 90) return 'text-red-600 font-semibold'
-  if (mins > 45) return 'text-amber-600 font-semibold'
+  if (mins > crit) return 'text-red-600 font-semibold'
+  if (mins > warn) return 'text-amber-600 font-semibold'
   return 'text-slate-500'
 }
 function fmtDwell(mins: number | null): string {
@@ -192,6 +195,7 @@ function InMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
 }
 
 function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dark?: boolean }) {
+  const dwellTh = useGateDwellThresholds()   // cùng ngưỡng với cảnh báo GATE_DWELL
   const list = data.gate.inside_list ?? []
   return (
     <Block title="Xe trong cổng" icon={Truck} count={data.gate.inside} dark={dark}>
@@ -218,7 +222,7 @@ function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dar
                     {g.content ? <span className="block truncate max-w-[140px]" title={g.content}>{g.content}</span> : <span className="text-slate-300">—</span>}
                   </td>
                   <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.entry_at ? formatTimestampTime(g.entry_at).slice(0, 5) : '—'}</td>
-                  <td className={`px-2.5 py-1 text-[10px] text-right whitespace-nowrap tabular-nums ${dwellClass(mins)}`}>{fmtDwell(mins)}</td>
+                  <td className={`px-2.5 py-1 text-[10px] text-right whitespace-nowrap tabular-nums ${dwellClass(mins, dwellTh.warn, dwellTh.crit)}`}>{fmtDwell(mins)}</td>
                 </tr>
               )
             })}

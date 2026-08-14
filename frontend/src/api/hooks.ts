@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
+import { ASSUMED_CARTON } from '@/utils/loadPlan'
 import { parsePctBands, type PctBands } from '@/utils/pctDateBands'
 import {
   mockInventory, mockTransactions, mockVehicles,
@@ -528,6 +529,18 @@ export function usePctBands(): PctBands {
     () => parsePctBands(data?.find(s => s.key === 'pct_date_bands')?.value),
     [data],
   )
+}
+
+// Cỡ thùng GIẢ ĐỊNH cho mã chưa khai kích thước (sơ đồ xếp xe 3D) — đọc `org_profile`
+// (tab Hệ thống). Mặc định mirror BE ORG_PROFILE_DEFAULT = 422×233×100mm (cỡ user đưa 12/07).
+export function useAssumedCarton(): { l: number; w: number; h: number } {
+  const { data } = useSystemSettings()
+  return useMemo(() => {
+    const c = (data?.find(s => s.key === 'org_profile')?.value as Record<string, unknown> | undefined)
+      ?.assumed_carton_mm as Record<string, unknown> | undefined
+    const n = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : d)
+    return { l: n(c?.l, ASSUMED_CARTON.l), w: n(c?.w, ASSUMED_CARTON.w), h: n(c?.h, ASSUMED_CARTON.h) }
+  }, [data])
 }
 
 // Ngưỡng LỆCH CÂN (%) tô đỏ — đọc từ `alert_thresholds` (tab Cài đặt ngưỡng trang Thông báo),

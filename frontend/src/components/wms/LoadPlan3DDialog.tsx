@@ -12,10 +12,10 @@ import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useSystemSettings, useUpdateSystemSetting } from '@/api/hooks'
+import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { computeLoadPlan, ASSUMED_CARTON, GROUP_COLORS, type LoadGroup, type LoadPlan } from '@/utils/loadPlan'
+import { computeLoadPlan, GROUP_COLORS, type LoadGroup, type LoadPlan } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 
 // Dòng xe ghi nhớ lòng thùng (mm) — SystemSetting 'truck_models'. ĐỘC LẬP với Loại xe TMS
@@ -102,6 +102,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     return Array.isArray(v) ? (v as TruckModel[]) : []
   }, [sysSettings])
 
+  // Cỡ thùng giả định cho mã chưa khai kích thước — cấu hình của ĐƠN VỊ (org_profile), không hardcode
+  const assumedCarton = useAssumedCarton()
+
   const [tmName, setTmName] = useState('')       // tên dòng xe đang chọn / sẽ lưu
   const [tmError, setTmError] = useState('')
   const [boxL, setBoxL] = useState('')
@@ -174,9 +177,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           doLabel: d.distributor_name ? `${d.delivery_code} · ${d.distributor_name}` : d.delivery_code,
           count: ordPhys,
           done,
-          l: hasDims ? Number(it.material!.carton_length_mm) : ASSUMED_CARTON.l,
-          w: hasDims ? Number(it.material!.carton_width_mm)  : ASSUMED_CARTON.w,
-          h: hasDims ? Number(it.material!.carton_height_mm) : ASSUMED_CARTON.h,
+          l: hasDims ? Number(it.material!.carton_length_mm) : assumedCarton.l,
+          w: hasDims ? Number(it.material!.carton_width_mm)  : assumedCarton.w,
+          h: hasDims ? Number(it.material!.carton_height_mm) : assumedCarton.h,
           weightKg: it.material?.weight_kg ?? null,
           assumed: !hasDims,
           maxLayers: it.material?.max_stack_layers ?? null,
@@ -185,7 +188,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       }
     }
     return [...map.values()]
-  }, [gdo])
+  }, [gdo, assumedCarton])
 
   const truckL = Number(boxL), truckW = Number(boxW), truckH = Number(boxH)
   const truckOk = truckL > 0 && truckW > 0 && truckH > 0
@@ -648,7 +651,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           )}
           {assumedCount > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
-              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang dùng cỡ giả định {ASSUMED_CARTON.l}×{ASSUMED_CARTON.w}×{ASSUMED_CARTON.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
+              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang dùng cỡ giả định {assumedCarton.l}×{assumedCarton.w}×{assumedCarton.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
             </div>
           )}
 

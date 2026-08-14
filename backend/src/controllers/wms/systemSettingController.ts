@@ -4,7 +4,7 @@ import { ok, fail } from '../../utils/response'
 import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
-  parseInboundEditWindow, parsePackingMaxMaterials,
+  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -40,6 +40,9 @@ import {
 // - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
 // - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
 // - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
+// - org_profile: NHẬN DIỆN & THAM SỐ RIÊNG CỦA ĐƠN VỊ (14/08) — { contact_email (subject Web Push),
+//     weigh_station_code (trạm cân mặc định), nmsx_alias (gộp mã nhà máy cũ→mới), assumed_carton_mm
+//     (cỡ thùng giả định khi mã chưa khai) }. Trước đây là hằng số của riêng LOF nằm rải 4 chỗ code.
 
 // - pct_date_bands: { good, low } — THANG MÀU %Date hiển thị TOÀN APP (audit hardcode 13/08: trước
 //     đó 3 thang mâu thuẫn 70/40 · 60/30 · 20/10 rải 12 chỗ FE). pct > good = xanh · > low = vàng ·
@@ -118,6 +121,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   packing_max_materials_per_run: {
     validate: v => parsePackingMaxMaterials(v) !== null,
     hint: 'số nguyên 1–50 (mã / trang sổ)',
+  },
+  org_profile: {
+    validate: v => parseOrgProfile(v) !== null,
+    hint: '{ contact_email, weigh_station_code, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
   },
 }
 

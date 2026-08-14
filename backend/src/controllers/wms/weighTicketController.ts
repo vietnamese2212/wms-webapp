@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
+import { getOrgProfile } from '../../utils/settings'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -57,7 +58,9 @@ export async function ingestWeighTickets(req: Request, res: Response) {
   try {
     const { station_code, warehouse_id, tickets } =
       req.body as { station_code?: string; warehouse_id?: string; tickets?: KbTicket[] }
-    const station = String(station_code ?? 'KB01').trim() || 'KB01'
+    // Trạm cân mặc định = cấu hình đơn vị (org_profile), KHÔNG hardcode mã trạm của LOF
+    const defStation = (await getOrgProfile()).weigh_station_code
+    const station = String(station_code ?? defStation).trim() || defStation
     if (!Array.isArray(tickets)) return fail(res, 'tickets phải là mảng', 400, 'VALIDATION_ERROR')
     if (tickets.length === 0) return ok(res, { upserted: 0, matched: 0 })
     if (tickets.length > 500) return fail(res, 'Tối đa 500 phiếu/lần', 400, 'VALIDATION_ERROR')

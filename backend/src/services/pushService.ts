@@ -5,6 +5,7 @@
 import webpush from 'web-push'
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
+import { getOrgProfile } from '../utils/settings'
 
 export interface PushPayload {
   title: string
@@ -31,7 +32,7 @@ export async function getVapid(): Promise<VapidKeys | null> {
     const keys = webpush.generateVAPIDKeys()
     const { error } = await supabase.from('push_config').insert({
       id: 1, vapid_public: keys.publicKey, vapid_private: keys.privateKey,
-      subject: 'mailto:wms@lof.vn', updated_at: new Date().toISOString(),
+      subject: `mailto:${(await getOrgProfile()).contact_email}`, updated_at: new Date().toISOString(),
     })
     if (error) {
       const { data: again } = await supabase.from('push_config')
@@ -40,7 +41,7 @@ export async function getVapid(): Promise<VapidKeys | null> {
       _vapidCache = { publicKey: again.vapid_public, privateKey: again.vapid_private, subject: again.subject }
       return _vapidCache
     }
-    _vapidCache = { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: 'mailto:wms@lof.vn' }
+    _vapidCache = { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: `mailto:${(await getOrgProfile()).contact_email}` }
     return _vapidCache
   } catch { return null }
 }

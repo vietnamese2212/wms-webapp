@@ -28,11 +28,14 @@ app.set('trust proxy', 1)
 // bật CSP ở đây không có tác dụng mà dễ gây phiền.
 app.use(helmet({ contentSecurityPolicy: false }))
 
+// Origin cho phép = FRONTEND_URL + CORS_ORIGINS (danh sách, ngăn bằng dấu phẩy). Mỗi đơn vị khai
+// domain của mình bằng ENV thay vì nhét domain một đơn vị vào code (kiến trúc multi-tenant silo).
+// Chưa khai CORS_ORIGINS → giữ nguyên domain production đơn vị 1 để app đang chạy không đứt.
+const extraOrigins = (process.env.CORS_ORIGINS ?? 'https://wms-webapp.vercel.app')
+  .split(',').map(s => s.trim()).filter(Boolean)
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL ?? 'http://localhost:5173',
-    'https://wms-webapp.vercel.app',
-  ],
+  origin: [process.env.FRONTEND_URL ?? 'http://localhost:5173', ...extraOrigins],
   credentials: true,
 }))
 // Limit mặc định 100kb làm upload bulk JSON (KH xuất/nhập hàng nghìn dòng) chết 413.

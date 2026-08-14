@@ -15,6 +15,7 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
+import { getOrgProfile } from '../../utils/settings'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -1447,11 +1448,12 @@ const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '
 const invStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 
 const HASH8 = /^[0-9a-f]{8}$/i
-const NMSX_ALIAS: Record<string, string> = { A: 'O' }   // "A" là mã cũ của nhà máy O → gộp về O
-function nmsxFromPallet(code: string, fallback: string | null): string | null {
+// Ánh xạ mã nhà máy CŨ → MỚI lấy từ cấu hình đơn vị (org_profile.nmsx_alias, mặc định { A: 'O' } =
+// đúng giá trị LOF đang chạy). Truyền vào thay vì đọc hằng số toàn cục: alias là dữ liệu của ĐƠN VỊ.
+function nmsxFromPallet(code: string, fallback: string | null, alias: Record<string, string>): string | null {
   const parts = String(code || '').split('_')
   const raw = (parts.length >= 6 && parts[5] && !HASH8.test(parts[5])) ? parts[5] : fallback
-  return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
+  return raw ? (alias[raw] ?? raw) : raw
 }
 // Ngày phải TỒN TẠI trên lịch: regex chỉ soi hình dạng nên "32/13/2026" hay "31/02/2026" vẫn khớp
 // → ghép thành '2026-02-31' rồi Postgres nổ "date out of range" LÚC GHI (vỡ cam kết "lỗi hiện ở bước
@@ -1525,6 +1527,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const matCatMap = new Map(mats.map(m => [m.id, m.category ?? '']))
     const matUnitsById = new Map<string, MatUnits>(mats.map(m => [m.id, m]))
     const whTypeMeta = await getWhTypeMetaMap()   // cờ requires_ncc per Loại kho (kiểm dòng thiếu NCC)
+    const nmsxAlias = (await getOrgProfile()).nmsx_alias   // gộp mã nhà máy cũ→mới theo cấu hình đơn vị
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
     const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
@@ -1673,7 +1676,7 @@ export async function uploadExcel(req: Request, res: Response) {
         qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
         if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qaNames})`); continue }
       }
-      const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null)
+      const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null, nmsxAlias)
 
       seenInFile.add(fileKey)
       const ex = exMap.get(fileKey)

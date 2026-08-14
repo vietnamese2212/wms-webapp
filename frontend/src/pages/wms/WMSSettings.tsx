@@ -100,6 +100,44 @@ const intIn = (s: string, min: number, max: number): number | null => {
   return Number.isInteger(n) && n >= min && n <= max ? n : null
 }
 
+// ── org_profile (đợt 3 chống hardcode 14/08) — nhận diện & tham số RIÊNG của đơn vị.
+// MIRROR mặc định BE ORG_PROFILE_DEFAULT: chưa cấu hình = đúng giá trị đang chạy của đơn vị 1.
+interface OrgProfileDraft { contact_email: string; weigh_station_code: string; nmsx_alias: string; l: string; w: string; h: string }
+interface OrgProfileValue {
+  contact_email: string
+  weigh_station_code: string
+  nmsx_alias: Record<string, string>
+  assumed_carton_mm: { l: number; w: number; h: number }
+}
+const ORG_DEFAULT: OrgProfileValue = { contact_email: 'wms@lof.vn', weigh_station_code: 'KB01', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }
+// alias hiện dạng "CŨ=MỚI, CŨ=MỚI" cho dễ gõ (ánh xạ vài mã, không đáng dựng bảng riêng)
+const aliasToStr = (o: Record<string, string>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(', ')
+function aliasFromStr(s: string): Record<string, string> | null {
+  const out: Record<string, string> = {}
+  for (const part of s.split(',').map(x => x.trim()).filter(Boolean)) {
+    const [k, v] = part.split('=').map(x => (x ?? '').trim())
+    if (!k || !v || k.length > 10 || v.length > 10) return null
+    out[k] = v
+  }
+  return out
+}
+function parseOrg(v: unknown): OrgProfileValue {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return ORG_DEFAULT
+  const o = v as Record<string, unknown>
+  const c = (o.assumed_carton_mm ?? {}) as Record<string, unknown>
+  const num = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : d)
+  const alias = (o.nmsx_alias && typeof o.nmsx_alias === 'object' && !Array.isArray(o.nmsx_alias))
+    ? Object.fromEntries(Object.entries(o.nmsx_alias as Record<string, unknown>)
+        .filter(([, val]) => typeof val === 'string').map(([k, val]) => [k, String(val)]))
+    : ORG_DEFAULT.nmsx_alias
+  return {
+    contact_email: typeof o.contact_email === 'string' && o.contact_email.trim() ? o.contact_email.trim() : ORG_DEFAULT.contact_email,
+    weigh_station_code: typeof o.weigh_station_code === 'string' && o.weigh_station_code.trim() ? o.weigh_station_code.trim() : ORG_DEFAULT.weigh_station_code,
+    nmsx_alias: alias,
+    assumed_carton_mm: { l: num(c.l, 422), w: num(c.w, 233), h: num(c.h, 100) },
+  }
+}
+
 function SystemTab({ canManage }: { canManage: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
@@ -112,6 +150,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycRow   = settings.find(s => s.key === 'cycle_count')
   const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
+  const orgRow   = settings.find(s => s.key === 'org_profile')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -119,6 +158,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvCyc   = numRec(cycRow?.value, CYC_DEFAULT)
   const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
   const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
+  const srvOrg   = parseOrg(orgRow?.value)
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
@@ -128,12 +168,17 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftCyc,   setDraftCyc]   = useState<Record<string, string>>(recToStr(srvCyc))
   const [draftInb,   setDraftInb]   = useState(String(srvInb))
   const [draftPack,  setDraftPack]  = useState(String(srvPack))
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack])
+  const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
+    contact_email: o.contact_email, weigh_station_code: o.weigh_station_code, nmsx_alias: aliasToStr(o.nmsx_alias),
+    l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
+  })
+  const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
-    setDraftInb(String(srvInb)); setDraftPack(String(srvPack))
+    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg))
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -147,7 +192,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycDirty   = JSON.stringify(draftCyc) !== JSON.stringify(recToStr(srvCyc))
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty
+  const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty
 
   async function applyChanges() {
     setErr('')
@@ -174,6 +220,18 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       pack = intIn(draftPack, 1, 50)
       if (!pack) return setErr('Sổ đóng gói: tối đa mã / trang sổ trong khoảng 1–50 (số nguyên).')
     }
+    let org: OrgProfileValue | null = null
+    if (orgDirty) {
+      const email = draftOrg.contact_email.trim()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Đơn vị: email liên hệ không hợp lệ (dùng cho thông báo đẩy).')
+      const station = draftOrg.weigh_station_code.trim()
+      if (!station || station.length > 20) return setErr('Đơn vị: mã trạm cân để trống hoặc quá dài (tối đa 20 ký tự).')
+      const alias = aliasFromStr(draftOrg.nmsx_alias)
+      if (!alias) return setErr('Đơn vị: mã nhà máy cũ→mới phải viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy.')
+      const l = intIn(draftOrg.l, 1, 5000), w = intIn(draftOrg.w, 1, 5000), h = intIn(draftOrg.h, 1, 5000)
+      if (!l || !w || !h) return setErr('Đơn vị: cỡ thùng giả định phải là số nguyên 1–5000 mm cho cả D, R, C.')
+      org = { contact_email: email, weigh_station_code: station, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
+    }
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
       if (dcDirty)    await save({ key: 'delivery_confirmation', value: draftDc })
@@ -182,6 +240,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (cyc)        await save({ key: 'cycle_count', value: cyc })
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
+      if (org)        await save({ key: 'org_profile', value: org })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
@@ -264,6 +323,30 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             <SettingField label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
               <div className="w-20"><SettingNum unit="mã" value={draftPack} onChange={setDraftPack} /></div>
             </SettingField>
+          </SettingGroup>
+
+          {/* Nhận diện & tham số riêng của ĐƠN VỊ — trước 14/08 là hằng số của LOF nằm rải trong code */}
+          <SettingGroup readOnly={!canManage} title="Đơn vị" meta={orgRow}>
+            <SettingField label="Email liên hệ" tip="Dùng làm địa chỉ liên hệ của thông báo đẩy (VAPID subject) — dịch vụ push của trình duyệt liên hệ về đây khi có sự cố. Đổi email chỉ có tác dụng với khóa push sinh MỚI.">
+              <Input value={draftOrg.contact_email} onChange={e => setDraftOrg(d => ({ ...d, contact_email: e.target.value }))}
+                className="h-7 w-full text-[11px] px-1.5" placeholder="wms@congty.vn" />
+            </SettingField>
+            <SettingField label="Mã trạm cân mặc định" tip="Dùng khi phần mềm trạm cân gửi phiếu mà KHÔNG khai station_code. Trạm khai đúng mã thì ô này không ảnh hưởng.">
+              <Input value={draftOrg.weigh_station_code} onChange={e => setDraftOrg(d => ({ ...d, weigh_station_code: e.target.value.toUpperCase() }))}
+                className="h-7 w-full text-[11px] px-1.5 font-mono" placeholder="KB01" />
+            </SettingField>
+            <SettingField label="Mã nhà máy cũ → mới" tip='Khi đọc đoạn NMSX trên tem pallet, mã cũ được quy về mã mới. Viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy. Để trống nếu đơn vị không có mã cũ.'>
+              <Input value={draftOrg.nmsx_alias} onChange={e => setDraftOrg(d => ({ ...d, nmsx_alias: e.target.value.toUpperCase() }))}
+                className="h-7 w-full text-[11px] px-1.5 font-mono" placeholder="A=O" />
+            </SettingField>
+            <div>
+              <SettingLabel text="Cỡ thùng giả định" tip="Dùng cho sơ đồ xếp xe 3D khi mã hàng CHƯA khai kích thước thùng. Khai kích thước thật ở Mã hàng thì sơ đồ dùng số thật, ô này không ảnh hưởng." />
+              <div className="grid grid-cols-3 gap-1.5">
+                <SettingNum label="Dài" unit="mm" value={draftOrg.l} onChange={v => setDraftOrg(d => ({ ...d, l: v }))} />
+                <SettingNum label="Rộng" unit="mm" value={draftOrg.w} onChange={v => setDraftOrg(d => ({ ...d, w: v }))} />
+                <SettingNum label="Cao" unit="mm" value={draftOrg.h} onChange={v => setDraftOrg(d => ({ ...d, h: v }))} />
+              </div>
+            </div>
           </SettingGroup>
         </div>
       </div>

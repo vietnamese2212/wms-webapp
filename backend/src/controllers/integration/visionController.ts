@@ -127,7 +127,9 @@ async function discoverModel(provider: VisionProvider, key: string): Promise<str
 }
 
 // Model NHỎ/RẺ hay mang các chữ này trong tên — dùng để gợi ý "rẻ" trên danh sách chọn.
-const CHEAP_RE = /(mini|nano|lite|flash|small)/i
+// ⚠️ PHẢI có ranh giới đoạn: chuỗi "mini" nằm ngay trong "ge-mini" nên regex trần gắn nhãn "rẻ"
+// cho MỌI model Gemini, kể cả bản pro đắt nhất (thấy ngay khi soi danh sách thật 14/08).
+const CHEAP_RE = /(^|[-_.])(mini|nano|lite|flash|small)([-_.]|$)/i
 
 /**
  * Liệt kê model ĐỌC ĐƯỢC ẢNH của chính key đang dùng (không phải danh sách viết cứng trong code —
@@ -166,7 +168,7 @@ async function listGeminiModels(key: string): Promise<string[]> {
       .map(m => (m.name ?? '').replace(/^models\//, ''))
       // bỏ nhánh KHÔNG dùng để đọc ảnh tem: sinh ảnh/âm thanh/nhúng + các bản chuyên dụng
       // (deep-research, computer-use, robotics…) — chọn nhầm là tốn tiền mà kết quả vô nghĩa
-      .filter(n => !/tts|image|audio|embed|aqa|learnlm|deep-research|computer-use|antigravity|robotics|guard/.test(n))
+      .filter(n => !/tts|image|audio|embed|aqa|learnlm|deep-research|computer-use|antigravity|robotics|guard|lyria|banana|veo|imagen/.test(n))
       .sort()
   } catch { return [] }
 }

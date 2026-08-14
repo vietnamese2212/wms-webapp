@@ -62,6 +62,7 @@ function VisionConfigCard() {
   const [keyInput, setKeyInput] = useState('')
   const [model, setModel] = useState('')
   const [provider, setProvider] = useState('')
+  const [keyLocked, setKeyLocked] = useState(true)   // chặn trình duyệt tự điền mật khẩu vào ô key
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
   const { data: cfg } = useQuery<VisionCfg>({
@@ -73,7 +74,7 @@ function VisionConfigCard() {
     mutationFn: (body: { api_key?: string | null; model?: string; provider?: string }) =>
       apiClient.put('/wms/vision-config', body).then(r => r.data.data as { configured: boolean }),
     onSuccess: (d) => {
-      setKeyInput(''); setModel(''); setProvider('')
+      setKeyInput(''); setModel(''); setProvider(''); setKeyLocked(true)
       setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử key' : 'Đã gỡ key — app quay về OCR thường' })
       qc.invalidateQueries({ queryKey: ['vision-config'] })
     },
@@ -151,11 +152,24 @@ function VisionConfigCard() {
             </div>
           </div>
           <div>
-            <SettingLabel text="API key" tip={<>Lấy key tại <b>{AI_KEY_PAGE[curProvider]}</b>. Key được lưu <b>mã hóa</b>, không hiện lại
-              và không lộ qua API đọc chung. Hết hạn / bị khóa → dán key mới vào đây là xong, không cần sửa gì khác.</>} />
+            <SettingLabel text="API key" tip={<>Key được lưu <b>mã hóa</b>, không hiện lại và không lộ qua API đọc chung.
+              Hết hạn / bị khóa → dán key mới vào đây là xong, không cần sửa gì khác. Để trống ô này khi chỉ muốn đổi model hoặc nhà cung cấp.</>} />
+            {/* Ô mật khẩu trong trang có form đăng nhập → trình duyệt TỰ ĐIỀN mật khẩu đã lưu vào đây
+                (thấy trên ảnh user 14/08: ô hiện sẵn 8 chấm, nút Lưu sáng dù chưa ai gõ). Lưu nhầm
+                = ghi key rác, AI Vision chết câm. `new-password` + readOnly-tới-khi-focus chặn cả
+                Chrome/Edge lẫn trình quản lý mật khẩu. */}
             <Input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
-              placeholder={cfg?.configured ? `Đang dùng key ${cfg.key_tail} — dán key mới để thay` : 'Dán key vào đây'}
-              className="h-8 w-72 text-[12px] font-mono" autoComplete="off" />
+              readOnly={keyLocked} onFocus={() => setKeyLocked(false)}
+              name="wms-ai-vision-key" autoComplete="new-password" spellCheck={false}
+              data-lpignore="true" data-1p-ignore="true"
+              placeholder={curProvider === 'openai' ? 'sk-… (dán key OpenAI)' : 'AIza… (dán key Google)'}
+              className="h-8 w-72 text-[12px] font-mono" />
+            <span className="block text-[9px] text-slate-400 mt-0.5">
+              {cfg?.configured ? `Đang dùng key ${cfg.key_tail} · ` : ''}Lấy key tại{' '}
+              <a href={`https://${AI_KEY_PAGE[curProvider]}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                {AI_KEY_PAGE[curProvider]}
+              </a>
+            </span>
           </div>
           <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700"
             disabled={busy || (!keyInput.trim() && !model.trim() && (!provider || provider === cfg?.provider))}

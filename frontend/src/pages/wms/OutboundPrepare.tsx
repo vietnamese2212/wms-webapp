@@ -19,7 +19,7 @@ import { qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'loc',     label: 'Vị trí (FEFO)', w: 150 },
@@ -137,7 +137,7 @@ export default function OutboundPrepare() {
   // Filter (ngày + kho) lưu ở store → nhớ khi rời trang + riêng theo từng user (scopedPersist)
   const prep = useWmsFilterStore(s => s.outboundPrepare)
   const setOutboundPrepare = useWmsFilterStore(s => s.setOutboundPrepare)
-  const date = prep.date || TODAY
+  const date = prep.date || TODAY()
   const warehouseId = prep.warehouseId
   const setDate = (d: string) => setOutboundPrepare({ date: d })
   const setWarehouseId = (w: string) => setOutboundPrepare({ warehouseId: w })

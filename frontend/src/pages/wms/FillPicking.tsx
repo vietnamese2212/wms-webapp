@@ -37,7 +37,7 @@ import { qtyLabel, qtyEntryDecimal, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } fro
 import { computePctDate } from '@/utils/shelfLife'
 import { formatDate, formatTimestampDate } from '@/utils/formatters'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
 
 const DEMAND_COLS = [
@@ -190,7 +190,7 @@ export default function FillPicking() {
             {f.tab === 'demand' && (
               <label className="flex items-center gap-1 shrink-0">
                 <span className="text-[10px] text-slate-500 hidden sm:inline">Ngày xuất</span>
-                <input type="date" value={f.date} onChange={e => setFillFilter({ date: e.target.value || TODAY })}
+                <input type="date" value={f.date} onChange={e => setFillFilter({ date: e.target.value || TODAY() })}
                   className="h-9 sm:h-7 rounded border border-slate-200 px-1.5 text-[11px]" />
               </label>
             )}

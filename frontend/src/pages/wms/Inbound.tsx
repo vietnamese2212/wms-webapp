@@ -48,7 +48,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 interface LocationWithCapacity {
   id: string
@@ -830,7 +830,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
               <div>
                 <Label className="text-xs">Ngày nhập <span className="text-red-500">*</span></Label>
-                <Input type="date" value={importDate} min={TODAY} className="h-8 text-xs mt-0.5" onChange={e => setImportDate(e.target.value)} />
+                <Input type="date" value={importDate} min={TODAY()} className="h-8 text-xs mt-0.5" onChange={e => setImportDate(e.target.value)} />
               </div>
 
               <div>
@@ -1037,7 +1037,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Ngày nhập *</Label>
-                  <Input type="date" value={importDate} min={editGroup?.length ? undefined : TODAY} onChange={e => {
+                  <Input type="date" value={importDate} min={editGroup?.length ? undefined : TODAY()} onChange={e => {
                     setImportDate(e.target.value)
                     if (selectedGate && e.target.value < selectedGate.date) setGateRegId('')
                   }} className="h-8 text-xs mt-0.5" />
@@ -1446,7 +1446,7 @@ export default function Inbound() {
 
   // Date label
   const hasDate = f.dateFrom || f.dateTo
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
@@ -1545,7 +1545,7 @@ export default function Inbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY, page: 1 })}>
+              onClick={() => setInbound({ dateFrom: TODAY(), dateTo: TODAY(), page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -1776,7 +1776,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   selected?: boolean
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
-  const isRowToday = order.import_date?.slice(0, 10) === TODAY
+  const isRowToday = order.import_date?.slice(0, 10) === TODAY()
   const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
   const matCode  = order.material?.material_code ?? ''

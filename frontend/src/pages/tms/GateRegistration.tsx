@@ -87,7 +87,7 @@ const ROW_TEXT: Record<GateStatus, string> = {
   COMPLETED:  'text-[#4A90D9] line-through hover:bg-slate-50',
 }
 
-const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY_VN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // Loại xe đặc biệt — KHÔNG gắn booking (không có TmsOrder nào mang loại xe này nên
 // suggest/relink tự lọc ra rỗng). Luôn xếp CUỐI trong cây.
@@ -322,14 +322,16 @@ const PHASE2_DEFAULT = {
   seal_number: '', notes: '',
 }
 
-const FORM_DEFAULT: FormData = {
-  date: TODAY_VN,
+// HÀM, không phải hằng: hằng module sẽ chốt NGÀY lúc mở app — máy cổng để mở qua đêm thì
+// form mới vẫn mang ngày hôm qua (và `min` chặn oan). Mọi nơi dùng phải GỌI formDefault().
+const formDefault = (): FormData => ({
+  date: TODAY_VN(),
   driver_name: '', phone: '',
   company_id: '', company_name_raw: '',
   vehicle_id: '', license_plate: '',
   direction: '', warehouse_id: '', warehouse_type: '', vehicle_type: '',
   content: '', return_pallet: false, seal_number: '', notes: '',
-}
+})
 
 // Chân thứ 2 (Xuất) của xe "kết hợp" — chỉ dùng khi Hướng = 'BOTH' (sentinel form, KHÔNG lưu DB).
 // Trường dùng chung (ngày/kho/Loại kho/biển số/lái xe/SĐT) lấy từ `form`; chỉ các trường này khác chân.
@@ -356,8 +358,8 @@ export default function GateRegistration() {
 
   // ── Filters (persisted via wmsFilterStore)
   const { gateRegistration: grf, setGateRegistration } = useWmsFilterStore()
-  const fDate          = grf.fDate          || TODAY_VN
-  const fDateTo        = grf.fDateTo        || TODAY_VN
+  const fDate          = grf.fDate          || TODAY_VN()
+  const fDateTo        = grf.fDateTo        || TODAY_VN()
   const fWarehouse     = grf.fWarehouse
   const fWarehouseType = grf.fWarehouseType
   const fVehicleTypes  = grf.fVehicleTypes
@@ -404,7 +406,7 @@ export default function GateRegistration() {
   const [selected,   setSelected]   = useState<GateRegistration | null>(null)
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editReg,    setEditReg]    = useState<GateRegistration | null>(null)
-  const [form,       setForm]       = useState<FormData>(FORM_DEFAULT)
+  const [form,       setForm]       = useState<FormData>(formDefault)
   const [outLeg,     setOutLeg]     = useState<LegData>(LEG_DEFAULT)   // chân Xuất khi đăng ký kết hợp
 
   // ── Action dialogs
@@ -760,7 +762,7 @@ export default function GateRegistration() {
   // ── Modal helpers
   function openCreate() {
     setEditReg(null)
-    setForm({ ...FORM_DEFAULT, date: TODAY_VN, warehouse_id: fWarehouse })
+    setForm({ ...formDefault(), warehouse_id: fWarehouse })
     setOutLeg(LEG_DEFAULT)
     setApiError('')
     setModalOpen(true)
@@ -1478,7 +1480,7 @@ export default function GateRegistration() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Ngày <span className="text-red-500">*</span></label>
-                <Input type="date" value={form.date} min={TODAY_VN} onChange={e => fCriteria('date', e.target.value)} className="text-xs h-8" />
+                <Input type="date" value={form.date} min={TODAY_VN()} onChange={e => fCriteria('date', e.target.value)} className="text-xs h-8" />
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>

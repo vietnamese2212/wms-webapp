@@ -6,6 +6,7 @@ import { syncVapidSubject } from '../../services/pushService'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
   parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
+  parseStandardWorkHours,
 } from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
@@ -41,6 +42,8 @@ import {
 // - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
 // - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
 // - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
+// - standard_work_hours: GIỜ CÔNG CHUẨN của 1 ngày công (mặc định 8) — bảng công quy ngày công ra
+//     giờ: total_hours = work_days × giờ chuẩn + OT − về sớm. BE và FE phải đọc CÙNG cờ này.
 // - vn_holidays: LỊCH NGHỈ LỄ theo năm — { "2026": [{date,name}] }. Năm khai ở đây dùng ĐÚNG danh sách
 //     khai (công bố của Chính phủ đổi hàng năm: nghỉ bù, Tết 5/7/9 ngày); năm không khai vẫn tự tính
 //     bằng thuật toán âm lịch cũ ⇒ chưa cấu hình = hành vi không đổi.
@@ -126,6 +129,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   packing_max_materials_per_run: {
     validate: v => parsePackingMaxMaterials(v) !== null,
     hint: 'số nguyên 1–50 (mã / trang sổ)',
+  },
+  standard_work_hours: {
+    validate: v => parseStandardWorkHours(v) !== null,
+    hint: 'số giờ 1–24, bước 0,5 (giờ công chuẩn của 1 ngày công — bảng công quy ngày ra giờ)',
   },
   vn_holidays: {
     validate: v => parseVnHolidays(v) !== null,

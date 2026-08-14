@@ -576,6 +576,15 @@ export function useAssumedCarton(): { l: number; w: number; h: number } {
   }, [data])
 }
 
+// GIỜ CÔNG CHUẨN của 1 ngày công (SystemSetting `standard_work_hours`, tab Hệ thống) — bảng công
+// quy ngày công ra giờ. PHẢI cùng nguồn với BE (attendanceController), nếu không "công" hiện trên
+// màn và "công" trong báo cáo sẽ lệch nhau. Mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT.
+export function useStandardWorkHours(): number {
+  const { data } = useSystemSettings()
+  const v = data?.find(s => s.key === 'standard_work_hours')?.value
+  return typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 24 ? v : 8
+}
+
 // Ngưỡng LỆCH CÂN (%) tô đỏ — đọc từ `alert_thresholds` (tab Cài đặt ngưỡng trang Thông báo),
 // CÙNG nguồn với rule cảnh báo WEIGH_DIFF (audit 13/08: trước đó Phiếu cân + detail chuyến tô đỏ
 // theo 5% CỨNG, admin đổi ngưỡng cảnh báo mà màu không theo). Mặc định mirror BE THRESHOLDS = 5.

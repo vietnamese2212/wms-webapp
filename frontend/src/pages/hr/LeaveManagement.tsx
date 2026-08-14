@@ -25,13 +25,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampDate } from '@/utils/formatters'
 
-const LEAVE_TYPES: { value: string; label: string }[] = [
-  { value: 'ANNUAL', label: 'Phép năm' },
-  { value: 'SICK',   label: 'Nghỉ ốm' },
-  { value: 'UNPAID', label: 'Không lương' },
-  { value: 'OTHER',  label: 'Khác' },
-]
-const typeLabel = (t: string) => LEAVE_TYPES.find(o => o.value === t)?.label ?? t
+import { LEAVE_TYPES, leaveTypeLabel as typeLabel } from '@/config/leaveTypes'
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const KIND_LABEL: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'Hành chính', LEAVE: 'Nghỉ phép' }
 

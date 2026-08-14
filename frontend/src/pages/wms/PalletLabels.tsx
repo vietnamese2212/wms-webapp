@@ -14,7 +14,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
-import { parseCodeFields } from '@/components/shared/palletLabel'
+import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
@@ -184,7 +184,7 @@ function PalletLabel({ d }: { d: LabelData }) {
   )
 }
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // ─── Material combobox (lọc theo Loại hàng nếu có) ─────────────
 function MatPicker({ value, label, category, onPick }: {
@@ -272,7 +272,7 @@ export default function PalletLabels() {
   // ── Generate form ──
   const [genCat, setGenCat]   = useState<string>(SAVED.genCat ?? '')   // Loại hàng — lọc nhanh mã hàng
   const [mat, setMat]         = useState<Material | null>(null)
-  const [prodDate, setProdDate] = useState(TODAY)
+  const [prodDate, setProdDate] = useState(TODAY())
   const [cycle, setCycle]     = useState<string>(SAVED.cycle ?? '')
   const [machine, setMachine] = useState<string>(SAVED.machine ?? '')
   const [nmsx, setNmsx]       = useState<string>(SAVED.nmsx ?? '')
@@ -283,7 +283,7 @@ export default function PalletLabels() {
   // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + NGÀY NHẬP KHO + Máy + STT ──
   // Thành phần ngày trong mã lô = ngày NHẬP KHO (user chốt 10/07 — vd SI260612N021 in ngày 12/06/26,
   // NSX 11/03/26 nằm riêng ở đoạn 4). Mặc định hôm nay, sửa được.
-  const [entryDateV2, setEntryDateV2] = useState<string>(TODAY)
+  const [entryDateV2, setEntryDateV2] = useState<string>(TODAY())
   const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
   const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
   const [hourV2, setHourV2]   = useState('1')     // MẺ SX (đoạn 6) — chọn 1..10
@@ -1011,7 +1011,7 @@ export default function PalletLabels() {
                   <Select value={hourV2} onValueChange={setHourV2}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 10 }, (_, i) => String(i + 1)).map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                      {batchNoOptions().map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>

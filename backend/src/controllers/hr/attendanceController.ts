@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
+import { getStandardWorkHours } from '../../utils/settings'
 
 type ReqUser = { sub?: string; name?: string; module_permissions?: Record<string, string[]>; warehouse_scope?: string; warehouse_ids?: string[]; warehouse_id?: string | null; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -255,10 +256,12 @@ export async function reportAttendance(req: Request, res: Response) {
     if (department_id) list = list.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
     // work_days = ca1+ca2+ca3+hc
     const nameOf = (r: { employee: unknown }) => ((r.employee as { name?: string } | null)?.name ?? '')
-    // Tổng công (giờ) = 8h × số ngày công + OT − về sớm
+    // Tổng công (giờ) = giờ công chuẩn × số ngày công + OT − về sớm.
+    // Giờ chuẩn là THAM SỐ (SystemSetting `standard_work_hours`, mặc định 8) — khác ca/khác đơn vị là khác.
+    const stdHours = await getStandardWorkHours()
     const out = list.map(r => {
       const work_days = r.ca1 + r.ca2 + r.ca3 + r.hc
-      return { ...r, work_days, total_hours: Math.round((work_days * 8 + r.ot_hours - r.early_hours) * 10) / 10 }
+      return { ...r, work_days, total_hours: Math.round((work_days * stdHours + r.ot_hours - r.early_hours) * 10) / 10 }
     }).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
     return ok(res, out)
   } catch (e) { return fail(res, String(e)) }

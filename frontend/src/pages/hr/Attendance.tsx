@@ -18,7 +18,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
   useDepartments, useJobTitles, useAttendanceMatrix,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
-  useLeaves, useHolidayOverrides,
+  useLeaves, useHolidayOverrides, useStandardWorkHours,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -284,6 +284,7 @@ function MySection() {
 
 // Bảng công của bản thân theo khoảng ngày tùy chọn (chu kỳ công không tròn tháng)
 function MyRangeSheet({ employeeId }: { employeeId?: string }) {
+  const stdHours = useStandardWorkHours()   // giờ công chuẩn — cấu hình ở tab Hệ thống, cùng nguồn với BE
   const from = useWmsFilterStore(s => s.attendanceMy.from)
   const setFrom = (v: string) => useWmsFilterStore.getState().setAttendanceMy({ from: v })
   const [to, setTo]     = useState<string>(TODAY())
@@ -298,9 +299,9 @@ function MyRangeSheet({ employeeId }: { employeeId?: string }) {
       if (r.kind === 'LEAVE') { leave++; continue }
       workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
     }
-    const hours = workDays * 8 + ot - early
+    const hours = workDays * stdHours + ot - early
     return { workDays, ot, early, leave, cong: toCong(hours) }
-  }, [rows])
+  }, [rows, stdHours])
 
   return (
     <div className="border-t border-slate-200 pt-3 space-y-2 max-w-4xl">
@@ -333,6 +334,7 @@ type MatrixRow = { id: string; name: string; code: string; job: string | null; b
 
 function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
+  const stdHours = useStandardWorkHours()   // giờ công chuẩn — cấu hình ở tab Hệ thống, cùng nguồn với BE
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
@@ -395,7 +397,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
     ot:       mx?.ot ?? 0,
     early:    mx?.early ?? 0,
     leave:    mx?.leave_days ?? 0,
-    cong:     toCong((mx?.work_days ?? 0) * 8 + (mx?.ot ?? 0) - (mx?.early ?? 0)),
+    cong:     toCong((mx?.work_days ?? 0) * stdHours + (mx?.ot ?? 0) - (mx?.early ?? 0)),
   }
 
   const defs: FilterDef[] = [

@@ -17,7 +17,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 const LOOSE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',        label: '',             w: 34 },
@@ -168,7 +168,7 @@ export default function LoosePicking() {
     looseTotal: data?.loose_total ?? 0,
   }
 
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
 
   // ─── Filter chip bar (Manhattan) ───
   const warehouseOptions = (warehouses as any[])
@@ -236,7 +236,7 @@ export default function LoosePicking() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setLoosePicking({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setLoosePicking({ dateFrom: TODAY(), dateTo: TODAY() })}>
               Hôm nay
             </button>
           )}

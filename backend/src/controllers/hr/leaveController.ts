@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { isLeaveType, DEFAULT_LEAVE_TYPE, LEAVE_TYPE_VALUES } from '../../config/leaveTypes'
 
 type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[]; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
@@ -284,7 +285,7 @@ export async function createLeave(req: Request, res: Response) {
       employee_id: empId,
       warehouse_id: warehouse_id || null,
       date_from, date_to,
-      leave_type: leave_type || 'ANNUAL',
+      leave_type: isLeaveType(leave_type) ? leave_type : DEFAULT_LEAVE_TYPE,
       reason: reason || null,
       status: 'PENDING',
       created_at: now, updated_at: now,
@@ -319,7 +320,12 @@ export async function updateLeave(req: Request, res: Response) {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userOf(req).name || null }
     if (date_from  !== undefined) updates.date_from  = date_from
     if (date_to    !== undefined) updates.date_to    = date_to
-    if (leave_type !== undefined) updates.leave_type = leave_type
+    if (leave_type !== undefined) {
+      // Sổ loại nghỉ là DANH SÁCH ĐÓNG — gọi thẳng API không được ghi giá trị ngoài sổ
+      if (!isLeaveType(leave_type))
+        return fail(res, `Loại nghỉ không hợp lệ (chỉ nhận: ${LEAVE_TYPE_VALUES.join(', ')})`, 400)
+      updates.leave_type = leave_type
+    }
     if (reason     !== undefined) updates.reason     = reason || null
     const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).single()
     if (error) return fail(res, error.message)

@@ -790,7 +790,11 @@ export async function listFacets(req: Request, res: Response) {
   return ok(res, { cycles, machines, nccs })
 }
 
-const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
+// Trạng thái mà ĐIỀU CHỈNH TỒN được phép TỰ SUY LẠI status (hết → EXPORTED, đủ → IN_STOCK,
+// còn dở → PARTIAL). KHÁC danh sách "pallet còn sống" của upload bên dưới (`ACTIVE_PALLET_STATUSES`)
+// — hai tập KHÔNG trùng nhau (ở đây có EXPORTED, không có QUARANTINE/LOOSE_PICKING) nên phải mang
+// TÊN RIÊNG; trước 14/08 cả hai đều tên `ACTIVE_STATUSES` trong CÙNG file, rất dễ dùng nhầm.
+const STATUS_RECALC_ON_ADJUST = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
 
 export async function adjustInventory(req: Request, res: Response) {
   const { id } = req.params
@@ -845,7 +849,7 @@ export async function adjustInventory(req: Request, res: Response) {
     if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
 
     let newStatus = entry.status
-    if (ACTIVE_STATUSES.includes(entry.status)) {
+    if (STATUS_RECALC_ON_ADJUST.includes(entry.status)) {
       if (newRemaining <= 0) newStatus = 'EXPORTED'
       else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
       else newStatus = 'PARTIAL'
@@ -1559,14 +1563,16 @@ export async function uploadExcel(req: Request, res: Response) {
     // Pallet ĐÃ CÓ (active) khớp mã trong file → CẬP NHẬT thay vì báo lỗi (user chốt 05/07).
     // Khóa khớp = (kho, mã pallet) — 1 mã pallet tồn tại hợp lệ ở NHIỀU kho (no-QR pallet_code=mã hàng),
     // khớp unique index uq_inventory_active_wh_pallet. Chỉ fetch entry theo mã trong file (không kéo cả bảng).
-    const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
+    // Pallet CÒN SỐNG (đang chiếm chỗ trong kho) — KHÔNG gồm EXPORTED. Tên riêng để không lẫn với
+    // `STATUS_RECALC_ON_ADJUST` ở đầu file (tập khác nghĩa, khác phần tử).
+    const ACTIVE_PALLET_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
     const filePallets = [...new Set(rows
       .flatMap(r => { const p = invStr(r.pallet_code); return p ? [p, p.toUpperCase()] : [] }))]
     const exRows: Record<string, unknown>[] = []
     for (let i = 0; i < filePallets.length; i += 400) {
       const chunk = filePallets.slice(i, i + 400)
       exRows.push(...await fetchAllRowsParallel(() =>
-        supabase.from('InventoryEntry').select('*').in('pallet_code', chunk).in('status', ACTIVE_STATUSES).order('id')))
+        supabase.from('InventoryEntry').select('*').in('pallet_code', chunk).in('status', ACTIVE_PALLET_STATUSES).order('id')))
     }
     const exMap = new Map(exRows.map(e =>
       [`${e.warehouse_id}|${String(e.pallet_code ?? '').trim().toLowerCase()}`, e]))

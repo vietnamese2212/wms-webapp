@@ -277,6 +277,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
   const orgRow   = settings.find(s => s.key === 'org_profile')
   const holRow   = settings.find(s => s.key === 'vn_holidays')
+  const stdRow   = settings.find(s => s.key === 'standard_work_hours')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -286,6 +287,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
   const srvOrg   = parseOrg(orgRow?.value)
   const srvHol   = parseHolidays(holRow?.value)
+  // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
+  const srvStd   = typeof stdRow?.value === 'number' && stdRow.value >= 1 && stdRow.value <= 24 ? stdRow.value : 8
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
@@ -301,12 +304,14 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   })
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol])
+  const [draftStd, setDraftStd] = useState(String(srvStd))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
+    setDraftStd(String(srvStd))
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -322,7 +327,8 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const packDirty  = draftPack !== String(srvPack)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty
+  const stdDirty   = draftStd !== String(srvStd)
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty || stdDirty
 
   async function applyChanges() {
     setErr('')
@@ -359,6 +365,14 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (!l || !w || !h) return setErr('Đơn vị: cỡ thùng giả định phải là số nguyên 1–5000 mm cho cả D, R, C.')
       org = { contact_email: email, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
     }
+    let std: number | null = null
+    if (stdDirty) {
+      const n = Number(draftStd)
+      // bước 0,5 giờ — 7,5h là ca thật, nhưng 7,37h thì là gõ nhầm
+      if (!Number.isFinite(n) || n < 1 || n > 24 || !Number.isInteger(n * 2))
+        return setErr('Chấm công: giờ công chuẩn phải trong khoảng 1–24 giờ và là bội của 0,5 (vd 8 hoặc 7.5).')
+      std = n
+    }
     let hol: HolidayMap | null = null
     if (holDirty) {
       const e = holidayError(draftHol)
@@ -373,6 +387,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (cyc)        await save({ key: 'cycle_count', value: cyc })
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
+      if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
@@ -450,6 +465,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
           <SettingGroup readOnly={!canManage} title="Nhập kho" meta={inbRow}>
             <SettingField label="Cửa sổ tự sửa/xóa pallet" tip="Người NHẬP tự sửa/xóa pallet của mình trong bấy nhiêu ngày kể từ ngày nhập. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).">
               <div className="w-20"><SettingNum unit="ngày" value={draftInb} onChange={setDraftInb} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Chấm công" meta={stdRow}>
+            <SettingField label="Giờ công chuẩn / ngày"
+              tip="Bảng công quy ngày công ra giờ: tổng giờ = số ngày công × giờ chuẩn + tăng ca − về sớm. Nhận số lẻ 0,5 (vd 7.5). Đổi ở đây là đổi CẢ số trên màn lẫn số trong báo cáo (backend đọc cùng cờ).">
+              <div className="w-20"><SettingNum unit="giờ" value={draftStd} onChange={setDraftStd} step={0.5} /></div>
             </SettingField>
           </SettingGroup>
 

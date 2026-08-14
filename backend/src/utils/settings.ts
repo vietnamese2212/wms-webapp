@@ -77,6 +77,19 @@ export const parsePackingMaxMaterials = (raw: unknown) => int(raw, 1, 50)
 export const getPackingMaxMaterials = () =>
   readSetting('packing_max_materials_per_run', PACKING_MAX_MATERIALS_DEFAULT, parsePackingMaxMaterials)
 
+// ── standard_work_hours — GIỜ CÔNG CHUẨN của 1 ngày công (đợt 3 vòng 2, 14/08) ──
+// Bảng công quy ngày công ra giờ: total_hours = work_days × giờ chuẩn + OT − về sớm. Trước đây
+// số 8 nằm cứng ở 3 chỗ (BE attendanceController + 2 chỗ FE) — nhà máy khác ca/khác đơn vị là khác.
+// Nhận nửa giờ (7,5) nên KHÔNG dùng int(): nhân đôi phải ra số nguyên.
+export const STANDARD_WORK_HOURS_DEFAULT = 8
+export function parseStandardWorkHours(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null
+  if (raw < 1 || raw > 24) return null
+  return Number.isInteger(raw * 2) ? raw : null   // chỉ cho bước 0,5 giờ
+}
+export const getStandardWorkHours = () =>
+  readSetting('standard_work_hours', STANDARD_WORK_HOURS_DEFAULT, parseStandardWorkHours)
+
 // ── org_profile — NHẬN DIỆN & THAM SỐ RIÊNG CỦA ĐƠN VỊ (đợt 3 chống hardcode 14/08) ──
 // Kiến trúc multi-tenant silo: khác biệt giữa các đơn vị đi qua CỜ, không qua tên đơn vị và
 // KHÔNG nằm cứng trong code. 4 giá trị dưới đây trước 14/08 là hằng số của riêng LOF nằm rải rác

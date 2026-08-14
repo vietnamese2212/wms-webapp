@@ -42,7 +42,7 @@ import type { GDO } from '@/types'
 import { tripInert } from '@/utils/outboundInert'
 import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
@@ -519,7 +519,7 @@ export default function Outbound() {
   }
 
   const hasDate = f.dateFrom || f.dateTo
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
@@ -669,7 +669,7 @@ export default function Outbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setOutbound({ dateFrom: TODAY, dateTo: TODAY, page: 1 })}>
+              onClick={() => setOutbound({ dateFrom: TODAY(), dateTo: TODAY(), page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -857,7 +857,7 @@ export default function Outbound() {
             )}
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-600">Ngày xuất mới</label>
-              <Input type="date" min={TODAY} value={moveDate} onChange={e => setMoveDate(e.target.value)} className="h-9" />
+              <Input type="date" min={TODAY()} value={moveDate} onChange={e => setMoveDate(e.target.value)} className="h-9" />
             </div>
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />

@@ -32,7 +32,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
@@ -316,7 +316,7 @@ export default function OutboundScanLog() {
       const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
-      saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)
+      saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY()}.xlsx`)
     } catch (e) {
       const err = e as AxiosError<{ error?: { message?: string } }>
       setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')

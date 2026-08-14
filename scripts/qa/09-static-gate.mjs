@@ -289,6 +289,14 @@ const RULES = [
         && /[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line), s),
   },
   {
+    key: 'today_frozen_at_import',
+    label: 'NGÀY HÔM NAY chốt bằng hằng module (tính 1 lần lúc mở app) — PDA/màn kho mở qua đêm sẽ dùng ngày HÔM QUA (min= chặn oan, filter "Hôm nay" sai). Khai dạng HÀM: const TODAY = () => …',
+    // CHỈ bắt khai báo CẤP MODULE (không thụt lề) — khai trong thân component thì mỗi lần render
+    // tính lại, hoàn toàn đúng; bắt luôn cả hai là báo oan, mà báo oan thì cổng sẽ bị bỏ qua.
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line) => /^const\s+\w*(TODAY|Today)\w*\s*(:[^=]+)?=\s*new Date\(\)/.test(line), s),
+  },
+  {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',
     count: (s) => countInnerComponentWithInput(s),

@@ -67,18 +67,19 @@ export function SettingField({ label, tip, children }: { label: string; tip?: Re
 }
 
 /** Ô SỐ: nhãn phụ 9px (khi xếp ngang nhiều ô), ô h-7, đơn vị bên phải */
-export function SettingNum({ label, unit, value, onChange, min = 1 }: {
+export function SettingNum({ label, unit, value, onChange, min = 1, step }: {
   label?: string
   unit: string
   value: string
   onChange: (v: string) => void
   min?: number
+  step?: number   // < 1 khi tham số nhận số lẻ (vd giờ công 7,5) — mặc định chỉ số nguyên
 }) {
   return (
     <label className="block min-w-0">
       {label && <span className="block text-[9px] text-slate-500 mb-0.5 truncate">{label}</span>}
       <span className="flex items-center gap-1">
-        <Input type="number" inputMode="numeric" min={min} value={value}
+        <Input type="number" inputMode={step && step < 1 ? 'decimal' : 'numeric'} min={min} step={step} value={value}
           onChange={e => onChange(e.target.value)}
           className="h-7 w-full min-w-0 text-[11px] tabular-nums px-1.5" />
         <span className="text-[9px] text-slate-400 shrink-0">{unit}</span>

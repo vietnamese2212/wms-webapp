@@ -47,7 +47,10 @@ Trần chống nhầm (thùng >100k, sản lượng >10tr) và format mã tự s
 | 2 ca làm việc | ⚠️ LÀM MỘT NỬA | gom 7 chỗ khai ca → `frontend/src/config/shifts.ts`, giữ nguyên 100% nhãn/màu/thứ tự. **Chưa** thành danh mục động: thuật toán phân ca (tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua") gắn chặt đúng 4 mã — cần việc riêng, đo lại với HR |
 | 3 tên tiếng Việt | ✅ XONG | cờ `JobTitle.is_driver` + `Department.is_carrier` (migration `20260814_role_flags`, backfill theo tên đang dùng + DO-block gác) · ô tick trong form Chức danh/Phòng ban · ratchet `role_by_vietnamese_name` baseline 0 |
 | 6 thang màu | ✅ phần MÂU THUẪN | dwell Giám sát vận hành đọc `GATE_WARN_MIN`/`GATE_CRIT_MIN` (90 vàng · 180 đỏ) thay 90/45 tự đặt. Các thang còn lại đo chỉ số KHÁC NHAU (sức chứa · tỷ lệ fill · tuân thủ · bao phủ · chính xác) → mỗi cái một ngưỡng là đúng, **không gộp** |
-| 5 giờ công 8h · 7 `ACTIVE_STATUSES` · 8 danh mục nhỏ · 9 `const TODAY` | ⏳ còn | gom khi đụng vào từng file (giá trị thấp, churn cao nếu sweep ngay) |
+| 5 giờ công 8h | ✅ XONG (vòng 3) | cờ `standard_work_hours` (mặc định **8** ⇒ số liệu không đổi), ô nhập cụm "Chấm công" tab Hệ thống, nhận nửa giờ (7,5). BE `getStandardWorkHours` + FE `useStandardWorkHours` đọc **cùng** cờ — trước đó số 8 nằm ở 3 chỗ, sửa lệch là màn một đằng báo cáo một nẻo. QA 23 có ca hợp lệ + 6 ca bậy |
+| 7 `ACTIVE_STATUSES` | ✅ XONG (vòng 3) | tách tên: `STATUS_RECALC_ON_ADJUST` (có EXPORTED — dùng khi điều chỉnh tồn suy lại status) vs `ACTIVE_PALLET_STATUSES` (có QUARANTINE/LOOSE_PICKING — pallet còn sống, dùng khi upload khớp cập nhật) |
+| 8 danh mục nhỏ | ✅ XONG (vòng 3) | **Nhãn ĐVT**: danh mục có 11 đơn vị mà formatter chỉ biết 6 mã cứng ⇒ màn hiện "5 SET"/"128 M2". Thêm `setUnitLabels()` nạp từ danh mục lúc khởi động (Shell), bảng cứng giữ làm lưới đỡ khi mất mạng — verify sống: "128 mét vuông" · **Loại nghỉ phép**: sổ chung `config/leaveTypes.ts` (BE+FE mirror), BE **chặn** giá trị ngoài sổ (trước đây `leave_type` là chuỗi tự do, gọi thẳng API ghi được rác) · **Mẻ 1..10**: `MAX_BATCH_NO`/`batchNoOptions` trong `palletLabel.tsx` |
+| 9 `const TODAY` | ✅ XONG (vòng 3) | 8 trang đổi sang **hàm** `TODAY()` (Inbound · Outbound · OutboundPrepare · OutboundScanLog · LoosePicking · FillPicking · PalletLabels · GateRegistration, kèm `FORM_DEFAULT`→`formDefault()`). Đây là **lỗi thật**: máy PDA/màn kho mở qua đêm dùng ngày hôm qua ⇒ `min=` chặn oan, chip "Hôm nay" lọc sai. Ratchet `today_frozen_at_import` (baseline 0) chỉ bắt khai báo **cấp module** — khai trong component là đúng, bắt luôn sẽ báo oan |
 
 ## VÒNG 2 — user phản biện ngay trong ngày (14/08 chiều)
 
@@ -56,6 +59,13 @@ Trần chống nhầm (thùng >100k, sản lượng >10tr) và format mã tự s
 | **"Mã trạm cân là setting CHUNG, nhưng tôi lấy dữ liệu nhiều trạm ở nhiều kho"** | ĐÚNG — và nguy hiểm hơn vẻ ngoài: `source_id` phần mềm cân là autonumber đếm từ 1 ở MỖI trạm, hai trạm cùng mã sẽ **đè phiếu của nhau** qua khóa upsert `(station_code, source_id)`, mất phiếu âm thầm. ⇒ **GỠ hẳn `weigh_station_code` khỏi `org_profile`**; mã trạm do agent từng trạm khai và **bắt buộc** (thiếu → 400); thêm chặn **1 mã trạm không được dùng cho 2 kho** (409 `STATION_CODE_CONFLICT`) làm lưới bắt "cài agent mới quên đổi mã". Migration `20260814b` dọn khóa cũ khỏi giá trị đang lưu. Gói QA **24-weigh-station** gác |
 | **"Email `wms@lof.vn` đâu có tồn tại, chưa hiểu để làm gì"** | Đó là **VAPID subject** (chuẩn Web Push): địa chỉ liên hệ kỹ thuật khai với dịch vụ push của trình duyệt, không nhận thư, người dùng không thấy. Đổi nhãn thành "Email kỹ thuật (thông báo đẩy)" + tooltip nói rõ; và **làm ô có tác dụng thật** — lưu `org_profile` giờ ghi luôn `push_config.subject` (trước đó khóa push sinh 1 lần rồi giữ subject cũ mãi ⇒ ô ma). Nên điền hòm thư quản trị CÓ THẬT |
 | **"Ngày nghỉ khai tay trông vẫn manual quá, gõ sai là hỏng"** | ĐÚNG — textarea "YYYY-MM-DD Tên" là bề mặt dễ hỏng nhất trong cả tab. Đổi thành trình soạn theo NĂM: mỗi ngày 1 dòng (**ô chọn ngày** + ô tên + nút xóa), nút **"Nạp lịch tự tính"** đổ ra 10 ngày app đang suy để sửa theo công bố, **"Bỏ khai năm"** trả về tự tính. Lỗi bắt tại chỗ (viền đỏ + câu tiếng Việt: trùng ngày / sai năm / thiếu tên), không còn "dòng số N sai" |
+
+## CÒN LẠI SAU VÒNG 3 — đúng 1 khoản
+
+**Ca làm việc CA1/CA2/CA3/HC thành danh mục ĐỘNG.** Hiện đã gom về một nguồn `frontend/src/config/shifts.ts`
+(nhãn · thứ tự · màu), nhưng muốn nhà máy tự thêm/bớt ca thì phải viết lại **thuật toán phân ca**
+(tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua thì hôm nay không xếp CA1") vốn ràng chặt đúng 4 mã đó.
+Đây là việc **nghiệp vụ**, không phải dọn hardcode — cần chốt quy tắc với HR trước khi code.
 
 **Bài học chung:** config hóa không chỉ là "đưa hằng số ra khỏi code" — phải hỏi **đơn vị cấu hình đúng là gì** (hệ thống? kho? trạm? thiết bị?). Đặt sai tầng thì cấu hình vừa vô dụng vừa tạo đường hỏng dữ liệu. Và bề mặt nhập liệu tự do (textarea) chỉ dùng khi không có cấu trúc — có cấu trúc thì phải có ô đúng kiểu.
 

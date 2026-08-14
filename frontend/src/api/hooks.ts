@@ -637,7 +637,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -646,7 +646,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; name?: string; address?: string; is_active?: boolean; warehouse_type?: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean }) =>
       apiClient.put(`/masterdata/warehouses/${id}`, body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -928,17 +928,6 @@ export function useInboundOrder(id?: string) {
       const { data } = await apiClient.get(`/wms/inbound-orders/${id}`)
       lsSet(`wms:io-detail:${id}`, data.data)
       return data.data as InboundOrder
-    },
-  })
-}
-
-export function useInboundLocationSuggestions(orderId?: string) {
-  return useQuery({
-    queryKey: ['inbound-location-suggestions', orderId],
-    enabled: !!orderId,
-    queryFn: async () => {
-      const { data } = await apiClient.get(`/wms/inbound-orders/${orderId}/location-suggestions`)
-      return data.data as import('@/types').LocationSuggestion[]
     },
   })
 }
@@ -2275,6 +2264,7 @@ export function useScanLoosePickingItem() {
       gdoId: string; itemId: string; qr_code: string; cartons_override?: number
       // Nhặt lẻ luôn để lại hàng trên pallet → BẮT BUỘC khai chỗ đặt lại ('KEEP' hoặc id vị trí mới)
       leftover_location_id?: string; leftover_ui?: boolean
+      rotation_override_reason?: string   // kho bật "bắt buộc" + quét sai thứ tự → phải có lý do
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
       ...body, loose_picking_mode: true,
     }).then(r => r.data.data),
@@ -2865,6 +2855,9 @@ export function useScanOutboundItem() {
       // leftover_ui: bản FE này CÓ ô chọn vị trí ⇒ BE được phép siết 422 khi thiếu. Bundle cũ
       // (PWA chưa cập nhật) không gửi cờ này nên vẫn quét được như trước, không bị khoá.
       leftover_location_id?: string; leftover_ui?: boolean
+      // Lý do lấy khác thứ tự luân chuyển — CHỈ cần khi kho bật "bắt buộc" và pallet quét sai thứ tự.
+      // Dạng 'CODE' hoặc 'OTHER: ghi chú'. Thiếu → BE trả 422 ROTATION_REASON_REQUIRED.
+      rotation_override_reason?: string
       // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
@@ -2884,7 +2877,7 @@ export function useScanOutboundItem() {
                   ...data.scan_entry,
                   is_loose_picking: false, loose_confirmed: false, loose_confirmed_at: null,
                   scanned_by: null, scanned_at: new Date().toISOString(),
-                  pct_date: null, production_date: null, best_available_date: null,
+                  pct_date: null, production_date: null, rotation_violation: null,
                 }],
               }
             }),
@@ -3025,7 +3018,9 @@ export function useGdoPickSuggestions(gdoId: string | undefined) {
 export type CheckOutboundScanResult = {
   pallet_code:       string
   production_date:   string | null
-  best_available_date: string | null
+  // Kiểm luân chuyển do BE tính (FE KHÔNG tự so ngày — xem frontend/src/utils/rotation.ts).
+  // Optional: bundle FE mới có thể gặp BE cũ trong cửa sổ deploy.
+  rotation?:         import('@/utils/rotation').RotationCheck
   available_cartons: number
   suggested_cartons: number
   // Vị trí phần còn lại (30/07): pallet đi không hết thì phải khai hàng dư nằm ở đâu
@@ -3335,7 +3330,11 @@ export type OutboundScanLogEntry = {
   pallet_code: string
   cartons_scanned: number
   production_date: string | null
-  best_available_date: string | null
+  best_available_date: string | null      // LEGACY (dòng trước 14/08) — xem utils/rotation.scanRotationOf
+  rotation_violation: boolean | null
+  rotation_best_date: string | null
+  rotation_principle: string | null
+  rotation_override_reason: string | null
   scanned_at: string
   is_loose_picking: boolean
   loose_confirmed_at: string | null
@@ -3395,6 +3394,7 @@ export type ScanLogParams = {
   cycles?: string              // comma-separated
   scanner_name?: string
   nmsx?: string                // comma-separated
+  rotation?: string            // '' | 'BAD' (chỉ lượt lấy sai thứ tự) | 'OK'
   page?: number
   limit?: number
 }
@@ -3405,7 +3405,11 @@ export function useOutboundScanLog(params: ScanLogParams, enabled = true) {
     enabled,
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/outbound/scan-log', { params })
-      return data.data as { rows: OutboundScanLogEntry[]; total: number; page: number; limit: number }
+      return data.data as {
+        rows: OutboundScanLogEntry[]; total: number; page: number; limit: number
+        // Tuân thủ luân chuyển của cả dải đang xem (mẫu số = số lượt ĐO ĐƯỢC, không phải total)
+        rotation_violations?: number; rotation_measured?: number
+      }
     },
     staleTime: 30_000,
     placeholderData: keepPreviousData, // đổi trang/lọc: giữ dữ liệu cũ, không trắng bảng

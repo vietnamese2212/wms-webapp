@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 
@@ -321,21 +321,23 @@ export async function listWeighTickets(req: Request, res: Response) {
 }
 
 // GET /wms/weigh-tickets/warehouses — chỉ các kho THỰC CÓ phiếu cân (option filter Kho trên FE),
-// vẫn cắt scope kho JWT. Check tồn tại từng kho (limit 1, index warehouse_id) — chính xác ở mọi quy mô,
-// không dựa DISTINCT trên trang bị cap 1000.
+// vẫn cắt scope kho JWT.
+// Trước 14/08 hỏi "kho này có phiếu cân không?" cho TỪNG kho: 153 kho hoạt động = 153 request
+// PostgREST mỗi lần mở bộ lọc, qua pool ~10 khe ⇒ làm chậm cả app. Nay DISTINCT chạy TRONG DB
+// (RPC weigh_ticket_warehouses) — 1 lời gọi, số dòng về bị chặn bởi số KHO chứ không phải số phiếu,
+// nên cũng không dính cap-1000.
 export async function listWeighWarehouses(req: Request, res: Response) {
   try {
     const scoped = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
     if (scoped && scoped.length === 0) return ok(res, [])
-    let q = supabase.from('Warehouse').select('id, name').order('name')
-    if (scoped) q = q.in('id', scoped)
-    const { data: whs, error } = await q
-    if (error) return fail(res, error.message, 500, 'DB_ERROR')
-    const checks = await Promise.all(((whs ?? []) as { id: string; name: string }[]).map(async w => {
-      const { data } = await supabase.from('WeighTicket').select('id').eq('warehouse_id', w.id).limit(1)
-      return (data ?? []).length > 0 ? w : null
-    }))
-    return ok(res, checks.filter(Boolean))
+    const { data: whRows, error: rpcErr } = await supabase.rpc('weigh_ticket_warehouses')
+    if (rpcErr) return fail(res, rpcErr.message, 500, 'DB_ERROR')
+    let ids = ((whRows ?? []) as { warehouse_id: string }[]).map(r => r.warehouse_id).filter(Boolean)
+    if (scoped) ids = ids.filter(id => scoped.includes(id))
+    if (!ids.length) return ok(res, [])
+    const whs = await fetchAllByIdChunks(ids, chunk =>
+      supabase.from('Warehouse').select('id, name').in('id', chunk).order('name'))
+    return ok(res, (whs ?? []) as { id: string; name: string }[])
   } catch (e) { return fail(res, String(e)) }
 }
 

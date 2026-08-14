@@ -35,6 +35,7 @@ import {
   useGdoPickSuggestions, usePctBands, useWeighWarnPct,
 } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
+import { scanRotationOf } from '@/utils/rotation'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { GdoScanSheet } from '@/components/wms/GdoScanSheet'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
@@ -1261,7 +1262,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                           </thead>
                           <tbody>
                             {scans.map(se => {
-                              const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                              const { bad: isSubOptimal, bestDate: rotBest } = scanRotationOf(se)
                               const fmtDate = (d: string) => { try { return format(parseISO(d), 'dd-MM-yyyy') } catch { return d } }
                               return (
                                 <tr key={se.id}>
@@ -1282,9 +1283,9 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                                     <span className="text-[10px] font-mono text-slate-400">{se.production_date ? fmtDate(se.production_date) : '—'}</span>
                                   </td>
                                   <td className="py-0.5">
-                                    {se.best_available_date ? (
+                                    {rotBest ? (
                                       <span className={`text-[10px] font-mono ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-300'}`}>
-                                        {isSubOptimal ? '⚠ ' : ''}{fmtDate(se.best_available_date)}
+                                        {isSubOptimal ? '⚠ ' : ''}{fmtDate(rotBest)}
                                       </span>
                                     ) : <span className="text-[10px] text-slate-300">—</span>}
                                   </td>

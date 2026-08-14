@@ -14,7 +14,7 @@
   "inert_banner_desktop_only": 0,
   "search_state_without_input": 0,
   "tms_cargo_cell_ignores_booking_category": 0,
-  "unpaginated_in_query": 144,
+  "unpaginated_in_query": 143,
   "qa_slot_fixture_on_today": 0,
   "hardcoded_warehouse_type_code": 1,
   "mojibake_double_utf8": 0,
@@ -23,6 +23,8 @@
   "qrscanner_keepmounted_without_active": 0,
   "tablehead_relative_kills_sticky": 0,
   "role_by_vietnamese_name": 0,
+  "rotation_rule_hand_rolled": 1,
+  "n_plus_1_supabase_in_map": 3,
   "today_frozen_at_import": 0,
   "component_defined_inside_component": 0,
   "upload_without_preflight": 0

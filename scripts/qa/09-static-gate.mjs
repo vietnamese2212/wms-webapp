@@ -289,6 +289,23 @@ const RULES = [
         && /[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line), s),
   },
   {
+    key: 'rotation_rule_hand_rolled',
+    label: 'tự so ngày để đoán "pallet nào nên lấy trước" — phải đi qua utils/rotation (BE) / khối `rotation` do BE trả (FE)',
+    // Bug thật 14/08: luật này từng có 4 BẢN chép tay (cột "Vị trí lấy" sắp theo %Date · 3 màn quét
+    // so production_date) nên gợi ý và cảnh báo chỉ vào 2 pallet khác nhau. Bắt đúng mẫu so-sánh
+    // giữa 2 mốc ngày của tồn kho; file utils/rotation.ts được miễn (nó LÀ luật).
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /\b(production_date|expiry_date)\b\s*[<>]=?\s*\w*\.?\b(best_available_date|production_date|expiry_date)\b/.test(line), s),
+    // Baseline 1 = phép so DUY NHẤT còn được phép: nhánh đọc dữ liệu LỊCH SỬ trước 14/08 trong
+    // frontend/src/utils/rotation.ts (dòng cũ không có cột rotation_*). Code mới không được tăng.
+  },
+  {
+    key: 'n_plus_1_supabase_in_map',
+    label: 'gọi supabase TRONG .map(async …) không chia lô = N+1 round-trip (pool PostgREST ~10 khe → nghẽn cả app)',
+    count: (s) => countNPlus1SupabaseInMap(s),
+  },
+  {
     key: 'today_frozen_at_import',
     label: 'NGÀY HÔM NAY chốt bằng hằng module (tính 1 lần lúc mở app) — PDA/màn kho mở qua đêm sẽ dùng ngày HÔM QUA (min= chặn oan, filter "Hôm nay" sai). Khai dạng HÀM: const TODAY = () => …',
     // CHỈ bắt khai báo CẤP MODULE (không thụt lề) — khai trong thân component thì mỗi lần render
@@ -399,6 +416,31 @@ function countDeadSearchState(sampleOut) {
 
 // File có overlay ẩn-bằng-CSS (`${open ? '' : 'hidden'}`) thì mọi thẻ <QRScanner …> trong file
 // phải mang prop `active` (thường active={open}) — thiếu = camera vẫn giữ stream khi overlay đóng.
+// N+1 PostgREST: `.map(async …)` mà trong thân có gọi supabase và KHÔNG chia lô.
+// Gốc rễ (đo 14/08): gợi ý vị trí nhập chạy 1 truy vấn / 1 VỊ TRÍ — kho Bàu Bàng 1.517 vị trí =
+// 1.517 request mỗi lần tạo phiếu nhập, trong khi pool PostgREST chỉ ~10 khe ⇒ nghẽn CẢ APP.
+// Loại lỗi này KHÔNG có triệu chứng trên màn hình (không lỗi, không cảnh báo) nên sống sót rất lâu.
+// Chia lô (`.slice(i, i + N)`) thì không tính — đó là cách xử ĐÚNG khi buộc phải gọi từng dòng.
+function countNPlus1SupabaseInMap(sampleOut) {
+  let n = 0
+  for (const f of filesOf('backend/src', ['.ts'])) {
+    const src = readFileSync(f, 'utf8')
+    const lines = src.split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/\.map\(\s*async\b/.test(line)) return
+      // Đã chia lô — trên chính dòng đó (`arr.slice(i, i+8).map(async …)`) hoặc ở dòng ngay trên
+      // (`const batch = arr.slice(i, i+8)` rồi `batch.map(async …)`). Chia lô là cách xử ĐÚNG khi
+      // buộc phải gọi từng dòng, không tính là vi phạm.
+      if (/\.slice\(/.test(line) || /\.slice\(/.test(lines[i - 1] ?? '')) return
+      const body = lines.slice(i, i + 12).join('\n')        // thân callback (đủ để thấy lời gọi)
+      if (!/\bsupabase\s*\.\s*(from|rpc)\b/.test(body)) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
+
 function countKeepMountedScannerWithoutActive(sampleOut) {
   let n = 0
   for (const f of filesOf('frontend/src', ['.tsx'])) {

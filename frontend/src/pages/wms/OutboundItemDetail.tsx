@@ -36,6 +36,8 @@ import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
 import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { useRotationGate } from '@/components/wms/RotationGate'
+import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -111,6 +113,8 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   // rồi bấm Lưu, KHÔNG phải quét lại pallet (user 30/07: "muốn chọn lại phải quét tiếp, mất thao tác")
   const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
+  // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
+  const rotGate = useRotationGate(checkResult?.rotation)
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
   // Panel multiscan tem THÙNG neo vào pallet vừa quét (chỉ khi Kho/Loại kho bật cờ)
@@ -160,6 +164,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    rotGate.reset()   // tem mới = câu hỏi lý do mới
     if (isOffline()) {   // trình duyệt biết chắc offline → khỏi bắn check chết
       queueScan(qr_code, undefined, false)
       return
@@ -189,13 +194,13 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const qtyToTake  = Math.max(1, parseInt(pendingCartons) || 1)
   const leftoverQty = Math.max(0, (checkResult?.pallet_remaining ?? 0) - qtyToTake)
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc)
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
-        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -267,8 +272,6 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     if (initialScan) handleScan(initialScan, 'wedge')
   }, []) // eslint-disable-line
 
-  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
-    checkResult.production_date > checkResult.best_available_date)
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -361,22 +364,19 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
               đẩy khuất dưới bàn phím mà không cuộn tới được ("không thấy nút chọn vị trí đâu"). */}
           {checkResult && !feedback && (
             <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
-              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
-                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${rotGate.blocked ? 'bg-red-50 border-red-200' : rotGate.warn ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${rotGate.blocked ? 'text-red-500' : rotGate.warn ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                  <p className={`text-sm font-semibold font-mono ${rotGate.blocked || rotGate.warn ? 'text-red-600' : 'text-green-800'}`}>
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
                     <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
-                  {isSubOptimal && checkResult.best_available_date && (
-                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
-                    </p>
-                  )}
+                  {rotGate.banner}
                 </div>
               </div>
+              {rotGate.reasonBox}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">Số lượng xuất:</label>
                 <QtyInput compact className="w-44"
@@ -1124,7 +1124,7 @@ export default function OutboundItemDetail() {
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => {
-                    const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                    const { bad: isSubOptimal, bestDate: rotBest } = scanRotationOf(se)
                     return (
                       <TableRow key={se.id} className={se.is_loose_picking && !se.loose_confirmed ? 'bg-purple-50' : ''}>
                         <TableCell className="px-2 py-1">
@@ -1178,9 +1178,9 @@ export default function OutboundItemDetail() {
                           </span>
                         </TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">
-                          {se.best_available_date ? (
+                          {rotBest ? (
                             <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
-                              {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
+                              {isSubOptimal ? '⚠ ' : ''}{format(parseISO(rotBest), 'dd-MM-yyyy')}
                             </span>
                           ) : (
                             <span className="text-[10px] text-slate-300">—</span>

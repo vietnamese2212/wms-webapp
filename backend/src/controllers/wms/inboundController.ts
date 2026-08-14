@@ -104,6 +104,55 @@ function generateImportCode(whCode: string, ddmmyy: string, seq: number): string
   return `${whCode}_N_${ddmmyy}_${String(seq).padStart(2, '0')}`
 }
 
+// BẢN LÔ — dùng cho LIST (nhiều phiếu cùng lúc). Bản lẻ bên dưới chỉ còn cho đường 1-phiếu.
+// Trước 14/08 list gọi bản lẻ trong `Promise.all(...map())` ⇒ mỗi phiếu TRANSFER tốn ≥3 round-trip,
+// trần list ~2.800 phiếu ⇒ hàng nghìn request qua pool PostgREST ~10 khe. Chính khối bulk ngay
+// dưới đây (dòng "BULK thay N+1") đã dọn 2 query kia từ trước nhưng BỎ SÓT đường này.
+// Giờ: 3 lượt query cho TẤT CẢ phiếu, bất kể bao nhiêu phiếu.
+type GdoCartonsReq = { orderId: string; gdoId: string; materialId: string | null }
+async function computeGdoTotalCartonsBulk(reqs: GdoCartonsReq[]): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>()
+  if (!reqs.length) return out
+
+  const gdoIds = [...new Set(reqs.map(r => r.gdoId))]
+  const dos = await fetchAllByIdChunks(gdoIds, chunk =>
+    supabase.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', chunk).order('id')) as { id: string; gdo_id: string }[]
+  const doIdsByGdo = new Map<string, string[]>()
+  for (const d of dos) {
+    const arr = doIdsByGdo.get(d.gdo_id) ?? []
+    arr.push(d.id); doIdsByGdo.set(d.gdo_id, arr)
+  }
+
+  const allDoIds = dos.map(d => d.id)
+  const items = allDoIds.length
+    ? await fetchAllByIdChunks(allDoIds, chunk =>
+        supabase.from('OutboundItem').select('id, do_id, material_id').in('do_id', chunk).order('id')) as { id: string; do_id: string; material_id: string | null }[]
+    : []
+  const itemsByDo = new Map<string, { id: string; material_id: string | null }[]>()
+  for (const i of items) {
+    const arr = itemsByDo.get(i.do_id) ?? []
+    arr.push({ id: i.id, material_id: i.material_id }); itemsByDo.set(i.do_id, arr)
+  }
+
+  const allItemIds = items.map(i => i.id)
+  const scans = allItemIds.length
+    ? await fetchAllByIdChunks(allItemIds, chunk =>
+        supabase.from('OutboundScanEntry').select('item_id, cartons_scanned').in('item_id', chunk).order('id')) as { item_id: string; cartons_scanned: number | null }[]
+    : []
+  const scannedByItem = new Map<string, number>()
+  for (const s of scans) scannedByItem.set(s.item_id, (scannedByItem.get(s.item_id) ?? 0) + (Number(s.cartons_scanned) || 0))
+
+  for (const r of reqs) {
+    const doIds = doIdsByGdo.get(r.gdoId) ?? []
+    if (!doIds.length) { out.set(r.orderId, null); continue }
+    const its = doIds.flatMap(id => itemsByDo.get(id) ?? [])
+      .filter(i => !r.materialId || i.material_id === r.materialId)
+    if (!its.length) { out.set(r.orderId, null); continue }
+    out.set(r.orderId, its.reduce((sum, i) => sum + (scannedByItem.get(i.id) ?? 0), 0))
+  }
+  return out
+}
+
 async function computeGdoTotalCartons(gdoId: string, materialId: string | null): Promise<number | null> {
   // Tổng dùng làm planned_cartons hiển thị — phải ĐỦ MỌI dòng (chuyến >1000 item/scan: cap-1000 cắt âm thầm → tổng thiếu)
   const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id'))
@@ -477,10 +526,12 @@ async function enrichOrders(orders: any[]): Promise<any[]> {
     // GDO cartons cho transfer thiếu planned_cartons (subset) — chạy song song
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const transfersNeedGdo = filtered.filter((o: any) => o.source_type === 'TRANSFER' && o.from_gdo_id && o.planned_cartons == null)
-    const gdoCartonsMap = new Map<string, number | null>()
-    await Promise.all(transfersNeedGdo.map(async (o: any) => {
-      gdoCartonsMap.set(o.id as string, await computeGdoTotalCartons(o.from_gdo_id as string, o.material_id as string | null))
-    }))
+    const gdoCartonsMap = await computeGdoTotalCartonsBulk(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transfersNeedGdo.map((o: any) => ({
+        orderId: o.id as string, gdoId: o.from_gdo_id as string, materialId: (o.material_id ?? null) as string | null,
+      }))
+    )
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const withCount = filtered.map((o: any) => computeOrderStats(
@@ -672,9 +723,8 @@ export async function createOrder(req: Request, res: Response) {
     if (!order) return fail(res, 409, 'DUPLICATE', 'Không thể tạo mã phiếu — thử lại')
     applyInboundMode(order as Parameters<typeof applyInboundMode>[0])
 
-    const suggestions = await getLocationSuggestionsData(warehouse_id, material_id)
     emitInboundChanged()
-    ok(res, { order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } }, location_suggestions: suggestions })
+    ok(res, { order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } } })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -1890,61 +1940,14 @@ export async function removeEntries(req: Request, res: Response) {
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// ─── Location suggestions ────────────────────────────────────
-
-export async function getLocationSuggestions(req: Request, res: Response) {
-  try {
-    const { data: order } = await supabase
-      .from('ProductionImport').select('warehouse_id, material_id').eq('id', req.params.id).maybeSingle()
-    if (!order)               return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
-    if (!order.warehouse_id)  return fail(res, 400, 'NO_WAREHOUSE', 'Phiếu nhập chưa có kho')
-    // Chống IDOR: gợi ý vị trí lộ layout/tồn kho — chỉ cho phiếu thuộc kho trong phạm vi user
-    const scope = scopeWhIds(req)
-    if (scope !== null && !scope.includes(order.warehouse_id))
-      return fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể xem gợi ý vị trí kho này')
-
-    ok(res, await getLocationSuggestionsData(order.warehouse_id, order.material_id))
-  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
-}
-
-// ─── Internal helper ─────────────────────────────────────────
-
-async function getLocationSuggestionsData(warehouse_id: string, material_id: string | null) {
-  const { data: locations } = await supabase
-    .from('Location')
-    .select('id, location_code, sub_code, sub_name, max_pallets')
-    .eq('warehouse_id', warehouse_id)
-    .eq('is_active', true)
-
-  if (!locations?.length) return []
-
-  // For each location, get layer-1 occupying entry count and check for same-material entries.
-  // Pallet CHIẾM CHỖ = IN_STOCK/PARTIAL/QUARANTINE + tồn>0 (khớp scanQR + move RPC); loại tồn=0 (snapshot upload không còn trên sàn) để available_slots không lệch với lúc quét.
-  const withSlots = await Promise.all(
-    locations.map(async (loc) => {
-      const { data: entries } = await supabase
-        .from('InventoryEntry')
-        .select('id, material_id')
-        .eq('location_id', loc.id)
-        .eq('stack_layer', 1)
-        .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-        .gt('cartons_remaining', 0)
-
-      const used_slots = entries?.length ?? 0
-      const available_slots = loc.max_pallets - used_slots
-      const has_same_material = material_id
-        ? (entries ?? []).some((e: { material_id: string }) => e.material_id === material_id)
-        : false
-
-      return { id: loc.id, location_code: loc.location_code, sub_code: loc.sub_code, sub_name: loc.sub_name, max_pallets: loc.max_pallets, used_slots, available_slots, has_same_material }
-    })
-  )
-
-  return withSlots
-    .filter((loc) => loc.available_slots > 0)
-    .sort((a, b) => {
-      if (a.has_same_material !== b.has_same_material) return b.has_same_material ? 1 : -1
-      return b.available_slots - a.available_slots
-    })
-    .slice(0, 10)
-}
+// ─── Gợi ý vị trí cất hàng: ĐÃ GỠ 14/08 ──────────────────────
+// Có `getLocationSuggestions` + `getLocationSuggestionsData` chạy 1 TRUY VẤN / 1 VỊ TRÍ
+// (kho Bàu Bàng 1.517 vị trí = 1.517 request PostgREST mỗi lần TẠO PHIẾU NHẬP), trong khi
+// pool PostgREST chỉ ~10 khe ⇒ mỗi phiếu nhập làm nghẽn CẢ APP, không riêng trang Nhập.
+// Nặng hơn: nó chạy SAU khi phiếu đã INSERT và commit, nên quá hạn 60s = user thấy "Lỗi server"
+// trên một phiếu ĐÃ TỒN TẠI → bấm lại = phiếu thứ hai (ProductionImport chỉ unique import_code,
+// không có khóa nghiệp vụ chặn trùng).
+// Và toàn bộ chi phí đó là VÔ ÍCH: frontend không đọc `location_suggestions` ở đâu cả (hook
+// useInboundLocationSuggestions khai rồi không trang nào gọi) — di sản của tính năng đã đổi UI.
+// Dựng lại gợi ý cất hàng ở Đợt 2 (Gom / Rải / Theo ABC) thì viết bằng MỘT câu GROUP BY, không
+// bao giờ quay lại kiểu 1-câu-mỗi-vị-trí (ratchet `n_plus_1_supabase_in_map` gác).

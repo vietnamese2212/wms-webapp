@@ -140,7 +140,6 @@ router.post('/inbound-orders/:id/scan-manual',          requireAnyPerm(['inbound
 router.patch('/inbound-orders/:id/entries/:entryId',    requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.updateEntry)
 router.delete('/inbound-orders/:id/entries/:entryId',   requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet'], ['tms_plan', 'confirm_receipt']), inbound.removeEntry)
 router.delete('/inbound-orders/:id/entries',            requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntries)
-router.get('/inbound-orders/:id/location-suggestions',  inbound.getLocationSuggestions)
 
 // Inventory (tồn kho)
 router.get('/inventory/facets',                   inventory.listFacets)

@@ -317,16 +317,6 @@ export interface PalletEntry {
   updated_at:         string
 }
 
-export interface LocationSuggestion {
-  id:               string
-  location_code:    string
-  sub_code:         string
-  sub_name:         string | null
-  max_pallets:      number
-  used_slots:       number
-  available_slots:  number
-  has_same_material: boolean
-}
 
 // KPI
 export interface KPIMetric {
@@ -644,7 +634,13 @@ export interface OutboundScanEntry {
   scanned_at:           string
   pct_date:             number | null
   production_date:      string | null
-  best_available_date:  string | null  // production_date tốt nhất trong kho lúc quét (cũ nhất, không QA)
+  // LEGACY (dòng trước 14/08): MIN(NSX) trong kho lúc quét, chỉ đếm IN_STOCK/PARTIAL. KHÔNG ghi nữa.
+  best_available_date:  string | null
+  // Vết luân chuyển từ 14/08 — null ở dòng cũ hoặc khi thiếu NSX/HSD để kết luận
+  rotation_principle?:       string | null
+  rotation_violation?:       boolean | null
+  rotation_best_date?:       string | null
+  rotation_override_reason?: string | null
   carton_scans?:        { code: string; match: boolean; at?: string }[] | null  // mã THÙNG đính kèm (multiscan, truy vết)
 }
 

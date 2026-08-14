@@ -22,6 +22,7 @@ import {
   fetchScanLogExport, useScanLogSearch, usePctBands,
 } from '@/api/hooks'
 import { computePctDate, resolveShelfLife } from '@/utils/shelfLife'
+import { scanRotationOf, rotationReasonLabel } from '@/utils/rotation'
 import { pctDateCls } from '@/utils/pctDateBands'
 import type { ScanLogParams } from '@/api/hooks'
 import { qtyLabel, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
@@ -36,7 +37,7 @@ const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_
 
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
-// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (32 cột). Cột 0 (Ngày xuất) sticky-left.
+// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (33 cột). Cột 0 (Ngày xuất) sticky-left.
 const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'delivery_date', label: 'Ngày xuất' },
   { id: 'warehouse',     label: 'Kho' },
@@ -50,7 +51,8 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'cartons',       label: 'Thùng', align: 'right' },
   { id: 'nsx',           label: 'NSX' },
   { id: 'hsd',           label: 'HSD' },
-  { id: 'best_date',     label: 'Date cũ nhất' },
+  { id: 'best_date',     label: 'Date nên lấy' },
+  { id: 'rotation',      label: 'Thứ tự lấy' },
   { id: 'pct',           label: '% Date', align: 'right' },
   { id: 'location',      label: 'Vị trí' },
   { id: 'machine',       label: 'Máy' },
@@ -72,7 +74,7 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'completed_at',  label: 'TG hoàn thành' },
 ]
 const SCANLOG_COL_DEFAULTS = [
-  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 52, 70, 50, 52, 48, 58, 110, 80,
+  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 96, 52, 70, 50, 52, 48, 58, 110, 80,
   120, 120, 90, 80, 90, 90, 80, 120, 120, 120, 120,
 ]
 
@@ -133,6 +135,7 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
     cycles:            f.cycles.length > 0    ? f.cycles.join(',')    : undefined,
     scanner_name:      f.scanner_name  || undefined,
     nmsx:              f.nmsx.length > 0      ? f.nmsx.join(',')      : undefined,
+    rotation:          f.rotation      || undefined,
   }
 }
 
@@ -234,6 +237,9 @@ export default function OutboundScanLog() {
       onChange: v => setScanLog({ pallet_code: v }) },
     { key: 'scanner_name', label: 'Người quét',  type: 'text', value: filters.scanner_name, placeholder: 'Người quét…',
       onChange: v => setScanLog({ scanner_name: v }) },
+    { key: 'rotation',     label: 'Thứ tự lấy',  type: 'single', value: filters.rotation, allLabel: 'Tất cả',
+      options: [{ value: 'BAD', label: 'Lấy SAI thứ tự' }, { value: 'OK', label: 'Lấy đúng thứ tự' }],
+      onChange: v => setScanLog({ rotation: v }) },
   ]
 
   // SavedViews — snapshot literal (assignable Record) để lưu/khớp
@@ -267,6 +273,9 @@ export default function OutboundScanLog() {
   const isError   = searchMode ? searchError : listError
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
+  // Chỉ luồng lọc mới có số tuân thủ (search tổng dùng RPC khác) — thiếu thì ô band hiện '—'
+  const rotViol     = (searchMode ? 0 : listData?.rotation_violations) ?? 0
+  const rotMeasured = (searchMode ? 0 : listData?.rotation_measured)   ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const isBlocked = !searchMode && canFetch && !isLoading && total > 200_000
 
@@ -291,6 +300,7 @@ export default function OutboundScanLog() {
       const sheet = all.map(row => {
         const expiry = rowExpiry(row)
         const pct    = rowPctAtScan(row)
+        const rowRot = scanRotationOf(row)
         return {
           'Ngày xuất': row.delivery_date ? formatDate(row.delivery_date) : '',
           'Kho': row.warehouse_name ?? '', 'Loại hàng': row.material_category ?? '',
@@ -299,7 +309,9 @@ export default function OutboundScanLog() {
           'Tên hàng': row.material_name ?? '', 'ĐVT': qtyUnitLabel(row), 'Thùng': qtyEntryDecimal(row.cartons_scanned, row),
           'NSX': row.production_date ? formatDate(row.production_date) : '',
           'HSD': expiry ? formatDate(expiry) : '',
-          'Date cũ nhất': row.best_available_date ? formatDate(row.best_available_date) : '',
+          'Date nên lấy': rowRot.bestDate ? formatDate(rowRot.bestDate) : '',
+          'Thứ tự lấy': row.rotation_violation == null ? '' : (rowRot.bad ? 'SAI' : 'Đúng'),
+          'Lý do lấy khác thứ tự': row.rotation_override_reason ? rotationReasonLabel(row.rotation_override_reason) : '',
           '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', 'Máy': row.machine_code ?? '',
           'Chu kỳ': row.cycle ?? '', 'NMSX': row.nmsx ?? '',
           'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
@@ -379,6 +391,10 @@ export default function OutboundScanLog() {
         { label: searchMode ? 'Kết quả tìm' : 'Bản ghi', value: (canFetch || searchMode) && !isLoading ? total.toLocaleString('vi-VN') : '—', accent: searchMode },
         { label: 'Loại hàng', value: searchMode ? 'Tất cả (truy cứu)' : (filters.material_category || '—') },
         { label: 'Bộ lọc', value: searchMode ? '—' : activeCount, accent: !searchMode && activeCount > 0 },
+        // Tuân thủ luân chuyển — mẫu số là số lượt ĐO ĐƯỢC (dòng cũ / thiếu NSX-HSD không tính),
+        // nên tỷ lệ không bị thổi lên bởi dữ liệu chưa từng được đo.
+        { label: 'Đúng thứ tự', value: rotMeasured > 0 ? `${Math.round((1 - rotViol / rotMeasured) * 100)}% (${(rotMeasured - rotViol).toLocaleString('vi-VN')}/${rotMeasured.toLocaleString('vi-VN')})` : '—',
+          accent: rotMeasured > 0 && rotViol > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
 
@@ -433,6 +449,7 @@ export default function OutboundScanLog() {
               {rows.map(row => {
                 const expiryDate = rowExpiry(row)
                 const pct        = rowPctAtScan(row)
+                const rotOf      = scanRotationOf(row)   // dòng mới đọc cột rotation_*, dòng cũ suy theo luật cũ
                 // Kết quả SEARCH TỔNG: click dòng → mở thẳng đơn xuất (RPC search trả gdo_id/item_id)
                 const openable = searchMode && !!row.gdo_id
                 return (
@@ -463,7 +480,15 @@ export default function OutboundScanLog() {
                       {expiryDate ? formatDate(expiryDate) : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                      {row.best_available_date ? formatDate(row.best_available_date) : <span className="text-slate-300">—</span>}
+                      {rotOf.bestDate ? formatDate(rotOf.bestDate) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      {row.rotation_violation == null ? <span className="text-slate-300">—</span>
+                        : rotOf.bad
+                          ? <span className="text-red-600 font-semibold" title={row.rotation_override_reason ? `Đã duyệt: ${rotationReasonLabel(row.rotation_override_reason)}` : undefined}>
+                              ⚠ Sai{row.rotation_override_reason ? ` · ${rotationReasonLabel(row.rotation_override_reason)}` : ''}
+                            </span>
+                          : <span className="text-green-600">Đúng</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right whitespace-nowrap">
                       {pct !== null

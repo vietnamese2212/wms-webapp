@@ -82,6 +82,7 @@ export interface ScanLogFilters {
   cycles: string[]
   scanner_name: string
   nmsx: string[]
+  rotation: string   // '' = tất cả · 'BAD' = chỉ lượt lấy SAI thứ tự luân chuyển · 'OK' = chỉ đúng
   search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
 export interface ControlTowerFilters {
@@ -436,7 +437,7 @@ function initialFilters() {
       warehouses: [], material_category: '',
       group_code: '', distributor: '', delivery_code: '',
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
-      search: '',
+      rotation: '', search: '',
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },

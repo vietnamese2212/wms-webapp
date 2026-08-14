@@ -7,7 +7,12 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
-import { computePctDate } from '../../utils/shelfLife'
+import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
+import {
+  PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isRotationViolation, isRotationReason,
+  rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
+  type RotationCheck, type RotationEntry, type RotationPrinciple,
+} from '../../utils/rotation'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue, safeSearch } from '../../utils/search'
@@ -4463,8 +4468,10 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
 // Chunk matIds (URL dài) + phân trang (cap ~1000, tồn 1 mã có thể >1000 pallet);
 // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
 // Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
-type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number }
-async function fefoSuggestionsByMaterial(matIds: string[], warehouseIds: string[]): Promise<Map<string, FefoSuggestion[]>> {
+type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
+async function rotationSuggestionsByMaterial(
+  matIds: string[], warehouseIds: string[], principleByWh: Map<string, RotationPrinciple>,
+): Promise<Map<string, FefoSuggestion[]>> {
   const out = new Map<string, FefoSuggestion[]>()
   if (!matIds.length) return out
   const useWhFilter = warehouseIds.length > 0
@@ -4472,9 +4479,13 @@ async function fefoSuggestionsByMaterial(matIds: string[], warehouseIds: string[
     Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry')
-          .select(`material_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
-          .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING'])
+          .in('status', [...PICKABLE_STATUSES])
+          // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
+          // nơi rồi mới biết không lấy được (lỗi thật, vá 14/08). Lọc ở DB cho nhẹ, JS kiểm lại bằng
+          // isPickEligible để luật chỉ có MỘT bản.
+          .is('qa_status_id', null)
           .gt('cartons_remaining', 0) // bỏ pallet tồn=0 từ DB (JS bên dưới cũng skip, filter sớm đỡ kéo hàng chục nghìn dòng chết)
           .order('id')
         if (useWhFilter) q = q.in('location.warehouse_id', warehouseIds)
@@ -4482,38 +4493,115 @@ async function fefoSuggestionsByMaterial(matIds: string[], warehouseIds: string[
       })
     )
   )
-  const entries = entryChunks.flat() as Array<{
-    material_id: string; cartons_remaining: number | null; cartons_imported: number | null
-    cartons_reserved: number | null; production_date: string | null; expiry_date: string | null; ncc_id: string | null; shelf_life_days: number | null
-    location: { location_code: string | null } | null
-    material: { shelf_life_days: number | null; supplier_shelf_life_overrides: { transport_company_id: string; shelf_life_days: number }[] | null } | null
+  const entries = entryChunks.flat() as Array<RotationEntry & {
+    material_id: string
+    location: { location_code: string | null; warehouse_id: string | null } | null
+    material: MaterialShelfInfo | null
   }>
   const nowMs = Date.now()
-  const byMat = new Map<string, Map<string, FefoSuggestion>>()
+  type Agg = FefoSuggestion & { rot_key: number | null }
+  const byMat = new Map<string, Map<string, Agg>>()
   for (const e of (entries ?? [])) {
-    const reserved  = Number(e.cartons_reserved ?? 0)
-    const available = Math.max(0, (e.cartons_remaining ?? e.cartons_imported ?? 0) - reserved)
-    if (available <= 0) continue
+    if (!isPickEligible(e)) continue
+    const principle = principleByWh.get(e.location?.warehouse_id ?? '') ?? asRotationPrinciple(null)
     const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
     const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
+    const rot_key  = rotationSortKey(e, e.material, principle)
+    const rot_date = rotationDateOf(e, e.material, principle)
     const loc = e.location?.location_code ?? '(chưa xác định)'
-    const k = `${pct_date ?? 'n'}|${loc}`
-    const locMap = byMat.get(e.material_id) ?? new Map<string, FefoSuggestion>()
-    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0 }
-    cur.available += available
+    const k = `${rot_key ?? 'n'}|${loc}`
+    const locMap = byMat.get(e.material_id) ?? new Map<string, Agg>()
+    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key }
+    cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
     locMap.set(k, cur)
     byMat.set(e.material_id, locMap)
   }
   for (const [matId, locMap] of byMat) {
-    // Hòa %Date → ưu tiên vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí; đồng bộ luật với panel tồn kho FE
+    // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa → ưu tiên vị trí ÍT
+    // hàng nhất (dọn hàng lẻ trước) → tên vị trí.
     out.set(matId, [...locMap.values()].sort((a, b) => {
-      const pa = a.pct_date ?? Infinity, pb = b.pct_date ?? Infinity
-      if (pa !== pb) return pa - pb
+      const ka = a.rot_key ?? Infinity, kb = b.rot_key ?? Infinity
+      if (ka !== kb) return ka - kb
       if (a.available !== b.available) return a.available - b.available
       return (a.location_code ?? '').localeCompare(b.location_code ?? '')
-    }))
+    }).map(({ rot_key: _k, ...rest }) => rest))
   }
   return out
+}
+
+// Cấu hình luân chuyển của các kho — 1 câu cho cả danh sách kho.
+async function rotationConfigOf(warehouseIds: string[]): Promise<Map<string, { principle: RotationPrinciple; required: boolean }>> {
+  const map = new Map<string, { principle: RotationPrinciple; required: boolean }>()
+  const ids = [...new Set(warehouseIds.filter(Boolean))]
+  if (!ids.length) return map
+  const data = await fetchAllByIdChunks(ids, chunk => supabase.from('Warehouse')
+    .select('id, rotation_principle, rotation_required').in('id', chunk).order('id'))
+  for (const w of ((data ?? []) as { id: string; rotation_principle: string | null; rotation_required: boolean | null }[])) {
+    map.set(w.id, { principle: asRotationPrinciple(w.rotation_principle), required: w.rotation_required === true })
+  }
+  return map
+}
+const principleMapOf = (cfg: Map<string, { principle: RotationPrinciple; required: boolean }>) =>
+  new Map([...cfg.entries()].map(([k, v]) => [k, v.principle]))
+
+// KIỂM LUÂN CHUYỂN của 1 lượt quét — dùng CHUNG cho preview (checkScanItem) và ghi (scanItem),
+// nên hai màn không bao giờ nói hai chuyện khác nhau như trước 14/08.
+// Kéo pallet cùng mã trong CÙNG kho rồi so bằng helper: đo trên staging (material, kho) trung bình
+// 27 pallet, p95 135 ⇒ thường 1 request. KHÔNG dùng order+limit(1) của SQL được vì HSD hiệu lực
+// phải suy từ shelf-life theo LÔ/NCC — DB không biết luật đó (và chép luật xuống SQL = đẻ bản thứ 2).
+async function rotationCheckOf(args: {
+  entry: RotationEntry; material: MaterialShelfInfo | null; materialId: string | null
+  warehouseId: string | null; principle: RotationPrinciple; required: boolean
+}): Promise<RotationCheck> {
+  const { entry, material, materialId, warehouseId, principle, required } = args
+  const base: RotationCheck = {
+    principle, required, violation: false, date_label: ROTATION_DATE_LABEL[principle],
+    scanned_date: rotationDateOf(entry, material, principle),
+    best_date: null, best_pallet_code: null, best_location_code: null,
+  }
+  if (!materialId || !warehouseId) return base
+
+  const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+    .select('pallet_code, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id)')
+    .eq('material_id', materialId)
+    .eq('location.warehouse_id', warehouseId)
+    .in('status', [...PICKABLE_STATUSES])
+    .is('qa_status_id', null)
+    .gt('cartons_remaining', 0)
+    .order('id')) as Array<RotationEntry & { pallet_code: string | null; location: { location_code: string | null } | null }>
+
+  let best: (typeof rows)[number] | null = null
+  let bestKey: number | null = null
+  for (const r of rows) {
+    if (!isPickEligible(r)) continue
+    const k = rotationSortKey(r, material, principle)
+    if (k == null) continue
+    if (bestKey == null || k < bestKey) { bestKey = k; best = r }
+  }
+  if (!best) return base
+
+  const scannedKey = rotationSortKey(entry, material, principle)
+  return {
+    ...base,
+    violation: isRotationViolation(scannedKey, bestKey),
+    best_date: rotationDateOf(best, material, principle),
+    best_pallet_code: best.pallet_code ?? null,
+    best_location_code: best.location?.location_code ?? null,
+  }
+}
+
+// Quyền duyệt lấy khác thứ tự — kiểm TRONG controller vì route /scan gate bằng outbound.scan
+// (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
+const canRotationOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['outbound']?.includes('rotation_override') === true
+
+// Thông báo chặn khi kho bật "bắt buộc" — nói rõ pallet nào nên lấy + lấy ở đâu, để người quét
+// còn đi lấy được, thay vì chỉ bị từ chối.
+function rotationBlockMessage(r: RotationCheck): string {
+  const where = r.best_location_code ? ` tại ${r.best_location_code}` : ''
+  const what  = r.best_pallet_code ? ` (pallet ${r.best_pallet_code})` : ''
+  return `Kho yêu cầu lấy đúng ${ROTATION_LABEL[r.principle]}. Còn hàng ${r.date_label} ${r.best_date ?? '—'}${what}${where} phải đi trước.`
 }
 
 // Gợi ý vị trí lấy cho MỌI mã của 1 chuyến — cột "Vị trí lấy" trang chi tiết Xuất/Nhặt lẻ
@@ -4531,7 +4619,8 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
     const items = await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
       .select('material_id').in('do_id', chunk).order('id')) as Array<{ material_id: string | null }>
     const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
-    const sugByMat = await fefoSuggestionsByMaterial(matIds, gdo.warehouse_id ? [gdo.warehouse_id] : [])
+    const whIds = gdo.warehouse_id ? [gdo.warehouse_id] : []
+    const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, principleMapOf(await rotationConfigOf(whIds)))
     return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
@@ -4579,7 +4668,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
       cartons_ordered: number; cartons_scanned: number; cartons_remaining: number
       cartons_per_pallet: number; pallets_remaining: number; no_qr_tracking: boolean
       base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
-      suggestions: { location_code: string | null; pct_date: number | null; available: number }[]
+      suggestions: FefoSuggestion[]
     }
     const rowMap = new Map<string, Row>()
     for (const i of (items ?? [])) {
@@ -4603,9 +4692,10 @@ export async function getPrepareBoard(req: Request, res: Response) {
       rowMap.set(key, cur)
     }
 
-    // FEFO suggestions cho các mã hàng — helper dùng chung với cột "Vị trí lấy" trang chi tiết đơn
+    // Gợi ý vị trí lấy — helper dùng chung với cột "Vị trí lấy" trang chi tiết đơn, sắp theo
+    // nguyên tắc luân chuyển của TỪNG kho (board có thể gom nhiều kho).
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
-    const sugByMat = await fefoSuggestionsByMaterial(matIds, warehouseIds)
+    const sugByMat = await rotationSuggestionsByMaterial(matIds, warehouseIds, principleMapOf(await rotationConfigOf(warehouseIds)))
     for (const r of rowMap.values()) {
       if (!r.material_id) continue
       r.suggestions = (sugByMat.get(r.material_id) ?? []).slice(0, 2)
@@ -4733,12 +4823,14 @@ export async function checkScanItem(req: Request, res: Response) {
       return fail(res, `Sai mã hàng — pallet không khớp với phiếu`, 400)
     }
 
+    // Shelf-life của mã: cần cho CẢ kiểm %Date lẫn kiểm luân chuyển → nạp MỘT lần.
+    const matId = item.material_id ?? inv.material_id
+    const { data: mat } = matId
+      ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
+      : { data: null }
+
     const dateReqPct = Number(item.date_required ?? 0)
     if (dateReqPct > 0) {
-      const matId = item.material_id ?? inv.material_id
-      const { data: mat } = matId
-        ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
-        : { data: null }
       // Ưu tiên HSD tường minh trên tem (V2) → không cần khai Shelf Life mã vẫn kiểm %Date được; fallback NSX+shelflife (V1).
       const pct = computePctDate(inv, mat)
       if (pct == null) return fail(res, `Pallet "${qr}" thiếu HSD hoặc NSX+Shelf Life — không thể kiểm tra %Date`, 400)
@@ -4747,29 +4839,23 @@ export async function checkScanItem(req: Request, res: Response) {
       }
     }
 
-    let best_available_date: string | null = null
-    if (inv.material_id && gdo?.warehouse_id) {
-      // MIN(production_date) = order + limit(1) — không kéo cả list (mã >1000 pallet bị cap cắt → min SAI);
-      // lọc kho bằng INNER JOIN Location thay vì nhồi location_id vào .in()
-      const { data: bestRow } = await supabase.from('InventoryEntry')
-        .select('production_date, location:Location!inner(warehouse_id)')
-        .eq('material_id', inv.material_id)
-        .eq('location.warehouse_id', gdo.warehouse_id)
-        .in('status', ['IN_STOCK', 'PARTIAL'])
-        .is('qa_status_id', null)
-        .not('production_date', 'is', null)
-        .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-        .order('production_date', { ascending: true })
-        .limit(1).maybeSingle()
-      best_available_date = (bestRow as { production_date: string | null } | null)?.production_date ?? null
-    }
+    // Kiểm luân chuyển (FEFO/FIFO/LIFO theo cấu hình kho) — ở đây CHỈ báo cáo, không chặn: đây là
+    // bước xem trước để FE hiện cảnh báo / hỏi lý do. Cửa chặn thật nằm ở scanItem (gọi thẳng API
+    // vẫn phải qua đó — luật "lọc ở picker chỉ là gợi ý, gác ở BE").
+    const rotCfg = (await rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : [])).get(gdo?.warehouse_id ?? '')
+      ?? { principle: asRotationPrinciple(null), required: false }
+    const rotation = await rotationCheckOf({
+      entry: inv as RotationEntry, material: mat as MaterialShelfInfo | null,
+      materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
+      principle: rotCfg.principle, required: rotCfg.required,
+    })
 
     return res.json({
       success: true,
       data: {
         pallet_code:       qr,
         production_date:   inv.production_date ?? null,
-        best_available_date,
+        rotation,
         available_cartons: available,
         suggested_cartons: Math.min(available, remaining_on_item),
         // Vị trí phần còn lại: FE cần biết pallet đang ở đâu + còn bao nhiêu để hỏi "để hàng dư ở đâu"
@@ -4790,7 +4876,7 @@ export async function scanItem(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return   // BASE UNIT: chặn payload bundle cũ (thùng thập phân)
     const { gdoId, itemId } = req.params
-    const { qr_code, employee_id, cartons_override, loose_picking_mode, leftover_location_id, leftover_ui } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean; leftover_location_id?: string; leftover_ui?: boolean }
+    const { qr_code, employee_id, cartons_override, loose_picking_mode, leftover_location_id, leftover_ui, rotation_override_reason } = req.body as { qr_code: string; employee_id?: string; cartons_override?: number; loose_picking_mode?: boolean; leftover_location_id?: string; leftover_ui?: boolean; rotation_override_reason?: string }
     const qr = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
     if (!qr) return fail(res, 'qr_code là bắt buộc', 400)
 
@@ -4833,28 +4919,35 @@ export async function scanItem(req: Request, res: Response) {
       return fail(res, `Pallet bị giữ QA: ${inv.qa_status?.name ?? inv.qa_status_id} — không được xuất`, 400)
     }
 
-    // Fetch shelf_life_days và best_available_date song song (cả hai chỉ cần dữ liệu từ bước trên)
+    // Fetch shelf_life_days + cấu hình luân chuyển của kho song song (cả hai chỉ cần dữ liệu bước trên)
     const matId = item.material_id ?? inv.material_id
-    const [{ data: shelfMat }, best_available_date] = await Promise.all([
+    const [{ data: shelfMat }, rotCfgMap] = await Promise.all([
       matId
         ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
         : Promise.resolve({ data: null }),
-      (async (): Promise<string | null> => {
-        if (!inv.material_id || !gdo?.warehouse_id) return null
-        // MIN(production_date) = order + limit(1) — không kéo cả list (cap 1000 làm min SAI); lọc kho bằng INNER JOIN
-        const { data: bestRow } = await supabase.from('InventoryEntry')
-          .select('production_date, location:Location!inner(warehouse_id)')
-          .eq('material_id', inv.material_id)
-          .eq('location.warehouse_id', gdo.warehouse_id)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-          .is('qa_status_id', null)
-          .not('production_date', 'is', null)
-          .or('cartons_remaining.gt.0,cartons_remaining.is.null')
-          .order('production_date', { ascending: true })
-          .limit(1).maybeSingle()
-        return (bestRow as { production_date: string | null } | null)?.production_date ?? null
-      })(),
+      rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : []),
     ])
+    const rotCfg = rotCfgMap.get(gdo?.warehouse_id ?? '') ?? { principle: asRotationPrinciple(null), required: false }
+    const rotation = await rotationCheckOf({
+      entry: inv as RotationEntry, material: shelfMat as MaterialShelfInfo | null,
+      materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
+      principle: rotCfg.principle, required: rotCfg.required,
+    })
+
+    // ── CHẶN khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────────────────
+    // Van xả PHẢI có: pallet đúng thứ tự có thể đang nằm dưới chồng / bị chắn / rách. Không có
+    // đường ra hợp lệ thì người quét kẹt giữa ca và sẽ tự tìm cách lách (quét pallet khác rồi sửa
+    // số, hoặc bỏ không quét) — tệ hơn hẳn so với cho qua kèm LÝ DO có vết.
+    let rotationOverride: string | null = null
+    if (rotation.required && rotation.violation) {
+      const raw  = String(rotation_override_reason ?? '').trim()
+      const code = raw.split(':')[0].trim()
+      if (!canRotationOverride(req))
+        return fail(res, 422, 'ROTATION_VIOLATION', `${rotationBlockMessage(rotation)} Cần người có quyền duyệt lấy khác thứ tự.`)
+      if (!isRotationReason(code))
+        return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${rotationBlockMessage(rotation)} Chọn lý do để tiếp tục.`)
+      rotationOverride = raw.slice(0, 200)
+    }
     // %Date pallet: ưu tiên HSD tường minh trên tem (V2) → fallback NSX+shelflife (V1). Tính 1 lần, tái dùng cho check + lưu.
     const pctRaw = computePctDate(inv, shelfMat)
 
@@ -4943,7 +5036,13 @@ export async function scanItem(req: Request, res: Response) {
       pallet_code: qr, cartons_scanned: to_take,
       nmsx: inv.nmsx ?? null,   // NMSX (đoạn 6 QR) kế thừa từ pallet tồn
       production_date: inv.production_date ?? null,
-      best_available_date,
+      // Vết luân chuyển — chốt cứng tại thời điểm quét (kho đổi cấu hình sau không làm đổi nghĩa
+      // dòng cũ). best_available_date CŨ không ghi nữa: nghĩa của nó là MIN(NSX) chỉ đếm
+      // IN_STOCK/PARTIAL, lệch với luật quét thật.
+      rotation_principle:       rotation.principle,
+      rotation_violation:       rotation.violation,
+      rotation_best_date:       rotation.best_date,
+      rotation_override_reason: rotationOverride,
       pct_date,
       is_loose_picking: !!loose_picking_mode,
       scanned_by: resolved_employee_id, scanned_at: t,
@@ -5630,6 +5729,7 @@ export async function getScanLog(req: Request, res: Response) {
     from_date, to_date, warehouse_ids, material_category,
     group_code, distributor, delivery_code,
     pallet_code, material, machine_codes, cycles, scanner_name, nmsx,
+    rotation,           // '' | 'BAD' (chỉ lượt sai thứ tự) | 'OK'
     page = '1', limit = '500',
   } = req.query
 
@@ -5676,7 +5776,15 @@ export async function getScanLog(req: Request, res: Response) {
     p_offset: offset,
   }
   if (scanCats) rpcParams.p_allowed_categories = scanCats.join(',')
+  const rotFilter = rotation === 'BAD' || rotation === 'OK' ? String(rotation) : null
+  if (rotFilter) rpcParams.p_rotation = rotFilter
   let { data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams)
+  // Fallback khi RPC chưa lên bản mới (20260814d chưa apply): bỏ param lạ rồi gọi lại — trang
+  // vẫn chạy, chỉ mất cột/bộ lọc luân chuyển.
+  if (error && rotFilter && /p_rotation|function|schema cache/i.test(error.message)) {
+    delete rpcParams.p_rotation
+    ;({ data, error } = await supabase.rpc('get_outbound_scan_log', rpcParams))
+  }
   // Fallback trước khi apply migration 20260702_scanlog_category_scope (RPC chưa có param mới)
   if (error && scanCats && /p_allowed_categories|function|schema cache/i.test(error.message)) {
     delete rpcParams.p_allowed_categories
@@ -5685,8 +5793,15 @@ export async function getScanLog(req: Request, res: Response) {
 
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const total = (data as any[])?.[0]?.total_count ?? 0
-  return ok(res, { rows: data ?? [], total, page: pageNum, limit: limitNum })
+  const first = (data as any[])?.[0]
+  const total = first?.total_count ?? 0
+  // Tuân thủ luân chuyển của CẢ DẢI đang xem (không đổi theo bộ lọc rotation — xem ghi chú trong
+  // migration 20260814d). measured = số lượt ĐO ĐƯỢC; dòng cũ/thiếu NSX-HSD không vào mẫu số.
+  return ok(res, {
+    rows: data ?? [], total, page: pageNum, limit: limitNum,
+    rotation_violations: Number(first?.viol_count ?? 0),
+    rotation_measured:   Number(first?.measured_count ?? 0),
+  })
 }
 
 // SEARCH TỔNG lịch sử quét (user chốt 15/07): 1 ô tìm mọi thứ (QR pallet/tem thùng/NPP/tên

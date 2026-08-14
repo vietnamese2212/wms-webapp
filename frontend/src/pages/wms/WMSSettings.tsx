@@ -520,7 +520,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -553,6 +553,10 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
   const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
+  // Nguyên tắc luân chuyển (14/08): thứ tự lấy hàng + có BẮT BUỘC hay chỉ cảnh báo.
+  // Mặc định FEFO + không bắt buộc = đúng hành vi trước đây, kho không tick thì không đổi gì.
+  const [rotPrinciple,  setRotPrinciple]  = useState<string>(wh?.rotation_principle ?? 'FEFO')
+  const [rotRequired,   setRotRequired]   = useState(wh?.rotation_required === true)
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -585,12 +589,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -691,6 +695,26 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               <span className="text-xs">
                 <span className="font-medium">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
                 <span className="block text-[10px] text-slate-400 font-normal">Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</span>
+              </span>
+            </label>
+          </div>
+          {/* Nguyên tắc luân chuyển (14/08) — thứ tự lấy hàng của kho + có siết hay không.
+              Mặc định FEFO + chỉ cảnh báo = hành vi cũ, không kho nào bị đổi khi lên bản này. */}
+          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Nguyên tắc luân chuyển (thứ tự lấy hàng)</Label>
+            <SingleSelect
+              value={rotPrinciple} onChange={setRotPrinciple}
+              options={[
+                { value: 'FEFO', label: 'FEFO — hạn dùng ngắn nhất đi trước', sub: 'mặc định, hợp hàng có HSD' },
+                { value: 'FIFO', label: 'FIFO — hàng vào trước đi trước',      sub: 'hợp bao bì/vật tư không HSD' },
+                { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
+              ]}
+            />
+            <label htmlFor="wh-rotrequired" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Bắt buộc lấy đúng thứ tự</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</span>
               </span>
             </label>
           </div>

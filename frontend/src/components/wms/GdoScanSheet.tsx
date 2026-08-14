@@ -20,6 +20,7 @@ import {
   type CheckOutboundScanResult,
 } from '@/api/hooks'
 import { materialCodeOf, normalizeQR } from '@/utils/qr'
+import { useRotationGate } from '@/components/wms/RotationGate'
 import { formatTimestampDate } from '@/utils/formatters'
 import { playBeep } from '@/utils/audio'
 import { qtyLabel, qtyBaseLabel } from '@/utils/qtyUnits'
@@ -68,6 +69,8 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const [activeItemId,   setActiveItemId]   = useState<string | null>(null)   // mã hàng vừa nhận từ QR
   const [count,          setCount]          = useState(0)                      // pallet lưu OK trong phiên
   const [cartonFor,      setCartonFor]      = useState<{ scanId: string; palletCode: string } | null>(null)
+  // Luân chuyển: kết quả do BE tính, FE chỉ hiển thị + hỏi lý do khi kho bắt buộc
+  const rotGate = useRotationGate(checkResult?.rotation)
   const { mutate: checkScan,     isPending: checking }       = useCheckOutboundScan()
   const { mutate: scanOutbound,  isPending: savingOutbound } = useScanOutboundItem()
   const { mutate: scanLoose,     isPending: savingLoose }    = useScanLoosePickingItem()
@@ -138,6 +141,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    rotGate.reset()   // tem mới = câu hỏi lý do mới, không kế thừa lượt trước
     const code = materialCodeOf(normalizeQR(qr_code))
     const matched = code ? matchItems(code) : []
     if (matched.length === 0) {
@@ -211,16 +215,17 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const palletRemain = checkResult?.pallet_remaining ?? 0
   const leftoverQty = mode === 'loose' ? palletRemain : Math.max(0, palletRemain - qtyToTake)
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc)
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !activeItem || !canSave) return
     const target = activeItem
     const cartons = qtyToTake
     const leftoverArg = { leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) }
+    const rotArg = rotGate.arg
     if (mode === 'loose') {
       scanLoose(
-        { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, ...leftoverArg },
+        { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, ...leftoverArg, ...rotArg },
         {
           onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
           onError: (err) => {
@@ -234,7 +239,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
       return
     }
     scanOutbound(
-      { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, employee_id: user?.id ?? undefined, ...leftoverArg },
+      { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, employee_id: user?.id ?? undefined, ...leftoverArg, ...rotArg },
       {
         onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
         onError: (err) => {
@@ -279,8 +284,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     if (initialScan) handleScan(initialScan, 'wedge')
   }, []) // eslint-disable-line
 
-  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
-    checkResult.production_date > checkResult.best_available_date)
+  const rot = checkResult?.rotation ?? null
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -387,22 +391,19 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           {/* Panel TỰ CUỘN: bàn phím (sửa số lượng) làm màn co lại, ô chọn vị trí không được khuất */}
           {checkResult && !feedback && (
             <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
-              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
-                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${rotGate.blocked ? 'bg-red-50 border-red-200' : rotGate.warn ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${rotGate.blocked ? 'text-red-500' : rotGate.warn ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                  <p className={`text-sm font-semibold font-mono ${rotGate.blocked || rotGate.warn ? 'text-red-600' : 'text-green-800'}`}>
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
                     <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
-                  {isSubOptimal && checkResult.best_available_date && (
-                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
-                    </p>
-                  )}
+                  {rotGate.banner}
                 </div>
               </div>
+              {rotGate.reasonBox}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? 'Lấy (lẻ):' : 'Số lượng:'}</label>
                 {/* BASE UNIT: cả quét thường lẫn quét lẻ đều nhập 2 ô Thùng+Hộp (lấy N thùng + M hộp từ pallet, trừ base) */}

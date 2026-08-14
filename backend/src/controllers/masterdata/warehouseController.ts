@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
+import { asRotationPrinciple } from '../../utils/rotation'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -134,7 +135,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -161,6 +162,8 @@ export async function createWarehouse(req: Request, res: Response) {
     if (sap_storage_locations !== undefined) row.sap_storage_locations = normSapSlocs(sap_storage_locations)
     if (require_weigh_on_start !== undefined) row.require_weigh_on_start = Boolean(require_weigh_on_start)   // rule 2: cân khi Bắt đầu xuất (20260801)
     if (require_gate_on_start !== undefined)  row.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
+    if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
+    if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
     // Cột carton_scan_* chưa apply migration → bỏ các cột đó rồi thử lại (không chặn tạo kho)
     if (error && /carton_scan/i.test(error.message)) {
@@ -177,12 +180,14 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sap_plant !== undefined)             patch.sap_plant = normSapPlant(sap_plant)
     if (sap_storage_locations !== undefined) patch.sap_storage_locations = normSapSlocs(sap_storage_locations)
     if (require_weigh_on_start !== undefined) patch.require_weigh_on_start = Boolean(require_weigh_on_start)   // rule 2: cân khi Bắt đầu xuất (20260801)
     if (require_gate_on_start !== undefined)  patch.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
+    if (rotation_principle !== undefined)     patch.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
+    if (rotation_required !== undefined)      patch.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
     if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) patch.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) patch.carton_scan_require_full = Boolean(carton_scan_require_full)

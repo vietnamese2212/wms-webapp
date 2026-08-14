@@ -30,6 +30,7 @@ const steps = [
   ['22-packing.mjs'],             // Sổ đóng gói điện tử: mở→đóng→sửa→hủy + đua quét/đóng + luật giờ in phun (11/08)
   ['23-settings.mjs'],            // Tham số vận hành SystemSetting: round-trip PUT/GET + validator chặn bậy + khôi phục (13/08)
   ['24-weigh-station.mjs'],       // Nạp phiếu cân NHIỀU trạm: mã trạm bắt buộc + 1 mã ≠ 2 kho + source_id trùng không đè (14/08)
+  ['25-rotation.mjs'],            // Luân chuyển FEFO/FIFO/LIFO: gợi ý ⇄ cảnh báo ⇄ chặn nói CÙNG một luật + van xả có vết (14/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

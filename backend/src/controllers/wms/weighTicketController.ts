@@ -5,7 +5,6 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, isRangeNotSatisfiable } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
-import { getOrgProfile } from '../../utils/settings'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -58,9 +57,12 @@ export async function ingestWeighTickets(req: Request, res: Response) {
   try {
     const { station_code, warehouse_id, tickets } =
       req.body as { station_code?: string; warehouse_id?: string; tickets?: KbTicket[] }
-    // Trạm cân mặc định = cấu hình đơn vị (org_profile), KHÔNG hardcode mã trạm của LOF
-    const defStation = (await getOrgProfile()).weigh_station_code
-    const station = String(station_code ?? defStation).trim() || defStation
+    // MÃ TRẠM BẮT BUỘC — mỗi trạm cân khai mã RIÊNG (agent có sẵn tham số StationCode).
+    // KHÔNG có mã mặc định: source_id của phần mềm cân là autonumber đếm từ 1 ở MỖI trạm, nên
+    // hai trạm mang cùng mã sẽ ĐÈ phiếu của nhau qua khóa upsert (station_code, source_id).
+    const station = String(station_code ?? '').trim().toUpperCase()
+    if (!station || station.length > 20)
+      return fail(res, 'Thiếu station_code — mỗi trạm cân phải khai mã riêng (tối đa 20 ký tự)', 400, 'VALIDATION_ERROR')
     if (!Array.isArray(tickets)) return fail(res, 'tickets phải là mảng', 400, 'VALIDATION_ERROR')
     if (tickets.length === 0) return ok(res, { upserted: 0, matched: 0 })
     if (tickets.length > 500) return fail(res, 'Tối đa 500 phiếu/lần', 400, 'VALIDATION_ERROR')
@@ -70,6 +72,14 @@ export async function ingestWeighTickets(req: Request, res: Response) {
     if (whId) {
       const { data: wh } = await supabase.from('Warehouse').select('id').eq('id', whId).maybeSingle()
       if (!wh) return fail(res, `warehouse_id không tồn tại: ${whId}`, 400, 'VALIDATION_ERROR')
+      // Lưới bắt "cài agent trạm mới mà QUÊN đổi mã trạm": mã này đang mang phiếu của KHO KHÁC ⇒
+      // ghi tiếp là đè chồng dữ liệu 2 trạm. Chặn ngay, nêu rõ phải đặt mã khác.
+      const { data: other } = await supabase.from('WeighTicket')
+        .select('warehouse_id').eq('station_code', station).not('warehouse_id', 'is', null)
+        .neq('warehouse_id', whId).limit(1).maybeSingle()
+      if (other) return fail(res,
+        `Mã trạm ${station} đang dùng cho kho khác — đặt mã trạm RIÊNG cho trạm này (StationCode trong agent)`,
+        409, 'STATION_CODE_CONFLICT')
     }
 
     const t = now()

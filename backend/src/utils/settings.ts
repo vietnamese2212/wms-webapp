@@ -83,15 +83,17 @@ export const getPackingMaxMaterials = () =>
 // (pushService · weighTicketController · inventoryController · FE loadPlan) — dựng đơn vị 2 mà quên
 // một chỗ là mang danh tính/tham số của LOF sang. MẶC ĐỊNH = ĐÚNG giá trị LOF đang chạy, nên đơn vị 1
 // không đổi hành vi khi chưa cấu hình gì.
+// ⚠️ MÃ TRẠM CÂN KHÔNG nằm ở đây (gỡ 14/08, user bắt): đơn vị có NHIỀU trạm cân ở NHIỀU kho nên
+// một giá trị CHUNG là sai bản chất — và nguy hiểm: source_id của phần mềm cân là autonumber đếm
+// từ 1 ở MỖI trạm, nên hai trạm dùng chung mã sẽ ĐÈ phiếu của nhau qua khóa (station_code, source_id).
+// Mã trạm giờ do agent của TỪNG trạm khai (bắt buộc) — xem weighTicketController.ingestWeighTickets.
 export interface OrgProfile {
   contact_email: string                                   // subject VAPID của Web Push (mailto:)
-  weigh_station_code: string                              // mã trạm cân mặc định khi agent không gửi station_code
   nmsx_alias: Record<string, string>                      // gộp mã nhà máy CŨ → MỚI khi đọc đoạn NMSX của tem V1
   assumed_carton_mm: { l: number; w: number; h: number }  // cỡ thùng giả định cho mã CHƯA khai kích thước (sơ đồ xếp xe)
 }
 export const ORG_PROFILE_DEFAULT: OrgProfile = {
   contact_email: 'wms@lof.vn',
-  weigh_station_code: 'KB01',              // Cân Kinh Bắc — trạm đầu tiên tích hợp
   nmsx_alias: { A: 'O' },                  // "A" là mã cũ của nhà máy O
   assumed_carton_mm: { l: 422, w: 233, h: 100 },
 }
@@ -102,8 +104,6 @@ export function parseOrgProfile(raw: unknown): OrgProfile | null {
   if (Object.keys(o).some(k => !(k in ORG_PROFILE_DEFAULT))) return null
   const email = typeof o.contact_email === 'string' ? o.contact_email.trim() : ''
   if (!EMAIL_RE.test(email) || email.length > 120) return null
-  const station = typeof o.weigh_station_code === 'string' ? o.weigh_station_code.trim() : ''
-  if (!station || station.length > 20) return null
   // alias: mã nhà máy là 1 ký tự/đoạn ngắn, ánh xạ CŨ → MỚI; rỗng {} là hợp lệ (đơn vị không có mã cũ)
   if (!o.nmsx_alias || typeof o.nmsx_alias !== 'object' || Array.isArray(o.nmsx_alias)) return null
   const aliasIn = o.nmsx_alias as Record<string, unknown>
@@ -118,7 +118,7 @@ export function parseOrgProfile(raw: unknown): OrgProfile | null {
   if (Object.keys(c).some(k => !'lwh'.includes(k) || k.length !== 1)) return null
   const l = int(c.l, 1, 5000), w = int(c.w, 1, 5000), h = int(c.h, 1, 5000)
   if (!l || !w || !h) return null
-  return { contact_email: email, weigh_station_code: station, nmsx_alias, assumed_carton_mm: { l, w, h } }
+  return { contact_email: email, nmsx_alias, assumed_carton_mm: { l, w, h } }
 }
 export const getOrgProfile = () => readSetting('org_profile', ORG_PROFILE_DEFAULT, parseOrgProfile)
 

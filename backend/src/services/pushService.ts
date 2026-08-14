@@ -46,6 +46,19 @@ export async function getVapid(): Promise<VapidKeys | null> {
   } catch { return null }
 }
 
+/**
+ * Đổi địa chỉ liên hệ VAPID (org_profile.contact_email) → ghi luôn vào khóa ĐANG DÙNG.
+ * Không có bước này thì ô cấu hình là ô ma: khóa push sinh 1 lần rồi giữ subject cũ mãi.
+ * Không throw — push là phụ trợ, đổi cấu hình không được vì thế mà lỗi.
+ */
+export async function syncVapidSubject(email: string): Promise<void> {
+  try {
+    await supabase.from('push_config')
+      .update({ subject: `mailto:${email}`, updated_at: new Date().toISOString() }).eq('id', 1)
+    _vapidCache = null   // lần gửi sau đọc lại từ DB
+  } catch { /* bỏ qua */ }
+}
+
 interface SubRow { id: string; employee_id: string; endpoint: string; p256dh: string; auth: string; failed_n: number }
 
 /** Gửi payload tới MỌI thiết bị của danh sách nhân viên. Không throw; trả về số gửi được. */

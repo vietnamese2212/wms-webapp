@@ -70,16 +70,18 @@ const CASES = [
      { 1999: [{ date: '1999-01-01', name: 'Ngoài khoảng năm' }] },
      { 2026: 'không phải mảng' }],
     {}],
-  // org_profile (14/08) — nhận diện & tham số riêng đơn vị; mặc định = đúng giá trị đơn vị 1 đang chạy
+  // org_profile (14/08) — nhận diện & tham số riêng đơn vị; mặc định = đúng giá trị đơn vị 1 đang chạy.
+  // weigh_station_code ĐÃ GỠ khỏi cờ này (nhiều trạm cân ở nhiều kho ⇒ mã trạm do agent từng trạm
+  // khai) — gửi lại khóa đó phải bị từ chối, không được âm thầm nhận rồi bỏ qua.
   ['org_profile',
-    { contact_email: 'wms@donvi2.vn', weigh_station_code: 'CN02', nmsx_alias: { B: 'P' }, assumed_carton_mm: { l: 400, w: 300, h: 200 } },
-    [{ contact_email: 'khong-phai-email', weigh_station_code: 'CN02', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 } },
-     { contact_email: 'a@b.vn', weigh_station_code: '', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 } },   // trạm rỗng
-     { contact_email: 'a@b.vn', weigh_station_code: 'X', nmsx_alias: { B: 5 }, assumed_carton_mm: { l: 400, w: 300, h: 200 } }, // alias không phải chuỗi
-     { contact_email: 'a@b.vn', weigh_station_code: 'X', nmsx_alias: {}, assumed_carton_mm: { l: 0, w: 300, h: 200 } },    // cỡ thùng ≤ 0
-     { contact_email: 'a@b.vn', weigh_station_code: 'X', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300 } },          // thiếu chiều cao
-     { contact_email: 'a@b.vn', weigh_station_code: 'X', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 }, la: 1 }], // khóa lạ
-    { contact_email: 'wms@lof.vn', weigh_station_code: 'KB01', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }],
+    { contact_email: 'wms@donvi2.vn', nmsx_alias: { B: 'P' }, assumed_carton_mm: { l: 400, w: 300, h: 200 } },
+    [{ contact_email: 'khong-phai-email', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 } },
+     { contact_email: 'a@b.vn', nmsx_alias: { B: 5 }, assumed_carton_mm: { l: 400, w: 300, h: 200 } },  // alias không phải chuỗi
+     { contact_email: 'a@b.vn', nmsx_alias: {}, assumed_carton_mm: { l: 0, w: 300, h: 200 } },          // cỡ thùng ≤ 0
+     { contact_email: 'a@b.vn', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300 } },                // thiếu chiều cao
+     { contact_email: 'a@b.vn', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 }, la: 1 }, // khóa lạ
+     { contact_email: 'a@b.vn', nmsx_alias: {}, assumed_carton_mm: { l: 400, w: 300, h: 200 }, weigh_station_code: 'KB01' }], // khóa ĐÃ GỠ
+    { contact_email: 'wms@lof.vn', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }],
 ]
 
 for (const [key, valid, invalids, def] of CASES) {

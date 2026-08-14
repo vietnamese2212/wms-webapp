@@ -34,6 +34,7 @@ import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { WH_BADGE_COLORS, whTypeBadgeCls, type WhTypeMeta } from '@/utils/cargoCategory'
+import { computedHolidaysOf } from '@/utils/vnHolidays'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -102,14 +103,13 @@ const intIn = (s: string, min: number, max: number): number | null => {
 
 // ── org_profile (đợt 3 chống hardcode 14/08) — nhận diện & tham số RIÊNG của đơn vị.
 // MIRROR mặc định BE ORG_PROFILE_DEFAULT: chưa cấu hình = đúng giá trị đang chạy của đơn vị 1.
-interface OrgProfileDraft { contact_email: string; weigh_station_code: string; nmsx_alias: string; l: string; w: string; h: string }
+interface OrgProfileDraft { contact_email: string; nmsx_alias: string; l: string; w: string; h: string }
 interface OrgProfileValue {
   contact_email: string
-  weigh_station_code: string
   nmsx_alias: Record<string, string>
   assumed_carton_mm: { l: number; w: number; h: number }
 }
-const ORG_DEFAULT: OrgProfileValue = { contact_email: 'wms@lof.vn', weigh_station_code: 'KB01', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }
+const ORG_DEFAULT: OrgProfileValue = { contact_email: 'wms@lof.vn', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }
 // alias hiện dạng "CŨ=MỚI, CŨ=MỚI" cho dễ gõ (ánh xạ vài mã, không đáng dựng bảng riêng)
 const aliasToStr = (o: Record<string, string>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(', ')
 function aliasFromStr(s: string): Record<string, string> | null {
@@ -121,32 +121,41 @@ function aliasFromStr(s: string): Record<string, string> | null {
   }
   return out
 }
-// ── vn_holidays — lịch nghỉ lễ KHAI TAY theo năm. Ô nhập dạng văn bản, mỗi dòng "YYYY-MM-DD Tên"
-// (khai vài chục ngày/năm, dựng bảng CRUD riêng là thừa). Năm KHÔNG khai → app tự tính như cũ.
-type HolidayMap = Record<string, { date: string; name: string }[]>
-function holidaysToText(h: HolidayMap): string {
-  return Object.keys(h).sort().flatMap(y => h[y].map(i => `${i.date} ${i.name}`)).join('\n')
+// ── vn_holidays — lịch nghỉ lễ KHAI theo năm. KHÔNG gõ văn bản tự do (bản đầu 14/08 dùng textarea
+// "YYYY-MM-DD Tên": gõ sai một ký tự là hỏng cả cụm, user bắt ngay) — mỗi ngày là MỘT DÒNG có ô
+// chọn ngày + ô tên, nạp sẵn được lịch app tự tính rồi sửa theo công bố của Chính phủ.
+type HolidayItem = { date: string; name: string }
+type HolidayMap = Record<string, HolidayItem[]>
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const isRealDate = (ds: string) => {
+  if (!DATE_RE.test(ds)) return false
+  const [y, mo, d] = ds.split('-').map(Number)
+  const chk = new Date(Date.UTC(y, mo - 1, d))
+  return chk.getUTCFullYear() === y && chk.getUTCMonth() === mo - 1 && chk.getUTCDate() === d
 }
-/** Văn bản → { năm: [{date,name}] }. Trả null kèm số dòng hỏng để báo lỗi rõ. */
-function holidaysFromText(text: string): { value: HolidayMap } | { errLine: number } {
-  const out: HolidayMap = {}
-  const lines = text.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-    const m = /^(\d{4}-\d{2}-\d{2})\s+(.+)$/.exec(line)
-    if (!m) return { errLine: i + 1 }
-    const [, date, name] = m
-    const [y, mo, d] = date.split('-').map(Number)
-    const chk = new Date(Date.UTC(y, mo - 1, d))
-    if (chk.getUTCFullYear() !== y || chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== d) return { errLine: i + 1 }
-    const year = date.slice(0, 4)
-    out[year] = out[year] ?? []
-    if (out[year].some(x => x.date === date)) return { errLine: i + 1 }   // trùng ngày
-    out[year].push({ date, name: name.trim().slice(0, 80) })
+/** Lỗi đầu tiên tìm thấy (câu tiếng Việt để hiện thẳng), hoặc null nếu khai hợp lệ. */
+function holidayError(h: HolidayMap): string | null {
+  for (const year of Object.keys(h).sort()) {
+    const list = h[year]
+    if (list.length > 60) return `Lịch nghỉ lễ ${year}: khai quá 60 ngày.`
+    const seen = new Set<string>()
+    for (const it of list) {
+      if (!it.date) return `Lịch nghỉ lễ ${year}: có dòng chưa chọn ngày.`
+      if (!isRealDate(it.date)) return `Lịch nghỉ lễ ${year}: ngày "${it.date}" không có thật.`
+      if (it.date.slice(0, 4) !== year) return `Lịch nghỉ lễ ${year}: ngày ${it.date} không thuộc năm ${year}.`
+      if (seen.has(it.date)) return `Lịch nghỉ lễ ${year}: ngày ${it.date} bị khai 2 lần.`
+      seen.add(it.date)
+      if (!it.name.trim()) return `Lịch nghỉ lễ ${year}: ngày ${it.date} chưa có tên.`
+    }
   }
-  return { value: out }
+  return null
 }
+/** Chuẩn hóa trước khi gửi: bỏ khoảng trắng thừa, cắt 80 ký tự, sắp theo ngày. */
+const holidaysNormalize = (h: HolidayMap): HolidayMap => Object.fromEntries(
+  Object.keys(h).sort().map(y => [y, [...h[y]]
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .map(i => ({ date: i.date, name: i.name.trim().slice(0, 80) }))]))
+
 function parseHolidays(v: unknown): HolidayMap {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
   const out: HolidayMap = {}
@@ -171,10 +180,87 @@ function parseOrg(v: unknown): OrgProfileValue {
     : ORG_DEFAULT.nmsx_alias
   return {
     contact_email: typeof o.contact_email === 'string' && o.contact_email.trim() ? o.contact_email.trim() : ORG_DEFAULT.contact_email,
-    weigh_station_code: typeof o.weigh_station_code === 'string' && o.weigh_station_code.trim() ? o.weigh_station_code.trim() : ORG_DEFAULT.weigh_station_code,
     nmsx_alias: alias,
     assumed_carton_mm: { l: num(c.l, 422), w: num(c.w, 233), h: num(c.h, 100) },
   }
+}
+
+/**
+ * Soạn lịch nghỉ lễ theo NĂM. Mỗi ngày một dòng (ô chọn ngày + tên) — không gõ văn bản tự do.
+ * "Nạp lịch tự tính" đổ ra danh sách app đang tự suy (Tết âm lịch + 4 lễ dương) để sửa cho khớp
+ * công bố hằng năm; "Bỏ khai" xóa hẳn năm đó → app quay lại tự tính.
+ * ⚠️ Phải nằm ở CẤP MODULE (khai trong component khác = ô nhập mất focus sau 1 ký tự).
+ */
+function HolidayEditor({ value, onChange, readOnly }: {
+  value: HolidayMap
+  onChange: (v: HolidayMap) => void
+  readOnly?: boolean
+}) {
+  const thisYear = new Date().getFullYear()
+  const [year, setYear] = useState(String(thisYear))
+  const yearOpts = [...new Set([...[-1, 0, 1, 2].map(d => String(thisYear + d)), ...Object.keys(value)])]
+    .sort().map(y => ({ value: y, label: `Năm ${y}` }))
+
+  const rows = value[year]                       // undefined = CHƯA khai năm này (app tự tính)
+  const computed = computedHolidaysOf(Number(year))
+  const dupes = new Set((rows ?? []).filter((r, i) => r.date && (rows ?? []).findIndex(x => x.date === r.date) !== i).map(r => r.date))
+  const setRows = (next: HolidayItem[]) => onChange({ ...value, [year]: next })
+  const dropYear = () => { const next = { ...value }; delete next[year]; onChange(next) }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <div className="w-28"><SingleSelect options={yearOpts} value={year} onChange={setYear} searchable={false} triggerClassName="w-full" /></div>
+        <span className={`text-[9px] ${rows ? 'text-sky-700' : 'text-slate-400'}`}>
+          {rows ? `đã khai ${rows.length} ngày` : `đang tự tính (${computed.length} ngày)`}
+        </span>
+      </div>
+
+      {rows && (
+        <div className="space-y-1 max-h-52 overflow-auto pr-0.5">
+          {rows.length === 0 && (
+            <p className="text-[9px] text-amber-600">Khai 0 ngày = năm {year} KHÔNG có ngày nghỉ lễ nào. Muốn quay lại lịch tự tính thì bấm "Bỏ khai".</p>
+          )}
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <input type="date" value={r.date} disabled={readOnly}
+                min={`${year}-01-01`} max={`${year}-12-31`}
+                onChange={e => setRows(rows.map((x, j) => (j === i ? { ...x, date: e.target.value } : x)))}
+                className={`h-7 w-[118px] shrink-0 rounded-md border px-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400
+                  ${dupes.has(r.date) || (r.date && r.date.slice(0, 4) !== year) ? 'border-red-400 bg-red-50' : 'border-slate-200'}`} />
+              <Input value={r.name} disabled={readOnly} placeholder="Tên ngày nghỉ"
+                onChange={e => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                className={`h-7 flex-1 min-w-0 text-[11px] px-1.5 ${r.name.trim() ? '' : 'border-red-400 bg-red-50'}`} />
+              {!readOnly && (
+                <button type="button" title="Bỏ ngày này" onClick={() => setRows(rows.filter((_, j) => j !== i))}
+                  className="h-7 w-6 shrink-0 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Button type="button" variant="outline" className="h-7 px-2 text-[10px]"
+            onClick={() => setRows([...(rows ?? []), { date: '', name: '' }])}>
+            <Plus className="h-3 w-3 mr-1" /> Thêm ngày
+          </Button>
+          <Button type="button" variant="outline" className="h-7 px-2 text-[10px]"
+            onClick={() => setRows(computed.map(c => ({ ...c })))}>
+            {rows?.length ? 'Nạp lại lịch tự tính' : `Nạp lịch tự tính (${computed.length} ngày)`}
+          </Button>
+          {rows && (
+            <Button type="button" variant="outline" className="h-7 px-2 text-[10px] text-red-600 border-red-200" onClick={dropYear}>
+              Bỏ khai năm {year}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function SystemTab({ canManage }: { canManage: boolean }) {
@@ -210,17 +296,17 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftInb,   setDraftInb]   = useState(String(srvInb))
   const [draftPack,  setDraftPack]  = useState(String(srvPack))
   const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
-    contact_email: o.contact_email, weigh_station_code: o.weigh_station_code, nmsx_alias: aliasToStr(o.nmsx_alias),
+    contact_email: o.contact_email, nmsx_alias: aliasToStr(o.nmsx_alias),
     l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
   })
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
-  const [draftHol, setDraftHol] = useState(holidaysToText(srvHol))
+  const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
-    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(holidaysToText(srvHol))
+    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -235,7 +321,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
-  const holDirty   = draftHol.trim() !== holidaysToText(srvHol).trim()
+  const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty
 
   async function applyChanges() {
@@ -266,20 +352,18 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     let org: OrgProfileValue | null = null
     if (orgDirty) {
       const email = draftOrg.contact_email.trim()
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Đơn vị: email liên hệ không hợp lệ (dùng cho thông báo đẩy).')
-      const station = draftOrg.weigh_station_code.trim()
-      if (!station || station.length > 20) return setErr('Đơn vị: mã trạm cân để trống hoặc quá dài (tối đa 20 ký tự).')
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Đơn vị: email kỹ thuật không hợp lệ (dùng cho thông báo đẩy).')
       const alias = aliasFromStr(draftOrg.nmsx_alias)
       if (!alias) return setErr('Đơn vị: mã nhà máy cũ→mới phải viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy.')
       const l = intIn(draftOrg.l, 1, 5000), w = intIn(draftOrg.w, 1, 5000), h = intIn(draftOrg.h, 1, 5000)
       if (!l || !w || !h) return setErr('Đơn vị: cỡ thùng giả định phải là số nguyên 1–5000 mm cho cả D, R, C.')
-      org = { contact_email: email, weigh_station_code: station, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
+      org = { contact_email: email, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
     }
     let hol: HolidayMap | null = null
     if (holDirty) {
-      const r = holidaysFromText(draftHol)
-      if ('errLine' in r) return setErr(`Lịch nghỉ lễ — dòng ${r.errLine} sai: mỗi dòng viết "YYYY-MM-DD Tên ngày lễ", ngày phải có thật và không trùng trong cùng năm.`)
-      hol = r.value
+      const e = holidayError(draftHol)
+      if (e) return setErr(e)
+      hol = holidaysNormalize(draftHol)
     }
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
@@ -377,30 +461,18 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
           {/* Lịch nghỉ lễ — công bố đổi hàng năm, trước 14/08 phải sửa code mới đúng */}
           <SettingGroup readOnly={!canManage} title="Lịch nghỉ lễ" meta={holRow}>
-            <SettingField label="Ngày nghỉ khai tay"
-              tip='Mỗi dòng viết "YYYY-MM-DD Tên ngày lễ". NĂM NÀO CÓ KHAI thì bảng công dùng đúng danh sách khai (kể cả nghỉ bù, Tết dài ngắn theo công bố); năm không khai vẫn tự tính bằng lịch âm + 4 lễ dương như trước. Ngày lễ = không tính là ngày cần chấm công.'>
-              <textarea value={draftHol} onChange={e => setDraftHol(e.target.value)} rows={4} spellCheck={false}
-                placeholder={'2026-01-01 Tết Dương lịch\n2026-02-17 Tết Nguyên đán (mùng 1)'}
-                className="w-full rounded-md border border-slate-200 px-1.5 py-1 text-[11px] font-mono leading-snug focus:outline-none focus:ring-1 focus:ring-sky-400" />
-              <span className="text-[9px] text-slate-400">
-                {(() => { const r = holidaysFromText(draftHol); return 'errLine' in r
-                  ? `⚠ dòng ${r.errLine} chưa đúng dạng`
-                  : Object.keys(r.value).length
-                    ? `${Object.entries(r.value).map(([y, l]) => `${y}: ${l.length} ngày`).join(' · ')}`
-                    : 'chưa khai năm nào — app tự tính lịch lễ' })()}
-              </span>
+            <SettingField label="Ngày nghỉ theo năm"
+              tip='NĂM NÀO CÓ KHAI thì bảng công dùng ĐÚNG danh sách khai (kể cả nghỉ bù, Tết dài ngắn theo công bố của Chính phủ); năm không khai vẫn tự tính bằng lịch âm + 4 lễ dương như trước. Bấm "Nạp lịch tự tính" để lấy bản nháp rồi sửa. Ngày lễ = không tính là ngày cần chấm công.'>
+              <HolidayEditor value={draftHol} onChange={setDraftHol} readOnly={!canManage} />
             </SettingField>
           </SettingGroup>
 
           {/* Nhận diện & tham số riêng của ĐƠN VỊ — trước 14/08 là hằng số của LOF nằm rải trong code */}
           <SettingGroup readOnly={!canManage} title="Đơn vị" meta={orgRow}>
-            <SettingField label="Email liên hệ" tip="Dùng làm địa chỉ liên hệ của thông báo đẩy (VAPID subject) — dịch vụ push của trình duyệt liên hệ về đây khi có sự cố. Đổi email chỉ có tác dụng với khóa push sinh MỚI.">
+            <SettingField label="Email kỹ thuật (thông báo đẩy)"
+              tip="Chuẩn Web Push bắt buộc khai MỘT địa chỉ liên hệ kỹ thuật để dịch vụ push của trình duyệt (Google/Apple) báo về khi máy chủ gửi thông báo có vấn đề. KHÔNG gửi/nhận thư ở đây, người dùng không nhìn thấy — nên điền hòm thư quản trị CÓ THẬT của đơn vị. Lưu là áp ngay cho khóa push đang dùng.">
               <Input value={draftOrg.contact_email} onChange={e => setDraftOrg(d => ({ ...d, contact_email: e.target.value }))}
-                className="h-7 w-full text-[11px] px-1.5" placeholder="wms@congty.vn" />
-            </SettingField>
-            <SettingField label="Mã trạm cân mặc định" tip="Dùng khi phần mềm trạm cân gửi phiếu mà KHÔNG khai station_code. Trạm khai đúng mã thì ô này không ảnh hưởng.">
-              <Input value={draftOrg.weigh_station_code} onChange={e => setDraftOrg(d => ({ ...d, weigh_station_code: e.target.value.toUpperCase() }))}
-                className="h-7 w-full text-[11px] px-1.5 font-mono" placeholder="KB01" />
+                className="h-7 w-full text-[11px] px-1.5" placeholder="quantri@congty.vn" />
             </SettingField>
             <SettingField label="Mã nhà máy cũ → mới" tip='Khi đọc đoạn NMSX trên tem pallet, mã cũ được quy về mã mới. Viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy. Để trống nếu đơn vị không có mã cũ.'>
               <Input value={draftOrg.nmsx_alias} onChange={e => setDraftOrg(d => ({ ...d, nmsx_alias: e.target.value.toUpperCase() }))}

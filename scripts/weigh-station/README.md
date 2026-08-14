@@ -33,6 +33,9 @@ Windows hay phần mềm cân — chỉ ĐỌC `TVTDB.mdb` (SELECT) rồi gọi 
    - `$ApiKey`  = API key scope `weigh:write` — admin WMS tạo trong Quản lý API key,
      **quy ước tên: `Kho <Tên kho>_Agent trạm cân`** (vd `Kho Ba Vì_Agent trạm cân`) — mỗi kho/trạm 1 key riêng để thu hồi độc lập
    - `$WmsUrl`  = URL WMS (production: `https://wms-webapp.vercel.app`)
+   - `$StationCode` = **mã trạm cân — BẮT BUỘC và phải KHÁC NHAU giữa các trạm** (vd `KB01`, `KB02`…).
+     Phần mềm cân đánh số phiếu (`source_id`) từ 1 ở **mỗi** trạm, nên hai trạm để chung một mã sẽ **đè phiếu của nhau**.
+     WMS chặn 2 đường: thiếu mã → 400; mã đang dùng cho kho khác → 409 `STATION_CODE_CONFLICT`. **Không có mã mặc định.**
    - `$WarehouseId` = **id Kho** của trạm cân trong WMS (mỗi phiếu đẩy lên tự gắn kho này → trang Phiếu cân filter theo Kho).
      Phiếu cũ đẩy trước khi khai kho = chưa gắn kho; gán lại 1 lần bằng SQL:
      `UPDATE "WeighTicket" SET warehouse_id = '<id kho>' WHERE station_code = 'KB01' AND warehouse_id IS NULL;`

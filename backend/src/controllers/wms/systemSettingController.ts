@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
+import { syncVapidSubject } from '../../services/pushService'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
   parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
@@ -44,8 +45,9 @@ import {
 //     khai (công bố của Chính phủ đổi hàng năm: nghỉ bù, Tết 5/7/9 ngày); năm không khai vẫn tự tính
 //     bằng thuật toán âm lịch cũ ⇒ chưa cấu hình = hành vi không đổi.
 // - org_profile: NHẬN DIỆN & THAM SỐ RIÊNG CỦA ĐƠN VỊ (14/08) — { contact_email (subject Web Push),
-//     weigh_station_code (trạm cân mặc định), nmsx_alias (gộp mã nhà máy cũ→mới), assumed_carton_mm
-//     (cỡ thùng giả định khi mã chưa khai) }. Trước đây là hằng số của riêng LOF nằm rải 4 chỗ code.
+//     nmsx_alias (gộp mã nhà máy cũ→mới), assumed_carton_mm (cỡ thùng giả định khi mã chưa khai) }.
+//     Trước đây là hằng số của riêng LOF nằm rải trong code. MÃ TRẠM CÂN từng nằm ở đây nhưng đã GỠ
+//     (14/08): đơn vị có nhiều trạm ở nhiều kho ⇒ mã trạm do agent TỪNG trạm khai, không có mặc định.
 
 // - pct_date_bands: { good, low } — THANG MÀU %Date hiển thị TOÀN APP (audit hardcode 13/08: trước
 //     đó 3 thang mâu thuẫn 70/40 · 60/30 · 20/10 rải 12 chỗ FE). pct > good = xanh · > low = vàng ·
@@ -131,7 +133,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   },
   org_profile: {
     validate: v => parseOrgProfile(v) !== null,
-    hint: '{ contact_email, weigh_station_code, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
+    hint: '{ contact_email, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
   },
 }
 
@@ -197,5 +199,11 @@ export async function updateSetting(req: Request, res: Response) {
   _labelFormatCache = null; _dcCache = null   // đổi cờ → xoá cache để có hiệu lực ngay (không đợi TTL 30s)
   invalidateAlertThresholdsCache()
   invalidateSettingsCache()
+  // Email liên hệ chỉ được dùng lúc SINH khóa push lần đầu → đổi ở đây phải ghi luôn vào khóa
+  // đang dùng, nếu không ô cấu hình không có tác dụng gì.
+  if (key === 'org_profile') {
+    const email = (value as { contact_email?: unknown } | null)?.contact_email
+    if (typeof email === 'string') await syncVapidSubject(email)
+  }
   return ok(res, data)
 }

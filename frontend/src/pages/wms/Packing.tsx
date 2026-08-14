@@ -1436,6 +1436,13 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
     }
     return m
   }, [run?.pallets])
+  // Đối chiếu SX↔Kho ở mức TRANG SỔ (user 13/08): mở detail là thấy ngay còn bao nhiêu pallet kho
+  // CHƯA quét nhập, khỏi rà từng dòng. Dòng đã hủy không tính (không còn là hàng phải nhận).
+  const recv = useMemo(() => {
+    const ps = (run?.pallets ?? []).filter(p => p.status !== 'CANCELLED')
+    const received = ps.filter(p => p.received_at).length
+    return { total: ps.length, received, pending: ps.length - received, diff: ps.filter(p => p.is_qty_diff).length }
+  }, [run?.pallets])
   const Info = ({ label, value }: { label: string; value: ReactNode }) => (
     <div className="min-w-0">
       <p className="text-[9px] uppercase tracking-wide text-slate-400">{label}</p>
@@ -1496,6 +1503,18 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
               </b>
             } />
             <Info label="Số pallet" value={<span className="tabular-nums">{run.pallet_count ?? 0}{(run.pallet_open ?? 0) > 0 ? ` (${run.pallet_open} đang mở)` : ''}</span>} />
+            {/* Kho đã nhận / chưa nhận — xác nhận LẦN 2 (kho quét nhập khớp tem pallet của sổ) */}
+            <Info label="Kho nhận" value={recv.total === 0 ? <span className="text-slate-300">—</span> : (
+              <span className={`tabular-nums ${recv.diff ? 'text-red-600 font-semibold' : recv.pending ? 'text-amber-600' : 'text-green-700'}`}
+                title={recv.pending
+                  ? `${recv.pending} pallet đã ghi sổ nhưng kho CHƯA quét nhập${recv.diff ? ` · ${recv.diff} pallet lệch số thùng sổ↔kho` : ''}`
+                  : `Kho đã quét nhập đủ ${recv.total} pallet${recv.diff ? ` · ${recv.diff} pallet lệch số thùng sổ↔kho` : ''}`}>
+                {recv.diff > 0 && <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />}
+                {recv.received}/{recv.total} đã nhận
+                {recv.pending > 0 && <span className="font-normal"> · {recv.pending} chưa</span>}
+                {recv.diff > 0 && <span className="font-normal"> · {recv.diff} lệch SL</span>}
+              </span>
+            )} />
             <Info label="Người mở" value={run.opened_by_name ?? '—'} />
             <Info label="Người đóng" value={run.closed_by_name ?? '—'} />
             <Info label="Ghi chú" value={run.note ?? '—'} />

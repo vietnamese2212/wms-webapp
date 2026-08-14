@@ -87,7 +87,10 @@ function VisionConfigCard() {
 
   const busy = saveMut.isPending || testMut.isPending
   const curProvider = provider || cfg?.provider || 'gemini'
-  const providerLabel = AI_PROVIDERS.find(p => p.value === curProvider)?.label ?? curProvider
+  const labelOf = (v?: string) => AI_PROVIDERS.find(p => p.value === v)?.label ?? v ?? ''
+  // ⚠️ Badge trạng thái phải đọc ĐÚNG giá trị ĐÃ LƯU (cfg), KHÔNG lấy lựa chọn đang nháp — trộn hai
+  // nguồn thì badge ghi "Đang dùng · OpenAI GPT · gemini-flash-lite-latest" khi mới chỉ đổi dropdown.
+  const savedProviderLabel = labelOf(cfg?.provider)
   // Đổi nhà cung cấp mà chưa gõ model → hiện model mặc định của bên đó (BE cũng tự đắp y hệt)
   const modelShown = model || (provider && provider !== cfg?.provider ? (cfg?.default_models?.[provider] ?? '') : (cfg?.model ?? ''))
   return (
@@ -98,7 +101,12 @@ function VisionConfigCard() {
         </span>
         {cfg && (
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
-            {cfg.configured ? `Đang dùng · ${providerLabel} · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
+            {cfg.configured ? `Đang dùng · ${savedProviderLabel} · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
+          </span>
+        )}
+        {cfg?.configured && (provider && provider !== cfg.provider) && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+            Chưa lưu — sẽ đổi sang {labelOf(provider)}
           </span>
         )}
       </div>

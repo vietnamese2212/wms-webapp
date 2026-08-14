@@ -164,7 +164,9 @@ async function listGeminiModels(key: string): Promise<string[]> {
     return (j.models ?? [])
       .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
       .map(m => (m.name ?? '').replace(/^models\//, ''))
-      .filter(n => !/tts|image|audio|embed|aqa|learnlm/.test(n))
+      // bỏ nhánh KHÔNG dùng để đọc ảnh tem: sinh ảnh/âm thanh/nhúng + các bản chuyên dụng
+      // (deep-research, computer-use, robotics…) — chọn nhầm là tốn tiền mà kết quả vô nghĩa
+      .filter(n => !/tts|image|audio|embed|aqa|learnlm|deep-research|computer-use|antigravity|robotics|guard/.test(n))
       .sort()
   } catch { return [] }
 }

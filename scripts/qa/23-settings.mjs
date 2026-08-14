@@ -8,8 +8,12 @@ import { login, api, check, finish, BASE } from './lib.mjs'
 
 // So sánh GIÁ TRỊ, không so thứ tự khóa — jsonb của Postgres tự đảo thứ tự key khi lưu
 // ({photos,feed} lưu ra {feed,photos}), so JSON.stringify thô là fail oan (bắt lượt chạy đầu).
-const canon = (v) => JSON.stringify(v && typeof v === 'object' && !Array.isArray(v)
-  ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v)
+// Sắp ĐỆ QUY: cờ lồng nhau (org_profile.assumed_carton_mm {l,w,h} lưu ra {h,l,w}) cũng bị đảo ở
+// TẦNG TRONG — bản sort-1-tầng báo oan lượt đầu chạy org_profile (14/08).
+const sortDeep = (v) => Array.isArray(v) ? v.map(sortDeep)
+  : (v && typeof v === 'object') ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sortDeep(v[k])]))
+  : v
+const canon = (v) => JSON.stringify(sortDeep(v))
 
 console.log(`── THAM SỐ VẬN HÀNH SystemSetting · ${BASE.replace('https://', '')} ──`)
 

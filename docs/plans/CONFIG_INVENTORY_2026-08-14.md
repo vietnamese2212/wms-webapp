@@ -38,7 +38,20 @@ Luật an toàn/bất biến: chặn xuất sớm `FUTURE_DATE` · 1 xe 1 ngày 
 Biên kỹ thuật lượt quét cảnh báo: cửa sổ gate 48h · BE_ERRORS 24h · packing 7 ngày · `EXPIRY_WINDOW_DAYS` (tự suy 6×PCT_WARN) — đã ghi chú tại `alertScanner.ts`.
 Trần chống nhầm (thùng >100k, sản lượng >10tr) và format mã tự sinh (đổi = phá parser ngược).
 
-## Thứ tự đề xuất
+## ĐÃ LÀM — 14/08 (user duyệt "ok làm đi")
+
+| # | Trạng thái | Cách xử |
+|---|---|---|
+| 4 hardcode LOF | ✅ XONG | gom vào `org_profile` (email liên hệ · mã trạm cân · ánh xạ mã nhà máy cũ→mới · cỡ thùng giả định) + CORS đọc ENV `CORS_ORIGINS`. **Mặc định = đúng giá trị đang chạy** nên đơn vị 1 không đổi hành vi |
+| 1 lễ/Tết | ✅ XONG | `vn_holidays` khai theo năm ("YYYY-MM-DD Tên", mỗi dòng một ngày). Năm KHÔNG khai vẫn tự tính bằng lịch âm như cũ |
+| 2 ca làm việc | ⚠️ LÀM MỘT NỬA | gom 7 chỗ khai ca → `frontend/src/config/shifts.ts`, giữ nguyên 100% nhãn/màu/thứ tự. **Chưa** thành danh mục động: thuật toán phân ca (tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua") gắn chặt đúng 4 mã — cần việc riêng, đo lại với HR |
+| 3 tên tiếng Việt | ✅ XONG | cờ `JobTitle.is_driver` + `Department.is_carrier` (migration `20260814_role_flags`, backfill theo tên đang dùng + DO-block gác) · ô tick trong form Chức danh/Phòng ban · ratchet `role_by_vietnamese_name` baseline 0 |
+| 6 thang màu | ✅ phần MÂU THUẪN | dwell Giám sát vận hành đọc `GATE_WARN_MIN`/`GATE_CRIT_MIN` (90 vàng · 180 đỏ) thay 90/45 tự đặt. Các thang còn lại đo chỉ số KHÁC NHAU (sức chứa · tỷ lệ fill · tuân thủ · bao phủ · chính xác) → mỗi cái một ngưỡng là đúng, **không gộp** |
+| 5 giờ công 8h · 7 `ACTIVE_STATUSES` · 8 danh mục nhỏ · 9 `const TODAY` | ⏳ còn | gom khi đụng vào từng file (giá trị thấp, churn cao nếu sweep ngay) |
+
+**Ghi chú `SPECIAL_VTYPES`**: đo lại thì `'Chỉ trả pallet'` / `'Khác'` KHÔNG phải tên trong danh mục Loại xe (bảng `VehicleType` chỉ có XE 4 PALLET · XE CONTAINER · …) — đây là 2 lựa chọn ảo của riêng màn Đăng ký cổng, không ai đổi tên được ⇒ không thuộc lớp lỗi "so tên danh mục", giữ nguyên.
+
+## Thứ tự đề xuất (bản gốc)
 1. **#4 hardcode LOF** — bắt buộc trước khi dựng đơn vị 2.
 2. **#1 lễ/Tết + #2 ca làm việc** — chu kỳ đổi hàng năm, đang phải nhờ lập trình viên.
 3. **#3 tên tiếng Việt → cờ danh mục** — lớp lỗi âm thầm.

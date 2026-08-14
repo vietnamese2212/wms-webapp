@@ -126,8 +126,16 @@ async function discoverModel(provider: VisionProvider, key: string): Promise<str
   return provider === 'openai' ? discoverOpenAIModel(key) : discoverGeminiModel(key)
 }
 
-// OpenAI cũng có ListModels — lọc bản đọc được ảnh, ưu tiên bản "mini" (rẻ nhất trong nhóm vision).
-async function discoverOpenAIModel(key: string): Promise<string | null> {
+// Model NHỎ/RẺ hay mang các chữ này trong tên — dùng để gợi ý "rẻ" trên danh sách chọn.
+const CHEAP_RE = /(mini|nano|lite|flash|small)/i
+
+/**
+ * Liệt kê model ĐỌC ĐƯỢC ẢNH của chính key đang dùng (không phải danh sách viết cứng trong code —
+ * tên model hai bên đổi/nghỉ hưu liên tục). Lọc theo TÊN vì cả hai API đều không khai "có vision":
+ * bỏ nhánh chỉ-âm-thanh / nhúng / sinh ảnh. Model lọt lưới mà không đọc được ảnh thì bấm
+ * "Kiểm tra" sẽ báo lỗi ngay — không âm thầm hỏng luồng quét.
+ */
+async function listOpenAIModels(key: string): Promise<string[]> {
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10_000)
@@ -135,34 +143,71 @@ async function discoverOpenAIModel(key: string): Promise<string | null> {
       headers: { Authorization: `Bearer ${key}` }, signal: ctrl.signal,
     })
     clearTimeout(timer)
-    if (!r.ok) return null
+    if (!r.ok) return []
     const j = await r.json() as { data?: Array<{ id?: string }> }
-    const ids = (j.data ?? []).map(m => m.id ?? '')
-      .filter(id => /^(gpt-\d|gpt-4o|o\d)/.test(id))
-      .filter(id => !/audio|realtime|transcribe|tts|embed|moderation|search|instruct/.test(id))
-    const pick = (re: RegExp) => ids.filter(id => re.test(id)).sort().reverse()[0] ?? null
-    return pick(/mini/) ?? ids.sort().reverse()[0] ?? null
-  } catch { return null }
+    return (j.data ?? []).map(m => m.id ?? '')
+      // các dòng CÓ đọc ảnh: gpt-4o / gpt-4.1 / gpt-5… và nhóm suy luận o3/o4 trở lên
+      .filter(id => /^(gpt-4o|gpt-4\.1|gpt-[5-9]|o[3-9])/.test(id))
+      .filter(id => !/audio|realtime|transcribe|tts|embed|moderation|search|image|dall|instruct/.test(id))
+      .sort()
+  } catch { return [] }
 }
 
-async function discoverGeminiModel(key: string): Promise<string | null> {
+async function listGeminiModels(key: string): Promise<string[]> {
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10_000)
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${encodeURIComponent(key)}`, { signal: ctrl.signal })
     clearTimeout(timer)
-    if (!r.ok) return null
+    if (!r.ok) return []
     const j = await r.json() as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> }
-    const gen = (j.models ?? [])
+    return (j.models ?? [])
       .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
       .map(m => (m.name ?? '').replace(/^models\//, ''))
-      .filter(n => !/preview|exp|thinking|tts|image|audio|embed/.test(n))
-    const pick = (re: RegExp) => {
-      const c = gen.filter(n => re.test(n))
-      return c.find(n => n.endsWith('-latest')) ?? c.sort().reverse()[0] ?? null
-    }
-    return pick(/flash-lite/) ?? pick(/flash/) ?? gen[0] ?? null
-  } catch { return null }
+      .filter(n => !/tts|image|audio|embed|aqa|learnlm/.test(n))
+      .sort()
+  } catch { return [] }
+}
+
+const listModels = (provider: VisionProvider, key: string) =>
+  provider === 'openai' ? listOpenAIModels(key) : listGeminiModels(key)
+
+// Chọn model TỰ ĐỘNG khi model đang dùng nghỉ hưu: ưu tiên bản rẻ (mini/lite/flash).
+async function discoverOpenAIModel(key: string): Promise<string | null> {
+  const ids = await listOpenAIModels(key)
+  return ids.filter(id => CHEAP_RE.test(id)).sort().reverse()[0] ?? ids.sort().reverse()[0] ?? null
+}
+
+async function discoverGeminiModel(key: string): Promise<string | null> {
+  // Bản tự-chọn thì tránh nhánh preview/exp/thinking (không ổn định cho việc chạy hằng ngày);
+  // danh sách CHO NGƯỜI CHỌN thì vẫn hiện đủ để ai muốn thử vẫn chọn được.
+  const gen = (await listGeminiModels(key)).filter(n => !/preview|exp|thinking/.test(n))
+  const pick = (re: RegExp) => {
+    const c = gen.filter(n => re.test(n))
+    return c.find(n => n.endsWith('-latest')) ?? c.sort().reverse()[0] ?? null
+  }
+  return pick(/flash-lite/) ?? pick(/flash/) ?? gen[0] ?? null
+}
+
+// POST /wms/vision-config/models — { provider?, api_key? } → danh sách model đọc-ảnh của CHÍNH key.
+// api_key bỏ trống = dùng key đã lưu (cho phép xem danh sách trước khi lưu key mới).
+export async function listVisionModels(req: Request, res: Response) {
+  if (!isSuper(req)) return fail(res, 'Chỉ Admin', 403)
+  const { provider, api_key } = req.body as { provider?: string; api_key?: string }
+  const cur = await getCfg()
+  const prov: VisionProvider = isProvider(provider) ? provider : (cur?.provider ?? 'gemini')
+  const raw = typeof api_key === 'string' && api_key.trim() ? api_key.trim() : null
+  // Key đã lưu chỉ dùng được khi hỏi ĐÚNG nhà cung cấp của nó (key Google không hỏi được OpenAI)
+  const key = raw ?? (cur && cur.provider === prov ? decryptSecret(cur.key_enc) : null)
+  if (!key) return fail(res, 422, 'VISION_NOT_CONFIGURED', `Chưa có API key của ${prov} — dán key vào ô rồi thử lại`)
+
+  const models = await listModels(prov, key)
+  if (!models.length) return fail(res, 422, 'VISION_FAILED', 'Không lấy được danh sách model (key sai hoặc bị chặn mạng)')
+  return ok(res, {
+    provider: prov,
+    models: models.map(id => ({ id, cheap: CHEAP_RE.test(id) })),
+    suggested: await discoverModel(prov, key),
+  })
 }
 
 async function persistModel(model: string) {

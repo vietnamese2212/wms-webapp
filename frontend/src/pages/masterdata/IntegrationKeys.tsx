@@ -84,9 +84,18 @@ function VisionConfigCard() {
     onSuccess: (d) => setMsg({ kind: 'ok', text: `Key hoạt động — ${d.model} phản hồi ${d.latency_ms}ms` }),
     onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
   })
+  // Danh sách model lấy TỪ CHÍNH KEY (không phải danh sách viết cứng — tên model hai bên đổi liên tục)
+  const modelsMut = useMutation({
+    mutationFn: (body: { provider: string; api_key?: string }) =>
+      apiClient.post('/wms/vision-config/models', body).then(r => r.data.data as { models: { id: string; cheap: boolean }[]; suggested: string | null }),
+    onSuccess: (d) => setMsg({ kind: 'ok', text: `Đã tải ${d.models.length} model — bản rẻ nhất gợi ý: ${d.suggested ?? '—'}` }),
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
 
-  const busy = saveMut.isPending || testMut.isPending
+  const busy = saveMut.isPending || testMut.isPending || modelsMut.isPending
   const curProvider = provider || cfg?.provider || 'gemini'
+  // Danh sách chỉ đúng với nhà cung cấp vừa hỏi; đổi bên khác thì phải tải lại
+  const modelList = modelsMut.data && modelsMut.variables?.provider === curProvider ? modelsMut.data.models : null
   const labelOf = (v?: string) => AI_PROVIDERS.find(p => p.value === v)?.label ?? v ?? ''
   // ⚠️ Badge trạng thái phải đọc ĐÚNG giá trị ĐÃ LƯU (cfg), KHÔNG lấy lựa chọn đang nháp — trộn hai
   // nguồn thì badge ghi "Đang dùng · OpenAI GPT · gemini-flash-lite-latest" khi mới chỉ đổi dropdown.
@@ -122,11 +131,24 @@ function VisionConfigCard() {
             </div>
           </div>
           <div>
-            <SettingLabel text="Model" tip={<>Tên model của nhà cung cấp. Để trống = dùng mặc định
-              ({cfg?.default_models?.[curProvider] ?? '—'}). Model nghỉ hưu / gõ sai → hệ thống <b>tự dò model còn sống</b> của chính key đó rồi lưu lại,
-              không cần ai sửa tay.</>} />
-            <Input value={modelShown} onChange={e => setModel(e.target.value)}
-              placeholder={cfg?.default_models?.[curProvider] ?? ''} className="h-8 w-52 text-[12px] font-mono" />
+            <SettingLabel text="Model" tip={<>Bấm <b>Tải model</b> để lấy danh sách <b>trực tiếp từ tài khoản của bạn</b> (không phải danh sách
+              viết sẵn — tên model hai bên đổi liên tục), rồi chọn. Bản gắn nhãn <b>rẻ</b> là dòng nhỏ (mini/nano/lite/flash).<br />
+              Để trống = mặc định {cfg?.default_models?.[curProvider] ?? '—'}. Model nghỉ hưu / gõ sai → hệ thống <b>tự dò model còn sống</b> của chính key đó rồi lưu lại.<br />
+              Danh sách lọc theo tên nên vẫn có thể lọt bản không đọc được ảnh — bấm <b>Kiểm tra</b> là biết ngay.</>} />
+            <div className="flex items-center gap-1">
+              <div className="w-56">
+                {modelList
+                  ? <SingleSelect
+                      options={modelList.map(m => ({ value: m.id, label: m.id, sub: m.cheap ? 'rẻ' : undefined }))}
+                      value={modelShown} onChange={setModel} triggerClassName="w-full" />
+                  : <Input value={modelShown} onChange={e => setModel(e.target.value)}
+                      placeholder={cfg?.default_models?.[curProvider] ?? ''} className="h-8 w-full text-[12px] font-mono" />}
+              </div>
+              <Button size="sm" variant="outline" className="h-8 px-2 text-[11px]" disabled={busy}
+                onClick={() => { setMsg(null); modelsMut.mutate({ provider: curProvider, ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}) }) }}>
+                {modelsMut.isPending ? 'Đang tải…' : 'Tải model'}
+              </Button>
+            </div>
           </div>
           <div>
             <SettingLabel text="API key" tip={<>Lấy key tại <b>{AI_KEY_PAGE[curProvider]}</b>. Key được lưu <b>mã hóa</b>, không hiện lại

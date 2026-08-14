@@ -71,6 +71,7 @@ router.delete('/integration-keys/:id',       integrationKeys.deleteKey)   // xó
 router.get('/vision-config',       vision.getVisionConfig)
 router.put('/vision-config',       vision.saveVisionConfig)
 router.post('/vision-config/test', vision.testVisionConfig)
+router.post('/vision-config/models', vision.listVisionModels)   // liệt kê model đọc-ảnh của chính key
 
 // Lookup values (loại xuất, v.v.)
 router.get('/lookup',        lookup.listLookup)

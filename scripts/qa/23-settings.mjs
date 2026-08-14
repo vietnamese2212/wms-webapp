@@ -46,6 +46,16 @@ await login()
     const r = await api('/wms/vision-config', 'PUT', body)
     check(`vision-config: ${label} → 400`, r.s === 400, `http=${r.s}`)
   }
+  // Danh sách model: hỏi nhà cung cấp KHÔNG có key đã lưu → 422 rõ ràng, KHÔNG dùng nhầm key bên kia
+  {
+    const cur = (await api('/wms/vision-config', 'GET')).j?.data ?? {}
+    const other = cur.provider === 'openai' ? 'gemini' : 'openai'
+    const r = await api('/wms/vision-config/models', 'POST', { provider: other })
+    check(`vision-models: hỏi ${other} khi chưa có key của bên đó → 422`,
+      r.s === 422 && r.j?.error?.code === 'VISION_NOT_CONFIGURED', `http=${r.s} code=${r.j?.error?.code}`)
+    const bad = await api('/wms/vision-config/models', 'POST', { provider: 'claude' })
+    check('vision-models: provider lạ → dùng cấu hình hiện tại, KHÔNG 500', bad.s !== 500, `http=${bad.s}`)
+  }
   const g = await api('/wms/vision-config', 'GET')
   const d = g.j?.data ?? {}
   check('vision-config: GET nêu đủ nhà cung cấp hỗ trợ + KHÔNG lộ key',

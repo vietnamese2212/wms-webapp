@@ -13,6 +13,8 @@ export interface User {
   warehouse_name?: string
   job_title_id?: string | null
   job_title_name?: string | null
+  is_driver?: boolean          // chức danh TÀI XẾ (cờ JobTitle.is_driver — KHÔNG so tên)
+  is_carrier_dept?: boolean    // phòng ban là ĐƠN VỊ VẬN TẢI (cờ Department.is_carrier)
   ncc_id?: string | null
   employee_code?: string | null
   // Permission system fields
@@ -31,6 +33,7 @@ export interface Department {
   name:            string
   code:            string
   allowed_modules: AppModule[]
+  is_carrier?:     boolean       // phòng ban là ĐƠN VỊ VẬN TẢI (nhà xe) — cờ thay việc so tên
   is_active:       boolean
   created_at?:     string
   updated_at?:     string
@@ -44,6 +47,7 @@ export interface JobTitle {
   department_id:      string
   parent_id:          string | null
   in_chart?:          boolean
+  is_driver?:         boolean      // chức danh TÀI XẾ — cờ thay việc so tên 'Lái xe'
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions

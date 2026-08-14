@@ -60,7 +60,11 @@ function buildRealtimeToken(empId: string): string | null {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string, jobTitleName?: string) {
+// jt = dòng JobTitle (kèm cờ is_driver + phòng ban). Cờ VAI TRÒ đi theo user để FE khỏi so TÊN
+// chức danh/phòng ban (audit 14/08 — đổi tên danh mục là luồng tài xế hỏng âm thầm).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string, jt?: any) {
+  const dept = jt?.Department ?? null
   return {
     id:                 emp.id,
     name:               emp.name,
@@ -70,7 +74,10 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     warehouse_id:       emp.warehouse_id ?? null,
     warehouse_name:     warehouseName ?? null,
     job_title_id:       emp.job_title_id ?? null,
-    job_title_name:     jobTitleName ?? null,
+    job_title_name:     jt?.name ?? null,
+    is_driver:          jt?.is_driver === true,                 // chức danh TÀI XẾ (cờ, không so tên)
+    department:         dept?.name ?? null,
+    is_carrier_dept:    dept?.is_carrier === true,              // phòng ban là ĐƠN VỊ VẬN TẢI
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
@@ -122,7 +129,7 @@ export async function login(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,7 +147,7 @@ export async function login(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name) })
+    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData) })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -166,7 +173,7 @@ export async function me(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,7 +190,7 @@ export async function me(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name), token, realtime_token: buildRealtimeToken(emp.id) })
+    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData), token, realtime_token: buildRealtimeToken(emp.id) })
   } catch (e) { return fail(res, String(e)) }
 }
 

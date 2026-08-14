@@ -277,6 +277,17 @@ const RULES = [
   // không cảnh báo, tsc/build đều xanh (bug thật 13/08 ở tab Hệ thống: đo trên Preview
   // document.activeElement = BODY ngay sau ký tự đầu). Cách đúng: đưa ra module-level và truyền props
   // (mẫu: components/shared/SettingsForm.tsx). Baseline 0 — luật chỉ đếm ca CÓ ô nhập.
+  // Quyết định HÀNH VI bằng cách so TÊN danh mục tiếng Việt ('Lái xe', 'Đơn vị vận tải'): đổi tên
+  // chức danh/phòng ban là việc quản trị hoàn toàn hợp lệ, nhưng luồng gán xe / màn hình tài xế
+  // biến mất ÂM THẦM — không lỗi, không cảnh báo. Nay đọc CỜ danh mục (JobTitle.is_driver ·
+  // Department.is_carrier, migration 20260814_role_flags). Baseline 0.
+  {
+    key: 'role_by_vietnamese_name',
+    label: "quyết định vai trò bằng so TÊN tiếng Việt ('Lái xe' / 'Đơn vị vận tải') — phải đọc cờ is_driver / is_carrier",
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /[=!]==\s*'(Lái xe|Đơn vị vận tải)'|'(Lái xe|Đơn vị vận tải)'\s*===/.test(line), s),
+  },
   {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',

@@ -245,7 +245,7 @@ function BookSlotDialog({ vslot, order, onClose }: {
 }) {
   const updateSlot = useUpdateVehicleSlot()
   const user = useAuthStore(s => s.user)
-  const isDriver = user?.job_title_name === 'Lái xe'
+  const isDriver = user?.is_driver === true      // cờ chức danh, không so tên (audit 14/08)
 
   // Không có ĐVVT thì KHÔNG gọi — params undefined trước đây kéo cả đội xe về vô ích
   const { data: nccVehicles = [] } = useTmsVehicles(
@@ -3853,7 +3853,7 @@ export default function TMSBookings() {
   const canView       = can(perms, 'tms_plan', 'view')
   const canUpload         = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
   const canUploadInbound  = can(perms, 'tms_plan', 'upload_inbound')
-  const isNccUser = user?.department === 'Đơn vị vận tải'
+  const isNccUser = user?.is_carrier_dept === true   // cờ phòng ban nhà xe, không so tên
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   // Filter state per-user qua useWmsFilterStore (scopedPersist) — KHÔNG localStorage thuần (sẽ dùng chung giữa user)

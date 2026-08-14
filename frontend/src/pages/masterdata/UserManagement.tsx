@@ -215,10 +215,13 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [nccId,    setNccId]    = useState(emp?.ncc_id ?? '')
   const [driverVehicleId, setDriverVehicleId] = useState<string>('')
 
-  const selectedDeptName = departments.find(d => d.id === deptId)?.name ?? ''
-  const selectedJtName   = jobTitles.find(jt => jt.id === jobTitleId)?.name ?? ''
-  const isDriverRole     = selectedDeptName === 'Đơn vị vận tải' && selectedJtName === 'Lái xe'
-  const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
+  // Vai trò đọc theo CỜ của danh mục (JobTitle.is_driver · Department.is_carrier), KHÔNG so tên
+  // tiếng Việt — đổi tên chức danh/phòng ban từng làm luồng gán xe biến mất âm thầm (audit 14/08).
+  const selectedDept     = departments.find(d => d.id === deptId)
+  const selectedJt       = jobTitles.find(jt => jt.id === jobTitleId)
+  const isCarrierDept    = selectedDept?.is_carrier === true
+  const isDriverRole     = isCarrierDept && selectedJt?.is_driver === true
+  const isDispatcherRole = isCarrierDept && !!jobTitleId && !isDriverRole
 
   // Chỉ gọi khi thực sự cần gán xe cho tài khoản Lái xe — trước đây các trường hợp còn lại
   // truyền params `undefined` nên vẫn tải TOÀN BỘ đội xe (953 xe ≈ 439KB) mà không dùng đến.
@@ -546,6 +549,7 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
   const [name, setName] = useState(dept?.name ?? '')
   const [code, setCode] = useState(dept?.code ?? '')
   const [isActive, setIsActive] = useState(dept?.is_active ?? true)
+  const [isCarrier, setIsCarrier] = useState(dept?.is_carrier ?? false)
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateDepartment()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateDepartment()
@@ -556,9 +560,9 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 
   function handleSubmit() {
     if (isEdit) {
-      update({ id: dept.id, name, code, is_active: isActive }, { onSuccess: onClose })
+      update({ id: dept.id, name, code, is_active: isActive, is_carrier: isCarrier }, { onSuccess: onClose })
     } else {
-      create({ name, code }, { onSuccess: onClose })
+      create({ name, code, is_carrier: isCarrier }, { onSuccess: onClose })
     }
   }
 
@@ -585,6 +589,16 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
             <Label className="text-xs">Mã *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="KHO, BV, QA…" />
           </div>
+          {/* Cờ vai trò — app đọc cờ này thay vì so tên phòng ban (đổi tên không làm hỏng luồng) */}
+          <div className="flex items-start gap-2">
+            <input id="dept-carrier" type="checkbox" checked={isCarrier}
+              onChange={e => setIsCarrier(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="dept-carrier" className="text-sm cursor-pointer leading-snug">
+              Là đơn vị vận tải (nhà xe)
+              <span className="block text-[11px] font-normal text-slate-500">Tài khoản thuộc phòng ban này đi luồng nhà xe: gán xe cho tài xế, xem lịch xe của mình.</span>
+            </Label>
+          </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="dept-active" type="checkbox" checked={isActive}
@@ -610,6 +624,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const [name,       setName]       = useState(jt?.name          ?? '')
   const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
+  const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateJobTitle()
@@ -637,7 +652,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     const cleanPerms = Object.fromEntries(
       Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
     )
-    const payload = { name, department_id: deptId, module_permissions: cleanPerms }
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -787,6 +802,16 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             </div>
           )}
 
+          {/* Cờ vai trò — thay việc so tên 'Lái xe'; đổi tên chức danh không làm mất luồng tài xế */}
+          <div className="flex items-start gap-2">
+            <input id="jt-driver" type="checkbox" checked={isDriver}
+              onChange={e => setIsDriver(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="jt-driver" className="text-sm cursor-pointer leading-snug">
+              Là chức danh tài xế
+              <span className="block text-[11px] font-normal text-slate-500">Tài khoản mang chức danh này được gán xe và mở màn hình tài xế (chỉ có tác dụng khi phòng ban là đơn vị vận tải).</span>
+            </Label>
+          </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="jt-active" type="checkbox" checked={isActive}

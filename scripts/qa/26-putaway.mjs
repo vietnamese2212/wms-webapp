@@ -28,18 +28,29 @@ const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho
 const created = { locs: [], orders: [] }
 let whId = null, whBackup = null
 
+// Dọn theo TAG chứ không chỉ theo id đã thu được: lần chạy hỏng giữa chừng (vd đọc sai shape
+// response nên không lấy được id) sẽ để lại phiếu MỒ CÔI — đã dính đúng lần đầu chạy gói này,
+// sót 2 phiếu OPEN trên staging. Quét theo `notes` là lưới phòng thủ, id chỉ là đường nhanh.
+async function sweepByTag() {
+  for (const o of await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)) {
+    await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`)
+    await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`)
+  }
+  for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*`))
+    await restWrite('Location', 'DELETE', `id=eq.${o.id}`)
+}
 async function cleanup() {
   for (const id of created.orders) {
     await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${id}`)
     await restWrite('ProductionImport', 'DELETE', `id=eq.${id}`)
   }
   for (const id of created.locs) await restWrite('Location', 'DELETE', `id=eq.${id}`)
+  await sweepByTag()
   // Gói QA KHÔNG được để lại kho đang bật "bắt buộc" — cả app sẽ chặn oan
   if (whId && whBackup) await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, whBackup)
 }
-// Tàn dư lần chạy hỏng giữa chừng → dọn trước (fixture phải TỰ HỒI PHỤC)
-for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*`))
-  await restWrite('Location', 'DELETE', `id=eq.${o.id}`)
+// Tàn dư lần chạy trước → dọn TRƯỚC khi dựng fixture (gói phải TỰ HỒI PHỤC)
+await sweepByTag()
 
 const PUT_COLS = 'putaway_priority,putaway_required,putaway_max_materials,putaway_date_mix,' +
   'putaway_block_pick_face,putaway_block_qa_hold,putaway_block_full,putaway_single_ncc'
@@ -189,9 +200,10 @@ try {
 } finally {
   await cleanup()
   const left = await restAll('Location', `select=id&location_code=like.${TAG}-*`)
+  const leftPo = await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)
   const [whNow] = await restAll('Warehouse', `select=putaway_required&id=eq.${whId}`)
-  check('[dọn] không còn fixture sót + kho trả về nguyên trạng',
-    left.length === 0 && whNow?.putaway_required === (whBackup?.putaway_required ?? false),
-    `vị trí sót ${left.length}`)
+  check('[dọn] không còn fixture sót (kể cả phiếu mồ côi) + kho trả về nguyên trạng',
+    left.length === 0 && leftPo.length === 0 && whNow?.putaway_required === (whBackup?.putaway_required ?? false),
+    `vị trí ${left.length} · phiếu ${leftPo.length}`)
   finish('PUTAWAY')
 }

@@ -233,4 +233,19 @@ for (const [table, label] of [
       : 'RPC rpc_source chưa apply (migration 20260815f)')
 }
 
+// 13. HÀM SECURITY DEFINER KHÔNG ĐƯỢC MỞ CHO ANON (chốt 15/08).
+//     Đo thật bằng chính anon key (khoá này nằm CÔNG KHAI trong bundle FE): `packing_logs_recon`
+//     trả HTTP 200 kèm dữ liệu nghiệp vụ THẬT (id pallet, id trang sổ, id NGƯỜI đóng gói);
+//     `packing_open_run` trả lỗi NGHIỆP VỤ — tức đã chạy qua tầng quyền, payload đủ là anon TẠO
+//     ĐƯỢC trang sổ. Gốc: Postgres mặc định cấp EXECUTE cho PUBLIC, và SECURITY DEFINER chạy bằng
+//     quyền chủ sở hữu nên RLS — lá chắn của cả app — KHÔNG chặn được gì.
+{
+  const rows = await restRpc('secdef_public_grants')
+  check('Không hàm SECURITY DEFINER nào còn mở cho PUBLIC/anon (RLS không che được lớp này)',
+    Array.isArray(rows) && rows.length === 0,
+    Array.isArray(rows)
+      ? (rows.length ? `HỞ: ${rows.slice(0, 5).map(r => `${r.fn}→${r.grantee}`).join(', ')}` : 'quét toàn schema public')
+      : 'RPC secdef_public_grants chưa apply (migration 20260815j)')
+}
+
 finish('INVARIANT')

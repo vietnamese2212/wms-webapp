@@ -5,7 +5,7 @@
 // Nợ cũ không chặn (không ép mass-rewrite — CLAUDE.md cấm churn), nhưng KHÔNG được tăng thêm.
 // usage: node scripts/qa/09-static-gate.mjs [--update-baseline]
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
-import { dirname, join } from 'path'
+import { dirname, join, sep } from 'path'
 import { fileURLToPath } from 'url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -33,6 +33,38 @@ function countMatches(roots, exts, test, sampleOut) {
       lines.forEach((line, i) => {
         if (test(line)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
       })
+    }
+  }
+  return n
+}
+
+// Đếm lời gọi hook DANH MỤC LỚN mà không khai `limit` (= kéo cả danh mục về trình duyệt).
+// Chiến dịch 27/07 dọn Mã hàng nhưng bỏ sót VỊ TRÍ: 15/08 đo lại còn 6 màn nạp trọn vị trí của
+// kho (Bàu Bàng 1.517 = 616KB/lần + BE quét InventoryEntry chunk 300 để tính used_slots).
+// Hợp lệ khi có `limit` (typeahead) hoặc `ids` (tra nhãn giá trị đang chọn).
+// Bỏ qua chính file định nghĩa hook; đọc cả khối tham số nhiều dòng (ngoặc cân bằng).
+function countCatalogueFullLoad(sampleOut) {
+  const HOOKS = ['useLocationsReal', 'useMaterials']
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.ts', '.tsx'])) {
+    if (f.endsWith(`api${sep}hooks.ts`)) continue
+    const src = readFileSync(f, 'utf8')
+    for (const hook of HOOKS) {
+      const re = new RegExp(`\\b${hook}\\s*\\(`, 'g')
+      let m
+      while ((m = re.exec(src))) {
+        let i = m.index + m[0].length, depth = 1
+        while (i < src.length && depth > 0) {
+          if (src[i] === '(') depth++
+          else if (src[i] === ')') depth--
+          i++
+        }
+        const args = src.slice(m.index, i)
+        if (/\blimit\b/.test(args) || /\bids\b/.test(args)) continue
+        n++
+        if (sampleOut && sampleOut.length < 5)
+          sampleOut.push(`${f.slice(ROOT.length + 1)}:${src.slice(0, m.index).split('\n').length}`)
+      }
     }
   }
   return n
@@ -317,6 +349,13 @@ const RULES = [
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',
     count: (s) => countInnerComponentWithInput(s),
+  },
+  {
+    key: 'catalogue_full_load',
+    label: 'ô chọn nạp CẢ DANH MỤC về trình duyệt (useLocationsReal/useMaterials thiếu `limit`) — ' +
+           'đo 15/08: 1 kho 1.517 vị trí = 616KB + hàng chục round-trip MỖI LẦN mở màn; phải `search` + `limit: 50` ' +
+           '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
+    count: (s) => countCatalogueFullLoad(s),
   },
   {
     key: 'upload_without_preflight',

@@ -24,7 +24,7 @@ import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
+  useLocationsReal, useLocationsByIds, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
   useSettingNumber,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
@@ -36,6 +36,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
+import { useDebouncedValue }        from '@/hooks/useDebouncedValue'
 import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -43,18 +44,21 @@ import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
 // Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
-function LocPickerPill({ trigger, triggerClass, options, onPick }: {
+// onSearch có = TÌM TRÊN SERVER (cha tự query theo từ khoá): KHÔNG lọc lại ở client vì `options`
+// chỉ là 50 dòng khớp từ khoá hiện tại, lọc lần nữa sẽ giấu mất kết quả server vừa trả.
+function LocPickerPill({ trigger, triggerClass, options, onPick, onSearch }: {
   trigger: ReactNode
   triggerClass: string
   options: { id: string; node: ReactNode; searchText: string }[]
   onPick: (id: string) => void
+  onSearch?: (term: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const btnRef = useRef<HTMLButtonElement>(null)
   const anchor = usePopoverAnchor(btnRef, open)
-  const filtered = q ? options.filter(o => o.searchText.toLowerCase().includes(q.toLowerCase())) : options
-  function close() { setOpen(false); setQ('') }
+  const filtered = onSearch ? options : (q ? options.filter(o => o.searchText.toLowerCase().includes(q.toLowerCase())) : options)
+  function close() { setOpen(false); setQ(''); onSearch?.('') }
   return (
     <>
       <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)} className={triggerClass}>
@@ -68,7 +72,7 @@ function LocPickerPill({ trigger, triggerClass, options, onPick }: {
             style={{ ...anchor.style, width: 280, left: Math.min(Number(anchor.style.left ?? 0), window.innerWidth - 288) }}
           >
             <div className="p-2 border-b border-slate-100">
-              <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm vị trí…"
+              <input type="text" value={q} onChange={e => { setQ(e.target.value); onSearch?.(e.target.value) }} placeholder="Tìm vị trí…"
                 autoFocus className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
             </div>
             <div className="max-h-56 overflow-y-auto">
@@ -156,11 +160,21 @@ export default function InboundDetail() {
   const autoScan = searchParams.get('scan') === '1'
 
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho (Bàu Bàng 1.517 = 616KB
+  // mỗi lần mở phiếu). BE ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng nên gợi ý không mất.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id
-      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}), ...(order.material_id ? { material_id: order.material_id } : {}) }
+      ? {
+          warehouse_id: order.warehouse_id,
+          ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
+          ...(order.material_id ? { material_id: order.material_id } : {}),
+          search: locTermDeb || undefined, limit: 50,
+        }
       : undefined
   )
+  const { data: locPicked = [] } = useLocationsByIds([order?.location_id])
 
   // Tab bar: các phiếu cùng kho + ngày, rồi lọc về CÙNG CHUYẾN (cùng nhóm bracket) với phiếu đang xem.
   const { data: openOrders = [] } = useInboundOrders(
@@ -205,7 +219,9 @@ export default function InboundDetail() {
   type LocOpt = { id: string; location_code: string; used_slots?: number; max_pallets: number; has_same_material?: boolean }
   const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
   const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
-  const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
+  // gộp vị trí ĐANG CHỌN (tra theo id) — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
+  const locAll = [...(allLocations as LocOpt[]), ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
+  const locOptions = locAll.sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
   const locPickOptions = locOptions.map(l => {
     const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
     return {
@@ -393,6 +409,7 @@ export default function InboundDetail() {
           onClose={() => { setShowScan(false); setPdaScan(null) }}
           employeeId={user?.id}
           allLocations={allLocations as any}
+          onLocSearch={setLocTerm}
           pdaMode={!!pdaScan}
           initialScan={pdaScan ?? undefined}
         />
@@ -729,6 +746,7 @@ export default function InboundDetail() {
                         triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
                         options={locPickOptions}
                         onPick={changeLoc}
+                        onSearch={setLocTerm}
                       />
                     )}
                     {locHistory.length > 0 && (
@@ -748,6 +766,7 @@ export default function InboundDetail() {
                         triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
                         options={locPickOptions}
                         onPick={changeLoc}
+                        onSearch={setLocTerm}
                       />
                     )}
                   </span>

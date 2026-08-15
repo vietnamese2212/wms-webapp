@@ -20,7 +20,7 @@ import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
-  useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useImportShifts,
+  useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
   useEmployeeRecords, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
@@ -347,7 +347,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     [activePlanLines]
   )
 
-  const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId, material_id: materialId || undefined } : undefined)
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho — Bàu Bàng 1.517 vị trí
+  // = 616KB + hàng chục round-trip. BE đã ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng trả về,
+  // nên gợi ý gom pallet KHÔNG mất khi cắt danh sách.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [] } = useLocationsReal(warehouseId
+    ? { warehouse_id: warehouseId, material_id: materialId || undefined, search: locTermDeb || undefined, limit: 50 }
+    : undefined)
+  const { data: locPicked = [] } = useLocationsByIds([locationId])
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
 
@@ -795,6 +803,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   disabled={!subType || !materialId}
                   searchPlaceholder="Tìm vị trí…"
                   triggerClassName="h-8 mt-0.5"
+                  serverSearch
+                  onSearchChange={setLocTerm}
+                  selectedLabel={locationId
+                    ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
+                    : undefined}
                   placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
                   options={filteredLocs.map(l => {
                     const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets

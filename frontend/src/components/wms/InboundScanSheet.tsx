@@ -5,6 +5,7 @@ import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { Button }              from '@/components/ui/button'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
@@ -114,12 +115,14 @@ interface InboundScanSheetProps {
   order: InboundOrder
   onClose: () => void
   employeeId?: string
+  // 50 dòng khớp từ khoá HIỆN TẠI (cha query với search+limit) — KHÔNG còn là cả kho.
   allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null }[]
+  onLocSearch?: (term: string) => void   // gõ trong picker → cha đổi từ khoá query (tìm trên server)
   pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
   initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
 }
 
-export function InboundScanSheet({ order, onClose, employeeId, allLocations, pdaMode = false, initialScan }: InboundScanSheetProps) {
+export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
@@ -393,6 +396,12 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, pda
           {showLocPicker && (
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
               <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+              {/* Tìm TRÊN SERVER: danh sách chỉ 50 vị trí đầu (trước đây nạp cả kho — Bàu Bàng
+                  1.517 vị trí = 616KB mỗi lần mở màn quét, nặng nhất trên PDA/wifi xưởng) */}
+              {onLocSearch && (
+                <input type="text" placeholder="Tìm vị trí…" onChange={e => onLocSearch(e.target.value)}
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+              )}
               <div className="max-h-36 overflow-y-auto space-y-1">
                 {allLocations.map(l => {
                     const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
@@ -562,9 +571,17 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, pda
 
 export function InboundScanSheetById({ importId, employeeId, onClose }: { importId: string; employeeId?: string; onClose: () => void }) {
   const { data: order, isLoading } = useInboundOrder(importId)
+  // TÌM TRÊN SERVER (luật danh mục lớn) — xem ghi chú ở picker vị trí bên trên
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id
-      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}) }
+      ? {
+          warehouse_id: order.warehouse_id,
+          ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
+          ...(order.material_id ? { material_id: order.material_id } : {}),
+          search: locTermDeb || undefined, limit: 50,
+        }
       : undefined
   )
 
@@ -586,6 +603,7 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
       onClose={onClose}
       employeeId={employeeId}
       allLocations={allLocations as InboundScanSheetProps['allLocations']}
+      onLocSearch={setLocTerm}
     />
   )
 }

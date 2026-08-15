@@ -20,7 +20,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory, useUploadInventoryExcel,
   useAdjustmentLog,
-  useLocationsReal, useMaterials, useMaterialsByIds,
+  useLocationsReal, useLocationsByIds, type LocationLite, useMaterials, useMaterialsByIds,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
   useInventorySummary, type InventorySummaryGroup, fetchInventoryExport, fetchAllInventorySummary,
@@ -324,20 +324,19 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
   const { mutate, isPending }  = useBulkTransferLocation()
-  const { data: allLocs = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước đây nạp TOÀN BỘ vị trí của kho — đo Bàu Bàng
+  // 1.517 vị trí = 616KB + hàng chục round-trip (BE còn quét InventoryEntry theo chunk 300 để
+  // tính used_slots). Nay 50 dòng đầu, gõ thì server tìm tiếp.
+  const searchDeb = useDebouncedValue(search, 250)
+  const { data: locRows = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50 } : undefined
   )
-
-  const filtered = useMemo(() => {
-    const s = search.toLowerCase()
-    return (allLocs as any[]).filter((l: any) =>
-      !s || l.location_code?.toLowerCase().includes(s) || l.sub_code?.toLowerCase().includes(s)
-    )
-  }, [allLocs, search])
-
-  const selectedLoc = useMemo(() =>
-    (allLocs as any[]).find((l: any) => l.id === locId), [allLocs, locId]
-  )
+  const filtered = locRows as LocationLite[]
+  // nhãn cho vị trí ĐANG CHỌN — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
+  const { data: pickedLoc = [] } = useLocationsByIds([locId])
+  const selectedLoc = useMemo(
+    () => filtered.find(l => l.id === locId) ?? pickedLoc.find(l => l.id === locId),
+    [filtered, pickedLoc, locId])
 
   function reset() { setLocId(''); setSearch(''); setError('') }
 
@@ -372,6 +371,9 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
           <Label className="text-xs">Vị trí mới</Label>
           <Input placeholder="Tìm vị trí…" value={search} autoFocus
             onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+          {filtered.length >= 50 && (
+            <p className="text-[10px] text-slate-400">Đang hiện 50 vị trí đầu — gõ để tìm tiếp</p>
+          )}
           <div className="border rounded max-h-[calc(100vh-280px)] overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>

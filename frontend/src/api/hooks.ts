@@ -34,6 +34,17 @@ export function useWarehouses(onlyActive = false) {
 
 type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; search?: string; limit?: number }
 
+/** Cột view=lite của Location (LOCATION_LITE_COLS ở BE) + 2 cột tính thêm. */
+export type LocationLite = {
+  id: string; location_code: string; warehouse_id: string
+  sub_code: string | null; sub_name: string | null
+  categories: string[] | null; row: string | null; shelf: string | null
+  max_pallets: number; is_active: boolean
+  requires_stocktake?: boolean | null; is_pick_face?: boolean | null
+  slot_no_in?: boolean | null; slot_no_out?: boolean | null
+  used_slots?: number; has_same_material?: boolean
+}
+
 /**
  * Vị trí kho — MẶC ĐỊNH bản GỌN (`view=lite`): bỏ audit + join Kho + đếm tồn tổng.
  * Đo 27/07: 1 kho 1.517 vị trí = 938KB. Trang Vị trí kho (list + form Sửa) dùng
@@ -46,6 +57,30 @@ export function useLocationsReal(params?: LocationListParams, enabled = true) {
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/locations', { params: { ...params, view: 'lite' } })
       return data.data as any[]
+    },
+  })
+}
+
+/**
+ * NHÃN cho vị trí ĐANG CHỌN (khuôn `useMaterialsByIds`, chunk 300 = trần URL).
+ * Ô chọn vị trí tìm-trên-server chỉ giữ 50 dòng khớp từ khoá HIỆN TẠI ⇒ value đang chọn phải
+ * có đường tra riêng, không thì ô in uuid thô và user tưởng mất dữ liệu (bài học 29/07).
+ */
+export function useLocationsByIds(ids: (string | null | undefined)[], enabled = true) {
+  const key = [...new Set(ids.filter((x): x is string => !!x))].sort()
+  return useQuery({
+    queryKey: ['locations-real', 'by-ids', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const out: LocationLite[] = []
+      for (let i = 0; i < key.length; i += 300) {
+        const { data } = await apiClient.get('/masterdata/locations', {
+          params: { ids: key.slice(i, i + 300).join(','), view: 'lite' },
+        })
+        out.push(...(data.data as LocationLite[]))
+      }
+      return out
     },
   })
 }

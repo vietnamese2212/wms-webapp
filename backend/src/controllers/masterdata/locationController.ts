@@ -161,12 +161,28 @@ export async function listLocationsSummary(req: Request, res: Response) {
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// Tập vị trí ĐANG ĐỂ DỞ đúng mã này (layer-1, còn tồn) — nguồn của gợi ý ★ "gom pallet".
+// Hỏi DB trả về TẬP VỊ TRÍ chứ không kéo dòng tồn về đếm; trần 300 = trần id trên URL.
+async function sameMaterialLocIds(materialId: string, warehouseId: string | null): Promise<string[]> {
+  let q = supabase.from('InventoryEntry').select('location_id')
+    .eq('material_id', materialId).eq('stack_layer', 1)
+    .in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0)
+    .not('location_id', 'is', null).limit(1000)
+  if (warehouseId) q = q.eq('warehouse_id', warehouseId)
+  const { data } = await q
+  return [...new Set((data ?? []).map(r => (r as { location_id: string }).location_id))].slice(0, 300)
+}
+
 export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id, view, search, limit } = req.query
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt
     const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
+    // ids=... : tra NHÃN cho vị trí ĐANG CHỌN (khuôn useMaterialsByIds). Ô chọn tìm-trên-server chỉ
+    // giữ 50 dòng khớp từ khoá HIỆN TẠI, nên value đang chọn phải có đường tra riêng — không thì
+    // chip/ô in uuid thô và user tưởng mất dữ liệu (bài học nghiệm thu 29/07). Cap 300 = trần URL.
+    const ids = parseListParam(req.query.ids, 300)
 
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
@@ -188,6 +204,7 @@ export async function listLocations(req: Request, res: Response) {
         .from('Location')
         .select(view === 'lite' ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
         .order('sub_code').order('row').order('shelf').order('id')
+      if (ids) query = query.in('id', ids.slice(0, 300))   // cap 300 = trần id trên URL PostgREST
       if (effective) {
         query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
       } else if (warehouse_id) {
@@ -205,9 +222,22 @@ export async function listLocations(req: Request, res: Response) {
     }
     let data: Record<string, unknown>[]
     if (cap > 0) {
+      // Ô chọn tìm-trên-server chỉ lấy `cap` dòng ĐẦU theo thứ tự mã vị trí. Với picker Nhập kho
+      // (có material_id) thì vị trí ★ "đang để dở cùng mã" gần như CHẮC CHẮN nằm ngoài 50 dòng đầu
+      // ⇒ mất gợi ý gom pallet. Nên khi có material_id: lấy nhóm ★ TRƯỚC (theo tập vị trí đang
+      // chứa mã đó) rồi bù danh sách thường cho đủ. 2 truy vấn nhỏ, vẫn rẻ hơn nhiều so với kéo
+      // cả kho (Bàu Bàng 1.517 vị trí = 616KB + hàng chục round-trip tính used_slots).
+      const recIds = material_id ? await sameMaterialLocIds(String(material_id), warehouse_id ? String(warehouse_id) : null) : []
+      const rec: Record<string, unknown>[] = []
+      if (recIds.length) {
+        const { data: r, error } = await buildQ().in('id', recIds.slice(0, 300)).limit(cap)
+        if (error) throw error
+        rec.push(...((r ?? []) as unknown as Record<string, unknown>[]))
+      }
       const { data: page, error } = await buildQ().limit(cap)
       if (error) throw error
-      data = (page ?? []) as unknown as Record<string, unknown>[]
+      const seen = new Set(rec.map(l => l.id as string))
+      data = [...rec, ...((page ?? []) as unknown as Record<string, unknown>[]).filter(l => !seen.has(l.id as string))]
     } else {
       data = await fetchAllRowsParallel(buildQ) as unknown as Record<string, unknown>[]
     }

@@ -16,9 +16,10 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, type PalletOpRow, type MaterialLite,
+  usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, useLocationsByIds, type LocationLite, type PalletOpRow, type MaterialLite,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
@@ -112,7 +113,15 @@ export default function PalletOps() {
   const [printLabels, setPrintLabels] = useState<LabelData[]>([])
   // Vị trí pallet con — danh sách theo Kho + Loại hàng; mặc định = vị trí pallet gốc
   const [splitLoc, setSplitLoc] = useState('')
-  const { data: splitLocs = [] } = useLocationsReal({ warehouse_id: opWh || undefined, category: opCat || undefined })
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho (Bàu Bàng 1.517 = 616KB)
+  const [splitLocTerm, setSplitLocTerm] = useState('')
+  const splitLocDeb = useDebouncedValue(splitLocTerm, 250)
+  const { data: splitLocs = [] } = useLocationsReal({
+    warehouse_id: opWh || undefined, category: opCat || undefined,
+    search: splitLocDeb || undefined, limit: 50,
+  })
+  // nhãn cho vị trí ĐANG CHỌN (không nằm trong 50 dòng khớp từ khoá hiện tại)
+  const { data: splitLocPicked = [] } = useLocationsByIds([splitLoc])
   useEffect(() => { if (srcEntry?.location_id) setSplitLoc(srcEntry.location_id) }, [srcEntry?.location_id])
   // Các pallet con ĐÃ tách trước đó từ chính pallet gốc này (để user biết lịch sử tách của nó)
   const { data: srcOps = [] } = usePalletOps({ search: srcQ, type: 'SPLIT' }, tab === 'split' && srcQ.length >= 3)
@@ -483,6 +492,11 @@ export default function PalletOps() {
                     placeholder="Vị trí"
                     searchPlaceholder="Tìm vị trí…"
                     triggerClassName="h-9"
+                    serverSearch
+                    onSearchChange={setSplitLocTerm}
+                    selectedLabel={splitLoc
+                      ? locName([...(splitLocs as LocationLite[]), ...splitLocPicked].find(l => l.id === splitLoc) ?? { id: splitLoc, location_code: splitLoc })
+                      : `Cùng vị trí pallet gốc${srcEntry?.location ? ` (${srcEntry.location.location_code}-${srcEntry.location.sub_code})` : ''}`}
                     options={[
                       { value: '__src__', label: `Cùng vị trí pallet gốc${srcEntry?.location ? ` (${srcEntry.location.location_code}-${srcEntry.location.sub_code})` : ''}` },
                       ...(splitLocs as any[]).map(l => {

@@ -205,6 +205,10 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     setPendingQR(raw)
     setFeedback(null)
     setServerCheckOk(false)
+    // Tem MỚI = trạng thái chặn/lý do của tem cũ hết hiệu lực (phòng thủ: hiện tại lượt mới chỉ vào
+    // được sau "Quét tiếp" hoặc lưu xong, cả hai đều đã xoá — nhưng đừng để phụ thuộc vào điều đó)
+    setPutawayBlock(null)
+    setPutawayReason('')
 
     const val = validateQR(raw, order)
     setValidation(val)
@@ -330,6 +334,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     setMergeWarning(null)
     setOutboundCartons(null)
     setCartons(defaultCartons)
+    // Bỏ lượt quét thì phải bỏ luôn trạng thái chặn CỦA CHÍNH lượt đó. Không xoá `putawayReason`
+    // thì lượt quét SAU bị chặn sẽ tự động dùng lại lý do cũ mà người quét không hề chọn —
+    // vết vượt rào gán sai pallet, đúng thứ mà danh sách lý do cố định sinh ra để tránh.
+    setPutawayBlock(null)
+    setPutawayReason('')
     scannerRef.current?.resume()
   }
 

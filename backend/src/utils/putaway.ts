@@ -88,7 +88,11 @@ export function applyPutawayBody(
     if (v === null || v === '') target.putaway_max_materials = null
     else {
       const n = Number(v)
+      // Trần 1000: cột DB là `integer` nên số quá lớn (vd 1e12) làm Postgres tràn kiểu → 500
+      // thay vì lỗi nhập liệu 4xx (fuzz 15/08 bắt được). Ô lớn nhất đo thật mới 69 mã ⇒ 1000 là
+      // thừa sức, và "không giới hạn" đã có cách khai riêng là ĐỂ TRỐNG.
       if (!Number.isFinite(n) || n < 1) return 'Số mã tối đa trong 1 vị trí phải là số nguyên ≥ 1'
+      if (n > 1000) return 'Số mã tối đa trong 1 vị trí không quá 1000 (để trống = không giới hạn)'
       target.putaway_max_materials = Math.floor(n)
     }
   }

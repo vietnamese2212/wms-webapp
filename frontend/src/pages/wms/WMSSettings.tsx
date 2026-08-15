@@ -598,8 +598,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     const maxMat = putMaxMat.trim() === '' ? null : Number(putMaxMat)
-    if (maxMat !== null && (!Number.isFinite(maxMat) || maxMat < 1))
-      { setErr('Số mã tối đa trong 1 vị trí phải là số nguyên ≥ 1 (để trống = không giới hạn)'); return }
+    if (maxMat !== null && (!Number.isFinite(maxMat) || maxMat < 1 || maxMat > 1000))
+      { setErr('Số mã tối đa trong 1 vị trí phải là số nguyên 1–1000 (để trống = không giới hạn)'); return }
     const putaway = {
       putaway_priority: putPriority, putaway_date_mix: putDateMix,
       putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
@@ -767,7 +767,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             </div>
             <div>
               <Label className="text-[11px] text-slate-500">Số mã tối đa trong một vị trí</Label>
-              <Input type="number" min={1} value={putMaxMat} onChange={e => setPutMaxMat(e.target.value)}
+              <Input type="number" min={1} max={1000} value={putMaxMat} onChange={e => setPutMaxMat(e.target.value)}
                 placeholder="để trống = không giới hạn" className="h-8 text-xs" />
             </div>
             {([

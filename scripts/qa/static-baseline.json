@@ -24,6 +24,7 @@
   "tablehead_relative_kills_sticky": 0,
   "role_by_vietnamese_name": 0,
   "rotation_rule_hand_rolled": 1,
+  "putaway_rule_hand_rolled": 0,
   "n_plus_1_supabase_in_map": 3,
   "today_frozen_at_import": 0,
   "component_defined_inside_component": 0,

@@ -31,7 +31,8 @@ function countMatches(roots, exts, test, sampleOut) {
     for (const f of filesOf(root, exts)) {
       const lines = readFileSync(f, 'utf8').split(/\r?\n/)
       lines.forEach((line, i) => {
-        if (test(line)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+        // truyền cả đường dẫn: có luật cần MIỄN chính file chứa luật (vd utils/putaway.ts)
+        if (test(line, f)) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
       })
     }
   }
@@ -331,6 +332,23 @@ const RULES = [
         && /\b(production_date|expiry_date)\b\s*[<>]=?\s*\w*\.?\b(best_available_date|production_date|expiry_date)\b/.test(line), s),
     // Baseline 1 = phép so DUY NHẤT còn được phép: nhánh đọc dữ liệu LỊCH SỬ trước 14/08 trong
     // frontend/src/utils/rotation.ts (dòng cũ không có cột rotation_*). Code mới không được tăng.
+  },
+  {
+    key: 'putaway_rule_hand_rolled',
+    label: 'tự đoán "cất pallet vào ô nào" (has_same_material / slot_no_in / so sức chứa để gợi ý) — phải đi qua utils/putaway (BE) / khối `putaway` do BE trả (FE)',
+    // Cùng họ bug với rotation_rule_hand_rolled, đo 15/08: luật ★ có 3 bản chép tay (BE
+    // sameMaterialLocIds · Inbound.tsx isRecommended · InboundDetail.tsx locRec) và màn quét PDA
+    // thì KHÔNG hiển thị gì, còn cờ Location.slot_no_in ("cấm đưa hàng vào") chỉ Slotting đọc —
+    // luồng nhập vẫn gợi ý cất vào đúng ô bị cấm. Bắt việc ĐỌC has_same_material/slot_no_in ngoài
+    // 2 file luật (utils/putaway.ts BE+FE, services/putawayContext.ts) để chấm ★/chặn.
+    // Bắt việc ĐỌC cờ (`x.has_same_material` / `x.slot_no_in`) để tự kết luận — khai báo kiểu,
+    // danh sách cột, `useLocationsByFlag('slot_no_in')`, `.eq('slot_no_in', …)` và phép GÁN đều
+    // không tính. Miễn 4 file: 2 file luật, putawayContext (đường nạp chung), slottingController
+    // + locationController (nơi DUY NHẤT dựng PutawayLoc rồi gọi luật). Baseline 0.
+    count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && !/utils[\\/]putaway\.ts$|services[\\/]putawayContext\.ts$|slottingController\.ts$|locationController\.ts$/.test(file)
+        && /\.\s*(has_same_material|slot_no_in)\b(?!\s*=[^=])/.test(line), s),
   },
   {
     key: 'n_plus_1_supabase_in_map',

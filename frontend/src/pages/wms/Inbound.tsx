@@ -40,6 +40,8 @@ import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { PutawayOption } from '@/components/wms/PutawayOption'
+import type { PutawayHint } from '@/utils/putaway'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
@@ -59,6 +61,7 @@ interface LocationWithCapacity {
   max_pallets: number
   used_slots: number
   has_same_material?: boolean
+  putaway?: PutawayHint | null
 }
 
 const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
@@ -352,8 +355,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   // nên gợi ý gom pallet KHÔNG mất khi cắt danh sách.
   const [locTerm, setLocTerm] = useState('')
   const locTermDeb = useDebouncedValue(locTerm, 250)
+  // ncc_id đi kèm để BE chấm được luật "không trộn NCC" (kho nào bật) — không có thì luật im lặng.
   const { data: locations = [] } = useLocationsReal(warehouseId
-    ? { warehouse_id: warehouseId, material_id: materialId || undefined, search: locTermDeb || undefined, limit: 50 }
+    ? { warehouse_id: warehouseId, material_id: materialId || undefined, ncc_id: nccId || undefined,
+        search: locTermDeb || undefined, limit: 50 }
     : undefined)
   const { data: locPicked = [] } = useLocationsByIds([locationId])
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
@@ -362,18 +367,12 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const { data: allWhTypes = [] } = useScopedWhTypes()
   const loaiKhoOpts = allWhTypes.map(t => t.value)
   const selectedZone = zones.find(z => z.name === subType)
-  // Khuyến nghị vị trí (sau khi chọn Mã hàng): CHỈ vị trí còn chỗ + đang để dở đúng loại
-  // hàng (gom pallet) → đánh dấu ★ + đẩy lên đầu. Còn trống / loại khác giữ thứ tự bình thường.
-  const isRecommended = (l: LocationWithCapacity) =>
-    materialId !== '' && !!l.has_same_material && !(l.max_pallets > 0 && l.used_slots >= l.max_pallets)
-  const filteredLocs = useMemo(() => {
-    const base = subType
-      ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
-      : allLocs
-    if (!materialId) return base
-    // sort ổn định: vị trí khuyến nghị lên đầu, phần còn lại giữ nguyên thứ tự gốc
-    return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
-  }, [allLocs, subType, selectedZone, materialId])
+  // ★ và thứ tự do BACKEND chấm theo quy tắc cất hàng của kho (utils/putaway.ts) — FE KHÔNG tự
+  // tính lại. Trước 15/08 chỗ này tự đánh ★ + tự sort, lệch với bản của InboundDetail và với BE.
+  const filteredLocs = useMemo(() => subType
+    ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
+    : allLocs,
+    [allLocs, subType, selectedZone])
 
   // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập.
   // Tìm TRÊN SERVER + 50 dòng: loại kho nhiều nghìn mã thì không dội hết về trình duyệt.
@@ -795,7 +794,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   </div>
                 ) : (<>
                 <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
-                  <span className="ml-2 text-[10px] font-normal text-slate-400">★ = còn chỗ · đang để dở cùng loại hàng</span>
+                  <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
                 </Label>
                 <SingleSelect
                   value={locationId}
@@ -809,22 +808,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
                     : undefined}
                   placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
-                  options={filteredLocs.map(l => {
-                    const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
-                    const isPartial = l.used_slots > 0 && !isFull
-                    const rec = isRecommended(l)
-                    return {
-                      value: l.id,
-                      label: l.location_code,
-                      node: (
-                        <span className="flex-1 truncate text-[11px]">
-                          {rec && <span className="text-amber-500 font-bold mr-1">★</span>}
-                          <span className={isFull ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : 'text-slate-700'}>{l.location_code}</span>
-                          <span className="ml-2 text-[10px] text-slate-400">({l.used_slots}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-                        </span>
-                      ),
-                    }
-                  })}
+                  options={filteredLocs.map(l => ({
+                    value: l.id,
+                    label: l.location_code,
+                    node: <PutawayOption loc={l} />,
+                  }))}
                 />
                 </>)}
               </div>

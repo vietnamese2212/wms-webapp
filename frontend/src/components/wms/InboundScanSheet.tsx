@@ -18,6 +18,8 @@ import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { PutawayOption } from '@/components/wms/PutawayOption'
+import type { PutawayHint } from '@/utils/putaway'
 import type { InboundOrder } from '@/types'
 
 // ─── Scan feedback banner ─────────────────────────────────────
@@ -116,7 +118,7 @@ interface InboundScanSheetProps {
   onClose: () => void
   employeeId?: string
   // 50 dòng khớp từ khoá HIỆN TẠI (cha query với search+limit) — KHÔNG còn là cả kho.
-  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null }[]
+  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null; putaway?: PutawayHint | null }[]
   onLocSearch?: (term: string) => void   // gõ trong picker → cha đổi từ khoá query (tìm trên server)
   pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
   initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
@@ -403,30 +405,20 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                   className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
               )}
               <div className="max-h-36 overflow-y-auto space-y-1">
-                {allLocations.map(l => {
-                    const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-                    const isPartial = (l.used_slots ?? 0) > 0 && !isFull
-                    return (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
-                        className={[
-                          'w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between',
-                          l.id === activeLocationId
-                            ? 'bg-blue-100 text-blue-700 font-medium'
-                            : isFull
-                            ? 'text-blue-600 hover:bg-blue-50'
-                            : isPartial
-                            ? 'text-amber-600 hover:bg-amber-50'
-                            : 'text-slate-700 hover:bg-white',
-                        ].join(' ')}
-                      >
-                        <span className="font-mono">{l.location_code}</span>
-                        <span className="text-[10px] text-slate-400">{l.used_slots ?? 0}/{l.max_pallets}</span>
-                      </button>
-                    )
-                  })}
+                {allLocations.map(l => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
+                      className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center ${
+                        l.id === activeLocationId ? 'bg-blue-100 font-medium' : 'hover:bg-white'
+                      }`}
+                    >
+                      {/* ★ / lý do chặn do BE chấm — trước đây màn này KHÔNG hiện gì, người quét
+                          chỉ thấy danh sách phẳng và không biết vì sao dòng đầu lại là dòng đầu */}
+                      <PutawayOption loc={l} />
+                    </button>
+                  ))}
               </div>
               {activeLocationId && (
                 <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>

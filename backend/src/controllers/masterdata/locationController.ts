@@ -9,6 +9,8 @@ import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchT
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { loadPutawayContext, loadSlotFactsRaw } from '../../services/putawayContext'
+import { putawayBlock, putawayReason, putawayScore, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -88,16 +90,13 @@ const locRpcParams = (c: LocListCtx) => ({
   p_tokens: c.tokens, p_flag: c.flag, p_pick_face: c.pickFace, p_subs: c.subs,
 })
 
-// Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem (định nghĩa khớp listLocations)
+// Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem.
+// Dùng CHUNG một định nghĩa với listLocations (RPC putaway_slot_facts) — trước đây là 2 vòng
+// quét chép tay và comment "định nghĩa khớp listLocations" chỉ là lời hứa, không ai gác.
 async function usedSlotsFor(ids: string[]): Promise<Map<string, number>> {
   const used = new Map<string, number>()
-  for (let i = 0; i < ids.length; i += 300) {
-    const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-      .select('location_id').in('location_id', ids.slice(i, i + 300))
-      .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
-    for (const r of rows as { location_id: string }[])
-      used.set(r.location_id, (used.get(r.location_id) ?? 0) + 1)
-  }
+  if (ids.length === 0) return used
+  for (const f of await loadSlotFactsRaw(ids, null, false)) used.set(f.location_id, Number(f.pallets ?? 0))
   return used
 }
 
@@ -259,45 +258,60 @@ export async function listLocations(req: Request, res: Response) {
     // InventoryEntry tính used_slots (chunk 300 = phần đắt nhất của endpoint này).
     if (byFlag) return ok(res, data ?? [])
 
-    // used_slots (layer 1 IN_STOCK/PARTIAL): 1 lượt quét gộp thay N+1 count query
-    // (trước: mỗi vị trí 1 roundtrip — nghìn vị trí = nghìn query song song, cạn connection)
+    // used_slots + "đang để dở cùng mã": HỎI DB TRẢ SỐ (RPC putaway_slot_facts), không kéo dòng
+    // tồn về đếm. Trước đây 2 vòng quét InventoryEntry riêng — Bàu Bàng 1.517 vị trí kéo về
+    // 15.009 dòng chỉ để đếm; nay tối đa 1.517 dòng, mỗi ô một dòng.
     const locIdsAll = (data ?? []).map((l: Record<string, unknown>) => l.id as string)
+    const matId = material_id ? String(material_id) : null
+
+    // Có mã hàng ⇒ đây là picker CẤT HÀNG: chấm luôn ★ / lý do chặn theo quy tắc của kho.
+    // Không có mã ⇒ chỉ cần used_slots, khỏi nạp cấu hình kho.
+    const whForRules = effective?.length === 1 ? effective[0] : (warehouse_id ? String(warehouse_id) : null)
+    const ctx = matId && locIdsAll.length > 0
+      ? await loadPutawayContext({
+          warehouseId: whForRules,
+          locIds: locIdsAll,
+          incoming: { material_id: matId, ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
+        })
+      : null
+    const rawFacts = ctx ? null : (locIdsAll.length > 0 ? await loadSlotFactsRaw(locIdsAll, null, false) : [])
     const usedCount = new Map<string, number>()
-    for (let i = 0; i < locIdsAll.length; i += 300) {
-      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-        .select('location_id').in('location_id', locIdsAll.slice(i, i + 300))
-        .eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id'))
-      for (const r of rows as { location_id: string }[])
-        usedCount.set(r.location_id, (usedCount.get(r.location_id) ?? 0) + 1)
-    }
+    if (ctx) for (const [id, f] of ctx.facts) usedCount.set(id, f.pallets)
+    else for (const r of rawFacts ?? []) usedCount.set(r.location_id, Number(r.pallets ?? 0))
+
     const withUsage = (data ?? []).map((loc: Record<string, unknown>) => {
       const { InventoryEntry, ...rest } = loc
-      return {
+      const id = rest.id as string
+      const row: Record<string, unknown> = {
         ...rest,
         _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
-        used_slots: usedCount.get(rest.id as string) ?? 0,
+        used_slots: usedCount.get(id) ?? 0,
         has_same_material: false,
-      } as Record<string, unknown>
+      }
+      if (ctx) {
+        const f = ctx.factsOf(id)
+        const l: PutawayLoc = {
+          id,
+          max_pallets:  rest.max_pallets  as number | null,
+          slot_no_in:   rest.slot_no_in   as boolean | null,
+          is_pick_face: rest.is_pick_face as boolean | null,
+        }
+        row.has_same_material = f.sameMaterial
+        // FE CHỈ hiển thị khối này, KHÔNG tự tính lại (luật một nguồn — utils/putaway.ts)
+        row.putaway = {
+          blocked: putawayBlock(l, f, ctx.incoming, ctx.rules),
+          reason:  putawayReason(l, f, ctx.incoming, ctx.rules),
+        } satisfies PutawayHint
+        row._score = putawayScore(l, f, ctx.incoming, ctx.rules)
+      }
+      return row
     })
 
-    // has_same_material: vị trí đang chứa (layer-1, IN_STOCK/PARTIAL) đúng material_id này
-    // → để FE gợi ý "nơi loại hàng đó đang để dở". Chunk 300 + phân trang.
-    if (material_id && withUsage.length > 0) {
-      const locIds = withUsage.map(l => l.id as string)
-      const sameSet = new Set<string>()
-      for (let i = 0; i < locIds.length; i += 300) {
-        const sameMat = await fetchAllRowsParallel(() => supabase
-          .from('InventoryEntry')
-          .select('location_id')
-          .in('location_id', locIds.slice(i, i + 300))
-          .eq('material_id', String(material_id))
-          .eq('stack_layer', 1)
-          .in('status', ['IN_STOCK', 'PARTIAL'])
-          .gt('cartons_remaining', 0)
-          .order('id'))
-        for (const e of sameMat as { location_id: string }[]) sameSet.add(e.location_id)
-      }
-      for (const l of withUsage) l.has_same_material = sameSet.has(l.id as string)
+    // Sắp xếp theo quy tắc cất hàng: ★ lên đầu, ô bị chặn xuống cuối, còn lại giữ nguyên thứ tự
+    // gốc (mã vị trí) — sort ỔN ĐỊNH nên hai ô cùng điểm không nhảy chỗ giữa các lần gõ.
+    if (ctx) {
+      withUsage.sort((a, b) => (a._score as number) - (b._score as number))
+      for (const r of withUsage) delete r._score
     }
 
     ok(res, withUsage)

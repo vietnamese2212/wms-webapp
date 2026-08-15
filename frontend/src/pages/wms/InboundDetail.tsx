@@ -41,6 +41,7 @@ import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
+import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
 // Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
@@ -214,28 +215,18 @@ export default function InboundDetail() {
   // KHÔNG dùng quyền `edit` (vốn là "Sửa nhóm phiếu NCC"). Tách riêng theo chuẩn 1 action = 1 quyền.
   const canSetLocation = can(perms, 'inbound', 'edit_pallet') || can(perms, 'inbound', 'force_edit_pallet')
 
-  // Vị trí cho dropdown đổi vị trí: hiện (đã dùng/sức chứa) + ★ khuyến nghị (đang để dở cùng loại,
-  // còn chỗ) — đồng bộ với form tạo phiếu. ★ đẩy lên đầu, còn lại giữ thứ tự.
-  type LocOpt = { id: string; location_code: string; used_slots?: number; max_pallets: number; has_same_material?: boolean }
-  const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
-  const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
+  // Vị trí cho dropdown đổi vị trí. ★ / lý do chặn / thứ tự đều do BACKEND chấm theo quy tắc cất
+  // hàng của kho (utils/putaway.ts) — KHÔNG tự tính lại ở đây (trước 15/08 chỗ này là bản chép
+  // tay thứ hai của luật ★, lệch với form tạo phiếu và với BE).
+  type LocOpt = PutawayLocRow
   // gộp vị trí ĐANG CHỌN (tra theo id) — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
-  const locAll = [...(allLocations as LocOpt[]), ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
-  const locOptions = locAll.sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
-  const locPickOptions = locOptions.map(l => {
-    const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
-    return {
-      id: l.id,
-      searchText: l.location_code,
-      node: (
-        <>
-          {locRec(l) && <span className="text-amber-500 font-bold mr-1">★</span>}
-          <span className={locFull(l) ? 'text-blue-700 font-semibold' : isPartial ? 'text-amber-600' : ''}>{l.location_code}</span>
-          <span className="ml-2 text-xs text-slate-400">({l.used_slots ?? 0}/{l.max_pallets}{l.has_same_material ? ' · đang để' : ''})</span>
-        </>
-      ),
-    }
-  })
+  const locOptions = [...(allLocations as LocOpt[]),
+    ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
+  const locPickOptions = locOptions.map(l => ({
+    id: l.id,
+    searchText: l.location_code,
+    node: <PutawayOption loc={l} />,
+  }))
   const { mutate: saveManual, isPending: savingManual   } = useScanManualPallet()
 
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true

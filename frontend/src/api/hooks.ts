@@ -32,7 +32,8 @@ export function useWarehouses(onlyActive = false) {
   })
 }
 
-type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; search?: string; limit?: number }
+// ncc_id: chỉ dùng cho picker CẤT HÀNG — để BE chấm được luật "không trộn NCC trong 1 vị trí".
+type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; ncc_id?: string; search?: string; limit?: number }
 
 /** Cột view=lite của Location (LOCATION_LITE_COLS ở BE) + 2 cột tính thêm. */
 export type LocationLite = {
@@ -43,6 +44,8 @@ export type LocationLite = {
   requires_stocktake?: boolean | null; is_pick_face?: boolean | null
   slot_no_in?: boolean | null; slot_no_out?: boolean | null
   used_slots?: number; has_same_material?: boolean
+  // Khối do BE chấm theo quy tắc cất hàng của kho — FE chỉ hiển thị (xem utils/putaway.ts)
+  putaway?: { blocked: string | null; reason: string | null } | null
 }
 
 /**

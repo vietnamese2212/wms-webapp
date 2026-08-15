@@ -5,6 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { asRotationPrinciple } from '../../utils/rotation'
+import { applyPutawayBody } from '../../utils/putaway'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -164,6 +165,8 @@ export async function createWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  row.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
+    const putErr = applyPutawayBody(req.body, row)                                                                   // quy tắc CẤT hàng (20260815d)
+    if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
     let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
     // Cột carton_scan_* chưa apply migration → bỏ các cột đó rồi thử lại (không chặn tạo kho)
     if (error && /carton_scan/i.test(error.message)) {
@@ -188,6 +191,8 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  patch.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (rotation_principle !== undefined)     patch.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      patch.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
+    const putErr = applyPutawayBody(req.body, patch)                                                                   // quy tắc CẤT hàng (20260815d)
+    if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
     if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)
     if (carton_scan_categories !== undefined) patch.carton_scan_categories = normCartonCats(carton_scan_categories)
     if (carton_scan_require_full !== undefined) patch.carton_scan_require_full = Boolean(carton_scan_require_full)

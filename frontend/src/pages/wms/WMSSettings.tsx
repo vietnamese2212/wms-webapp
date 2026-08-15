@@ -17,6 +17,7 @@ import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, Se
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { putawayDateMixOpts } from '@/utils/putaway'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
@@ -520,7 +521,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -557,6 +558,14 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   // Mặc định FEFO + không bắt buộc = đúng hành vi trước đây, kho không tick thì không đổi gì.
   const [rotPrinciple,  setRotPrinciple]  = useState<string>(wh?.rotation_principle ?? 'FEFO')
   const [rotRequired,   setRotRequired]   = useState(wh?.rotation_required === true)
+  // Quy tắc CẤT hàng (15/08) — nửa còn lại của nguyên tắc luân chuyển. Mặc định = hành vi cũ.
+  const [putPriority,   setPutPriority]   = useState<string>(wh?.putaway_priority ?? 'CONSOLIDATE')
+  const [putDateMix,    setPutDateMix]    = useState<string>(wh?.putaway_date_mix ?? 'ANY')
+  const [putMaxMat,     setPutMaxMat]     = useState<string>(wh?.putaway_max_materials != null ? String(wh.putaway_max_materials) : '')
+  const [putNoPickFace, setPutNoPickFace] = useState(wh?.putaway_block_pick_face === true)
+  const [putNoQaHold,   setPutNoQaHold]   = useState(wh?.putaway_block_qa_hold === true)
+  const [putNoFull,     setPutNoFull]     = useState(wh?.putaway_block_full === true)
+  const [putSingleNcc,  setPutSingleNcc]  = useState(wh?.putaway_single_ncc === true)
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -587,14 +596,23 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
+    const maxMat = putMaxMat.trim() === '' ? null : Number(putMaxMat)
+    if (maxMat !== null && (!Number.isFinite(maxMat) || maxMat < 1))
+      { setErr('Số mã tối đa trong 1 vị trí phải là số nguyên ≥ 1 (để trống = không giới hạn)'); return }
+    const putaway = {
+      putaway_priority: putPriority, putaway_date_mix: putDateMix,
+      putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
+      putaway_block_pick_face: putNoPickFace, putaway_block_qa_hold: putNoQaHold,
+      putaway_block_full: putNoFull, putaway_single_ncc: putSingleNcc,
+    }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired, ...putaway },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired, ...putaway },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -717,6 +735,47 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</span>
               </span>
             </label>
+          </div>
+          {/* Quy tắc CẤT hàng (15/08) — nửa còn lại của luân chuyển: lấy hàng ở trên, cất hàng ở đây.
+              Mặc định Gom + không ràng buộc = ĐÚNG hành vi trước 15/08, bật từng luật là lựa chọn
+              của từng kho. Vị trí gắn cờ "cấm đưa hàng vào" (tab Cài đặt của trang Tối ưu vị trí)
+              LUÔN bị loại, không cần bật gì. */}
+          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Quy tắc cất hàng (gợi ý chỗ đặt pallet)</Label>
+            <SingleSelect
+              value={putPriority} onChange={setPutPriority}
+              options={[
+                { value: 'CONSOLIDATE', label: 'Gom — ưu tiên ô đang để dở cùng mã', sub: 'mặc định, ít lối đi khi nhặt hàng' },
+                { value: 'SPREAD',      label: 'Rải — ưu tiên ô còn nhiều chỗ nhất',  sub: 'dàn đều, tránh ô đầy sớm chặn lối' },
+                { value: 'ABC',         label: 'Theo ABC — hàng nhặt nhiều để gần cửa', sub: 'dùng hạng nhặt khu của Tối ưu vị trí' },
+              ]}
+            />
+            <div>
+              <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
+              <SingleSelect
+                value={putDateMix} onChange={setPutDateMix}
+                options={putawayDateMixOpts(rotPrinciple === 'FEFO' ? 'HSD' : 'NSX')}
+              />
+            </div>
+            <div>
+              <Label className="text-[11px] text-slate-500">Số mã tối đa trong một vị trí</Label>
+              <Input type="number" min={1} value={putMaxMat} onChange={e => setPutMaxMat(e.target.value)}
+                placeholder="để trống = không giới hạn" className="h-8 text-xs" />
+            </div>
+            {([
+              ['wh-put-full',      putNoFull,     setPutNoFull,     'Không cất vào vị trí đã đầy', 'Hiện tại ô đầy vẫn chọn được — tick để loại hẳn khỏi gợi ý.'],
+              ['wh-put-pickface',  putNoPickFace, setPutNoPickFace, 'Không cất pallet nguyên vào vị trí nhặt lẻ', 'Vị trí nhặt lẻ là chỗ lệnh Fill đổ hàng vào; pallet nguyên chiếm chỗ sẽ làm lệnh fill báo đầy.'],
+              ['wh-put-qahold',    putNoQaHold,   setPutNoQaHold,   'Không cất vào ô đang có pallet bị QA giữ', 'Tránh chôn pallet đang giữ phía sau — lúc QA xả hàng phải dọn pallet đè lên mới lấy ra được.'],
+              ['wh-put-ncc',       putSingleNcc,  setPutSingleNcc,  'Không trộn NCC khác nhau trong một vị trí', 'Cùng mã khác NCC có thể khác hạn dùng. Pallet hoặc hàng trong ô chưa khai NCC thì không chặn.'],
+            ] as const).map(([id, val, set, title, desc]) => (
+              <label key={id} htmlFor={id} className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+                <input id={id} type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+                <span className="text-xs">
+                  <span className="font-medium">{title}</span>
+                  <span className="block text-[10px] text-slate-400 font-normal">{desc}</span>
+                </span>
+              </label>
+            ))}
           </div>
           <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">

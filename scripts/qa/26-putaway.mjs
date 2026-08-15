@@ -82,6 +82,13 @@ try {
   // cho đường quét (hot-path) và chỉ xoá cache khi lưu qua form. Ghi thẳng PostgREST thì luật vẫn
   // chạy theo bản cũ tới 30s — chính chỗ này từng làm 6 phép kiểm đỏ oan.
   const setRules = (patch) => api(`/masterdata/warehouses/${whId}`, 'PUT', patch)
+  // Chờ cấu hình có hiệu lực trên MỌI instance serverless trước khi ĐO ĐUA.
+  // Lưu qua API chỉ xoá cache của instance nhận request; instance khác giữ bản cũ tới 30s
+  // (putawayContext.whConfig). Bắn 6 lượt đồng thời NGAY sau khi bật luật thì vài lượt rơi vào
+  // instance chưa biết luật ⇒ phép kiểm lật qua lật lại giữa các lần chạy (đo thật 15/08: cùng
+  // một bản code, lượt 1 ra "1 mã" XANH, lượt 2 ra "2 mã" ĐỎ). Đây là ĐỘ TRỄ CẤU HÌNH, không
+  // phải row-lock hỏng — chờ hết cửa sổ rồi mới đo thì phép kiểm mới nói đúng thứ nó định nói.
+  const waitConfigSettled = () => new Promise(r => setTimeout(r, 31_000))
   const mkLoc = async (code, extra = {}) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 20,
@@ -264,6 +271,7 @@ try {
   if (raceMats.length >= 3) {
     const locRace = await mkLoc('RACE')
     await setRules({ putaway_max_materials: 1, putaway_required: true })
+    await waitConfigSettled()
     const raceOrders = []
     for (const m of raceMats) {
       const rr = await mkOrder(locRace.id, { material_id: m.id })
@@ -368,6 +376,7 @@ try {
 
     if (p1 && p2) {
       await setRules({ putaway_max_materials: 1, putaway_required: true })
+      await waitConfigSettled()
       let rb = await move([p1.id, p2.id], locBulk.id)
       check('[28] ô trống giới hạn 1 mã + lô 2 MÃ → CHẶN (chấm từng pallet với sự thật tĩnh sẽ lọt cả 2)',
         rb.s === 422 && rb.j?.error?.code === 'PUTAWAY_VIOLATION', `HTTP ${rb.s} ${rb.j?.error?.code ?? ''}`)

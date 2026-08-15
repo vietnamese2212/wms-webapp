@@ -756,6 +756,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 value={putDateMix} onChange={setPutDateMix}
                 options={putawayDateMixOpts(rotPrinciple === 'FEFO' ? 'HSD' : 'NSX')}
               />
+              {putDateMix !== 'ANY' && (
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>.
+                  Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.
+                </p>
+              )}
             </div>
             <div>
               <Label className="text-[11px] text-slate-500">Số mã tối đa trong một vị trí</Label>

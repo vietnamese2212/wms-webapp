@@ -174,7 +174,9 @@ export async function guardPutawayBatch(opts: {
   if (!block)
     return { blocked: null, rules, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
 
-  const msg = putawayBlockMessage(block, l.location_code, facts, rules, principle)
+  const after = block === 'MAX_MATERIALS'
+    ? new Set([...facts.mats, ...batch.map(b => b.material_id)]).size : undefined
+  const msg = putawayBlockMessage(block, l.location_code, facts, rules, principle, after)
   if (!rules.required)
     return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
 

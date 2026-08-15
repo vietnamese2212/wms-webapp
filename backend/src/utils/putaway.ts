@@ -366,6 +366,9 @@ export function putawayDateMixLabel(mix: PutawayDateMix, principle: RotationPrin
 export function putawayBlockMessage(
   code: PutawayBlockCode, locationCode: string, facts: SlotFacts, rules: PutawayRules,
   principle: RotationPrinciple,
+  // Cất theo LÔ: nói con số SAU KHI chuyển. Nói "đang có 1 mã, kho giới hạn 1 mã" thì người đọc
+  // thấy hai số bằng nhau, tưởng app báo nhầm — lý do thật là 2 mã của lô sẽ nâng ô lên 3.
+  afterMaterials?: number,
 ): string {
   const at = `Vị trí ${locationCode}`
   switch (code) {
@@ -373,7 +376,9 @@ export function putawayBlockMessage(
     case 'FULL':          return `${at} đã đầy (${facts.pallets} pallet). Chọn vị trí còn chỗ.`
     case 'PICK_FACE':     return `${at} là vị trí nhặt lẻ — kho không cho cất pallet nguyên vào đây (chỗ này để lệnh Fill đổ hàng).`
     case 'QA_HOLD':       return `${at} đang có pallet bị QA giữ — cất đè lên sẽ chôn pallet đó. Chọn vị trí khác.`
-    case 'MAX_MATERIALS': return `${at} đang có ${facts.materials} mã, kho giới hạn ${rules.max_materials} mã cho một vị trí.`
+    case 'MAX_MATERIALS': return afterMaterials != null
+      ? `${at} sẽ có ${afterMaterials} mã sau khi chuyển (đang có ${facts.materials}), kho giới hạn ${rules.max_materials} mã cho một vị trí.`
+      : `${at} đang có ${facts.materials} mã, kho giới hạn ${rules.max_materials} mã cho một vị trí.`
     case 'NCC_MIX':       return `${at} đang để hàng của NCC khác — kho không cho trộn NCC trong một vị trí.`
     // KHÔNG toLowerCase cả câu — nuốt luôn chữ viết tắt ("HSD" thành "hsd"). Chỉ hạ chữ ĐẦU.
     case 'DATE_MIX': {

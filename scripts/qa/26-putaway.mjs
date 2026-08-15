@@ -67,6 +67,16 @@ try {
   const [wh]  = await restAll('Warehouse', `select=id,nmsx_code,${PUT_COLS}&id=eq.${whId}`)
   // Trả về qua API nên KHÔNG kèm updated_at (backend tự đặt); giữ đúng 8 cờ như trước khi chạy.
   whBackup = Object.fromEntries(PUT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
+  // ⚠️ Bẫy đã dính 15/08: một script thăm dò chạy hỏng giữa chừng để lại kho ở trạng thái "bắt
+  // buộc + 1 mã/ô"; gói này chụp đúng trạng thái BẨN đó làm bản gốc rồi khôi phục y nguyên, và
+  // phép kiểm dọn (so với chính bản gốc) vẫn XANH. ⇒ Nói ra ngay từ đầu để người đọc còn phân
+  // biệt "kho thật sự cấu hình vậy" với "tàn dư lần chạy trước".
+  if (wh?.putaway_required || wh?.putaway_max_materials != null || wh?.putaway_priority !== 'CONSOLIDATE'
+      || wh?.putaway_date_mix !== 'ANY' || wh?.putaway_block_pick_face || wh?.putaway_block_qa_hold
+      || wh?.putaway_block_full || wh?.putaway_single_ncc) {
+    console.log(`  ⚠️  kho test đang có cấu hình cất hàng KHÁC mặc định: ${JSON.stringify(whBackup)}`)
+    console.log('      (gói sẽ khôi phục đúng trạng thái này — nếu đây là tàn dư của lần chạy hỏng thì reset trước rồi chạy lại)')
+  }
 
   // Đổi cấu hình QUA API như người dùng thật, KHÔNG ghi thẳng DB: backend cache cấu hình kho 30s
   // cho đường quét (hot-path) và chỉ xoá cache khi lưu qua form. Ghi thẳng PostgREST thì luật vẫn

@@ -211,6 +211,39 @@ try {
       && mine.filter(x => x.putaway_checked && x.putaway_violation).length === 2,
     `mẫu số ${mine.filter(x => x.putaway_checked).length} · vi phạm ${mine.filter(x => x.putaway_checked && x.putaway_violation).length}`)
 
+  // ── 5b. LUẬT TRỘN DATE — luật user nêu đích danh, chỉ kết luận được ở cửa quét ──────
+  // Phát biểu theo THỨ TỰ LẤY nên đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so NSX):
+  // OLDER_ONLY = ô chỉ được chứa hàng PHẢI LẤY TRƯỚC pallet mới ⇒ pallet mới không chôn ai.
+  {
+    const locD = await mkLoc('DATE')
+    const qrDate = (daysAgo, seq) => {
+      const dt = new Date(Date.now() - daysAgo * 86400000)
+      const s = `${String(dt.getDate()).padStart(2, '0')}${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getFullYear()).slice(2)}`
+      return `${s}_${mat.material_code}_${TAG.replace(/-/g, '')}_M9_${seq}_${wh.nmsx_code ?? 'B'}`
+    }
+    const oD = (await mkOrder(locD.id)).j?.data?.order?.id
+    await setRules({ putaway_date_mix: 'ANY', putaway_required: false })
+    await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(30, 970), location_id: locD.id, qty_semantics: 'base' })
+
+    await setRules({ putaway_date_mix: 'OLDER_ONLY', putaway_required: true })
+    const rNew = await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(5, 971), location_id: locD.id, qty_semantics: 'base' })
+    const rOld = await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(60, 972), location_id: locD.id, qty_semantics: 'base' })
+    check('[19] trộn date OLDER_ONLY: pallet MỚI hơn cho qua, pallet CŨ hơn bị chặn (không chôn hàng phải lấy trước)',
+      rNew.s === 200 && rOld.s === 422 && rOld.j?.error?.code === 'PUTAWAY_VIOLATION',
+      `mới=${rNew.s} · cũ=${rOld.s} ${rOld.j?.error?.code ?? ''}`)
+    check('[20] thông báo giữ nguyên chữ viết tắt HSD/NSX (không lowercase cả câu)',
+      /HSD|NSX/.test(rOld.j?.error?.message ?? ''), (rOld.j?.error?.message ?? '').slice(0, 70))
+
+    const rOv = await api(`/wms/inbound-orders/${oD}/scan`, 'POST',
+      { qr_code: qrDate(60, 973), location_id: locD.id, putaway_override_reason: 'URGENT', qty_semantics: 'base' })
+    const tD = (await restAll('InventoryEntry',
+      `select=putaway_violation,putaway_override_reason&pallet_code=eq.${encodeURIComponent(qrDate(60, 973))}`))[0]
+    check('[21] vượt rào luật date → qua + ghi vết đúng mã DATE_MIX',
+      rOv.s === 200 && tD?.putaway_violation === 'DATE_MIX' && tD?.putaway_override_reason === 'URGENT',
+      `viol=${tD?.putaway_violation} reason=${tD?.putaway_override_reason}`)
+    await setRules({ putaway_date_mix: 'ANY', putaway_required: false })
+  }
+
   // ── 6. ĐUA: luật "tối đa N mã/ô" phải chốt DƯỚI ROW-LOCK ───────────────────────────
   // Đo 15/08 trước khi sửa: 6 lượt quét đồng thời 6 mã khác nhau vào ô trống giới hạn 1 mã →
   // LỌT 3 MÃ (backend đọc-rồi-ghi, nhiều lượt cùng đọc "ô đang có 0 mã"). Nay đếm trong RPC.

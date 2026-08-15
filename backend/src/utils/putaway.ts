@@ -297,7 +297,11 @@ export function putawayBlockMessage(
     case 'QA_HOLD':       return `${at} đang có pallet bị QA giữ — cất đè lên sẽ chôn pallet đó. Chọn vị trí khác.`
     case 'MAX_MATERIALS': return `${at} đang có ${facts.materials} mã, kho giới hạn ${rules.max_materials} mã cho một vị trí.`
     case 'NCC_MIX':       return `${at} đang để hàng của NCC khác — kho không cho trộn NCC trong một vị trí.`
-    case 'DATE_MIX':      return `${at} không hợp luật trộn ${ROTATION_DATE_LABEL[principle]} của kho: ${putawayDateMixLabel(rules.date_mix, principle).toLowerCase()}.`
+    // KHÔNG toLowerCase cả câu — nuốt luôn chữ viết tắt ("HSD" thành "hsd"). Chỉ hạ chữ ĐẦU.
+    case 'DATE_MIX': {
+      const lb = putawayDateMixLabel(rules.date_mix, principle)
+      return `${at} không hợp luật trộn ${ROTATION_DATE_LABEL[principle]} của kho: ${lb.charAt(0).toLowerCase()}${lb.slice(1)}.`
+    }
   }
 }
 

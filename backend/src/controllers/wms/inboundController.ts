@@ -15,7 +15,8 @@ import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { getInboundEditWindowDays } from '../../utils/settings'
-import { guardPutaway } from '../../services/putawayContext'
+import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
+import type { MaterialShelfInfo } from '../../utils/shelfLife'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
 // (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
@@ -1135,9 +1136,13 @@ export async function checkScanQR(req: Request, res: Response) {
     const isTransfer = (order as any).source_type === 'TRANSFER'
 
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
-      supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides').eq('material_code', parsed.material_code).maybeSingle(),
+      // shelf_life_days + supplier_shelf_life_overrides: quy tắc cất hàng cần để suy HSD hiệu lực
+      // (thiếu 2 cột này thì luật trộn date ở PREVIEW im lặng trong khi lúc GHI lại chặn)
+      supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories').eq('id', location_id).maybeSingle(),
+      // slot_no_in + is_pick_face: 2 cờ quy tắc cất hàng — thiếu thì preview KHÔNG thấy ô bị cấm
+      // trong khi lúc quét thật lại chặn (người quét đi tới nơi mới biết)
+      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories, slot_no_in, is_pick_face').eq('id', location_id).maybeSingle(),
       isTransfer
         ? supabase.from('OutboundScanEntry').select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -1223,6 +1228,7 @@ export async function checkScanQR(req: Request, res: Response) {
         expiry_date:     parsed.expiry_date ?? null,
       },
       overrideReason: null, canOverride: false,
+      loc: location as PutawayLocRow, material: material as MaterialShelfInfo,
     })
     // BASE UNIT: gợi ý = base (định mức thùng/pallet vật lý × hệ số; outboundCartons đã là base)
     return ok(res, {
@@ -1478,6 +1484,10 @@ export async function scanQR(req: Request, res: Response) {
       },
       overrideReason: req.body.putaway_override_reason,
       canOverride: canPutawayOverride(req),
+      // Dùng lại 2 dòng đã nạp ở Promise.all phía trên — quét là đường ghi nóng nhất, pool
+      // PostgREST chỉ ~10 khe nên mỗi request thừa ở đây làm chậm CẢ APP.
+      loc: location as PutawayLocRow,
+      material: material as MaterialShelfInfo,
     })
     if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
 

@@ -11,8 +11,11 @@ import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
   putawayRulesOf, putawayNeedsLots, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
   putawayBlock, putawayBlockMessage, isPutawayOverrideReason,
-  type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet,
+  type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc,
 } from '../utils/putaway'
+
+// Dòng Location tối thiểu mà luật cần — caller truyền dòng đã nạp sẵn phải có đủ ngần này
+export type PutawayLocRow = PutawayLoc & { location_code: string }
 
 export interface PutawayContext {
   rules:      PutawayRules
@@ -71,15 +74,21 @@ export async function guardPutaway(opts: {
   incoming:       IncomingInput
   overrideReason?: unknown
   canOverride:    boolean
+  // Dòng ĐÃ NẠP SẴN của caller — truyền vào để KHỎI hỏi lại. Quét nhập là đường ghi nóng nhất của
+  // app và pool PostgREST chỉ ~10 khe: 3 request thừa mỗi lượt quét làm chậm CẢ APP, không riêng
+  // màn quét. `scanQR` đã có sẵn cả 2 dòng này trong Promise.all ngay phía trên.
+  loc?:      PutawayLocRow | null
+  material?: MaterialShelfInfo | null
 }): Promise<PutawayGuardResult> {
   const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
-  const { data: loc } = await supabase.from('Location')
+  const loc = opts.loc ?? (await supabase.from('Location')
     .select('id, location_code, max_pallets, slot_no_in, is_pick_face')
-    .eq('id', opts.locationId).maybeSingle()
+    .eq('id', opts.locationId).maybeSingle()).data
   if (!loc) return { blocked: null, trace: NO_TRACE, warning: null }   // vị trí sai đã có guard riêng ở controller
 
   const ctx = await loadPutawayContext({
     warehouseId: opts.warehouseId, locIds: [opts.locationId], incoming: opts.incoming,
+    material: opts.material,
   })
   const l = loc as { id: string; location_code: string; max_pallets: number | null; slot_no_in: boolean | null; is_pick_face: boolean | null }
   const facts = ctx.factsOf(l.id)
@@ -104,19 +113,28 @@ export async function guardPutaway(opts: {
   return { blocked: block, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
+// Cấu hình kho đổi rất hiếm (form Cài đặt) nhưng bị đọc MỖI LƯỢT QUÉT → cache 30s như getLabelFormat.
+// Bật/tắt công tắc có hiệu lực chậm nhất 30s, đổi lại đường quét bớt hẳn 1 round-trip mỗi lượt.
+const _whCache = new Map<string, { at: number; row: Record<string, unknown> }>()
+async function whConfig(warehouseId: string): Promise<Record<string, unknown>> {
+  const hit = _whCache.get(warehouseId)
+  if (hit && Date.now() - hit.at < 30_000) return hit.row
+  const { data } = await supabase.from('Warehouse')
+    .select(`rotation_principle, ${PUTAWAY_WH_COLS}`).eq('id', warehouseId).maybeSingle()
+  const row = (data ?? {}) as Record<string, unknown>
+  _whCache.set(warehouseId, { at: Date.now(), row })
+  return row
+}
+
 export async function loadPutawayContext(opts: {
   warehouseId: string | null
   locIds:      string[]
   incoming:    IncomingInput
+  material?:   MaterialShelfInfo | null   // dòng Material đã nạp sẵn của caller (khỏi hỏi lại)
 }): Promise<PutawayContext> {
   const { warehouseId, locIds, incoming } = opts
 
-  const { data: whRow } = warehouseId
-    ? await supabase.from('Warehouse')
-        .select(`rotation_principle, ${PUTAWAY_WH_COLS}`)
-        .eq('id', warehouseId).maybeSingle()
-    : { data: null }
-  const wh = (whRow ?? {}) as Record<string, unknown>
+  const wh = warehouseId ? await whConfig(warehouseId) : {}
   const rules = putawayRulesOf(wh)
   const principle = asRotationPrinciple(wh.rotation_principle)
 
@@ -141,8 +159,8 @@ export async function loadPutawayContext(opts: {
   // Khóa luân chuyển của chính pallet sắp cất — tính bằng ĐÚNG rotationSortKey, không tự so ngày.
   let key: number | null = null
   if (incoming.production_date || incoming.expiry_date) {
-    const { data: mat } = await supabase.from('Material').select(MAT_SHELF_COLS)
-      .eq('id', incoming.material_id).maybeSingle()
+    const mat = opts.material ?? (await supabase.from('Material').select(MAT_SHELF_COLS)
+      .eq('id', incoming.material_id).maybeSingle()).data
     key = rotationSortKey(
       {
         production_date: incoming.production_date ?? null,

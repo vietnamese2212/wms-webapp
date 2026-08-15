@@ -272,6 +272,50 @@ try {
     await setRules({ putaway_max_materials: null, putaway_required: false })
   } else check('[18] ĐUA tối đa N mã/ô', true, 'bỏ qua — không đủ 3 mã có khai thùng/pallet')
 
+  // ── 7. CHIẾN THUẬT ABC (đợt C) — phải chỉ vào ĐÚNG khu Slotting coi là band của hạng đó ──────
+  // Oracle dựng ĐỘC LẬP từ `material_abc` + hạng nhặt khu, rồi so với cái BE đánh dấu. Đây chính
+  // là chỗ hai module từng đánh nhau: Slotting đẩy hàng A ra gần cửa, luồng nhập cất vào khu C.
+  {
+    const abcRows = await restRpc('material_abc', { p_warehouse_id: whId, p_categories: null, p_days: 30 })
+    const zoneRows = await restAll('WarehouseZone',
+      `select=code,categories,pick_rank&warehouse_id=eq.${whId}&is_active=is.true&pick_rank=not.is.null`)
+    const target = (mrow) => {
+      const hop = zoneRows
+        .filter(z => !z.categories?.length || (mrow.category && z.categories.includes(mrow.category)))
+        .sort((a, b) => (a.pick_rank - b.pick_rank) || a.code.localeCompare(b.code))
+      const band = (i, n) => (n <= 1 ? 'A' : (i / n < 1 / 3 ? 'A' : (i / n < 2 / 3 ? 'B' : 'C')))
+      return hop.filter((_, i) => band(i, hop.length) === mrow.abc).map(z => z.code)
+    }
+    // Chọn mã có khu đích THẬT SỰ tồn tại — loại hàng chỉ có 1 khu xếp hạng thì khu đó là band A,
+    // nên mã hạng C ĐÚNG RA không có khu đích nào (rỗng là kết quả hợp lệ, không phải lỗi).
+    const withTarget = (abcRows ?? []).map(r => ({ r, want: target(r) })).find(x => x.want.length > 0)
+    if (withTarget && zoneRows.length > 0) {
+      const { r: mrow, want } = withTarget
+      await setRules({ putaway_priority: 'ABC' })
+      const url = `/masterdata/locations?warehouse_id=${whId}&material_id=${mrow.material_id}&view=lite&limit=200`
+      const rowsAbc = (await api(url)).j?.data ?? []
+      const marked = rowsAbc.filter(x => x.putaway?.reason === 'BAND_MATCH')
+      check('[22] chiến thuật ABC đánh dấu ĐÚNG khu mà oracle độc lập tính ra',
+        marked.length > 0 && marked.every(x => want.includes(x.sub_code)),
+        `mã ${mrow.material_code} hạng ${mrow.abc} · oracle [${want.join(',')}] · BE [${[...new Set(marked.map(x => x.sub_code))].join(',')}]`)
+      const top = rowsAbc.find(x => !x.putaway?.blocked)
+      check('[23] vị trí ĐẦU danh sách nằm trong khu đúng band',
+        !!top && want.includes(top.sub_code), `đầu = ${top?.location_code} (khu ${top?.sub_code})`)
+      await setRules({ putaway_priority: 'CONSOLIDATE' })
+      const rowsGom = (await api(url)).j?.data ?? []
+      check('[24] đổi về Gom → hết đánh dấu BAND_MATCH (không dính cache chiến thuật cũ)',
+        rowsGom.every(x => x.putaway?.reason !== 'BAND_MATCH'))
+    } else {
+      // Không dựng được ca có khu đích → vẫn phải chứng minh BE KHÔNG đánh dấu bừa
+      await setRules({ putaway_priority: 'ABC' })
+      const rowsAbc = (await api(`/masterdata/locations?warehouse_id=${whId}&material_id=${mat.id}&view=lite&limit=100`)).j?.data ?? []
+      check('[22] kho/loại hàng chưa có khu đích → ABC xuống thang, KHÔNG đánh dấu bừa',
+        rowsAbc.every(x => x.putaway?.reason !== 'BAND_MATCH'),
+        `${zoneRows.length} khu xếp hạng, không khu nào hợp band`)
+      await setRules({ putaway_priority: 'CONSOLIDATE' })
+    }
+  }
+
 } catch (e) {
   check('gói chạy trọn', false, e?.message ?? String(e))
 } finally {

@@ -10,6 +10,12 @@ const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Mi
 const ddmmyy = today.slice(8, 10) + today.slice(5, 7) + today.slice(2, 4)
 const tem = (n, mat = `${TAG}${n}`) => `${ddmmyy}_${mat}_55_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
 const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`).toISOString()
+// Đóng trang sổ mà KHÔNG truyền giờ kết thúc thì server lấy "bây giờ" — và fixture đặt giờ bắt đầu
+// 07:00, nên gói chạy trong khoảng 00:00–07:00 giờ VN sẽ có end < start ⇒ app từ chối ĐÚNG LUẬT
+// (422 TIME_ORDER), trang không đóng được, các phép kiểm sau lệch dây chuyền (đo thật 16/08 lúc
+// 00:20: 6 FAIL, trong đó 3 cái báo RUN_AMBIGUOUS vì trang cũ còn mở). Không phải lỗi app — nhưng
+// CI chạy mỗi lần push, push ban đêm là cổng đỏ oan. Mọi lời gọi đóng đều truyền giờ TƯỜNG MINH.
+const END_OK = iso(16, 30)
 
 async function cleanup() {
   await restWrite('packing_logs', 'DELETE', `pallet_code=like.*${TAG}*`).catch(() => {})
@@ -145,7 +151,7 @@ let runB = null
 
 // [10] Trang ĐÃ ĐÓNG không nhận quét nữa: đóng nốt trang B + trang M9 → quét mã đó lại bị RUN_REQUIRED
 {
-  await api(`/wms/packing-runs/${runB?.id}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${runB?.id}/close`, 'POST', { end_at: END_OK })
   const r = await api('/wms/packing-logs/open', 'POST', { qr_code: tem(7, `${TAG}1`) })
   check('Mọi trang của mã đã đóng → quét lại 422 RUN_REQUIRED', r.s === 422 && r.j?.error?.code === 'RUN_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
 }
@@ -313,7 +319,7 @@ let runB = null
     `http=${qd.s} diff_count=${qd.j?.data?.diff_count} received_qty=${dHit?.received_qty}`)
   await restWrite('InventoryEntry', 'DELETE', `id=eq.${invId}`)
 
-  await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${mrun?.id}/close`, 'POST', { end_at: END_OK })
   if (yWin?.id) await api(`/wms/packing-runs/${yWin.id}/cancel`, 'POST', {})
 }
 
@@ -383,7 +389,7 @@ let runB = null
       }
       const hits = [
         ['PATCH trang sổ', await as5(`/wms/packing-runs/${rid}`, 'PATCH', { shift: 'Ca 3' })],
-        ['Giờ kết thúc trang', await as5(`/wms/packing-runs/${rid}/close`, 'POST', {})],
+        ['Giờ kết thúc trang', await as5(`/wms/packing-runs/${rid}/close`, 'POST', { end_at: END_OK })],
         ['Hủy trang', await as5(`/wms/packing-runs/${rid}/cancel`, 'POST', {})],
         ['PATCH pallet', await as5(`/wms/packing-logs/${lid}`, 'PATCH', { qty_cartons: 1 })],
         ['Đóng pallet', await as5(`/wms/packing-logs/${lid}/close`, 'POST', {})],
@@ -519,7 +525,7 @@ let runB = null
   // máy A cho cùng mã (2 trang OPEN cùng mã sẽ thành RUN_AMBIGUOUS nên phải đóng trang cũ trước).
   const m9 = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'M9' })
   const mA = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'A' })
-  await api(`/wms/packing-runs/${rcId}/close`, 'POST', {})
+  await api(`/wms/packing-runs/${rcId}/close`, 'POST', { end_at: END_OK })
   const rcA = await openRun(`${TAG}C`, 'A', { cycle: '55' })
   const rcAId = rcA.j?.data?.id
   check('[20] mở trang máy A (danh mục có A) → 200', rcA.s === 200, `http=${rcA.s} code=${rcA.j?.error?.code}`)
@@ -532,7 +538,7 @@ let runB = null
   check('[20] Máy ghi vào sổ = máy TRANG SỔ (không nhận override từ body)',
     okMachine.j?.data?.machine_code === 'A', `machine=${okMachine.j?.data?.machine_code}`)
 
-  if (rcAId) await api(`/wms/packing-runs/${rcAId}/close`, 'POST', {})   // có pallet → đóng, không hủy được
+  if (rcAId) await api(`/wms/packing-runs/${rcAId}/close`, 'POST', { end_at: END_OK })   // có pallet → đóng, không hủy được
   for (const id of [m9.j?.data?.id, mA.j?.data?.id]) if (id) await api(`/masterdata/machines/${id}`, 'DELETE')
 }
 
@@ -640,7 +646,7 @@ let runB = null
     Number(r3?.recv_total) === 2 && Number(r3?.received_count) === 2, `recv=${r3?.received_count}/${r3?.recv_total}`)
 
   for (const iid of invIds) await restWrite('InventoryEntry', 'DELETE', `id=eq.${iid}`)
-  if (rid) await api(`/wms/packing-runs/${rid}/close`, 'POST', {})
+  if (rid) await api(`/wms/packing-runs/${rid}/close`, 'POST', { end_at: END_OK })
 }
 
 console.log('\n🧹 dọn…')

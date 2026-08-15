@@ -1,6 +1,13 @@
 import { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../services/alertScanner'
+import { syncVapidSubject } from '../../services/pushService'
+import {
+  invalidateSettingsCache, parseRetention, parseCycleCount,
+  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
+  parseStandardWorkHours,
+} from '../../utils/settings'
 
 // SystemSetting: cờ hành vi per-DB (multi-tenant SILO — cờ theo KHÁC BIỆT, không theo đơn vị).
 // SỔ CỜ (thêm cờ mới = thêm dòng vào KNOWN_SETTINGS + ghi chú ở đây):
@@ -23,6 +30,34 @@ import { ok, fail } from '../../utils/response'
 //     ĐỘC LẬP với Loại xe TMS (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế — dims không
 //     treo trên Loại xe). Ghi = wms_settings.manage_system (nút Lưu/Xóa trong dialog 3D gate quyền này).
 
+// - alert_thresholds: 7 ngưỡng của trung tâm cảnh báo (user yêu cầu tùy biến 10/08 — vd %Date 10→15):
+//     { PCT_WARN, PCT_CRIT, GATE_WARN_MIN, GATE_CRIT_MIN, TRIP_STUCK_HOURS, WEIGH_WARN_PCT, WEIGH_CRIT_PCT }.
+//     Chưa cấu hình = mặc định THRESHOLDS trong alertScanner. UI = tab "Cài đặt ngưỡng" trang Thông báo.
+//     Ràng buộc chéo: PCT_CRIT ≤ PCT_WARN (thấp hơn = nguy hơn) · GATE/WEIGH crit ≥ warn.
+
+// ── THAM SỐ VẬN HÀNH (đợt 2 chống hardcode 13/08) — mặc định + validator ở `utils/settings.ts`
+//    (MỘT nguồn: getter của consumer và validator của PUT dùng chung, không có bản chép tay).
+//    UI = tab "Hệ thống" trang Cài đặt WMS.
+// - retention_days: { photos, feed, error_logs } — số NGÀY giữ ảnh / thông báo cá nhân / log lỗi.
+// - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
+// - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
+// - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
+// - standard_work_hours: GIỜ CÔNG CHUẨN của 1 ngày công (mặc định 8) — bảng công quy ngày công ra
+//     giờ: total_hours = work_days × giờ chuẩn + OT − về sớm. BE và FE phải đọc CÙNG cờ này.
+// - vn_holidays: LỊCH NGHỈ LỄ theo năm — { "2026": [{date,name}] }. Năm khai ở đây dùng ĐÚNG danh sách
+//     khai (công bố của Chính phủ đổi hàng năm: nghỉ bù, Tết 5/7/9 ngày); năm không khai vẫn tự tính
+//     bằng thuật toán âm lịch cũ ⇒ chưa cấu hình = hành vi không đổi.
+// - org_profile: NHẬN DIỆN & THAM SỐ RIÊNG CỦA ĐƠN VỊ (14/08) — { contact_email (subject Web Push),
+//     nmsx_alias (gộp mã nhà máy cũ→mới), assumed_carton_mm (cỡ thùng giả định khi mã chưa khai) }.
+//     Trước đây là hằng số của riêng LOF nằm rải trong code. MÃ TRẠM CÂN từng nằm ở đây nhưng đã GỠ
+//     (14/08): đơn vị có nhiều trạm ở nhiều kho ⇒ mã trạm do agent TỪNG trạm khai, không có mặc định.
+
+// - pct_date_bands: { good, low } — THANG MÀU %Date hiển thị TOÀN APP (audit hardcode 13/08: trước
+//     đó 3 thang mâu thuẫn 70/40 · 60/30 · 20/10 rải 12 chỗ FE). pct > good = xanh · > low = vàng ·
+//     còn lại đỏ. Chưa cấu hình = mặc định { good: 60, low: 30 } (khớp thang họ Xuất/Nhặt lẻ cũ).
+//     FE đọc qua usePctBands() + pctDateCls() (utils/pctDateBands) — thêm chỗ hiển thị %Date mới
+//     BẮT BUỘC dùng cặp này, KHÔNG tự viết ternary ngưỡng.
+
 export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
 export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
 export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
@@ -44,11 +79,69 @@ function isTruckModels(v: unknown): boolean {
   })
 }
 
+function isAlertThresholds(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  const keys = ALERT_TH_CONFIG_KEYS as readonly string[]
+  if (Object.keys(o).some(k => !keys.includes(k))) return false   // chỉ nhận đúng bộ khóa
+  if (!keys.every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number) && (o[k] as number) > 0)) return false
+  const t = o as Record<string, number>
+  if (!(t.PCT_CRIT <= t.PCT_WARN && t.PCT_WARN <= 90)) return false                                   // %Date: thấp = nguy
+  if (!(t.GATE_WARN_MIN >= 15 && t.GATE_WARN_MIN <= t.GATE_CRIT_MIN && t.GATE_CRIT_MIN <= 2880)) return false
+  if (!(t.TRIP_STUCK_HOURS >= 1 && t.TRIP_STUCK_HOURS <= 72)) return false
+  if (!(Number.isInteger(t.TRIP_LATE_DAYS) && t.TRIP_LATE_DAYS >= 1 && t.TRIP_LATE_DAYS <= 180)) return false
+  if (!(t.WEIGH_WARN_PCT <= t.WEIGH_CRIT_PCT && t.WEIGH_CRIT_PCT <= 100)) return false
+  if (!(t.PACKING_UNRECV_WARN_H >= 1 && t.PACKING_UNRECV_WARN_H <= t.PACKING_UNRECV_CRIT_H && t.PACKING_UNRECV_CRIT_H <= 168)) return false
+  return true
+}
+
+function isPctDateBands(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'good' && k !== 'low')) return false
+  const good = o.good, low = o.low
+  if (typeof good !== 'number' || typeof low !== 'number' || !Number.isFinite(good) || !Number.isFinite(low)) return false
+  return low > 0 && low <= good && good <= 100
+}
+
 const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: string }> = {
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
+  pct_date_bands: { validate: isPctDateBands, hint: '{ good: number, low: number } với 0 < low ≤ good ≤ 100 — %Date > good xanh, > low vàng, còn lại đỏ' },
   decimal_separator: { validate: v => v === 'dot' || v === 'comma', hint: "'dot' | 'comma'" },
   delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
+  alert_thresholds: {
+    validate: isAlertThresholds,
+    hint: 'đủ 10 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · TRIP_LATE_DAYS 1–180 (ngày) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ)',
+  },
+  retention_days: {
+    validate: v => parseRetention(v) !== null,
+    hint: '{ photos: 7–730, feed: 1–90, error_logs: 7–365 } — số ngày, nguyên',
+  },
+  cycle_count: {
+    validate: v => parseCycleCount(v) !== null,
+    hint: '{ A, B, C: 1–365 ngày (A ≤ B ≤ C — hạng A kiểm dày nhất), window_days: 7–365 }',
+  },
+  inbound_edit_window_days: {
+    validate: v => parseInboundEditWindow(v) !== null,
+    hint: 'số nguyên 1–90 (ngày)',
+  },
+  packing_max_materials_per_run: {
+    validate: v => parsePackingMaxMaterials(v) !== null,
+    hint: 'số nguyên 1–50 (mã / trang sổ)',
+  },
+  standard_work_hours: {
+    validate: v => parseStandardWorkHours(v) !== null,
+    hint: 'số giờ 1–24, bước 0,5 (giờ công chuẩn của 1 ngày công — bảng công quy ngày ra giờ)',
+  },
+  vn_holidays: {
+    validate: v => parseVnHolidays(v) !== null,
+    hint: '{ "2026": [{ date: "2026-01-01", name: "Tết Dương lịch" }] } — năm KHÔNG khai thì dùng lịch tự tính (âm lịch + 4 lễ dương)',
+  },
+  org_profile: {
+    validate: v => parseOrgProfile(v) !== null,
+    hint: '{ contact_email, nmsx_alias: {CŨ:MỚI}, assumed_carton_mm: {l,w,h} } — nhận diện & tham số riêng của đơn vị',
+  },
 }
 
 // Cờ label_format có cache ngắn (điểm quét đọc mỗi lần → không query DB liên tục; cờ đổi rất hiếm).
@@ -84,11 +177,15 @@ export async function wrongFormatHint(raw: string): Promise<string | null> {
     : 'Tem không đúng định dạng đơn vị: đơn vị này dùng tem gạch dưới ( _ ), tem vừa quét là tem chấm phẩy ( ; ). Kiểm tra lại tem.'
 }
 
+// Cờ chứa BÍ MẬT (key_enc AI Vision…) — ghi qua route riêng (visionController, superadmin),
+// TUYỆT ĐỐI không trả qua GET hở đọc này. PUT /wms/settings/<key> tự chặn (không trong KNOWN_SETTINGS).
+const SECRET_SETTINGS = new Set(['vision_api'])
+
 // GET /wms/settings — auth-only (mọi user đăng nhập đọc được: trang in tem/quét cần biết cờ)
 export async function listSettings(_req: Request, res: Response) {
   const { data, error } = await supabase.from('SystemSetting').select('key, value, updated_by, updated_at')
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
-  return ok(res, data ?? [])
+  return ok(res, (data ?? []).filter(r => !SECRET_SETTINGS.has((r as { key: string }).key)))
 }
 
 // PUT /wms/settings/:key — requirePerm wms_settings.manage_system
@@ -107,5 +204,13 @@ export async function updateSetting(req: Request, res: Response) {
   }, { onConflict: 'key' }).select('key, value, updated_by, updated_at').single()
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
   _labelFormatCache = null; _dcCache = null   // đổi cờ → xoá cache để có hiệu lực ngay (không đợi TTL 30s)
+  invalidateAlertThresholdsCache()
+  invalidateSettingsCache()
+  // Email liên hệ chỉ được dùng lúc SINH khóa push lần đầu → đổi ở đây phải ghi luôn vào khóa
+  // đang dùng, nếu không ô cấu hình không có tác dụng gì.
+  if (key === 'org_profile') {
+    const email = (value as { contact_email?: unknown } | null)?.contact_email
+    if (typeof email === 'string') await syncVapidSubject(email)
+  }
   return ok(res, data)
 }

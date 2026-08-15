@@ -3,13 +3,13 @@ import { randomUUID } from 'crypto'
 import bcrypt from 'bcrypt'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeSearch } from '../../utils/search'
 
 // ─── Phân quyền: bảo vệ tài khoản Admin + giới hạn phạm vi thấy nhân sự ─────────
 function isSuperadmin(req: Request): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return req.user?.name === 'Admin'
+  // Cờ is_superadmin trong token = cột Employee.is_superadmin (migration 20260813f) — không so tên
+  return req.user?.is_superadmin === true
 }
 
 // Chống leo thang: non-superadmin không được gán cho tài khoản/chức danh quyền mà CHÍNH
@@ -30,8 +30,8 @@ async function blockIfTargetSuperadmin(req: Request, res: Response): Promise<boo
   if (isSuperadmin(req)) return false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data } = await supabase.from('Employee')
-    .select('name, employee_code').eq('id', req.params.id).maybeSingle()
-  if (data?.name === 'Admin' || data?.employee_code === 'ADMIN') {
+    .select('is_superadmin').eq('id', req.params.id).maybeSingle()
+  if (data?.is_superadmin === true) {
     fail(res, 'Chỉ Admin mới được thao tác trên tài khoản Admin', 403)
     return true
   }
@@ -58,7 +58,7 @@ async function visibleEmployeeIds(req: Request): Promise<Set<string> | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = req.user
   if (!u) return new Set<string>()
-  if (u.name === 'Admin') return null
+  if (u.is_superadmin === true) return null
 
   const self: string = u.sub
   const allowed = new Set<string>([self]) // luôn thấy chính mình
@@ -142,6 +142,11 @@ const EMP_BASE = [
   'ncc_id', 'is_driver', 'manager_id',
 ].join(', ')
 
+// `view=lite`: chỉ các cột đủ để DỰNG SƠ ĐỒ / ĐỔ DROPDOWN, không phải hồ sơ đầy đủ.
+// Đo 28/07: dòng nhân sự đầy đủ ≈ 830 B ⇒ 1.539 người = 1.230KB và ~5.400 người là vượt trần
+// 4,5MB của Vercel. Sơ đồ tổ chức chỉ cần tên + chức danh + kho; ô chọn chỉ cần tên + mã.
+const EMP_LITE = ['id', 'name', 'employee_code', 'job_title_id', 'department_id', 'is_active'].join(', ')
+
 // Fetch employees và join dept / job_title / warehouse_access thủ công
 // (tránh Supabase FK join cho FK mới — PostgREST schema cache có thể chưa reload)
 async function fetchFull(opts: {
@@ -150,21 +155,43 @@ async function fetchFull(opts: {
   is_active?: boolean
   search?: string
   include_deleted?: boolean
+  lite?: boolean          // chỉ cột dựng sơ đồ / đổ dropdown (xem EMP_LITE)
 }) {
   // Phân trang (cap ~1000 dòng/response) — Employee sẽ vượt 1000 khi thêm tài khoản lái xe;
   // scope lọc SAU fetch (listEmployees) nên bị cắt là mất người khỏi DS âm thầm.
-  const buildQ = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q = supabase.from('Employee').select(EMP_BASE).order('name').order('id')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyF = (q: any): any => {
     if (!opts.include_deleted) q = q.is('deleted_at', null)
-    if (opts.ids?.length)      q = q.in('id', opts.ids)
     if (opts.department_id)    q = q.eq('department_id', opts.department_id)
     if (opts.is_active !== undefined) q = q.eq('is_active', opts.is_active)
     if (opts.search) { const s = safeSearch(opts.search); q = q.or(`name.ilike.%${s}%,employee_code.ilike.%${s}%,email.ilike.%${s}%`) }
     return q
   }
-  const emps = await fetchAllRowsParallel(buildQ) as unknown as EmpRow[]
+  // Có danh sách id (nạp đúng 1 trang) → CHUNK 300: trang 500 dòng nhồi 1 `.in()` là vỡ URL
+  // PostgREST (trần ~300 uuid — xem [[id-list-url-limits]]). Không có id → phân trang cả bảng.
+  const SEL = opts.lite ? EMP_LITE : EMP_BASE
+  const emps = (opts.ids?.length
+    ? await fetchAllByIdChunks(opts.ids, chunk => applyF(
+        supabase.from('Employee').select(SEL).in('id', chunk)).order('name').order('id'))
+    : await fetchAllRowsParallel(() => applyF(
+        supabase.from('Employee').select(SEL)).order('name').order('id'))) as unknown as EmpRow[]
   if (!emps.length) return []
+
+  // LITE: chỉ kèm danh sách id kho được gán (sơ đồ tổ chức lọc theo kho) — KHÔNG tra tên
+  // phòng ban / chức danh / quản lý / tên kho. Bên gọi đã có sẵn danh mục đó (useJobTitles,
+  // useDepartments, useScopedWarehouses) nên nhúng lại vào TỪNG dòng chỉ làm phình payload.
+  if (opts.lite) {
+    const waLite = await fetchAllByIdChunks(emps.map(e => e.id), chunk =>
+      supabase.from('UserWarehouseAccess').select('employee_id, warehouse_id')
+        .in('employee_id', chunk).order('employee_id')) as { employee_id: string; warehouse_id: string }[]
+    const byEmp = new Map<string, { warehouse_id: string }[]>()
+    for (const wa of waLite) {
+      const l = byEmp.get(wa.employee_id) ?? []
+      l.push({ warehouse_id: wa.warehouse_id })
+      byEmp.set(wa.employee_id, l)
+    }
+    return emps.map(emp => ({ ...emp, warehouse_access: byEmp.get(emp.id) ?? [] }))
+  }
 
   // ── Departments ────────────────────────────────────────────────────────────
   const deptIds = [...new Set(emps.map(e => e.department_id).filter((x): x is string => !!x))]
@@ -181,11 +208,14 @@ async function fetchFull(opts: {
     : { data: [] as { id: string; name: string }[] }
 
   // ── Warehouse access ───────────────────────────────────────────────────────
-  // Phân trang (cap ~1000/response) — NV × kho được gán dễ vượt 1000 khi nhân sự tăng
+  // CHUNK 300 id/lô: nhồi cả danh sách nhân sự vào 1 `.in()` là vỡ URL PostgREST — đo thật
+  // 28/07 trên staging: 385 nhân sự còn chạy, **395 là đứt kết nối → HTTP 500 sau 8,5s**
+  // (trang Quản lý người dùng + Bảng công trắng màn). Xem [[id-list-url-limits]]: trần ~300
+  // uuid/11KB URL. fetchAllByIdChunks lo cả chunk id lẫn phân trang cap ~1000 trong mỗi lô.
   const empIds = emps.map(e => e.id)
-  const waRows = await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess')
+  const waRows = await fetchAllByIdChunks(empIds, chunk => supabase.from('UserWarehouseAccess')
     .select('employee_id, warehouse_id')
-    .in('employee_id', empIds)
+    .in('employee_id', chunk)
     .order('employee_id').order('warehouse_id')) as { employee_id: string; warehouse_id: string }[]
 
   const wIds = [...new Set(((waRows ?? []) as { employee_id: string; warehouse_id: string }[]).map(r => r.warehouse_id))]
@@ -208,10 +238,11 @@ async function fetchFull(opts: {
 
   // ── Quản lý trực tiếp ────────────────────────────────────────────────────
   const mgrIds = [...new Set(emps.map(e => e.manager_id).filter((x): x is string => !!x))]
-  const { data: mgrs } = mgrIds.length
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ? await supabase.from('Employee').select('id, name, employee_code').in('id', mgrIds)
-    : { data: [] as { id: string; name: string; employee_code: string }[] }
+  // cũng chunk 300 — số quản lý ít hơn nhân sự nhưng vẫn tăng theo quy mô, đừng để vỡ URL
+  const mgrs = mgrIds.length
+    ? await fetchAllByIdChunks(mgrIds, chunk => supabase.from('Employee')
+        .select('id, name, employee_code').in('id', chunk).order('id'))
+    : ([] as { id: string; name: string; employee_code: string }[])
   const mgrMap = new Map(((mgrs ?? []) as { id: string; name: string; employee_code: string }[]).map(m => [m.id, m]))
 
   return emps.map(emp => ({
@@ -225,15 +256,57 @@ async function fetchFull(opts: {
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 
+// Trang Quản lý người dùng — phân trang SERVER (RPC `hr_employees_page`).
+// Đo thật 28/07: trả cả bảng thì 3.000 nhân sự = 2.495KB (trần 4,5MB response của Vercel ở
+// ~5.400 NV) và mọi bộ lọc/tìm kiếm chạy ở trình duyệt trên tập đã tải. Scope nhân sự vẫn
+// resolve ở đây (kho ∩ cấp dưới theo JobTitle) rồi truyền xuống RPC bằng THAM SỐ MẢNG —
+// POST body nên không dính trần ~300 id trên URL.
+export async function listEmployeesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+  const scope = await visibleEmployeeIds(req)
+
+  const { data, error } = await supabase.rpc('hr_employees_page', {
+    p_scope_ids:    scope === null ? null : [...scope],
+    p_dept:         q.department_id || null,
+    p_jt_id:        q.job_title_id || null,
+    p_wh:           q.warehouse_id || null,
+    p_search:       q.search || null,
+    p_active:       q.is_active === undefined || q.is_active === '' ? null : String(q.is_active),
+    p_incl_deleted: q.include_deleted === 'true',
+    p_status:       q.status || null,
+    p_offset:       (pageNum - 1) * pageSize,
+    p_limit:        pageSize,
+  })
+  if (error) return fail(res, error.message)
+  const pd = (data ?? {}) as { ids?: string[]; total?: number; active?: number; paused?: number; hidden?: number }
+  const ids = pd.ids ?? []
+  // fetchFull chỉ nạp ĐÚNG nhân sự của trang này (đã chunk 300 bên trong)
+  const rows = ids.length ? await fetchFull({ ids, include_deleted: true }) : []
+  const byId = new Map(rows.map(r => [r.id, r]))
+  return ok(res, {
+    rows: ids.map(id => byId.get(id)).filter(Boolean),
+    total: pd.total ?? 0, active: pd.active ?? 0, paused: pd.paused ?? 0, hidden: pd.hidden ?? 0,
+    page: pageNum, page_size: pageSize,
+  })
+}
+
 export async function listEmployees(req: Request, res: Response) {
   try {
-    const { department_id, is_active, search, include_deleted } = req.query as Record<string, string>
+    // Chế độ MẢNG giữ nguyên cho các consumer cần roster đầy đủ (Sơ đồ tổ chức, chọn người
+    // trong Nhập kho, map tên ở Nghỉ phép) — chỉ trang Quản lý người dùng truyền ?page=.
+    if (req.query.page) return await listEmployeesPaged(req, res)
+    const { department_id, is_active, search, include_deleted, view } = req.query as Record<string, string>
     const scope = await visibleEmployeeIds(req)
     const data = await fetchFull({
       department_id: department_id || undefined,
       is_active: is_active !== undefined ? is_active === 'true' : undefined,
       search: search || undefined,
       include_deleted: include_deleted === 'true',
+      // ?view=lite — chỉ cột dựng sơ đồ / đổ dropdown (Sơ đồ tổ chức, ô chọn NV ở Nghỉ phép).
+      // Hồ sơ đầy đủ ≈ 830 B/dòng ⇒ vượt trần 4,5MB từ ~5.400 người.
+      lite: view === 'lite',
     })
     return ok(res, scope === null ? data : data.filter(e => scope.has(e.id)))
   } catch (e) { return fail(res, String(e)) }

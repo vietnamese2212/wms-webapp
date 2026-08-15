@@ -41,7 +41,33 @@ Hàng 2: `<FilterBar defs={...} />` bọc `hidden sm:flex`. Mobile: FilterBar t�
 - **Server-side** filter: `warehouse_id`, `material_category` (Inventory paginated + Inbound). **Client-side**: phần còn lại.
 
 ## 4. SummaryBand (`@/components/shared/SummaryBand`)
-Dải `bg-sky-800` full-width ngay TRÊN bảng; mỗi tile = nhãn nhỏ in hoa + số lớn. List và detail **dùng chung** để đồng bộ. Số liệu tổng chuyển hết vào đây thay cho dòng text. Stats tính trên `displayItems` (đã filter).
+Dải `bg-sky-800` full-width ngay TRÊN bảng; mỗi tile = nhãn nhỏ in hoa + số lớn. List và detail **dùng chung** để đồng bộ. Số liệu tổng chuyển hết vào đây thay cho dòng text.
+- **List CHƯA phân trang**: stats tính trên `displayItems` (đã filter).
+- **List ĐÃ phân trang** (mục 4b): tổng phải lấy từ **API summary tính bằng SQL trên TOÀN BỘ bộ lọc** — cộng trên trang đang xem ra "tổng của trang 1", **SAI mà không báo gì**. Thêm ô `{ label: 'Trang', value: \`${page}/${totalPages}\` }` vào cuối band khi `totalPages > 1`.
+
+## 4b. PHÂN TRANG — chuẩn DUY NHẤT, mọi trang giống hệt nhau
+> User chốt 28/07: *"phân trang đồng bộ giao diện ở mọi trang, tránh mỗi trang một kiểu"*. Trước đó có 3 biến thể rời (nút chữ giữa bảng · mũi tên nhỏ ghim mép phải "Mỗi trang" · "‹ Trước · Trang x/y").
+
+**BẮT BUỘC dùng `@/components/shared/ListPager`, KHÔNG tự viết nút phân trang:**
+```tsx
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+
+// … ngay SAU </Table>, BÊN TRONG vùng cuộn:
+<PagerNav page={page} totalPages={totalPages} onPage={p => setX({ page: p })} />
+
+// … NGOÀI vùng cuộn, dính đáy card (thay cho footer đếm bản ghi ở mục 1):
+<ListFooter page={page} pageSize={pageSize} total={total} unit="phiếu"
+  onPageSize={n => setX({ pageSize: n, page: 1 })}
+  right={`${pallets} pallet · ${cartons} thùng`}      // tuỳ chọn: số phụ căn phải
+>{selected && <span className="ml-2 text-blue-600">· 1 đang xem</span>}</ListFooter>
+```
+- `PAGE_SIZE_OPTIONS` = **50/100/200/500/1000** ở mọi trang; **mặc định** tuỳ trang (dòng thưa 100, dòng dày 500).
+- `page`/`pageSize` khai trong slice của `useWmsFilterStore` (nhớ theo user tự động, mục 14). **MỌI onChange filter phải kèm `page: 1`** — kể cả `SearchInput`, `SavedViews.onApply`, nút "Hôm nay".
+- Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối: `useEffect(() => { if (!isLoading && total > 0 && page > totalPages) setX({ page: totalPages }) }, …)`.
+- Hook list dùng `placeholderData: keepPreviousData` (lật trang không nháy trắng).
+- **Ba thứ PHẢI chuyển xuống server cùng lúc, nếu không sẽ SAI ÂM THẦM** (cùng họ bẫy cắt-1000): (1) **tổng SummaryBand** → API summary; (2) **ô tìm kiếm** → server, kẻo chỉ tìm trong trang đang xem; (3) **sắp xếp** → server, kẻo chỉ sắp trong trang. Thứ tự dòng do SQL quyết định — **không sort lại client**.
+- Nhóm dòng đóng khung (mục 10): sắp theo **khoá nhóm** trong SQL để mỗi nhóm nằm trọn 1 trang; thao tác trên cả nhóm (vd "Sửa nhóm") phải lấy đủ nhóm **từ server**, không lọc trong trang.
+- Chuẩn BE + RPC đi kèm: memory `server-pagination-campaign` (khuôn 3 hàm `*_page` / `*_summary` / `*_facets` cùng một mệnh đề WHERE; **bắt buộc plpgsql + `plan_cache_mode = force_custom_plan`**).
 
 ## 5. SavedViews + Density
 - `SavedViews` (`useSavedViewsStore`): lưu/áp tổ hợp filter đặt tên (localStorage theo module). Truyền `module`, `currentFilters`, `onApply`, `activeId`.
@@ -159,6 +185,7 @@ Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn 
 ## Checklist tạo/sửa list page (Manhattan)
 - [ ] Card trên canvas xám (`sm:p-3` + panel trắng bo góc, KHÔNG `overflow-hidden`)
 - [ ] Toolbar (Search + FilterSheetButton + SavedViews + density + action) + FilterBar (hàng 2, `defs`) + SummaryBand
+- [ ] (List phân trang) `PagerNav` + `ListFooter` dùng chung · mọi filter reset `page: 1` · tổng/tìm/sort ở SERVER · ô "Trang x/y" trong SummaryBand
 - [ ] Filter ngày = `daterange`; sentinel `'__all__'`; state → `useWmsFilterStore`
 - [ ] Container `overflow-auto` duy nhất (KHÔNG bọc thêm `overflow-x-auto`)
 - [ ] Bảng nghiệp vụ: `table-fixed` + `useColumnResize` + colgroup + kẻ cột + tay kéo + cột đầu sticky-left

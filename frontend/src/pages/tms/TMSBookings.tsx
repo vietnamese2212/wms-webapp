@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -19,7 +19,10 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { RowFilterChips, rowFilterPass, type RowFilterVal } from '@/components/shared/RowFilterChips'
 import type { MSOpt } from '@/components/shared/MultiSelectFilter'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
@@ -29,18 +32,22 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import {
   useWarehouses, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles,
   useDeliverySlots, useGenerateSlots,
-  useTmsOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
+  useTmsOrdersPaged, useTmsOrdersSummary, useTmsOrdersFacets, useConsolidatableOrders, tmsCsvParams,
+  useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, useBulkUpdateOrderDate,
   useAddVehicleSlot, useUpdateVehicleSlot, useReleaseVehicleSlot, useRevokeVehicleSlot, useDeleteVehicleSlot,
-  usePlanLinesByOrder, usePlanVsActual, useBulkCreatePlanLinesForOrder, useMaterials,
+  usePlanLinesByOrder, usePlanVsActual, usePlanGoods, useBulkCreatePlanLinesForOrder, useMaterials, useMaterialsByCodes,
+  fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
   useActiveImportsByGdo, useCreateOneInbound,
-  useCompleteInboundOrder, useScanManualPallet, useMaterialSummary,
+  useCompleteInboundOrder, useScanManualPallet, useMaterialSummary, useMaterialSummaryByFilter,
   useCancelInboundOrder, useDeletePalletEntry,
   type TransferOrder,
 } from '@/api/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
@@ -79,10 +86,11 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Slot Picker ───────────────────────────────────────────────────────────────
 
-function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, vehicleType }: {
+function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, bookingCategory, vehicleType }: {
   warehouseId: string; date: string; selectedSlotId: string | null
   onSelect: (slot: DeliverySlot) => void
-  cargoType?: string | null
+  cargoType?: string | null          // các loại hàng xe CHỞ (có thể ghép) — chỉ dùng khi chưa chốt cửa
+  bookingCategory?: string | null    // CỬA đặt lịch đã khai ở Kế hoạch xuất (giá trị ĐƠN)
   vehicleType?: string | null
 }) {
   const [generateDone, setGenerateDone] = useState(false)
@@ -112,7 +120,17 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
 
   const filtered = allSlots.filter(slot => {
     if (slot.id === selectedSlotId) return true
-    if (cargoType && slot.cargo_type !== 'ALL' && slot.cargo_type !== cargoType) return false
+    // CỬA ĐẶT LỊCH (user chốt 03/08 "làm khóa cứng"): 1 xe chở lẫn nhiều loại nhưng chỉ đậu MỘT
+    // cửa — cửa đó KHAI ở Kế hoạch xuất (`booking_category`), KHÔNG suy diễn (có xe giữ nốt FG02
+    // dù chở cả FG01). ⇒ chỉ hiện khung của ĐÚNG cửa đó + khung 'ALL'. Gộp khung của mọi loại xe
+    // đang chở (bản vá sáng 03/08) là nguy cơ ĐẶT SAI CỬA. BE gác 422 BOOKING_CATEGORY_MISMATCH.
+    // Lệnh CHƯA chốt cửa (dữ liệu nạp trước khi có cột) → fallback giao ≥1 như cũ, không khoá chết.
+    if (bookingCategory) {
+      if (slot.cargo_type !== 'ALL' && slot.cargo_type !== bookingCategory) return false
+    } else {
+      const cargoCats = splitCats(cargoType)
+      if (cargoCats.length && slot.cargo_type !== 'ALL' && !cargoCats.includes(slot.cargo_type)) return false
+    }
     if (vehicleType && slot.vehicle_type?.name && slot.vehicle_type.name !== vehicleType) return false
     return true
   })
@@ -134,23 +152,28 @@ function SlotPicker({ warehouseId, date, selectedSlotId, onSelect, cargoType, ve
             disabled={disabled}
             onClick={() => onSelect(slot)}
             className={[
-              'w-full text-left px-3 py-2 rounded border text-xs flex items-center justify-between transition-colors',
+              'w-full text-left px-3 py-2 rounded border transition-colors',
               selected ? 'border-blue-500 bg-blue-50'
                 : disabled ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
                 : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 cursor-pointer',
             ].join(' ')}
           >
-            <span className="flex items-center gap-2">
-              <span className="font-mono font-semibold">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
-              <span className="text-slate-500">{slot.cargo_type === 'ALL' ? 'Tất cả' : slot.cargo_type}</span>
+            {/* Dòng 1: giờ + số xe — thông tin quyết định, cỡ lớn dễ đọc/bấm */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono font-semibold text-sm">{slot.time_from.slice(0, 5)}–{slot.time_to.slice(0, 5)}</span>
+              <span className={`text-sm font-semibold tabular-nums shrink-0 ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
+                {slot.booked_count}/{slot.max_vehicles} xe
+              </span>
+            </div>
+            {/* Dòng 2: loại hàng + loại xe + trạng thái — không nhồi chung dòng 1 (chật trên mobile) */}
+            <div className="flex items-center flex-wrap gap-1.5 mt-1 text-[11px] text-slate-500">
+              <span>{slot.cargo_type === 'ALL' ? 'Tất cả loại hàng' : slot.cargo_type}</span>
               {slot.vehicle_type?.name && (
-                <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded">{slot.vehicle_type.name}</span>
+                <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{slot.vehicle_type.name}</span>
               )}
-              {past && !selected && <span className="text-[9px] text-slate-400">đã qua</span>}
-            </span>
-            <span className={`font-semibold tabular-nums ${full && !selected ? 'text-red-500' : past && !selected ? 'text-slate-400' : 'text-green-600'}`}>
-              {slot.booked_count}/{slot.max_vehicles} xe
-            </span>
+              {full && !selected && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Đầy</span>}
+              {past && !selected && <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Đã qua</span>}
+            </div>
           </button>
         )
       })}
@@ -215,18 +238,19 @@ function PlateCombobox({ value, onChange, plates }: {
 
 // ── ĐVVT Book Dialog (điền slot + biển số + SĐT cho 1 VehicleSlot) ──────────
 
-function BookSlotDialog({ vslot, order, onClose, allOrders }: {
+function BookSlotDialog({ vslot, order, onClose }: {
   vslot: TmsVehicleSlot | null
   order: TmsOrder | null
   onClose: () => void
-  allOrders: TmsOrder[]
 }) {
   const updateSlot = useUpdateVehicleSlot()
   const user = useAuthStore(s => s.user)
-  const isDriver = user?.job_title_name === 'Lái xe'
+  const isDriver = user?.is_driver === true      // cờ chức danh, không so tên (audit 14/08)
 
+  // Không có ĐVVT thì KHÔNG gọi — params undefined trước đây kéo cả đội xe về vô ích
   const { data: nccVehicles = [] } = useTmsVehicles(
-    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true', pool_branches: 'true' } : undefined
+    !isDriver && order?.ncc_id ? { ncc_id: order.ncc_id, is_active: 'true', pool_branches: 'true' } : undefined,
+    !!(!isDriver && order?.ncc_id),
   )
 
   const [selectedSlot, setSelectedSlot] = useState<DeliverySlot | null>(null)
@@ -249,19 +273,18 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
     }
   }, [vslot?.id, isDriver])
 
-  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group này
+  // Đơn cùng ĐVVT, cùng ngày, xe chính PENDING, chưa trong group này — hỏi SERVER (danh sách Kế
+  // hoạch đã phân trang nên không còn mảng "toàn bộ đơn" ở client để lọc).
+  const canConsolidate = !isDriver && !!order && ['PENDING', 'BOOKED', 'ARRIVED'].includes(vslot?.status ?? '')
+  const { data: consolidatableRaw = [] } = useConsolidatableOrders(canConsolidate ? order?.id : undefined)
   const consolidatableOrders = useMemo(() => {
-    if (isDriver || !order || !['PENDING', 'BOOKED', 'ARRIVED'].includes(vslot?.status ?? '')) return []
+    if (!canConsolidate) return []
     const currentGroupId = vslot?.consolidation_group_id ?? null
-    return allOrders.filter(o => {
-      if (o.id === order.id || o.ncc_id !== order.ncc_id || o.date !== order.date) return false
-      if (o.direction !== order.direction) return false  // Xuất chỉ đi với Xuất, Nhập với Nhập
+    return consolidatableRaw.filter(o => {
       const mainSlot = o.vehicle_slots.find(vs => vs.consolidation_group_id) ?? o.vehicle_slots[0]
-      if (!mainSlot) return false
-      if (currentGroupId && mainSlot.consolidation_group_id === currentGroupId) return false
-      return mainSlot.status === 'PENDING' && !mainSlot.consolidation_group_id
+      return !!mainSlot && !(currentGroupId && mainSlot.consolidation_group_id === currentGroupId)
     })
-  }, [allOrders, order?.id, order?.ncc_id, order?.date, vslot?.status, vslot?.consolidation_group_id, isDriver])
+  }, [consolidatableRaw, canConsolidate, vslot?.consolidation_group_id])
 
   const handleSave = async (skipVtCheck = false) => {
     if (!vslot || !order) return
@@ -316,6 +339,7 @@ function BookSlotDialog({ vslot, order, onClose, allOrders }: {
               selectedSlotId={selectedSlot?.id ?? null}
               onSelect={setSelectedSlot}
               cargoType={order.warehouse_type}
+              bookingCategory={order.booking_category}
               vehicleType={order.vehicle_type}
             />
           </div>
@@ -435,11 +459,10 @@ function getDuplicateCodes(rows: { material_code: string }[]): Set<string> {
 }
 
 function MatCombobox({
-  value, onSelect, allMats, onPaste, inputClassName, filterCategory, disabled: disabledProp,
+  value, onSelect, onPaste, inputClassName, filterCategory, disabled: disabledProp,
 }: {
   value: string
   onSelect: (code: string, id: string, name: string, unit: string) => void
-  allMats: MatItem[]
   onPaste?: (e: React.ClipboardEvent<HTMLInputElement>) => void
   inputClassName?: string
   filterCategory?: string
@@ -450,17 +473,13 @@ function MatCombobox({
 
   React.useEffect(() => { setQ(value) }, [value])
 
-  const matches = React.useMemo(() => {
-    if (!q) return []
-    const lower = q.toLowerCase()
-    const sourceMats = filterCategory ? allMats.filter(m => m.category === filterCategory) : allMats
-    return sourceMats
-      .filter(m =>
-        m.material_code.toLowerCase().includes(lower) ||
-        (m.short_name ?? '').toLowerCase().includes(lower)
-      )
-      .slice(0, 10)
-  }, [q, allMats, filterCategory])
+  // TỰ tìm trên server theo từ khóa (10 gợi ý) — trước đây form cha phải nạp CẢ danh mục
+  // mã hàng rồi truyền xuống qua prop `allMats`.
+  const term = useDebouncedValue(q, 250)
+  const { data: found = [] } = useMaterials(
+    { search: term, category: filterCategory || undefined, limit: 50 }, term.trim().length > 1)
+  const matches = React.useMemo(
+    () => found.filter(m => !m.is_non_stock).slice(0, 10) as MatItem[], [found])
 
   return (
     <div className="relative">
@@ -622,7 +641,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: transportCompanies = [] }  = useTransportCompanies(true)
   const createOrder  = useCreateOrder()
   const updateOrder  = useUpdateOrder()
-  const { data: allMats = [] }             = useMaterials()
   const { mutateAsync: addPlanLines }      = useBulkCreatePlanLinesForOrder()
   const { mutateAsync: deletePlanLine }    = useDeletePlanLine()
   const { mutateAsync: updatePlanLine }    = useUpdatePlanLine()
@@ -631,7 +649,27 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
   const { data: existingPlanLines = [] }   = usePlanLinesByOrder(isEdit ? (order?.id ?? null) : null)
 
   const [form, setForm]         = useState<OrderFormData>(EMPTY_FORM(defaultDate, defaultWarehouseId))
+  const qc = useQueryClient()
   const [planRows, setPlanRows] = useState<PlanLineRow[]>(() => Array.from({ length: 20 }, EMPTY_PLAN_LINE))
+  // Chỉ tra ĐÚNG mã đang có trên các dòng kế hoạch (trước đây nạp cả danh mục mã hàng).
+  // Lúc LƯU sẽ tra lại đồng bộ (fetchMaterialsByCodes) vì SL quy đổi theo hệ số thùng/hộp của mã.
+  const planCodes = React.useMemo(() => planRows.map(r => r.material_code).filter(Boolean), [planRows])
+  const { data: allMats = [] }             = useMaterialsByCodes(planCodes)
+  // Mã gõ tay/dán được tra bất đồng bộ → có kết quả thì điền tên + ĐVT vào dòng
+  React.useEffect(() => {
+    if (allMats.length === 0) return
+    setPlanRows(prev => {
+      let changed = false
+      const next = prev.map(r => {
+        if (!r.material_code || r.material_id) return r
+        const mat = allMats.find(m => m.material_code === r.material_code.trim())
+        if (!mat) return r
+        changed = true
+        return { ...r, material_id: mat.id, material_name: mat.short_name ?? '', unit: unitCodeOf(mat) }
+      })
+      return changed ? next : prev
+    })
+  }, [allMats])
   const [planSaving, setPlanSaving] = useState(false)
   const [err, setErr] = useState('')
   const [createdCode, setCreatedCode] = useState<string | null>(null)
@@ -661,7 +699,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       const rows = [...prev]
       rows[i] = { ...rows[i], [field]: value }
       if (field === 'material_code') {
-        const mat = (allMats as import('@/types').Material[]).find(m => m.material_code === value.trim())
+        const mat = allMats.find(m => m.material_code === value.trim())
         if (mat) {
           rows[i].material_id   = mat.id
           rows[i].material_name = (mat as { short_name?: string }).short_name ?? ''
@@ -726,7 +764,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
         const code    = (cols[0] ?? '').trim()
         const boxes   = (cols[1] ?? '').trim().replace(/[^0-9]/g, '')
         const pallets = (cols[2] ?? '').trim().replace(/[^0-9]/g, '')
-        const mat = (allMats as import('@/types').Material[]).find(m =>
+        const mat = allMats.find(m =>
           m.material_code === code && (!form.warehouse_type || m.category === form.warehouse_type)
         )
         rows[startIdx + offset] = {
@@ -806,6 +844,11 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
       gdo_refs: form.gdo_refs || null, notes: form.notes || null,
       priority: form.priority,
     }
+    // Quy đổi SL theo hệ số thùng/hộp của mã → phải có dữ liệu mã TRƯỚC khi lưu (không đợi query nền)
+    const saveMats = form.direction === 'INBOUND'
+      ? await fetchMaterialsByCodes(qc, planRows.map(r => r.material_code).filter(Boolean))
+      : new Map<string, MaterialLite>()
+    const saveMatById = new Map([...saveMats.values()].map(m => [m.id, m]))
     try {
       if (isEdit && order) {
         await updateOrder.mutateAsync({ id: order.id, ...payload })
@@ -818,14 +861,14 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
           setPlanSaving(true)
           await Promise.all([
             ...toDelete.map((l: any) => deletePlanLine(l.id)),
-            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
+            ...toUpdate.map(r => updatePlanLine({ id: r.line_id!, planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null), ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}) })),
           ])
           if (toAdd.length > 0) {
             await addPlanLines({
               tms_order_id: order.id,
               lines: toAdd.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -842,7 +885,7 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
               tms_order_id: (created as import('@/types').TmsOrder).id,
               lines: validLines.map(r => ({
                 material_id:   r.material_id,
-                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, allMats.find(m => m.id === r.material_id) ?? null),
+                planned_boxes: qtyFromEntryBase(Number(r.planned_boxes), 0, saveMatById.get(r.material_id) ?? null),
                 ...(r.planned_pallets ? { planned_pallets: Number(r.planned_pallets) } : {}),
               })),
             })
@@ -1012,7 +1055,6 @@ function CreateEditDialog({ open, order, onClose, defaultDate, defaultWarehouseI
                         <td className="px-1 py-0.5">
                           <MatCombobox
                             value={row.material_code}
-                            allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                             onSelect={(code, id, name, unit) => selectPlanMat(i, code, id, name, unit)}
                             onPaste={e => handlePasteAt(i, e)}
                             filterCategory={form.warehouse_type || undefined}
@@ -1096,6 +1138,7 @@ type ImportRow = {
   order_code: string
   planned_boxes: number | null; planned_pallets: number | null; planned_tons: number | null
   gdo_refs: string; notes: string; priority: boolean; valid: boolean; error: string
+  warning: string   // cảnh báo KHÔNG chặn (vd Pallet/Tấn vượt sức xe — thường do ô Excel mất dấu thập phân)
 }
 
 const EXCEL_COL_MAP: Record<string, string> = {
@@ -1157,6 +1200,8 @@ function parseExcelDate(val: unknown): string | null {
   return null
 }
 
+// Chip lọc bảng preview upload: Tất cả / Hợp lệ / Lỗi — đã tách thành component dùng chung (chuẩn upload-download)
+
 function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleTypes, transportCompanies }: {
   open: boolean; onClose: () => void
   warehouses: { id: string; name: string }[]
@@ -1170,16 +1215,26 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<{ inserted: number } | null>(null)
   const [err, setErr] = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
 
   const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
   const validVtNames = new Set(vehicleTypes.map(vt => vt.name.toLowerCase().trim()))
-  const nccByCode    = Object.fromEntries(transportCompanies.flatMap(c => [
-    [c.code.toLowerCase().trim(), c.id] as [string, string],
-    ...((c.alias_codes ?? []).map(a => [String(a).toLowerCase().trim(), c.id] as [string, string])),
-  ]))
+  // ĐVVT nhận MÃ · ALIAS · TÊN (chuẩn chung với upload KH xuất & KH nhập — 29/07 phát hiện chỗ này
+  // thiếu TÊN nên file ghi tên đơn vị bị báo "không tìm thấy"). Mã/alias ưu tiên hơn tên khi trùng key.
+  const nccByCode: Record<string, string> = {}
+  for (const c of transportCompanies) {
+    const nm = String(c.name ?? '').toLowerCase().trim()
+    if (nm && !(nm in nccByCode)) nccByCode[nm] = c.id
+  }
+  for (const c of transportCompanies) {
+    for (const k of [c.code, ...(c.alias_codes ?? [])]) {
+      const key = String(k ?? '').toLowerCase().trim()
+      if (key) nccByCode[key] = c.id
+    }
+  }
 
-  const reset = () => { setRows([]); setResult(null); setErr('') }
+  const reset = () => { setRows([]); setResult(null); setErr(''); setRowFilter('all') }
   useEffect(() => { if (open) reset() }, [open])
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1217,7 +1272,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (!whId && !whName) errors.push('thiếu kho')
           if (whType && validWhTypes.size > 0 && !validWhTypes.has(whType.toLowerCase())) errors.push(`loại kho "${whType}" không hợp lệ`)
           if (vtName && validVtNames.size > 0 && !validVtNames.has(vtName.toLowerCase())) errors.push(`loại xe "${vtName}" không hợp lệ`)
-          if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không tìm thấy`)
+          if (nccCode && !nccId) errors.push(`ĐVVT "${nccCode}" không khớp danh mục (điền mã, alias hoặc tên)`)
           if (!orderCode) errors.push('thiếu mã đơn')
           else if (!ORDER_CODE_RE.test(orderCode)) errors.push(`mã đơn "${orderCode}" sai định dạng (vd: BV_X_260610_1)`)
           else if (seenCodes.has(orderCode.toUpperCase())) errors.push(`mã đơn "${orderCode}" bị trùng trong file`)
@@ -1232,20 +1287,38 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
           if (tonsNum != null && Math.abs(tonsNum) > 9999999.999)
             errors.push(`Tấn "${norm.planned_tons}" quá lớn (tối đa 9.999.999,999)`)
 
+          // TỰ SỬA "mất dấu thập phân" — bắt từ file thật 29/07: 94/118 dòng Pallet kiểu "19112"
+          // (= 19,112 pallet, nguồn SAP/Excel đánh rơi dấu phẩy VN) → KH ghi 582.167 pallet/53 xe.
+          // Chữ ký lỗi rất đặc trưng: số phình ĐÚNG ×1000, mà 1 xe không chở nổi >200 pallet/tấn
+          // ⇒ >200 và ÷1000 ra số hợp lý = sửa (giá trị sửa hiện ngay trên bảng kiểm, có ⚠ ghi rõ
+          // gốc→sửa, user thấy trước khi bấm Import). ÷1000 vẫn >200 (rác thật) → chỉ cảnh báo.
+          const warns: string[] = []
+          const fixLostDecimal = (n: number | null, label: string): number | null => {
+            if (n == null || isNaN(n) || n <= 200) return n
+            if (n / 1000 <= 200) {
+              warns.push(`${label} tự sửa ${n.toLocaleString('vi-VN')} → ${(n / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} (mất dấu thập phân)`)
+              return n / 1000
+            }
+            warns.push(`${label} ${n.toLocaleString('vi-VN')} /xe bất thường — kiểm lại file nguồn`)
+            return n
+          }
+          const palletsFixed = fixLostDecimal(palletsNum != null && !isNaN(palletsNum) ? palletsNum : null, 'Pallet')
+          const tonsFixed    = fixLostDecimal(tonsNum != null && !isNaN(tonsNum) ? tonsNum : null, 'Tấn')
+
           return {
             date, warehouse_id: whId, warehouse_name: whName,
             npp_name: String(norm.npp_name ?? ''), direction,
             warehouse_type: whType, vehicle_type: vtName,
             ncc_code: nccCode, ncc_id: nccId, order_code: orderCode,
             planned_boxes: boxesNum != null && !isNaN(boxesNum) ? boxesNum : null,
-            planned_pallets: palletsNum != null && !isNaN(palletsNum) ? palletsNum : null,
-            planned_tons: tonsNum != null && !isNaN(tonsNum) ? tonsNum : null,
+            planned_pallets: palletsFixed, planned_tons: tonsFixed,
             gdo_refs: String(norm.gdo_refs ?? ''), notes: String(norm.notes ?? ''),
             priority: parsePriority(norm.priority),
-            valid: errors.length === 0, error: errors.join(', '),
+            valid: errors.length === 0, error: errors.join(', '), warning: warns.join(', '),
           }
         })
         setRows(parsed); setErr('')
+        setRowFilter(parsed.some(r => !r.valid) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi cho dễ soát
       } catch { setErr('Không đọc được file. Vui lòng dùng định dạng .xlsx hoặc .xls') }
     }
     reader.readAsArrayBuffer(file)
@@ -1301,12 +1374,16 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   }
 
   const errorCount = rows.filter(r => !r.valid).length
+  const warnCount  = rows.filter(r => r.warning).length
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Upload kế hoạch từ Excel</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
+      {/* Có preview → 80% màn hình (chuẩn upload 29/07: xem vấn đề của file rồi mới Xác nhận) */}
+      <DialogContent className={rows.length > 0
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-2xl'}>
+        <DialogHeader className="shrink-0"><DialogTitle>{rows.length > 0 ? 'Kiểm file trước khi nhập — Kế hoạch điều vận' : 'Upload kế hoạch từ Excel'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2 flex-1 min-h-0 flex flex-col">
           {result ? (
             <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800">
               <p className="font-medium">Import thành công!</p>
@@ -1323,16 +1400,28 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                 </Button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
                 {rows.length > 0 && (
-                  <span className="text-xs text-slate-500">
-                    {rows.length} dòng
-                    {errorCount > 0
-                      ? <> · <span className="text-red-600 font-medium">{errorCount} lỗi</span> · chỉ hiện dòng lỗi bên dưới</>
-                      : <> · <span className="text-green-600 font-medium">Tất cả hợp lệ</span></>}
-                  </span>
+                  <RowFilterChips total={rows.length} okCount={rows.length - errorCount} errCount={errorCount}
+                    value={rowFilter} onChange={setRowFilter} />
                 )}
               </div>
               {rows.length > 0 && (
-                <div className="max-h-64 overflow-auto rounded border">
+                errorCount > 0
+                  ? <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 shrink-0">
+                      <b>Kiểu nhập: TẤT CẢ HOẶC KHÔNG GÌ.</b> File còn {errorCount} dòng lỗi nên chưa nhập được — sửa file rồi chọn lại.
+                    </p>
+                  : <p className="text-xs text-green-800 bg-green-50 border border-green-200 rounded-lg px-3 py-2 shrink-0">
+                      File hợp lệ. Bấm <b>Import {rows.length} đơn</b> mới ghi dữ liệu — chưa có gì được ghi.
+                    </p>
+              )}
+              {rows.length > 0 && errorCount === 0 && warnCount > 0 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 shrink-0">
+                  ⚠ <b>{warnCount} dòng Pallet/Tấn bị mất dấu thập phân</b> (vd <span className="font-mono">19112</span> thay
+                  vì <span className="font-mono">19,112</span>) — <b>app đã tự sửa</b>, giá trị SAU SỬA đang hiển thị trên
+                  bảng và sẽ được import. Soát cột Lỗi (⚠ gốc → sửa) trước khi bấm Import.
+                </p>
+              )}
+              {rows.length > 0 && (
+                <div className="flex-1 min-h-0 overflow-auto rounded border">
                   <table className="min-w-full text-[10px]">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
@@ -1342,7 +1431,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => ({ r, i })).filter(x => errorCount === 0 || !x.r.valid).map(({ r, i }) => (
+                      {rows.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, x.r.valid)).map(({ r, i }) => (
                         <tr key={i} className={r.valid ? '' : 'bg-red-50'}>
                           <td className="px-2 py-0.5 text-slate-400">{i + 1}</td>
                           <td className="px-2 py-0.5 font-mono">{r.order_code || '—'}</td>
@@ -1357,11 +1446,16 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
                           <td className="px-2 py-0.5">{r.warehouse_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.vehicle_type || '—'}</td>
                           <td className="px-2 py-0.5">{r.ncc_code || '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets ?? '—'}</td>
-                          <td className="px-2 py-0.5 tabular-nums">{r.planned_tons ?? '—'}</td>
+                          {/* Format vi-VN (phẩy = thập phân): in raw JS "17.103" sẽ bị đọc nhầm 17 nghìn */}
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_boxes?.toLocaleString('vi-VN') ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_pallets?.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) ?? '—'}</td>
+                          <td className="px-2 py-0.5 tabular-nums">{r.planned_tons?.toLocaleString('vi-VN', { maximumFractionDigits: 3 }) ?? '—'}</td>
                           <td className="px-2 py-0.5 text-red-600 font-semibold">{r.priority ? 'x' : ''}</td>
-                          <td className="px-2 py-0.5 text-red-500">{r.error}</td>
+                          <td className="px-2 py-0.5">
+                            {r.error && <span className="text-red-500">{r.error}</span>}
+                            {r.error && r.warning && <span className="text-slate-300"> · </span>}
+                            {r.warning && <span className="text-amber-600">⚠ {r.warning}</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1584,8 +1678,8 @@ type PlanBulkRow = {
 function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
   open: boolean; warehouseId: string; onClose: () => void
 }) {
+  const qc = useQueryClient()
   const { data: transportCompanies = [] } = useTransportCompanies(true)
-  const { data: materials = [] }          = useMaterials()
   const { data: warehouses = [] }         = useWarehouses(true)
   const { data: vehicleTypes = [] }       = useVehicleTypes(true)
   const bulkCreate = useBulkCreatePlanLines()
@@ -1593,6 +1687,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
   const [preview, setPreview] = useState<PlanBulkRow[] | null>(null)
   const [fileName, setFileName] = useState('')
   const [err, setErr]           = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Nhận CẢ mã lẫn tên (normalize trim + uppercase)
@@ -1613,20 +1708,18 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     ;(w.shipto_codes ?? []).forEach(s => { const k = String(s).trim().toUpperCase(); if (k) whByCode.set(k, w.id) })
   })
   const vtNameSet = new Set((vehicleTypes as import('@/types').TmsVehicleType[]).map(vt => String(vt.name)))
-  const matByCode = new Map(
-    (materials as import('@/types').Material[]).map(m => [
-      String(m.material_code).trim(),
-      { id: m.id, category: m.category ?? '' },
-    ])
-  )
 
   function parseFile(file: File) {
     const reader = new FileReader()
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const wb = XLSX.read(e.target?.result, { type: 'binary' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        // Tra ĐÚNG mã hàng có trong file (chunk 300/lượt) thay vì nạp cả danh mục để đối chiếu
+        const fileCodes = rows.map(r => String(r['Mã hàng'] ?? r['material_code'] ?? '').trim()).filter(Boolean)
+        const matLite = await fetchMaterialsByCodes(qc, fileCodes)
+        const matByCode = new Map([...matLite.values()].map(m => [String(m.material_code).trim(), { id: m.id, category: m.category ?? '' }]))
         const parsed: PlanBulkRow[] = rows.map((row, i) => {
           const rowDate  = parseExcelDate(row['Ngày'] ?? row['Ngay'] ?? row['date'] ?? '')
           const khoCode  = String(row['Mã kho']    ?? row['Kho']        ?? row['kho_code']   ?? '').trim().toUpperCase()
@@ -1665,6 +1758,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
           }
         }).filter(r => r.date || r.ncc_code || r.material_code)
         setPreview(parsed)
+        setRowFilter(parsed.some(r => !r._valid) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi
         setErr('')
       } catch { setErr('Không đọc được file Excel') }
     }
@@ -1677,6 +1771,9 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     if (!valid.length) { setErr('Không có dòng hợp lệ nào'); return }
     try {
       // BASE UNIT: cột "Số thùng" trong file = THÙNG NGUYÊN → quy đổi base theo hệ số mã
+      // (tra lại theo mã ngay trước khi ghi — cache 5' nên thường không tốn thêm request)
+      const matLite = await fetchMaterialsByCodes(qc, valid.map(r => r.material_code))
+      const matById = new Map([...matLite.values()].map(m => [m.id, m]))
       const lines = valid.map(r => ({
         date:            r.date,
         warehouse_id:    r.kho_id   || warehouseId,
@@ -1685,7 +1782,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
         ncc_id:          r.ncc_id          || null,
         material_id:     r.material_id     || null,
         po_number:       r.po_number       || null,
-        planned_boxes:   r.planned_boxes != null ? qtyFromEntryBase(Number(r.planned_boxes), 0, (materials as import('@/types').Material[]).find(m => m.id === r.material_id) ?? null) : null,
+        planned_boxes:   r.planned_boxes != null ? qtyFromEntryBase(Number(r.planned_boxes), 0, matById.get(r.material_id) ?? null) : null,
         planned_pallets: r.planned_pallets,
       }))
       await bulkCreate.mutateAsync(lines)
@@ -1706,12 +1803,15 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
     saveWorkbook(wb, 'template_ke_hoach_nhap.xlsx')
   }
 
-  function handleClose() { setPreview(null); setFileName(''); setErr(''); onClose() }
+  function handleClose() { setPreview(null); setFileName(''); setErr(''); setRowFilter('all'); onClose() }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) handleClose() }}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
+      {/* Có preview → 80% màn hình (user 25/07) để soát bảng nghìn dòng; chưa có file → gọn */}
+      <DialogContent className={preview
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-3xl'}>
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <FileSpreadsheet className="h-4 w-4" /> Upload kế hoạch nhập
           </DialogTitle>
@@ -1723,6 +1823,10 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
               Cột bắt buộc: <strong>Ngày</strong> (dd/mm/yyyy), <strong>Mã NCC</strong> (nhận mã hoặc tên), <strong>Mã hàng</strong>, <strong>Số thùng</strong>.
               Tuỳ chọn: Mã kho (mã hoặc tên; trống = kho đang chọn), Loại xe, Số PO, Số pallet.
               Loại kho tự suy từ Mã hàng.
+            </p>
+            <p className="text-slate-500">
+              Upload lại: dòng trùng key <strong>Ngày + Kho + NCC + Mã hàng</strong> sẽ được <strong>cập nhật</strong> số lượng
+              (không nhân đôi kế hoạch); key mới thì thêm dòng. Trùng key ngay trong file → tự gộp số lượng.
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
@@ -1739,14 +1843,15 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
             {err && <p className="text-red-500">{err}</p>}
           </div>
         ) : (
-          <div className="space-y-2 py-1 text-xs">
-            <div className="flex items-center justify-between">
-              <p className="text-slate-500">{preview.filter(r => r._valid).length}/{preview.length} dòng hợp lệ</p>
-              <Button variant="ghost" size="sm" onClick={() => { setPreview(null); setFileName('') }}>
+          <div className="flex flex-col flex-1 min-h-0 space-y-2 py-1 text-xs">
+            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+              <RowFilterChips total={preview.length} okCount={preview.filter(r => r._valid).length}
+                errCount={preview.filter(r => !r._valid).length} value={rowFilter} onChange={setRowFilter} />
+              <Button variant="ghost" size="sm" onClick={() => { setPreview(null); setFileName(''); setRowFilter('all') }}>
                 <X className="h-3.5 w-3.5 mr-1" /> Chọn lại
               </Button>
             </div>
-            <div className="max-h-64 overflow-auto border rounded-md">
+            <div className="flex-1 min-h-0 overflow-auto border rounded-md">
               <table className="min-w-full text-[10px]">
                 <thead className="sticky top-0 bg-slate-50 border-b">
                   <tr>
@@ -1756,7 +1861,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.map((r, i) => (
+                  {preview.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, x.r._valid)).map(({ r, i }) => (
                     <tr key={i} className={r._valid ? 'hover:bg-slate-50' : 'bg-red-50'}>
                       <td className="px-2 py-1 whitespace-nowrap">{r.date ? formatDate(r.date) : '—'}</td>
                       <td className="px-2 py-1 font-mono text-[9px] text-slate-400">{r.kho_code || '(mặc định)'}</td>
@@ -1796,39 +1901,50 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
 
 // ── Upload Plan Lines Dialog (cho INBOUND booking) ───────────────────────────
 
-function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose }: {
+function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
   orderId: string
   warehouseType?: string
-  existingCodes?: Set<string>
   onClose: () => void
 }) {
   const [rows, setRows] = useState<{ material_code: string; material_id?: string; planned_boxes: number; planned_pallets?: number; err?: string }[]>([])
-  const [dupError, setDupError] = useState('')
   const [saving, setSaving] = useState(false)
   const [apiError, setApiError] = useState('')
+  const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
   const { mutateAsync: bulkCreate } = useBulkCreatePlanLinesForOrder()
-  const { data: materials = [] } = useMaterials()
+  const qc = useQueryClient()
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
-    setDupError('')
     const reader = new FileReader()
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
       const ws = wb.Sheets[wb.SheetNames[0]]
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-      const parsed = (raw.slice(1) as unknown[][])
-        .filter(r => r[0])
-        .map(r => {
-          const material_code = String(r[0] ?? '').trim()
-          const planned_boxes = Number(r[1] ?? 0)
-          const planned_pallets = r[2] != null && r[2] !== '' ? Number(r[2]) : undefined
-          const mat = (materials as import('@/types').Material[]).find(m =>
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+      // Map theo TÊN cột (đồng bộ VL06O/KHVC): chuẩn hóa trim/lower/bỏ dấu → chịu ĐẢO thứ tự cột.
+      const nk = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9]+/g, ' ').trim()
+      const pick = (nm: Record<string, unknown>, keys: string[]) => { for (const k of keys) { const v = nm[k]; if (v != null && String(v).trim() !== '') return v } return '' }
+      // Tra ĐÚNG mã hàng trong file thay vì nạp cả danh mục để đối chiếu
+      const codesInFile = rows.map(row => {
+        const nm2: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(row)) nm2[nk(k)] = v
+        return String(pick(nm2, ['ma hang', 'material code']) ?? '').trim()
+      }).filter(Boolean)
+      const matLite = await fetchMaterialsByCodes(qc, codesInFile)
+      const materials = [...matLite.values()]
+      const parsed = rows
+        .map(row => {
+          const nm: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(row)) nm[nk(k)] = v
+          const material_code = String(pick(nm, ['ma hang', 'material code']) ?? '').trim()
+          const planned_boxes = Number(pick(nm, ['sl thung', 'so thung', 'planned boxes']) || 0)
+          const rawPallet = pick(nm, ['sl pallet', 'so pallet', 'planned pallets'])
+          const planned_pallets = rawPallet !== '' ? Number(rawPallet) : undefined
+          const mat = materials.find(m =>
             m.material_code === material_code &&
             (!warehouseType || m.category === warehouseType)
           )
-          const notFound = !(materials as import('@/types').Material[]).find(m => m.material_code === material_code)
+          const notFound = !materials.find(m => m.material_code === material_code)
           return {
             material_code,
             material_id: mat?.id,
@@ -1843,31 +1959,31 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
                   : undefined,
           }
         })
-      // Detect duplicates within file
-      const codeCount = new Map<string, number>()
-      for (const r of parsed) { codeCount.set(r.material_code, (codeCount.get(r.material_code) ?? 0) + 1) }
-      const dupInFile = [...codeCount.entries()].filter(([, n]) => n > 1).map(([c]) => c)
-      // Detect duplicates vs existing plan lines
-      const dupVsExisting = existingCodes ? parsed.map(r => r.material_code).filter(c => existingCodes.has(c)) : []
-      const allDups = [...new Set([...dupInFile, ...dupVsExisting])]
-      if (allDups.length > 0) {
-        setDupError(`File bị block — mã hàng trùng: ${allDups.join(', ')}`)
-      }
+        .filter(r => r.material_code)   // bỏ dòng trống (không có mã hàng)
+      // Trùng mã (trong file / với KH đã có) KHÔNG block nữa — BE upsert theo key (lệnh + mã):
+      // trùng trong file tự GỘP SL, mã đã có KH thì CẬP NHẬT số lượng (user chốt 25/07).
       setRows(parsed)
+      setRowFilter(parsed.some(r => r.err) ? 'err' : 'all')   // có lỗi → mở sẵn tab Lỗi
     }
     reader.readAsBinaryString(f)
   }
 
   async function handleSave() {
-    if (dupError) return
     const valid = rows.filter(r => !r.err && r.material_id)
     if (!valid.length) return
     setSaving(true)
     setApiError('')
     try {
+      // BASE UNIT: file nhập "SL thùng" (entry) → convert BASE per mã trước khi POST
+      // (inbound_plan_lines.planned_boxes = BASE — cùng convention với upload KH nhập /inbound-plan/bulk)
+      const matById = new Map([...(await fetchMaterialsByCodes(qc, valid.map(r => r.material_code))).values()].map(m => [m.id, m]))
       await bulkCreate({
         tms_order_id: orderId,
-        lines: valid.map(r => ({ material_id: r.material_id!, planned_boxes: r.planned_boxes, ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}) })),
+        lines: valid.map(r => ({
+          material_id: r.material_id!,
+          planned_boxes: qtyFromEntryBase(r.planned_boxes, 0, matById.get(r.material_id!) ?? null),
+          ...(r.planned_pallets != null ? { planned_pallets: r.planned_pallets } : {}),
+        })),
       })
       onClose()
     } catch (e: unknown) {
@@ -1878,29 +1994,35 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
     }
   }
 
-  const validCount = dupError ? 0 : rows.filter(r => !r.err).length
+  const validCount = rows.filter(r => !r.err).length
   const errCount   = rows.filter(r => r.err).length
 
   return (
     <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-sm">Upload danh sách hàng</DialogTitle>
+      {/* Có preview → 80% màn hình (chuẩn upload 29/07) */}
+      <DialogContent className={rows.length > 0
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-lg max-h-[80vh] overflow-y-auto'}>
+        <DialogHeader className="shrink-0">
+          <DialogTitle className="text-sm">{rows.length > 0 ? 'Kiểm file trước khi nhập — Danh sách hàng' : 'Upload danh sách hàng'}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3 text-xs">
+        <div className="space-y-3 text-xs flex-1 min-h-0 flex flex-col">
           <p className="text-slate-500">
-            File Excel: cột A = <span className="font-mono">Mã hàng</span> · cột B = <span className="font-mono">SL thùng</span> · cột C = <span className="font-mono">SL pallet</span> (tùy chọn). Hàng đầu là tiêu đề, bỏ qua.
+            File Excel có tiêu đề: <span className="font-mono">Mã hàng</span> · <span className="font-mono">SL thùng</span> · <span className="font-mono">SL pallet</span> (tùy chọn). Nhận diện theo TÊN cột — thứ tự cột tùy ý.
             {warehouseType && <> · Chỉ nhận hàng loại <span className="font-medium text-slate-700">{warehouseType}</span>.</>}
+            {' '}Mã đã có kế hoạch trong lệnh → <span className="font-medium text-slate-700">cập nhật</span> số lượng; trùng mã trong file → tự gộp.
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="text-xs" />
-          {dupError && <p className="text-red-600 text-[11px] bg-red-50 border border-red-200 px-3 py-2 rounded">{dupError}</p>}
           {rows.length > 0 && (
             <>
-              <div className="flex gap-3 text-[10px]">
-                {!dupError && <span className="text-green-600 font-medium">{validCount} dòng hợp lệ</span>}
-                {errCount > 0 && <span className="text-red-500">{errCount} dòng lỗi</span>}
-              </div>
-              <div className="rounded border overflow-auto max-h-52">
+              <p className={`text-xs rounded-lg px-3 py-2 shrink-0 border ${errCount > 0
+                ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-green-800 bg-green-50 border-green-200'}`}>
+                Bấm <b>Lưu {validCount} dòng</b> mới ghi dữ liệu — chưa có gì được ghi.
+                {errCount > 0 && <> {errCount} dòng lỗi sẽ bị BỎ QUA (kiểu nhập theo từng dòng).</>}
+              </p>
+              <RowFilterChips total={rows.length} okCount={validCount} errCount={errCount}
+                value={rowFilter} onChange={setRowFilter} />
+              <div className="rounded border overflow-auto flex-1 min-h-0">
                 <table className="min-w-full">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
@@ -1910,7 +2032,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r, i) => (
+                    {rows.map((r, i) => ({ r, i })).filter(x => rowFilterPass(rowFilter, !x.r.err)).map(({ r, i }) => (
                       <tr key={i} className={`border-t border-slate-100 ${r.err ? 'bg-red-50' : ''}`}>
                         <td className="px-2 py-1 font-mono font-semibold text-[10px]">{r.material_code}</td>
                         <td className="px-2 py-1 text-[10px] tabular-nums">{r.planned_boxes}</td>
@@ -1929,7 +2051,7 @@ function UploadPlanLinesDialog({ orderId, warehouseType, existingCodes, onClose 
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0 || !!dupError}>
+          <Button size="sm" onClick={handleSave} disabled={saving || validCount === 0}>
             {saving && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
             {saving ? 'Đang lưu...' : `Lưu ${validCount} dòng`}
           </Button>
@@ -1949,31 +2071,52 @@ const TRANSFER_STATUS_CFG: Record<string, { label: string; cls: string }> = {
 }
 
 // Band tổng hợp theo MÃ HÀNG (KH · thực tế · chênh lệch) để tra cứu — kiểu expand "Phân bổ theo NPP" của Outbound.
-// orderIds = các đơn ĐÃ lọc trên UI; có ô tìm mã hàng/tên để tra cứu nhanh. Tổng ở header tính trên dòng đã lọc.
-function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
+// Tính trên TOÀN BỘ đơn NHẬP của bộ lọc (BE tự resolve từ cờ filter — danh sách đã phân trang nên
+// client không còn giữ đủ id); có ô tìm mã hàng/tên để tra cứu nhanh.
+// `filter` = lưới Kế hoạch (đã phân trang); `orderIds` = tab Chuyển kho (danh sách nhỏ, chưa phân trang).
+function MaterialSummaryBand({ filter, orderIds }: { filter?: Record<string, string | undefined>; orderIds?: string[] }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
-  const { data: rows = [], isFetching } = useMaterialSummary(orderIds, orderIds.length > 0)
+  // isLoading (lần tải ĐẦU của key) thay isFetching: band đăng ký realtime 4 bảng nóng (InventoryEntry…)
+  // → refetch nền vài giây/lần, dùng isFetching làm chữ "đang tải" nhấp nháy liên tục. Refetch nền chạy im lặng.
+  const byFilter = useMaterialSummaryByFilter(orderIds ? undefined : filter)
+  const byIds    = useMaterialSummary(orderIds ?? [], !!orderIds)
+  const { data: rows = [], isLoading } = orderIds ? byIds : byFilter
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
     if (!s) return rows
     return rows.filter(r => r.material_code.toLowerCase().includes(s) || r.material_name.toLowerCase().includes(s))
   }, [rows, q])
-  const totals = useMemo(() => filtered.reduce(
-    (a, r) => ({ planned: a.planned + r.planned_boxes, actual: a.actual + r.actual_boxes, diff: a.diff + r.diff }),
-    { planned: 0, actual: 0, diff: 0 }), [filtered])
+  // Tổng phải TÁCH THEO ĐVT — cộng chung mã "thùng" (CAR) với mã KG/EA rồi gắn nhãn "thùng" là SAI
+  // đơn vị + thổi tổng (luật BASE UNIT trong CLAUDE.md). Thực tế phát hiện 26/07: KH nhập NVL đếm
+  // theo cái/kg tới hàng triệu → header từng hiện "73.324.718 thùng".
+  const totalsByUnit = useMemo(() => {
+    const m = new Map<string, { planned: number; actual: number; diff: number }>()
+    for (const r of filtered) {
+      const k = (r.unit || '').trim().toUpperCase()
+      const cur = m.get(k) ?? { planned: 0, actual: 0, diff: 0 }
+      m.set(k, { planned: cur.planned + r.planned_boxes, actual: cur.actual + r.actual_boxes, diff: cur.diff + r.diff })
+    }
+    return [...m.entries()].sort((a, b) => b[1].planned - a[1].planned)
+  }, [filtered])
   const fmtDiff = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString('vi-VN')}`
+  const unitSummary = (u: string, t: { planned: number; actual: number; diff: number }) =>
+    `${unitLabel(u)}: KH ${t.planned.toLocaleString('vi-VN')} · TT ${t.actual.toLocaleString('vi-VN')} · CL ${fmtDiff(t.diff)}`
 
-  if (orderIds.length === 0) return null
+  if ((!filter && !orderIds?.length) || (!isLoading && rows.length === 0)) return null
   return (
     <div className="border-b border-slate-200 bg-white shrink-0">
       <button type="button" onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left">
         <Boxes className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-        <span>Tổng hợp mã hàng ({rows.length} mã) · KH {totals.planned.toLocaleString('vi-VN')} · thực tế {totals.actual.toLocaleString('vi-VN')} · chênh lệch {fmtDiff(totals.diff)} thùng</span>
+        <span className="truncate" title={totalsByUnit.map(([u, t]) => unitSummary(u, t)).join('\n')}>
+          Tổng hợp mã hàng ({rows.length} mã)
+          {totalsByUnit.slice(0, 2).map(([u, t]) => ` · ${unitSummary(u, t)}`).join('')}
+          {totalsByUnit.length > 2 ? ` · +${totalsByUnit.length - 2} ĐVT khác` : ''}
+        </span>
         {q.trim() && <span className="text-blue-600">· lọc “{q.trim()}”</span>}
-        {isFetching && <span className="text-slate-400">· đang tải…</span>}
+        {isLoading && <span className="text-slate-400">· đang tải…</span>}
         <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
@@ -1983,7 +2126,7 @@ function MaterialSummaryBand({ orderIds }: { orderIds: string[] }) {
               className="w-full max-w-xs h-7 px-2 text-xs border border-slate-200 rounded outline-none focus:border-blue-400" />
           </div>
           {rows.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-400">{isFetching ? 'Đang tải…' : 'Không có dòng hàng nào'}</div>
+            <div className="py-6 text-center text-xs text-slate-400">{isLoading ? 'Đang tải…' : 'Không có dòng hàng nào'}</div>
           ) : (
             <table className="w-full [&_td]:border-t [&_td]:border-slate-100">
               <thead className="sticky top-[42px] z-10 bg-slate-50">
@@ -2032,7 +2175,7 @@ function TransportUpdateDialog({ order, onClose }: { order: TransferOrder | null
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const dvvtName = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? ''
   const resolvedNccId = order?.ncc?.id ?? allCompanies.find(c => c.name === dvvtName)?.id ?? null
-  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true', pool_branches: 'true' } : undefined)
+  const { data: dvvtVehicles = [] } = useTmsVehicles(resolvedNccId ? { ncc_id: resolvedNccId, is_active: 'true', pool_branches: 'true' } : undefined, !!resolvedNccId)
 
   const [licensePlate, setPlate]    = useState('')
   const [driverPhone, setPhone]     = useState('')
@@ -2981,7 +3124,7 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: 'Hướng' },
   { label: 'Loại kho' },
   { label: 'Loại xe' },
-  { label: 'Thùng', align: 'right' },
+  { label: 'SL (quy đổi)', align: 'right' },
   { label: 'Pallet', align: 'right' },
   { label: 'Tấn', align: 'right' },
   { label: 'SĐT' },
@@ -2994,6 +3137,13 @@ const MAIN_COLS: { label: string; cls?: string; align?: 'right'; resize?: boolea
   { label: 'Kho' },
   { label: '', resize: false },                    // actions
 ]
+// Loại kho của 1 chuyến/lệnh có thể là chuỗi GHÉP nhiều loại ('FG01+PM01' = xe chở lẫn) — tách ra
+// để so khớp theo GIAO ≥1 (mirror wt_cats() bên SQL + splitCategories() bên BE). Đừng tự split('+').
+const splitCats = (raw?: string | null): string[] =>
+  String(raw ?? '').split('+').map(s => s.trim()).filter(Boolean)
+
+// Ô tìm tại máy (tab Chuyển kho): bỏ dấu + không phân biệt hoa thường, khớp cách server tìm (unaccent)
+const normSearch = (v: string) => v.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
 const MAIN_COL_DEFAULTS = [32, 148, 150, 44, 78, 88, 88, 110, 28, 56, 88, 100, 64, 56, 56, 90, 92, 96, 64, 64, 64, 64, 104, 64]
 
 // ── TransferOrdersPanel ───────────────────────────────────────────────────────
@@ -3013,7 +3163,7 @@ function srcEditing(o: TransferOrder): boolean {
 // Cột bảng Chuyển kho (kéo giãn được) — label + độ rộng mặc định (px). Thứ tự PHẢI khớp <td> trong tbody.
 const TRANSFER_COLS: { label: string; align?: 'right' }[] = [
   { label: 'Số DO' }, { label: 'Ngày xuất' }, { label: 'Kho xuất' }, { label: 'Kho nhận' },
-  { label: 'Ngày nhận' }, { label: 'Thùng KH', align: 'right' }, { label: 'Thực nhận', align: 'right' },
+  { label: 'Ngày nhận' }, { label: 'KH (quy đổi)', align: 'right' }, { label: 'Thực nhận', align: 'right' },
   { label: 'Chênh lệch', align: 'right' }, { label: 'Tình trạng GN' }, { label: 'Dự kiến giao' },
   { label: 'ĐVVT' }, { label: 'Biển số' }, { label: 'Số điện thoại' }, { label: 'Tình trạng' },
   { label: 'Số GDO' }, { label: 'Ghi chú' }, { label: 'Mã lệnh' },
@@ -3043,6 +3193,8 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
   const { widths: colW, startResize, totalWidth } = useColumnResize('tms_transfer_col_widths', TRANSFER_COL_DEFAULTS)
   const khoXuatFilter  = ttf.khoXuat;  const setKhoXuatFilter  = (v: string[]) => setTtf({ khoXuat: v })
   const khoNhanFilter  = ttf.khoNhan;  const setKhoNhanFilter  = (v: string[]) => setTtf({ khoNhan: v })
+  const tSearch = ttf.search; const setTSearch = (v: string) => setTtf({ search: v })
+  const dTSearch = useDebouncedValue(tSearch.trim(), 200)
 
   // Set các kho user có quyền truy cập (null = không giới hạn)
   const accessibleIds = React.useMemo(() => {
@@ -3114,8 +3266,23 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
     if (dateTo)   list = list.filter(o => o.date <= dateTo)
     if (khoXuatFilter.length) list = list.filter(o => o.transfer_gdo?.warehouse?.id && khoXuatFilter.includes(o.transfer_gdo.warehouse.id))
     if (khoNhanFilter.length) list = list.filter(o => o.destination_warehouse_id && (o as any).warehouse?.id && khoNhanFilter.includes((o as any).warehouse.id))
+    // Tìm nhanh tại MÁY là đủ và trung thực ở tab này: danh sách nạp TRỌN (BE báo 400 nếu vượt trần,
+    // không cắt âm thầm) nên gõ gì cũng soi hết, không như lưới Kế hoạch phân trang server.
+    if (dTSearch) {
+      const k = normSearch(dTSearch)
+      // Cột hiện trên bảng nhưng chưa có trong type TransferOrder → khai kiểu HẸP tại chỗ (không nới lỏng kiểu)
+      type TOSearch = { license_plate?: string | null; warehouse?: { id?: string | null } | null }
+      list = list.filter(o => {
+        const ox = o as unknown as TOSearch
+        const plates = [ox.license_plate, o.transfer_gdo?.license_plate,
+          ...((o.vehicle_slots ?? []) as { license_plate?: string | null }[]).map(s => s.license_plate)]
+        return [o.order_code, o.npp_name, o.notes, o.transfer_gdo?.group_code, ...plates,
+          whNameById.get(o.transfer_gdo?.warehouse?.id ?? ''), whNameById.get(ox.warehouse?.id ?? '')]
+          .some(v => v && normSearch(String(v)).includes(k))
+      })
+    }
     return list
-  }, [scopedOrders, effDateFrom, dateTo, khoXuatFilter, khoNhanFilter])
+  }, [scopedOrders, effDateFrom, dateTo, khoXuatFilter, khoNhanFilter, dTSearch, whNameById])
 
   // Subtotal tab Chuyển kho (SummaryBand) — tính trên dữ liệu ĐÃ filter.
   // Thùng KH = tổng kế hoạch MỌI lệnh (scope). Thực nhận = CHỈ lệnh ĐÃ GIAO (đã hoàn tất nhận).
@@ -3148,14 +3315,19 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
       <TransferOrderDetail order={selectedOrder} canEdit={canEdit} canConfirmReceipt={canConfirmReceipt} onClose={() => setSelectedOrderId(null)} />
       {/* ── Filter bar (gom 1 chỗ qua FilterBar — đồng bộ tab Kế hoạch) ── */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 sm:py-2 border-b bg-white shrink-0">
+        <SearchInput value={tSearch} onChange={setTSearch} className="flex-1 min-w-[150px] sm:max-w-xs"
+          placeholder="Tìm mã lệnh / chuyến · NPP · biển số · kho…" />
         <FilterBar defs={transferFilterDefs} />
         <FilterSheetButton defs={transferFilterDefs} className="sm:hidden" />
       </div>
       {!isLoading && filtered.length > 0 && (
         <SummaryBand compact tiles={[
           { label: 'Lệnh',       value: summary.count.toLocaleString('vi-VN') },
-          { label: 'Thùng KH',   value: summary.plannedBoxes.toLocaleString('vi-VN') },
-          { label: 'Thực nhận',  value: summary.actualBoxes.toLocaleString('vi-VN') },
+          // Nhãn "SL (quy đổi)" chứ KHÔNG phải "Thùng": tổng gộp mọi mã, trong đó mã không có entry_unit
+          // (NVL đếm cái/kg) góp số base thô → gọi là "thùng" là SAI đơn vị và thổi số (phát hiện 26/07:
+          // 12,5 triệu "thùng" thực chất là cái/kg). Tổng CHÍNH XÁC theo từng ĐVT xem ở band Tổng hợp mã hàng.
+          { label: 'SL KH (quy đổi)', value: summary.plannedBoxes.toLocaleString('vi-VN') },
+          { label: 'Thực nhận (quy đổi)', value: summary.actualBoxes.toLocaleString('vi-VN') },
           { label: 'Chênh lệch', value: summary.diff > 0 ? `+${summary.diff.toLocaleString('vi-VN')}` : summary.diff.toLocaleString('vi-VN'), accent: summary.diff !== 0 },
           { label: 'Đã giao',    value: `${summary.delivered}/${summary.count}`, accent: summary.delivered > 0 },
         ]} />
@@ -3186,7 +3358,7 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                     <TableHeader>
                       <TableRow>
                         {TRANSFER_COLS.map((c, i) => (
-                          <TableHead key={c.label} className={`relative h-auto normal-case px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                          <TableHead key={c.label} className={`h-auto normal-case px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
                             {c.label}
                             {i > 0 && (
                               <span
@@ -3301,6 +3473,11 @@ function TransferOrdersPanel({ canEdit, canConfirmReceipt, userScope, userWareho
                             </TableCell>
                             <TableCell className="px-2 py-1 truncate" title={o.order_code}>
                               <span className="text-[10px] font-mono font-semibold">{o.order_code}</span>
+                              {/* Lệnh ngừng hiệu lực vì kế hoạch bỏ xe — chỉ đánh dấu trạng thái, không badge nguồn (03/08 vòng 2) */}
+                              {o.plan_dropped && (
+                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold whitespace-nowrap"
+                                  title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                              )}
                             </TableCell>
                           </TableRow>
                         )
@@ -3336,7 +3513,15 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   const [addMatId, setAddMatId]     = useState('')
   const { data: planLines = [] }    = usePlanLinesByOrder(order?.id ?? null)
   const { data: planVsActual = [] } = usePlanVsActual(order?.id ?? null)
-  const { data: allMats = [] }      = useMaterials()
+  // Dòng hàng lệnh XUẤT theo Số xe (Kế hoạch xuất + VL06O) — read-only, thiếu VL06O KHÔNG chặn booking
+  const { data: planGoods } = usePlanGoods(order?.direction === 'OUTBOUND' ? order?.id : null)
+  // Chỉ tra mã đang hiện trên bảng KH (+ mã đang gõ ở ô Thêm dòng) — không nạp cả danh mục
+  const shownCodes = useMemo(() => [...new Set([
+    ...(planLines as Record<string, unknown>[]).map(l => (l.material as Record<string, unknown>)?.material_code as string),
+    ...(planVsActual as Record<string, unknown>[]).map(r => r.material_code as string),
+    addCode.trim(),
+  ].filter(Boolean))], [planLines, planVsActual, addCode])
+  const { data: allMats = [] }      = useMaterialsByCodes(shownCodes)
   const { mutateAsync: addLines }   = useBulkCreatePlanLinesForOrder()
   const { mutate: deleteLine }      = useDeletePlanLine()
 
@@ -3360,7 +3545,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       const code = mat?.material_code as string
       if (!code || seen.has(code)) continue
       seen.add(code)
-      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      const matFull = allMats.find(m => m.material_code === code)
       rows.push({
         line_id: line.id as string ?? null,
         material_code: code,
@@ -3376,7 +3561,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
       const code = row.material_code as string
       if (seen.has(code)) continue
       seen.add(code)
-      const matFull = (allMats as import('@/types').Material[]).find(m => m.material_code === code)
+      const matFull = allMats.find(m => m.material_code === code)
       rows.push({
         line_id: null,
         material_code: code,
@@ -3391,7 +3576,7 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
   }, [planLines, planVsActual, allMats])
 
   async function handleAddLine() {
-    const matId = addMatId || (allMats as import('@/types').Material[]).find(m => m.material_code === addCode.trim())?.id
+    const matId = addMatId || allMats.find(m => m.material_code === addCode.trim())?.id
     if (!matId) { setAddError('Không tìm thấy mã hàng'); return }
     const boxes = Number(addBoxes)
     if (!boxes || boxes <= 0) { setAddError('SL thùng phải > 0'); return }
@@ -3448,7 +3633,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
     {showUpload && <UploadPlanLinesDialog
       orderId={order.id}
       warehouseType={order.warehouse_type ?? undefined}
-      existingCodes={existingPlanCodes}
       onClose={() => setShowUpload(false)}
     />}
     <Dialog open={!!order} onOpenChange={v => !v && onClose()}>
@@ -3460,6 +3644,15 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             <span className="text-sm font-mono font-bold text-slate-800">{order.order_code || 'Chi tiết đơn'}</span>
             {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
             {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
+            {/* Nguồn lệnh (user chốt 03/08 vòng 2): TỪ Kế hoạch xuất = mặc định, KHÔNG badge;
+                chỉ đánh dấu nguồn KHÁC "(Excel)" + trạng thái "KH đã bỏ" */}
+            {order.plan_dropped ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả">KH đã bỏ</span>
+            ) : order.origin !== 'KHVC' && order.source_type !== 'TRANSFER' ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
+            ) : null}
             {order.priority && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Ưu tiên</span>}
             <ActionCluster className="ml-auto" items={headerActions} />
           </div>
@@ -3468,7 +3661,11 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             {infoRow('Ngày', <span className="font-mono">{formatDate(order.date)}</span>)}
             {infoRow('ĐVVT', order.ncc?.name)}
             {infoRow('Kho', whName)}
-            {infoRow('Loại kho', order.warehouse_type)}
+            {infoRow('Loại kho (hàng chở)', order.warehouse_type
+              ?? <span className="text-slate-400">chưa biết — chờ dữ liệu VL06O</span>)}
+            {infoRow('Cửa đặt lịch', order.booking_category
+              ? order.booking_category
+              : <span className="text-amber-600">chưa chốt — khai ở tab Kế hoạch xuất</span>)}
             {infoRow('Loại xe', order.vehicle_type)}
             {infoRow('Thùng', order.planned_boxes != null ? `${order.planned_boxes} thùng` : null)}
             {infoRow('Pallet', order.planned_pallets != null ? `${order.planned_pallets} pl` : null)}
@@ -3522,6 +3719,50 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
             </div>
           </section>
 
+          {/* Hàng hóa lệnh XUẤT — dòng SL từ Kế hoạch xuất + VL06O (user chốt 03/08). Chỉ để ĐỌC khi
+              booking; chuyến chờ dữ liệu SAP thì báo DO đang thiếu nhưng KHÔNG khóa thao tác nào. */}
+          {!isInbound && planGoods && (planGoods.lines.length > 0 || planGoods.awaiting_dos.length > 0) && (
+            <section>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                Hàng hóa theo Kế hoạch xuất ({planGoods.lines.length})
+              </p>
+              {planGoods.awaiting_sap && (
+                <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
+                  Chờ dữ liệu SAP — thiếu DO: <span className="font-mono">{planGoods.awaiting_dos.join(', ')}</span>.
+                  Up VL06O có các DO này là dòng hàng tự hiện; <b>booking vẫn đặt bình thường</b>.
+                </div>
+              )}
+              {planGoods.lines.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-max w-full">
+                    <thead className="sticky top-0 z-10 bg-slate-50">
+                      <tr>
+                        {['Mã hàng', 'Tên hàng', 'DO', 'NPP', 'SL kế hoạch', 'Đã xuất'].map(h => (
+                          <th key={h} className="px-2 py-1.5 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planGoods.lines.map((l, i) => (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{l.material_code ?? '—'}</td>
+                          <td className="px-2 py-1 text-[10px] max-w-[220px] truncate whitespace-nowrap" title={l.material_name ?? undefined}>{l.material_name ?? '—'}</td>
+                          <td className="px-2 py-1 text-[10px] font-mono whitespace-nowrap max-w-[180px] truncate" title={l.do_refs.join(', ')}>{l.do_refs.join(', ') || '—'}</td>
+                          <td className="px-2 py-1 text-[10px] whitespace-nowrap max-w-[160px] truncate" title={l.npp ?? undefined}>{l.npp ?? '—'}</td>
+                          {/* BASE UNIT: SL lưu base → hiển thị "N thùng + M hộp" per-mã, không in số base thô */}
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold whitespace-nowrap">{qtyLabel(l.qty_base, l)}</td>
+                          <td className="px-2 py-1 text-[10px] text-right tabular-nums whitespace-nowrap">
+                            {l.scanned_base > 0 ? qtyLabel(l.scanned_base, l) : <span className="text-slate-300">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Hàng hóa nhập hàng — KH vs Thực tế (chỉ INBOUND), cùng format bảng dòng hàng với Chuyển kho */}
           {isInbound && (
             <section>
@@ -3567,7 +3808,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
                   <div className="flex gap-1 items-center flex-wrap">
                     <MatCombobox
                       value={addCode}
-                      allMats={allMats.filter(m => !m.is_non_stock) as MatItem[]}
                       onSelect={(code, id) => { setAddCode(code); setAddMatId(id); setAddError('') }}
                       inputClassName="h-7 w-36 shrink-0 rounded border border-slate-200 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
                     />
@@ -3613,19 +3853,23 @@ export default function TMSBookings() {
   const canView       = can(perms, 'tms_plan', 'view')
   const canUpload         = can(perms, 'tms_plan', 'upload_outbound') || can(perms, 'tms_plan', 'upload_inbound')
   const canUploadInbound  = can(perms, 'tms_plan', 'upload_inbound')
-  const isNccUser = user?.department === 'Đơn vị vận tải'
+  const isNccUser = user?.is_carrier_dept === true   // cờ phòng ban nhà xe, không so tên
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   // Filter state per-user qua useWmsFilterStore (scopedPersist) — KHÔNG localStorage thuần (sẽ dùng chung giữa user)
   const tf    = useWmsFilterStore(s => s.tmsBookings)
   const setTf = useWmsFilterStore(s => s.setTmsBookings)
   const dateFrom       = tf.dateFrom;  const dateTo            = tf.dateTo
-  const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v })
-  const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v })
-  const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v })
-  const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v })
-  const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v })
-  const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v })
+  const warehouseId    = tf.warehouseId; const setWarehouseId  = (v: string)   => setTf({ warehouseId: v, page: 1 })
+  const loaiKhoFilter  = tf.loaiKho;   const setLoaiKhoFilter  = (v: string[]) => setTf({ loaiKho: v, page: 1 })
+  const loaiXeFilter   = tf.loaiXe;    const setLoaiXeFilter   = (v: string[]) => setTf({ loaiXe: v, page: 1 })
+  const huongFilter    = tf.huong;     const setHuongFilter    = (v: string[]) => setTf({ huong: v, page: 1 })
+  const dvvtFilter     = tf.dvvt;      const setDvvtFilter     = (v: string[]) => setTf({ dvvt: v, page: 1 })
+  const khungGioFilter = tf.khungGio;  const setKhungGioFilter = (v: string[]) => setTf({ khungGio: v, page: 1 })
+  // Ô TÌM NHANH — lọc TRÊN SERVER (lưới phân trang 200/trang: lọc client chỉ soi trang đang xem,
+  // gõ mã đơn nằm trang sau sẽ ra "không có dòng nào"). Debounce 250ms để không bắn mỗi ký tự.
+  const search = tf.search; const setSearch = (v: string) => setTf({ search: v, page: 1 })
+  const dSearch = useDebouncedValue(search.trim(), 250)
   const [slotOverviewOpen, setSlotOverviewOpen] = useState(false)
 
   // Tab Chuyển kho chỉ hiện khi có quyền confirm_receipt (#1) — ẩn hẳn nếu thiếu, ép về 'main'
@@ -3652,13 +3896,26 @@ export default function TMSBookings() {
   const { data: whTypesMain = [] }            = useScopedWhTypes()
   const { data: vehicleTypesMain = [] }       = useVehicleTypes(true)
   const { data: transportCompaniesMain = [] } = useTransportCompanies(true)
-  const { data: orders = [], isLoading }      = useTmsOrders(
-    (warehouseId || isNccUser) ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined } : undefined,
-  )
-  const nppSuggestions = useMemo(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.npp_name).filter(Boolean) as string[])].sort(),
-    [orders]
-  )
+  // PHÂN TRANG SERVER: trang + tổng + option filter là 3 lời gọi CÙNG một bộ lọc (lệch nhau =
+  // pager và tổng đá nhau). Không lọc/sắp xếp lại ở client — thứ tự do SQL quyết.
+  const canQuery = !!(warehouseId || isNccUser) && !!dateFrom
+  const listParams = useMemo(() => canQuery ? {
+    date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined,
+    directions: huongFilter, dvvt: dvvtFilter, wh_types: loaiKhoFilter, vehicle_types: loaiXeFilter,
+    slot_ids: khungGioFilter.filter(v => v !== '__chua_dat__'),
+    unbooked: khungGioFilter.includes('__chua_dat__'),
+    search: dSearch || undefined,
+  } : undefined, [canQuery, dateFrom, dateTo, warehouseId, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter, dSearch])
+  const baseParams = useMemo(() => canQuery
+    ? { date_from: dateFrom, date_to: dateTo || dateFrom, warehouse_id: warehouseId || undefined }
+    : undefined, [canQuery, dateFrom, dateTo, warehouseId])
+
+  const { data: pageData, isLoading, error: listErr } =
+    useTmsOrdersPaged(listParams ? { ...listParams, page: tf.page, page_size: tf.pageSize } : undefined)
+  const { data: summary } = useTmsOrdersSummary(listParams)
+  const { data: facets }  = useTmsOrdersFacets(baseParams)
+  const orders = pageData?.rows ?? []
+  const nppSuggestions = facets?.npp_names ?? []
   const deleteOrder        = useDeleteOrder()
   const addVehicleSlot     = useAddVehicleSlot()
   const releaseVehicleSlot = useReleaseVehicleSlot()
@@ -3681,55 +3938,26 @@ export default function TMSBookings() {
     { value: 'OUTBOUND', label: 'Xuất' },
     { value: 'INBOUND',  label: 'Nhập' },
   ]
+  // Option filter lấy từ FACETS (DISTINCT dưới DB trên phạm vi nền) — KHÔNG suy từ trang đang xem,
+  // nếu không thì lật trang là danh sách lựa chọn đổi theo.
   const dvvtOptions = useMemo<MSOpt[]>(() =>
-    [...new Map((orders as TmsOrder[])
-      .filter(o => o.ncc_id && o.ncc?.name)
-      .map(o => [o.ncc_id!, { value: o.ncc_id!, label: o.ncc!.name! }])
-    ).values()], [orders]
-  )
+    (facets?.dvvt ?? []).map(d => ({ value: d.id, label: d.name })), [facets])
   const loaiKhoOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.warehouse_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })), [orders]
-  )
+    (facets?.wh_types ?? []).map(v => ({ value: v, label: v })), [facets])
   const loaiXeOptions = useMemo<MSOpt[]>(() =>
-    [...new Set((orders as TmsOrder[]).map(o => o.vehicle_type).filter((v): v is string => !!v))]
-      .map(v => ({ value: v, label: v })), [orders]
-  )
+    (facets?.vehicle_types ?? []).map(v => ({ value: v, label: v })), [facets])
 
-  // Filter client-side trên orders
-  const filteredOrders = useMemo(() => {
-    let list = orders as TmsOrder[]
-    if (huongFilter.length)    list = list.filter(o => o.direction && huongFilter.includes(o.direction))
-    if (dvvtFilter.length)     list = list.filter(o => o.ncc_id && dvvtFilter.includes(o.ncc_id))
-    if (loaiKhoFilter.length)  list = list.filter(o => o.warehouse_type && loaiKhoFilter.includes(o.warehouse_type))
-    if (loaiXeFilter.length) {
-      const directIds = new Set(list.filter(o => o.vehicle_type && loaiXeFilter.includes(o.vehicle_type)).map(o => o.id))
-      const partnerGroupIds = new Set<string>()
-      for (const o of list) {
-        if (!directIds.has(o.id)) continue
-        for (const vs of o.vehicle_slots) {
-          if (vs.consolidation_group_id) partnerGroupIds.add(vs.consolidation_group_id)
-        }
-      }
-      list = list.filter(o => {
-        if (directIds.has(o.id)) return true
-        return o.vehicle_slots.some(vs => vs.consolidation_group_id && partnerGroupIds.has(vs.consolidation_group_id))
-      })
-    }
-    if (khungGioFilter.length) {
-      list = list.filter(o => o.vehicle_slots.some(vs => {
-        if (!vs.slot_id && khungGioFilter.includes('__chua_dat__')) return true
-        if (vs.slot_id && khungGioFilter.includes(vs.slot_id)) return true
-        return false
-      }))
-    }
-    return list
-  }, [orders, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+  // Trang đã được SERVER lọc + sắp xếp — dựng lưới thẳng từ đây (không lọc lại client).
+  // Thứ tự: ngày ↓ (gần nhất trên) · ưu tiên (UT) · Xuất→Nhập · loại kho · loại xe · ĐVVT · mã đơn
+  // (đổi thứ tự = sửa ORDER BY trong migration 20260729d_tms_orders_page_sort.sql, KHÔNG sort lại ở đây
+  //  — client chỉ giữ 1 TRANG nên sort ở client là sort sai trên tập cắt cụt).
+  const filteredOrders = orders as TmsOrder[]
 
-  // Tất cả filter tab Kế hoạch gom 1 chỗ qua FilterBar (ngày = daterange Từ–Đến)
+  // Tất cả filter tab Kế hoạch gom 1 chỗ qua FilterBar (ngày = daterange Từ–Đến).
+  // MỌI onChange filter phải kèm page: 1 — không thì đang đứng trang 5 lọc xong sẽ ra trang trống.
   const mainFilterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày', type: 'daterange', from: dateFrom, to: dateTo,
-      onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf }) } },
+      onChange: (f, t) => { const nf = f || today; setTf({ dateFrom: nf, dateTo: t || nf, page: 1 }) } },
     { key: 'huong', label: 'Hướng', type: 'single', allLabel: 'Tất cả',
       value: huongFilter.length === 1 ? huongFilter[0] : '',
       onChange: v => setHuongFilter(v ? [v] : []), options: huongOptions },
@@ -3740,22 +3968,16 @@ export default function TMSBookings() {
   ]
 
 
-  // STT ổn định theo toàn kho (không nhảy khi filter) — pre-compute trên ALL orders
+  // STT xe do SERVER đánh trên TOÀN phạm vi ngày+kho (không nhảy khi lọc, không lệ thuộc trang
+  // đang xem). Trước đây tính ở client trên toàn bộ đơn đã tải — phân trang rồi thì không còn đủ dữ liệu.
   const stableVehicleStt = useMemo<Map<string, number>>(() => {
     const map = new Map<string, number>()
-    let stt = 0
     for (const o of (orders as TmsOrder[])) {
-      const slots = o.vehicle_slots.length > 0 ? o.vehicle_slots : [null as unknown as TmsVehicleSlot]
-      for (let si = 0; si < slots.length; si++) {
-        const s = slots[si]
-        if (s && s.consolidation_group_id && !s.is_consolidation_primary) continue
-        map.set(`${o.id}/${si}`, ++stt)
+      if (o.vehicle_slots.length === 0) {
+        if (o.stt_no_slot != null) map.set(`${o.id}/0`, o.stt_no_slot)
+        continue
       }
-    }
-    // Orphans (all slots are secondary)
-    for (const o of (orders as TmsOrder[])) {
-      if (o.vehicle_slots.some((_, si) => map.has(`${o.id}/${si}`))) continue
-      map.set(`${o.id}/0`, ++stt)
+      o.vehicle_slots.forEach((s, si) => { if (s.stt != null) map.set(`${o.id}/${si}`, s.stt) })
     }
     return map
   }, [orders])
@@ -3878,54 +4100,36 @@ export default function TMSBookings() {
     return rows
   }, [filteredOrders])
 
-  // Phân trang lưới Kế hoạch: render theo TRANG để không treo khi nhiều đơn/đa-ngày.
-  // CẮT TẠI RANH GIỚI CỤM (blockKey) → 1 cụm xe gom/tách luôn trọn 1 trang → rowspan co dãn đúng.
-  const [planPage, setPlanPage] = useState(1)
-  const [planPageSize, setPlanPageSize] = useState(200)
-  const planPages = useMemo<TableRow[][]>(() => {
-    const out: TableRow[][] = []
-    let cur: TableRow[] = []
-    let i = 0
-    while (i < tableRows.length) {
-      const bk = tableRows[i].blockKey
-      const block: TableRow[] = []
-      while (i < tableRows.length && tableRows[i].blockKey === bk) { block.push(tableRows[i]); i++ }
-      // đóng trang trước khi thêm cụm sẽ vượt cỡ (trang có thể >pageSize chút để trọn cụm — đúng "200 hoặc hơn")
-      if (cur.length > 0 && cur.length + block.length > planPageSize) { out.push(cur); cur = [] }
-      cur.push(...block)
-    }
-    if (cur.length) out.push(cur)
-    return out
-  }, [tableRows, planPageSize])
-  const planPageCount = Math.max(1, planPages.length)
-  const planSafePage  = Math.min(planPage, planPageCount)
-  const pagedRows     = planPages[planSafePage - 1] ?? []
-  // Reset về trang 1 khi đổi filter/ngày/kho/cỡ trang — KHÔNG reset khi realtime refetch (giữ trang đang xem)
-  useEffect(() => { setPlanPage(1) }, [dateFrom, dateTo, warehouseId, planPageSize, huongFilter, dvvtFilter, loaiKhoFilter, loaiXeFilter, khungGioFilter])
+  // Phân trang do SERVER cắt (đơn vị = CỤM xe gom, xem migration 20260728_tms_orders_paged_rpc):
+  // 1 cụm luôn trọn 1 trang nên rowspan không bao giờ bị xé ngang trang.
+  const planPage        = tf.page
+  const planPageSize    = tf.pageSize
+  const setPlanPage     = (p: number) => setTf({ page: p })
+  const setPlanPageSize = (n: number) => setTf({ pageSize: n, page: 1 })
+  const planPageCount   = pageData?.total_pages ?? 1
+  const planSafePage    = Math.min(planPage, planPageCount)
+  const pagedRows       = tableRows
+  // Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối (không để màn trống)
+  useEffect(() => {
+    if (!isLoading && pageData && tf.page > pageData.total_pages) setTf({ page: pageData.total_pages })
+  }, [isLoading, pageData, tf.page, setTf])
 
-  // Subtotal tab Kế hoạch (SummaryBand) — tính trên dữ liệu ĐÃ filter
-  const mainSummary = useMemo(() => {
-    let boxes = 0, pallets = 0, tons = 0
-    for (const o of filteredOrders) {
-      boxes   += o.planned_boxes ?? 0
-      pallets += o.planned_pallets ?? 0
-      tons    += o.planned_tons ?? 0
-    }
-    const vehicles = tableRows.filter(r => r.stt !== null).length
-    const done = filteredOrders.filter(o => o.vehicle_slots.length > 0 && o.vehicle_slots.every(vs => vs.status === 'DONE')).length
-    return { orders: filteredOrders.length, vehicles, boxes, pallets, tons, done }
-  }, [filteredOrders, tableRows])
+  // Tổng SummaryBand tính bằng SQL trên TOÀN BỘ bộ lọc — KHÔNG cộng trên trang đang xem (sẽ ra
+  // "tổng của trang 1", đúng họ bẫy im lặng của phân trang).
+  const mainSummary = summary ?? { orders: 0, vehicles: 0, boxes: 0, pallets: 0, tons: 0, done: 0 }
 
-  // Band tổng hợp mã hàng chỉ cho phần NHẬP (Kế hoạch) — đơn INBOUND mới có inbound_plan_lines.
-  const inboundOrderIds = useMemo(
-    () => filteredOrders.filter(o => o.direction === 'INBOUND').map(o => o.id),
-    [filteredOrders])
-
+  // Lệnh TỰ SINH từ Kế hoạch xuất = dữ liệu BỊ ĐỘNG (như chuyến SAP bên Xuất, user chốt 03/08):
+  // sửa/xóa/đổi ngày phải làm ở NGUỒN (tab Kế hoạch xuất / VL06O), lệnh tự cập nhật theo.
+  // Khóa từ FE — không để tick rồi mới báo lỗi (bài học cc332dbb). Lệnh "KH đã bỏ" vẫn xóa được để dọn.
+  const isDerivedOrder = (o: TmsOrder) => o.origin === 'KHVC'
   const canEditOrder = (o: TmsOrder) =>
-    canEdit && o.vehicle_slots.every(vs => vs.status === 'PENDING')
+    canEdit && !isDerivedOrder(o) && o.vehicle_slots.every(vs => vs.status === 'PENDING')
 
-  const canBookSlot = (vs: TmsVehicleSlot) =>
-    canBook && ['PENDING','BOOKED'].includes(vs.status) &&
+  // Lệnh "KH đã bỏ" KHÔNG được đặt khung giờ: xe không còn trong kế hoạch mà vẫn chiếm 1 chỗ thì
+  // xe thật mất chỗ, và không lượt đồng bộ nào nhả hộ lần hai (BE chặn 422 TMS_PLAN_DROPPED —
+  // ẩn nút để user khỏi bấm rồi mới biết). Nhả khung vẫn cho (canReleaseSlot không đụng cờ này).
+  const canBookSlot = (vs: TmsVehicleSlot, o?: TmsOrder) =>
+    canBook && !o?.plan_dropped && ['PENDING','BOOKED'].includes(vs.status) &&
     (!vs.slot || !isSlotTimePassed(vs.slot.date ?? '', vs.slot.time_from ?? ''))
 
   const canReleaseSlot = (vs: TmsVehicleSlot) =>
@@ -3939,9 +4143,13 @@ export default function TMSBookings() {
     !canReleaseSlot(vs)
 
   // Đơn NHẬP cũng đổi ngày/xóa được như đơn xuất (BE dọn inbound_plan_lines + đổi date lines theo).
-  // Trừ đơn chuyển kho TRANSFER (tự tạo từ Outbound — BE chặn xóa, ngày đi theo GDO).
+  // Trừ: đơn chuyển kho TRANSFER (tự tạo từ Outbound — BE chặn xóa, ngày đi theo GDO) và lệnh
+  // TỰ SINH từ Kế hoạch xuất (sửa ở nguồn; riêng "KH đã bỏ" cho tick để bulk-XÓA dọn bảng).
   const checkableOrderIds = useMemo(() =>
-    (canChangeDate || canDelete) ? filteredOrders.filter(o => o.source_type !== 'TRANSFER' && o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
+    (canChangeDate || canDelete) ? filteredOrders.filter(o =>
+      o.source_type !== 'TRANSFER' &&
+      !(isDerivedOrder(o) && !o.plan_dropped) &&
+      o.vehicle_slots.every(vs => vs.status === 'PENDING')).map(o => o.id) : [],
     [filteredOrders, canChangeDate, canDelete]
   )
   const allChecked = checkableOrderIds.length > 0 && checkableOrderIds.every(id => selectedOrderIds.has(id))
@@ -4071,6 +4279,12 @@ export default function TMSBookings() {
               placeholder="— Chọn kho —"
               triggerClassName="h-8 w-[200px]"
             />
+            {/* Ô tìm nhanh — server-side (xem chú thích chỗ khai dSearch) */}
+            {(warehouseId || isNccUser) && (
+              <SearchInput value={search} onChange={setSearch}
+                placeholder="Tìm mã đơn / Số xe · NPP · biển số…"
+                className="w-full sm:w-[260px] order-1 sm:order-none" />
+            )}
             {(warehouseId || isNccUser) && <FilterBar defs={mainFilterDefs} />}
             {(warehouseId || isNccUser) && <FilterSheetButton defs={mainFilterDefs} className="sm:hidden" />}
             {(canChangeDate || canDelete) && selectedOrderIds.size > 0 && (
@@ -4112,18 +4326,20 @@ export default function TMSBookings() {
           />
         </div>
       ) : null}
+      {activeTab === 'main' && <ListErrorBanner error={listErr} />}
       {activeTab === 'main' && (warehouseId || isNccUser) && tableRows.length > 0 && (
         <SummaryBand compact tiles={[
           { label: 'Đơn',        value: mainSummary.orders.toLocaleString('vi-VN') },
           { label: 'Xe',         value: mainSummary.vehicles.toLocaleString('vi-VN') },
-          { label: 'Thùng',      value: mainSummary.boxes.toLocaleString('vi-VN') },
+          // "SL (quy đổi)" — gộp mọi mã kể cả mã không entry (cái/kg) nên KHÔNG được gọi là "Thùng"
+          { label: 'SL (quy đổi)', value: mainSummary.boxes.toLocaleString('vi-VN') },
           { label: 'Pallet',     value: mainSummary.pallets.toLocaleString('vi-VN') },
           { label: 'Tấn',        value: mainSummary.tons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
           { label: 'Hoàn thành', value: `${mainSummary.done}/${mainSummary.orders}`, accent: mainSummary.done > 0 },
         ]} />
       )}
       {activeTab === 'main' && (warehouseId || isNccUser) && (
-        <MaterialSummaryBand orderIds={inboundOrderIds} />
+        <MaterialSummaryBand filter={listParams ? tmsCsvParams(listParams) : undefined} />
       )}
       <div className={`flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 ${activeTab !== 'main' ? 'hidden' : ''}`}>
         {!warehouseId && !isNccUser ? (
@@ -4258,7 +4474,20 @@ export default function TMSBookings() {
                         {order.vehicle_slots.length > 1 && (
                           <div className="absolute left-1/2 top-1/2 bottom-0 w-px bg-slate-300 pointer-events-none" />
                         )}
-                        {order.order_code || <span className="text-slate-400 font-normal">—</span>}
+                        {/* Badge nguồn SAU mã, 1 hàng, KHÔNG bị che (user chốt 03/08 vòng 3): cột table-fixed
+                            + overflow-hidden nên badge nối đuôi chuỗi sẽ bị cắt khi cột hẹp (mã 22 ký tự đã
+                            chiếm trọn 148px mặc định) → flex: MÃ truncate co lại, badge shrink-0 luôn hiện.
+                            Lệnh TỪ Kế hoạch xuất = mặc định, KHÔNG badge; chỉ nguồn khác "(Excel)" + "KH đã bỏ". */}
+                        <div className="flex items-center gap-1 min-w-0" title={order.order_code || undefined}>
+                          <span className="truncate">{order.order_code || <span className="text-slate-400 font-normal">—</span>}</span>
+                          {order.plan_dropped ? (
+                            <span className="shrink-0 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
+                              title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>
+                          ) : order.origin !== 'KHVC' ? (
+                            <span className="shrink-0 px-1 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-sans font-semibold text-[9px] whitespace-nowrap"
+                              title="Lệnh nạp theo luồng cũ (upload Excel / tạo tay) — sửa trực tiếp tại đây">(Excel)</span>
+                          ) : null}
+                        </div>
                       </>
                     ) : (() => {
                       const nextRow = pagedRows[rowIndex + 1]
@@ -4291,7 +4520,7 @@ export default function TMSBookings() {
 
                   {/* Đặt giờ — luôn hiện cho mỗi vehicle slot */}
                   <TableCell className={`px-2 py-1 ${cellHoverBg}`}>
-                    {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot) && (
+                    {vslot.id && !vslot.id.startsWith('_temp_') && canBookSlot(vslot, order) && (
                       <button
                         onClick={e => { e.stopPropagation(); setBookingSlot({ vslot, order }) }}
                         className="text-blue-400 hover:text-blue-600 p-1 rounded"
@@ -4346,7 +4575,27 @@ export default function TMSBookings() {
                   {/* Loại kho — merge qua tất cả rows cùng vehicle group */}
                   {stt !== null && (
                     <TableCell rowSpan={sttRowspan > 1 ? sttRowspan : undefined} className={`px-2 py-1 text-[10px] whitespace-nowrap align-middle ${cellHoverBg}`}>
-                      {order.warehouse_type || <span className="text-slate-400">—</span>}
+                      {/* HAI thứ khác nhau trong 1 ô: hàng xe CHỞ (warehouse_type) và CỬA đặt lịch.
+                          Chuyến CHỜ dữ liệu SAP thì hàng chở CHƯA BIẾT (loại suy từ mã hàng của VL06O)
+                          nên warehouse_type null — nhưng CỬA đã khai ở kế hoạch, và cửa mới là thứ trang
+                          booking cần ⇒ ô này KHÔNG được để trống khi đã có cửa (user báo 03/08). */}
+                      {order.warehouse_type
+                        ? <>
+                            {order.warehouse_type}
+                            {/* 1 loại thì cửa = chính nó, khỏi nhiễu; chở LẪN mới cần chỉ rõ đậu cửa nào */}
+                            {order.booking_category && splitCats(order.warehouse_type).length > 1 && (
+                              <span className="ml-1 shrink-0 px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
+                                title={`Cửa đặt lịch: ${order.booking_category} — khai ở tab Kế hoạch xuất`}>
+                                cửa {order.booking_category}
+                              </span>
+                            )}
+                          </>
+                        : order.booking_category
+                          ? <span className="px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[9px] font-medium"
+                              title={`Cửa đặt lịch: ${order.booking_category} (khai ở Kế hoạch xuất). Hàng xe chở chưa biết — chờ dữ liệu VL06O.`}>
+                              cửa {order.booking_category}
+                            </span>
+                          : <span className="text-slate-400">—</span>}
                     </TableCell>
                   )}
                   <TableCell className={`px-2 py-1 text-[10px] whitespace-nowrap ${cellHoverBg}`}>
@@ -4468,28 +4717,20 @@ export default function TMSBookings() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={planSafePage} totalPages={planPageCount} onPage={setPlanPage} />
       </div>
 
-      {/* Footer đếm bản ghi + phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl flex items-center gap-3 flex-wrap">
-        {activeTab === 'main' ? (
-          <>
-            <span>{(orders as TmsOrder[]).length.toLocaleString('vi-VN')} đơn · {tableRows.length.toLocaleString('vi-VN')} dòng</span>
-            {planPageCount > 1 && (
-              <span className="flex items-center gap-1.5">
-                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage <= 1} onClick={() => setPlanPage(p => Math.max(1, p - 1))}>‹ Trước</button>
-                <span className="tabular-nums">Trang {planSafePage}/{planPageCount}</span>
-                <button className="px-2 py-0.5 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-100" disabled={planSafePage >= planPageCount} onClick={() => setPlanPage(p => Math.min(planPageCount, p + 1))}>Sau ›</button>
-              </span>
-            )}
-            <span className="flex items-center gap-1">Cỡ trang:
-              {[200, 500, 1000].map(sz => (
-                <button key={sz} className={`px-1.5 py-0.5 rounded border ${planPageSize === sz ? 'border-sky-500 text-sky-700 bg-sky-50' : 'border-slate-300 hover:bg-slate-100'}`} onClick={() => setPlanPageSize(sz)}>{sz}</button>
-              ))}
-            </span>
-          </>
-        ) : 'Chuyển kho'}
-      </div>
+      {/* Footer đếm bản ghi + phân trang (chuẩn chung ListPager) */}
+      {activeTab === 'main' ? (
+        <ListFooter
+          page={planSafePage} pageSize={planPageSize} total={pageData?.total ?? 0} unit="đơn"
+          from={pageData?.page_from ?? 0} to={pageData?.page_to ?? 0}
+          onPageSize={setPlanPageSize}
+          right={`${tableRows.length.toLocaleString('vi-VN')} dòng · ${mainSummary.vehicles.toLocaleString('vi-VN')} xe`}
+        />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">Chuyển kho</div>
+      )}
      </div>
 
       <CreateEditDialog
@@ -4504,7 +4745,6 @@ export default function TMSBookings() {
         vslot={bookingSlot?.vslot ?? null}
         order={bookingSlot?.order ?? null}
         onClose={() => setBookingSlot(null)}
-        allOrders={orders as TmsOrder[]}
       />
       <SlotOverviewDialog
         open={slotOverviewOpen}
@@ -4551,8 +4791,9 @@ export default function TMSBookings() {
         onClose={() => setDetailOrder(null)}
         warehouses={warehouses as { id: string; name: string }[]}
         canUploadInbound={canUploadInbound}
-        canEdit={canEdit}
-        canDelete={canDelete}
+        // Lệnh dẫn xuất từ Kế hoạch xuất: Sửa/Xóa ở NGUỒN — ẩn nút tại đây ("KH đã bỏ" vẫn xóa được để dọn)
+        canEdit={canEdit && !(detailOrder ? isDerivedOrder(detailOrder) : false)}
+        canDelete={canDelete && !(detailOrder ? isDerivedOrder(detailOrder) && !detailOrder.plan_dropped : false)}
         onEditOrder={() => { setEditOrder(detailOrder); setDetailOrder(null) }}
         onDeleteOrder={() => {
           if (!detailOrder) return

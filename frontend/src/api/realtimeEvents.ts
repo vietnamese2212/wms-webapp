@@ -5,17 +5,22 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
-  ProductionImport:    [['inbound-orders'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard'], ['control-tower']],
+  ProductionImport:    [['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard'], ['control-tower']],
   // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
   // slotting-plan(s): tiến độ kế hoạch sắp xếp suy từ location_id hiện tại — pallet được chuyển phải nhảy tick ngay
-  InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans']],
-  Location:            [['locations-real'], ['sub-groups'], ['dashboard']],
+  InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['stocktake-log'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans'], ['fill-demand'], ['fill-tasks']],
+  StocktakeLog:        [['stocktake-log']],
+  Location:            [['locations-real'], ['sub-groups'], ['dashboard'], ['fill-demand'], ['fill-pick-face-locations']],
+  // Fill hàng: màn danh sách lệnh + chi tiết lệnh phải sáng ngay khi người khác quét/gán/hủy
+  // (không F5); fill-demand vì dòng treo được trừ vào phần "thiếu" của mã đó.
+  FillTask:            [['fill-orders'], ['fill-order'], ['fill-demand'], ['fill-report']],
+  FillOrder:           [['fill-orders'], ['fill-order']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   Material:            [['materials'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
-  PalletLabelPrint:    [['pallet-prints']],
-  PalletOperation:     [['pallet-ops-log']],
+  PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
+  PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
   Warehouse:           [['warehouses']],
   WarehouseZone:       [['warehouse-zones'], ['dashboard']],
@@ -28,30 +33,47 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc
   Vehicle:             [['tms-vehicles']],
   // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
-  TmsOrder:            [['tms-orders'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
-  TmsVehicleSlot:      [['tms-orders'], ['gate-registrations'], ['gate-suggest']],
+  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
+  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest']],
   DeliverySlot:        [['tms-delivery-slots']],
-  gate_registrations:  [['gate-registrations'], ['control-tower']],
+  gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower']],
+  alert_events:        [['alerts-list']],
+  user_notifications:  [['notify-feed']],   // chuông Header nhảy badge ngay khi được giao việc
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
-  GroupDeliveryOrder:  [['gdos'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower']],
-  OutboundDelivery:    [['gdo']],
-  OutboundItem:        [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages']],
-  OutboundScanEntry:   [['gdo'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
+  // fill-demand: "Cần" của tab Đề xuất fill = đơn nhặt lẻ theo NGÀY XUẤT — đơn phát sinh/đổi ngày
+  // phải làm số nhảy ngay với người đang mở tab (user chốt 05/08), không chờ F5.
+  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand']],
+  // list Xuất phân trang: tổng SummaryBand + phân bổ NPP tính từ DO/Item → đổi dòng hàng
+  // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
+  OutboundDelivery:    [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['tms-plan-goods']],
+  OutboundItem:        [['gdo'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['dashboard'], ['outbound-shortages'], ['tms-plan-goods'], ['fill-demand']],
+  OutboundScanEntry:   [['gdo'], ['gdos-paged'], ['outbound-summary'], ['loosepicking'], ['item-inventory'], ['inventory-by-material'], ['outbound-shortages'], ['control-tower']],
   reconcile_tasks:     [['reconcile-tasks'], ['reconcile-open-count']],   // hàng chờ "Cần xử lý" đối chiếu SAP — engine ghi khi up VL06O/sửa DO SAP
   // Dữ liệu bên ngoài — cross-invalidate 2 CHIỀU: DO SAP hiện cột Số xe/Ngày xuất từ khvc; Kế hoạch xuất hiện "Trong DO SAP" từ raw.
   // Đổi 1 bảng → list bảng kia phải refetch (cột/filter chéo mới đúng), + facets của chính nó.
-  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc']],
+  erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O về → chuyến chờ tự kích hoạt (không cần F5)
+  outbound_events:     [['gdo-events']],
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
-  Employee:             [['employees'], ['employee-records'], ['employee-record'], ['warehouse-employees']],
+  forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],
+  forklift_checklist_items: [['forklift-items']],
+  forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log'], ['forklift-logs-matrix']],
+  packing_logs:             [['packing-board'], ['packing-logs'], ['packing-run-board'], ['packing-runs'], ['packing-run']],
+  packing_runs:             [['packing-run-board'], ['packing-runs'], ['packing-run']],
+  warehouse_machines:       [['machines']],
+  // `Employee` ĐÃ GỠ KHỎI BẢN ĐỒ (04/08): bảng nhân sự CỐ Ý không nằm trong publication realtime và
+  // không có policy đọc cho `authenticated` — dữ liệu HR chỉ ra ngoài qua API đã cắt scope. Giữ dòng
+  // map ở đây là lời hứa suông: sự kiện KHÔNG BAO GIỜ tới, người đọc code lại tưởng đã có realtime.
+  // Muốn realtime cho nhân sự thì phải quyết định mở đọc bảng này trước (quyết định về dữ liệu, không
+  // phải kỹ thuật). Bất biến "bảng khai realtime phải nhận được sự kiện" ở gói QA 00 gác luật này.
   JobTitle:             [['job-titles'], ['employee-records']],
   Department:           [['departments'], ['job-titles']],
   UserWarehouseAccess:  [['employee-record'], ['employee-records']],
   Skill:                [['hr-skills'], ['hr-emp-skills']],
   EmployeeSkill:        [['hr-emp-skills']],
-  LeaveRequest:         [['hr-leaves']],
+  LeaveRequest:         [['hr-leaves'], ['hr-leaves-paged']],
   WorkAssignmentSheet:  [['hr-sheets'], ['hr-sheet']],
   WorkAssignmentDemand: [['hr-sheet']],
   WorkAssignment:       [['hr-sheet']],
@@ -59,7 +81,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   WorkLayoutSkill:      [['hr-layout']],
   WorkLayoutJobTitle:   [['hr-layout']],
   ShiftRestRule:        [['hr-shift-rules']],
-  Attendance:           [['hr-attendance'], ['hr-att-report']],
+  Attendance:           [['hr-attendance'], ['hr-attendance-matrix'], ['hr-att-report']],
 }
 
 type Payload = RealtimePostgresChangesPayload<Record<string, unknown>>
@@ -85,19 +107,18 @@ function patchSlotCache(payload: Payload) {
   )
 
   // 2. Patch slot embedded trong TmsOrder.vehicle_slots[].slot
-  queryClient.setQueriesData<TmsOrder[]>(
-    { queryKey: ['tms-orders'] },
-    (old) => {
-      if (!Array.isArray(old)) return old
-      return old.map(o => ({
-        ...o,
-        vehicle_slots: o.vehicle_slots.map(vs =>
-          vs.slot_id === updated.id && vs.slot
-            ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
-            : vs
-        ),
-      }))
-    }
+  const patchOrder = (o: TmsOrder): TmsOrder => ({
+    ...o,
+    vehicle_slots: o.vehicle_slots.map(vs =>
+      vs.slot_id === updated.id && vs.slot
+        ? { ...vs, slot: { ...vs.slot, booked_count: updated.booked_count as number } }
+        : vs
+    ),
+  })
+  // Lưới Kế hoạch đã phân trang server → cache là { rows, total… }, không phải mảng
+  queryClient.setQueriesData<{ rows: TmsOrder[] }>(
+    { queryKey: ['tms-orders-paged'] },
+    (old) => (old?.rows ? { ...old, rows: old.rows.map(patchOrder) } : old)
   )
 }
 
@@ -187,7 +208,7 @@ export function connectRealtimeEvents(): void {
         // isMutating() bị loại khỏi check vì nó block cả gate mutations (same SPA).
         const suppress = Date.now() < suppressTmsOrdersUntil
         keys.forEach((k) => {
-          if (suppress && k[0] === 'tms-orders') return
+          if (suppress && (k[0] === 'tms-orders-paged' || k[0] === 'tms-orders-summary')) return
           coalescedInvalidate(k)
         })
       }

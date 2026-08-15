@@ -26,7 +26,9 @@ async function qtyBaseIntError(materialCode: unknown, qtyBase: unknown): Promise
 
 // Cap an toàn cho filter chéo "Trong kế hoạch": số DO của cửa sổ đưa vào .in() không được quá lớn
 // (URL PostgREST) → vượt thì bỏ filter + trả cảnh báo (KHÔNG cắt âm thầm). Ngày đơn lẻ luôn dưới ngưỡng.
-const PLAN_FILTER_CAP = 1500
+// 800 ≈ 9KB URL (đo 27/07: 1000 giá trị 9 ký tự = 9,8KB OK · 1300 = 12,7KB đứt kết nối).
+// Cap cũ 1500 vượt ngưỡng → lọc rộng sẽ lỗi thay vì hiện cảnh báo "thu hẹp ngày".
+const PLAN_FILTER_CAP = 800
 
 // Đối chiếu SAP↔WMS sau khi SỬA/XÓA raw tay (AUGMENT — lỗi engine KHÔNG làm hỏng thao tác CRUD raw).
 async function reconcileQuiet(keys: OdKey[], actor: string | null) {
@@ -229,7 +231,8 @@ export async function listDoSap(req: Request, res: Response) {
 // GET /external/do-sap/facets — giá trị lọc (plant, source, ship_to) — gọn, lấy distinct từ trang đầu lớn
 export async function doSapFacets(_req: Request, res: Response) {
   try {
-    const { data } = await supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').limit(5000)
+    // Phân trang né cap-1000: .limit(5000) KHÔNG vượt cap PostgREST (~1000) → facet thiếu giá trị khi bảng >1000 dòng
+    const data = await fetchAllRowsParallel(() => supabase.from('erp_outbound_orders').select('plant, source, ship_to_code, ship_to_name').order('id'))
     const plants = [...new Set((data ?? []).map(r => r.plant).filter(Boolean))].sort()
     const sources = [...new Set((data ?? []).map(r => r.source).filter(Boolean))].sort()
     const shiptos = [...new Map((data ?? []).filter(r => r.ship_to_code).map(r => [r.ship_to_code, r.ship_to_name])).entries()]

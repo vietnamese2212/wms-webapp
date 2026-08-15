@@ -44,7 +44,7 @@ function buildToken(emp: any, warehouseIds: string[], modulePerms: Record<string
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
     ncc_id:             emp.ncc_id ?? null,
-    is_superadmin:      emp.employee_code === 'ADMIN' || emp.name === 'Admin',   // middleware bypass đọc từ token — khớp điều kiện resolve quyền
+    is_superadmin:      emp.is_superadmin === true,   // NGUỒN = cột Employee.is_superadmin (migration 20260813f) — hết so tên 'Admin'
   }
   return jwt.sign(payload, JWT_SECRET(), { expiresIn: JWT_EXPIRY })
 }
@@ -60,7 +60,11 @@ function buildRealtimeToken(empId: string): string | null {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string, jobTitleName?: string) {
+// jt = dòng JobTitle (kèm cờ is_driver + phòng ban). Cờ VAI TRÒ đi theo user để FE khỏi so TÊN
+// chức danh/phòng ban (audit 14/08 — đổi tên danh mục là luồng tài xế hỏng âm thầm).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<string, string[]>, warehouseName?: string, jt?: any) {
+  const dept = jt?.Department ?? null
   return {
     id:                 emp.id,
     name:               emp.name,
@@ -70,11 +74,15 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
     warehouse_id:       emp.warehouse_id ?? null,
     warehouse_name:     warehouseName ?? null,
     job_title_id:       emp.job_title_id ?? null,
-    job_title_name:     jobTitleName ?? null,
+    job_title_name:     jt?.name ?? null,
+    is_driver:          jt?.is_driver === true,                 // chức danh TÀI XẾ (cờ, không so tên)
+    department:         dept?.name ?? null,
+    is_carrier_dept:    dept?.is_carrier === true,              // phòng ban là ĐƠN VỊ VẬN TẢI
     allowed_categories: emp.allowed_categories ?? [],
     warehouse_ids:      warehouseIds,
     module_permissions: modulePerms,
     ncc_id:             emp.ncc_id ?? null,
+    is_superadmin:      emp.is_superadmin === true,   // FE isAdmin đọc cờ này (không so tên)
   }
 }
 
@@ -82,14 +90,25 @@ function buildUserObj(emp: any, warehouseIds: string[], modulePerms: Record<stri
 
 export async function login(req: Request, res: Response) {
   try {
-    const { email, password } = req.body as { email?: string; password?: string }
-    if (!email || !password) return fail(res, 'Email và mật khẩu là bắt buộc', 400)
+    const { email, password } = req.body as { email?: unknown; password?: unknown }
+    // Kiểm KIỂU chứ không chỉ truthy: email dạng object/mảng (payload dị dạng) từng lọt xuống
+    // .ilike → 500 (digest bắt 29/07). Rác đầu vào = 400, không phải lỗi hệ thống.
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password)
+      return fail(res, 'Email và mật khẩu là bắt buộc', 400)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: emps } = await supabase.from('Employee')
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id')
+    const { data: emps, error: lookupErr } = await supabase.from('Employee')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, password, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
       .ilike('email', escapeLikeEmail(email))
       .limit(1)
+
+    // DB KHÔNG TRUY CẬP ĐƯỢC ≠ SAI MẬT KHẨU (phát hiện 28/07: staging trả 522 giữa lúc test tải).
+    // Trước đây `error` bị BỎ QUA ⇒ data null ⇒ rơi vào nhánh 401 "Tên đăng nhập hoặc mật khẩu không
+    // đúng": trong một sự cố DB thì TOÀN BỘ nhân sự tưởng mật khẩu mình hỏng và đi đổi mật khẩu, còn
+    // người trực thì mất thời gian tìm sai chỗ. Nay trả 503 (client thấy message 5xx chung — đủ để
+    // hiểu là lỗi hệ thống chứ không phải sai mật khẩu; chi tiết log server-side).
+    // KHÔNG làm yếu chống-liệt-kê-tài-khoản: nhánh này không phụ thuộc tài khoản có tồn tại hay không.
+    if (lookupErr) return fail(res, `login: Employee lookup failed — ${lookupErr.message}`, 503)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
@@ -110,7 +129,7 @@ export async function login(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,9 +137,9 @@ export async function login(req: Request, res: Response) {
         : Promise.resolve(null),
     ])
 
-    // Resolve module_permissions: superadmin (employee_code=ADMIN hoặc name=Admin) gets all; else dùng job_title
+    // Resolve module_permissions: superadmin (cột Employee.is_superadmin) gets all; else dùng job_title
     let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    const isSuperAdmin = emp.is_superadmin === true
     if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
@@ -128,7 +147,7 @@ export async function login(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name) })
+    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData) })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -141,7 +160,7 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id')
+      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -154,7 +173,7 @@ export async function me(req: Request, res: Response) {
       getWarehouseIds(emp.id),
       emp.job_title_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
         : Promise.resolve(null),
       emp.warehouse_id
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,7 +182,7 @@ export async function me(req: Request, res: Response) {
     ])
 
     let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.employee_code === 'ADMIN' || emp.name === 'Admin'
+    const isSuperAdmin = emp.is_superadmin === true
     if (isSuperAdmin) {
       modulePerms = ALL_PERMISSIONS as Record<string, string[]>
     } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
@@ -171,7 +190,7 @@ export async function me(req: Request, res: Response) {
     }
 
     const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData?.name), token, realtime_token: buildRealtimeToken(emp.id) })
+    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData), token, realtime_token: buildRealtimeToken(emp.id) })
   } catch (e) { return fail(res, String(e)) }
 }
 

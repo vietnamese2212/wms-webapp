@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -17,9 +18,12 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import {
-  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials,
-  fetchScanLogExport, useScanLogSearch,
+  useOutboundScanLog, useOutboundScanLogFacets, useWarehouses, useMaterials, useMaterialsByIds,
+  fetchScanLogExport, useScanLogSearch, usePctBands,
 } from '@/api/hooks'
+import { computePctDate, resolveShelfLife } from '@/utils/shelfLife'
+import { scanRotationOf, rotationReasonLabel } from '@/utils/rotation'
+import { pctDateCls } from '@/utils/pctDateBands'
 import type { ScanLogParams } from '@/api/hooks'
 import { qtyLabel, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -27,12 +31,13 @@ import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/fo
 import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const PAGE_SIZE = 500
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
 const EXPORT_MAX = 50_000  // chặn export nếu vượt — yêu cầu lọc hẹp lại (tránh treo trình duyệt)
 
-// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (32 cột). Cột 0 (Ngày xuất) sticky-left.
+// Cột bảng — thứ tự PHẢI khớp các <TableCell> mỗi dòng (33 cột). Cột 0 (Ngày xuất) sticky-left.
 const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'delivery_date', label: 'Ngày xuất' },
   { id: 'warehouse',     label: 'Kho' },
@@ -46,7 +51,8 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'cartons',       label: 'Thùng', align: 'right' },
   { id: 'nsx',           label: 'NSX' },
   { id: 'hsd',           label: 'HSD' },
-  { id: 'best_date',     label: 'Date cũ nhất' },
+  { id: 'best_date',     label: 'Date nên lấy' },
+  { id: 'rotation',      label: 'Thứ tự lấy' },
   { id: 'pct',           label: '% Date', align: 'right' },
   { id: 'location',      label: 'Vị trí' },
   { id: 'machine',       label: 'Máy' },
@@ -68,34 +74,40 @@ const SCANLOG_COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'completed_at',  label: 'TG hoàn thành' },
 ]
 const SCANLOG_COL_DEFAULTS = [
-  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 52, 70, 50, 52, 48, 58, 110, 80,
+  72, 72, 70, 90, 110, 80, 100, 70, 130, 50, 58, 58, 58, 96, 52, 70, 50, 52, 48, 58, 110, 80,
   120, 120, 90, 80, 90, 90, 80, 120, 120, 120, 120,
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────
 
-function calcExpiryDate(prodDate: string | null, shelfDays: number | null): string | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const prod = new Date(prodDate)
-  if (isNaN(prod.getTime())) return null
-  return new Date(prod.getTime() + shelfDays * 86_400_000)
+// %Date TẠI THỜI ĐIỂM QUÉT — dùng computePctDate CHUNG (utils/shelfLife) với nowMs = lúc quét.
+// Trước 13/08 trang này tự tính bằng m.shelf_life_days nên bỏ qua HSD tường minh tem V2 +
+// shelf-life theo LÔ/NCC → ra số KHÁC trang Tồn kho (audit hardcode 13/08). RPC 20260813g trả
+// đủ nguyên liệu thô (entry_shelf_life_days / expiry_date / ncc_id / overrides).
+type PctRow = {
+  production_date: string | null; scanned_at: string; shelf_life_days: number | null
+  entry_shelf_life_days?: number | null; expiry_date?: string | null; ncc_id?: string | null
+  supplier_shelf_life_overrides?: { transport_company_id: string; shelf_life_days: number }[] | null
+}
+function rowPctAtScan(row: PctRow): number | null {
+  const scanMs = new Date(row.scanned_at).getTime()
+  if (isNaN(scanMs)) return null
+  return computePctDate(
+    { production_date: row.production_date, expiry_date: row.expiry_date, shelf_life_days: row.entry_shelf_life_days, ncc_id: row.ncc_id },
+    { shelf_life_days: row.shelf_life_days, supplier_shelf_life_overrides: row.supplier_shelf_life_overrides },
+    scanMs,
+  )
+}
+// HSD hiển thị: tem V2 mang HSD tường minh; tem V1 suy NSX + shelf-life hiệu lực (lô → NCC → mặc định)
+function rowExpiry(row: PctRow): string | null {
+  if (row.expiry_date) return row.expiry_date
+  if (!row.production_date) return null
+  const prod = new Date(row.production_date)
+  const shelf = resolveShelfLife(row.entry_shelf_life_days,
+    { shelf_life_days: row.shelf_life_days, supplier_shelf_life_overrides: row.supplier_shelf_life_overrides }, row.ncc_id)
+  if (isNaN(prod.getTime()) || shelf <= 0) return null
+  return new Date(prod.getTime() + shelf * 86_400_000)
     .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-}
-
-function calcPctAtScan(prodDate: string | null, shelfDays: number | null, scannedAt: string): number | null {
-  if (!prodDate || !shelfDays || shelfDays <= 0) return null
-  const prod = new Date(prodDate)
-  const scan = new Date(scannedAt)
-  if (isNaN(prod.getTime()) || isNaN(scan.getTime())) return null
-  const totalMs  = shelfDays * 86_400_000
-  const remaining = prod.getTime() + totalMs - scan.getTime()
-  return Math.max(0, Math.round((remaining / totalMs) * 100))
-}
-
-function datePctCls(pct: number): string {
-  if (pct >= 70) return 'text-green-600 font-semibold'
-  if (pct >= 40) return 'text-amber-600 font-semibold'
-  return 'text-red-600 font-semibold'
 }
 
 function FmtTs({ ts }: { ts: string | null }) {
@@ -123,6 +135,7 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
     cycles:            f.cycles.length > 0    ? f.cycles.join(',')    : undefined,
     scanner_name:      f.scanner_name  || undefined,
     nmsx:              f.nmsx.length > 0      ? f.nmsx.join(',')      : undefined,
+    rotation:          f.rotation      || undefined,
   }
 }
 
@@ -130,12 +143,15 @@ function buildParams(f: ScanLogFilters): ScanLogParams {
 
 export default function OutboundScanLog() {
   const navigate = useNavigate()
+  const pctBands = usePctBands()
   const [page, setPage]                 = useState(1)
+  const [pageSize, setPageSize]         = useState(500)
   const [exporting, setExporting]       = useState(false)
   const [exportError, setExportError]   = useState('')
   const { widths: colW, startResize, totalWidth } = useColumnResize('scanlog_col_widths', SCANLOG_COL_DEFAULTS)
 
   const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
   const filters    = useWmsFilterStore(s => s.scanLog)
   const setScanLog = useWmsFilterStore(s => s.setScanLog)
 
@@ -145,11 +161,16 @@ export default function OutboundScanLog() {
   const categories  = (whTypesData ?? []).map(t => t.value)
 
   const { data: facets } = useOutboundScanLogFacets(filters.material_category || undefined)
-  const { data: materialsData } = useMaterials(
-    { category: filters.material_category },
+  // Filter Mã hàng: TÌM TRÊN SERVER (50 dòng) — trước đây chọn Loại kho là kéo về toàn bộ
+  // mã hàng của loại đó chỉ để dựng options.
+  const [matTerm, setMatTerm] = useState('')
+  const { data: materialsData, isFetching: matFetching } = useMaterials(
+    { category: filters.material_category, search: matTerm || undefined, limit: 50 },
     !!filters.material_category,
   )
   const materials = materialsData ?? []
+  // Nhãn cho mã ĐANG CHỌN — options tìm-trên-server không chứa nó khi từ khóa đổi / mở lại app.
+  const { data: pickedMats = [] } = useMaterialsByIds(filters.materials)
 
   // Kho mặc định cho user theo phạm vi (non-NATIONAL) — chỉ set 1 lần khi trống
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,11 +192,10 @@ export default function OutboundScanLog() {
   const categoryOpts = useMemo(() =>
     (categories as string[]).map(c => ({ value: c, label: c }))
   , [categories])
-  const materialOpts  = useMemo(() =>
-    materials.map(m => ({
-      value: m.id,
-      label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}`,
-    })), [materials])
+  const matLabel = (m: { id: string; material_code: string; short_name?: string | null }) =>
+    ({ value: m.id, label: `${m.material_code}${m.short_name ? ' – ' + m.short_name : ''}` })
+  const materialOpts   = useMemo(() => materials.map(matLabel), [materials])
+  const pickedMatOpts  = useMemo(() => pickedMats.map(matLabel), [pickedMats])
   const machineOpts   = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
   const cycleOpts     = useMemo(() => (facets?.cycles   ?? []).map(c => ({ value: c, label: c })), [facets])
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
@@ -199,6 +219,7 @@ export default function OutboundScanLog() {
     { key: 'category',     label: 'Loại hàng',   type: 'single', options: categoryOpts, value: filters.material_category, allLabel: 'Tất cả loại',
       onChange: v => setScanLog({ material_category: v, materials: [], machines: [], cycles: [] }) },
     { key: 'material',     label: 'Mã / Tên hàng', type: 'multi', options: materialOpts, selected: filters.materials, searchable: true,
+      serverSearch: true, onSearchChange: setMatTerm, loading: matFetching, selectedOpts: pickedMatOpts,
       onChange: v => setScanLog({ materials: v }) },
     { key: 'machine',      label: 'Máy',         type: 'multi', options: machineOpts, selected: filters.machines, searchable: machineOpts.length > 6,
       onChange: v => setScanLog({ machines: v }) },
@@ -216,6 +237,9 @@ export default function OutboundScanLog() {
       onChange: v => setScanLog({ pallet_code: v }) },
     { key: 'scanner_name', label: 'Người quét',  type: 'text', value: filters.scanner_name, placeholder: 'Người quét…',
       onChange: v => setScanLog({ scanner_name: v }) },
+    { key: 'rotation',     label: 'Thứ tự lấy',  type: 'single', value: filters.rotation, allLabel: 'Tất cả',
+      options: [{ value: 'BAD', label: 'Lấy SAI thứ tự' }, { value: 'OK', label: 'Lấy đúng thứ tự' }],
+      onChange: v => setScanLog({ rotation: v }) },
   ]
 
   // SavedViews — snapshot literal (assignable Record) để lưu/khớp
@@ -241,7 +265,7 @@ export default function OutboundScanLog() {
   }, [filters.search])
   const searchMode = debouncedQ.trim().length >= 2
 
-  const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: PAGE_SIZE }), [filters, page])
+  const params: ScanLogParams = useMemo(() => ({ ...buildParams(filters), page, limit: pageSize }), [filters, page, pageSize])
   const { data: listData, isLoading: listLoading, isError: listError } = useOutboundScanLog(params, canFetch && !searchMode)
   const { data: searchData, isLoading: searchLoading, isError: searchError } = useScanLogSearch(debouncedQ, page, searchMode)
   const data      = searchMode ? searchData : listData
@@ -249,7 +273,10 @@ export default function OutboundScanLog() {
   const isError   = searchMode ? searchError : listError
   const rows       = data?.rows  ?? []
   const total      = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  // Chỉ luồng lọc mới có số tuân thủ (search tổng dùng RPC khác) — thiếu thì ô band hiện '—'
+  const rotViol     = (searchMode ? 0 : listData?.rotation_violations) ?? 0
+  const rotMeasured = (searchMode ? 0 : listData?.rotation_measured)   ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const isBlocked = !searchMode && canFetch && !isLoading && total > 200_000
 
   // Đổi filter / từ khóa search → về trang 1
@@ -271,8 +298,9 @@ export default function OutboundScanLog() {
       const all = await fetchScanLogExport(buildParams(filters))
       const fmtTs = (ts: string | null) => ts ? `${formatTimestampDate(ts, true)} ${formatTimestampTime(ts)}` : ''
       const sheet = all.map(row => {
-        const expiry = calcExpiryDate(row.production_date, row.shelf_life_days)
-        const pct    = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+        const expiry = rowExpiry(row)
+        const pct    = rowPctAtScan(row)
+        const rowRot = scanRotationOf(row)
         return {
           'Ngày xuất': row.delivery_date ? formatDate(row.delivery_date) : '',
           'Kho': row.warehouse_name ?? '', 'Loại hàng': row.material_category ?? '',
@@ -281,7 +309,9 @@ export default function OutboundScanLog() {
           'Tên hàng': row.material_name ?? '', 'ĐVT': qtyUnitLabel(row), 'Thùng': qtyEntryDecimal(row.cartons_scanned, row),
           'NSX': row.production_date ? formatDate(row.production_date) : '',
           'HSD': expiry ? formatDate(expiry) : '',
-          'Date cũ nhất': row.best_available_date ? formatDate(row.best_available_date) : '',
+          'Date nên lấy': rowRot.bestDate ? formatDate(rowRot.bestDate) : '',
+          'Thứ tự lấy': row.rotation_violation == null ? '' : (rowRot.bad ? 'SAI' : 'Đúng'),
+          'Lý do lấy khác thứ tự': row.rotation_override_reason ? rotationReasonLabel(row.rotation_override_reason) : '',
           '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', 'Máy': row.machine_code ?? '',
           'Chu kỳ': row.cycle ?? '', 'NMSX': row.nmsx ?? '',
           'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
@@ -298,7 +328,7 @@ export default function OutboundScanLog() {
       const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
-      saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY}.xlsx`)
+      saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY()}.xlsx`)
     } catch (e) {
       const err = e as AxiosError<{ error?: { message?: string } }>
       setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')
@@ -340,11 +370,12 @@ export default function OutboundScanLog() {
           />
           {/* Cụm action toolbar (chuẩn ActionCluster) — quét QR truy cứu dùng nút QR CÓ SẴN trong ô search (SearchInput) */}
           <ActionCluster className="shrink-0" mobileInline items={[
-            {
+            // Xuất file = mang dữ liệu ra ngoài → cần quyền RIÊNG scanlog.export (không đi ké 'view')
+            ...(can(perms, 'scanlog', 'export') ? [{
               key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel kết quả đang lọc',
               mobileHidden: true, disabled: !canFetch, busy: exporting,
               onClick: () => { void handleExport() },
-            } satisfies ActionItem,
+            } satisfies ActionItem] : []),
           ]} />
           </div>
         </div>
@@ -360,6 +391,10 @@ export default function OutboundScanLog() {
         { label: searchMode ? 'Kết quả tìm' : 'Bản ghi', value: (canFetch || searchMode) && !isLoading ? total.toLocaleString('vi-VN') : '—', accent: searchMode },
         { label: 'Loại hàng', value: searchMode ? 'Tất cả (truy cứu)' : (filters.material_category || '—') },
         { label: 'Bộ lọc', value: searchMode ? '—' : activeCount, accent: !searchMode && activeCount > 0 },
+        // Tuân thủ luân chuyển — mẫu số là số lượt ĐO ĐƯỢC (dòng cũ / thiếu NSX-HSD không tính),
+        // nên tỷ lệ không bị thổi lên bởi dữ liệu chưa từng được đo.
+        { label: 'Đúng thứ tự', value: rotMeasured > 0 ? `${Math.round((1 - rotViol / rotMeasured) * 100)}% (${(rotMeasured - rotViol).toLocaleString('vi-VN')}/${rotMeasured.toLocaleString('vi-VN')})` : '—',
+          accent: rotMeasured > 0 && rotViol > 0 },
         { label: 'Trang', value: `${page}/${totalPages}` },
       ]} />
 
@@ -412,8 +447,9 @@ export default function OutboundScanLog() {
             </TableHeader>
             <TableBody>
               {rows.map(row => {
-                const expiryDate = calcExpiryDate(row.production_date, row.shelf_life_days)
-                const pct        = calcPctAtScan(row.production_date, row.shelf_life_days, row.scanned_at)
+                const expiryDate = rowExpiry(row)
+                const pct        = rowPctAtScan(row)
+                const rotOf      = scanRotationOf(row)   // dòng mới đọc cột rotation_*, dòng cũ suy theo luật cũ
                 // Kết quả SEARCH TỔNG: click dòng → mở thẳng đơn xuất (RPC search trả gdo_id/item_id)
                 const openable = searchMode && !!row.gdo_id
                 return (
@@ -444,11 +480,19 @@ export default function OutboundScanLog() {
                       {expiryDate ? formatDate(expiryDate) : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-                      {row.best_available_date ? formatDate(row.best_available_date) : <span className="text-slate-300">—</span>}
+                      {rotOf.bestDate ? formatDate(rotOf.bestDate) : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                      {row.rotation_violation == null ? <span className="text-slate-300">—</span>
+                        : rotOf.bad
+                          ? <span className="text-red-600 font-semibold" title={row.rotation_override_reason ? `Đã duyệt: ${rotationReasonLabel(row.rotation_override_reason)}` : undefined}>
+                              ⚠ Sai{row.rotation_override_reason ? ` · ${rotationReasonLabel(row.rotation_override_reason)}` : ''}
+                            </span>
+                          : <span className="text-green-600">Đúng</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-right whitespace-nowrap">
                       {pct !== null
-                        ? <span className={datePctCls(pct)}>{pct}%</span>
+                        ? <span className={`${pctDateCls(pct, pctBands)} font-semibold`}>{pct}%</span>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>
@@ -483,33 +527,18 @@ export default function OutboundScanLog() {
             </TableBody>
           </Table>
         )}
+        {!isBlocked && <PagerNav page={page} totalPages={totalPages} onPage={setPage} />}
       </div>
 
-      {/* Footer đếm bản ghi + phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span className="flex-1">
-          {canFetch && !isLoading && !isBlocked
-            ? `${total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0}–${Math.min(page * PAGE_SIZE, total)} / ${total.toLocaleString('vi-VN')} bản ghi`
-            : 'Chọn Kho và Loại hàng để xem dữ liệu'}
-        </span>
-        {!isBlocked && totalPages > 1 && (
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-              disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span className="px-1">{page} / {totalPages}</span>
-            <button
-              className="h-6 w-6 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
-              disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Phân trang — chuẩn dùng chung mọi list page (PagerNav trong vùng cuộn, ListFooter dính đáy) */}
+      {canFetch && !isLoading && !isBlocked ? (
+        <ListFooter page={page} pageSize={pageSize} total={total} unit="bản ghi"
+          onPageSize={n => { setPageSize(n); setPage(1) }} />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+          Chọn Kho và Loại hàng để xem dữ liệu
+        </div>
+      )}
      </div>
     </div>
   )

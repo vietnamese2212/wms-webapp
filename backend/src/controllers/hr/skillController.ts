@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
+import { parseListParam } from '../../utils/httpQuery'
 
 type Actor = string | null
 const actorOf = (req: Request): Actor => (req as { user?: { name?: string } }).user?.name ?? null
@@ -36,13 +37,24 @@ async function scopeJobTitleIds(rootJtId: string): Promise<string[]> {
 // Non-superadmin chỉ được sửa Danh mục Vị trí/Skill của chức danh CẤP DƯỚI mình.
 // Trả Set chức danh được phép (cấp dưới, KHÔNG gồm chức danh của chính mình); null = superadmin (không giới hạn).
 async function writableJobTitleIds(req: Request): Promise<Set<string> | null> {
-  const u = (req as { user?: { name?: string; sub?: string } }).user
-  if (u?.name === 'Admin') return null
+  const u = (req as { user?: { is_superadmin?: boolean; sub?: string } }).user
+  if (u?.is_superadmin === true) return null
   const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
   const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
   if (!jtId) return new Set<string>()
   const scope = await scopeJobTitleIds(jtId)        // gồm cả chức danh của mình
   return new Set(scope.filter(id => id !== jtId))    // chỉ giữ cấp dưới
+}
+
+// Nhân viên caller quản được (CHÍNH MÌNH + cấp dưới theo sơ đồ) — giới hạn xem/gán skill của
+// NHÂN VIÊN đích (khác writableJobTitleIds chỉ cấp-dưới cho sửa DANH MỤC skill). null = superadmin.
+async function manageableJobTitleIds(req: Request): Promise<Set<string> | null> {
+  const u = (req as { user?: { is_superadmin?: boolean; sub?: string } }).user
+  if (u?.is_superadmin === true) return null
+  const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', u?.sub ?? '').maybeSingle()
+  const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
+  if (!jtId) return new Set<string>()
+  return new Set(await scopeJobTitleIds(jtId))   // self + cấp dưới
 }
 
 const NO_PERM_MSG = 'Chỉ được sửa Danh mục Vị trí/Skill của chức danh cấp dưới bạn'
@@ -54,7 +66,7 @@ export async function listSkills(req: Request, res: Response) {
     const { job_title_id, job_title_ids, department_id, include_inactive, with_descendants } = req.query as Record<string, string>
     let jtIds: string[] | null = null
     if (job_title_ids) {
-      const base = job_title_ids.split(',').map(s => s.trim()).filter(Boolean)
+      const base = parseListParam(job_title_ids) ?? []
       jtIds = with_descendants === 'true'
         ? [...new Set((await Promise.all(base.map(scopeJobTitleIds))).flat())]
         : base
@@ -155,6 +167,9 @@ export async function getEmployeeSkills(req: Request, res: Response) {
     if (!emp) return fail(res, 'Không tìm thấy nhân viên', 404)
     const jtId = (emp as { job_title_id: string | null }).job_title_id
     if (!jtId) return ok(res, { job_title_id: null, skills: [] })
+    // Giới hạn ngang: chỉ xem skill nhân viên trong phạm vi quản lý (chính mình + cấp dưới)
+    const mgScope = await manageableJobTitleIds(req)
+    if (mgScope !== null && !mgScope.has(jtId)) return fail(res, 'Ngoài phạm vi quản lý — không xem được skill nhân viên này', 403)
 
     // scope = chức danh NV + chức danh cấp dưới (cấp trên được dùng skill cấp dưới)
     const scopeJts = await scopeJobTitleIds(jtId)
@@ -183,6 +198,9 @@ export async function setEmployeeSkills(req: Request, res: Response) {
     const { data: emp } = await supabase.from('Employee').select('job_title_id').eq('id', id).maybeSingle()
     const jtId = (emp as { job_title_id: string | null } | null)?.job_title_id
     if (!jtId) return fail(res, 'Nhân viên chưa có chức danh', 400)
+    // Giới hạn ngang: chỉ gán skill cho nhân viên trong phạm vi quản lý (chính mình + cấp dưới)
+    const mgScope = await manageableJobTitleIds(req)
+    if (mgScope !== null && !mgScope.has(jtId)) return fail(res, 'Ngoài phạm vi quản lý — không gán được skill nhân viên này', 403)
 
     const scopeJts = await scopeJobTitleIds(jtId)
     const { data: scopeSkills } = await supabase.from('Skill').select('id').in('job_title_id', scopeJts)

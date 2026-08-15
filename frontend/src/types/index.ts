@@ -13,6 +13,8 @@ export interface User {
   warehouse_name?: string
   job_title_id?: string | null
   job_title_name?: string | null
+  is_driver?: boolean          // chức danh TÀI XẾ (cờ JobTitle.is_driver — KHÔNG so tên)
+  is_carrier_dept?: boolean    // phòng ban là ĐƠN VỊ VẬN TẢI (cờ Department.is_carrier)
   ncc_id?: string | null
   employee_code?: string | null
   // Permission system fields
@@ -21,6 +23,7 @@ export interface User {
   warehouse_ids?:      string[]
   allowed_modules?:    AppModule[]
   module_permissions?: ModulePermissions
+  is_superadmin?:      boolean   // từ cột Employee.is_superadmin qua /auth/login + /auth/me — isAdmin() đọc cờ này
 }
 
 // ─── Permission masterdata ────────────────────────────────────────────────────
@@ -30,6 +33,7 @@ export interface Department {
   name:            string
   code:            string
   allowed_modules: AppModule[]
+  is_carrier?:     boolean       // phòng ban là ĐƠN VỊ VẬN TẢI (nhà xe) — cờ thay việc so tên
   is_active:       boolean
   created_at?:     string
   updated_at?:     string
@@ -43,6 +47,7 @@ export interface JobTitle {
   department_id:      string
   parent_id:          string | null
   in_chart?:          boolean
+  is_driver?:         boolean      // chức danh TÀI XẾ — cờ thay việc so tên 'Lái xe'
   is_active:          boolean
   department?:        Pick<Department, 'id' | 'name' | 'code'>
   module_permissions?: ModulePermissions
@@ -312,16 +317,6 @@ export interface PalletEntry {
   updated_at:         string
 }
 
-export interface LocationSuggestion {
-  id:               string
-  location_code:    string
-  sub_code:         string
-  sub_name:         string | null
-  max_pallets:      number
-  used_slots:       number
-  available_slots:  number
-  has_same_material: boolean
-}
 
 // KPI
 export interface KPIMetric {
@@ -389,6 +384,10 @@ export interface InventoryEntry {
   stocktake_flag_note: string | null
   created_at:          string
   updated_at:          string
+  // ⚠️ FK → Employee.id (KHÔNG phải tên). Hiển thị phải dùng created_by_emp/updated_by_emp,
+  // in thẳng 2 cột này ra màn là ra uuid thô.
+  created_by:          string | null
+  updated_by:          string | null
   location:              { id: string; location_code: string; sub_code: string; sub_name: string | null; sub_type: string | null; warehouse?: { id: string; name: string; code: string } | null } | null
   material:              { id: string; material_code: string; short_name: string | null; shelf_life_days: number | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; category: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   manufacturer:          { id: string; code: string; name: string | null } | null
@@ -435,6 +434,8 @@ export interface TmsVehicleSlot {
   gate_exit_at:              string | null
   created_at:    string
   updated_at:    string
+  /** STT xe trong TOÀN phạm vi ngày+kho (server tính — không đổi khi lọc/lật trang) */
+  stt?:          number | null
 }
 
 export interface TmsOrder {
@@ -448,7 +449,8 @@ export interface TmsOrder {
   npp_name:        string | null
   vehicle_type:    string | null
   direction:       'OUTBOUND' | 'INBOUND' | null
-  warehouse_type:  string | null
+  warehouse_type:  string | null    // các loại hàng xe CHỞ (có thể ghép 'FG01+PM01') → quyền + lọc, giao ≥1
+  booking_category?: string | null  // CỬA đặt lịch (giá trị ĐƠN, khai ở Kế hoạch xuất) → CHỈ dùng khớp khung giờ
   planned_boxes:   number | null
   planned_pallets: number | null
   planned_tons:    number | null
@@ -458,6 +460,10 @@ export interface TmsOrder {
   export_status:   string | null
   status:          string
   source_type?:    string | null
+  // Kế hoạch VC tự sinh theo Kế hoạch xuất (03/08) — bị động: sửa ở nguồn, không sửa tay
+  origin?:         string | null    // 'KHVC' = tự sinh theo Số xe của Kế hoạch xuất
+  plan_dropped?:   boolean | null   // kế hoạch đã bỏ Số xe này → lệnh ngừng hiệu lực, khung giờ ĐÃ nhả
+  plan_dropped_at?: string | null
   destination_warehouse_id?: string | null
   eta?:            string | null
   created_by:      string | null
@@ -466,6 +472,8 @@ export interface TmsOrder {
   updated_at:      string
   completed_at?:   string | null
   vehicle_slots:   TmsVehicleSlot[]
+  /** STT dòng ảo của đơn CHƯA có xe nào (server tính cùng `TmsVehicleSlot.stt`) */
+  stt_no_slot?:    number | null
 }
 
 // TMS – Foundation
@@ -626,7 +634,13 @@ export interface OutboundScanEntry {
   scanned_at:           string
   pct_date:             number | null
   production_date:      string | null
-  best_available_date:  string | null  // production_date tốt nhất trong kho lúc quét (cũ nhất, không QA)
+  // LEGACY (dòng trước 14/08): MIN(NSX) trong kho lúc quét, chỉ đếm IN_STOCK/PARTIAL. KHÔNG ghi nữa.
+  best_available_date:  string | null
+  // Vết luân chuyển từ 14/08 — null ở dòng cũ hoặc khi thiếu NSX/HSD để kết luận
+  rotation_principle?:       string | null
+  rotation_violation?:       boolean | null
+  rotation_best_date?:       string | null
+  rotation_override_reason?: string | null
   carton_scans?:        { code: string; match: boolean; at?: string }[] | null  // mã THÙNG đính kèm (multiscan, truy vết)
 }
 
@@ -678,10 +692,13 @@ export interface GDO {
   delivery_date:    string
   warehouse_id:     string | null
   warehouse_type:   string | null
-  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null } | null
+  warehouse?:       { id: string; code: string; name: string; inventory_mode?: string | null; require_weigh_on_start?: boolean; require_gate_on_start?: boolean } | null
   shipto_party?:     string | null
   transfer_status?:  string | null
   dvvt:             string | null
+  // Nguồn chuyến (02/08): 'SAP' = sinh từ VL06O+Kế hoạch xuất → phần KẾ HOẠCH khóa trên đơn,
+  // sửa ở 2 tab nguồn; 'EXCEL'/'MANUAL'/'LEGACY' = sửa như cũ (kho không làm SAP)
+  origin?:          string | null
   status:           OutboundStatus
   created_at:       string
   // List aggregates
@@ -726,4 +743,35 @@ export interface GDO {
   carton_scan_enabled?: boolean
   // Kho chọn "Bắt buộc quét đủ thùng" → BE chặn Hoàn thành chuyến khi pallet thiếu tem (15/07)
   carton_scan_require_full?: boolean
+  // Gate cân xe (01/08): duyệt bỏ qua cân + phiếu cân gắn chuyến + ước tính KL hàng (đối chiếu net cân)
+  weigh_waived_at?:     string | null   // duyệt bỏ qua RULE 2 (cân)
+  weigh_waived_by?:     string | null
+  weigh_waive_reason?:  string | null
+  gate_waived_at?:      string | null   // duyệt bỏ qua RULE 1 (đăng ký cổng) — biển số thành tùy chọn
+  gate_waived_by?:      string | null
+  gate_waive_reason?:   string | null
+  weigh_tickets?: {
+    id: string; ticket_no: string | null; weigh_date: string | null; license_plate: string | null
+    tare_kg: number | null; gross_kg: number | null; net_kg: number | null
+    is_complete: boolean; in_time: string | null; out_time: string | null
+  }[]
+  weight_estimate?: { gdo_id: string; kg_planned: number | null; kg_actual: number | null; items_total: number; items_missing: number } | null
+  // CHUYẾN BẤT ĐỘNG (03/08) — hiện trên màn nhưng không thao tác được, chỉ xem + xem lịch sử:
+  awaiting_sap?:  boolean | null   // còn DO chưa có dữ liệu VL06O (tự tắt khi VL06O về)
+  awaiting_dos?:  string[] | null  // DO đang chờ (hiện trong cảnh báo)
+  plan_dropped?:  boolean | null   // Kế hoạch xuất không còn Số xe này (tự bật lại khi kế hoạch có lại)
+}
+
+// 1 dòng lịch sử của chuyến (nút "Thông tin") — gộp nhật ký kế hoạch + thay đổi từ SAP
+export interface OutboundEvent {
+  id: string
+  event_type: string
+  source: 'PLAN' | 'SAP' | 'USER' | 'SYSTEM' | string
+  actor: string | null
+  do_number: string | null
+  material_code: string | null
+  old_value: string | null
+  new_value: string | null
+  detail: string
+  created_at: string
 }

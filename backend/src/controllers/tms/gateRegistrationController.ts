@@ -1,7 +1,11 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { categoryTextOrScopeFilter, scopeCategoriesOf, splitCategories } from '../../utils/categoryScope'
+import { uuidList } from '../../utils/ids'
+import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 function apiErr(res: Response, code: string, message: string, status = 400) {
   return res.status(status).json({ success: false, error: { code, message } })
@@ -61,7 +65,7 @@ export async function listGateRegistrations(req: Request, res: Response) {
     }
     if (scopeWhs.length > 0) q = q.in('warehouse_id', scopeWhs)
     // Cắt theo Loại hàng được phép — đăng ký không khai loại hoặc 'Khác' vẫn hiện
-    if (scopeCats) q = q.or(`warehouse_type.is.null,warehouse_type.eq.Khác,warehouse_type.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+    if (scopeCats) q = q.or(`warehouse_type.eq."Khác",${categoryTextOrScopeFilter('warehouse_type', scopeCats)}`)
     if (warehouse_id)   q = q.eq('warehouse_id', warehouse_id)
     if (warehouse_type) q = q.eq('warehouse_type', warehouse_type)
     if (vehicle_type)   q = q.eq('vehicle_type', vehicle_type)
@@ -70,16 +74,116 @@ export async function listGateRegistrations(req: Request, res: Response) {
     if (status)         q = q.eq('status', status)
     return q
   }
-  const PAGE = 1000
-  const data: unknown[] = []
-  for (let page = 0; ; page++) {
-    const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-    if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
-    const arr = batch ?? []
-    data.push(...arr)
-    if (arr.length < PAGE) break
-  }
+  // Trần dòng: FE render toàn bộ lượt đăng ký ở client → vượt trần thì BÁO RÕ để user thu hẹp,
+  // KHÔNG cắt âm thầm (luật CLAUDE.md).
+  // Trần tính theo BYTE: đo 28/07 dòng đăng ký cổng ≈ 1.044 B ⇒ trần cũ 10.000 dòng ≈ 10MB,
+  // gấp hơn 2 lần trần 4,5MB của Vercel (hàng rào đếm sai đơn vị thì không kịp chặn).
+  // (Trang Đăng ký cổng đã dùng cây LAZY `gate_leaves_page`; endpoint phẳng này còn phục vụ
+  // picker ở Nhập kho / chi tiết Xuất kho — luôn kèm 1 ngày + 1 kho nên rất nhẹ.)
+  const CAP = rowCapForBytes(1044)
+  const { rows: data, truncated } = await fetchUpTo(buildQuery, CAP)
+  if (truncated) return apiErr(res, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(CAP), 400)
   return res.json({ success: true, data })
+}
+
+// ─── CÂY LƯỜI (user chốt 28/07) ─────────────────────────────────────────────────────────────────
+// Trang Đăng ký cổng là cây gập/mở 3 cấp, không phải list phẳng → thay vì tải hết rồi dựng cây ở
+// máy: (1) /tree lấy thống kê từng nhóm + tổng, (2) /leaves lấy dòng chi tiết theo đúng thứ tự cây,
+// cuộn tới đâu lấy tới đó. Bộ lọc parse 1 CHỖ để 2 endpoint không lệch nhau.
+type GateFilterCtx = {
+  from: string; to: string
+  warehouseId: string | null; warehouseType: string | null
+  vehicleTypes: string[] | null; companyId: string | null
+  direction: string | null; status: string | null
+  scopeWh: string[] | null; categories: string[] | null
+  badFilter: boolean       // id gửi lên không phải uuid → không khớp gì (KHÔNG để Postgres 22P02 → 500)
+}
+// Nhận cả CSV lẫn MẢNG (`?x[]=a&x[]=b`) — tên loại kho/loại xe có thể chứa dấu phẩy nên FE gửi
+// mảng; nhận CSV để tương thích link cũ. Sai kiểu ở đây là 500 (đã dính khi test).
+const gateCsv = (v?: string | string[]): string[] | null => {
+  const a = parseListParam(v) ?? []
+  return a.length ? a : null
+}
+function getGateCtx(req: Request): GateFilterCtx {
+  const q = req.query as Record<string, string | string[] | undefined>
+  const str = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '')
+  const from = str(q.date_from) || str(q.date) || ''
+  const to   = str(q.date_to)   || str(q.date) || from
+  const scope = scopeWhIds(req)
+  const rawCompany = str(q.company_id) || null
+  const companyId = rawCompany && uuidList([rawCompany]).length ? rawCompany : null
+  return {
+    from, to,
+    warehouseId: str(q.warehouse_id) || null,
+    warehouseType: str(q.warehouse_type) || null,
+    vehicleTypes: gateCsv(q.vehicle_types as string | string[] | undefined),
+    companyId,
+    badFilter: !!rawCompany && !companyId,
+    direction: str(q.direction) || null,
+    status: str(q.status) || null,
+    scopeWh: scope && scope.length ? scope : (scope ? [] : null),
+    categories: scopeCategoriesOf(req),
+  }
+}
+const gateRpcParams = (c: GateFilterCtx) => ({
+  p_date_from: c.from, p_date_to: c.to,
+  p_warehouse_id: c.warehouseId, p_warehouse_type: c.warehouseType,
+  p_vehicle_types: c.vehicleTypes, p_company_id: c.companyId,
+  p_direction: c.direction, p_status: c.status,
+  p_scope_wh: c.scopeWh, p_categories: c.categories,
+})
+
+// GET /api/tms/gate-registrations/tree — thống kê từng nhóm (Kho × Loại kho × Loại xe) + tổng
+export async function getGateTree(req: Request, res: Response) {
+  try {
+    const ctx = getGateCtx(req)
+    if (!ctx.from) return apiErr(res, 'BAD_REQUEST', 'date hoặc date_from là bắt buộc', 400)
+    if (ctx.badFilter || (ctx.scopeWh && ctx.scopeWh.length === 0)) {
+      return res.json({ success: true, data: { nodes: [], totals: { total: 0, done: 0, inside: 0, waiting: 0 } } })
+    }
+    const { data, error } = await supabase.rpc('gate_tree', gateRpcParams(ctx))
+    if (error) throw new Error(error.message)
+    return res.json({ success: true, data })
+  } catch (e) {
+    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    return apiErr(res, 'INTERNAL', String(e), 500)
+  }
+}
+
+// GET /api/tms/gate-registrations/leaves?offset&limit&order_wh&order_wt&order_vt&collapsed_*
+// Thứ tự nhóm do FE gửi xuống (kho theo tên, loại kho/loại xe theo Cài đặt) — SQL không tự đoán.
+export async function getGateLeaves(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | string[] | undefined>
+    const one = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '')
+    const arr = (v: string | string[] | undefined) => gateCsv(v as string | string[] | undefined)
+    const ctx = getGateCtx(req)
+    if (!ctx.from) return apiErr(res, 'BAD_REQUEST', 'date hoặc date_from là bắt buộc', 400)
+    if (ctx.badFilter || (ctx.scopeWh && ctx.scopeWh.length === 0)) return res.json({ success: true, data: { rows: [], total: 0 } })
+    const offset = Math.max(0, Number(one(q.offset)) || 0)
+    const limit  = Math.min(500, Math.max(1, Number(one(q.limit)) || 200))
+    const { data, error } = await supabase.rpc('gate_leaves_page', {
+      p_offset: offset, p_limit: limit, ...gateRpcParams(ctx),
+      p_wh_order: arr(q.order_wh), p_wt_order: arr(q.order_wt), p_vt_order: arr(q.order_vt),
+      p_collapsed_wh: arr(q.collapsed_wh), p_collapsed_wt: arr(q.collapsed_wt),
+      p_collapsed_vt: arr(q.collapsed_vt),
+      // Nhãn nhóm rỗng do FE quy định — dùng chung 1 khoá cho thứ tự / gập / hiển thị
+      p_wt_null: one(q.wt_null) || '∅', p_vt_null: one(q.vt_null) || '∅',
+    })
+    if (error) throw new Error(error.message)
+    const p = (data ?? {}) as { ids?: string[]; total?: number }
+    const ids = p.ids ?? []
+    const rows = ids.length
+      ? await fetchAllByIdChunks(ids, chunk => supabase.from('gate_registrations').select('*').in('id', chunk).order('id'))
+      : []
+    // PostgREST `.in()` không giữ thứ tự → sắp lại đúng thứ tự cây mà RPC đã quyết
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
+    return res.json({ success: true, data: { rows: ids.map(id => byId.get(id)).filter(Boolean), total: p.total ?? 0 } })
+  } catch (e) {
+    if (isQueryTimeout(e)) return apiErr(res, 'RANGE_TOO_WIDE', QUERY_TIMEOUT_MSG, 400)
+    return apiErr(res, 'INTERNAL', String(e), 500)
+  }
 }
 
 // NCC KHÔNG booking: fallback tìm đơn KH nhập PENDING (chưa book khung giờ) khớp tiêu chí gate
@@ -172,7 +276,11 @@ export async function suggestBooking(req: Request, res: Response) {
     if (vs.order.date !== date) return false
     if (vs.order.warehouse_id !== warehouse_id) return false
     if (direction && vs.order.direction !== direction) return false
-    if (warehouse_type && vs.order.warehouse_type !== warehouse_type) return false
+    // Loại kho của LỆNH có thể là chuỗi GHÉP ('FG01+PM01' — xe chở lẫn): so khớp nguyên chuỗi sẽ
+    // KHÔNG bao giờ khớp giá trị đơn của đăng ký cổng ⇒ xe chở lẫn không gắn được booking, và ở kho
+    // bật rule "phải có đăng ký cổng" thì chuyến không Bắt đầu được. Luật giao ≥1 (utils/categoryScope).
+    if (warehouse_type && vs.order.warehouse_type
+        && !splitCategories(vs.order.warehouse_type).includes(warehouse_type)) return false
     if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
     if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
     return true
@@ -314,7 +422,7 @@ export async function createGateRegistration(req: Request, res: Response) {
     driver_name:        driver_name ?? null,
     phone:              phone ?? null,
     vehicle_id:         vehicle_id ?? null,
-    license_plate:      license_plate ?? null,
+    license_plate:      normalizePlate(license_plate as string | null | undefined),
     warehouse_id,
     warehouse_type:     warehouse_type ?? null,
     status:             'REGISTERED',
@@ -430,8 +538,29 @@ export async function updateGateRegistration(req: Request, res: Response) {
       return apiErr(res, 'FORBIDDEN', 'Không thể chuyển đăng ký sang kho ngoài phạm vi được giao', 403)
   }
   const uCats = scopeCategoriesOf(req)
+  // Loại HIỆN TẠI của bản ghi phải trong phạm vi (chống IDOR-loại: sửa đăng ký loại ngoài scope cùng kho)
+  if (uCats && before?.warehouse_type && before.warehouse_type !== 'Khác' && !uCats.includes(before.warehouse_type))
+    return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể sửa đăng ký cổng loại kho này', 403)
   if (uCats && warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !uCats.includes(warehouse_type))
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể đổi sang loại kho này', 403)
+
+  // Đang được CHUYẾN XUẤT trỏ tới → khóa các trường ĐỊNH DANH (biển số/chiều/kho/ngày) — đổi là
+  // thông tin cổng lệch với xe của chuyến, mất giá trị đối soát rule 1 (user chốt 01/08: muốn sửa
+  // phải gỡ khỏi chuyến trước). Các trường phụ (SĐT, ghi chú, seal…) vẫn sửa bình thường.
+  {
+    const wantsIdentityChange =
+      (license_plate !== undefined && normalizePlate(license_plate) !== normalizePlate(before?.license_plate)) ||
+      (direction !== undefined && direction !== before?.direction) ||
+      (warehouse_id !== undefined && warehouse_id !== before?.warehouse_id) ||
+      (date !== undefined && date !== before?.date)
+    if (wantsIdentityChange) {
+      const { data: linked } = await supabase.from('GroupDeliveryOrder')
+        .select('group_code').eq('gate_registration_id', id).neq('status', 'CANCELLED').limit(3)
+      if (linked && linked.length > 0)
+        return apiErr(res, 'GATE_IN_USE',
+          `Đăng ký cổng đang gắn với chuyến xuất ${linked.map(g => g.group_code).join(', ')} — không đổi được Biển số/Chiều/Kho/Ngày. Gỡ khỏi chuyến (Sửa thông tin xe / Gỡ bắt đầu) trước rồi sửa.`, 422)
+    }
+  }
 
   const patch: Record<string, unknown> = {
     updated_by: userName,
@@ -445,7 +574,7 @@ export async function updateGateRegistration(req: Request, res: Response) {
   if (company_id !== undefined)       patch.company_id = company_id
   if (company_name_raw !== undefined) patch.company_name_raw = company_name_raw
   if (vehicle_id !== undefined)       patch.vehicle_id = vehicle_id
-  if (license_plate !== undefined)    patch.license_plate = license_plate
+  if (license_plate !== undefined)    patch.license_plate = normalizePlate(license_plate)
   if (direction !== undefined)        patch.direction = direction
   if (warehouse_id !== undefined)     patch.warehouse_id = warehouse_id
   if (warehouse_type !== undefined)   patch.warehouse_type = warehouse_type
@@ -955,6 +1084,16 @@ export async function relinkAfterDelete(
 export async function deleteGateRegistration(req: Request, res: Response) {
   const { id } = req.params
   if (!(await guardGateScope(req, res, id))) return
+
+  // Đăng ký cổng đang được CHUYẾN XUẤT trỏ tới = bằng chứng "đã qua cổng" (rule 1) — xóa là mất
+  // vết đối soát ÂM THẦM (FK SET NULL). User chốt 01/08: chặn, muốn xóa phải gỡ khỏi chuyến trước.
+  {
+    const { data: linked } = await supabase.from('GroupDeliveryOrder')
+      .select('group_code').eq('gate_registration_id', id).neq('status', 'CANCELLED').limit(3)
+    if (linked && linked.length > 0)
+      return apiErr(res, 'GATE_IN_USE',
+        `Đăng ký cổng đang gắn với chuyến xuất ${linked.map(g => g.group_code).join(', ')} — gỡ khỏi chuyến (Sửa thông tin xe / Gỡ bắt đầu) trước rồi mới xóa được`, 422)
+  }
 
   // Lấy thông tin trước khi xóa để re-link sau
   const { data: reg } = await supabase

@@ -1,4 +1,4 @@
--- Chiến dịch BASE UNIT — Đợt 0: khai báo ĐVT trên Mã hàng (kế hoạch: BASE_UNIT_EXECUTION_PLAN.md)
+-- Chiến dịch BASE UNIT — Đợt 0: khai báo ĐVT trên Mã hàng (kế hoạch: docs/plans/BASE_UNIT_EXECUTION_PLAN.md)
 -- base_unit = đơn vị gốc (LƯU TRỮ/TÍNH TOÁN sau đợt 2); entry_unit = đơn vị nhập liệu (CHỈ hiển thị).
 -- Hệ số 1 Entry = N Base dùng lại cột units_per_carton (không tạo cột trùng nghĩa).
 -- Backfill theo rule user chốt 19/07: TP+SCA → HOP (mã "chai" → BT), entry CAR khi có hệ số;

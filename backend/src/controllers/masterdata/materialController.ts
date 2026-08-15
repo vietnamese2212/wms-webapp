@@ -3,9 +3,13 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel } from '../../utils/pagination'
-import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
-import { safeSearch } from '../../utils/search'
+import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } from '../../utils/warehouseTypeMeta'
+import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
+import { parseListParam } from '../../utils/httpQuery'
+import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
@@ -13,34 +17,139 @@ function buildShortName(description: string, code: string, custom?: string | nul
   return `${base} [${suffix}]`
 }
 
+// Cột TỐI THIỂU cho dropdown/bảng tra (view=lite) — bỏ cột chỉ trang Danh mục Mã hàng dùng
+// (dims/khối lượng/ảnh/ghi chú/old_code/audit + join NSX). Payload/dòng giảm ~2,5× vì tên cột
+// lặp lại theo SỐ DÒNG: cột rỗng 100% vẫn tốn ~60KB/2.740 mã. Đo 27/07: 2.566KB → xem verify.
+const MATERIAL_LITE_COLS =
+  'id, material_code, material_description, short_name, product_type, category, is_active,' +
+  'cartons_per_pallet, pallet_per_ea, units_per_carton, base_unit, entry_unit, shelf_life_days,' +
+  'no_qr_tracking, is_non_stock, is_pallet_carrier, batch_prefix,' +
+  'warehouse_pallet_overrides, supplier_shelf_life_overrides'
+
+// ─── Phân trang SERVER cho TRANG DANH MỤC Mã hàng ───────────────────────────────────────────────
+// Trang gốc cần ĐỦ CỘT nhưng chỉ 1 trang; 2 luật "Trùng tên" / "Thiếu thông tin" phải tính trên
+// TOÀN BẢNG nên nằm trong RPC (xem 20260728_materials_paged_rpc.sql).
+type MatListCtx = {
+  tokens: string[] | null
+  categories: string[] | null
+  scopeCats: string[] | null
+  status: string[] | null
+  qr: string[] | null
+  dq: string[] | null
+}
+const matCsv = (v?: string | string[]): string[] | null => {
+  const a = parseListParam(v) ?? []
+  return a.length ? a : null
+}
+function getMatListCtx(req: Request): MatListCtx {
+  const q = req.query as Record<string, string | string[] | undefined>
+  const rawSearch = typeof q.search === 'string' ? q.search : ''
+  // Chuẩn hoá bằng ĐÚNG công thức của cột `search_norm` rồi tách token (khớp AND như omniMatch FE)
+  const norm = normalizeSearchTerm(rawSearch).trim()
+  return {
+    tokens: norm ? norm.split(/\s+/).filter(Boolean) : null,
+    categories: matCsv(q.categories),
+    scopeCats: scopeCategoriesOf(req),
+    status: matCsv(q.status),
+    qr: matCsv(q.qr),
+    dq: matCsv(q.dq),
+  }
+}
+async function matRpcParams(c: MatListCtx) {
+  return {
+    p_tokens: c.tokens, p_categories: c.categories, p_scope_cats: c.scopeCats,
+    p_status: c.status, p_qr: c.qr, p_dq: c.dq,
+    p_cat_rules: await getMaterialCategoryRules(),
+    p_legacy_no_sl: LEGACY_NO_SHELF_LIFE, p_legacy_pe: LEGACY_PALLET_PER_EA,
+  }
+}
+
+// GET /api/masterdata/materials?page=1&page_size=200&… — 1 TRANG danh mục (đủ cột)
+async function listMaterialsPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const page = Math.max(1, Number(q.page) || 1)
+  const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
+  const ctx = getMatListCtx(req)
+  const { data, error } = await supabase.rpc('materials_page', {
+    p_offset: (page - 1) * pageSize, p_limit: pageSize, ...(await matRpcParams(ctx)),
+  })
+  if (error) throw error
+  const p = (data ?? {}) as { ids?: string[]; dup_ids?: string[]; total?: number }
+  const ids = p.ids ?? []
+  const dupSet = new Set(p.dup_ids ?? [])
+  const rows = ids.length
+    ? await fetchAllByIdChunks(ids, chunk => supabase.from('Material')
+        .select('*, manufacturer:Manufacturer(id, code, name)').in('id', chunk).order('material_code'))
+    : []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
+  // `is_dup_name` phải do SERVER gắn: "trùng tên" chỉ đúng khi soi toàn bảng, không suy được từ 1 trang
+  const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+  for (const r of ordered) r.is_dup_name = dupSet.has(r.id)
+  return ok(res, { rows: ordered, total: p.total ?? 0 })
+}
+
+// GET /api/masterdata/materials/summary — 6 ô SummaryBand trên TOÀN BỘ bộ lọc
+export async function listMaterialsSummary(req: Request, res: Response) {
+  try {
+    const ctx = getMatListCtx(req)
+    const { data, error } = await supabase.rpc('materials_summary', await matRpcParams(ctx))
+    if (error) throw error
+    return ok(res, data ?? {})
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids } = req.query
+    // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
     const scopeCats = scopeCategoriesOf(req)
+    // limit=N (typeahead): chỉ lấy N dòng đầu, KHÔNG kéo cả danh mục về trình duyệt
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
+    // codes=A,B,C — chặn 300/lượt đúng trần URL của PostgREST (xem memory id-list-url-limits)
+    // Xét theo SỰ CÓ MẶT của tham số, không theo truthy: `?codes=` (chuỗi rỗng) là "tra 0 mã" →
+    // phải trả []. Dùng `codes ?` thì chuỗi rỗng thành falsy ⇒ bỏ lọc ⇒ TRẢ CẢ DANH MỤC 2.740 mã
+    // (~2,5MB). Ngữ nghĩa này nằm trong parseListParam (utils/httpQuery) — đừng tự split.
+    const codeList = parseListParam(codes, 300)
+    if (codeList && codeList.length === 0) return ok(res, [])
+    // ids=uuid1,uuid2 — tra nhãn cho các mã ĐANG ĐƯỢC CHỌN ở filter (chip lọc), cùng trần 300 như codes.
+    const idList = parseListParam(ids, 300)
+    if (idList && idList.length === 0) return ok(res, [])
+
+    // Có ?page= → TRANG danh mục (trang Mã hàng). Không có → giữ mode cũ trả MẢNG cho mọi
+    // consumer khác (dropdown lite, codes=…, typeahead limit=N).
+    if (req.query.page) return await listMaterialsPaged(req, res)
 
     // Rebuild mỗi trang — phân trang vượt cap ~1000 dòng/response của PostgREST.
     // Đã >1000 mã hàng active → không phân trang thì 4+ mã biến mất khỏi mọi list + dropdown chọn mã (Inbound/Outbound/TMS...).
     const buildQuery = () => {
       let query = supabase
         .from('Material')
-        .select('*, manufacturer:Manufacturer(id, code, name)')
+        .select(view === 'lite' ? MATERIAL_LITE_COLS : '*, manufacturer:Manufacturer(id, code, name)')
         .order('material_code')
       if (active === 'true') query = query.eq('is_active', true)
       if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
       if (storage_category) query = query.eq('storage_category', String(storage_category))
       if (category) query = query.eq('category', String(category))
       if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
-      if (search) {
-        const s = safeSearch(search)
-        query = query.or(
-          `material_code.ilike.%${s}%,material_description.ilike.%${s}%,short_name.ilike.%${s}%,old_code.ilike.%${s}%`
-        )
-      }
+      // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
+      // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
+      if (codeList) query = query.in('material_code', codeList)
+      if (idList) query = query.in('id', idList)
+      // Tìm BỎ DẤU trên cột chuẩn-hoá `search_norm` (mã + mô tả + tên ngắn + mã cũ):
+      // gõ "nha dam" ra "Nha Đam". Từ khóa chuẩn hoá bằng ĐÚNG công thức của cột (normalizeSearchTerm).
+      if (search) query = query.ilike('search_norm', `%${safeSearch(normalizeSearchTerm(search))}%`)
       return query
     }
-    // Phân trang SONG SONG (helper) — >1000 mã cần 2+ round-trip, chạy đồng thời giảm độ trễ
-    // (trước ~3.5s do 2 lượt nối tiếp). Giữ yêu cầu trả HẾT (dropdown chọn mã cần đầy đủ).
+    // limit=N → 1 round-trip, dừng ở N dòng (typeahead). Không limit: phân trang SONG SONG
+    // (helper) — >1000 mã cần 2+ round-trip, chạy đồng thời giảm độ trễ (trước ~3.5s nối tiếp).
+    if (cap > 0) {
+      const { data, error } = await buildQuery().limit(cap)
+      if (error) throw error
+      return ok(res, data ?? [])
+    }
     const out = await fetchAllRowsParallel(buildQuery)
     ok(res, out)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -72,6 +181,8 @@ export async function createMaterial(req: Request, res: Response) {
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
+    // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
+    if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     // Entry unit đòi hệ số 1 Entry = N Base (dùng lại units_per_carton)
     if (entry_unit && !(Number(units_per_carton) > 0))
       return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô Hộp/thùng) phải > 0')
@@ -142,6 +253,13 @@ export async function updateMaterial(req: Request, res: Response) {
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
       base_unit, entry_unit, is_non_stock, is_pallet_carrier,
     } = req.body
+
+    // Scope Loại hàng: chỉ sửa mã thuộc loại được phép + không đổi sang loại ngoài phạm vi (mã chưa gán loại → cho qua)
+    {
+      const { data: curCat } = await supabase.from('Material').select('category').eq('id', req.params.id).maybeSingle()
+      if (!categoryAllowed(req, (curCat as { category: string | null } | null)?.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+      if (category !== undefined && !categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    }
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
@@ -225,19 +343,11 @@ export async function deleteMaterial(req: Request, res: Response) {
 
 export async function listCategories(_req: Request, res: Response) {
   try {
-    // Phân trang để không sót category chỉ xuất hiện ở mã hàng thứ >1000 (cap PostgREST)
-    const PAGE = 1000
-    const rows: { category: string | null }[] = []
-    for (let page = 0; ; page++) {
-      const { data, error } = await supabase
-        .from('Material').select('category').eq('is_active', true).not('category', 'is', null)
-        .range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) throw error
-      const arr = (data ?? []) as { category: string | null }[]
-      rows.push(...arr)
-      if (arr.length < PAGE) break
-    }
-    const cats = [...new Set(rows.map(m => m.category).filter(Boolean))].sort()
+    // DISTINCT dưới DB (RPC `material_categories`) — trước đây quét MỌI dòng Material về Node
+    // rồi mới Set(): 10 round-trip ở 10.000 mã, chỉ để lấy ~5 giá trị.
+    const { data, error } = await supabase.rpc('material_categories')
+    if (error) throw error
+    const cats = ((data ?? []) as { category: string }[]).map(r => r.category)
     ok(res, cats)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -245,54 +355,83 @@ export async function listCategories(_req: Request, res: Response) {
 // ─── Upload Excel: UPSERT Material theo material_code ────────────────────────
 // Mirror scripts/import_materials.js: mã MỚI → thêm (Tên hàng bắt buộc); mã ĐÃ CÓ → cập nhật
 // chỉ ô CÓ GIÁ TRỊ trong file (ô trống = giữ nguyên). short_name tự sinh khi đổi Tên hàng.
-// batch_prefix (ĐV2 tem `;`) THÊM Ở CUỐI để không xê dịch cột cũ. File ĐV1 KHÔNG có cột này (12 cột) →
-// r[12] undefined → giữ nguyên (không đụng). File ĐV2 thêm cột thứ 13 = mã tắt mã lô.
-// Cột index 3 ('unit' = ĐVT cũ) GIỮ LÀM FILLER VỊ TRÍ để file Excel cũ không lệch cột — KHÔNG còn persist
-// vào DB (cột Material.unit đã bỏ). Đơn vị mã hàng nay = base_unit + entry_unit (cuối mảng).
-const M_KEYS = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet',
-  'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes', 'batch_prefix',
-  'carton_length_mm', 'carton_width_mm', 'carton_height_mm',
-  'max_stack_layers', 'stack_on_top',
-  'base_unit', 'entry_unit'] as const   // ĐVT base/entry (chiến dịch Base Unit) THÊM Ở CUỐI — file cũ ngắn hơn → giữ nguyên
+// Map theo TÊN CỘT (đồng bộ VL06O/KHVC) — chịu ĐẢO cột + đổi tên nhãn; alias = {key + nhãn VN}.
+// 'unit' (ĐVT cũ, cột Material.unit đã bỏ) giữ để đọc file cũ nhưng KHÔNG persist. batch_prefix (ĐV2 tem `;`),
+// base_unit/entry_unit (Base Unit) — file ĐV1 không có các cột này thì bỏ trống (không bắt buộc).
+const M_FIELDS: FieldDef[] = [
+  { key: 'material_code',        label: 'Mã hàng',            aliases: ['ma hang'], required: true },
+  { key: 'material_description', label: 'Tên hàng',           aliases: ['ten hang'] },
+  { key: 'category',             label: 'Loại hàng',          aliases: ['loai hang'] },
+  { key: 'unit',                 label: 'ĐVT (bỏ)',           aliases: [] },
+  { key: 'cartons_per_pallet',   label: 'Thùng/Pallet',       aliases: ['thung pallet'] },
+  { key: 'units_per_carton',     label: 'Đv/Thùng',           aliases: ['dv thung'] },
+  { key: 'pallet_per_ea',        label: 'Pallet/EA',          aliases: ['pallet ea'] },
+  { key: 'weight_kg',            label: 'KL (kg)',            aliases: ['kl kg', 'kl', 'weight'] },
+  { key: 'shelf_life_days',      label: 'HSD (ngày)',         aliases: ['hsd ngay', 'hsd'] },
+  { key: 'product_type',         label: 'Loại SP',            aliases: ['loai sp'] },
+  { key: 'custom_short_name',    label: 'Tên rút gọn',        aliases: ['ten rut gon'] },
+  { key: 'notes',                label: 'Ghi chú',            aliases: ['ghi chu'] },
+  { key: 'batch_prefix',         label: 'Mã tắt (mã lô)',     aliases: ['ma tat ma lo', 'ma tat'] },
+  { key: 'carton_length_mm',     label: 'Thùng dài (mm)',     aliases: ['thung dai mm', 'thung dai'] },
+  { key: 'carton_width_mm',      label: 'Thùng rộng (mm)',    aliases: ['thung rong mm', 'thung rong'] },
+  { key: 'carton_height_mm',     label: 'Thùng cao (mm)',     aliases: ['thung cao mm', 'thung cao'] },
+  { key: 'max_stack_layers',     label: 'Số lớp tối đa',      aliases: ['so lop toi da'] },
+  { key: 'stack_on_top',         label: 'Xếp trên hàng khác', aliases: ['xep tren hang khac 1 0', 'xep tren hang khac'] },
+  { key: 'base_unit',            label: 'Base Unit',          aliases: ['base unit'] },
+  { key: 'entry_unit',           label: 'Entry Unit',         aliases: ['entry unit'] },
+  { key: 'no_qr_tracking',       label: 'Không quản QR',      aliases: ['khong quan qr'] },
+  { key: 'is_non_stock',         label: 'Mã phi hàng hóa',    aliases: ['ma phi hang hoa'] },
+  { key: 'is_pallet_carrier',    label: 'Pallet mang hàng',   aliases: ['pallet mang hang'] },
+]
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
 const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return (!Number.isFinite(n) || n < 0) ? null : n }
 const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return (!Number.isFinite(n) || n < 0) ? null : n }
+// Trường "N đơn vị TRONG 1 đơn vị khác" (Đv/Thùng, Thùng/Pallet, Pallet/EA): 0 là VÔ NGHĨA
+// (hệ số quy đổi / sức chứa không thể bằng 0) → coi như ô TRỐNG. File thật 27/07 điền 0 cho
+// 2.292 mã, ghi thẳng vào DB thành số rác. KHÁC với HSD=0 ("không hạn") và KL=0 — 0 ở đó CÓ nghĩa.
+// Giữ đúng kiểu cột: Đv/Thùng + Thùng/Pallet là integer, Pallet/EA là numeric.
+const mQtyInt = (v: unknown): number | null => { const n = mInt(v); return n != null && n > 0 ? n : null }
+const mQtyNum = (v: unknown): number | null => { const n = mNum(v); return n != null && n > 0 ? n : null }
+// Cờ 1/x/có/yes → true; 0/không/no → false; ô TRỐNG → null = giữ nguyên giá trị cũ
+const mBool = (v: unknown): boolean | null => {
+  const s = mStr(v)?.toLowerCase() ?? null
+  return s == null ? null : ['1', 'x', 'true', 'có', 'co', 'yes'].includes(s)
+}
 
 export async function uploadExcel(req: Request, res: Response) {
   try {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
     const ws = wb.Sheets[wb.SheetNames[0]]
-    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
-    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
-
-    // Map theo VỊ TRÍ cột (đúng thứ tự M_KEYS) — chịu được khi mất dòng key/nhãn.
-    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    // Dòng key nhận diện qua 2 ô đầu cố định (KHÔNG so đủ mọi cột) → file ĐV1 12 cột vẫn khớp
-    // khi M_KEYS thêm batch_prefix ở cuối; tránh hiểu nhầm dòng key thành dữ liệu.
-    const isKeyRow = (r: unknown[]) => norm(r)[0] === 'material_code' && norm(r)[1] === 'material_description'
-    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1   // có dòng key → data từ dòng 3; không → bỏ dòng nhãn
-    const rows = raw.slice(start)
-      .map(r => Object.fromEntries(M_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
-      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
-
+    const { rows, missingRequired } = parseSheetByHeader(ws, M_FIELDS)   // map theo TÊN cột (chịu đảo cột)
+    if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Mã hàng`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
-    // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000
+    // Nạp TẤT CẢ mã đã có (đủ cột để MERGE: ô trống trong file giữ giá trị cũ) — phân trang né cap-1000.
+    // ⚠️ PHẢI đủ MỌI cột mà file có thể đắp: PostgREST upsert lấy HỢP các key của CẢ LÔ, nên cột chỉ
+    // xuất hiện ở VÀI dòng sẽ bị set NULL ở những dòng còn lại. Thiếu cột ở đây = mất dữ liệu âm thầm
+    // (26/07: file sửa 3 mã entry_unit + 25 mã category cùng lô → 25 mã kia MẤT entry_unit='CAR').
     type ExistingMat = {
       id: string; material_code: string; material_description: string | null; short_name: string | null
       custom_short_name: string | null; category: string | null; product_type: string | null
       weight_kg: number | null; cartons_per_pallet: number | null; units_per_carton: number | null
       pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
-      base_unit: string | null; entry_unit: string | null
+      base_unit: string | null; entry_unit: string | null; batch_prefix: string | null
+      carton_length_mm: number | null; carton_width_mm: number | null; carton_height_mm: number | null
+      max_stack_layers: number | null; stack_on_top: boolean
+      no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
+
+    // Danh mục Loại kho hợp lệ (để chặn loại lạ trong file → loại mồ côi)
+    const { data: whTypes } = await supabase.from('LookupValue').select('value').eq('type', 'warehouse_type')
+    const whTypeSet = new Set(((whTypes ?? []) as { value: string }[]).map(r => String(r.value)))
 
     const now = new Date().toISOString()
     let skipped = 0
@@ -311,9 +450,9 @@ export async function uploadExcel(req: Request, res: Response) {
       const category     = mStr(row.category)
       const product_type = mStr(row.product_type)
       const weight_kg    = mNum(row.weight_kg)
-      const cpp          = mInt(row.cartons_per_pallet)
-      const upc          = mInt(row.units_per_carton)
-      const ppe          = mNum(row.pallet_per_ea)
+      const cpp          = mQtyInt(row.cartons_per_pallet)   // 0 = ô trống (xem mQtyInt)
+      const upc          = mQtyInt(row.units_per_carton)
+      const ppe          = mQtyNum(row.pallet_per_ea)
       const sld          = mInt(row.shelf_life_days)
       const notes        = mStr(row.notes)
       const batchPrefix  = (() => { const s = mStr(row.batch_prefix); return s ? s.toUpperCase() : null })()  // ĐV2: mã tắt mã lô
@@ -322,8 +461,10 @@ export async function uploadExcel(req: Request, res: Response) {
       const cHei         = mNum(row.carton_height_mm)
       const maxLayers    = mInt(row.max_stack_layers)
       // Xếp trên hàng khác: 1/x/có/yes → true; 0/không/no → false; ô trống → giữ nguyên
-      const onTopRaw     = mStr(row.stack_on_top)?.toLowerCase() ?? null
-      const onTop        = onTopRaw == null ? null : ['1', 'x', 'true', 'có', 'co', 'yes'].includes(onTopRaw)
+      const onTop        = mBool(row.stack_on_top)
+      const noQr         = mBool(row.no_qr_tracking)      // mã không quản QR (kho QTY, hàng không tem)
+      const nonStock     = mBool(row.is_non_stock)        // mã chiết khấu/dịch vụ — loại khỏi Xuất/Nhập/Tồn
+      const palletCarry  = mBool(row.is_pallet_carrier)   // pallet mang hàng (Loscam) — không đếm trùng
       const baseUnit     = (() => { const s = mStr(row.base_unit);  return s ? s.toUpperCase() : null })()
       const entryUnit    = (() => { const s = mStr(row.entry_unit); return s ? s.toUpperCase() : null })()
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
@@ -347,6 +488,9 @@ export async function uploadExcel(req: Request, res: Response) {
         if (onTop        != null) base.stack_on_top = onTop
         if (baseUnit     != null) base.base_unit = baseUnit
         if (entryUnit    != null) base.entry_unit = entryUnit
+        if (noQr         != null) base.no_qr_tracking = noQr
+        if (nonStock     != null) base.is_non_stock = nonStock
+        if (palletCarry  != null) base.is_pallet_carrier = palletCarry
         base.updated_at = now
         return base
       }
@@ -355,6 +499,12 @@ export async function uploadExcel(req: Request, res: Response) {
       // Scope Loại hàng: bỏ qua (báo lỗi) mã thuộc loại ngoài phạm vi user (mã mới chưa gán loại vẫn cho)
       const effCat = category ?? dbRow?.category ?? null
       if (!categoryAllowed(req, effCat)) { errors.push(`${material_code} — Loại hàng "${effCat ?? ''}" ngoài phạm vi của bạn`); continue }
+      // Loại hàng phải CÓ trong danh mục Loại kho — file ghi loại lạ (vd 'PM01' khi danh mục là
+      // 'POSM') từng ghi thẳng vào DB, sinh loại mồ côi: mã không lọt filter/scope nào, khu vực và
+      // phân quyền theo loại không khớp. Chặn tại đây để user sửa file hoặc đổi tên loại trước.
+      if (category && !whTypeSet.has(category)) {
+        errors.push(`${material_code} — Loại hàng "${category}" không có trong danh mục Loại kho (hiện có: ${[...whTypeSet].join(', ')})`); continue
+      }
       // BASE UNIT: validate cặp đơn vị theo GIÁ TRỊ HIỆU LỰC sau merge (file đắp lên DB) — cùng luật
       // với form tạo/sửa mã (createMaterial): entry đòi hệ số > 0, entry ≠ base. Thiếu guard này
       // upload từng cho tạo mã khai entry mà không hệ số → app coi như không entry (phát hiện smoke 23/07).
@@ -365,7 +515,7 @@ export async function uploadExcel(req: Request, res: Response) {
         const effBase  = baseUnit ?? (acc?.base_unit as string | null | undefined) ?? dbRow?.base_unit ?? null
         const effUpc   = upc ?? (acc?.units_per_carton as number | null | undefined) ?? dbRow?.units_per_carton ?? null
         if (effEntry && !(Number(effUpc) > 0)) {
-          errors.push(`${material_code} — Entry unit "${effEntry}" cần hệ số quy đổi (cột Hộp/thùng) > 0`); continue
+          errors.push(`${material_code} — có Entry Unit "${effEntry}" thì phải điền cột "Đv/Thùng" (số ${effBase ?? 'base'} trong 1 ${effEntry}) > 0`); continue
         }
         if (effEntry && effBase && effEntry === effBase) {
           errors.push(`${material_code} — Entry unit phải KHÁC Base unit (đang cùng "${effEntry}")`); continue
@@ -380,6 +530,13 @@ export async function uploadExcel(req: Request, res: Response) {
           weight_kg: dbRow!.weight_kg, cartons_per_pallet: dbRow!.cartons_per_pallet,
           units_per_carton: dbRow!.units_per_carton, pallet_per_ea: dbRow!.pallet_per_ea,
           shelf_life_days: dbRow!.shelf_life_days, notes: dbRow!.notes,
+          // Các cột dưới BẮT BUỘC có mặt dù file không đắp — xem cảnh báo ở khối nạp `existing`:
+          // dòng nào thiếu key mà lô có key sẽ bị PostgREST ghi NULL đè.
+          base_unit: dbRow!.base_unit, entry_unit: dbRow!.entry_unit, batch_prefix: dbRow!.batch_prefix,
+          carton_length_mm: dbRow!.carton_length_mm, carton_width_mm: dbRow!.carton_width_mm,
+          carton_height_mm: dbRow!.carton_height_mm, max_stack_layers: dbRow!.max_stack_layers,
+          stack_on_top: dbRow!.stack_on_top, no_qr_tracking: dbRow!.no_qr_tracking,
+          is_non_stock: dbRow!.is_non_stock, is_pallet_carrier: dbRow!.is_pallet_carrier,
         }
         upsertByCode.set(material_code, apply(base))
       } else if (insertByCode.has(material_code)) {
@@ -394,14 +551,30 @@ export async function uploadExcel(req: Request, res: Response) {
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,
           max_stack_layers: maxLayers, stack_on_top: onTop ?? false,
           base_unit: baseUnit, entry_unit: entryUnit,
+          no_qr_tracking: noQr ?? false, is_non_stock: nonStock ?? false, is_pallet_carrier: palletCarry ?? false,
           is_active: true, created_at: now, updated_at: now,
         })
       }
     }
 
+    // ALL-OR-NOTHING (user chốt 27/07): còn 1 dòng lỗi là KHÔNG ghi gì.
+    // Trước đây ghi per-row (dòng hợp lệ vẫn vào, dòng lỗi bị loại) → file 3.5k dòng có vài dòng
+    // "khai entry mà thiếu số hộp/thùng" ghi vào 2.662 mã dở dang, phải xoá tay rồi up lại.
+    // Đồng bộ với upload Tồn kho + Vị trí kho: sửa file rồi up lại, DB không bao giờ nửa vời.
+    if (errors.length) {
+      if (isPreflight(req)) return ok(res, buildPreflight({ unit: 'mã hàng', total: rows.length, skipped, errors }))
+      return ok(res, { inserted: 0, updated: 0, skipped, errors })
+    }
+
     let inserted = 0, updated = 0
     const insertRecords = [...insertByCode.values()]
     const upsertRecords = [...upsertByCode.values()]
+
+    // KIỂM TRƯỚC: file sạch → báo "sẽ thêm N mã / sẽ cập nhật M mã" rồi dừng (chưa ghi)
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'mã hàng', total: rows.length, skipped,
+      toInsert: insertRecords.length, toUpdate: upsertRecords.length,
+    }))
 
     // INSERT mã mới theo lô 500 (lỗi lô → từng dòng để chỉ đúng mã hỏng)
     for (let i = 0; i < insertRecords.length; i += 500) {
@@ -410,8 +583,18 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!error) { inserted += chunk.length; continue }
       for (const rec of chunk) {
         const { error: e1 } = await supabase.from('Material').insert(rec)
-        if (e1) errors.push(`${rec.material_code} — lỗi thêm: ${e1.message}`)
-        else inserted++
+        if (!e1) { inserted++; continue }
+        if (e1.code === '23505') {
+          // Thua đua: mã vừa được người khác tạo cùng lúc → chuyển thành UPDATE đè lên bản người thắng (last-write-wins)
+          const { data: winner } = await supabase.from('Material').select('id').eq('material_code', rec.material_code).maybeSingle()
+          if (winner?.id) {
+            const { error: e2 } = await supabase.from('Material').upsert({ ...(rec as Record<string, unknown>), id: winner.id }, { onConflict: 'id' })
+            if (!e2) { updated++; continue }
+          }
+          errors.push(`${rec.material_code} — mã vừa được người khác tạo cùng lúc, upload lại để cập nhật`)
+          continue
+        }
+        errors.push(`${rec.material_code} — lỗi thêm: ${e1.message}`)
       }
     }
 

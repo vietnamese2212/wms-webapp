@@ -41,6 +41,49 @@ export async function listReconcileTasks(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /wms/outbound/:id/events — LỊCH SỬ 1 chuyến cho nút "Thông tin" (user chốt 03/08:
+// "thay đổi như thế nào, bởi ai, lúc nào, nguồn nào"). Gộp 2 nguồn để thành MỘT dòng thời gian:
+//   outbound_events  = nhật ký kế hoạch/chuyến (ghi tại nơi biết được thay đổi)
+//   reconcile_tasks  = thay đổi đến từ SAP (số cũ → số mới, đã quét bao nhiêu, xử lý ra sao)
+// Chuyến bị xóa-tạo-lại khi replan (id đổi) nên tra theo group_code MỚI là chính, gdo_id chỉ phụ.
+export async function listOutboundEvents(req: Request, res: Response) {
+  try {
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, group_code').eq('id', req.params.id).maybeSingle()
+    if (!gdo) return fail(res, 'Không tìm thấy chuyến', 404)
+    const gc = (gdo as { group_code: string }).group_code
+
+    const [evRes, rcRes] = await Promise.all([
+      supabase.from('outbound_events').select('*').eq('group_code', gc).order('created_at', { ascending: false }).limit(300),
+      supabase.from('reconcile_tasks').select('*').eq('group_code', gc).order('created_at', { ascending: false }).limit(300),
+    ])
+    const ACTION_LABEL: Record<string, string> = {
+      AUTO_APPLIED: 'SAP_AUTO_APPLIED', NEEDS_REVIEW: 'SAP_NEEDS_REVIEW',
+      BLOCKED: 'SAP_BLOCKED', RECONCILE_ONLY: 'SAP_RECONCILE_ONLY',
+    }
+    type Ev = { id: string; event_type: string; source: string; actor: string | null; do_number: string | null
+      material_code: string | null; old_value: string | null; new_value: string | null; detail: string; created_at: string }
+    const items: Ev[] = [
+      ...((evRes.data ?? []) as Ev[]),
+      ...((rcRes.data ?? []) as unknown as { id: string; action: string; actor: string | null; od_number: string | null
+        material_code: string | null; old_ordered: number | null; new_ordered: number | null; detail: string | null
+        change_type: string; created_at: string }[]).map(t => ({
+        id: t.id,
+        event_type: ACTION_LABEL[t.action] ?? 'SAP_CHANGE',
+        source: 'SAP',
+        actor: t.actor,
+        do_number: t.od_number,
+        material_code: t.material_code,
+        old_value: t.old_ordered == null ? null : String(t.old_ordered),
+        new_value: t.new_ordered == null ? null : String(t.new_ordered),
+        detail: t.detail ?? t.change_type,
+        created_at: t.created_at,
+      })),
+    ].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return ok(res, { items, group_code: gc })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // GET /wms/outbound/reconcile-tasks/count — số việc đang OPEN (badge)
 export async function reconcileOpenCount(_req: Request, res: Response) {
   try {

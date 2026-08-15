@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/lib/utils'
 import { toast } from '@/components/ui/use-toast'
 import { apiClient } from '@/api/client'
+import { usePushNotifications } from '@/hooks/usePushNotifications'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -58,13 +59,8 @@ export default function Settings() {
     }
   }
 
-  const [notifications, setNotifications] = useState({
-    lowStock: true,
-    inboundComplete: true,
-    deliveryStatus: true,
-    overtimeApproval: false,
-    systemAlerts: true,
-  })
+  // Web Push — điều khiển THẬT per thiết bị (thay 5 switch mock cũ không nối gì)
+  const push = usePushNotifications()
 
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
 
@@ -193,34 +189,66 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* Notifications */}
+        {/* Notifications — Web Push thật (Đợt 1 roadmap 06/08) */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Bell className="h-4 w-4" />
-              Thông báo
+              Thông báo đẩy
             </CardTitle>
-            <CardDescription>Quản lý các loại thông báo bạn muốn nhận</CardDescription>
+            <CardDescription>
+              Nhận thông báo trên thiết bị này kể cả khi không mở app: được giao lệnh fill,
+              việc &quot;Cần xử lý&quot; khi SAP đổi dữ liệu…
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {[
-              { key: 'lowStock', label: 'Cảnh báo tồn kho thấp', desc: 'Khi hàng dưới mức tối thiểu' },
-              { key: 'inboundComplete', label: 'Nhập kho hoàn thành', desc: 'Khi phiếu nhập được xác nhận' },
-              { key: 'deliveryStatus', label: 'Cập nhật trạng thái giao hàng', desc: 'Khi trạng thái đơn hàng thay đổi' },
-              { key: 'overtimeApproval', label: 'Yêu cầu tăng ca', desc: 'Khi có yêu cầu tăng ca cần duyệt' },
-              { key: 'systemAlerts', label: 'Cảnh báo hệ thống', desc: 'Lỗi kỹ thuật và cảnh báo quan trọng' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium">{label}</p>
-                  <p className="text-xs text-muted-foreground">{desc}</p>
+            {!push.supported ? (
+              <p className="text-sm text-muted-foreground">
+                Trình duyệt này không hỗ trợ thông báo đẩy.
+              </p>
+            ) : push.state === 'denied' ? (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                Bạn đã CHẶN thông báo cho trang này — mở cài đặt trình duyệt (biểu tượng ổ khóa
+                cạnh địa chỉ) → Thông báo → Cho phép, rồi quay lại đây bật.
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium">Bật trên thiết bị này</p>
+                    <p className="text-xs text-muted-foreground">
+                      {push.state === 'on' ? 'Đang bật — thiết bị này sẽ nhận thông báo' : 'Đang tắt'}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={push.state === 'on'}
+                    disabled={push.busy || push.state === 'loading'}
+                    onCheckedChange={(v) => (v ? push.enable() : push.disable())}
+                  />
                 </div>
-                <Switch
-                  checked={notifications[key as keyof typeof notifications]}
-                  onCheckedChange={(v) => setNotifications((prev) => ({ ...prev, [key]: v }))}
-                />
-              </div>
-            ))}
+                {push.state === 'on' && (
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-xs text-muted-foreground">
+                      Kiểm tra chuông: gửi một thông báo thử tới mọi thiết bị đã bật của bạn.
+                    </p>
+                    <Button size="sm" variant="outline" disabled={push.busy}
+                      onClick={async () => {
+                        const okSent = await push.sendTest()
+                        if (okSent) toast({ title: 'Đã gửi thông báo thử', description: 'Chờ 1-2 giây — thông báo sẽ hiện trên thiết bị.', variant: 'success' })
+                      }}>
+                      Gửi thử
+                    </Button>
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  iPhone/iPad: cần &quot;Thêm vào MH chính&quot; (iOS 16.4 trở lên) rồi mở app từ màn hình
+                  chính mới bật được. Mỗi thiết bị/trình duyệt bật riêng.
+                </p>
+                {push.error && (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{push.error}</p>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
 

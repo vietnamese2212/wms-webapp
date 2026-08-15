@@ -23,7 +23,10 @@ async function main() {
   const now = new Date().toISOString()
   let ok = 0, skip = 0, err = 0
   for (const r of rows) {
-    const plate = S(r.license_plate), vt = S(r.vehicle_type), ncc = S(r.ncc)
+    // Biển số về dạng chuẩn của app (chỉ chữ+số, IN HOA) — DB có CHECK `^[A-Z0-9]+$`
+    // (migration 20260731_plate_format); file Excel hay ghi "29E-09404" / "66H 07144" sẽ bị 23514.
+    const plate = S(r.license_plate).replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+    const vt = S(r.vehicle_type), ncc = S(r.ncc)
     if (!plate || !vt || !ncc) { console.log('  SKIP (thiếu biển/loại/ĐVVT)'); skip++; continue }
     const vtRes = resolveVt(vt)
     if (!vtRes.id) { console.error('  ERR', plate, '— Loại xe ' + (vtRes.error ?? 'không khớp') + ':', vt); err++; continue }

@@ -13,7 +13,7 @@ await login()
 const t0 = Date.now()
 const rs = await pool(Array.from({ length: N }, (_, k) => () =>
   api('/wms/outbound/quick-export', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,   // xuất luôn = ngày hôm nay (luật FUTURE_DATE 02/08)
     delivery_code: `SC-${k}-` + Math.floor(Math.random() * 1e6), license_plate: '88S-' + (1000 + k),
     customer_name: 'QA SCALE ' + k,
     items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 1 + (k % 5) }],
@@ -39,7 +39,7 @@ async function measure(name, path) {
     `${times.join('/')}ms · rows=${rows} · ${(bytes / 1024).toFixed(0)}KB`)
 }
 await measure('TMS transfer list (cửa sổ ngày)', `/tms/orders?source_type=TRANSFER&date_from=2026-01-01`)
-await measure('Outbound list (ngày test)', `/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`)
+await measure('Outbound list (ngày test)', `/wms/outbound?date_from=${FIX.EXEC_DATE}&date_to=${FIX.EXEC_DATE}`)
 await measure('Inventory list', '/wms/inventory?limit=100')
 await measure('Inventory facets', '/wms/inventory/facets')
 

@@ -1,0 +1,79 @@
+# Kiểm kê CẤU HÌNH — 14/08/2026
+
+> Câu hỏi: "các setting/configuration đang có, cái nào CHƯA tập trung".
+> Đo lại từ code hôm nay (không chép audit 13/08). Bổ sung cho `HARDCODE_AUDIT_2026-08-13.md`
+> (file đó xếp theo rủi ro; file này xếp theo **NƠI CHỈNH** — người vận hành đổi ở đâu).
+
+## PHẦN 1 — ĐÃ TẬP TRUNG (đổi được trong app, không cần lập trình viên)
+
+| Nơi chỉnh | Chứa gì | Ghi chú |
+|---|---|---|
+| **Cài đặt WMS ▸ Hệ thống** | 9 khóa `SystemSetting`: `label_format` · `decimal_separator` · `delivery_confirmation` · `retention_days` · `cycle_count` · `inbound_edit_window_days` · `packing_max_materials_per_run` · (+`pct_date_bands`, `truck_models` chưa có ô UI riêng) | mặc định + validator MỘT nguồn `backend/src/utils/settings.ts` |
+| **Thông báo ▸ Cài đặt ngưỡng** | `alert_thresholds` — 10 ngưỡng cảnh báo | cùng khuôn `SettingsForm` với tab Hệ thống (13/08) |
+| **Cài đặt WMS** 7 tab còn lại | Kho · Loại kho · Đơn vị tính · Khu vực · Ca nhập · QA · Máy | danh mục CRUD |
+| **Cài đặt TMS** 4 tab | Loại xe · Khung giờ · ĐVVT/NCC · Xe | |
+| **Cấu hình per-ĐỐI TƯỢNG** (form của chính đối tượng) | `Warehouse`: chế độ tồn, 2 rule cổng/cân, quét tem thùng, SAP plant/sloc, kho cha · `Material` · `WarehouseZone` (hạng nhặt, luồng cửa, loại kho) · `Location.is_pick_face` · `LookupValue.meta` (cờ theo loại kho) | đúng chỗ — không nên gom về trung tâm |
+| **Phân quyền** | `JobTitle.module_permissions` + scope kho/loại hàng của nhân sự | trang Quản lý người dùng |
+| **Cá nhân** | `/settings`: giao diện, đổi mật khẩu, thông báo đẩy · `notification_prefs` (chuông per trường hợp) | per user, không phải cấu hình hệ thống |
+| **Tích hợp** | `/masterdata/integration-keys`: API key ERP + khóa AI Vision (`vision_api`, mã hóa, lọc khỏi GET hở đọc) | superadmin |
+| **ENV (Vercel)** | 9 biến: SUPABASE_URL/SERVICE_ROLE_KEY/JWT_SECRET, FRONTEND_URL, PGRST_MAX_ROWS… | hạ tầng, đúng chỗ |
+
+## PHẦN 2 — CHƯA TẬP TRUNG (muốn đổi phải sửa code + deploy)
+
+| # | Cái gì | Ở đâu (đo 14/08) | Vì sao đáng gom |
+|---|---|---|---|
+| 1 | **Lịch nghỉ lễ + Tết** | `frontend/src/utils/vnHolidays.ts` — Tết cứng 5 ngày, 4 lễ dương; **BE không có bảng lễ**, tin `work_dates` client gửi | Chính phủ công bố lại HÀNG NĂM. Sai lễ = sai bảng công. Đề xuất `SystemSetting.vn_holidays` per năm, BE+FE cùng đọc |
+| 2 | **Ca làm việc CA1/CA2/CA3/HC** | 7 file: `hooks.ts`, `Assignments`, `Attendance`, `LeaveManagement`, `hrSkillSections` (FE) + `assignmentController`, `attendanceController` (BE) | nhà máy thêm/đổi ca = sửa 7 chỗ. Đề xuất danh mục ca (mã · tên · giờ · rank) |
+| 3 | **Hành vi quyết định bằng TÊN tiếng Việt** | `'Lái xe'` (UserManagement:220, TMSBookings:248) · `'Đơn vị vận tải'` (UserManagement:220-221, TMSBookings:3856) · `SPECIAL_VTYPES ['Chỉ trả pallet','Khác']` (GateRegistration:94,487,1057) | đổi TÊN chức danh/loại xe trong danh mục = luồng hỏng **âm thầm**, không lỗi. Đề xuất cờ meta: `JobTitle.is_driver`, `vehicle_type.meta.no_booking` |
+| 4 | **Hardcode riêng LOF** (chặn mở đơn vị 2) | `pushService.ts:34,43` `mailto:wms@lof.vn` · `weighTicketController.ts:60` trạm cân `'KB01'` · `inventoryController.ts:1450` `NMSX_ALIAS {A:'O'}` · `app.ts:34` CORS `wms-webapp.vercel.app` · `loadPlan.ts` `ASSUMED_CARTON` 422×233×100mm | kiến trúc multi-tenant silo yêu cầu khác biệt đi qua CỜ, không qua tên đơn vị. Deploy đơn vị 2 mà quên = mang danh tính/tham số của LOF |
+| 5 | **Giờ công chuẩn 8h/ngày** | `attendanceController.ts:261` (`work_days * 8`) + `Attendance.tsx` | khác ca/khác đơn vị là khác. Đề xuất `standard_work_hours` |
+| 6 | **Ngưỡng màu KPI — mỗi trang một thang** | Dashboard 100/80 · FillPicking 80/50 · Forklift 90/60 · StocktakeDashboard 90/50 và 98/90 · **ControlTower dwell 90/45 phút — lệch ngưỡng cảnh báo đã cấu hình (90/180)** | cùng một chỉ số mà 2 màn tô màu khác nhau ⇒ người đọc mất tin. Hợp nhất 1 thang + dwell đọc `alert_thresholds` |
+| 7 | **`ACTIVE_STATUSES` 2 định nghĩa LỆCH trong cùng file** | `inventoryController.ts:792` `[IN_STOCK, PARTIAL, EXPORTED]` vs `:1559` `[IN_STOCK, PARTIAL, QUARANTINE, LOOSE_PICKING]` | không phải cấu hình, nhưng là 2 "luật" cùng tên khác nghĩa — người sửa sau dễ dùng nhầm. Đặt tên riêng + comment, hoặc hợp nhất |
+| 8 | **Danh mục nhỏ cứng trong code** | `LEAVE_TYPES` (LeaveManagement:28) · Mẻ 1..10 (PalletLabels:1010) · nhãn ĐVT (`qtyUnits.ts` — đã có LookupValue `unit_of_measure` mà formatter không đọc) | ít đổi, gom khi tiện |
+| 9 | **`const TODAY` tính 1 lần lúc mở app** | 10 trang: Assignments, Attendance, LeaveManagement, FillPicking, Inbound, LoosePicking, Outbound, OutboundPrepare, OutboundScanLog, PalletLabels | PDA/màn kho mở qua đêm → `min={TODAY}` chặn sai ngày. Đổi thành hàm `TODAY()` (HR/Packing/Forklift đã đúng) |
+
+## PHẦN 3 — CỐ Ý KHÔNG CONFIG HÓA (đừng gom)
+
+Luật an toàn/bất biến: chặn xuất sớm `FUTURE_DATE` · 1 xe 1 ngày · 1 xe 1 cửa · Z1–Z4 reconcile · KH khớp thực quét mới Hoàn thành · giao ≥1 loại · base-unit số nguyên · biển số `[A-Z0-9]` (có CHECK ở DB) · cấu trúc QR V1/V2.
+Biên kỹ thuật lượt quét cảnh báo: cửa sổ gate 48h · BE_ERRORS 24h · packing 7 ngày · `EXPIRY_WINDOW_DAYS` (tự suy 6×PCT_WARN) — đã ghi chú tại `alertScanner.ts`.
+Trần chống nhầm (thùng >100k, sản lượng >10tr) và format mã tự sinh (đổi = phá parser ngược).
+
+## ĐÃ LÀM — 14/08 (user duyệt "ok làm đi")
+
+| # | Trạng thái | Cách xử |
+|---|---|---|
+| 4 hardcode LOF | ✅ XONG | gom vào `org_profile` (email kỹ thuật push · ánh xạ mã nhà máy cũ→mới · cỡ thùng giả định) + CORS đọc ENV `CORS_ORIGINS`. **Mặc định = đúng giá trị đang chạy** nên đơn vị 1 không đổi hành vi |
+| 1 lễ/Tết | ✅ XONG | `vn_holidays` khai theo năm, soạn bằng **ô chọn ngày + tên** (mỗi ngày 1 dòng) + nút "Nạp lịch tự tính" để sửa từ bản app đang suy. Năm KHÔNG khai vẫn tự tính bằng lịch âm như cũ |
+| 2 ca làm việc | ⚠️ LÀM MỘT NỬA | gom 7 chỗ khai ca → `frontend/src/config/shifts.ts`, giữ nguyên 100% nhãn/màu/thứ tự. **Chưa** thành danh mục động: thuật toán phân ca (tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua") gắn chặt đúng 4 mã — cần việc riêng, đo lại với HR |
+| 3 tên tiếng Việt | ✅ XONG | cờ `JobTitle.is_driver` + `Department.is_carrier` (migration `20260814_role_flags`, backfill theo tên đang dùng + DO-block gác) · ô tick trong form Chức danh/Phòng ban · ratchet `role_by_vietnamese_name` baseline 0 |
+| 6 thang màu | ✅ phần MÂU THUẪN | dwell Giám sát vận hành đọc `GATE_WARN_MIN`/`GATE_CRIT_MIN` (90 vàng · 180 đỏ) thay 90/45 tự đặt. Các thang còn lại đo chỉ số KHÁC NHAU (sức chứa · tỷ lệ fill · tuân thủ · bao phủ · chính xác) → mỗi cái một ngưỡng là đúng, **không gộp** |
+| 5 giờ công 8h | ✅ XONG (vòng 3) | cờ `standard_work_hours` (mặc định **8** ⇒ số liệu không đổi), ô nhập cụm "Chấm công" tab Hệ thống, nhận nửa giờ (7,5). BE `getStandardWorkHours` + FE `useStandardWorkHours` đọc **cùng** cờ — trước đó số 8 nằm ở 3 chỗ, sửa lệch là màn một đằng báo cáo một nẻo. QA 23 có ca hợp lệ + 6 ca bậy |
+| 7 `ACTIVE_STATUSES` | ✅ XONG (vòng 3) | tách tên: `STATUS_RECALC_ON_ADJUST` (có EXPORTED — dùng khi điều chỉnh tồn suy lại status) vs `ACTIVE_PALLET_STATUSES` (có QUARANTINE/LOOSE_PICKING — pallet còn sống, dùng khi upload khớp cập nhật) |
+| 8 danh mục nhỏ | ✅ XONG (vòng 3) | **Nhãn ĐVT**: danh mục có 11 đơn vị mà formatter chỉ biết 6 mã cứng ⇒ màn hiện "5 SET"/"128 M2". Thêm `setUnitLabels()` nạp từ danh mục lúc khởi động (Shell), bảng cứng giữ làm lưới đỡ khi mất mạng — verify sống: "128 mét vuông" · **Loại nghỉ phép**: sổ chung `config/leaveTypes.ts` (BE+FE mirror), BE **chặn** giá trị ngoài sổ (trước đây `leave_type` là chuỗi tự do, gọi thẳng API ghi được rác) · **Mẻ 1..10**: `MAX_BATCH_NO`/`batchNoOptions` trong `palletLabel.tsx` |
+| 9 `const TODAY` | ✅ XONG (vòng 3) | 8 trang đổi sang **hàm** `TODAY()` (Inbound · Outbound · OutboundPrepare · OutboundScanLog · LoosePicking · FillPicking · PalletLabels · GateRegistration, kèm `FORM_DEFAULT`→`formDefault()`). Đây là **lỗi thật**: máy PDA/màn kho mở qua đêm dùng ngày hôm qua ⇒ `min=` chặn oan, chip "Hôm nay" lọc sai. Ratchet `today_frozen_at_import` (baseline 0) chỉ bắt khai báo **cấp module** — khai trong component là đúng, bắt luôn sẽ báo oan |
+
+## VÒNG 2 — user phản biện ngay trong ngày (14/08 chiều)
+
+| Điểm user bắt | Xử |
+|---|---|
+| **"Mã trạm cân là setting CHUNG, nhưng tôi lấy dữ liệu nhiều trạm ở nhiều kho"** | ĐÚNG — và nguy hiểm hơn vẻ ngoài: `source_id` phần mềm cân là autonumber đếm từ 1 ở MỖI trạm, hai trạm cùng mã sẽ **đè phiếu của nhau** qua khóa upsert `(station_code, source_id)`, mất phiếu âm thầm. ⇒ **GỠ hẳn `weigh_station_code` khỏi `org_profile`**; mã trạm do agent từng trạm khai và **bắt buộc** (thiếu → 400); thêm chặn **1 mã trạm không được dùng cho 2 kho** (409 `STATION_CODE_CONFLICT`) làm lưới bắt "cài agent mới quên đổi mã". Migration `20260814b` dọn khóa cũ khỏi giá trị đang lưu. Gói QA **24-weigh-station** gác |
+| **"Email `wms@lof.vn` đâu có tồn tại, chưa hiểu để làm gì"** | Đó là **VAPID subject** (chuẩn Web Push): địa chỉ liên hệ kỹ thuật khai với dịch vụ push của trình duyệt, không nhận thư, người dùng không thấy. Đổi nhãn thành "Email kỹ thuật (thông báo đẩy)" + tooltip nói rõ; và **làm ô có tác dụng thật** — lưu `org_profile` giờ ghi luôn `push_config.subject` (trước đó khóa push sinh 1 lần rồi giữ subject cũ mãi ⇒ ô ma). Nên điền hòm thư quản trị CÓ THẬT |
+| **"Ngày nghỉ khai tay trông vẫn manual quá, gõ sai là hỏng"** | ĐÚNG — textarea "YYYY-MM-DD Tên" là bề mặt dễ hỏng nhất trong cả tab. Đổi thành trình soạn theo NĂM: mỗi ngày 1 dòng (**ô chọn ngày** + ô tên + nút xóa), nút **"Nạp lịch tự tính"** đổ ra 10 ngày app đang suy để sửa theo công bố, **"Bỏ khai năm"** trả về tự tính. Lỗi bắt tại chỗ (viền đỏ + câu tiếng Việt: trùng ngày / sai năm / thiếu tên), không còn "dòng số N sai" |
+
+## CÒN LẠI SAU VÒNG 3 — đúng 1 khoản
+
+**Ca làm việc CA1/CA2/CA3/HC thành danh mục ĐỘNG.** Hiện đã gom về một nguồn `frontend/src/config/shifts.ts`
+(nhãn · thứ tự · màu), nhưng muốn nhà máy tự thêm/bớt ca thì phải viết lại **thuật toán phân ca**
+(tầng CA1+CA2→CA3→HC, luật "CA3 hôm qua thì hôm nay không xếp CA1") vốn ràng chặt đúng 4 mã đó.
+Đây là việc **nghiệp vụ**, không phải dọn hardcode — cần chốt quy tắc với HR trước khi code.
+
+**Bài học chung:** config hóa không chỉ là "đưa hằng số ra khỏi code" — phải hỏi **đơn vị cấu hình đúng là gì** (hệ thống? kho? trạm? thiết bị?). Đặt sai tầng thì cấu hình vừa vô dụng vừa tạo đường hỏng dữ liệu. Và bề mặt nhập liệu tự do (textarea) chỉ dùng khi không có cấu trúc — có cấu trúc thì phải có ô đúng kiểu.
+
+**Ghi chú `SPECIAL_VTYPES`**: đo lại thì `'Chỉ trả pallet'` / `'Khác'` KHÔNG phải tên trong danh mục Loại xe (bảng `VehicleType` chỉ có XE 4 PALLET · XE CONTAINER · …) — đây là 2 lựa chọn ảo của riêng màn Đăng ký cổng, không ai đổi tên được ⇒ không thuộc lớp lỗi "so tên danh mục", giữ nguyên.
+
+## Thứ tự đề xuất (bản gốc)
+1. **#4 hardcode LOF** — bắt buộc trước khi dựng đơn vị 2.
+2. **#1 lễ/Tết + #2 ca làm việc** — chu kỳ đổi hàng năm, đang phải nhờ lập trình viên.
+3. **#3 tên tiếng Việt → cờ danh mục** — lớp lỗi âm thầm.
+4. **#6 hợp nhất thang màu** (kèm dwell đọc ngưỡng đã cấu hình).
+5. #5, #7, #8, #9 — gom khi đụng vào từng file.

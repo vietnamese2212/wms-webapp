@@ -9,15 +9,14 @@ import {
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { SHIFT_CODES, shiftShort } from '@/config/shifts'
 
+// Ca lấy từ sổ ca dùng chung (config/shifts.ts); ô này dùng nhãn NGẮN + có lựa chọn "không gắn ca"
 const SHIFT_OPTS: { value: string; label: string }[] = [
-  { value: '',    label: '—' },
-  { value: 'CA1', label: 'Ca 1' },
-  { value: 'CA2', label: 'Ca 2' },
-  { value: 'CA3', label: 'Ca 3' },
-  { value: 'HC',  label: 'HC' },
+  { value: '', label: '—' },
+  ...SHIFT_CODES.map(c => ({ value: c as string, label: shiftShort(c) })),
 ]
-const shiftLabel = (t: string | null) => SHIFT_OPTS.find(o => o.value === (t ?? ''))?.label ?? '—'
+const shiftLabel = (t: string | null) => (t ? shiftShort(t) : '—')
 
 // ─── Danh mục skill của 1 Chức danh (trong dialog sửa chức danh) ─────────────
 export function JobTitleSkillSection({ jobTitleId }: { jobTitleId: string }) {

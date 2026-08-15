@@ -39,7 +39,9 @@ export default function OrgChart() {
   const { data: jobTitles = [], isLoading } = useJobTitles()
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const [wh, setWh] = useState('')
-  const { data: emps = [] } = useEmployeeRecords()
+  // Sơ đồ chỉ cần tên + chức danh + kho được gán → `view: 'lite'`. Hồ sơ đầy đủ ≈ 830 B/dòng
+  // (1.539 người = 1.230KB; ~5.400 người là vượt trần 4,5MB của Vercel).
+  const { data: emps = [] } = useEmployeeRecords({ view: 'lite' })
   const setParent = useSetJobTitleParent()
   const [err, setErr] = useState<string | null>(null)
 

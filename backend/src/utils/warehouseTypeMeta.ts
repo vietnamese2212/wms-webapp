@@ -17,6 +17,19 @@ export interface WhTypeMeta {
 
 // Phòng hộ khi meta chưa seed (migration chưa apply) — đúng hardcode cũ
 const LEGACY_NCC_CATEGORIES = ['POSM', 'Raw', 'Thùng', 'Giấy']
+// Mirror frontend/src/utils/cargoCategory.ts — dùng cho luật "Thiếu thông tin" của danh mục Mã hàng
+export const LEGACY_NO_SHELF_LIFE = ['Thùng', 'POSM']
+export const LEGACY_PALLET_PER_EA = ['Raw', 'Thùng', 'Giấy']
+
+/** Luật bắt buộc HSD / Pallet-EA theo từng Loại kho → truyền xuống RPC (không hardcode tên trong SQL). */
+export async function getMaterialCategoryRules(): Promise<{ c: string; sl: boolean; pe: boolean }[]> {
+  const map = await getWhTypeMetaMap()
+  return [...map.entries()].map(([c, meta]) => ({
+    c,
+    sl: typeof meta.requires_shelf_life === 'boolean' ? meta.requires_shelf_life : !LEGACY_NO_SHELF_LIFE.includes(c),
+    pe: typeof meta.requires_pallet_per_ea === 'boolean' ? meta.requires_pallet_per_ea : LEGACY_PALLET_PER_EA.includes(c),
+  }))
+}
 
 let _cache: { map: Map<string, WhTypeMeta>; at: number } | null = null
 

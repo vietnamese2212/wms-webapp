@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
-import { Tag, Plus, Upload, Pencil, Trash2, X, Check, Minus, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
+import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
+import { RowCheck } from '@/components/shared/RowCheck'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
@@ -23,10 +25,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { omniMatch } from '@/utils/omniSearch'
 import { getDecimalSep, sanitizeDecimalInput, parseDecimalInput, formatDecimalForInput } from '@/utils/decimalSep'
 import {
-  useMaterials, useWarehouses, useTransportCompanies,
+  useMaterialsPaged, useMaterialsSummary, useWarehouses, useTransportCompanies,
   useCreateMaterial, useUpdateMaterial, useDeleteMaterial, useUploadMaterialsExcel,
   useSystemSettings, useUnits,
 } from '@/api/hooks'
@@ -39,22 +40,6 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
 
 type WhRow = { id: string; code: string; name: string }
-
-// ── Shared mini checkbox ─────────────────────────────────────────────────────
-function RowCheck({ checked, indeterminate, onClick }: {
-  checked: boolean; indeterminate?: boolean; onClick: () => void
-}) {
-  return (
-    <div
-      onClick={e => { e.preventDefault(); e.stopPropagation(); onClick() }}
-      className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center cursor-pointer transition-colors
-        ${checked || indeterminate ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white hover:border-blue-400'}`}
-    >
-      {checked && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-      {!checked && indeterminate && <Minus className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-    </div>
-  )
-}
 
 function CatBadge({ cat, metaMap }: { cat: string | null; metaMap?: WhTypeMetaMap }) {
   if (!cat) return <span className="text-slate-300">—</span>
@@ -135,11 +120,12 @@ export default function Materials() {
   const statusFilter = mf.statusFilter
   const qrFilter     = mf.qrFilter ?? []
   const dqFilter     = mf.dqFilter ?? []
-  const setSearch       = (v: string)   => setMaterials({ search: v })
-  const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v })
-  const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v })
-  const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v })
-  const setDqFilter     = (v: string[]) => setMaterials({ dqFilter: v })
+  // Mọi filter đổi phải kèm page: 1 — đang đứng trang 5 mà lọc là ra trang trống
+  const setSearch       = (v: string)   => setMaterials({ search: v, page: 1 })
+  const setCatFilter    = (v: string[]) => setMaterials({ catFilter: v, page: 1 })
+  const setStatusFilter = (v: string[]) => setMaterials({ statusFilter: v, page: 1 })
+  const setQrFilter     = (v: string[]) => setMaterials({ qrFilter: v, page: 1 })
+  const setDqFilter     = (v: string[]) => setMaterials({ dqFilter: v, page: 1 })
 
   // Density
   const [dense, setDense] = useState(() => localStorage.getItem('materials_density') !== 'comfortable')
@@ -180,7 +166,15 @@ export default function Materials() {
   const [bulkPack, setBulkPack] = useState({ l: '', w: '', h: '', layers: '', onTop: '' })   // onTop: ''=giữ nguyên · '1' · '0'
 
   // Data
-  const { data: raw = [], isLoading }    = useMaterials(undefined)
+  // PHÂN TRANG SERVER: trước đây kéo TOÀN BỘ danh mục (2.740 mã ≈ 2,5MB) rồi lọc + cắt trang ở máy.
+  // Bộ lọc + tổng + 2 luật "Trùng tên"/"Thiếu thông tin" nay tính bằng SQL trên toàn bảng.
+  const listParams = useMemo(() => ({
+    search, categories: catFilter, status: statusFilter, qr: qrFilter, dq: dqFilter,
+  }), [search, catFilter, statusFilter, qrFilter, dqFilter])
+  const { data: pageData, isLoading } = useMaterialsPaged({ ...listParams, page: mf.page, page_size: mf.pageSize })
+  const { data: matSummary } = useMaterialsSummary(listParams)
+  const pageItems = useMemo(() => (pageData?.rows ?? []) as Material[], [pageData])
+  const totalRows = pageData?.total ?? 0
   const { data: warehouseTypes = [] }    = useScopedWhTypes()
   const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (HSD/Pallet-EA bắt buộc, màu badge)
   const { data: warehousesRaw = [] }     = useWarehouses(true)
@@ -212,53 +206,17 @@ export default function Materials() {
   const updateMaterial = useUpdateMaterial()
   const deleteMaterial = useDeleteMaterial()
 
-  // Tên hàng (material_description) bị TRÙNG: tính trên TOÀN BỘ mã (raw), không theo filter.
-  const dupNames = useMemo(() => {
-    const cnt = new Map<string, number>()
-    for (const m of raw as Material[]) {
-      const k = (m.material_description ?? '').trim().toLowerCase()
-      if (k) cnt.set(k, (cnt.get(k) ?? 0) + 1)
-    }
-    return new Set([...cnt.entries()].filter(([, n]) => n > 1).map(([k]) => k))
-  }, [raw])
-  const isDupName = (m: Material) => dupNames.has((m.material_description ?? '').trim().toLowerCase())
+  // "Trùng Tên hàng" do SERVER gắn (chỉ đúng khi soi TOÀN bảng — không suy được từ 200 dòng đang xem)
+  const isDupName = (m: Material) => (m as Material & { is_dup_name?: boolean }).is_dup_name === true
 
-  // Filtered list
-  const filtered = useMemo(() => {
-    const showActive   = statusFilter.includes('active')   || statusFilter.length === 0
-    const showInactive = statusFilter.includes('inactive') || statusFilter.length === 0
-    const showQr   = qrFilter.includes('has_qr')  || qrFilter.length === 0
-    const showNoQr = qrFilter.includes('no_qr')   || qrFilter.length === 0
-    return (raw as Material[]).filter(m => {
-      if (m.is_active  && !showActive)   return false
-      if (!m.is_active && !showInactive) return false
-      if (m.no_qr_tracking  && !showNoQr) return false
-      if (!m.no_qr_tracking && !showQr)  return false
-      if (catFilter.length > 0 && !catFilter.includes(m.category ?? '')) return false
-      // Lọc chất lượng dữ liệu (OR giữa các tuỳ chọn đã chọn)
-      if (dqFilter.length > 0) {
-        const okIncomplete = dqFilter.includes('incomplete') && missingRequiredFields(m, whTypeMeta).length > 0
-        const okDup        = dqFilter.includes('dup')        && isDupName(m)
-        if (!okIncomplete && !okDup) return false
-      }
-      if (!omniMatch([m.material_code, m.material_description, m.short_name, m.old_code, m.category, m.base_unit, m.entry_unit], search)) return false
-      return true
-    })
-  }, [raw, catFilter, search, statusFilter, qrFilter, dqFilter, dupNames, whTypeMeta])
-
-  const allSelected  = filtered.length > 0 && filtered.every(m => selected.has(m.id))
+  const allSelected  = pageItems.length > 0 && pageItems.every(m => selected.has(m.id))
   const someSelected = selected.size > 0 && !allSelected
 
-  // Phân trang client 200/trang — ~1800 mã render hết một lượt = hàng chục nghìn DOM node,
-  // chậm rõ trên tablet/phone. Data đã có đủ ở client (BE cố ý trả hết cho dropdown) → chỉ cắt lúc render.
-  const PAGE_SIZE = 200
-  const [page, setPage] = useState(0)
-  const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1)
-  const curPage = Math.min(page, maxPage)   // filter thu hẹp → tự kéo về trang cuối còn dữ liệu
-  const pageItems = useMemo(
-    () => filtered.slice(curPage * PAGE_SIZE, (curPage + 1) * PAGE_SIZE),
-    [filtered, curPage]
-  )
+  const totalPages = Math.max(1, Math.ceil(totalRows / mf.pageSize))
+  // Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối
+  useEffect(() => {
+    if (!isLoading && mf.page > totalPages) setMaterials({ page: totalPages })
+  }, [isLoading, totalPages, mf.page, setMaterials])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setField(k: keyof typeof EMPTY_FORM, v: string) {
@@ -288,11 +246,11 @@ export default function Materials() {
     return null
   }
 
-  // Mẫu Excel Mã hàng — cột KHỚP thứ tự M_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  // Mẫu Excel Mã hàng — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
   // ĐV tem `;` (isV2Format): mẫu tự thêm cột 13 batch_prefix (Mã tắt mã lô); ĐV tem `_` giữ 12 cột như cũ.
   function downloadMaterialTemplate() {
     // Cột 4 ('(bỏ trống)') = filler VỊ TRÍ của ĐVT cũ (đã bỏ) — giữ để file cũ không lệch cột. Đơn vị nay = Base/Entry Unit (2 cột cuối).
-    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg) *', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
+    const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg)', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
     const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', '', 80, 48, '', 9.6, 180, 'UHT', '', '']
     if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
@@ -303,6 +261,10 @@ export default function Materials() {
     labels.push('Base Unit *', 'Entry Unit')
     keys.push('base_unit', 'entry_unit')
     ex.push('HOP', 'CAR')
+    // 3 cờ nghiệp vụ (1/0) — ô trống = giữ nguyên với mã đã có, = tắt với mã mới
+    labels.push('Không quản QR (1/0)', 'Mã phi hàng hóa (1/0)', 'Pallet mang hàng (1/0)')
+    keys.push('no_qr_tracking', 'is_non_stock', 'is_pallet_carrier')
+    ex.push(0, 0, 0)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -480,7 +442,8 @@ export default function Materials() {
 
   function toggleAll() {
     if (allSelected) setSelected(new Set())
-    else setSelected(new Set(filtered.map(m => m.id)))
+    // Chọn hết = TRANG đang xem (danh mục đã phân trang server, không còn mảng "toàn bộ" ở client)
+    else setSelected(new Set(pageItems.map(m => m.id)))
   }
 
   // Override helpers
@@ -562,14 +525,15 @@ export default function Materials() {
     return savedViews.find(v => JSON.stringify(v.filters) === cur)?.id ?? null
   }, [savedViews, viewSnapshot])
 
-  const summary = useMemo(() => ({
-    total:      filtered.length,
-    active:     filtered.filter(m => m.is_active).length,
-    inactive:   filtered.filter(m => !m.is_active).length,
-    noQr:       filtered.filter(m => m.no_qr_tracking).length,
-    incomplete: filtered.filter(m => missingRequiredFields(m, whTypeMeta).length > 0).length,
-    dup:        filtered.filter(m => isDupName(m)).length,
-  }), [filtered, dupNames, whTypeMeta])
+  // Tổng tính bằng SQL trên TOÀN BỘ bộ lọc — không đếm trên trang đang xem
+  const summary = {
+    total:      matSummary?.total ?? 0,
+    active:     matSummary?.active ?? 0,
+    inactive:   matSummary?.inactive ?? 0,
+    noQr:       matSummary?.no_qr ?? 0,
+    incomplete: matSummary?.incomplete ?? 0,
+    dup:        matSummary?.dup ?? 0,
+  }
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -649,7 +613,7 @@ export default function Materials() {
             <TableBody>
               {isLoading ? (
                 <tr><td colSpan={colCount} className="p-0"><TableSkeleton cols={colCount} rows={12} /></td></tr>
-              ) : filtered.length === 0 ? (
+              ) : pageItems.length === 0 ? (
                 <tr><td colSpan={colCount}><EmptyState title="Không có mã hàng" /></td></tr>
               ) : pageItems.map(mat => {
                 const hasOverrides = (mat.warehouse_pallet_overrides?.length ?? 0) > 0
@@ -742,27 +706,14 @@ export default function Materials() {
               })}
             </TableBody>
           </Table>
+          <PagerNav page={mf.page} totalPages={totalPages} onPage={p => setMaterials({ page: p })} />
       </div>
 
-      {/* Footer đếm bản ghi + chuyển trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl flex items-center gap-2">
-        <span>
-          {filtered.length > 0
-            ? `${curPage * PAGE_SIZE + 1}–${Math.min((curPage + 1) * PAGE_SIZE, filtered.length)} / ${filtered.length} mã hàng`
-            : '0 mã hàng'}
-          {(raw as Material[]).length !== filtered.length && <span className="text-slate-400"> (tổng {(raw as Material[]).length})</span>}
-        </span>
-        {selected.size > 0 && <span className="text-green-600 font-medium">· {selected.size} đang chọn</span>}
-        {maxPage > 0 && (
-          <span className="ml-auto flex items-center gap-1">
-            <button onClick={() => setPage(Math.max(0, curPage - 1))} disabled={curPage === 0}
-              className="px-2 py-0.5 rounded border border-slate-300 bg-white disabled:opacity-30 hover:bg-slate-100">‹</button>
-            <span className="tabular-nums">{curPage + 1}/{maxPage + 1}</span>
-            <button onClick={() => setPage(Math.min(maxPage, curPage + 1))} disabled={curPage >= maxPage}
-              className="px-2 py-0.5 rounded border border-slate-300 bg-white disabled:opacity-30 hover:bg-slate-100">›</button>
-          </span>
-        )}
-      </div>
+      {/* Footer đếm bản ghi + chọn dòng/trang (chuẩn chung ListPager) */}
+      <ListFooter page={mf.page} pageSize={mf.pageSize} total={totalRows} unit="mã hàng"
+        onPageSize={n => setMaterials({ pageSize: n, page: 1 })}>
+        {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {selected.size} đang chọn</span>}
+      </ListFooter>
      </div>
 
       {/* ── Bulk action bar ────────────────────────────────────────────── */}
@@ -1376,10 +1327,12 @@ export default function Materials() {
       {showUpload && (
         <UploadExcelDialog
           title="Upload Mã hàng từ Excel"
-          hint="Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị (ô trống = giữ nguyên)."
+          hint={'Còn 1 dòng lỗi là KHÔNG ghi gì — sửa file rồi upload lại (không sợ nhập dở dang). '
+              + 'Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị, ô trống giữ nguyên. '
+              + 'Mã có Entry Unit thì bắt buộc điền "Đv/Thùng"; Loại hàng phải có sẵn trong danh mục Loại kho.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadMaterialTemplate}
-          onUpload={file => uploadMaterials.mutateAsync({ file })}
+          onUpload={(file, preflight) => uploadMaterials.mutateAsync({ file, preflight })}
         />
       )}
     </div>

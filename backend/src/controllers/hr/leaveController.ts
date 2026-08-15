@@ -2,9 +2,10 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllByIdChunks, fetchAllRowsParallel, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { isLeaveType, DEFAULT_LEAVE_TYPE, LEAVE_TYPE_VALUES } from '../../config/leaveTypes'
 
-type ReqUser = { sub?: string; name?: string }
+type ReqUser = { sub?: string; name?: string; warehouse_scope?: string; warehouse_ids?: string[]; is_superadmin?: boolean }
 const userOf = (req: Request): ReqUser => (req as { user?: ReqUser }).user ?? {}
 
 const LEAVE_SELECT = 'id, employee_id, warehouse_id, date_from, date_to, leave_type, reason, status, approved_by, approved_at, created_at, updated_at'
@@ -137,7 +138,7 @@ async function canApprove(ctx: ApproverCtx, employeeId: string, pm: Map<string, 
 // Non-admin chỉ được thao tác đơn của CHÍNH MÌNH hoặc cấp dưới (chức danh dưới + chung kho).
 async function guardLeaveTarget(req: Request, res: Response, empId?: string | null): Promise<boolean> {
   const u = userOf(req)
-  if (u.name === 'Admin') return true
+  if (u.is_superadmin === true) return true
   if (!empId) { fail(res, 'Thiếu nhân viên', 400); return false }
   if (empId === u.sub) return true
   const ctx = await approverContext(u.sub)
@@ -148,16 +149,82 @@ async function guardLeaveTarget(req: Request, res: Response, empId?: string | nu
 }
 // SỬA/XÓA: lấy employee_id của đơn rồi áp guardLeaveTarget.
 async function guardLeaveScope(req: Request, res: Response, leaveId: string): Promise<boolean> {
-  if (userOf(req).name === 'Admin') return true
+  if (userOf(req).is_superadmin === true) return true
   const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', leaveId).maybeSingle()
   const empId = (lv as { employee_id: string } | null)?.employee_id
   if (!empId) { fail(res, 'Không tìm thấy đơn', 404); return false }
   return guardLeaveTarget(req, res, empId)
 }
 
+// Scope kho của người gọi → danh sách id nhân sự được phép xem đơn (null = không giới hạn).
+// Tách riêng để nhánh phân trang và nhánh mảng dùng CHUNG một luật — đơn nghỉ có cột LÝ DO
+// (dữ liệu cá nhân) nên lệch luật giữa 2 đường là rò dữ liệu.
+async function leaveScopeEmpIds(req: Request, warehouse_id?: string): Promise<string[] | null | 'FORBIDDEN'> {
+  const uL = userOf(req)
+  if (uL.is_superadmin === true || uL.warehouse_scope === 'NATIONAL') return null
+  const myWhs = (uL.warehouse_ids ?? []) as string[]
+  if (warehouse_id && !myWhs.includes(warehouse_id)) return 'FORBIDDEN'
+  const whIds = warehouse_id ? [warehouse_id] : myWhs
+  const access = whIds.length
+    ? await fetchAllRowsParallel(() => supabase.from('UserWarehouseAccess').select('employee_id').in('warehouse_id', whIds).order('id'))
+    : []
+  return [...new Set([...((access ?? []) as { employee_id: string }[]).map(a => a.employee_id), ...(uL.sub ? [uL.sub] : [])])]
+}
+
+// Tab Nghỉ phép — PHÂN TRANG SERVER (?page=). Bộ lọc NGÀY mặc định của trang là CẢ NĂM: đo 28/07
+// với 6.001 đơn = 3.812KB, sát trần 4,5MB của Vercel ⇒ công ty vài nghìn người là vượt trần ngay
+// ở màn hình mặc định. Hàng rào `rowCapForBytes` chặn đúng nhưng lại chặn chính màn hình đó.
+// Lọc CHỨC DANH cũng xuống SQL (trước lọc client = lọc trên đúng 1 trang, 4 ô tổng cũng sai).
+async function listLeavesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string | undefined>
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(q.page_size ?? '100'), 10) || 100))
+  const scope = await leaveScopeEmpIds(req, q.warehouse_id)
+  if (scope === 'FORBIDDEN') return fail(res, 403, 'FORBIDDEN', 'Ngoài phạm vi kho được giao')
+
+  const { data, error } = await supabase.rpc('hr_leaves_page', {
+    p_scope_emp_ids: scope,
+    p_warehouse: q.warehouse_id || null,
+    p_dept:      q.department_id || null,
+    p_employee:  q.employee_id || null,
+    p_jt_name:   q.jt || null,
+    p_status:    q.status || null,
+    p_from:      q.date_from || null,
+    p_to:        q.date_to || null,
+    p_offset:    (pageNum - 1) * pageSize,
+    p_limit:     pageSize,
+  })
+  // Timeout (statement_timeout 8s CỐ ĐỊNH của role PostgREST) → 400 CÓ HƯỚNG DẪN thu hẹp khoảng ngày
+  if (error) return isQueryTimeout(error) ? fail(res, 400, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG) : fail(res, 500, 'DB_ERROR', error.message)
+  const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number; pending?: number; approved?: number; rejected?: number }
+  const ids = p.ids ?? []
+  const meta = {
+    total: p.total ?? 0, pending: p.pending ?? 0, approved: p.approved ?? 0, rejected: p.rejected ?? 0,
+    page: pageNum, page_size: pageSize,
+  }
+  if (!ids.length) return ok(res, { items: [], ...meta })
+  // RPC trả THẲNG rows + employee embed (migration 20260729) ⇒ 1 request thay vì 4
+  // (trước: nạp LeaveRequest chunk + attachEmployees = Employee + JobTitle).
+  if (p.rows) return ok(res, { items: p.rows, ...meta })
+  // Nhánh dự phòng cửa sổ triển khai (code mới chạy trước khi migration được apply)
+  const rows = await fetchAllByIdChunks(ids, chunk =>
+    supabase.from('LeaveRequest').select(LEAVE_SELECT).in('id', chunk)) as { id: string; employee_id: string }[]
+  const withEmp = await attachEmployees(rows)
+  // `.in()` không giữ thứ tự → sắp lại theo thứ tự RPC đã trả (date_from desc, id)
+  const byId = new Map(withEmp.map(r => [(r as { id: string }).id, r]))
+  return ok(res, { items: ids.map(id => byId.get(id)).filter(Boolean), ...meta })
+}
+
 export async function listLeaves(req: Request, res: Response) {
   try {
+    if (req.query.page) return await listLeavesPaged(req, res)
     const { warehouse_id, department_id, employee_id, status, date_from, date_to, to_approve, direct } = req.query as Record<string, string>
+    // SCOPE KHO (RULE user): chỉ thấy đơn của NV thuộc kho được giao + đơn của chính mình.
+    // Thiếu lớp này thì ai có `leave.view` (10/19 chức danh) đọc được đơn nghỉ + LÝ DO của toàn công ty
+    // (verify runtime 26/07 đã rò thật). Superadmin / NATIONAL → không giới hạn.
+    const sc = await leaveScopeEmpIds(req, warehouse_id)
+    if (sc === 'FORBIDDEN') return fail(res, 'Ngoài phạm vi kho được giao', 403)
+    const scopeEmpIds: string[] | null = sc
     const buildQuery = () => {
       let q = supabase.from('LeaveRequest').select(LEAVE_SELECT).order('date_from', { ascending: false })
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
@@ -168,17 +235,20 @@ export async function listLeaves(req: Request, res: Response) {
       if (date_from)    q = q.gte('date_to', date_from)
       return q
     }
-    const PAGE = 1000
-    const data: unknown[] = []
-    for (let page = 0; ; page++) {
-      const { data: batch, error } = await buildQuery().range(page * PAGE, page * PAGE + PAGE - 1)
-      if (error) return fail(res, error.message)
-      const arr = batch ?? []
-      data.push(...arr)
-      if (arr.length < PAGE) break
-    }
+    // Trần dòng: FE render toàn bộ đơn nghỉ ở client → vượt trần thì BÁO RÕ để user thu hẹp,
+    // KHÔNG cắt âm thầm (luật CLAUDE.md).
+    // Trần tính theo BYTE, không theo số dòng: đo 28/07 dòng đơn nghỉ ≈ 650 B ⇒ trần cũ 10.000
+    // dòng ≈ 6,2MB, tức VƯỢT trần 4,5MB của Vercel TRƯỚC KHI hàng rào kịp chặn (user chỉ thấy
+    // trang lỗi trắng, không thấy câu "hãy thu hẹp khoảng ngày" mà ta cố tình viết ra).
+    const CAP = rowCapForBytes(650)
+    const { rows: data, truncated } = await fetchUpTo(buildQuery, CAP)
+    if (truncated) return fail(res, 400, 'RANGE_TOO_WIDE', LIST_TOO_LARGE_MSG(CAP))
 
     let rows = (data ?? []) as { employee_id: string; [k: string]: unknown }[]
+    if (scopeEmpIds !== null) {
+      const allow = new Set(scopeEmpIds)
+      rows = rows.filter(r => allow.has(r.employee_id))
+    }
     let withEmp = await attachEmployees(rows)
     if (department_id) {
       withEmp = withEmp.filter(r => (r.employee as { department_id?: string } | null)?.department_id === department_id)
@@ -215,7 +285,7 @@ export async function createLeave(req: Request, res: Response) {
       employee_id: empId,
       warehouse_id: warehouse_id || null,
       date_from, date_to,
-      leave_type: leave_type || 'ANNUAL',
+      leave_type: isLeaveType(leave_type) ? leave_type : DEFAULT_LEAVE_TYPE,
       reason: reason || null,
       status: 'PENDING',
       created_at: now, updated_at: now,
@@ -250,7 +320,12 @@ export async function updateLeave(req: Request, res: Response) {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userOf(req).name || null }
     if (date_from  !== undefined) updates.date_from  = date_from
     if (date_to    !== undefined) updates.date_to    = date_to
-    if (leave_type !== undefined) updates.leave_type = leave_type
+    if (leave_type !== undefined) {
+      // Sổ loại nghỉ là DANH SÁCH ĐÓNG — gọi thẳng API không được ghi giá trị ngoài sổ
+      if (!isLeaveType(leave_type))
+        return fail(res, `Loại nghỉ không hợp lệ (chỉ nhận: ${LEAVE_TYPE_VALUES.join(', ')})`, 400)
+      updates.leave_type = leave_type
+    }
     if (reason     !== undefined) updates.reason     = reason || null
     const { data, error } = await supabase.from('LeaveRequest').update(updates).eq('id', id).select(LEAVE_SELECT).single()
     if (error) return fail(res, error.message)
@@ -273,8 +348,8 @@ export async function decideLeave(req: Request, res: Response) {
     if (status !== 'APPROVED' && status !== 'REJECTED') return fail(res, 'status phải là APPROVED hoặc REJECTED', 400)
     const u = userOf(req)
 
-    // chỉ cấp trên trực tiếp (theo chức danh) + chung kho, hoặc Admin
-    if (u.name !== 'Admin') {
+    // chỉ cấp trên trực tiếp (theo chức danh) + chung kho, hoặc superadmin
+    if (u.is_superadmin !== true) {
       const { data: lv } = await supabase.from('LeaveRequest').select('employee_id').eq('id', id).maybeSingle()
       const empId = (lv as { employee_id: string } | null)?.employee_id
       if (!empId) return fail(res, 'Không tìm thấy đơn', 404)

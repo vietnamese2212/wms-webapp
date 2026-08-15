@@ -7,6 +7,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -22,7 +23,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import {
-  useDepartments, useJobTitles, useEmployeeRecords,
+  useDepartments, useJobTitles, useEmployeesPaged,
   useCreateEmployee, useUpdateEmployee, useDeleteEmployee, useRestoreEmployee, useWarehouses, useWarehouseTypes,
   useCreateDepartment, useUpdateDepartment,
   useCreateJobTitle, useUpdateJobTitle,
@@ -188,7 +189,7 @@ function ConfirmDeleteDialog({ emp, open, onClose }: { emp: EmployeeRecord; open
 function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null; open: boolean; onClose: () => void }) {
   const isEdit = !!emp
   const me = useAuthStore(s => s.user)
-  const fullEdit = isAdmin(me?.name)          // chỉ Admin được sửa toàn bộ hồ sơ
+  const fullEdit = isAdmin(me)          // chỉ Admin được sửa toàn bộ hồ sơ
   const skillOnly = isEdit && !fullEdit        // non-admin: chỉ chỉnh Kỹ năng / Vị trí
 
   const { data: departments = [] } = useDepartments()
@@ -214,13 +215,19 @@ function EmployeeFormDialog({ emp, open, onClose }: { emp: EmployeeRecord | null
   const [nccId,    setNccId]    = useState(emp?.ncc_id ?? '')
   const [driverVehicleId, setDriverVehicleId] = useState<string>('')
 
-  const selectedDeptName = departments.find(d => d.id === deptId)?.name ?? ''
-  const selectedJtName   = jobTitles.find(jt => jt.id === jobTitleId)?.name ?? ''
-  const isDriverRole     = selectedDeptName === 'Đơn vị vận tải' && selectedJtName === 'Lái xe'
-  const isDispatcherRole = selectedDeptName === 'Đơn vị vận tải' && !!jobTitleId && !isDriverRole
+  // Vai trò đọc theo CỜ của danh mục (JobTitle.is_driver · Department.is_carrier), KHÔNG so tên
+  // tiếng Việt — đổi tên chức danh/phòng ban từng làm luồng gán xe biến mất âm thầm (audit 14/08).
+  const selectedDept     = departments.find(d => d.id === deptId)
+  const selectedJt       = jobTitles.find(jt => jt.id === jobTitleId)
+  const isCarrierDept    = selectedDept?.is_carrier === true
+  const isDriverRole     = isCarrierDept && selectedJt?.is_driver === true
+  const isDispatcherRole = isCarrierDept && !!jobTitleId && !isDriverRole
 
+  // Chỉ gọi khi thực sự cần gán xe cho tài khoản Lái xe — trước đây các trường hợp còn lại
+  // truyền params `undefined` nên vẫn tải TOÀN BỘ đội xe (953 xe ≈ 439KB) mà không dùng đến.
   const { data: allVehicles = [] } = useTmsVehicles(
-    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined
+    isDriverRole && nccId && !isEdit ? { ncc_id: nccId, is_active: 'true', unassigned: 'true' } : undefined,
+    !!(isDriverRole && nccId && !isEdit),
   )
   const selectedVehicle = isDriverRole && !isEdit ? (allVehicles as TmsVehicle[]).find(v => v.id === driverVehicleId) ?? null : null
 
@@ -542,6 +549,7 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
   const [name, setName] = useState(dept?.name ?? '')
   const [code, setCode] = useState(dept?.code ?? '')
   const [isActive, setIsActive] = useState(dept?.is_active ?? true)
+  const [isCarrier, setIsCarrier] = useState(dept?.is_carrier ?? false)
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateDepartment()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateDepartment()
@@ -552,9 +560,9 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 
   function handleSubmit() {
     if (isEdit) {
-      update({ id: dept.id, name, code, is_active: isActive }, { onSuccess: onClose })
+      update({ id: dept.id, name, code, is_active: isActive, is_carrier: isCarrier }, { onSuccess: onClose })
     } else {
-      create({ name, code }, { onSuccess: onClose })
+      create({ name, code, is_carrier: isCarrier }, { onSuccess: onClose })
     }
   }
 
@@ -581,6 +589,16 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
             <Label className="text-xs">Mã *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="KHO, BV, QA…" />
           </div>
+          {/* Cờ vai trò — app đọc cờ này thay vì so tên phòng ban (đổi tên không làm hỏng luồng) */}
+          <div className="flex items-start gap-2">
+            <input id="dept-carrier" type="checkbox" checked={isCarrier}
+              onChange={e => setIsCarrier(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="dept-carrier" className="text-sm cursor-pointer leading-snug">
+              Là đơn vị vận tải (nhà xe)
+              <span className="block text-[11px] font-normal text-slate-500">Tài khoản thuộc phòng ban này đi luồng nhà xe: gán xe cho tài xế, xem lịch xe của mình.</span>
+            </Label>
+          </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="dept-active" type="checkbox" checked={isActive}
@@ -599,13 +617,14 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: boolean; onClose: () => void }) {
   const isEdit = !!jt
   const me = useAuthStore(s => s.user)
-  const fullEdit = isAdmin(me?.name)            // chỉ Admin sửa tên/phòng ban/phân quyền
+  const fullEdit = isAdmin(me)            // chỉ Admin sửa tên/phòng ban/phân quyền
   const skillOnly = isEdit && !fullEdit          // non-admin: chỉ Danh mục Vị trí/Skill (chức danh cấp dưới)
   const { data: departments = [] } = useDepartments()
 
   const [name,       setName]       = useState(jt?.name          ?? '')
   const [deptId,     setDeptId]     = useState(jt?.department_id ?? '')
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
+  const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateJobTitle()
@@ -633,7 +652,7 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
     const cleanPerms = Object.fromEntries(
       Object.entries(modulePerms).filter((e): e is [string, string[]] => e[1] !== undefined)
     )
-    const payload = { name, department_id: deptId, module_permissions: cleanPerms }
+    const payload = { name, department_id: deptId, module_permissions: cleanPerms, is_driver: isDriver }
     if (isEdit) {
       update({ id: jt.id, ...payload, is_active: isActive }, { onSuccess: onClose })
     } else {
@@ -783,6 +802,16 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             </div>
           )}
 
+          {/* Cờ vai trò — thay việc so tên 'Lái xe'; đổi tên chức danh không làm mất luồng tài xế */}
+          <div className="flex items-start gap-2">
+            <input id="jt-driver" type="checkbox" checked={isDriver}
+              onChange={e => setIsDriver(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 mt-0.5" />
+            <Label htmlFor="jt-driver" className="text-sm cursor-pointer leading-snug">
+              Là chức danh tài xế
+              <span className="block text-[11px] font-normal text-slate-500">Tài khoản mang chức danh này được gán xe và mở màn hình tài xế (chỉ có tác dụng khi phòng ban là đơn vị vận tải).</span>
+            </Label>
+          </div>
           {isEdit && (
             <div className="flex items-center gap-2">
               <input id="jt-active" type="checkbox" checked={isActive}
@@ -808,10 +837,11 @@ export default function UserManagement() {
   const canDeleteEmp = can(perms, 'user_admin', 'delete')
   // Cấu trúc phòng ban/chức danh & phân quyền: chỉ Admin. Danh mục Vị trí/Skill: Admin hoặc người có
   // work_skill.manage cho chức danh CẤP DƯỚI mình (theo sơ đồ chức danh).
-  const isAdminUser    = isAdmin(user?.name)
+  const isAdminUser    = isAdmin(user)
   // "Quản lý skill" = có bất kỳ quyền ghi danh mục Vị trí/Skill (create/edit/delete)
   const canManageSkill = can(perms, 'work_skill', 'create') || can(perms, 'work_skill', 'edit') || can(perms, 'work_skill', 'delete')
   const { data: allJts = [] } = useJobTitles()
+  const { data: allWarehouses = [] } = useWarehouses()   // ô chọn Kho lấy từ danh mục gốc
   const subordinateJtIds = (() => {
     const set = new Set<string>()
     const myJt = user?.job_title_id
@@ -827,7 +857,7 @@ export default function UserManagement() {
   const ua = useWmsFilterStore(s => s.userAdmin)
   const setUserAdmin = useWmsFilterStore(s => s.setUserAdmin)
   const { search, deptId: filterDept, jtId: filterJt, warehouseId: filterWh, status: statusFilter, jtDept: filterDeptJt } = ua
-  const setSearch       = (v: string) => setUserAdmin({ search: v })
+  const setSearch       = (v: string) => setUserAdmin({ search: v, page: 1 })
   const setFilterDept   = (v: string) => setUserAdmin({ deptId: v })
   const setFilterJt     = (v: string) => setUserAdmin({ jtId: v })
   const setFilterWh     = (v: string) => setUserAdmin({ warehouseId: v })
@@ -861,46 +891,44 @@ export default function UserManagement() {
   const { data: jobTitles = [] }   = useJobTitles(filterDeptJt === '__all__' ? undefined : filterDeptJt)
   // Tab Chức danh: chỉ hiện chức danh được phép sửa (Admin: tất cả · non-admin: chỉ cấp dưới mình)
   const visibleJobTitles = jobTitles.filter(jt => canEditJt(jt.id))
-  const { data: rawEmployees = [], isLoading, isError, error } = useEmployeeRecords({
-    department_id: filterDept === '__all__' ? undefined : filterDept,
-    search: search || undefined,
+  // Phân trang SERVER + MỌI bộ lọc xuống server. Đo thật 28/07: trả cả bảng thì 3.000 nhân sự
+  // = 2.495KB/lần gọi, và lọc trên tập đã tải sau phân trang = lọc trong 1 trang (ra thiếu).
+  const { data: empPage, isLoading, isError, error } = useEmployeesPaged({
+    department_id:   filterDept === '__all__' ? undefined : filterDept,
+    job_title_id:    filterJt   === '__all__' ? undefined : filterJt,
+    warehouse_id:    filterWh   === '__all__' ? undefined : filterWh,
+    search:          search || undefined,
     include_deleted: statusFilter !== 'active' ? true : undefined,
+    status:          statusFilter,
+    page:            ua.page,
+    page_size:       ua.pageSize,
   })
-  // Options 2 filter dẫn xuất từ DS nhân viên đang tải (đã lọc Phòng ban + phạm vi) → tự liên kết
-  const jtOptions = (() => {
-    const m = new Map<string, { id: string; label: string; sub?: string }>()
-    for (const e of rawEmployees) if (e.job_title_id) m.set(e.job_title_id, { id: e.job_title_id, label: e.job_title?.name ?? '—', sub: e.dept?.name })
-    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
-  })()
-  const whOptions = (() => {
-    const m = new Map<string, { id: string; label: string; sub?: string }>()
-    for (const e of rawEmployees) for (const wa of (e.warehouse_access ?? [])) m.set(wa.warehouse_id, { id: wa.warehouse_id, label: wa.warehouse?.name ?? wa.warehouse_id, sub: wa.warehouse?.code })
-    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
-  })()
-  // Lọc thêm theo Chức danh + Kho (multi-select, client-side)
-  const matchExtra = (e: EmployeeRecord) =>
-    (filterJt === '__all__' || e.job_title_id === filterJt) &&
-    (filterWh === '__all__' || (e.warehouse_access ?? []).some(wa => wa.warehouse_id === filterWh))
-  const scopedRaw = rawEmployees.filter(matchExtra)
-  const employees = statusFilter === 'hidden'
-    ? scopedRaw.filter(e => !!e.deleted_at)
-    : scopedRaw
+  const employees   = empPage?.rows ?? []
+  const empTotal    = empPage?.total ?? 0
+  const empPages    = Math.max(1, Math.ceil(empTotal / ua.pageSize))
+  // Ô chọn lấy từ DANH MỤC gốc (chức danh / kho), KHÔNG dẫn xuất từ trang đang xem — sau khi
+  // phân trang thì tập đang tải chỉ còn 100 dòng, dẫn xuất ra là mất phần lớn lựa chọn.
+  const jtOptions = allJts.map(j => ({ id: j.id, label: j.name }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  const whOptions = (allWarehouses as { id: string; name: string; code?: string }[])
+    .map(w => ({ id: w.id, label: w.name, sub: w.code }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 
   // Filter danh sách nhân viên — FilterBar chuẩn (Kho · Phòng ban · Chức danh · Tình trạng)
   const empFilterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho',
-      value: filterWh === '__all__' ? '' : filterWh, onChange: v => setFilterWh(v || '__all__'),
+      value: filterWh === '__all__' ? '' : filterWh, onChange: v => { setFilterWh(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: whOptions.map(o => ({ value: o.id, label: o.label })) },
     { key: 'dept', label: 'Phòng ban', type: 'single', allLabel: 'Tất cả phòng ban',
       value: filterDept === '__all__' ? '' : filterDept,
-      onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__') },
+      onChange: v => { setFilterDept(v || '__all__'); setFilterJt('__all__'); setFilterWh('__all__'); setUserAdmin({ page: 1 }) },
       options: departments.map(d => ({ value: d.id, label: d.name })) },
     { key: 'jt', label: 'Chức danh', type: 'single', allLabel: 'Tất cả chức danh',
-      value: filterJt === '__all__' ? '' : filterJt, onChange: v => setFilterJt(v || '__all__'),
+      value: filterJt === '__all__' ? '' : filterJt, onChange: v => { setFilterJt(v || '__all__'); setUserAdmin({ page: 1 }) },
       options: jtOptions.map(o => ({ value: o.id, label: o.label })) },
     { key: 'status', label: 'Tình trạng', type: 'single', allLabel: 'Đang hoạt động',
       value: statusFilter === 'active' ? '' : statusFilter,
-      onChange: v => setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'),
+      onChange: v => { setStatusFilter((v || 'active') as 'active' | 'hidden' | 'all'); setUserAdmin({ page: 1 }) },
       options: [{ value: 'hidden', label: 'Đang ẩn' }, { value: 'all', label: 'Toàn bộ' }] },
   ]
 
@@ -958,10 +986,11 @@ export default function UserManagement() {
           </div>
           <FilterBar defs={empFilterDefs} className="shrink-0 hidden sm:flex" />
 
+          {/* 3 ô đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm ở FE là đếm trang đang xem */}
           <SummaryBand compact className="shrink-0 rounded-lg" tiles={[
-            { label: 'Đang hoạt động', value: scopedRaw.filter(e => !e.deleted_at && e.is_active).length, accent: true },
-            { label: 'Tạm dừng', value: scopedRaw.filter(e => !e.deleted_at && !e.is_active).length },
-            { label: 'Đã ẩn', value: scopedRaw.filter(e => !!e.deleted_at).length },
+            { label: 'Đang hoạt động', value: empPage?.active ?? 0, accent: true },
+            { label: 'Tạm dừng', value: empPage?.paused ?? 0 },
+            { label: 'Đã ẩn', value: empPage?.hidden ?? 0 },
           ]} />
 
           {isError && (
@@ -1092,8 +1121,11 @@ export default function UserManagement() {
                       })}
                     </TableBody>
                   </Table>
+                  <PagerNav page={ua.page} totalPages={empPages} onPage={p => { setUserAdmin({ page: p }); setSelectedEmp(null) }} />
                 </div>
               )}
+              <ListFooter page={ua.page} pageSize={ua.pageSize} total={empTotal} unit="nhân viên"
+                onPageSize={n => setUserAdmin({ pageSize: n, page: 1 })} />
             </Card>
             {selectedEmp && (
               <Card className="w-56 shrink-0 p-3 space-y-2 text-xs">

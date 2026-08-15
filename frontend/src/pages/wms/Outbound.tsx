@@ -1,14 +1,20 @@
-import { useRef, useState, useMemo, useEffect } from 'react'
+import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays } from 'lucide-react'
+import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Trash2, PenSquare, Rows3, AlignJustify, ChevronDown, Building2, PackageCheck, ArrowRight, Download, Loader2, CalendarDays, Lock } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
+import { ModalOverlay } from '@/components/shared/ModalOverlay'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -16,7 +22,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useGDOs, useUploadGDOExcel, useUploadVl06o, useUploadKhvc, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundPalletLookup, useOutboundShortages, UPLOAD_TOO_LARGE_MSG } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG, type UploadPreflight } from '@/api/hooks'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -25,17 +31,18 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
-import { omniMatch } from '@/utils/omniSearch'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
+import { tripInert } from '@/utils/outboundInert'
+import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
 const normalizeForMatch = (s: string) =>
   s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase().trim()
@@ -83,12 +90,8 @@ function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
   return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
 }
 
-function naturalSortCode(a: string, b: string): number {
-  const numA = parseInt(a.match(/(\d+)$/)?.[1] ?? '0', 10)
-  const numB = parseInt(b.match(/(\d+)$/)?.[1] ?? '0', 10)
-  if (numA !== numB) return numA - numB
-  return a.localeCompare(b)
-}
+// (naturalSortCode đã chuyển xuống SQL — outbound_gdos_page sắp theo số ở CUỐI mã chuyến;
+//  sort ở client chỉ tác dụng trong trang đang xem nên bỏ hẳn.)
 
 function fTime(ts: string | null | undefined): string {
   if (!ts) return '—'
@@ -115,7 +118,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
   { id: 'plate',     label: 'Biển số xe',    w: 110 },
-  { id: 'cartons',   label: 'Tổng thùng',    w: 118, align: 'right' },
+  { id: 'cartons',   label: 'Tổng SL',       w: 118, align: 'right' },   // cell (GdoQty) tự ghi đơn vị — chuyến nhiều mã khác ĐVT thì là SL quy đổi
   { id: 'cartons_qr', label: 'Tổng (QR)',    w: 118, align: 'right' },
   { id: 'cartons_noqr', label: 'Tổng (k QR)', w: 118, align: 'right' },
   { id: 'loose',     label: 'Tổng nhặt lẻ',  w: 118, align: 'right' },
@@ -250,18 +253,9 @@ export default function Outbound() {
   const [postUploadLoading, setPostUploadLoading] = useState(false)
   const [showCreate,  setShowCreate]  = useState(false)
   const [showUpload,  setShowUpload]  = useState(false)
-  // ĐỢT 3: "Up kế hoạch VC" — 2 bước (VL06O raw → KHVC sinh chuyến)
-  const [showVcUpload, setShowVcUpload] = useState(false)
-  const vl06oRef = useRef<HTMLInputElement>(null)
-  const khvcRef  = useRef<HTMLInputElement>(null)
-  const [vl06oOk,  setVl06oOk]  = useState<string | null>(null)
-  const [vl06oErr, setVl06oErr] = useState<string | null>(null)
-  const [vl06oUnitErrs, setVl06oUnitErrs] = useState<{ material_code: string; material_name: string; kind: string; file_value: string; system_value: string }[] | null>(null)
-  const [vcOk,     setVcOk]     = useState<string | null>(null)
-  const [vcErr,    setVcErr]    = useState<string | null>(null)
-  // v2.7 — cảnh báo TRƯỚC khi ghi (preflight): giữ file chờ xác nhận + số liệu cảnh báo
-  const [vl06oWarn, setVl06oWarn] = useState<{ file: File; dos_on_trips: number; trips_in_progress: number; scanned_items: number } | null>(null)
-  const [khvcWarn,  setKhvcWarn]  = useState<{ file: File; trips: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced: string | null; missing_dos: number; missing_dos_sample: string[]; cross_trip_dos: number; cross_trip_sample: string[] } | null>(null)
+  // KIỂM TRƯỚC KHI GHI (chuẩn 29/07) — LUÔN kiểm rồi hiện báo cáo 80% màn hình chờ Xác nhận.
+  // (VL06O + KH điều vận đã chuyển sang trang Dữ liệu bên ngoài — xem external/VcUploadDialog.)
+  const [pf, setPf] = useState<{ file: File; report: UploadPreflight } | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('outbound_density') !== 'comfortable')
   const [nppOpen, setNppOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -304,43 +298,60 @@ export default function Outbound() {
     }
   }, [user?.warehouse_id]) // eslint-disable-line
 
-  const { data: gdos = [], isLoading, isFetching } = useGDOs({
+  const page     = f.page     || 1     // state persist cũ chưa có field → fallback
+  const pageSize = f.pageSize || 200
+  const debSearch = useDebouncedValue(f.search, 250)
+
+  // PHÂN TRANG SERVER (28/07): mọi filter xuống SQL; list chỉ tải 1 trang; tổng SummaryBand +
+  // phân bổ NPP = RPC tính trên TOÀN BỘ kết quả lọc (cộng trên trang đang xem là SỐ SAI).
+  const listParams = {
+    warehouse_id:    f.warehouseId || undefined,
+    search:          debSearch || undefined,
+    date_from:       f.dateFrom || undefined,
+    date_to:         f.dateTo   || undefined,
+    warehouse_types: f.filterWarehouseTypes ?? [],
+    export_types:    f.filterTypes          ?? [],
+    dvvts:           f.filterDvvts          ?? [],
+    npps:            f.filterNpps           ?? [],
+    material_codes:  f.filterMaterials      ?? [],
+    status_labels:   f.filterStatuses       ?? [],
+  }
+  const { data: pageData, isLoading, isFetching, error: listErr } = useGDOsPaged({ ...listParams, page, limit: pageSize })
+  const gdos       = useMemo(() => pageData?.items ?? [], [pageData])
+  const total      = pageData?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const { data: summaryData } = useOutboundSummary(listParams)
+  const { data: facets }      = useOutboundFacets({
     warehouse_id: f.warehouseId || undefined,
-    // search lọc client-side (omni đa cột) — không gửi lên BE để không bị thu hẹp theo mỗi group_code
     date_from: f.dateFrom || undefined,
     date_to:   f.dateTo   || undefined,
   })
+
+  // Bộ lọc co lại khi đang đứng trang sau → kéo về trang cuối còn dữ liệu
+  useEffect(() => {
+    if (!isLoading && total > 0 && page > totalPages) setOutbound({ page: totalPages })
+  }, [isLoading, total, page, totalPages, setOutbound])
   // Prefetch chi tiết chuyến ĐANG CHẠY khi có mạng → offline quét được cả chuyến chưa bấm vào
   usePrefetchGdos(gdos)
-  // Prefetch danh mục mã hàng (nền) cho user có quyền tạo/sửa → mở form Thêm/Sửa lần đầu đã sẵn.
-  // CHỈ chạy SAU khi danh sách chuyến tải xong (!isLoading) để 1.37MB mã hàng KHÔNG cạnh tranh,
-  // giữ danh sách hiện nhanh. Chung cache key với useMaterials() trong form; user chỉ-xem không tải.
-  useMaterials(undefined, !isLoading && (can(perms, 'outbound', 'create') || can(perms, 'outbound', 'edit')))
+  // (BỎ prefetch cả danh mục mã hàng — ô chọn mã trong form nay TÌM TRÊN SERVER theo từ khóa,
+  //  không cần danh mục nằm sẵn trong trình duyệt. Trước đây mở trang Xuất kho là tải ~2,5MB.)
   const { mutate: uploadExcel, isPending: uploading } = useUploadGDOExcel()
-  const { mutate: uploadVl06o, isPending: vl06oUploading } = useUploadVl06o()
-  const { mutate: uploadKhvc,  isPending: khvcUploading }  = useUploadKhvc()
   const { mutate: assignGDO } = useAssignGDO()
   const { mutateAsync: patchGDOAsync } = usePatchGDO()
   // Tem pallet: quét/gõ mã tem ở ô tìm kiếm → ra chuyến đã xuất pallet đó
-  const { data: palletGdoIds = [] } = useOutboundPalletLookup(f.search)
-  const palletGdoSet = useMemo(() => new Set(palletGdoIds), [palletGdoIds])
+  // (Tra tem pallet đã chuyển xuống BE — getGdoListCtx resolve mã tem → tập chuyến, nên
+  //  ô tìm kiếm hoạt động trên TOÀN BỘ dữ liệu chứ không chỉ trang đang xem.)
 
   useEffect(() => {
     if (postUploadLoading && !isFetching) setPostUploadLoading(false)
   }, [isFetching, postUploadLoading])
 
-  const typeOptions       = useMemo(() => [...new Set(gdos.map(g => g.export_type).filter(Boolean))] as string[], [gdos])
-  const dvvtOptions       = useMemo(() => [...new Set(gdos.map(g => g.dvvt).filter(Boolean))] as string[], [gdos])
-  const nppOptions        = useMemo(() => [...new Set(gdos.flatMap(g => g.distributor_names ?? []).filter(Boolean))], [gdos])
-  const warehouseTypeOpts = useMemo(() => [...new Set(gdos.map(g => g.warehouse_type).filter(Boolean))] as string[], [gdos])
-  const materialOptions   = useMemo(() => {
-    const seen = new Map<string, string>()  // code → label
-    for (const g of gdos) for (const b of g.item_breakdown ?? []) {
-      if (!seen.has(b.material_code))
-        seen.set(b.material_code, b.material_name ? `${b.material_code} · ${b.material_name}` : b.material_code)
-    }
-    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([value, label]) => ({ value, label }))
-  }, [gdos])
+  // Option filter — DISTINCT dưới DB (RPC facets), không gom từ dòng đã tải (chỉ có 1 trang)
+  const typeOptions       = facets?.export_types    ?? []
+  const dvvtOptions       = facets?.dvvts           ?? []
+  const nppOptions        = facets?.npps            ?? []
+  const warehouseTypeOpts = facets?.warehouse_types ?? []
+  const materialOptions   = facets?.materials       ?? []
 
   const filterTypes          = f.filterTypes          ?? []
   const filterDvvts          = f.filterDvvts          ?? []
@@ -349,42 +360,14 @@ export default function Outbound() {
   const filterWarehouseTypes = f.filterWarehouseTypes ?? []
   const filterStatuses       = f.filterStatuses       ?? []
 
-  const statusOptions = useMemo(() => {
-    const labels = new Set<string>()
-    for (const g of gdos) { const { label } = gdoStatusInfo(g); if (label !== '—') labels.add(label) }
-    return [...labels].map(l => ({ value: l, label: l }))
-  }, [gdos])
+  const statusOptions = useMemo(() =>
+    (facets?.status_labels ?? []).map(l => ({ value: l, label: l })), [facets])
 
-  const filtered = useMemo(() => gdos.filter(g => {
-    if (filterTypes.length          > 0 && !filterTypes.includes(g.export_type ?? ''))                              return false
-    if (filterDvvts.length          > 0 && !filterDvvts.includes(g.dvvt ?? ''))                                     return false
-    if (filterNpps.length           > 0 && !(g.distributor_names ?? []).some(n => filterNpps.includes(n)))          return false
-    if (filterMaterials.length      > 0 && !(g.item_breakdown ?? []).some(b => filterMaterials.includes(b.material_code))) return false
-    if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(g.warehouse_type ?? ''))                  return false
-    if (filterStatuses.length       > 0 && !filterStatuses.includes(gdoStatusInfo(g).label))                        return false
-    // Search khớp cả mã/tên hàng (item_breakdown) → gõ mã hàng ra đơn xuất chứa mã đó.
-    // + tem pallet: chuyến khớp nếu id nằm trong kết quả tra tem (palletGdoSet).
-    if (!omniMatch([g.group_code, g.export_type, g.dvvt, g.warehouse_type, gdoStatusInfo(g).label,
-      ...(g.distributor_names ?? []),
-      ...(g.item_breakdown ?? []).flatMap(b => [b.material_code, b.material_name])], f.search)
-      && !((f.search ?? '').trim() && palletGdoSet.has(g.id))) return false
-    return true
-  }), [gdos, f.search, filterTypes, filterDvvts, filterNpps, filterMaterials, filterWarehouseTypes, filterStatuses, palletGdoSet])
-
-  const sorted = useMemo(() => [...filtered].sort((a, b) => {
-    if (a.delivery_date !== b.delivery_date)
-      return b.delivery_date.localeCompare(a.delivery_date)
-    // Gom các chuyến chung 1 xe liền nhau (để nối bracket); chuyến có nhóm xếp trước
-    const keyA = outboundGroupKey(a) ?? '', keyB = outboundGroupKey(b) ?? ''
-    if (keyA !== keyB) {
-      if (!keyA && keyB) return 1
-      if (keyA && !keyB) return -1
-      return keyA.localeCompare(keyB)
-    }
-    const ta = a.export_type ?? '', tb = b.export_type ?? ''
-    if (ta !== tb) return tb.localeCompare(ta)
-    return naturalSortCode(a.group_code, b.group_code)
-  }), [filtered])
+  // Lọc + sắp xếp đã chuyển XUỐNG SERVER (RPC outbound_gdos_page giữ nguyên thứ tự cũ:
+  // ngày giao DESC → nhóm cùng xe → export_type DESC → naturalSortCode).
+  // KHÔNG lọc/sort lại ở client — làm vậy chỉ tác dụng trong trang đang xem = sai âm thầm.
+  const filtered = gdos
+  const sorted   = gdos
 
   // Vị trí bracket cho mỗi chuyến trong nhóm "cùng xe" (cùng ngày + cùng outboundGroupKey)
   const bracketPositions = useMemo(() => {
@@ -404,31 +387,31 @@ export default function Outbound() {
     return pos
   }, [sorted])
 
-  const summary = useMemo(() => ({
-    count:     sorted.length,
-    cartons:   sorted.reduce((s, g) => s + (g.total_cartons ?? 0), 0),
-    cartonsQr:   sorted.reduce((s, g) => s + ((g.total_cartons ?? 0) - (g.total_cartons_noqr ?? 0)), 0),
-    cartonsNoqr: sorted.reduce((s, g) => s + (g.total_cartons_noqr ?? 0), 0),
-    pallets:   sorted.reduce((s, g) => s + (g.total_pallets ?? 0), 0),
-    completed: sorted.filter(g => g.status === 'COMPLETED').length,
-  }), [sorted])
+  // Tổng + phân bổ NPP: SQL tính trên TOÀN BỘ kết quả lọc (RPC outbound_gdos_summary).
+  // Cộng trên trang đang xem = tổng của trang 1, SAI mà không báo gì.
+  // too_wide: phạm vi quá rộng → BE không tính tổng (tránh chiếm DB của người khác) → hiện "—".
+  const tooWide = summaryData?.too_wide === true
+  const summary = {
+    count:       summaryData?.count ?? total,
+    cartons:     Number(summaryData?.cartons ?? 0),
+    cartonsQr:   Number(summaryData?.cartons_qr ?? 0),
+    cartonsNoqr: Number(summaryData?.cartons_noqr ?? 0),
+    pallets:     Number(summaryData?.pallets ?? 0),
+    completed:   summaryData?.completed ?? 0,
+  }
+  const fmtTotal = (v: number) =>
+    tooWide ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
 
-  // Phân bổ theo NPP — gom item_breakdown của các chuyến đã lọc; nếu đang lọc mã hàng thì
-  // chỉ tính mã hàng đó (gõ mã hàng → đi những nhà nào, bao nhiêu, tổng). Kiểu expand Inbound.
+  // Phân bổ theo NPP — RPC đã thu hẹp theo mã hàng đang lọc (gõ mã hàng → đi những nhà nào)
   const nppBreakdown = useMemo(() => {
     const map = new Map<string, { npp: string; planned: number; scanned: number }>()
-    for (const g of sorted) for (const b of g.item_breakdown ?? []) {
-      if (filterMaterials.length > 0 && !filterMaterials.includes(b.material_code)) continue
-      const npp = b.distributor_name ?? '(không tên)'
-      const cur = map.get(npp) ?? { npp, planned: 0, scanned: 0 }
-      cur.planned += b.cartons
-      cur.scanned += b.cartons_scanned ?? 0
-      map.set(npp, cur)
+    for (const b of summaryData?.npp_breakdown ?? []) {
+      map.set(b.npp, { npp: b.npp, planned: Number(b.planned), scanned: Number(b.scanned) })
     }
     return [...map.values()]
       .map(r => ({ ...r, remaining: Math.max(0, r.planned - r.scanned) }))
       .sort((a, b) => b.planned - a.planned)
-  }, [sorted, filterMaterials])
+  }, [summaryData])
   const nppTotals = useMemo(() => ({
     planned:   nppBreakdown.reduce((s, r) => s + r.planned, 0),
     scanned:   nppBreakdown.reduce((s, r) => s + r.scanned, 0),
@@ -450,117 +433,31 @@ export default function Outbound() {
     saveWorkbook(wb, 'mau_xuat_kho.xlsx')
   }
 
-  // ─── ĐỢT 3: mẫu VL06O (giữ NGUYÊN tên cột SAP, rút gọn còn cột cần) + mẫu KHVC (tự soạn, gọn) ───
-  function downloadVl06oTemplate() {
-    const headers = ['Delivery', 'Item', 'Ship-to Party', 'Material', 'Item Description',
-      'Delivery Quantity', 'Sales Unit', 'Actual delivery qty', 'Base Unit of Measure',
-      'Name ship-to party', 'Batch', 'Date (%)', 'Ghi chú giao hàng', 'Ghi chú hoá đơn']
-    const ex = ['3000384084', '10', '30000325', '510000306', 'BAVI SCA Có đường 100grx48',
-      40, 'CAR', 1920, 'HOP', 'NPPTRANGHOANG', '', '', '', '']
-    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Data')
-    saveWorkbook(wb, 'mau_vl06o.xlsx')
-  }
-  function downloadKhvcTemplate() {
-    const d = new Date(); d.setDate(d.getDate() + 1)
-    const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
-    const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
-    const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
-    const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
-    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
-    saveWorkbook(wb, 'mau_khvc.xlsx')
-  }
-
-  function handleVl06oChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return
-    e.target.value = ''
-    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVl06oWarn(null)
-    // v2.7: preflight — nếu file chứa DO đã lên chuyến → cảnh báo trước, chờ xác nhận. Lỗi preflight → up thẳng.
-    uploadVl06o({ file, preflight: true }, {
-      onSuccess: (pf: { dos_on_trips?: number; trips_in_progress?: number; scanned_items?: number }) => {
-        if (Number(pf?.dos_on_trips) > 0) setVl06oWarn({ file, dos_on_trips: Number(pf.dos_on_trips), trips_in_progress: Number(pf.trips_in_progress ?? 0), scanned_items: Number(pf.scanned_items ?? 0) })
-        else doVl06oUpload(file)
-      },
-      onError: () => doVl06oUpload(file),
-    })
-  }
-  function doVl06oUpload(file: File) {
-    setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVl06oWarn(null)
-    uploadVl06o({ file }, {
-      onSuccess: (r: { rows: number; deliveries: number; skipped_no_key: number; warning_count: number; warnings: string[] }) => {
-        const parts = [`Lưu ${r.rows} dòng · ${r.deliveries} DO`]
-        if (r.skipped_no_key) parts.push(`bỏ ${r.skipped_no_key} dòng thiếu Delivery/Item`)
-        let msg = parts.join(' · ')
-        if (r.warning_count) msg += `\n⚠ ${r.warning_count} cảnh báo:\n` + r.warnings.map(w => `  • ${w}`).join('\n')
-        setVl06oOk(msg)
-      },
-      onError: (err) => {
-        const ax = err as AxiosError<{ error: { message: string }; unit_errors?: { material_code: string; material_name: string; kind: string; file_value: string; system_value: string }[] }>
-        const data = ax?.response?.data
-        if (data?.unit_errors?.length) setVl06oUnitErrs(data.unit_errors)
-        setVl06oErr(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload VL06O'))
-      },
-    })
-  }
-
-  function handleKhvcChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return
-    e.target.value = ''
-    setVcErr(null); setVcOk(null); setKhvcWarn(null)
-    // v2.7: preflight — ngày này đã có chuyến / DO chưa sẵn sàng → cảnh báo trước. Lỗi preflight → up thẳng.
-    uploadKhvc({ file, preflight: true }, {
-      onSuccess: (pf: { trips?: { total: number; in_progress: number; completed: number; paused: number }; vl06o_last_synced?: string | null; missing_dos?: number; missing_dos_sample?: string[]; cross_trip_dos?: number; cross_trip_sample?: string[] }) => {
-        const trips = pf?.trips ?? { total: 0, in_progress: 0, completed: 0, paused: 0 }
-        if (trips.total > 0 || Number(pf?.missing_dos) > 0 || Number(pf?.cross_trip_dos) > 0)
-          setKhvcWarn({ file, trips, vl06o_last_synced: pf?.vl06o_last_synced ?? null, missing_dos: Number(pf?.missing_dos ?? 0), missing_dos_sample: pf?.missing_dos_sample ?? [], cross_trip_dos: Number(pf?.cross_trip_dos ?? 0), cross_trip_sample: pf?.cross_trip_sample ?? [] })
-        else doKhvcUpload(file)
-      },
-      onError: () => doKhvcUpload(file),
-    })
-  }
-  function doKhvcUpload(file: File) {
-    setVcErr(null); setVcOk(null); setKhvcWarn(null)
-    setPostUploadLoading(true)
-    uploadKhvc({ file }, {
-      onSuccess: (result: { created?: Array<{ created?: boolean; merged?: boolean; skipped?: boolean }> }) => {
-        const items = result.created ?? []
-        const nCreated = items.filter(r => r.created && !r.merged).length
-        const nMerged  = items.filter(r => r.merged).length
-        const nSkipped = items.filter(r => r.skipped).length
-        setVcOk([
-          nCreated > 0 && `Tạo mới ${nCreated} chuyến`,
-          nMerged  > 0 && `Cập nhật ${nMerged} chuyến (PAUSED)`,
-          nSkipped > 0 && `Bỏ qua ${nSkipped} chuyến (đang xuất/đã HT)`,
-        ].filter(Boolean).join(' · ') || 'Không có chuyến mới')
-      },
-      onError: (err) => {
-        setPostUploadLoading(false)
-        const ax = err as AxiosError<{ error: { message: string }; validation_errors?: { group_code: string; errors: string[] }[] }>
-        const data = ax?.response?.data
-        const ve = data?.validation_errors
-        if (ve?.length) {
-          const lines = [data!.error.message, '']
-          for (const { group_code, errors } of ve) { lines.push(`Số xe: ${group_code}`); for (const m of errors) lines.push(`  • ${m}`) }
-          setVcErr(lines.join('\n'))
-        } else {
-          setVcErr(data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload KHVC'))
-        }
-      },
-    })
-  }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
+    setUploadErr(null); setUploadOk(null); setUploadWarn(null); setPf(null)
+    // PHA 1 — kiểm trước, KHÔNG ghi. Lỗi dữ liệu về trong report.errors (BE trả 200 khi preflight).
+    uploadExcel({ file, warehouse_id: user?.warehouse_id || undefined, preflight: true }, {
+      onSuccess: (r: UploadPreflight) => setPf({ file, report: r }),
+      onError: (err) => {
+        const ax = err as AxiosError<{ error?: { message?: string } }>
+        setUploadErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi kiểm file'))
+      },
+    })
+  }
+
+  // PHA 2 — user đã xem báo cáo và bấm Xác nhận → ghi thật
+  function doGdoUpload(file: File) {
     setUploadErr(null); setUploadOk(null); setUploadWarn(null)
     setPostUploadLoading(true)
     uploadExcel(
       { file, warehouse_id: user?.warehouse_id || undefined },
       {
         onSuccess: (result) => {
+          setPf(null)
           const items = (result.created ?? []) as Array<{ group_code: string; created?: boolean; merged?: boolean; skipped?: boolean; reason?: string }>
           const nCreated = items.filter(r => r.created && !r.merged).length
           const nMerged  = items.filter(r => r.merged).length
@@ -619,11 +516,10 @@ export default function Outbound() {
         },
       }
     )
-    e.target.value = ''
   }
 
   const hasDate = f.dateFrom || f.dateTo
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
@@ -642,26 +538,31 @@ export default function Outbound() {
 
   const filterDefs: FilterDef[] = [
     { key: 'date',     label: 'Ngày xuất', type: 'daterange', from: f.dateFrom, to: f.dateTo,
-      onChange: (from, to) => setOutbound({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setOutbound({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho xuất', type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setOutbound({ warehouseId: v }) },
+      onChange: v => setOutbound({ warehouseId: v, page: 1 }) },
     { key: 'whType',   label: 'Loại kho',  type: 'multi',  options: warehouseTypeOpts.map(t => ({ value: t, label: t })), selected: filterWarehouseTypes,
-      onChange: v => setOutbound({ filterWarehouseTypes: v }) },
+      onChange: v => setOutbound({ filterWarehouseTypes: v, page: 1 }) },
     { key: 'vehType',  label: 'Loại xe',   type: 'multi',  options: typeOptions.map(t => ({ value: t, label: t })), selected: filterTypes,
-      onChange: v => setOutbound({ filterTypes: v }) },
+      onChange: v => setOutbound({ filterTypes: v, page: 1 }) },
     { key: 'dvvt',     label: 'ĐVVT',      type: 'multi',  options: dvvtOptions.map(d => ({ value: d, label: d })), selected: filterDvvts,
-      onChange: v => setOutbound({ filterDvvts: v }) },
+      onChange: v => setOutbound({ filterDvvts: v, page: 1 }) },
     { key: 'npp',      label: 'NPP',       type: 'multi',  options: nppOptions.map(n => ({ value: n, label: n })), selected: filterNpps, searchable: true,
-      onChange: v => setOutbound({ filterNpps: v }) },
+      onChange: v => setOutbound({ filterNpps: v, page: 1 }) },
     { key: 'material', label: 'Mã hàng',   type: 'multi',  options: materialOptions, selected: filterMaterials, searchable: true,
-      onChange: v => setOutbound({ filterMaterials: v }) },
+      onChange: v => setOutbound({ filterMaterials: v, page: 1 }) },
     { key: 'status',   label: 'Tình trạng', type: 'multi', options: statusOptions, selected: filterStatuses,
-      onChange: v => setOutbound({ filterStatuses: v }) },
+      onChange: v => setOutbound({ filterStatuses: v, page: 1 }) },
   ]
 
   // ─── Chuyển ngày xuất hàng loạt (multi-select chuyến PENDING — đơn rớt ngày, user 22/07) ───
+  // CHỈ chuyến upload kiểu CŨ (EXCEL) / tạo TAY (MANUAL/LEGACY) mới đổi ngày được ở đây. Chuyến sinh
+  // từ SAP là dữ liệu BỊ ĐỘNG: ngày sửa ở tab Kế hoạch xuất rồi tự dội xuống (user chốt 02/08) —
+  // BE đã chặn 422, nhưng phải khóa từ Ô TÍCH để người dùng không chọn rồi mới bị báo lỗi.
   const canEditGdo = can(perms, 'outbound', 'edit')
-  const pendingIdsOnScreen = useMemo(() => sorted.filter(g => g.status === 'PENDING').map(g => g.id), [sorted])
+  // Chuyến bất động (chờ SAP / kế hoạch đã bỏ) cũng không chuyển ngày ở đây — sửa ở nguồn
+  const canMoveDateOf = (g: GDO) => g.status === 'PENDING' && g.origin !== 'SAP' && !tripInert(g)
+  const pendingIdsOnScreen = useMemo(() => sorted.filter(canMoveDateOf).map(g => g.id), [sorted])
   const allPendingChecked = pendingIdsOnScreen.length > 0 && pendingIdsOnScreen.every(id => checkedIds.has(id))
   function toggleCheckAll() {
     setCheckedIds(prev => {
@@ -675,7 +576,7 @@ export default function Outbound() {
     setCheckedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
   // Chỉ thao tác trên chuyến CÒN trên màn hình + còn PENDING (chuyến đổi trạng thái giữa chừng thì bỏ qua)
-  const moveTargets = useMemo(() => sorted.filter(g => checkedIds.has(g.id) && g.status === 'PENDING'), [sorted, checkedIds])
+  const moveTargets = useMemo(() => sorted.filter(g => checkedIds.has(g.id) && canMoveDateOf(g)), [sorted, checkedIds])
   async function handleMoveDates() {
     if (!moveDate || moveTargets.length === 0) return
     setMovingDates(true); setMoveErrs([]); setMoveOk(null)
@@ -712,7 +613,7 @@ export default function Outbound() {
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
-          <SearchInput value={f.search} onChange={v => setOutbound({ search: v })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setOutbound({ search: v, page: 1 })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng chủ đích (hết cảnh mỗi nút 1 hàng rời rạc trên PDA);
               desktop sm:contents → tan vào hàng toolbar như cũ */}
@@ -721,7 +622,7 @@ export default function Outbound() {
             module="outbound"
             currentFilters={viewSnapshot}
             activeId={activeViewId}
-            onApply={(filters) => setOutbound(filters as Partial<typeof f>)}
+            onApply={(filters) => setOutbound({ ...(filters as Partial<typeof f>), page: 1 })}
           />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
@@ -756,16 +657,11 @@ export default function Outbound() {
               mobileHidden: true, // upload Excel không dùng trên điện thoại (giữ hành vi cũ max-sm:hidden)
               onClick: () => { setUploadErr(null); setUploadOk(null); setUploadWarn(null); setShowUpload(true) },
             } satisfies ActionItem] : []),
-            ...(can(perms, 'outbound', 'import') ? [{
-              key: 'vcupload', icon: Upload, label: 'Up kế hoạch VC', tip: 'Up VL06O (SAP) + KH điều vận → tự sinh chuyến xuất',
-              mobileHidden: true,
-              onClick: () => { setVl06oErr(null); setVl06oOk(null); setVl06oUnitErrs(null); setVcErr(null); setVcOk(null); setShowVcUpload(true) },
-            } satisfies ActionItem] : []),
+            // "Up kế hoạch VC" (VL06O + KH điều vận) ĐÃ CHUYỂN sang trang Dữ liệu bên ngoài (user chốt 02/08):
+            // nạp NGUỒN phải ở đúng trang nguồn — tab DO SAP nạp VL06O, tab Kế hoạch xuất nạp KH điều vận.
           ]} />
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
-          <input ref={vl06oRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleVl06oChange} />
-          <input ref={khvcRef}  type="file" accept=".xlsx,.xls" className="hidden" onChange={handleKhvcChange} />
         </div>
 
         {/* Row 2: Filter chip bar (desktop) — mobile dùng nút Lọc ở hàng trên */}
@@ -773,7 +669,7 @@ export default function Outbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setOutbound({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setOutbound({ dateFrom: TODAY(), dateTo: TODAY(), page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -797,7 +693,8 @@ export default function Outbound() {
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
               onClick={() => setNppOpen(v => !v)}>
               <Building2 className="h-3.5 w-3.5 text-slate-400" />
-              Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} thùng
+              {/* Tổng cross-mã (đủ loại đơn vị) → không gắn "thùng" (từ vựng chốt 26/07, xem QTY_CONVERTED_LABEL) */}
+              <span title={QTY_CONVERTED_TIP}>Phân bổ theo NPP ({nppBreakdown.length} nhà) · KH {nppTotals.planned.toLocaleString('vi-VN')} · đã xuất {nppTotals.scanned.toLocaleString('vi-VN')} · còn {nppTotals.remaining.toLocaleString('vi-VN')} (SL quy đổi)</span>
               {filterMaterials.length > 0 && <span className="text-blue-600">· lọc {filterMaterials.length} mã hàng</span>}
               <ChevronDown className={`h-3 w-3 ml-auto transition-transform ${nppOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -846,14 +743,22 @@ export default function Outbound() {
       </div>
 
       {/* Summary band (Manhattan) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
-        { label: 'Tổng thùng', value: summary.cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Tổng (QR)', value: summary.cartonsQr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Tổng (k QR)', value: summary.cartonsNoqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Pallet', value: fmtPallets(summary.pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Hoàn thành', value: summary.completed, accent: summary.completed > 0 },
+        { label: QTY_CONVERTED_LABEL, value: fmtTotal(summary.cartons), tip: QTY_CONVERTED_TIP },
+        { label: 'QR (quy đổi)', value: fmtTotal(summary.cartonsQr), tip: QTY_CONVERTED_TIP },
+        { label: 'K QR (quy đổi)', value: fmtTotal(summary.cartonsNoqr), tip: QTY_CONVERTED_TIP },
+        { label: 'Pallet', value: fmtTotal(fmtPallets(summary.pallets)) },
+        { label: 'Hoàn thành', value: tooWide ? '—' : summary.completed, accent: !tooWide && summary.completed > 0 },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
       ]} />
+      {tooWide && (
+        <div className="shrink-0 bg-amber-50 border-b border-amber-200 px-3 py-1.5 text-[11px] text-amber-800">
+          Khoảng lọc quá rộng nên chưa tính tổng (danh sách vẫn xem bình thường).
+          Thu hẹp <span className="font-medium">khoảng ngày</span> hoặc chọn <span className="font-medium">1 kho</span> để xem tổng thùng · pallet · phân bổ NPP.
+        </div>
+      )}
 
       {/* Table + Pane (Manhattan Insight) */}
       <div className="flex flex-1 min-h-0">
@@ -911,7 +816,8 @@ export default function Outbound() {
                     onClick={() => { if (isDesktop) setSelectedId(gdo.id); else navigate(`/wms/outbound/${gdo.id}`) }}
                     onDoubleClick={() => navigate(`/wms/outbound/${gdo.id}`)}
                     onAssign={can(perms, 'outbound', 'assign') ? (e => { e.stopPropagation(); assignGDO({ id: gdo.id }) }) : undefined}
-                    checkable={canEditGdo && gdo.status === 'PENDING'}
+                    checkable={canEditGdo && canMoveDateOf(gdo)}
+                    sapLocked={gdo.origin === 'SAP'}
                     checked={checkedIds.has(gdo.id)}
                     onToggleCheck={() => toggleCheck(gdo.id)}
                   />
@@ -922,16 +828,18 @@ export default function Outbound() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setOutbound({ page: p })} />
       </div>
       {selectedId && sorted.find(g => g.id === selectedId) && (
         <OutboundPane gdo={sorted.find(g => g.id === selectedId)!} onClose={() => setSelectedId(null)} />
       )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {sorted.length > 0 ? `1–${sorted.length} / ${sorted.length} chuyến xe` : '0 chuyến xe'}
-      </div>
+      <ListFooter
+        page={page} pageSize={pageSize} total={total} unit="chuyến xe"
+        onPageSize={n => setOutbound({ pageSize: n, page: 1 })}
+        right={`${fmtTotal(summary.pallets)} pallet · ${fmtTotal(summary.cartons)} SL quy đổi`}
+      />
      </div>
 
       {/* Modal chuyển ngày xuất hàng loạt (đơn rớt ngày) */}
@@ -949,11 +857,11 @@ export default function Outbound() {
             )}
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-600">Ngày xuất mới</label>
-              <Input type="date" min={TODAY} value={moveDate} onChange={e => setMoveDate(e.target.value)} className="h-9" />
+              <Input type="date" min={TODAY()} value={moveDate} onChange={e => setMoveDate(e.target.value)} className="h-9" />
             </div>
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>Chuyến sinh từ upload SAP: <b>up Kế hoạch VC mới sẽ đè lại ngày theo kế hoạch</b>. Sau khi chuyển, tab Kế hoạch xuất (Dữ liệu bên ngoài) sẽ hiện <b>Lệch ngày xuất</b> để đối chiếu.</span>
+              <span>Chỉ đổi được ngày của chuyến <b>upload kiểu cũ</b> hoặc <b>tạo tay</b>. Chuyến sinh từ <b>SAP</b> có ổ khóa ở cột Ngày — đổi ngày tại tab <b>Kế hoạch xuất</b> (Dữ liệu bên ngoài), chuyến tự cập nhật theo.</span>
             </div>
             {moveOk && (
               <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-center gap-2">
@@ -983,7 +891,9 @@ export default function Outbound() {
         />
       )}
       {showUpload && (
-        <ModalOverlay onClose={() => setShowUpload(false)} className="w-full max-w-lg max-h-[90vh]">
+        // Kết quả/lỗi dài (file nhiều xe bị bỏ qua) → nới dialog ~80% màn hình cho dễ đọc (chuẩn upload-download)
+        <ModalOverlay onClose={() => setShowUpload(false)}
+          className={`w-full max-h-[90vh] ${((uploadWarn?.length ?? 0) > 600 || (uploadErr?.length ?? 0) > 600) ? 'max-w-[95vw] sm:max-w-[80vw]' : 'max-w-lg'}`}>
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-700">Upload kế hoạch xuất từ Excel</h3>
             <button onClick={() => setShowUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
@@ -1022,134 +932,20 @@ export default function Outbound() {
           </div>
         </ModalOverlay>
       )}
-      {showVcUpload && (
-        <ModalOverlay onClose={() => setShowVcUpload(false)} className="w-full max-w-lg max-h-[90vh]">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-700">Up kế hoạch VC (VL06O + KH điều vận)</h3>
-            <button onClick={() => setShowVcUpload(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+
+      {/* BÁO CÁO KIỂM TRƯỚC (KH xuất), 80% màn hình — chưa ghi gì cho tới khi bấm Xác nhận;
+          Huỷ = bỏ file, DB nguyên vẹn. (VL06O/KH điều vận có báo cáo riêng ở Dữ liệu bên ngoài.) */}
+      {pf && (
+        <ModalOverlay onClose={() => setPf(null)}
+          className="sm:w-[80vw] sm:max-w-[80vw] sm:!h-[80vh] sm:max-h-[80vh]">
+          <div className="px-3 py-2 border-b shrink-0">
+            <span className="text-sm font-semibold text-slate-700">Kiểm file trước khi nhập — Kế hoạch xuất</span>
           </div>
-          <div className="p-4 space-y-4 overflow-auto">
-            {/* Bước 1 — VL06O (raw SAP) */}
-            <div className="space-y-2">
-              <div className="text-xs font-semibold text-slate-600">Bước 1 — Up VL06O (dữ liệu SAP)</div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={downloadVl06oTemplate} className="h-8 text-xs gap-1">
-                  <Download className="h-3.5 w-3.5" /> Tải mẫu VL06O
-                </Button>
-                <Button size="sm" disabled={vl06oUploading} onClick={() => vl06oRef.current?.click()} className="h-8 text-xs gap-1">
-                  {vl06oUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  {vl06oUploading ? 'Đang xử lý…' : 'Chọn file VL06O'}
-                </Button>
-              </div>
-              {vl06oWarn && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-semibold">File có {vl06oWarn.dos_on_trips} DO đã lên chuyến{vl06oWarn.trips_in_progress > 0 ? ` · ${vl06oWarn.trips_in_progress} chuyến đang xuất/tạm dừng` : ''}.</div>
-                      <div>{vl06oWarn.scanned_items > 0
-                        ? `${vl06oWarn.scanned_items} dòng ĐÃ QUÉT sẽ KHÔNG bị tự đè — chuyển sang tab "Cần xử lý" để bạn duyệt.`
-                        : 'Các dòng chưa quét sẽ tự cập nhật theo SAP (an toàn).'}</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => doVl06oUpload(vl06oWarn.file)}>Tiếp tục up VL06O</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setVl06oWarn(null)}>Huỷ</Button>
-                  </div>
-                </div>
-              )}
-              {vl06oOk && (
-                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oOk}</pre>
-                </div>
-              )}
-              {vl06oErr && (
-                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vl06oErr}</pre>
-                </div>
-              )}
-              {vl06oUnitErrs && vl06oUnitErrs.length > 0 && (
-                <div className="rounded-lg border border-red-200 overflow-x-auto">
-                  <table className="w-full text-[11px] whitespace-nowrap">
-                    <thead className="bg-red-50 text-red-700">
-                      <tr>
-                        <th className="px-2 py-1 text-left font-medium">Mã hàng</th>
-                        <th className="px-2 py-1 text-left font-medium">Tên</th>
-                        <th className="px-2 py-1 text-left font-medium">Lỗi</th>
-                        <th className="px-2 py-1 text-left font-medium">Trong file</th>
-                        <th className="px-2 py-1 text-left font-medium">Hệ thống</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vl06oUnitErrs.map((u, i) => (
-                        <tr key={i} className="border-t border-red-100">
-                          <td className="px-2 py-1 font-mono font-semibold">{u.material_code}</td>
-                          <td className="px-2 py-1 max-w-[180px] truncate" title={u.material_name}>{u.material_name || <span className="text-slate-300">—</span>}</td>
-                          <td className="px-2 py-1">{u.kind}</td>
-                          <td className="px-2 py-1 text-red-600 font-semibold">{u.file_value}</td>
-                          <td className="px-2 py-1">{u.system_value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            <div className="border-t border-slate-100" />
-            {/* Bước 2 — KHVC (sinh chuyến) */}
-            <div className="space-y-2">
-              <div className="text-xs font-semibold text-slate-600">Bước 2 — Up KH điều vận (sinh chuyến xuất)</div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={downloadKhvcTemplate} className="h-8 text-xs gap-1">
-                  <Download className="h-3.5 w-3.5" /> Tải mẫu KHVC
-                </Button>
-                <Button size="sm" disabled={khvcUploading} onClick={() => khvcRef.current?.click()} className="h-8 text-xs gap-1">
-                  {khvcUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  {khvcUploading ? 'Đang xử lý…' : 'Chọn file KHVC'}
-                </Button>
-              </div>
-              {khvcWarn && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      {khvcWarn.trips.total > 0 && (
-                        <div><span className="font-semibold">Ngày/Số xe này đã có {khvcWarn.trips.total} chuyến</span>
-                          {(khvcWarn.trips.in_progress + khvcWarn.trips.completed + khvcWarn.trips.paused) > 0
-                            ? ` (${khvcWarn.trips.in_progress} đang xuất · ${khvcWarn.trips.completed} đã xong · ${khvcWarn.trips.paused} tạm dừng — được bảo vệ, không tự đè).`
-                            : ' (đều PENDING — sẽ ghi đè).'}
-                        </div>
-                      )}
-                      {khvcWarn.missing_dos > 0 && (
-                        <div className="text-red-700">⚠ {khvcWarn.missing_dos} DO CHƯA có trong VL06O{khvcWarn.missing_dos_sample.length ? ` (${khvcWarn.missing_dos_sample.join(', ')}${khvcWarn.missing_dos > khvcWarn.missing_dos_sample.length ? '…' : ''})` : ''} → hãy Up VL06O mới nhất TRƯỚC (Bước 1).</div>
-                      )}
-                      {khvcWarn.cross_trip_dos > 0 && (
-                        <div className="text-red-700">⚠ {khvcWarn.cross_trip_dos} DO ĐÃ nằm trong chuyến khác Số xe còn sống{khvcWarn.cross_trip_sample.length ? ` (${khvcWarn.cross_trip_sample.join('; ')}${khvcWarn.cross_trip_dos > khvcWarn.cross_trip_sample.length ? '…' : ''})` : ''} — tiếp tục sẽ sinh chuyến TRÙNG DO (kế hoạch double). Đơn rớt ngày: dùng nút Chuyển ngày ở Xuất kho, đừng gửi lại KH dưới Số xe mới.</div>
-                      )}
-                      <div className="text-amber-700">VL06O cập nhật lần cuối: <b>{khvcWarn.vl06o_last_synced ? `${formatTimestampDate(khvcWarn.vl06o_last_synced, true)} ${formatTimestampTime(khvcWarn.vl06o_last_synced)}` : 'chưa có DO nào'}</b>. Đã Up VL06O mới nhất chưa?</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => doKhvcUpload(khvcWarn.file)}>Tiếp tục sinh chuyến</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setKhvcWarn(null)}>Huỷ</Button>
-                  </div>
-                </div>
-              )}
-              {vcOk && (
-                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />{vcOk}
-                </div>
-              )}
-              {vcErr && (
-                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{vcErr}</pre>
-                </div>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-500">
-              VL06O = bản sao dữ liệu SAP (giữ nguyên định dạng, lưu lại đầy đủ). KHVC = kế hoạch điều vận tự soạn (Số xe, DO, NPP…),
-              hệ thống ghép theo DO rồi tự tính Thùng + Hộp lẻ theo đơn vị gốc từng mã. Up VL06O trước, rồi Up KHVC.
-            </p>
+          <div className="flex-1 min-h-0 overflow-hidden p-3 flex flex-col">
+            <UploadPreflightPanel report={pf.report} fileName={pf.file.name}
+              busy={uploading}
+              onCancel={() => setPf(null)}
+              onConfirm={() => doGdoUpload(pf.file)} />
           </div>
         </ModalOverlay>
       )}
@@ -1159,7 +955,7 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck }: {
+function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
   gdo: GDO
   onClick: () => void
   onDoubleClick?: () => void
@@ -1169,9 +965,10 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   selected?: boolean
   whInfoByKey: Map<string, { code: string; mode: string }>
   bracketPos?: BracketPos
-  checkable?: boolean          // chuyến PENDING + user có outbound.edit → tick chọn để chuyển ngày hàng loạt
+  checkable?: boolean          // chuyến PENDING KHÔNG phải SAP + user có outbound.edit → tick chọn để chuyển ngày hàng loạt
   checked?: boolean
   onToggleCheck?: () => void
+  sapLocked?: boolean          // chuyến sinh từ SAP → ngày khóa theo Kế hoạch xuất (hiện ổ khóa thay ô tick)
 }) {
   const { pin, unpin, isPinned } = useActiveVehiclesStore()
   const pinned    = isPinned(gdo.id)
@@ -1184,9 +981,10 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const rowBg = selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'
+  const inert = tripInert(gdo)
 
   return (
-    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''} ${showBracket && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${showBracket && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
+    <TableRow className={`cursor-pointer ${gdoRowText(gdo)} ${inert ? 'opacity-50' : ''} ${dense ? '' : '[&_td]:py-2.5'} ${selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : ''} ${showBracket && bracketPos === 'first' ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''} ${showBracket && bracketPos === 'last' ? '[&_td]:!border-b-slate-300' : ''}`} onClick={onClick} onDoubleClick={onDoubleClick}>
       {/* Bookmark + bracket connector nối chuyến chung 1 xe */}
       <TableCell className={`px-1.5 py-1 sticky left-0 z-10 ${rowBg}`} style={{ left: 0 }} onClick={e => e.stopPropagation()}>
         {showBracket && (
@@ -1209,15 +1007,23 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
       </TableCell>
 
       <TableCell className={`px-2 py-1 whitespace-nowrap sticky z-10 ${rowBg}`} style={{ left: pinW }}>
-        {checkable && (
+        {checkable ? (
           <input type="checkbox" className="h-3 w-3 accent-sky-600 cursor-pointer align-middle mr-1"
             checked={checked} onClick={e => e.stopPropagation()} onChange={onToggleCheck}
             title="Chọn chuyến (chuyển ngày hàng loạt)" />
-        )}
+        ) : sapLocked && gdo.status === 'PENDING' ? (
+          // Chuyến sinh từ SAP: ngày là dữ liệu bị động → không tick chuyển ngày ở đây
+          <Lock className="inline-block h-3 w-3 text-slate-300 align-middle mr-1"
+            aria-label="Ngày xuất khóa theo Kế hoạch xuất" />
+        ) : null}
         <span className="text-[10px] font-medium tabular-nums">{dateLabel}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className="text-[10px] font-mono font-semibold">{gdo.group_code}</span>
+        {inert && (
+          <AlertTriangle className={`inline-block h-3 w-3 align-middle mr-1 ${gdo.plan_dropped ? 'text-slate-400' : 'text-amber-500'}`}
+            aria-label={inert} />
+        )}
+        <span className="text-[10px] font-mono font-semibold" title={inert ?? undefined}>{gdo.group_code}</span>
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>
@@ -1328,7 +1134,8 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
 
 // ─── Material picker ──────────────────────────────────────────
 
-type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit: string | null } & MatUnits & {
+// `unit` để optional: Material KHÔNG có cột này trong DB (ĐVT lấy qua unitCodeOf/base_unit)
+type MatOption = { id: string; material_code: string; short_name: string | null; category: string | null; unit?: string | null } & MatUnits & {
   // Định mức pallet (+ ngoại lệ theo kho) — tính Nhặt lẻ TỰ ĐỘNG từ Tổng (pallet-remainder)
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
@@ -1346,10 +1153,13 @@ function MatPicker({ value, onSelect, disabled, disabledNoType, filterCategory, 
   const [open, setOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
-  const { data: mats = [] } = useMaterials({
-    search: !disabled && !disabledNoType && search.length > 1 ? search : undefined,
-    category: filterCategory || undefined,
-  })
+  // Chỉ gọi API KHI đã gõ ≥2 ký tự, chỉ lấy 50 dòng đầu, và HOÃN 250ms — trước đây gõ chưa đủ
+  // ký tự vẫn kéo TOÀN BỘ danh mục mã hàng về trình duyệt (2.740 mã hôm nay, chục nghìn về sau).
+  const matTerm = useDebouncedValue(!disabled && !disabledNoType && search.length > 1 ? search : '', 250)
+  const { data: mats = [] } = useMaterials(
+    { search: matTerm, category: filterCategory || undefined, limit: 50 },
+    !!matTerm,
+  )
 
   useEffect(() => { setSearch(value) }, [value])
 
@@ -1644,9 +1454,14 @@ function GDOFormBody({
   const { data: whTypesInForm = [] } = useScopedWhTypes()
   const { data: allVehicleTypes = [] } = useVehicleTypes()
   const { data: vtByWarehouse = [] } = useVehicleTypesByWarehouse(warehouseId || null, warehouseType || undefined)
-  const { data: allMatsData = [] } = useMaterials()
-  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng
-  const allMats = allMatsData.filter(m => !m.is_non_stock) as ({ id: string; material_code: string; short_name?: string | null; unit?: string | null; category?: string | null } & MatUnits)[]
+  // Dán Excel: tra ĐÚNG các mã vừa dán (trước đây nạp cả danh mục mã hàng về trình duyệt chỉ để
+  // dò 1 mã). Mã PHI HÀNG HÓA (chiết khấu/dịch vụ) không được nhận vào dòng hàng.
+  const qc = useQueryClient()
+  const resolveMats = useCallback(async (codes: string[]) => {
+    const map = await fetchMaterialsByCodes(qc, codes)
+    for (const [k, m] of map) if (m.is_non_stock) map.delete(k)
+    return map
+  }, [qc])
 
   // Loại xe = DANH MỤC độc lập (user chốt 04/07) — kho chưa có khung giờ vẫn tạo được đơn;
   // loại có khung giờ tại kho được ưu tiên lên đầu.
@@ -1662,6 +1477,14 @@ function GDOFormBody({
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
   const isMultiNpp = nppOptions.length > 1
+
+  // Chuyến sinh từ SAP (origin='SAP', user chốt 02/08): Xuất là KẾT QUẢ DẪN XUẤT — phần KẾ HOẠCH
+  // (ngày/kho/NPP/Số DO/Loại xe/thêm dòng) khóa trên form, sửa ở tab nguồn (DO SAP / Kế hoạch xuất).
+  // Batch/%Date/CS/ghi chú vẫn sửa được (yêu cầu phía kho, không phải dữ liệu nguồn).
+  const sapLocked = mode === 'edit' && gdo?.origin === 'SAP'
+  const lockedVal = (v: string) => (
+    <div className="h-7 text-xs px-2 flex items-center border border-slate-100 rounded bg-slate-50 text-slate-500 truncate" title="Chuyến sinh từ SAP — sửa ở tab nguồn (Dữ liệu bên ngoài)">{v || '—'}</div>
+  )
 
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [yr, mo, dy] = TODAY_STR.split('-')
@@ -1694,29 +1517,26 @@ function GDOFormBody({
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
   }, [items])
 
-  function lookupMat(code: string) {
-    const mat = allMats.find(m => m.material_code === code.trim())
-    return mat ?? null
-  }
-
-  // Paste tab-separated Excel row(s) into material code cell — fills all columns
-  function handlePasteRowAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+  // Paste tab-separated Excel row(s) into material code cell — fills all columns.
+  // `async` vì phải TRA MÃ TRÊN SERVER trước khi điền: số lượng được quy đổi theo hệ số
+  // thùng/hộp của mã (`qtyFromEntryBase`) — điền trước rồi vá sau sẽ ra SỐ SAI.
+  // preventDefault phải gọi TRƯỚC await (sau await là trình duyệt đã dán xong).
+  async function handlePasteRowAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
     const text = e.clipboardData.getData('text')
+    e.preventDefault()
     if (!text.includes('\t') && !text.includes('\n')) {
       // Single code paste — auto-lookup if exact match
-      const mat = lookupMat(text.trim())
-      if (mat) {
-        e.preventDefault()
-        setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
-          ...r, material_code: text.trim(),
-          mat_name: mat.short_name ?? '', unit: unitCodeOf(mat), category: mat.category ?? null,
-          mat_units: mat,
-        }))
-      }
+      const code = text.trim()
+      const mat = (await resolveMats([code])).get(code.toUpperCase()) ?? null
+      setItems(prev => prev.map((r, i) => i !== startIdx ? r : {
+        ...r, material_code: code,
+        ...(mat ? { mat_name: mat.short_name ?? '', unit: unitCodeOf(mat), category: mat.category ?? null, mat_units: mat } : {}),
+      }))
       return
     }
-    e.preventDefault()
     const lines = text.trim().split(/\r?\n/).filter(Boolean)
+    const matMap = await resolveMats(lines.map(l => (l.split('\t')[0] ?? '').trim()))
+    const lookupMat = (code: string) => matMap.get(code.trim().toUpperCase()) ?? null
     setItems(prev => {
       const rows = [...prev]
       while (rows.length < startIdx + lines.length) rows.push(makeItem())
@@ -1752,18 +1572,21 @@ function GDOFormBody({
     })
   }
 
-  function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
+  async function handlePasteCartonsAt(startIdx: number, e: React.ClipboardEvent<HTMLElement>) {
     const text = e.clipboardData.getData('text')
     if (!text.includes('\n')) return
     e.preventDefault()
     const values = text.trim().split(/\r?\n/).filter(Boolean)
+    // Dòng chưa có hệ số thùng/hộp (mã gõ tay) → tra trước, nếu không số quy đổi sẽ sai
+    const need = items.slice(startIdx, startIdx + values.length).filter(r => !r.mat_units && r.material_code).map(r => r.material_code)
+    const matMap = need.length ? await resolveMats(need) : new Map()
     setItems(prev => {
       const rows = [...prev]
       while (rows.length < startIdx + values.length) rows.push(makeItem())
       values.forEach((val, offset) => {
         const row = rows[startIdx + offset]
         if (row.sap_linked) return   // dòng gốc SAP: SL khóa — paste bỏ qua
-        const u = row.mat_units ?? lookupMat(row.material_code)
+        const u = row.mat_units ?? matMap.get(row.material_code.trim().toUpperCase()) ?? null
         const thung = parseInt(val.trim().replace(/[^0-9]/g, '')) || 0
         rows[startIdx + offset] = { ...row, mat_units: row.mat_units ?? u, cartons: qtyFromEntryBase(thung, 0, u) }
       })
@@ -1822,34 +1645,47 @@ function GDOFormBody({
         </button>
       </div>
 
+      {sapLocked && (
+        <div className="shrink-0 flex items-start gap-1.5 bg-sky-50 border-b border-sky-200 px-4 py-1.5 text-[11px] text-sky-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>Đơn sinh từ <b>SAP</b> — Số lượng/dòng hàng sửa ở tab <b>DO SAP</b>; Ngày/Kho/NPP/Loại xe sửa ở tab <b>Kế hoạch xuất</b> (menu Dữ liệu bên ngoài), chuyến tự cập nhật theo. Batch/%Date/CS vẫn sửa tại đây.</span>
+        </div>
+      )}
+
       {/* Metadata fields — compact strip, no scroll */}
       <div className="shrink-0 border-b bg-slate-50/50 px-4 py-2.5">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Ngày xuất <span className="text-red-500">*</span></label>
-            <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
+            {sapLocked ? lockedVal(date) : (
+              <Input type="date" className="h-7 text-xs" value={date} min={TODAY_STR} onChange={e => setDate(e.target.value)} />
+            )}
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-medium text-slate-500">Kho xuất</label>
-            <WarehouseSingleSelect
-              warehouses={(warehouses as WarehouseLite[]).filter(w => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
-              value={warehouseId}
-              onChange={setWarehouseId}
-              placeholder="Chọn kho…"
-              triggerClassName="h-7"
-            />
+            {sapLocked ? lockedVal((warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.name ?? warehouseId) : (
+              <WarehouseSingleSelect
+                warehouses={(warehouses as WarehouseLite[]).filter(w => !formAllowedWhIds || formAllowedWhIds.has(w.id))}
+                value={warehouseId}
+                onChange={setWarehouseId}
+                placeholder="Chọn kho…"
+                triggerClassName="h-7"
+              />
+            )}
           </div>
           {setWarehouseType !== undefined ? (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại kho <span className="text-red-500">*</span></label>
-              <SingleSelect
-                options={[{ value: '', label: '— Chọn loại kho' }, ...whTypesInForm.map(t => ({ value: t.value, label: t.value }))]}
-                value={warehouseType ?? ''}
-                onChange={setWarehouseType}
-                placeholder="Loại kho…"
-                searchable={false}
-                triggerClassName="h-7"
-              />
+              {sapLocked ? lockedVal(warehouseType ?? '') : (
+                <SingleSelect
+                  options={[{ value: '', label: '— Chọn loại kho' }, ...whTypesInForm.map(t => ({ value: t.value, label: t.value }))]}
+                  value={warehouseType ?? ''}
+                  onChange={setWarehouseType}
+                  placeholder="Loại kho…"
+                  searchable={false}
+                  triggerClassName="h-7"
+                />
+              )}
             </div>
           ) : <div />}
           <div className="space-y-1">
@@ -1860,7 +1696,7 @@ function GDOFormBody({
               <div className="text-[10px] px-2 py-1 border border-slate-100 rounded bg-white text-slate-600 truncate">
                 {(gdo?.delivery_orders ?? []).map(d => d.distributor_name).filter(Boolean).join(' · ') || '—'}
               </div>
-            ) : (
+            ) : sapLocked ? lockedVal(customerName) : (
               // Kho NPP: gợi ý khách hàng CHỈ gồm kho tổng (trả hàng về tổng) — không hiện NPP khác; khách lẻ gõ tay.
               // Luật quỹ đạo kho phụ: kho phụ chỉ gợi ý cho kho parent của nó; kho xuất là kho phụ → chỉ gợi ý parent (xuất trả).
               <CustomerCombobox
@@ -1900,13 +1736,15 @@ function GDOFormBody({
           {!isMultiNpp && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Số DO *</label>
-              <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
+              {sapLocked ? lockedVal(deliveryCode) : (
+                <Input className="h-7 text-xs font-mono" placeholder="VD: 3000245103" value={deliveryCode} onChange={e => setDeliveryCode(e.target.value)} />
+              )}
             </div>
           )}
           {!noVehicle && (
             <div className="space-y-1">
               <label className="text-[10px] font-medium text-slate-500">Loại xe <span className="text-red-500">*</span></label>
-              {exportTypeOptions.length === 0 ? (
+              {sapLocked ? lockedVal(exportType) : exportTypeOptions.length === 0 ? (
                 <p className="text-[10px] text-slate-400 italic leading-7">
                   {warehouseId ? 'Chưa có loại xe — kiểm tra TMS' : 'Chọn kho để lọc'}
                 </p>
@@ -2106,12 +1944,15 @@ function GDOFormBody({
           </table>
         </div>
 
-        <button
-          onClick={() => setItems(rows => [...rows, { ...makeItem(), npp: isMultiNpp ? '' : (nppOptions[0] ?? '') }])}
-          className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
-        >
-          <Plus className="h-3 w-3" /> Thêm dòng
-        </button>
+        {/* Chuyến SAP: thêm dòng tay = xuất ngoài SAP → khóa (thêm DO ở tab nguồn) */}
+        {!sapLocked && (
+          <button
+            onClick={() => setItems(rows => [...rows, { ...makeItem(), npp: isMultiNpp ? '' : (nppOptions[0] ?? '') }])}
+            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 w-full justify-center border border-dashed border-blue-200 rounded-lg py-1.5 hover:border-blue-400 mt-2"
+          >
+            <Plus className="h-3 w-3" /> Thêm dòng
+          </button>
+        )}
         {duplicateCodes.size > 0 && (
           <p className="text-[11px] text-red-600 mt-2">Mã hàng bị trùng trong cùng NPP: {[...duplicateCodes].map(k => k.split('||')[1]).join(', ')}</p>
         )}
@@ -2127,20 +1968,6 @@ function GDOFormBody({
         {quickAction}
       </div>
     </>
-  )
-}
-
-// ─── Shared modal wrapper ─────────────────────────────────────
-
-function ModalOverlay({ children, onClose, className }: { children: React.ReactNode; onClose: () => void; className?: string }) {
-  return (
-    // Mobile: full màn hình (không lề); ≥sm: canh giữa có lề
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative z-10 bg-white shadow-2xl flex flex-col w-full h-full max-h-full rounded-none sm:h-auto sm:rounded-xl ${className ?? 'sm:w-[80vw] sm:max-w-[80vw] sm:max-h-[90vh]'}`}>
-        {children}
-      </div>
-    </div>
   )
 }
 
@@ -2182,12 +2009,14 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (khớp tên ĐVVT → công ty → lọc xe theo ncc_id)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
   const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
-  const { data: allVehicles = [] } = useTmsVehicles(showQuick ? { is_active: 'true' } : undefined, showQuick)
+  // Lọc xe theo ĐVVT NGAY TRÊN SERVER — trước đây tải TOÀN BỘ xe đang hoạt động (953 xe
+  // ≈ 439KB hôm nay) rồi mới lọc ở trình duyệt.
+  const { data: allVehicles = [] } = useTmsVehicles(
+    dvvtCompanyId ? { ncc_id: dvvtCompanyId, is_active: 'true' } : undefined,
+    showQuick && !!dvvtCompanyId)
   const platesForDvvt = useMemo(
-    () => dvvtCompanyId
-      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
-      : [],
-    [allVehicles, dvvtCompanyId],
+    () => [...new Set((allVehicles as { license_plate: string }[]).map(v => v.license_plate))],
+    [allVehicles],
   )
 
   function handleSubmit(quick = false) {
@@ -2226,6 +2055,7 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
     const handlers = {
       onSuccess: () => onClose(),
       onError: (e: unknown) => {
+        // Rule cân chặn (WEIGH_REQUIRED): BE đã kèm hướng dẫn "Lưu đơn thường → nhờ duyệt trên chuyến"
         const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? (isQuick ? 'Lỗi xuất nhanh' : 'Lỗi tạo đơn')
         setError(msg)
       },
@@ -2309,12 +2139,14 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)
   const { data: dvvtCompaniesForPlate = [] } = useTransportCompanies(true)
   const dvvtCompanyId = (dvvtCompaniesForPlate as { id: string; name: string }[]).find(c => c.name === dvvt)?.id ?? null
-  const { data: allVehicles = [] } = useTmsVehicles(showQuickEdit ? { is_active: 'true' } : undefined, showQuickEdit)
+  // Lọc xe theo ĐVVT NGAY TRÊN SERVER — trước đây tải TOÀN BỘ xe đang hoạt động (953 xe
+  // ≈ 439KB hôm nay) rồi mới lọc ở trình duyệt.
+  const { data: allVehicles = [] } = useTmsVehicles(
+    dvvtCompanyId ? { ncc_id: dvvtCompanyId, is_active: 'true' } : undefined,
+    showQuickEdit && !!dvvtCompanyId)
   const platesForDvvt = useMemo(
-    () => dvvtCompanyId
-      ? [...new Set((allVehicles as { ncc_id: string; license_plate: string }[]).filter(v => v.ncc_id === dvvtCompanyId).map(v => v.license_plate))]
-      : [],
-    [allVehicles, dvvtCompanyId],
+    () => [...new Set((allVehicles as { license_plate: string }[]).map(v => v.license_plate))],
+    [allVehicles],
   )
 
   // Pre-fill once GDO loads (wait for vehicle types to normalize correctly)
@@ -2399,6 +2231,7 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
             {
               onSuccess: () => onClose(),
               onError: (e: unknown) => {
+                // Rule cân chặn: miễn trừ = nhờ người có quyền bấm "Bỏ qua cổng/cân" trên trang chuyến
                 const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Đã lưu nhưng chưa xuất được'
                 setError(msg)
               },

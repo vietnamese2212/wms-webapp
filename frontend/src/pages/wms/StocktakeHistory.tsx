@@ -1,0 +1,274 @@
+import { useEffect } from 'react'
+import { useWarehouses, useLocationsReal, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useState } from 'react'
+import * as XLSX from 'xlsx'
+import { saveWorkbook } from '@/utils/saveExcel'
+import { sanitizeRows } from '@/utils/excelSafe'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
+import { SearchInput } from '@/components/shared/SearchInput'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { History, Download, Flag, Rows3, AlignJustify } from 'lucide-react'
+import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { qtyEntryText, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { rowText } from '@/lib/rowStatus'
+import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
+
+const LOG_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'at',     label: 'Thời gian kiểm', w: 140 },
+  { id: 'pallet', label: 'Mã pallet',      w: 150 },
+  { id: 'loc',    label: 'Vị trí',         w: 120 },
+  { id: 'mat',    label: 'Tên hàng',       w: 170 },
+  { id: 'app',    label: 'Tồn App',        w: 80,  align: 'right' },
+  { id: 'real',   label: 'Thực tế',        w: 90,  align: 'right' },
+  { id: 'diff',   label: 'Chênh lệch',     w: 90,  align: 'right' },
+  { id: 'by',     label: 'Người kiểm',     w: 130 },
+  { id: 'status', label: 'Kết quả',        w: 100 },
+]
+const LOG_COL_DEFAULTS = LOG_COLS.map(c => c.w)
+
+const mu = (r: StocktakeLogRow): MatUnits => ({ base_unit: r.base_unit, entry_unit: r.entry_unit, units_per_carton: r.units_per_carton })
+
+export default function StocktakeHistory() {
+  const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+
+  const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+
+  const { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search, page, pageSize } = useWmsFilterStore(s => s.stocktakeHistory)
+  const setF = useWmsFilterStore(s => s.setStocktakeHistory)
+  const [dense, setDense] = useState(() => localStorage.getItem('stocktake_history_density') === '1')
+  const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_history_density', d ? '0' : '1'); return !d })
+  const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_history_col_widths', LOG_COL_DEFAULTS)
+  const viewSnapshot = { warehouseId, category, locationIds, requiresOnly, dateFrom, dateTo, search }
+  const savedViews = useSavedViewsStore(s => s.views['stocktake_history'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
+
+  // Mặc định kho = kho đầu tiên của user (nếu store chưa có)
+  useEffect(() => {
+    if (!warehouseId) {
+      const def = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (def) setF({ warehouseId: def })
+    }
+  }, [warehouseId, user, setF])
+
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: whTypes    = [] } = useScopedWhTypes()
+  const categories = whTypes.map(t => t.value)
+  const { data: locations  = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  )
+  // Vị trí "quan trọng" (cần kiểm) của kho — mở nhanh nhóm này
+  const importantLocIds = (locations as { id: string; requires_stocktake?: boolean }[]).filter(l => l.requires_stocktake).map(l => l.id)
+  const isImportantScope = importantLocIds.length > 0
+    && locationIds.length === importantLocIds.length
+    && importantLocIds.every(id => locationIds.includes(id))
+
+  // Đúng bộ "cần check" → gửi CỜ requires_only, BE tự resolve vị trí. Nhồi cả nghìn id vào query
+  // string là 414 (kho 1.517 vị trí = URL 55KB; ngưỡng Vercel ~800 id / 32KB — đo 27/07).
+  const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
+  const queryParams = {
+    warehouse_id: warehouseId || undefined,
+    category: category || undefined,
+    location_ids: (!isImportantScope && locationIds.length && !tooManyLocs) ? locationIds.join(',') : undefined,
+    requires_only: isImportantScope ? '1' : undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    search: search || undefined,
+  }
+  const { data, isFetching } = useStocktakeLog({ ...queryParams, page, page_size: pageSize }, !tooManyLocs)
+
+  const rows  = data?.rows ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  // 3 ô SummaryBand đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm trên `rows` là đếm mỗi trang đang xem,
+  // đứng cạnh ô "Lượt kiểm" (toàn bộ) thành hai con số đá nhau.
+  const flaggedN = data?.flagged ?? 0
+  const countedN = data?.counted ?? 0
+  const matchedN = Math.max(0, countedN - flaggedN)
+
+  const defs: FilterDef[] = [
+    { key: 'daterange', label: 'Ngày kiểm', type: 'daterange', pinned: true, from: dateFrom, to: dateTo,
+      onChange: (from, to) => setF({ dateFrom: from, dateTo: to, page: 1 }) },
+    { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
+      onChange: v => setF({ warehouseId: v, locationIds: [], page: 1 }),
+      options: (warehouses as { id: string; name: string }[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
+    { key: 'category', label: 'Loại hàng', type: 'single', value: category, allLabel: 'Tất cả loại',
+      onChange: v => setF({ category: v, locationIds: [], page: 1 }),
+      options: (categories as string[]).map(c => ({ value: c, label: c })) },
+    { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
+      onChange: ids => setF({ locationIds: ids, page: 1 }),
+      options: (locations as { id: string; location_code: string }[]).map(l => ({ value: l.id, label: l.location_code })) },
+  ]
+
+  // Xuất Excel = TOÀN BỘ kết quả lọc (duyệt hết trang), không phải trang đang xem
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    let all: StocktakeLogRow[]
+    try { all = await fetchAllStocktakeLog(queryParams) } catch { setExporting(false); return }
+    const sheet = all.map(r => ({
+      'Thời gian kiểm': `${formatTimestampDate(r.counted_at, true)} ${formatTimestampTime(r.counted_at)}`,
+      'Mã pallet': r.pallet_code, 'Vị trí': r.location_code ?? '',
+      'Tên hàng': r.short_name ?? r.material_code ?? '',
+      'Tồn App': qtyEntryDecimal(Number(r.app_qty ?? 0), mu(r)),
+      'Thực tế': r.physical_qty != null ? qtyEntryDecimal(Number(r.physical_qty), mu(r)) : '',
+      'Chênh lệch': r.diff != null ? qtyEntryDecimal(Number(r.diff), mu(r)) : '',
+      'Người kiểm': r.counted_by_name ?? '',
+      'Kết quả': r.is_flagged ? 'Chênh lệch' : (r.physical_qty != null ? 'Khớp' : 'Đã kiểm'),
+    }))
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử kiểm')
+    saveWorkbook(wb, `lich_su_kiem_${dateFrom}_${dateTo}.xlsx`)
+    setExporting(false)
+  }
+
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+     <StocktakeTabs />
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Toolbar */}
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:space-y-1.5 sm:rounded-t-xl">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1 shrink-0">
+            <History className="h-3.5 w-3.5 text-blue-600" />
+            <span className="text-xs font-semibold text-slate-700">Lịch sử kiểm</span>
+          </div>
+          {importantLocIds.length > 0 && (
+            <label className="flex items-center gap-1 cursor-pointer select-none shrink-0"
+              title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê". Bỏ tick để xem tất cả.`}>
+              <input type="checkbox" checked={isImportantScope} onChange={e => {
+                const on = e.target.checked
+                setF(on ? { requiresOnly: true, locationIds: importantLocIds, page: 1 } : { requiresOnly: false, locationIds: [], page: 1 })
+              }} className="h-3 w-3 cursor-pointer" />
+              <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
+                <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
+              </span>
+            </label>
+          )}
+          <SearchInput value={search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
+          <FilterSheetButton defs={defs} className="sm:hidden" />
+          <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <SavedViews module="stocktake_history" currentFilters={viewSnapshot} activeId={activeViewId}
+              onApply={(fl) => setF(fl as Partial<typeof viewSnapshot>)} />
+            <button type="button" onClick={toggleDense}
+              className="hidden sm:inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+              title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+              {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+            </button>
+            <ActionCluster className="shrink-0" mobileInline items={[
+              // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
+              ...(can(perms, 'stocktake', 'export') ? [{
+                key: 'export', icon: Download, label: exporting ? 'Đang tải…' : 'Excel',
+                tip: 'Xuất Excel TOÀN BỘ lịch sử kiểm theo bộ lọc đang áp (không chỉ trang đang xem)',
+                mobileHidden: true, disabled: !rows.length || exporting, busy: exporting, onClick: exportExcel,
+              } satisfies ActionItem] : []),
+            ]} />
+          </div>
+          <FilterBar defs={defs} className="hidden sm:flex" />
+        </div>
+      </div>
+
+      <SummaryBand tiles={[
+        { label: 'Lượt kiểm', value: total },
+        { label: 'Đã đếm số', value: countedN },
+        { label: 'Khớp', value: matchedN },
+        { label: 'Chênh lệch', value: flaggedN, accent: flaggedN > 0 },
+      ]} />
+
+      {/* Table */}
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {tooManyLocs && (
+          <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+            Đang chọn {locationIds.length.toLocaleString('vi-VN')} vị trí — quá nhiều để lọc (tối đa {LOC_ID_CAP}).
+            Bỏ bớt vị trí, hoặc bỏ chọn hết để xem cả kho / dùng “Chỉ vị trí cần check”.
+          </div>
+        )}
+        <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
+          <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+          <TableHeader>
+            <TableRow className="bg-slate-50">
+              {LOG_COLS.map((c, i) => (
+                <TableHead key={c.id}
+                  className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  {c.label}
+                  {i > 0 && (
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                  )}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isFetching && rows.length === 0 ? (
+              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Đang tải…</TableCell></TableRow>
+            ) : rows.length === 0 ? (
+              <TableRow><TableCell colSpan={LOG_COLS.length} className="text-center text-xs text-slate-400 py-8">Chưa có lượt kiểm nào trong khoảng ngày này</TableCell></TableRow>
+            ) : rows.map(r => {
+              const stickyBg = 'bg-white'
+              return (
+                <TableRow key={r.id} className={rowText(r.is_flagged ? 'paused' : 'completed')}>
+                  <TableCell className={`px-2 py-1 whitespace-nowrap sticky left-0 z-10 ${stickyBg}`}>
+                    <span className="text-[10px] text-slate-500">{formatTimestampDate(r.counted_at, true)} {formatTimestampTime(r.counted_at)}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className="font-mono text-[10px] font-semibold block truncate" title={r.pallet_code}>{r.pallet_code}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className="font-mono text-[10px] block truncate" title={r.location_code ?? ''}>{r.location_code ?? <span className="text-slate-300">—</span>}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className="text-[10px] block truncate" title={r.short_name ?? r.material_code ?? ''}>{r.short_name ?? r.material_code ?? '—'}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-right">
+                    <span className="text-[10px] tabular-nums">{qtyEntryText(Number(r.app_qty ?? 0), mu(r))}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-right">
+                    {r.physical_qty != null
+                      ? <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(Number(r.physical_qty), mu(r))}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap text-right">
+                    {r.diff != null && Number(r.diff) !== 0
+                      ? <span className={`text-[10px] font-semibold tabular-nums ${Number(r.diff) < 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                          {Number(r.diff) > 0 ? '+' : ''}{qtyEntryText(Number(r.diff), mu(r))}
+                        </span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <span className="text-[10px] text-slate-500">{r.counted_by_name ?? '—'}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    {r.is_flagged
+                      ? <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600 bg-red-100 rounded-full px-1.5 py-0.5"><Flag className="h-2.5 w-2.5" /> Chênh lệch</span>
+                      : r.physical_qty != null
+                        ? <span className="text-[9px] font-semibold text-green-600 bg-green-100 rounded-full px-1.5 py-0.5">Khớp</span>
+                        : <span className="text-[9px] text-slate-500 bg-slate-100 rounded-full px-1.5 py-0.5">Đã kiểm</span>}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setF({ page: p })} />
+      </div>
+
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="lượt kiểm"
+        onPageSize={n => setF({ pageSize: n, page: 1 })} />
+     </div>
+    </div>
+  )
+}

@@ -1,9 +1,12 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
+import { parseListParam } from '../../utils/httpQuery'
+import { safeFilterValue } from '../../utils/search'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -20,7 +23,8 @@ function ok(res: Response, data: unknown) {
   return res.status(200).json({ success: true, data })
 }
 function fail(res: Response, status: number, code: string, message: string) {
-  return res.status(status).json({ success: false, error: { code, message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = []
@@ -43,9 +47,11 @@ type Level = 'EASY' | 'NORMAL' | 'HARD'
 type Principle = 'FIFO' | 'FEFO' | 'LIFO'
 const LEVELS: Level[] = ['EASY', 'NORMAL', 'HARD']
 const PRINCIPLES: Principle[] = ['FIFO', 'FEFO', 'LIFO']
+// Số dòng cảnh báo "sai khu" gửi về FE (FE hiện 6 dòng + tooltip). Tổng vẫn đếm trên TOÀN BỘ.
+const WARN_PREVIEW = 50
 
 // ─── Kiểu dữ liệu từ RPC ─────────────────────────────────────────────────────
-interface StatsZone { id: string; code: string; name: string; category: string | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
+interface StatsZone { id: string; code: string; name: string; categories: string[] | null; pick_rank: number | null; flow_type: string | null; capacity: number; used_slots: number }
 interface StatsMaterial { material_id: string; code: string; name: string | null; category: string | null; picks: number; cartons_out: number; pallets_touched: number; stock_pallets: number; stock_cartons: number; abc: 'A' | 'B' | 'C'; cum_share: number }
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
 // slot_no_in = vị trí KHÔNG đưa hàng vào (kho tạm — không làm đích, hàng ở đó luôn kéo đi)
@@ -66,11 +72,17 @@ async function fetchStats(warehouseId: string, categories: string[] | null, days
   return { stats: data as Stats }
 }
 
-// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3) ─────────────
-// Khu có Loại → CHỈ nhận mã đúng Loại (khu SCA chỉ nhận mã loại SCA; mã chưa khai loại KHÔNG vào được).
-// Khu chưa gắn Loại → nhận mọi mã (khu đa dụng).
+// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3; multi-loại 27/07) ────
+// Khu có Loại → CHỈ nhận mã có loại ∈ MẢNG loại của khu (mã chưa khai loại KHÔNG vào được).
+// Khu chưa gắn Loại (di sản null/rỗng) → nhận mọi mã (khu đa dụng).
 function zoneAccepts(zone: StatsZone, mat: { category: string | null }): boolean {
-  return zone.category == null || zone.category === mat.category
+  if (!zone.categories?.length) return true
+  return mat.category != null && zone.categories.includes(mat.category)
+}
+// 2 khu "cùng nhóm loại" nếu giao nhau ≥1 loại (dùng để xếp band A/B/C trong nhóm khu tương đương)
+function zonesOverlap(a: string[] | null, b: string[] | null): boolean {
+  if (!a?.length || !b?.length) return (!a?.length && !b?.length)
+  return a.some(x => b.includes(x))
 }
 
 // ─── Banding khu theo hạng nhặt (chỉ dùng mức HARD) ─────────────────────────
@@ -126,9 +138,9 @@ function categoryWarnings(stats: Stats): CategoryWarning[] {
     if (!p.sub_code) continue
     const zone = zoneByCode.get(p.sub_code)
     const mat = matById.get(p.material_id)
-    if (!zone || !mat || zone.category == null) continue
-    if (zone.category !== mat.category)
-      out.push({ type: 'WRONG_CATEGORY', material_code: mat.code, material_name: mat.name, material_category: mat.category, zone_code: zone.code, zone_category: zone.category, pallets: p.pallets })
+    if (!zone || !mat || !zone.categories?.length) continue
+    if (!zoneAccepts(zone, mat))
+      out.push({ type: 'WRONG_CATEGORY', material_code: mat.code, material_name: mat.name, material_category: mat.category, zone_code: zone.code, zone_category: zone.categories.join(', '), pallets: p.pallets })
   }
   return out.sort((a, b) => b.pallets - a.pallets)
 }
@@ -146,7 +158,8 @@ export async function getSlotting(req: Request, res: Response) {
     if (!warehouseId) return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id')
     if (!guardWarehouse(req, res, warehouseId)) return
     const scopeCats = scopeCategoriesOf(req)
-    const reqCats = req.query.categories ? String(req.query.categories).split(',').filter(Boolean) : []
+    // safeFilterValue: ký tự điều khiển (%00…) xuống Postgres text[] là 22021 → 500 (QA 21 bắt 06/08, cùng lỗ với cycle-count)
+    const reqCats = (parseListParam(req.query.categories) ?? []).map(c => safeFilterValue(c)).filter(Boolean)
     const effCats = scopeCats
       ? (reqCats.length > 0 ? reqCats.filter(c => scopeCats.includes(c)) : scopeCats)
       : reqCats
@@ -161,14 +174,48 @@ export async function getSlotting(req: Request, res: Response) {
     const materials = enrichMaterials(stats)
     const hasRanked = stats.zones.some(z => z.pick_rank != null)
     const zones = stats.zones.map(z => {
-      // band hiển thị = band trong nhóm khu cùng Loại với chính khu đó
-      const ranked = eligibleRankedZones(stats.zones, { category: z.category })
+      // band hiển thị = band trong nhóm khu cùng nhóm Loại (giao ≥1 loại) với chính khu đó
+      const ranked = stats.zones
+        .filter(zz => zz.pick_rank != null && zonesOverlap(zz.categories, z.categories))
+        .sort((a, b) => (a.pick_rank! - b.pick_rank!) || a.code.localeCompare(b.code))
       const idx = ranked.findIndex(r => r.code === z.code)
       return { ...z, band: z.pick_rank != null && idx >= 0 ? bandOfIndex(idx, ranked.length) : null }
     })
+    // Cảnh báo "hàng nằm sai khu": TRẢ TỐI ĐA 50 DÒNG + tổng đếm trên toàn bộ.
+    // FE chỉ hiện 6 dòng đầu + "…+N", còn lại nhồi vào tooltip — mà tooltip 3.269 dòng thì
+    // không ai đọc. Đo 28/07: gửi cả danh sách = 598KB/3.269 dòng (~183 B/dòng) ⇒ kho lớn hơn
+    // là vượt trần 4,5MB của Vercel chỉ vì phần tooltip không dùng được.
+    const allWarnings = categoryWarnings(stats)
+
+    // Bảng ABC: PHÂN TRANG. Đo 28/07 với 2.378 mã = 902KB; danh mục 10.000 mã ≈ 3,8MB, cộng phần
+    // còn lại là vượt trần 4,5MB của Vercel.
+    // ⚠️ XẾP HẠNG vẫn phải tính trên TOÀN BỘ mã: hạng A/B/C là % LŨY KẾ lượt nhặt, cắt trang trước
+    // khi xếp hạng thì trang 2 sẽ toàn hạng A (mỗi trang tự tính lũy kế lại) — sai hoàn toàn.
+    // Nên: engine xếp hạng đủ tập → mới cắt trang → và các ô SummaryBand đếm trên ĐỦ TẬP.
+    const pageNum  = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1)
+    const pageSize = Math.min(1000, Math.max(1, parseInt(String(req.query.page_size ?? '200'), 10) || 200))
+    // Tìm mã/tên: lọc ở SERVER (lọc client sau khi phân trang = lọc trên đúng 1 trang)
+    const term = String(req.query.search ?? '').trim().toLowerCase()
+    const filtered = term
+      ? materials.filter(m => `${m.code} ${m.name ?? ''}`.toLowerCase().includes(term))
+      : materials
+    const offset = (pageNum - 1) * pageSize
+
     return ok(res, {
       window_days: days, total_picks: stats.total_picks, has_ranked_zones: hasRanked,
-      zones, materials, warnings: categoryWarnings(stats),
+      zones,
+      materials: filtered.slice(offset, offset + pageSize),
+      materials_total: filtered.length,
+      page: pageNum, page_size: pageSize,
+      // 5 ô SummaryBand đếm trên TOÀN BỘ mã khớp lọc (đếm ở FE = chỉ đếm trang đang xem)
+      n_a: filtered.filter(m => m.abc === 'A').length,
+      n_b: filtered.filter(m => m.abc === 'B').length,
+      n_c: filtered.filter(m => m.abc === 'C').length,
+      misplaced_mats:    filtered.filter(m => m.misplaced_pallets > 0).length,
+      misplaced_pallets: filtered.reduce((s, m) => s + m.misplaced_pallets, 0),
+      warnings: allWarnings.slice(0, WARN_PREVIEW),
+      warnings_total: allWarnings.length,
+      warnings_pallets: allWarnings.reduce((s, w) => s + w.pallets, 0),
     })
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
@@ -410,7 +457,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const e of entries) {
       const z = zoneOfLoc(e.location_id)
       const mat = matById.get(e.material_id)
-      if (z?.category != null && mat && z.category !== mat.category) frozen.add(e.id)
+      if (z?.categories?.length && mat && !zoneAccepts(z, mat)) frozen.add(e.id)
     }
 
     const homeZonesOf = (mat: StatsMaterial) => stats!.zones
@@ -873,6 +920,16 @@ export async function updatePlan(req: Request, res: Response) {
     const { status } = req.body as { status?: string }
     if (!status || !['COMPLETED', 'CANCELLED', 'ACTIVE'].includes(status))
       return fail(res, 400, 'INVALID_INPUT', 'status phải là COMPLETED / CANCELLED / ACTIVE')
+    // Hoàn thành / Hủy / Mở lại = 3 quyền riêng (tách 05/08) — route gộp requireAnyPerm nên
+    // kiểm đúng quyền theo status ở đây (đừng để người chỉ có complete hủy được kế hoạch)
+    {
+      const need = status === 'COMPLETED' ? 'complete' : status === 'CANCELLED' ? 'cancel' : 'reopen'
+      const isAdmin = req.user?.is_superadmin === true
+      if (!isAdmin && !(req.user?.module_permissions?.slotting ?? []).includes(need)) {
+        const label = need === 'complete' ? 'hoàn thành' : need === 'cancel' ? 'hủy' : 'mở lại'
+        return fail(res, 403, 'FORBIDDEN', `Không có quyền ${label} kế hoạch sắp xếp`)
+      }
+    }
     const { data: plan } = await supabase.from('SlottingPlan')
       .select('id, warehouse_id, status').eq('id', req.params.id).maybeSingle()
     if (!plan) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kế hoạch')
@@ -913,7 +970,7 @@ export async function updateZoneConfig(req: Request, res: Response) {
       patch.flow_type = flow_type
     }
     const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
-      .select('id, code, name, category, pick_rank, flow_type').single()
+      .select('id, code, name, categories, pick_rank, flow_type').single()
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }

@@ -33,8 +33,9 @@ const COLS: { id: string; label: string; align?: 'right' }[] = [
   { id: 'mcode', label: 'Mã hàng' },
   { id: 'mname', label: 'Tên hàng' },
   { id: 'unit',  label: 'ĐVT' },
-  { id: 'plan',  label: 'KH (thùng)',     align: 'right' },
-  { id: 'act',   label: 'Thực tế (thùng)', align: 'right' },
+  // Dòng = 1 MÃ, số theo ĐVT của mã đó (cột ĐVT bên cạnh) — mã tính KG/cái KHÔNG phải "thùng"
+  { id: 'plan',  label: 'KH',      align: 'right' },
+  { id: 'act',   label: 'Thực tế', align: 'right' },
   { id: 'pct',   label: '% TT/KH',        align: 'right' },
   { id: 'note',  label: 'Ghi chú' },
 ]
@@ -64,7 +65,7 @@ export default function TMSReport() {
 
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const canEditPoPerm = isAdmin(user?.name) || can(perms, 'inbound_plan', 'edit')
+  const canEditPoPerm = isAdmin(user) || can(perms, 'inbound_plan', 'edit')
 
   const [editingPoId, setEditingPoId] = useState<string | null>(null)
   const [editingPoValue, setEditingPoValue] = useState('')
@@ -137,8 +138,8 @@ export default function TMSReport() {
       'Mã hàng':          r.material_code,
       'Tên hàng':         r.material_name,
       'ĐVT':              r.unit,
-      'KH (thùng)':       r.planned_boxes,
-      'Thực tế (thùng)':  r.actual_boxes,
+      'KH (theo ĐVT)':      r.planned_boxes,
+      'Thực tế (theo ĐVT)': r.actual_boxes,
       '% TT/KH':          r.pct != null ? r.pct / 100 : null,
       'Ghi chú':          r.note || '',
     }))
@@ -175,12 +176,15 @@ export default function TMSReport() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          <ActionCluster className="shrink-0" mobileInline items={[{
-            key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
-            primary: true, disabled: filteredRows.length === 0,
-            mobileHidden: true, // export Excel không dùng trên điện thoại
-            onClick: exportExcel,
-          } satisfies ActionItem]} />
+          <ActionCluster className="shrink-0" mobileInline items={[
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG tms_plan.export
+            ...(can(perms, 'tms_plan', 'export') ? [{
+              key: 'export-excel', icon: Download, label: 'Excel', tip: 'Xuất báo cáo đang lọc ra file Excel',
+              primary: true, disabled: filteredRows.length === 0,
+              mobileHidden: true, // export Excel không dùng trên điện thoại
+              onClick: exportExcel,
+            } satisfies ActionItem] : []),
+          ]} />
           </div>
         </div>
         <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
@@ -196,8 +200,9 @@ export default function TMSReport() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
         { label: 'Dòng', value: filteredRows.length },
-        { label: 'KH (thùng)', value: summary.totalPlan.toLocaleString('vi-VN') },
-        { label: 'Thực (thùng)', value: summary.totalActual.toLocaleString('vi-VN') },
+        // Ô TỔNG gộp mọi mã (thùng + KG/cái) → nhãn quy đổi (luật 1b CLAUDE.md)
+        { label: 'KH (quy đổi)', value: summary.totalPlan.toLocaleString('vi-VN') },
+        { label: 'Thực (quy đổi)', value: summary.totalActual.toLocaleString('vi-VN') },
         { label: '% TT/KH', value: `${overallPct}%`, accent: overallPct >= 100 },
       ]} />
 

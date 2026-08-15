@@ -427,7 +427,17 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // "xếp xong tím phải CAO BẰNG lớp tiếp giáp"; floor thuần từng hụt 80-480mm
           // do bội nền/gửi lệch — vượt nhẹ < 1 thùng nền tốt hơn lõm)
           let platLayers = 1
-          {
+          if (firstPlatMm >= 0) {
+            // Thềm ĐÃ MỞ (mã gửi trước) → mã gửi CỠ KHÁC lát TIẾP trên CÙNG mức thềm
+            // (user 23/07: hàng gửi liền vùng, chạy hết ngang — trước đây tính lại mức
+            // thềm cho mã mới → lệch firstPlatMm → break → CẢ MÃ rơi PHA 3 thành khối
+            // đứng SÀN ở đuôi, tách rời vùng gửi, trái luật "hàng gửi đè lên chân")
+            const plCap = Math.min(Math.floor(truck.height / bg.h), bg.maxLayers ?? Infinity)
+            if (firstPlatMm % bg.h !== 0 || firstPlatMm / bg.h > plCap) break   // nền class khác không khớp mức thềm
+            platLayers = firstPlatMm / bg.h
+            if (topT - firstPlatMm < lgd.h - 1e-9) break                        // hết head-room cho mã gửi này
+            Lf = Math.min(Lf, Math.max(1, Math.floor((topT - firstPlatMm) / lgd.h)))
+          } else {
             const plCap = Math.min(Math.floor(truck.height / bg.h), bg.maxLayers ?? Infinity)
             const Lf0 = Lf
             let bestSc = Infinity
@@ -441,9 +451,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
               }
             }
           }
-          // nền còn lại không đủ đổ → hạ bớt nền (đỉnh lõm nhẹ, vẫn giữ đủ lớp gửi)
+          // nền còn lại không đủ đổ → hạ bớt nền (đỉnh lõm nhẹ, vẫn giữ đủ lớp gửi) —
+          // CHỈ khi đang mở thềm mới (thềm đã neo mức thì giữ nguyên, không phá anchor)
           const colsNeed = Math.ceil(Math.ceil(N / Lf) * cellArea / colArea)
-          while (platLayers > 1 && colsNeed * platLayers > availBase * 0.8) platLayers--
+          while (firstPlatMm < 0 && platLayers > 1 && colsNeed * platLayers > availBase * 0.8) platLayers--
           const platMm = platLayers * bg.h
           if (firstPlatMm < 0) firstPlatMm = platMm
           else if (platMm !== firstPlatMm) break     // KHÔNG mở thềm mức khác
@@ -745,19 +756,39 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             leftover.push({ group: gi, count: remaining }); used[gi] += remaining
             continue
           }
-          // MẢNH LẺ (< 1 chồng) khi vùng gửi đã kẹt trần → BỎ LẠI (báo "Không vừa xe")
-          // — user 15/07: cột lùn 2 thùng đứng sàn chắn cửa là đổ hàng, không ai làm
-          if (laid.length && remaining < 2 * (g.maxLayers ?? LIGHT_MAX_DEFAULT)) {
-            leftover.push({ group: gi, count: remaining }); used[gi] += remaining
-            continue
+          // (2.5) NỔI LÊN NÓC khối sàn CÙNG ĐƠN, dồn PHÍA TRONG thành dải liền — user
+          // 23/07: "đưa hàng gửi lên xếp đè lên nó", hàng gửi dư KHÔNG đứng sàn (cột
+          // nhẹ đứng sàn giữa/đuôi xe = đổ hàng + tách rời vùng gửi).
+          {
+            const capN = g.maxLayers ?? LIGHT_MAX_DEFAULT
+            const roofCols = cols
+              .filter(c => c.doKey === dk)
+              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
+              .sort((a, b) => (a.x - b.x) || (a.y - b.y))
+            for (const c of roofCols) {
+              if (remaining <= 0) break
+              const fit = (g.l <= c.fl && g.w <= c.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
+              const n = Math.min(remaining, capN, Math.floor((truck.height - c.top) / g.h))
+              if (n <= 0) continue
+              step++
+              for (let k = 0; k < n; k++)
+                placed.push({ x: c.x, y: c.y, z: c.top + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
+              c.top += n * g.h
+              c.groups.add(gi)
+              used[gi] += n
+              remaining -= n
+            }
           }
-          // khối gửi đứng sàn KHÔNG cao hơn mặt bằng hiện có (vật lý: tháp nhẹ lẻ
-          // không gì đỡ — chain có thể còn nguyên trần khi toàn bộ nền đã vào thềm)
-          const roof = Math.max(
-            cols.length ? Math.max(...cols.map(c => c.top)) : 0,
-            laid.length ? Math.max(...laid.map(l => l.top)) : 0)
-          if (roof > 0) chain.capMm = Math.min(chain.capMm, Math.max(g.h, Math.floor(roof / g.h) * g.h))
-          pourClass([gi], `${dk}|top|${classKeyOf(g)}`)
+          if (remaining <= 0) continue
+          // (3) Khối gửi đứng sàn CHỈ khi cả xe không có gì để đè (đơn toàn hàng gửi);
+          // còn lại → bỏ lại (báo "Không vừa xe") — không dựng cột nhẹ đứng sàn.
+          if (cols.length === 0 && !laid.length) {
+            const roof = laid.length ? Math.max(...laid.map(l => l.top)) : 0
+            if (roof > 0) chain.capMm = Math.min(chain.capMm, Math.max(g.h, Math.floor(roof / g.h) * g.h))
+            pourClass([gi], `${dk}|top|${classKeyOf(g)}`)
+          } else {
+            leftover.push({ group: gi, count: remaining }); used[gi] += remaining
+          }
         }
       }
     }
@@ -768,6 +799,24 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // (không tràn nóc), rồi ÍT HỐ KÍN trên sàn nhất; tie-break maxX lớn hơn.
   // Sau lưới thô, nhị phân tinh chỉnh giữa nấc tốt nhất và nấc kế.
   const maxXOf = (placed: PlacedBox[]) => placed.length ? Math.max(...placed.map(b => b.x + b.l)) : 0
+  // SÀN TRỐNG SAU ĐUÔI LÀN (user 23/07: "để hở mà không dùng hết mặt sàn là không đúng
+  // logic"): mm chiều dài TB các làn HỤT so mặt tiền xa nhất (quét dải y 50mm). Trừ vào
+  // điểm → m-search tự chọn số lớp cho hàng cuối gần KÍN hàng ngang (đuôi phẳng, hết
+  // khe góc sàn); điểm = "chiều dài sàn dùng THẬT" thay vì làn dài nhất.
+  const tailNotch = (placed: PlacedBox[]): number => {
+    const floor = placed.filter(b => b.z === 0)
+    if (!floor.length) return 0
+    const mx = Math.max(...floor.map(b => b.x + b.l))
+    let area = 0, covered = 0
+    for (let y = 25; y < truck.width; y += 50) {
+      let front = -1
+      for (const b of floor) if (b.y <= y && y < b.y + b.w) front = Math.max(front, b.x + b.l)
+      if (front < 0) continue
+      covered += 50
+      area += (mx - front) * 50
+    }
+    return covered > 0 ? area / covered : 0
+  }
   // Đếm HỐ KÍN trên sàn: chân có khoảng trống ngang-y sau lưng BỊ hàng chặn phía đuôi
   // (khe mở thông ra đuôi xe = hợp lệ — "hở đẩy ra ngoài")
   const closedHoles = (placed: PlacedBox[]): number => {
@@ -796,15 +845,19 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // nhất → sạch (không tràn nóc) → ĐIỂM = maxX − 500mm/hố kín (đánh đổi: 1 hố nhỏ đổi
   // được ≥0.5m chiều dài thì trải; maxX xấp xỉ nhau thì phương án ít hố thắng)
   const leftCnt = (p: PackResult) => p.leftover.reduce((s, x) => s + x.count, 0)
+  // ĐIỂM: chiều dài sàn dùng THẬT (maxX) − hố kín − sàn trống sau đuôi làn (notch) − nóc
+  // gửi xấu. `spilled` (thùng nổi nóc DO SÀN HỤT) chỉ PHẠT NHẸ (40mm/thùng) — user 23/07
+  // "để hở mà không dùng hết mặt sàn là không đúng logic": HẠ LỚP để trải KÍN sàn tới đuôi
+  // (thừa nổi trên khối = đúng SOP) TỐT HƠN khối cao-gọn chừa 1-2m đuôi. Không hard-veto
+  // spilled nữa (trước: sạch>trải → xe vừa tải chọn khối cao ngắn, hở đuôi lớn). Over-spread
+  // tự chặn: nổi kịch +1 lớp → phần thật dư thành leftover → leftCnt gạt ở nhánh trên.
   const score = (p: PackResult) => maxXOf(p.placed) - closedHoles(p.placed) * 500
+    - tailNotch(p.placed) * 3                                 // đuôi phẳng kín sàn (nặng hơn: hết khe góc)
+    - p.spilled * 10                                          // nổi-do-sàn-hụt: phạt NHẸ, đổi lấy trải kín sàn (thừa nổi = SOP)
     - p.lightPatch * 100 - p.spanMiss * 0.5 - p.topMiss * 2   // phạt vùng gửi xấu (lõm đỉnh phạt nặng hơn)
   const better = (r: PackResult, cur: PackResult): boolean => {
     const rl = leftCnt(r), cl = leftCnt(cur)
     if (rl !== cl) return rl < cl
-    if (rl === 0) {
-      const rClean = r.spilled === 0, cClean = cur.spilled === 0
-      if (rClean !== cClean) return rClean
-    }
     return score(r) >= score(cur)
   }
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]

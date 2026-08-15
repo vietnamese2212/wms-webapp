@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -28,6 +28,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Rows3, AlignJustify } from 'lucide-react'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -35,19 +36,33 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Render field có thể chứa '\n' (multi-order) thành nhiều dòng riêng biệt
+/**
+ * Field có thể chứa '\n' (1 lượt xe chở NHIỀU đơn) — Mã đơn / NPP / GDO.
+ *
+ * Desktop: xếp CHỒNG từng giá trị, vì dòng thứ i của 3 cột ăn khớp nhau (đơn i ↔ NPP i ↔ GDO i)
+ *          — mất thế xếp chồng là mất luôn quan hệ đó.
+ * Mobile : gộp 1 DÒNG "a · b · c" + cắt đuôi. Xếp chồng trên điện thoại tốn y hệt wrap: đo thật
+ *          30/07 một lượt 6 GDO đẩy ô cao 89px ⇒ CẢ dòng cao 98px, màn 360x800 chỉ còn ~5 dòng.
+ *          Gộp lại còn ~34px/dòng (gấp ~3 lượng dữ liệu thấy được). Giá trị đầy đủ vẫn xem được
+ *          ở tooltip và ở pane chi tiết khi bấm vào dòng.
+ */
 function renderOrderField(value: string | null | undefined, mono = false) {
   if (!value) return <span className="text-slate-300">—</span>
   const parts = value.split('\n')
-  if (parts.length <= 1) return <span className={`block truncate ${mono ? 'font-mono font-semibold' : ''}`} title={value}>{value || <span className="text-slate-300">—</span>}</span>
+  const monoCls = mono ? 'font-mono font-semibold' : ''
+  if (parts.length <= 1) return <span className={`block truncate ${monoCls}`} title={value}>{value || <span className="text-slate-300">—</span>}</span>
+  const full = parts.join(' · ')
   return (
-    <div className={`divide-y divide-slate-100 ${mono ? 'font-mono font-semibold' : ''}`} title={parts.join(', ')}>
-      {parts.map((p, i) => (
-        <div key={i} className={`truncate ${i > 0 ? 'pt-0.5' : ''}`}>
-          {p || <span className="text-slate-300 font-normal">—</span>}
-        </div>
-      ))}
-    </div>
+    <>
+      <span className={`block truncate sm:hidden ${monoCls}`} title={full}>{full}</span>
+      <div className={`hidden sm:block divide-y divide-slate-100 ${monoCls}`} title={full}>
+        {parts.map((p, i) => (
+          <div key={i} className={`truncate ${i > 0 ? 'pt-0.5' : ''}`}>
+            {p || <span className="text-slate-300 font-normal">—</span>}
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -72,7 +87,7 @@ const ROW_TEXT: Record<GateStatus, string> = {
   COMPLETED:  'text-[#4A90D9] line-through hover:bg-slate-50',
 }
 
-const TODAY_VN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY_VN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // Loại xe đặc biệt — KHÔNG gắn booking (không có TmsOrder nào mang loại xe này nên
 // suggest/relink tự lọc ra rỗng). Luôn xếp CUỐI trong cây.
@@ -83,28 +98,33 @@ const WT_FALLBACK = '— Chưa rõ loại kho —'
 const VT_FALLBACK = '— Chưa rõ loại xe —'
 
 // Cột bảng đăng ký cổng — số phần tử PHẢI khớp số <TableCell> mỗi dòng (22 cột)
+// Thứ tự cột = MẠCH ĐỌC của người gác cổng (user chốt 30/07), chia 5 cụm trái→phải:
+//   ① lượt nào     : # · Ngày · Hướng
+//   ② việc gì      : Booking → Nội dung          (Booking TRƯỚC Nội dung — user chốt)
+//   ③ xe & người   : ĐVVT → Biển số → Lái xe → SĐT   (ngay SAU Nội dung — user chốt)
+//   ④ chứng từ     : Mã đơn · NPP · GDO
+//   ⑤ diễn biến    : Giờ ĐK → Gọi → Vào → Ra ⇒ TT (kết luận) · Ghi chú · thao tác
+// KHÔNG có cột Kho / Loại kho / Loại xe: cả 3 ĐÃ LÀ tiêu đề nhóm (cây 3 cấp Kho → Loại kho →
+// Loại xe) — in lại trong từng dòng chỉ tốn 310px ngang, thứ mà màn 360px không có để phí.
 const GATE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'num',     label: '#',         w: 40 },
   { id: 'date',    label: 'Ngày',      w: 90 },
   { id: 'dir',     label: 'Hướng',     w: 64 },
-  { id: 'vtype',   label: 'Loại xe',   w: 90 },
-  { id: 'content', label: 'Nội dung',  w: 120 },
   { id: 'booking', label: 'Booking',   w: 110 },
-  { id: 'order',   label: 'Mã đơn',    w: 120 },
-  { id: 'npp',     label: 'NPP',       w: 140 },
-  { id: 'gdo',     label: 'GDO',       w: 110 },
+  { id: 'content', label: 'Nội dung',  w: 120 },
   { id: 'company', label: 'ĐVVT',      w: 120 },
   { id: 'plate',   label: 'Biển số',   w: 100 },
   { id: 'driver',  label: 'Lái xe',    w: 110 },
   { id: 'phone',   label: 'SĐT',       w: 100 },
-  { id: 'notes',   label: 'Ghi chú',   w: 120 },
+  { id: 'order',   label: 'Mã đơn',    w: 120 },
+  { id: 'npp',     label: 'NPP',       w: 140 },
+  { id: 'gdo',     label: 'GDO',       w: 110 },
   { id: 'tReg',    label: 'Giờ ĐK',    w: 60 },
   { id: 'tCall',   label: 'Giờ gọi',   w: 60 },
   { id: 'tIn',     label: 'Giờ vào',   w: 60 },
   { id: 'tOut',    label: 'Giờ ra',    w: 60 },
-  { id: 'wh',      label: 'Kho',       w: 120 },
-  { id: 'whType',  label: 'Loại kho',  w: 100 },
   { id: 'status',  label: 'TT',        w: 90 },
+  { id: 'notes',   label: 'Ghi chú',   w: 120 },
   { id: 'actions', label: '',          w: 160 },
 ]
 
@@ -302,14 +322,16 @@ const PHASE2_DEFAULT = {
   seal_number: '', notes: '',
 }
 
-const FORM_DEFAULT: FormData = {
-  date: TODAY_VN,
+// HÀM, không phải hằng: hằng module sẽ chốt NGÀY lúc mở app — máy cổng để mở qua đêm thì
+// form mới vẫn mang ngày hôm qua (và `min` chặn oan). Mọi nơi dùng phải GỌI formDefault().
+const formDefault = (): FormData => ({
+  date: TODAY_VN(),
   driver_name: '', phone: '',
   company_id: '', company_name_raw: '',
   vehicle_id: '', license_plate: '',
   direction: '', warehouse_id: '', warehouse_type: '', vehicle_type: '',
   content: '', return_pallet: false, seal_number: '', notes: '',
-}
+})
 
 // Chân thứ 2 (Xuất) của xe "kết hợp" — chỉ dùng khi Hướng = 'BOTH' (sentinel form, KHÔNG lưu DB).
 // Trường dùng chung (ngày/kho/Loại kho/biển số/lái xe/SĐT) lấy từ `form`; chỉ các trường này khác chân.
@@ -336,8 +358,8 @@ export default function GateRegistration() {
 
   // ── Filters (persisted via wmsFilterStore)
   const { gateRegistration: grf, setGateRegistration } = useWmsFilterStore()
-  const fDate          = grf.fDate          || TODAY_VN
-  const fDateTo        = grf.fDateTo        || TODAY_VN
+  const fDate          = grf.fDate          || TODAY_VN()
+  const fDateTo        = grf.fDateTo        || TODAY_VN()
   const fWarehouse     = grf.fWarehouse
   const fWarehouseType = grf.fWarehouseType
   const fVehicleTypes  = grf.fVehicleTypes
@@ -384,7 +406,7 @@ export default function GateRegistration() {
   const [selected,   setSelected]   = useState<GateRegistration | null>(null)
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editReg,    setEditReg]    = useState<GateRegistration | null>(null)
-  const [form,       setForm]       = useState<FormData>(FORM_DEFAULT)
+  const [form,       setForm]       = useState<FormData>(formDefault)
   const [outLeg,     setOutLeg]     = useState<LegData>(LEG_DEFAULT)   // chân Xuất khi đăng ký kết hợp
 
   // ── Action dialogs
@@ -410,112 +432,26 @@ export default function GateRegistration() {
   if (fDirection)     params.direction      = fDirection
   if (fStatus)        params.status         = fStatus
 
-  const { data: regs = [], isLoading } = useQuery<GateRegistration[]>({
-    queryKey: ['gate-registrations', params],
-    queryFn: () => apiClient.get('/tms/gate-registrations', { params }).then(r => r.data.data),
+  // gửi MẢNG (axios → vehicle_types[]=…): tên loại xe có thể chứa dấu phẩy nên không nối CSV
+  const treeParams: Record<string, string | string[]> = { ...params }
+  if (fVehicleTypes.length) treeParams.vehicle_types = fVehicleTypes
+
+  // ── CÂY LƯỜI (user chốt 28/07): thống kê nhóm tải trước (nhẹ), DÒNG chi tiết cuộn tới đâu tải
+  // tới đó. Trước đây tải HẾT mọi lượt đăng ký rồi mới dựng cây ở máy — kéo rộng khoảng ngày là
+  // hàng chục nghìn dòng (trang chết hẳn ở trần 10.000).
+  type TreeNode = { wh: string; wt: string | null; vt: string | null; total: number; done: number; inside: number; waiting: number }
+  const { data: tree, isLoading: treeLoading, error: listErr } = useQuery<{ nodes: TreeNode[]; totals: { total: number; done: number; inside: number; waiting: number } }>({
+    queryKey: ['gate-tree', treeParams],
+    queryFn: () => apiClient.get('/tms/gate-registrations/tree', { params: treeParams }).then(r => r.data.data),
   })
-
-  // Client-side vehicle type filter + sort: date DESC → vehicle_type ASC → booking_slot_from ASC → reg_number ASC
-  const displayRegs = (() => {
-    const filtered = fVehicleTypes.length > 0
-      ? regs.filter(r => fVehicleTypes.includes(r.vehicle_type ?? ''))
-      : regs
-    return [...filtered].sort((a, b) => {
-      if (a.date !== b.date) return a.date > b.date ? -1 : 1
-      const vta = a.vehicle_type ?? '￿'
-      const vtb = b.vehicle_type ?? '￿'
-      if (vta !== vtb) return vta < vtb ? -1 : 1
-      const bfa = a.booking_slot_from ?? '￿'
-      const bfb = b.booking_slot_from ?? '￿'
-      if (bfa !== bfb) return bfa < bfb ? -1 : 1
-      return a.registration_number - b.registration_number
-    })
-  })()
-
-  // Tất cả key nhóm (mọi cấp) để Mở/Gom tất cả — key PHẢI khớp buildRenderList
-  const allGroupKeys = useMemo(() => {
-    const s = new Set<string>()
-    for (const r of displayRegs) {
-      const whKey = `W::${r.warehouse_id ?? ''}`
-      const wtKey = `${whKey}::T::${r.warehouse_type ?? WT_FALLBACK}`
-      s.add(whKey); s.add(wtKey); s.add(`${wtKey}::V::${r.vehicle_type ?? VT_FALLBACK}`)
-    }
-    return s
-  }, [displayRegs])
+  const treeNodes = useMemo(() => tree?.nodes ?? [], [tree])
+  const totals = tree?.totals ?? { total: 0, done: 0, inside: 0, waiting: 0 }
   const expandAll  = () => { setCollapsed(new Set()); try { localStorage.setItem(collapseKey, '[]') } catch { /* ignore */ } }
   const collapseAll = () => { const all = new Set(allGroupKeys); setCollapsed(all); try { localStorage.setItem(collapseKey, JSON.stringify([...all])) } catch { /* ignore */ } }
-  // Đang gom hết? = mọi nhóm Kho (cấp 1) đều đang gập → nút 1-cái toggle Mở/Gom
-  const whKeys = useMemo(() => [...new Set(displayRegs.map(r => `W::${r.warehouse_id ?? ''}`))], [displayRegs])
-  const allCollapsed = whKeys.length > 0 && whKeys.every(k => collapsed.has(k))
-
   // Cây phân cấp: Kho → Loại kho → Loại xe; dòng lá sort booking ↑ (null cuối) → giờ ĐK ↑
   type RenderItem =
     | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
-  const buildRenderList = (warehouses: { id: string; name: string }[], wtOrder: Map<string, number>, vtOrder: Map<string, number>): RenderItem[] => {
-    const whName = (wid: string) =>(warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
-    const byWh = new Map<string, Map<string, Map<string, GateRegistration[]>>>()
-    for (const r of displayRegs) {
-      const wid = r.warehouse_id ?? ''
-      const wt = r.warehouse_type ?? WT_FALLBACK
-      const vt = r.vehicle_type ?? VT_FALLBACK
-      if (!byWh.has(wid)) byWh.set(wid, new Map())
-      const wtMap = byWh.get(wid)!
-      if (!wtMap.has(wt)) wtMap.set(wt, new Map())
-      const vtMap = wtMap.get(wt)!
-      if (!vtMap.has(vt)) vtMap.set(vt, [])
-      vtMap.get(vt)!.push(r)
-    }
-    const stats = (rs: GateRegistration[]) => ({
-      total: rs.length,
-      done: rs.filter(r => r.status === 'COMPLETED').length,
-      inside: rs.filter(r => r.status === 'IN').length,
-      waiting: rs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length,
-    })
-    const sortLeaf = (a: GateRegistration, b: GateRegistration) => {
-      const ba = a.booking_slot_from ?? '￿', bb = b.booking_slot_from ?? '￿'
-      if (ba !== bb) return ba < bb ? -1 : 1
-      const ra = a.registered_at ?? '', rb = b.registered_at ?? ''
-      return ra < rb ? -1 : ra > rb ? 1 : 0
-    }
-    const items: RenderItem[] = []
-    const whKeys = [...byWh.keys()].sort((a, b) => whName(a).localeCompare(whName(b), 'vi'))
-    for (const wid of whKeys) {
-      const wtMap = byWh.get(wid)!
-      const whRegs = [...wtMap.values()].flatMap(m => [...m.values()].flat())
-      const whKey = `W::${wid}`
-      const whCol = collapsed.has(whKey)
-      items.push({ kind: 'group', level: 1, key: whKey, label: whName(wid), ...stats(whRegs), collapsed: whCol })
-      if (whCol) continue
-      for (const wt of [...wtMap.keys()].sort((a, b) => {
-        const oa = wtOrder.get(a) ?? 9999, ob = wtOrder.get(b) ?? 9999   // loại kho theo thứ tự WMS Settings; lạ/null xuống cuối
-        if (oa !== ob) return oa - ob
-        return a.localeCompare(b, 'vi')
-      })) {
-        const vtMap = wtMap.get(wt)!
-        const wtRegs = [...vtMap.values()].flat()
-        const wtKey = `${whKey}::T::${wt}`
-        const wtCol = collapsed.has(wtKey)
-        items.push({ kind: 'group', level: 2, key: wtKey, label: wt, ...stats(wtRegs), collapsed: wtCol })
-        if (wtCol) continue
-        for (const vt of [...vtMap.keys()].sort((a, b) => {
-          const sa = SPECIAL_VTYPES.includes(a) ? 1 : 0, sb = SPECIAL_VTYPES.includes(b) ? 1 : 0   // Chỉ trả pallet / Khác xuống cuối
-          if (sa !== sb) return sa - sb
-          const oa = vtOrder.get(a) ?? 9999, ob = vtOrder.get(b) ?? 9999   // loại xe theo thứ tự TMS Settings; lạ xuống cuối
-          if (oa !== ob) return oa - ob
-          return a.localeCompare(b, 'vi')
-        })) {
-          const leaves = [...vtMap.get(vt)!].sort(sortLeaf)
-          const vtKey = `${wtKey}::V::${vt}`
-          const vtCol = collapsed.has(vtKey)
-          items.push({ kind: 'group', level: 3, key: vtKey, label: vt, ...stats(leaves), collapsed: vtCol })
-          if (vtCol) continue
-          for (const reg of leaves) items.push({ kind: 'leaf', reg })
-        }
-      }
-    }
-    return items
-  }
 
   const { data: companies = [] } = useQuery<TransportCompany[]>({
     queryKey: ['tms-companies'],
@@ -536,12 +472,146 @@ export default function GateRegistration() {
   const { data: allWhTypes = [] } = useWarehouseTypes()   // đủ loại — chỉ dùng sắp thứ tự hiển thị
   const { data: whTypes = [] } = useScopedWhTypes()       // option filter + form theo scope user
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const renderList = useMemo(() => {
-    const wtOrder = new Map<string, number>((allWhTypes as { value: string }[]).map((t, i) => [t.value, i]))
-    const vtOrder = new Map<string, number>((vehicleTypes as { name: string }[]).map((t, i) => [t.name, i]))
-    return buildRenderList(warehouses as { id: string; name: string }[], wtOrder, vtOrder)
-  }, [displayRegs, collapsed, warehouses, allWhTypes, vehicleTypes])
+  // ── Thứ tự cây do FE quyết (kho theo TÊN · loại kho theo Cài đặt WMS · loại xe theo Cài đặt TMS,
+  // "Chỉ trả pallet"/"Khác" xuống cuối). Gửi 3 mảng thứ tự này xuống server để server trả DÒNG
+  // đúng thứ tự cây — KHÔNG chép quy tắc sắp xếp vào SQL (đổi cài đặt là lệch nhau ngay).
+  const whNameOf = (wid: string) => (warehouses as { id: string; name: string }[]).find(w => w.id === wid)?.name ?? wid
+  const treeOrder = useMemo(() => {
+    const wtRank = new Map<string, number>((allWhTypes as { value: string }[]).map((t, i) => [t.value, i]))
+    const vtRank = new Map<string, number>((vehicleTypes as { name: string }[]).map((t, i) => [t.name, i]))
+    const whs = [...new Set(treeNodes.map(n => n.wh))]
+      .sort((a, b) => whNameOf(a).localeCompare(whNameOf(b), 'vi'))
+    const wts = [...new Set(treeNodes.map(n => n.wt ?? WT_FALLBACK))].sort((a, b) => {
+      const oa = wtRank.get(a) ?? 9999, ob = wtRank.get(b) ?? 9999
+      return oa !== ob ? oa - ob : a.localeCompare(b, 'vi')
+    })
+    const vts = [...new Set(treeNodes.map(n => n.vt ?? VT_FALLBACK))].sort((a, b) => {
+      const sa = SPECIAL_VTYPES.includes(a) ? 1 : 0, sb = SPECIAL_VTYPES.includes(b) ? 1 : 0
+      if (sa !== sb) return sa - sb
+      const oa = vtRank.get(a) ?? 9999, ob = vtRank.get(b) ?? 9999
+      return oa !== ob ? oa - ob : a.localeCompare(b, 'vi')
+    })
+    return { whs, wts, vts }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [treeNodes, warehouses, allWhTypes, vehicleTypes])
+
+  // Nhóm ĐANG GẬP → server bỏ qua dòng của nhóm đó (không thì trang tải toàn dòng đang bị ẩn)
+  const collapsedArrays = useMemo(() => {
+    const wh: string[] = [], wt: string[] = [], vt: string[] = []
+    for (const k of collapsed) {
+      const m3 = k.match(/^W::(.*)::T::(.*)::V::(.*)$/)
+      if (m3) { vt.push(`${m3[1]}|${m3[2]}|${m3[3]}`); continue }
+      const m2 = k.match(/^W::(.*)::T::(.*)$/)
+      if (m2) { wt.push(`${m2[1]}|${m2[2]}`); continue }
+      const m1 = k.match(/^W::(.*)$/)
+      if (m1) wh.push(m1[1])
+    }
+    return { wh, wt, vt }
+  }, [collapsed])
+
+  // Dòng chi tiết: cuộn tới đâu tải tới đó (mỗi lượt 200 dòng theo đúng thứ tự cây)
+  const LEAF_PAGE = 200
+  const leafParams = useMemo(() => ({
+    ...treeParams,
+    order_wh: treeOrder.whs, order_wt: treeOrder.wts, order_vt: treeOrder.vts,
+    wt_null: WT_FALLBACK, vt_null: VT_FALLBACK,
+    collapsed_wh: collapsedArrays.wh, collapsed_wt: collapsedArrays.wt, collapsed_vt: collapsedArrays.vt,
+    limit: LEAF_PAGE,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [JSON.stringify(treeParams), treeOrder, collapsedArrays])
+  const leavesQ = useInfiniteQuery({
+    queryKey: ['gate-leaves', leafParams],
+    enabled: treeNodes.length > 0,
+    initialPageParam: 0,
+    placeholderData: keepPreviousData,
+    queryFn: ({ pageParam }) => apiClient
+      .get('/tms/gate-registrations/leaves', { params: { ...leafParams, offset: pageParam } })
+      .then(r => r.data.data as { rows: GateRegistration[]; total: number }),
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((s, p) => s + p.rows.length, 0)
+      return loaded < last.total ? loaded : undefined
+    },
+  })
+  const displayRegs = useMemo(
+    () => leavesQ.data?.pages.flatMap(p => p.rows) ?? [], [leavesQ.data])
+  const leavesTotal = leavesQ.data?.pages[0]?.total ?? 0
+
+  // Cuộn chạm đáy → tải lượt tiếp theo
+  const loadMoreRef = useRef<HTMLDivElement | null>(null)
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = leavesQ
+  useEffect(() => {
+    const el = loadMoreRef.current
+    if (!el || !hasNextPage) return
+    const io = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) fetchNextPage()
+    }, { rootMargin: '400px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, displayRegs.length])
+
+  // Tất cả key nhóm (mọi cấp) để Mở/Gom tất cả — lấy từ CÂY (không phải từ dòng đã tải)
+  const allGroupKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const n of treeNodes) {
+      const whKey = `W::${n.wh}`
+      const wtKey = `${whKey}::T::${n.wt ?? WT_FALLBACK}`
+      s.add(whKey); s.add(wtKey); s.add(`${wtKey}::V::${n.vt ?? VT_FALLBACK}`)
+    }
+    return s
+  }, [treeNodes])
+  const whKeys = useMemo(() => [...new Set(treeNodes.map(n => `W::${n.wh}`))], [treeNodes])
+  const allCollapsed = whKeys.length > 0 && whKeys.every(k => collapsed.has(k))
+
+  const renderList = useMemo<RenderItem[]>(() => {
+    // Thống kê nhóm lấy từ CÂY (đúng trên toàn bộ bộ lọc), dòng lấy từ phần ĐÃ TẢI
+    const nodeByKey = new Map<string, { total: number; done: number; inside: number; waiting: number }>()
+    const roll = (k: string, n: { total: number; done: number; inside: number; waiting: number }) => {
+      const cur = nodeByKey.get(k) ?? { total: 0, done: 0, inside: 0, waiting: 0 }
+      nodeByKey.set(k, { total: cur.total + n.total, done: cur.done + n.done, inside: cur.inside + n.inside, waiting: cur.waiting + n.waiting })
+    }
+    const wtsOf = new Map<string, Set<string>>(), vtsOf = new Map<string, Set<string>>()
+    for (const n of treeNodes) {
+      const wt = n.wt ?? WT_FALLBACK, vt = n.vt ?? VT_FALLBACK
+      const whKey = `W::${n.wh}`, wtKey = `${whKey}::T::${wt}`, vtKey = `${wtKey}::V::${vt}`
+      roll(whKey, n); roll(wtKey, n); roll(vtKey, n)
+      if (!wtsOf.has(whKey)) wtsOf.set(whKey, new Set())
+      wtsOf.get(whKey)!.add(wt)
+      if (!vtsOf.has(wtKey)) vtsOf.set(wtKey, new Set())
+      vtsOf.get(wtKey)!.add(vt)
+    }
+    const leavesByKey = new Map<string, GateRegistration[]>()
+    for (const r of displayRegs) {
+      const k = `W::${r.warehouse_id ?? ''}::T::${r.warehouse_type ?? WT_FALLBACK}::V::${r.vehicle_type ?? VT_FALLBACK}`
+      if (!leavesByKey.has(k)) leavesByKey.set(k, [])
+      leavesByKey.get(k)!.push(r)
+    }
+    const items: RenderItem[] = []
+    for (const wid of treeOrder.whs) {
+      const whKey = `W::${wid}`
+      const whStats = nodeByKey.get(whKey)
+      if (!whStats) continue
+      const whCol = collapsed.has(whKey)
+      items.push({ kind: 'group', level: 1, key: whKey, label: whNameOf(wid), ...whStats, collapsed: whCol })
+      if (whCol) continue
+      for (const wt of treeOrder.wts) {
+        if (!wtsOf.get(whKey)?.has(wt)) continue
+        const wtKey = `${whKey}::T::${wt}`
+        const wtCol = collapsed.has(wtKey)
+        items.push({ kind: 'group', level: 2, key: wtKey, label: wt, ...nodeByKey.get(wtKey)!, collapsed: wtCol })
+        if (wtCol) continue
+        for (const vt of treeOrder.vts) {
+          if (!vtsOf.get(wtKey)?.has(vt)) continue
+          const vtKey = `${wtKey}::V::${vt}`
+          const vtCol = collapsed.has(vtKey)
+          items.push({ kind: 'group', level: 3, key: vtKey, label: vt, ...nodeByKey.get(vtKey)!, collapsed: vtCol })
+          if (vtCol) continue
+          for (const reg of leavesByKey.get(vtKey) ?? []) items.push({ kind: 'leaf', reg })
+        }
+      }
+    }
+    return items
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [treeNodes, displayRegs, collapsed, treeOrder, warehouses])
 
   // Loại xe = DANH MỤC độc lập (user chốt 04/07: "Loại xe khác mà khung giờ khác") —
   // không còn chặn theo khung giờ kho; chỉ ƯU TIÊN loại có khung giờ tại kho lên đầu cho dễ chọn.
@@ -603,8 +673,12 @@ export default function GateRegistration() {
   // ── Mutations
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['gate-registrations'] })
+    // Cây lười: thống kê nhóm + dòng đã tải đều phải làm mới (thêm/gọi/vào/ra đổi cả 2)
+    qc.invalidateQueries({ queryKey: ['gate-tree'] })
+    qc.invalidateQueries({ queryKey: ['gate-leaves'] })
     // call/entry/exit cập nhật TmsOrder.export_status + slot → làm mới trang Bookings đang mở song song
-    qc.invalidateQueries({ queryKey: ['tms-orders'] })
+    qc.invalidateQueries({ queryKey: ['tms-orders-paged'] })
+    qc.invalidateQueries({ queryKey: ['tms-orders-summary'] })
     qc.invalidateQueries({ queryKey: ['gate-suggest'] })
   }
 
@@ -688,7 +762,7 @@ export default function GateRegistration() {
   // ── Modal helpers
   function openCreate() {
     setEditReg(null)
-    setForm({ ...FORM_DEFAULT, date: TODAY_VN, warehouse_id: fWarehouse })
+    setForm({ ...formDefault(), warehouse_id: fWarehouse })
     setOutLeg(LEG_DEFAULT)
     setApiError('')
     setModalOpen(true)
@@ -818,7 +892,10 @@ export default function GateRegistration() {
   // Xe kết hợp: chân đối ứng (khác chiều) cùng visit_group_id — để gác thứ tự Vào/Ra
   function combinedPartner(reg: GateRegistration): GateRegistration | undefined {
     if (!reg.visit_group_id) return undefined
-    return regs.find(r => r.visit_group_id === reg.visit_group_id && r.id !== reg.id)
+    // Tìm trong các dòng ĐÃ TẢI: 2 chân của xe kết hợp cùng kho/loại nên gần như luôn nằm cùng
+    // lượt tải. Nếu chưa tải kịp thì chỉ mất phần LÀM MỜ nút — thứ tự Vào/Ra vẫn được BE chặn
+    // (combinedPartnerStatus ở doCall/doEntry/doRevertExit).
+    return displayRegs.find(r => r.visit_group_id === reg.visit_group_id && r.id !== reg.id)
   }
 
   // ── Action buttons nhỏ NẰM TRONG CELL từng dòng (chuẩn 17b — giữ nguyên, không dùng ActionCluster)
@@ -1016,7 +1093,9 @@ export default function GateRegistration() {
   }, [savedViews, viewSnapshot])
 
   const { widths: gateColW, startResize: gateStartResize, totalWidth: gateTotalWidth } =
-    useColumnResize('gate_col_widths', GATE_COLS.map(c => c.w))
+    // key _v2: bộ cột đổi (bỏ Kho/Loại kho/Loại xe + xếp lại) — độ rộng user kéo theo bộ CŨ
+    // không còn khớp cột nào, giữ lại là lệch cột im lặng. Đổi key = ai cũng bắt đầu từ mặc định mới.
+    useColumnResize('gate_col_widths_v2', GATE_COLS.map(c => c.w))
 
   const renderLeafRow = (reg: GateRegistration) => (
     <TableRow
@@ -1035,14 +1114,7 @@ export default function GateRegistration() {
           ? <span className="flex items-center gap-0.5">Nhập<ArrowLeft className="h-3 w-3 text-blue-600" />{reg.visit_group_id && <span className="text-red-500 font-bold" title="Xe kết hợp Nhập + Xuất">*</span>}</span>
           : '—'}
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.vehicle_type ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
-        <span className="flex items-center gap-1">
-          <span>{reg.content ?? '—'}</span>
-          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
-          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
-        </span>
-      </TableCell>
+      {/* ② việc gì: Booking → Nội dung */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
         <span className="flex items-center gap-1">
           {reg.booking_slot_from
@@ -1051,6 +1123,19 @@ export default function GateRegistration() {
           {bookingIcon(reg)}
         </span>
       </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+        <span className="flex items-center gap-1">
+          <span className="truncate">{reg.content ?? '—'}</span>
+          {reg.return_pallet && <Package className="h-3 w-3 text-blue-500 shrink-0" />}
+          {reg.priority && <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />}
+        </span>
+      </TableCell>
+      {/* ③ xe & người */}
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
+      {/* ④ chứng từ */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_order_code, true)}
       </TableCell>
@@ -1060,22 +1145,17 @@ export default function GateRegistration() {
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_gdo_refs)}
       </TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{companyName(reg)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{reg.license_plate ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.driver_name ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.phone ?? '—'}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
+      {/* ⑤ diễn biến → kết luận */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{fmtTime(reg.registered_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.called_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.entry_at)}</TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap font-medium">{fmtTime(reg.exit_at)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{warehouseName(reg.warehouse_id)}</TableCell>
-      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{reg.warehouse_type ?? '—'}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${STATUS_BADGE[reg.status]}`}>
           {STATUS_LABEL[reg.status]}
         </span>
       </TableCell>
+      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap" title={reg.notes ?? ''}>{reg.notes ?? '—'}</TableCell>
       <TableCell className="px-1 py-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
         <ActionButtons reg={reg} />
       </TableCell>
@@ -1127,20 +1207,22 @@ export default function GateRegistration() {
       </div>
 
       {/* Summary band (Manhattan) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
-        { label: 'Tổng xe', value: displayRegs.length },
-        { label: 'Đang chờ', value: displayRegs.filter(r => r.status === 'REGISTERED' || r.status === 'CALLED').length },
-        { label: 'Đang trong', value: displayRegs.filter(r => r.status === 'IN').length, accent: displayRegs.some(r => r.status === 'IN') },
-        { label: 'Đã ra', value: displayRegs.filter(r => r.status === 'COMPLETED').length },
+        // Tổng tính bằng SQL trên TOÀN BỘ bộ lọc — không đếm trên số dòng đã tải về
+        { label: 'Tổng xe', value: totals.total },
+        { label: 'Đang chờ', value: totals.waiting },
+        { label: 'Đang trong', value: totals.inside, accent: totals.inside > 0 },
+        { label: 'Đã ra', value: totals.done },
       ]} />
 
       {/* ── Main area: table */}
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-        {isLoading ? (
+        {treeLoading ? (
           <div className="flex items-center justify-center h-32 text-sm text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin mr-2" />Đang tải...
           </div>
-        ) : displayRegs.length === 0 ? (
+        ) : totals.total === 0 ? (
           <div className="flex items-center justify-center h-32 text-sm text-slate-400">
             Không có dữ liệu
           </div>
@@ -1151,7 +1233,7 @@ export default function GateRegistration() {
                   <TableRow>
                     {GATE_COLS.map((c, i) => (
                       <TableHead key={c.id}
-                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${i === 21 ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                        className={`text-[9px] font-medium text-slate-500 whitespace-nowrap py-1.5 ${c.id === 'actions' ? 'px-1' : 'px-2'} ${c.align === 'right' ? 'text-right' : ''} ${c.id === 'num' ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
                         {c.label}
                         {i > 0 && c.id !== 'actions' && (
                           <span onPointerDown={e => gateStartResize(i, e)} onClick={e => e.stopPropagation()}
@@ -1195,11 +1277,20 @@ export default function GateRegistration() {
                 </TableBody>
               </Table>
           )}
+        {/* Mốc cuộn: chạm tới là tải tiếp lượt sau (cây LƯỜI — không có nút phân trang) */}
+        {leavesQ.hasNextPage && (
+          <div ref={loadMoreRef} className="flex items-center justify-center gap-2 py-3 text-[11px] text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Đang tải thêm… ({displayRegs.length.toLocaleString('vi-VN')}/{leavesTotal.toLocaleString('vi-VN')} dòng)
+          </div>
+        )}
       </div>
 
       {/* Footer đếm bản ghi */}
       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {displayRegs.length > 0 ? `1–${displayRegs.length} / ${displayRegs.length} lượt đăng ký` : '0 lượt đăng ký'}
+        {totals.total > 0
+          ? `${displayRegs.length.toLocaleString('vi-VN')} / ${leavesTotal.toLocaleString('vi-VN')} dòng đã tải · ${totals.total.toLocaleString('vi-VN')} lượt đăng ký`
+          : '0 lượt đăng ký'}
       </div>
      </div>
 
@@ -1389,7 +1480,7 @@ export default function GateRegistration() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Ngày <span className="text-red-500">*</span></label>
-                <Input type="date" value={form.date} min={TODAY_VN} onChange={e => fCriteria('date', e.target.value)} className="text-xs h-8" />
+                <Input type="date" value={form.date} min={TODAY_VN()} onChange={e => fCriteria('date', e.target.value)} className="text-xs h-8" />
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-500">Kho <span className="text-red-500">*</span></label>

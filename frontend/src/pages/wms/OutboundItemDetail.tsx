@@ -5,10 +5,11 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Trash2, Pause, ChevronDown, ChevronRight, PenSquare, Info,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { Card }    from '@/components/ui/card'
 import { Input }   from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -16,7 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { toast } from '@/components/ui/use-toast'
-import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, useAttachCartonScans, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { useGDO, useScanOutboundItem, useManualCompleteItem, useManualItemStock, useDeleteOutboundScanEntry, useItemInventory, useCheckOutboundScan, useConfirmLoosePickingItem, useAttachCartonScans, usePctBands, type ItemInventoryEntry, type CheckOutboundScanResult } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { CartonScanSheet, type CartonScan } from '@/components/wms/CartonScanSheet'
 import { materialCodeOf } from '@/utils/qr'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
@@ -33,6 +35,9 @@ import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQu
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { useRotationGate } from '@/components/wms/RotationGate'
+import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -102,7 +107,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
+  // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
+  const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ (thiếu / vị trí vừa đầy): hiện NGAY TRONG panel và GIỮ tem đang chờ — user chọn lại
+  // rồi bấm Lưu, KHÔNG phải quét lại pallet (user 30/07: "muốn chọn lại phải quét tiếp, mất thao tác")
+  const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
+  // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
+  const rotGate = useRotationGate(checkResult?.rotation)
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
   // Panel multiscan tem THÙNG neo vào pallet vừa quét (chỉ khi Kho/Loại kho bật cờ)
@@ -115,12 +127,15 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   // Offline: không check được với server → xếp thẳng vào hàng đợi; SL do server chốt
   // lúc sync (cap = min(tồn pallet, còn cần xuất) — không bao giờ vượt kế hoạch).
   // cartons_override chỉ gửi khi user đã kịp xác nhận số (đường handleSave).
-  function queueScan(qr_code: string, cartonsOverride: number | undefined, uncertain: boolean) {
+  function queueScan(qr_code: string, cartonsOverride: number | undefined, uncertain: boolean, leftoverLocation?: string | null) {
     const norm = normalizeQR(qr_code)
     const { queued, duplicate } = enqueueScan({
       kind: 'outbound',
       url: `/wms/outbound/${gdoId}/items/${item.id}/scan`,
-      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride },
+      // Offline chưa biết pallet có dư hay không (không hỏi được server) → mặc định GIỮ CHỖ CŨ,
+      // đúng bằng hành vi cũ; nếu user đã kịp chọn chỗ thì gửi đúng chỗ đó.
+      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride,
+              leftover_ui: true, leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
       pallet_code: norm,
       label: `${item.material?.material_code ?? item.material_code_raw ?? ''} · ${matName}`,
       orderId: gdoId,
@@ -149,6 +164,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    rotGate.reset()   // tem mới = câu hỏi lý do mới
     if (isOffline()) {   // trình duyệt biết chắc offline → khỏi bắn check chết
       queueScan(qr_code, undefined, false)
       return
@@ -159,6 +175,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
@@ -173,10 +190,17 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     )
   }
 
+  // Số BASE còn lại trên pallet sau lượt này — >0 thì BẮT BUỘC khai chỗ đặt trước khi Lưu
+  const qtyToTake  = Math.max(1, parseInt(pendingCartons) || 1)
+  const leftoverQty = Math.max(0, (checkResult?.pallet_remaining ?? 0) - qtyToTake)
+  const needLeftoverLoc = !!checkResult && leftoverQty > 0
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+
   function handleSave() {
-    if (!checkResult || saving) return
+    if (!checkResult || saving || !canSave) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1), employee_id: user?.id ?? undefined },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -197,12 +221,15 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         },
         onError: (err) => {
           const qr = checkResult.pallet_code
-          const cartons = Math.max(1, parseInt(pendingCartons) || 1)
+          const cartons = qtyToTake
+          // Lỗi VỊ TRÍ → giữ nguyên tem đang chờ + báo trong panel để chọn lại rồi Lưu tiếp
+          const emsg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? ''
+          if (isLeftoverLocError(emsg)) { setLocError(emsg); setLeftoverLoc(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
           // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
           if (isConnectivityError(err)) {
-            queueScan(qr, cartons, !(err instanceof OfflineError))
+            queueScan(qr, cartons, !(err instanceof OfflineError), leftoverLoc)
             return
           }
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -245,8 +272,6 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     if (initialScan) handleScan(initialScan, 'wedge')
   }, []) // eslint-disable-line
 
-  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
-    checkResult.production_date > checkResult.best_available_date)
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -282,9 +307,15 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
           <div className="relative flex-1 min-h-0">
             {gunMode ? (
               <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
-                <QrCode className="h-12 w-12 text-sky-400/70" />
-                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
-                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                {/* Hướng dẫn CHỈ hiện lúc đang chờ bắn tem — nút nổi đứng absolute GIỮA vùng này,
+                    để chữ lại là đè mất chữ trên màn nhỏ (user báo 2 lần, 30/07). */}
+                {!checkResult && !checking && (
+                  <>
+                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+                    <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                  </>
+                )}
               </div>
             ) : (
               <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
@@ -308,14 +339,17 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
               </button>
             )}
 
-            {checkResult && !saving && (
+            {/* Chưa chọn vị trí hàng dư → KHÔNG hiện pill giữa vùng quét: pill đó bấm không được mà
+                lại ĐÈ MẤT dòng hướng dẫn phía sau (màn 360px). Việc cần làm nằm ở khối vàng bên dưới;
+                chọn xong thì nút Lưu hiện ra. */}
+            {checkResult && !saving && canSave && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), item.material)}
+                Lưu {qtyLabel(qtyToTake, item.material)}
               </button>
             )}
             {saving && (
@@ -326,24 +360,23 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
             )}
           </div>
 
+          {/* Panel TỰ CUỘN: mở bàn phím để sửa số lượng làm màn co lại, trước đây ô chọn vị trí bị
+              đẩy khuất dưới bàn phím mà không cuộn tới được ("không thấy nút chọn vị trí đâu"). */}
           {checkResult && !feedback && (
-            <div className="space-y-2">
-              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
-                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+            <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${rotGate.blocked ? 'bg-red-50 border-red-200' : rotGate.warn ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${rotGate.blocked ? 'text-red-500' : rotGate.warn ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                  <p className={`text-sm font-semibold font-mono ${rotGate.blocked || rotGate.warn ? 'text-red-600' : 'text-green-800'}`}>
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
                     <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
-                  {isSubOptimal && checkResult.best_available_date && (
-                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
-                    </p>
-                  )}
+                  {rotGate.banner}
                 </div>
               </div>
+              {rotGate.reasonBox}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">Số lượng xuất:</label>
                 <QtyInput compact className="w-44"
@@ -353,6 +386,23 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                 />
                 <span className="text-sm text-slate-400">/ {remaining} cần xuất</span>
               </div>
+              {needLeftoverLoc && (
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={item.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && (
+                    <p className="mt-1.5 text-xs font-medium text-red-600 flex items-start gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{locError}
+                    </p>
+                  )}
+                </div>
+              )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}
@@ -437,6 +487,7 @@ export default function OutboundItemDetail() {
 
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const pctBands = usePctBands()
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
@@ -447,6 +498,7 @@ export default function OutboundItemDetail() {
   const { vehicles } = useActiveVehiclesStore()
 
   const [showScan,         setShowScan]         = useState(false)
+  const [hdrOpen,          setHdrOpen]          = useState(false)   // mobile: popup thông tin tham khảo (SL/hộp/pallet/DO-NPP)
   const [pdaScan,          setPdaScan]          = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   const [confirmScanId,    setConfirmScanId]    = useState<string | null>(null)
   const [showInventory,    setShowInventory]    = useState(false)
@@ -651,8 +703,42 @@ export default function OutboundItemDetail() {
     ? cartonListAll.filter(c => c.code.toLowerCase().includes(cartonListQ.trim().toLowerCase()))
     : cartonListAll
 
+  // Thông tin THAM KHẢO (SL/hộp/nhặt lẻ/pallet/loại) — desktop inline; mobile mở popup Info.
+  // (Điều kiện quét sống còn: tên+tiến độ+Batch/%Date+ghi chú đỏ vẫn LUÔN hiện, không vào popup.)
+  const refInfoJSX = (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${itemStatusText(item.status)}`}>
+      <span className="flex items-center gap-1">
+        <Package className="h-3 w-3 text-slate-400 shrink-0" />
+        <span className="font-medium">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+        {item.boxes_display > 0 && (
+          <span className="ml-1">· <span className="font-medium">{item.boxes_display}</span> hộp</span>
+        )}
+        {item.loose_picking > 0 && (
+          <span className="ml-1">· nhặt lẻ <span className="font-medium">{qtyLabel(item.loose_picking, item.material)}</span></span>
+        )}
+      </span>
+      {item.pallets_estimated > 0 && (
+        <span><span className="font-medium">{item.pallets_estimated}</span> pl</span>
+      )}
+      {item.material_type && (
+        <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
+      )}
+      {doCode && (
+        <span><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>
+      )}
+    </div>
+  )
+
   return (
     <>
+      {/* Mobile: popup thông tin tham khảo mã hàng (desktop hiện inline) */}
+      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin mã · {matCode}</DialogTitle></DialogHeader>
+          {doNpp && <p className="text-xs text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></p>}
+          {refInfoJSX}
+        </DialogContent>
+      </Dialog>
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled}
           pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
@@ -817,8 +903,8 @@ export default function OutboundItemDetail() {
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
 
           {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-x-2 gap-y-1.5">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
                 onClick={() => navigate(`/wms/outbound/${gdoId}`)}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
@@ -827,47 +913,34 @@ export default function OutboundItemDetail() {
               </button>
               <span className={`font-mono font-semibold text-sm truncate ${itemStatusText(item.status)}`}>{matCode}</span>
               <Badge status={item.status} />
+              <button
+                onClick={() => setHdrOpen(true)}
+                className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+                title="Thông tin mã · NPP · DO"
+              >
+                <Info className="h-4 w-4" />
+              </button>
             </div>
 
-            <div className="flex items-center gap-1.5 max-sm:w-full">
+            <div className="flex items-center gap-1.5 shrink-0">
               {!isNoQr && !isDone && !canScan && (
                 <span className="text-xs text-slate-400 italic hidden sm:inline">Chưa bắt đầu</span>
               )}
+              {!isNoQr && !isDone && canScan && <PdaGunHint />}
               <ActionCluster items={actionItems} />
             </div>
           </div>
 
-          {/* Row 2: material name + progress — kế thừa màu trạng thái như dòng ở list */}
-          <div className="space-y-1">
-            <p className={`text-sm font-medium leading-tight ${itemStatusText(item.status)}`}>{matName}</p>
-            <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} mat={item.material} />
-          </div>
+          {/* Row 2: material name — tiến độ gộp xuống dòng heading "Pallet đã quét" */}
+          <p className={`text-sm font-medium leading-tight ${itemStatusText(item.status)}`}>{matName}</p>
 
-          {/* Row 3: số lượng + meta nhỏ — kế thừa màu trạng thái */}
-          <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs ${itemStatusText(item.status)}`}>
-            <span className="flex items-center gap-1">
-              <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="font-medium">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
-              {item.boxes_display > 0 && (
-                <span className="ml-1">· <span className="font-medium">{item.boxes_display}</span> hộp</span>
-              )}
-              {item.loose_picking > 0 && (
-                <span className="ml-1">· nhặt lẻ <span className="font-medium">{qtyLabel(item.loose_picking, item.material)}</span></span>
-              )}
-            </span>
-            {item.pallets_estimated > 0 && (
-              <span><span className="font-medium">{item.pallets_estimated}</span> pl</span>
-            )}
-            {item.material_type && (
-              <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{item.material_type}</span>
-            )}
-          </div>
+          {/* Row 3: SL/meta THAM KHẢO — desktop inline; mobile xem qua popup Info (điều kiện đỏ vẫn hiện dưới) */}
+          <div className="hidden sm:block">{refInfoJSX}</div>
 
-          {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ */}
-          {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-              {doNpp && <span className="text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
-              {doCode && <span className="text-slate-500"><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>}
+          {/* Row 3b: NPP (dòng riêng, wrap an toàn — không chèn dòng 1 để khỏi bị che) + điều kiện xuất Batch/%Date ĐỎ. DO nằm trong nút Info */}
+          {(doNpp || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] min-w-0">
+              {doNpp && <span className="text-slate-600 truncate max-w-full"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
               {item.batch_required && (
                 <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
               )}
@@ -933,22 +1006,20 @@ export default function OutboundItemDetail() {
                           className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
                           onClick={() => toggleInv(row.key)}
                         >
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
-                                <span className={`text-xs font-bold tabular-nums ${
-                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                }`}>{row.pct_date}%</span>
+                                <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
                               ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
                               {row.is_qa && (
                                 <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                             <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, item.material)}</span>
                             <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(item.material)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
@@ -1009,18 +1080,23 @@ export default function OutboundItemDetail() {
           </div>
         )}
 
+        {/* Heading + tiến độ — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
+        <div className="border-b bg-white px-3 py-1.5 shrink-0 flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-slate-700 shrink-0 whitespace-nowrap">
+            Pallet đã quét
+            <span className="ml-1 text-xs font-normal text-slate-400">{scans.length} pallet</span>
+          </h2>
+          <div className="flex-1 min-w-0">
+            <ProgressBar scanned={item.cartons_scanned} ordered={item.cartons_ordered} looseUnconfirmed={looseUnconfirmedCount} mat={item.material} />
+          </div>
+        </div>
+
         {/* ── Scan list: ~70% ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         <div className="p-3">
 
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-700">
-              Pallet đã quét
-              <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
-            </h2>
-          </div>
-
-          <Card>
+          {/* min-w-max: Card nở đúng bằng bảng (min-w-[520]) để nền+viền phủ trọn, không để lộ vạch xám giữa bảng khi cuộn ngang */}
+          <Card className="min-w-max">
             {scans.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                 <QrCode className="h-10 w-10 opacity-30" />
@@ -1048,10 +1124,10 @@ export default function OutboundItemDetail() {
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => {
-                    const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                    const { bad: isSubOptimal, bestDate: rotBest } = scanRotationOf(se)
                     return (
                       <TableRow key={se.id} className={se.is_loose_picking && !se.loose_confirmed ? 'bg-purple-50' : ''}>
-                        <TableCell className="px-2 py-1.5">
+                        <TableCell className="px-2 py-1">
                           <div className="flex items-center gap-1.5">
                             <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                               {se.pallet_code}
@@ -1081,45 +1157,43 @@ export default function OutboundItemDetail() {
                             )
                           })()}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
+                        <TableCell className="px-2 py-1 text-right tabular-nums text-[10px] font-semibold">
                           {qtyEntryText(se.cartons_scanned, item.material)}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {se.is_loose_picking ? (
                             se.loose_confirmed
                               ? <span className="text-[9px] font-medium text-green-700 bg-green-100 rounded px-1.5 py-0.5">✓ Lẻ</span>
                               : <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">Lẻ</span>
                           ) : null}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           {se.pct_date !== null ? (
-                            <span className={`text-[10px] font-bold tabular-nums ${
-                              se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                            }`}>{se.pct_date}%</span>
+                            <span className={`text-[10px] font-bold tabular-nums ${pctDateCls(se.pct_date, pctBands)}`}>{se.pct_date}%</span>
                           ) : <span className="text-[10px] text-slate-300">—</span>}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
                           <span className="text-[10px] font-mono tabular-nums text-slate-600">
                             {se.production_date ? format(parseISO(se.production_date), 'dd-MM-yyyy') : '—'}
                           </span>
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap">
-                          {se.best_available_date ? (
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          {rotBest ? (
                             <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
-                              {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
+                              {isSubOptimal ? '⚠ ' : ''}{format(parseISO(rotBest), 'dd-MM-yyyy')}
                             </span>
                           ) : (
                             <span className="text-[10px] text-slate-300">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="px-2 py-1.5">
+                        <TableCell className="px-2 py-1">
                           <span className="text-[10px] text-slate-500">{se.scanned_by_emp?.name ?? se.scanned_by ?? '—'}</span>
                         </TableCell>
-                        <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
-                          <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
-                          <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
+                        <TableCell className="px-2 py-1 whitespace-nowrap tabular-nums">
+                          <div className="text-[10px] leading-tight text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
+                          <div className="text-[9px] leading-tight text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
                         </TableCell>
-                        <TableCell className="px-1 py-2">
+                        <TableCell className="px-1 py-1">
                           {can(perms, 'outbound', 'scan') && (
                             <button
                               className={`p-1 rounded transition-colors ${isPaused ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}

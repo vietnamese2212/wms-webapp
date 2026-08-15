@@ -17,12 +17,15 @@ interface WarehouseMultiSelectProps {
   dropUp?: boolean         // mở lên — dùng khi ở trong dialog overflow-y-auto
   showTags?: boolean       // hiện tags bên dưới (default true)
   triggerClassName?: string
+  unitLabel?: string        // danh từ đơn vị trong "N <unitLabel> được chọn" (vd 'loại kho')
+  searchPlaceholder?: string
 }
 
 export function WarehouseMultiSelect({
   warehouses, selected, onChange,
   placeholder = 'Chọn kho…',
   showTags = true, triggerClassName = '',
+  unitLabel = 'kho', searchPlaceholder = 'Tìm tên hoặc mã kho…',
 }: WarehouseMultiSelectProps) {
   const [open, setOpen]   = useState(false)
   const [search, setSearch] = useState('')
@@ -51,7 +54,7 @@ export function WarehouseMultiSelect({
           style={{ minHeight: '28px' }}
         >
           <span className={selected.length === 0 ? 'text-slate-400' : 'text-slate-700'}>
-            {selected.length === 0 ? placeholder : `${selected.length} kho được chọn`}
+            {selected.length === 0 ? placeholder : `${selected.length} ${unitLabel} được chọn`}
           </span>
           <ChevronDown className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
@@ -68,7 +71,7 @@ export function WarehouseMultiSelect({
                   type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Tìm tên hoặc mã kho…"
+                  placeholder={searchPlaceholder}
                   className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400"
                   autoFocus
                 />

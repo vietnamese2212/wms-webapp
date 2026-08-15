@@ -14,24 +14,27 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import {
   useInventoryEntries, useInventoryFacets, useWarehouses, useQAStatuses, useAdjustInventory, useUploadInventoryExcel,
   useAdjustmentLog,
-  useLocationsReal, useMaterials,
+  useLocationsReal, useLocationsByIds, type LocationLite, useMaterials, useMaterialsByIds,
   useBulkUpdateInventoryQA, useBulkTransferLocation, useBulkTransferMaterial,
   useBulkUpdateProductionDate, useBulkUpdateInventoryNcc, useTransportCompanies,
-  useInventorySummary, type InventorySummaryGroup, fetchInventoryExport,
-  useSystemSettings,
+  useInventorySummary, type InventorySummaryGroup, fetchInventoryExport, fetchAllInventorySummary,
+  useSystemSettings, usePctBands,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
-import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel } from '@/utils/qtyUnits'
+import { pctDateCls } from '@/utils/pctDateBands'
+import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { saveWorkbook } from '@/utils/saveExcel'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
@@ -40,12 +43,6 @@ import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 function formatLoc(loc: { location_code: string } | null): string {
   if (!loc) return '—'
   return loc.location_code
-}
-
-function datePctCls(pct: number): string {
-  if (pct >= 70) return 'text-green-600 font-semibold'
-  if (pct >= 40) return 'text-amber-600 font-semibold'
-  return 'text-red-600 font-semibold'
 }
 
 // Nền dòng: dữ liệu KHÔNG tô màu theo trạng thái. Dòng đang xem (selected) nền xanh đậm để chữ
@@ -90,7 +87,7 @@ function writeXlsx(rows: Record<string, unknown>[], baseName: string) {
   saveWorkbook(wb, baseName)   // chọn vị trí + nhớ thư mục trước (fallback tải thẳng)
 }
 
-// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (19 cột)
+// Cột bảng tồn kho — số phần tử PHẢI khớp số <TableCell> mỗi dòng EntryRow (21 cột)
 const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',     label: '',         w: 32 },
   { id: 'warehouse', label: 'Kho',      w: 110 },
@@ -110,6 +107,9 @@ const INVENTORY_COLS: { id: string; label: string; w: number; align?: 'right' }[
   { id: 'datePct',   label: '%Date',    w: 60, align: 'right' },
   { id: 'qa',        label: 'QA',       w: 60 },
   { id: 'adjust',    label: 'Đ.chỉnh',  w: 64, align: 'right' },
+  // Ngày VÀO KHO + ai nhận (khác cột "Nhập" là SỐ LƯỢNG) — bê tồn cũ bằng Excel phải soát được
+  { id: 'importDate', label: 'Ngày nhập',  w: 84 },
+  { id: 'createdBy',  label: 'Người nhập', w: 110 },
   { id: 'chevron',   label: '',         w: 28 },
 ]
 const INVENTORY_COL_DEFAULTS = INVENTORY_COLS.map(c => c.w)
@@ -324,20 +324,19 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
   const { mutate, isPending }  = useBulkTransferLocation()
-  const { data: allLocs = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước đây nạp TOÀN BỘ vị trí của kho — đo Bàu Bàng
+  // 1.517 vị trí = 616KB + hàng chục round-trip (BE còn quét InventoryEntry theo chunk 300 để
+  // tính used_slots). Nay 50 dòng đầu, gõ thì server tìm tiếp.
+  const searchDeb = useDebouncedValue(search, 250)
+  const { data: locRows = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50 } : undefined
   )
-
-  const filtered = useMemo(() => {
-    const s = search.toLowerCase()
-    return (allLocs as any[]).filter((l: any) =>
-      !s || l.location_code?.toLowerCase().includes(s) || l.sub_code?.toLowerCase().includes(s)
-    )
-  }, [allLocs, search])
-
-  const selectedLoc = useMemo(() =>
-    (allLocs as any[]).find((l: any) => l.id === locId), [allLocs, locId]
-  )
+  const filtered = locRows as LocationLite[]
+  // nhãn cho vị trí ĐANG CHỌN — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
+  const { data: pickedLoc = [] } = useLocationsByIds([locId])
+  const selectedLoc = useMemo(
+    () => filtered.find(l => l.id === locId) ?? pickedLoc.find(l => l.id === locId),
+    [filtered, pickedLoc, locId])
 
   function reset() { setLocId(''); setSearch(''); setError('') }
 
@@ -372,6 +371,9 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
           <Label className="text-xs">Vị trí mới</Label>
           <Input placeholder="Tìm vị trí…" value={search} autoFocus
             onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+          {filtered.length >= 50 && (
+            <p className="text-[10px] text-slate-400">Đang hiện 50 vị trí đầu — gõ để tìm tiếp</p>
+          )}
           <div className="border rounded max-h-[calc(100vh-280px)] overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
@@ -427,7 +429,9 @@ function MaterialPanel({ ids, category, onClose }: {
   const [error, setError]       = useState('')
   const [confirming, setConfirming] = useState(false)
   const { mutate, isPending }   = useBulkTransferMaterial()
-  const { data: materials = [] } = useMaterials({ search: search || undefined, category: category || undefined })
+  // Tìm trên server, 50 mã đầu — trước đây bỏ trống ô tìm là kéo cả danh mục mã hàng về máy
+  const searchDeb = useDebouncedValue(search, 250)
+  const { data: materials = [] } = useMaterials({ search: searchDeb || undefined, category: category || undefined, limit: 50 })
 
   const selectedMat = useMemo(() =>
     (materials as any[]).find((m: any) => m.id === matId), [materials, matId]
@@ -665,6 +669,19 @@ export default function Inventory() {
     categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,
   })
 
+  // Filter Tên hàng + Vị trí: TÌM TRÊN SERVER (50 dòng) — trước đây facet nhồi cả 2.740 mã
+  // và 1.753 vị trí vào payload (~420KB) mỗi lần mở trang Tồn kho.
+  const [matFilterTerm, setMatFilterTerm] = useState('')
+  const { data: matFilterRows = [], isFetching: matFilterLoading } = useMaterials(
+    { search: matFilterTerm || undefined, category: f.materialCategories.length === 1 ? f.materialCategories[0] : undefined, limit: 50 },
+    !!matFilterTerm)
+  // Nhãn cho các mã ĐANG CHỌN (filter được nhớ qua lần mở app sau) — 1 request, chỉ khi có mã chọn.
+  const { data: pickedMatRows = [] } = useMaterialsByIds(f.filterMaterialIds)
+  const [locFilterTerm, setLocFilterTerm] = useState('')
+  const { data: locFilterRows = [], isFetching: locFilterLoading } = useLocationsReal(
+    { search: locFilterTerm || undefined, warehouse_id: f.warehouseIds.length === 1 ? f.warehouseIds[0] : undefined, limit: 50 },
+    !!locFilterTerm)
+
   // Normalize old JWT abbreviations (TP→Thành phẩm, BAO_BI→Bao bì)
   const normCatFe = (c: string) => c === 'TP' ? 'Thành phẩm' : c === 'BAO_BI' ? 'Bao bì' : c
   const userAllowedCats = (user?.allowed_categories ?? []).map(normCatFe)
@@ -686,14 +703,37 @@ export default function Inventory() {
       categoryDefaultApplied.current = true
       if (f.materialCategories.length === 0) {
         const dbCats = categories as string[]
-        // Restrict default to categories the user is allowed to see (if scope is set)
-        const defaultCats = userAllowedCats.length > 0
+        // Restrict default to categories the user is allowed to see (if scope is set).
+        // NATIONAL/superadmin = TOÀN BỘ (khớp useScopedWhTypes + BE isNational): nếu lọc theo
+        // allowed_categories, loại kho tùy biến ngoài 5 loại chuẩn (vd SCA) bị ẩn khỏi Tồn kho dù
+        // server không chặn → tổng Tồn kho lệch Dashboard.
+        const isNationalScope = user?.warehouse_scope === 'NATIONAL'
+        const defaultCats = (!isNationalScope && userAllowedCats.length > 0)
           ? dbCats.filter(c => userAllowedCats.includes(c))
           : dbCats
         setInventory({ materialCategories: [...new Set(defaultCats)], page: 1 })
       }
     }
   }, [categories]) // eslint-disable-line
+
+  // DEEP-LINK từ cảnh báo "tồn cận date" (/wms/alerts): ?warehouse_id=..&search=<mã hàng>
+  // → mở thẳng Tồn kho ĐÃ LỌC sẵn đúng mã + kho, khỏi bắt người dùng tự tìm lại.
+  // Đặt SAU 2 effect gán mặc định ở trên để đè lên chúng; chạy đúng 1 lần rồi xoá param
+  // (F5 sau đó không áp lại, người dùng đổi filter không bị kéo về).
+  const deepLinkApplied = useRef(false)
+  useEffect(() => {
+    if (deepLinkApplied.current) return
+    const sp = new URLSearchParams(window.location.search)
+    const wh = sp.get('warehouse_id'), term = sp.get('search')
+    if (!wh && !term) return
+    deepLinkApplied.current = true
+    setInventory({
+      ...(wh ? { warehouseIds: [wh] } : {}),
+      ...(term ? { search: term } : {}),
+      page: 1,
+    })
+    window.history.replaceState(null, '', '/wms/inventory')
+  }, []) // eslint-disable-line
 
   const queryParams = {
     warehouse_ids:      f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
@@ -709,13 +749,16 @@ export default function Inventory() {
     filter_nmsx:        f.filterNmsx.length > 0 ? f.filterNmsx : undefined,
     date_pct_ranges:    f.datePctRanges.length > 0 ? f.datePctRanges : undefined,
     ncc_ids:            f.nccIds.length > 0 ? f.nccIds : undefined,
+    import_date_from:   f.importDateFrom || undefined,
+    import_date_to:     f.importDateTo   || undefined,
   }
   const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
-  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary(queryParams, aggregate)
+  // Tổng hợp phân trang SERVER: trước đây nhận HẾT nhóm rồi tự `slice` — 41.107 nhóm = 18MB,
+  // vượt trần 4,5MB của Vercel (pager trông đúng nhưng payload vẫn chết).
+  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate)
 
   const displayEntries    = data?.entries               ?? []
-  const summaryGroups     = summaryData?.groups          ?? []
-  const pagedGroups       = useMemo(() => summaryGroups.slice((f.page - 1) * limit, f.page * limit), [summaryGroups, f.page, limit])
+  const pagedGroups       = summaryData?.groups          ?? []
   const loading           = aggregate ? summaryLoading : isLoading
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
@@ -742,10 +785,11 @@ export default function Inventory() {
     }
     try {
       if (aggregate) {
-        const groups = summaryData?.groups ?? []
-        if (groups.length === 0) { setExportError('Không có dữ liệu để xuất'); return }
-        if (groups.length > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${groups.length.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
+        if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
+        if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
         setExporting(true)
+        // Duyệt HẾT trang — lấy `groups` của trang đang xem là file Excel bị cắt âm thầm
+        const groups = await fetchAllInventorySummary(queryParams)
         writeXlsx(groups.map(g => {
           const nh = qc(g.cartons_imported, g), xu = qc(g.cartons_exported, g), to = qc(g.cartons_remaining, g)
           return {
@@ -787,6 +831,10 @@ export default function Inventory() {
             'Ngày SX': e.production_date ? formatTimestampDate(e.production_date) : '',
             '% Date': pct ?? '', 'QA': e.qa_status?.code ?? '',
             'Điều chỉnh (thùng)': dc.t, 'Điều chỉnh (hộp)': dc.h,
+            // Round-trip với mẫu upload: 2 cột này up lại được (tên cột khớp alias parser).
+            // Xuất TÊN nhân sự (parser nhận cả mã lẫn tên) — KHÔNG xuất created_by vì đó là Employee.id.
+            'Ngày nhập': e.import_date ? formatTimestampDate(e.import_date) : '',
+            'Người nhập': e.created_by_emp?.name ?? '',
           }
         }), `ton_kho_chi_tiet_${stamp}`)
       }
@@ -798,12 +846,14 @@ export default function Inventory() {
     }
   }
 
-  // Mẫu Excel Tồn kho đầu kỳ — cột KHỚP thứ tự INV_KEYS backend (dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ).
+  // Mẫu Excel Tồn kho đầu kỳ — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
   function downloadInventoryTemplate() {
     // BASE UNIT: mã có Hộp/thùng → "Số thùng" SỐ NGUYÊN + phần lẻ ghi cột "Hộp" (đơn vị gốc)
-    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)']
-    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base']
-    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24]
+    const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)',
+      'Ngày nhập (tùy, trống = hôm nay)', 'Người nhập (tùy, trống = người upload)']
+    const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base',
+      'import_date', 'created_by']
+    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24, '2026-06-05', 'Nguyễn Văn A']
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
@@ -868,8 +918,10 @@ export default function Inventory() {
   // Merge DB categories with user's allowed categories so user can always toggle their scope even if no data yet
   const categoryOpts   = (categories as string[]).map(c => ({ value: c, label: c }))
   const qaOpts         = (qaStatuses as any[]).map((q: any) => ({ value: q.id, label: `${q.code} – ${q.name}` }))
-  const locationOpts   = (facets?.locations ?? []).map(l => ({ value: l.code, label: l.code }))
-  const materialOpts   = (facets?.materials ?? []).map(m => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code }))
+  const locationOpts   = (locFilterRows as { location_code: string }[]).map(l => ({ value: l.location_code, label: l.location_code }))
+  const matLabel       = (m: { id: string; material_code: string; short_name?: string | null }) =>
+    ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })
+  const materialOpts   = matFilterRows.map(matLabel)
   const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
   const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
@@ -899,8 +951,12 @@ export default function Inventory() {
     { key: 'status', label: 'Tình trạng', type: 'single', options: [{ value: 'ALL', label: 'Tất cả' }], value: f.status === 'ALL' ? 'ALL' : '', allLabel: 'Còn tồn',
       onChange: v => setInventory({ status: v === 'ALL' ? 'ALL' : '', page: 1 }) },
     { key: 'material', label: 'Tên hàng', type: 'multi', options: materialOpts, selected: f.filterMaterialIds,
+      serverSearch: true, onSearchChange: setMatFilterTerm, loading: matFilterLoading,
+      selectedOpts: pickedMatRows.map(matLabel),
       onChange: v => setInventory({ filterMaterialIds: v, page: 1 }) },
     { key: 'location', label: 'Vị trí', type: 'multi', options: locationOpts, selected: f.filterLocations,
+      serverSearch: true, onSearchChange: setLocFilterTerm, loading: locFilterLoading,
+      selectedOpts: f.filterLocations.map(v => ({ value: v, label: v })),   // value = mã vị trí, tự làm nhãn
       onChange: v => setInventory({ filterLocations: v, page: 1 }) },
     { key: 'qa', label: 'QA Status', type: 'multi', options: qaOpts, selected: f.qaStatusIds,
       onChange: v => setInventory({ qaStatusIds: v, page: 1 }) },
@@ -914,6 +970,9 @@ export default function Inventory() {
       onChange: v => setInventory({ datePctRanges: v, page: 1 }) },
     { key: 'ncc', label: 'NCC', type: 'multi', options: nccFilterOpts, selected: f.nccIds, searchable: nccFilterOpts.length > 5,
       onChange: v => setInventory({ nccIds: v, page: 1 }) },
+    // NGÀY NHẬP KHO (không phải Ngày SX) — soát lại lô vừa upload / xem hàng vào kho trong khoảng nào
+    { key: 'importDate', label: 'Ngày nhập', type: 'daterange', from: f.importDateFrom, to: f.importDateTo,
+      onChange: (from, to) => setInventory({ importDateFrom: from, importDateTo: to, page: 1 }) },
   ]
 
   const viewSnapshot = {
@@ -923,6 +982,7 @@ export default function Inventory() {
     filterNmsx: f.filterNmsx,
     datePctRanges: f.datePctRanges,
     nccIds: f.nccIds,
+    importDateFrom: f.importDateFrom, importDateTo: f.importDateTo,
   }
   const savedViews = useSavedViewsStore(s => s.views['inventory'] ?? [])
   const activeViewId = useMemo(() => {
@@ -994,12 +1054,12 @@ export default function Inventory() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={aggregate ? [
         { label: 'Nhóm (mã×kho×ngày)', value: total.toLocaleString('vi-VN') },
-        { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ] : [
         // Chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (fallback total khi BE cũ chưa deploy)
         { label: 'Pallet', value: (data?.total_pallets_in_stock ?? total).toLocaleString('vi-VN') },
-        { label: 'Thùng tồn', value: totalCartons.toLocaleString('vi-VN') },
+        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ]} />
@@ -1092,23 +1152,7 @@ export default function Inventory() {
               </Table>
               )}
 
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-3 py-3 border-t bg-white">
-                  <button
-                    disabled={f.page <= 1}
-                    onClick={() => setInventory({ page: f.page - 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    ← Trước
-                  </button>
-                  <span className="text-xs text-slate-500">{f.page} / {totalPages}</span>
-                  <button
-                    disabled={f.page >= totalPages}
-                    onClick={() => setInventory({ page: f.page + 1 })}
-                    className="px-3 py-1 text-xs rounded border disabled:opacity-40 hover:bg-slate-50">
-                    Sau →
-                  </button>
-                </div>
-              )}
+              <PagerNav page={f.page} totalPages={totalPages} onPage={p => setInventory({ page: p })} />
             </>
           )}
         </div>
@@ -1131,22 +1175,11 @@ export default function Inventory() {
         ) : null}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {total > 0
-          ? `${(f.page - 1) * limit + 1}–${Math.min(f.page * limit, total)} / ${total.toLocaleString('vi-VN')} ${aggregate ? 'nhóm' : 'pallet'}`
-          : (aggregate ? '0 nhóm' : '0 pallet')}
+      <ListFooter
+        page={f.page} pageSize={limit} total={total} unit={aggregate ? 'nhóm' : 'pallet'}
+        onPageSize={n => setInventory({ pageSize: n, page: 1 })}>
         {selected && checkedCount === 0 && <span className="ml-2 text-blue-600">· 1 đang xem</span>}
-        <label className="ml-3 inline-flex items-center gap-1 text-slate-400">
-          <span className="hidden sm:inline">·</span> Dòng/trang:
-          <select
-            value={limit}
-            onChange={e => setInventory({ pageSize: Number(e.target.value), page: 1 })}
-            className="h-5 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 tabular-nums cursor-pointer">
-            {[50, 100, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-      </div>
+      </ListFooter>
      </div>
 
       {/* ── Floating action bar (when items checked) ── */}
@@ -1213,10 +1246,12 @@ export default function Inventory() {
       {showUpload && (
         <UploadExcelDialog
           title="Upload Tồn kho từ Excel"
-          hint="Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên."
+          hint={'Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên. '
+            + '“Ngày nhập” = ngày hàng VÀO KHO (bê tồn cũ thì khai ngày thật, để trống = hôm nay) — mọi báo cáo “nhập trong ngày” đọc theo cột này. '
+            + '“Người nhập” điền mã nhân viên hoặc tên (để trống = người đang upload).'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadInventoryTemplate}
-          onUpload={file => uploadInventory.mutateAsync({ file })}
+          onUpload={(file, preflight) => uploadInventory.mutateAsync({ file, preflight })}
         />
       )}
 
@@ -1365,6 +1400,18 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
           <span className="text-[10px] text-slate-300">—</span>
         )}
       </TableCell>
+      {/* Ngày nhập kho (KHÔNG phải ngày SX) — upload tồn cũ khai được ngày thật, trống thì = ngày upload */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {e.import_date
+          ? <span className="text-[10px] tabular-nums">{formatTimestampDate(e.import_date, true)}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      {/* TÊN người nhập lấy từ join created_by_emp — `created_by` là Employee.id, in ra sẽ là uuid thô */}
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {e.created_by_emp?.name
+          ? <span className="text-[10px] truncate block max-w-[100px]" title={e.created_by_emp.name}>{e.created_by_emp.name}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
       <TableCell className="px-1 py-1">
         <ChevronRight className={`h-3 w-3 text-slate-300 transition-transform ${isSelected ? 'rotate-90 text-white' : ''}`} />
       </TableCell>
@@ -1450,6 +1497,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const remaining = e.cartons_remaining ?? e.cartons_imported
   const exported  = Math.max(0, Number(e.cartons_imported) - Number(remaining))
   const pct       = computePctDate(e, e.material)
+  const pctBands  = usePctBands()
 
   // BASE UNIT: delta gửi đi = SỐ BASE (nhập theo thùng → × hệ_số); mã có entry bắt SỐ NGUYÊN
   const adjFactor = hasEntry(e.material) && adjUnit === 'entry' ? Number(e.material!.units_per_carton) : 1
@@ -1532,7 +1580,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
             <Row label="NCC" value={e.ncc.name} />
           )}
           {pct !== null && (
-            <Row label="% Date còn" value={`${pct}%`} cls={datePctCls(pct)} bold />
+            <Row label="% Date còn" value={`${pct}%`} cls={pctDateCls(pct, pctBands)} bold />
           )}
         </Section>
 

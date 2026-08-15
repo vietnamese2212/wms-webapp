@@ -37,14 +37,21 @@ const outboundScanLog    = () => import('@/pages/wms/OutboundScanLog')
 const outboundPrepare    = () => import('@/pages/wms/OutboundPrepare')
 const weighTickets       = () => import('@/pages/wms/WeighTickets')
 const controlTower       = () => import('@/pages/wms/ControlTower')
+const alertsPage         = () => import('@/pages/wms/Alerts')
+const stocktakeCycle     = () => import('@/pages/wms/StocktakeCycle')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
+const forklift           = () => import('@/pages/wms/Forklift')
+const packing            = () => import('@/pages/wms/Packing')
+const fillPicking        = () => import('@/pages/wms/FillPicking')
+const fillOrderDetail    = () => import('@/pages/wms/FillOrderDetail')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
 const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
 const locations          = () => import('@/pages/wms/Locations')
 const stocktake          = () => import('@/pages/wms/Stocktake')
 const stocktakeDashboard = () => import('@/pages/wms/StocktakeDashboard')
+const stocktakeHistory   = () => import('@/pages/wms/StocktakeHistory')
 const palletLabels       = () => import('@/pages/wms/PalletLabels')
 const palletOps          = () => import('@/pages/wms/PalletOps')
 const multiScanTest      = () => import('@/pages/wms/MultiScanTest')
@@ -75,14 +82,21 @@ export const Pages = {
   OutboundPrepare: lazyRetry(outboundPrepare),
   WeighTickets: lazyRetry(weighTickets),
   ControlTower: lazyRetry(controlTower),
+  Alerts: lazyRetry(alertsPage),
+  StocktakeCycle: lazyRetry(stocktakeCycle),
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
+  Forklift: lazyRetry(forklift),
+  Packing: lazyRetry(packing),
+  FillPicking: lazyRetry(fillPicking),
+  FillOrderDetail: lazyRetry(fillOrderDetail),
   LoosePicking: lazyRetry(loosePicking),
   LoosePickingDetail: lazyRetry(loosePickingDetail),
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
   Locations: lazyRetry(locations),
   Stocktake: lazyRetry(stocktake),
   StocktakeDashboard: lazyRetry(stocktakeDashboard),
+  StocktakeHistory: lazyRetry(stocktakeHistory),
   PalletLabels: lazyRetry(palletLabels),
   PalletOps: lazyRetry(palletOps),
   MultiScanTest: lazyRetry(multiScanTest),
@@ -118,7 +132,10 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/locations': locations,
   '/wms/stocktake': stocktake,
   '/wms/slotting': slotting,
+  '/wms/fill': fillPicking,
+  '/wms/forklift': forklift,
   '/wms/stocktake/summary': stocktakeDashboard,
+  '/wms/stocktake/history': stocktakeHistory,
   '/wms/settings': wmsSettings,
   '/tms/bookings': tmsBookings,
   '/tms/reports': tmsReport,

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { relinkAfterDelete } from './gateRegistrationController'
+import { normalizePlate } from '../../utils/plate'
 
 // ── Scope-write: user ASSIGNED chỉ thao tác xe của lệnh thuộc kho mình (nguồn hoặc đích).
 // NATIONAL → null (toàn quyền). ĐVVT (ncc_id) → null vì scope theo CÔNG TY (book xe liên kho là hợp lệ).
@@ -122,7 +123,8 @@ export async function updateVehicleSlot(req: Request, res: Response) {
 
     const newSlotId = slot_id !== undefined ? slot_id : existing.slot_id
     const isChangingSlot = newSlotId !== existing.slot_id
-    const newPlate = license_plate !== undefined ? (license_plate || null) : ((existing.license_plate as string | null) ?? null)
+    // Biển số về dạng chuẩn NGAY tại rìa (chỉ chữ+số, in hoa) — DB có CHECK chặn dạng khác
+    const newPlate = license_plate !== undefined ? normalizePlate(license_plate) : ((existing.license_plate as string | null) ?? null)
     const isChangingPlate = license_plate !== undefined && newPlate !== ((existing.license_plate as string | null) ?? null)
 
     // Gác giờ (chỉ đọc) khi đổi khung giờ — làm TRƯỚC khi đụng kế toán
@@ -142,13 +144,88 @@ export async function updateVehicleSlot(req: Request, res: Response) {
       if (newSlotId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: newSlot } = await supabase.from('DeliverySlot')
-          .select('date, time_from').eq('id', newSlotId).single()
+          .select('date, time_from, cargo_type').eq('id', newSlotId).single()
         if (!newSlot) return fail(res, 'Slot không tồn tại', 404)
+        // ── GÁC CỬA ĐẶT LỊCH (user chốt 03/08 "làm khóa cứng") ──
+        // 1 xe chở lẫn nhiều loại nhưng chỉ đậu MỘT cửa, cửa đó KHAI ở Kế hoạch xuất
+        // (khvc_lines.booking_category → TmsOrder.booking_category). Lọc ở picker chỉ là GỢI Ý:
+        // gọi thẳng API vẫn đặt được khung của cửa khác nếu không gác tại đây. Lệnh chưa chốt cửa
+        // (dữ liệu nạp trước khi có cột này) → không gác, giữ hành vi cũ.
+        {
+          const { data: ord } = await supabase.from('TmsOrder')
+            .select('booking_category, plan_dropped, order_code').eq('id', existing.order_id as string).maybeSingle()
+          // ── LỆNH ĐÃ NGỪNG HIỆU LỰC thì KHÔNG được chiếm chỗ (probe 04/08 P1) ──
+          // Kế hoạch bỏ Số xe ⇒ lệnh plan_dropped + hệ thống TỰ NHẢ khung giờ cho xe khác. Nhưng
+          // không có gì cấm đặt LẠI: nút đồng hồ vẫn hiện trên lưới (canBookSlot không soi cờ này)
+          // ⇒ xe KHÔNG có trong kế hoạch vẫn giữ 1 chỗ, và giữ VĨNH VIỄN (không lượt đồng bộ nào
+          // nhả lần hai vì lệnh đã ở trạng thái dropped). Khung giờ là tài nguyên khan hiếm giờ cao
+          // điểm — chỗ này mất là xe thật không đặt được. Nhả khung thì vẫn cho (chỉ gác lúc GÁN).
+          if ((ord as { plan_dropped?: boolean | null } | null)?.plan_dropped)
+            return fail(res, 422, 'TMS_PLAN_DROPPED',
+              `Lệnh ${(ord as { order_code?: string | null }).order_code ?? ''} đã NGỪNG HIỆU LỰC (Kế hoạch xuất không còn Số xe này)`
+              + ' — không đặt được khung giờ. Đưa Số xe trở lại Kế hoạch xuất trước, rồi đặt lịch.')
+          const cua = (ord as { booking_category?: string | null } | null)?.booking_category ?? null
+          const slotCargo = (newSlot as { cargo_type?: string | null }).cargo_type ?? null
+          if (cua && slotCargo && slotCargo !== 'ALL' && slotCargo !== cua)
+            return fail(res, 422, 'BOOKING_CATEGORY_MISMATCH',
+              `Xe đặt lịch tại cửa ${cua} — không đặt được khung giờ của cửa ${slotCargo}. ` +
+              'Đổi "Loại kho booking" ở tab Kế hoạch xuất nếu cần.')
+        }
         const newSlotStart = new Date(`${newSlot.date}T${newSlot.time_from}+07:00`).getTime()
         if (nowMs >= newSlotStart) {
           return fail(res, `Khung giờ ${String(newSlot.time_from).slice(0, 5)} đã qua, không thể đặt`, 400)
         }
       }
+    }
+
+    // ── GÁC GOM ĐƠN CHẠY CHUNG — PHẢI CHẠY TRƯỚC RPC ─────────────────────────
+    // RPC book_vehicle_slot COMMIT ngay; mọi gác đặt SAU nó chỉ còn là lời từ chối trên giấy: API
+    // trả 422 nhưng xe CHÍNH đã chiếm chỗ rồi, user tưởng "không có gì xảy ra" (đúng lớp lỗi mà
+    // chính 3 gác dưới đây sinh ra khi mới thêm 04/08). Toàn bộ phần KIỂM dời lên đây; phần GHI
+    // (gán consolidation_group_id + rải slot sang xe phụ) vẫn nằm sau, vì nó cần kết quả RPC.
+    type ConsolOrder = {
+      order_code?: string | null; direction?: string | null; warehouse_type?: string | null
+      booking_category?: string | null; plan_dropped?: boolean | null; warehouse_id?: string | null; date?: string | null
+    }
+    const consolidationIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
+    if (consolidationIds.length > 0) {
+      const { data: po } = await supabase.from('TmsOrder')
+        .select('direction, warehouse_type, booking_category, warehouse_id, date').eq('id', existing.order_id).single()
+      const primary = (po ?? null) as ConsolOrder | null
+      const { data: secondaryOrders } = await supabase.from('TmsOrder')
+        .select('order_code, direction, warehouse_type, booking_category, plan_dropped, warehouse_id, date').in('id', consolidationIds)
+      const secs = (secondaryOrders ?? []) as ConsolOrder[]
+
+      // KHO + NGÀY: picker (listConsolidatable) vốn chỉ liệt kê lệnh CÙNG kho/CÙNG ngày/CÙNG ĐVVT,
+      // nhưng đường ghi nhận thẳng id từ body ⇒ gọi API bằng id lệnh kho khác là ghi đè được dòng xe
+      // của kho đó (ghi thẳng, không qua RPC, không để lại booked_by). Gác đúng bất biến của picker.
+      const lac = secs.find(o => primary?.warehouse_id && o.warehouse_id && o.warehouse_id !== primary.warehouse_id)
+      if (lac) return fail(res, 403, 'FORBIDDEN',
+        `Không gom được Số xe ${lac.order_code ?? ''} — lệnh thuộc KHO KHÁC. Chỉ gom các lệnh cùng kho, cùng ngày.`)
+      const lechNgay = secs.find(o => primary?.date && o.date && String(o.date).slice(0, 10) !== String(primary.date).slice(0, 10))
+      if (lechNgay) return fail(res, 422, 'DATE_MISMATCH',
+        `Không gom được Số xe ${lechNgay.order_code ?? ''} — lệnh ngày ${String(lechNgay.date).slice(0, 10)}, khác ngày xe đang đặt lịch (1 xe chạy 1 ngày).`)
+
+      if (primary?.direction && secs.some(o => o.direction !== primary!.direction)) {
+        const dirLabel = primary.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'
+        return fail(res, `Không thể gom đơn khác hướng: ${dirLabel} chỉ đi với ${dirLabel}`, 400)
+      }
+      if (primary?.warehouse_type && secs.some(o => o.warehouse_type && o.warehouse_type !== primary!.warehouse_type))
+        return fail(res, `Không thể gom đơn khác loại kho: chỉ gom được các đơn cùng loại kho "${primary.warehouse_type}"`, 400)
+
+      // Nhánh gom ghi THẲNG slot_id sang vslot đơn phụ ⇒ đơn phụ đã NGỪNG HIỆU LỰC cũng chiếm chỗ
+      // được qua cửa này, lách gác "lệnh NGỪNG" ở trên.
+      const chet = secs.find(o => o.plan_dropped)
+      if (chet) return fail(res, 422, 'TMS_PLAN_DROPPED',
+        `Không gom được Số xe ${chet.order_code ?? ''} — lệnh đã NGỪNG HIỆU LỰC (Kế hoạch xuất không còn Số xe này).`)
+
+      // CỬA đặt lịch: xe chạy chung là 1 xe VẬT LÝ nên chỉ đậu MỘT cửa. warehouse_type ở trên KHÔNG
+      // chặn được vì đó là hàng xe CHỞ (chuỗi ghép) — cửa là trường RIÊNG, giá trị ĐƠN.
+      const cuaChinh = primary?.booking_category ?? null
+      const lech = secs.find(o => cuaChinh && o.booking_category && o.booking_category !== cuaChinh)
+      if (lech) return fail(res, 422, 'BOOKING_CATEGORY_MISMATCH',
+        `Không gom được Số xe ${lech.order_code ?? ''} (cửa ${lech.booking_category}) vào xe đang đặt lịch tại cửa ${cuaChinh}`
+        + ' — xe chạy chung chỉ đậu MỘT cửa. Sửa "Loại kho booking" ở tab Kế hoạch xuất nếu khai nhầm.')
     }
 
     // Kế toán NGUYÊN TỬ qua RPC khi đổi slot HOẶC đổi biển số
@@ -219,33 +296,12 @@ export async function updateVehicleSlot(req: Request, res: Response) {
     // status chỉ set qua plain update khi RPC KHÔNG được gọi (không đổi slot/biển)
     if (status !== undefined && !(isChangingSlot || isChangingPlate)) updates.status = status
 
-    // Consolidation: tạo group mới (lần đầu) hoặc thêm đơn vào group hiện có (BOOKED)
+    // Consolidation: tạo group mới (lần đầu) hoặc thêm đơn vào group hiện có (BOOKED).
+    // MỌI phép KIỂM của nhánh này đã chạy TRƯỚC RPC (xem khối "GÁC GOM ĐƠN CHẠY CHUNG" ở trên) —
+    // ở đây chỉ còn phần GHI, vốn phải đứng sau khi kế toán slot đã xong.
     let newGroupId: string | null = null
-    const orderIds = Array.isArray(consolidation_order_ids) ? consolidation_order_ids as string[] : []
+    const orderIds = consolidationIds
     if (orderIds.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: primaryOrder } = await supabase.from('TmsOrder')
-        .select('direction, warehouse_type').eq('id', existing.order_id).single()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: secondaryOrders } = await supabase.from('TmsOrder')
-        .select('direction, warehouse_type').in('id', orderIds)
-      if (primaryOrder?.direction) {
-        const hasWrongDir = (secondaryOrders ?? []).some(
-          (o: { direction: string }) => o.direction !== primaryOrder.direction
-        )
-        if (hasWrongDir) {
-          const dirLabel = primaryOrder.direction === 'OUTBOUND' ? 'Xuất' : 'Nhập'
-          return fail(res, `Không thể gom đơn khác hướng: ${dirLabel} chỉ đi với ${dirLabel}`, 400)
-        }
-      }
-      if (primaryOrder?.warehouse_type) {
-        const hasWrongType = (secondaryOrders ?? []).some(
-          (o: { warehouse_type: string | null }) => o.warehouse_type && o.warehouse_type !== primaryOrder.warehouse_type
-        )
-        if (hasWrongType) {
-          return fail(res, `Không thể gom đơn khác loại kho: chỉ gom được các đơn cùng loại kho "${primaryOrder.warehouse_type}"`, 400)
-        }
-      }
       if (existing.status === 'PENDING') {
         newGroupId = randomUUID()
         updates.consolidation_group_id = newGroupId
@@ -284,16 +340,22 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .filter(s => { if (seen.has(s.order_id)) return false; seen.add(s.order_id); return true })
 
       if (eligible.length > 0) {
-        await Promise.all(eligible.map(s =>
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // SO-SÁNH-RỒI-GHI: lặp lại ĐÚNG điều kiện đã lọc ở câu SELECT ngay trên câu UPDATE.
+        // Ghi mù theo ảnh chụp (`.eq('id')` trần) làm MẤT CẬP NHẬT im lặng: giữa hai câu, người
+        // khác có thể vừa đặt lịch cho chính dòng xe đó (RPC nguyên tử, hợp lệ) — câu ghi mù sẽ
+        // đè booking của họ sang khung của mình, không ai được báo, và khung CŨ của họ giữ lại 1
+        // chỗ ma (không có lời gọi recount nào cho khung cũ). Thêm 2 điều kiện thì dòng đã đổi
+        // trạng thái sẽ KHÔNG khớp và bị bỏ qua — thà gom thiếu 1 xe còn hơn xoá booking người khác.
+        const ghi = await Promise.all(eligible.map(s =>
           supabase.from('TmsVehicleSlot').update({
             slot_id: finalSlotId, license_plate: finalPlate, status: 'BOOKED',
             consolidation_group_id: newGroupId, is_consolidation_primary: false, updated_at: now,
-          }).eq('id', s.id)
+          }).eq('id', s.id).eq('status', 'PENDING').is('consolidation_group_id', null).select('id')
         ))
+        const bo = eligible.length - ghi.filter(r => (r.data ?? []).length > 0).length
+        if (bo > 0) console.warn(`[consolidation] bỏ qua ${bo} xe phụ vừa đổi trạng thái (người khác đặt lịch xen giữa)`)
         // Recount slot đích sau khi thêm các xe gom (cùng biển → số chỗ không đổi, nhưng đảm bảo cache đúng)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (finalSlotId) await (supabase.rpc as any)('recount_slot', { p_slot_id: finalSlotId })
+        if (finalSlotId) await supabase.rpc('recount_slot', { p_slot_id: finalSlotId })
       }
     }
 

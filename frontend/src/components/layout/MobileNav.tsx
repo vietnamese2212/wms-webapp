@@ -9,7 +9,7 @@ import { NAV_GROUPS } from '@/config/navigation'
 export function MobileNav() {
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
   const initials = user?.name.split(' ').slice(-2).map((n) => n[0]).join('').toUpperCase() ?? 'U'
   // Nhóm phụ ĐẦU TIÊN (không phải vận hành, không phải Tổng quan) → chèn vạch ngăn để ưu tiên vận hành
   const firstSecondaryLabel = NAV_GROUPS.find(g => !g.operational && g.label !== NAV_GROUPS[0].label)?.label

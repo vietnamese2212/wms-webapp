@@ -17,7 +17,7 @@ const ALL_TABS: { to: string; icon: React.ElementType; label: string; end?: bool
 export function BottomNav() {
   const { user } = useAuthStore()
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
 
   const tabs = ALL_TABS.filter(tab => {
     if (!tab.module) return true

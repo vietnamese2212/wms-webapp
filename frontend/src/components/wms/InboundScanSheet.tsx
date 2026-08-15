@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { Button }              from '@/components/ui/button'
 import { Label }               from '@/components/ui/label'
 import { useScanPallet, useCheckInboundScan, useInboundOrder, useLocationsReal, useTransportCompanies } from '@/api/hooks'
@@ -113,10 +115,14 @@ interface InboundScanSheetProps {
   order: InboundOrder
   onClose: () => void
   employeeId?: string
-  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; category?: string | null }[]
+  // 50 dòng khớp từ khoá HIỆN TẠI (cha query với search+limit) — KHÔNG còn là cả kho.
+  allLocations: { id: string; location_code: string; sub_code: string; max_pallets: number; used_slots?: number; categories?: string[] | null }[]
+  onLocSearch?: (term: string) => void   // gõ trong picker → cha đổi từ khoá query (tìm trên server)
+  pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
+  initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
 }
 
-export function InboundScanSheet({ order, onClose, employeeId, allLocations }: InboundScanSheetProps) {
+export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
@@ -164,12 +170,26 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
   const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
+  // Súng PDA: 1 phát bắn 'wedge' → khóa chế độ súng (tắt camera cả phiên, đỡ pin/nóng máy).
+  // pdaMode = mở bằng cò súng cấp trang → vào thẳng chế độ súng ngay.
+  const [gunMode,          setGunMode]          = useState(pdaMode)
 
   const activeLoc = allLocations.find(l => l.id === activeLocationId)
 
-  function handleScan(raw: string) {
+  function handleScan(raw: string, src: 'camera' | 'wedge' = 'camera') {
+    // Bắn bằng súng → khóa chế độ súng (camera không tự bật lại sau khi Lưu)
+    if (src === 'wedge' && !gunMode) setGunMode(true)
+    // Đang xử lý / lưu → bỏ qua lượt bắn mới (camera tự pause; súng bắn bất kỳ lúc nào nên cần guard)
+    if (saving || serverChecking) return
     if (!activeLocationId) {
       setShowLocPicker(true)
+      return
+    }
+    // Đang chờ xác nhận Lưu: bắn LẠI đúng tem đó = bấm Lưu (giống Xuất; camera đứng yên KHÔNG tự lưu).
+    // Tem khác trong lúc đang chờ → bỏ qua (buộc "Quét tiếp"/Lưu trước).
+    if (pendingQR) {
+      const savable = serverCheckOk && !serverChecking && !nccMissing
+      if (src === 'wedge' && savable && normalizeQR(raw) === normalizeQR(pendingQR)) { playBeep(); handleSave() }
       return
     }
     playBeep()
@@ -289,6 +309,16 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
     scannerRef.current?.resume()
   }
 
+  // Súng PDA: chỉ bật khi đã vào giao diện vị trí/mã hàng (đã chọn vị trí) — như yêu cầu vận hành.
+  // handleScan tự chặn khi chưa chọn vị trí / đang lưu nên an toàn kể cả khi enabled đổi.
+  useWedgeScanner(code => handleScan(code, 'wedge'), !!activeLocationId)
+
+  // Cò súng cấp trang: mở sheet kèm tem đầu → xử lý NGAY 1 lần (activeLocationId đã có vì trang gate theo vị trí).
+  const initialDone = useRef(false)
+  useEffect(() => {
+    if (initialScan && !initialDone.current) { initialDone.current = true; handleScan(initialScan, 'wedge') }
+  }, [initialScan]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
   const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)
   const nccMissing = nccRequired && !nccId && !v1AutoNcc
@@ -366,6 +396,12 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
           {showLocPicker && (
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
               <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+              {/* Tìm TRÊN SERVER: danh sách chỉ 50 vị trí đầu (trước đây nạp cả kho — Bàu Bàng
+                  1.517 vị trí = 616KB mỗi lần mở màn quét, nặng nhất trên PDA/wifi xưởng) */}
+              {onLocSearch && (
+                <input type="text" placeholder="Tìm vị trí…" onChange={e => onLocSearch(e.target.value)}
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+              )}
               <div className="max-h-36 overflow-y-auto space-y-1">
                 {allLocations.map(l => {
                     const isFull    = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
@@ -443,7 +479,22 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
 
           {/* Camera with floating buttons — flex-1 lấp đầy phần còn lại của sheet (không cuộn) */}
           <div className="relative flex-1 min-h-0">
-            <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            {gunMode ? (
+              <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
+                {/* Hướng dẫn CHỈ hiện lúc đang chờ bắn tem. Có tem chờ / đang xác thực thì bỏ hẳn:
+                    nút nổi ("Lưu…"/"Đang xác thực…") đứng absolute GIỮA vùng này, để chữ lại là đè
+                    mất chữ — màn 360x640 vùng quét chỉ còn ~120px, canh kiểu gì cũng đụng (30/07). */}
+                {!pendingQR && !serverChecking && (
+                  <>
+                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+                    <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Lưu</p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+            )}
 
             {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu
                 (vd "Pallet đã được quét") — để quét pallet khác ngay, không phải Huỷ ra vào lại */}
@@ -520,9 +571,17 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations }: I
 
 export function InboundScanSheetById({ importId, employeeId, onClose }: { importId: string; employeeId?: string; onClose: () => void }) {
   const { data: order, isLoading } = useInboundOrder(importId)
+  // TÌM TRÊN SERVER (luật danh mục lớn) — xem ghi chú ở picker vị trí bên trên
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id
-      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}) }
+      ? {
+          warehouse_id: order.warehouse_id,
+          ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
+          ...(order.material_id ? { material_id: order.material_id } : {}),
+          search: locTermDeb || undefined, limit: 50,
+        }
       : undefined
   )
 
@@ -544,6 +603,7 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
       onClose={onClose}
       employeeId={employeeId}
       allLocations={allLocations as InboundScanSheetProps['allLocations']}
+      onLocSearch={setLocTerm}
     />
   )
 }

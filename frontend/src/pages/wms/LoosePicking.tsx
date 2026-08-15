@@ -4,20 +4,20 @@ import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import { Scissors, Bookmark, Rows3, AlignJustify } from 'lucide-react'
 import { SearchInput } from '@/components/shared/SearchInput'
-import { omniMatch } from '@/utils/omniSearch'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useLoosePickingItems, useWarehouses, type LoosePickingItem } from '@/api/hooks'
+import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, type LoosePickingItem } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 const LOOSE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',        label: '',             w: 34 },
@@ -99,7 +99,30 @@ export default function LoosePicking() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { data: items = [], isLoading } = useLoosePickingItems({
+  const filterWarehouseTypes = f.filterWarehouseTypes ?? []
+  const filterTypes          = f.filterTypes          ?? []
+  const filterDvvts          = f.filterDvvts          ?? []
+  const filterNpps           = f.filterNpps           ?? []
+
+  // Mọi bộ lọc chạy trên SERVER: lọc sau khi phân trang = lọc trong 1 trang (ra thiếu, không báo).
+  // Trang cắt theo CHUYẾN nên 1 chuyến không bị xẻ đôi.
+  const { data, isLoading } = useLoosePickingItems({
+    warehouse_id: f.warehouseId || undefined,
+    date_from:    f.dateFrom    || undefined,
+    date_to:      f.dateTo      || undefined,
+    wh_types:     filterWarehouseTypes.join(',') || undefined,
+    export_types: filterTypes.join(',')          || undefined,
+    dvvts:        filterDvvts.join(',')          || undefined,
+    npps:         filterNpps.join(',')           || undefined,
+    search:       f.search || undefined,
+    page:         f.page,
+    page_size:    f.pageSize,
+  })
+  const items      = data?.items ?? []
+  const totalTrips = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalTrips / f.pageSize))
+  // Ô chọn bộ lọc tính trên phạm vi NGÀY + KHO trong DB (không phải trên trang đang xem)
+  const { data: facets } = useLoosePickingFacets({
     warehouse_id: f.warehouseId || undefined,
     date_from:    f.dateFrom    || undefined,
     date_to:      f.dateTo      || undefined,
@@ -127,43 +150,25 @@ export default function LoosePicking() {
       })
   }, [items])
 
-  const filterWarehouseTypes = f.filterWarehouseTypes ?? []
-  const filterTypes          = f.filterTypes          ?? []
-  const filterDvvts          = f.filterDvvts          ?? []
-  const filterNpps           = f.filterNpps           ?? []
+  // Server đã lọc → `grouped` CHÍNH LÀ danh sách hiển thị (đừng lọc lại: lọc lần hai trên trang
+  // đang xem chỉ có thể làm mất dòng, không thể tìm thêm dòng ở trang khác).
+  const filtered = grouped
 
-  const filtered = useMemo(() => {
-    return grouped.filter(s => {
-      if (filterWarehouseTypes.length > 0 && !filterWarehouseTypes.includes(s.gdo?.warehouse_type ?? '')) return false
-      if (filterTypes.length          > 0 && !filterTypes.includes(s.gdo?.export_type ?? ''))             return false
-      if (filterDvvts.length          > 0 && !filterDvvts.includes(s.gdo?.dvvt ?? ''))                   return false
-      if (filterNpps.length           > 0 && !(s.gdo?.distributor_names ?? []).some(n => filterNpps.includes(n))) return false
-      if (!omniMatch([
-        s.gdo?.group_code,
-        s.gdo?.export_type,
-        s.gdo?.dvvt,
-        ...(s.gdo?.distributor_names ?? []),
-        ...s.items.flatMap(i => [i.material?.material_code ?? i.material_code_raw, i.material?.short_name]),
-      ], f.search)) return false
-      return true
-    })
-  }, [grouped, f.search, filterDvvts, filterNpps, filterWarehouseTypes, filterTypes])
+  const dvvtOptions       = facets?.dvvts        ?? []
+  const nppOptions        = facets?.npps         ?? []
+  const warehouseTypeOpts = facets?.wh_types     ?? []
+  const typeOptions       = facets?.export_types ?? []
 
-  const dvvtOptions         = useMemo(() => [...new Set(grouped.map(s => s.gdo?.dvvt).filter(Boolean))] as string[], [grouped])
-  const nppOptions          = useMemo(() => [...new Set(grouped.flatMap(s => s.gdo?.distributor_names ?? []).filter(Boolean))], [grouped])
-  const warehouseTypeOpts   = useMemo(() => [...new Set(grouped.map(s => s.gdo?.warehouse_type).filter(Boolean))] as string[], [grouped])
-  const typeOptions         = useMemo(() => [...new Set(grouped.map(s => s.gdo?.export_type).filter(Boolean))] as string[], [grouped])
+  // 4 ô SummaryBand tính trên TOÀN BỘ bộ lọc (server), không phải trang đang xem
+  const totalPending = data?.pending_n ?? 0
+  const summary = {
+    count:      totalTrips,
+    items:      data?.items_n ?? 0,
+    looseDone:  data?.loose_done ?? 0,
+    looseTotal: data?.loose_total ?? 0,
+  }
 
-  const totalPending = items.filter(i => itemLooseStats(i).remaining > 0).length
-
-  const summary = useMemo(() => ({
-    count:      filtered.length,
-    items:      filtered.reduce((s, g) => s + g.items.length, 0),
-    looseDone:  filtered.reduce((s, g) => s + g.totalLooseDone, 0),
-    looseTotal: filtered.reduce((s, g) => s + g.totalLoose, 0),
-  }), [filtered])
-
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
 
   // ─── Filter chip bar (Manhattan) ───
   const warehouseOptions = (warehouses as any[])
@@ -172,17 +177,17 @@ export default function LoosePicking() {
 
   const filterDefs: FilterDef[] = [
     { key: 'date', label: 'Ngày xuất', type: 'daterange', from: f.dateFrom, to: f.dateTo,
-      onChange: (from, to) => setLoosePicking({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setLoosePicking({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho xuất', type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setLoosePicking({ warehouseId: v }) },
-    { key: 'whType', label: 'Loại kho', type: 'multi', options: warehouseTypeOpts.map(t => ({ value: t, label: t })), selected: filterWarehouseTypes,
-      onChange: v => setLoosePicking({ filterWarehouseTypes: v }) },
-    { key: 'exportType', label: 'Loại xuất', type: 'multi', options: typeOptions.map(t => ({ value: t, label: t })), selected: filterTypes,
-      onChange: v => setLoosePicking({ filterTypes: v }) },
-    { key: 'dvvt', label: 'ĐVVT', type: 'multi', options: dvvtOptions.map(d => ({ value: d, label: d })), selected: filterDvvts,
-      onChange: v => setLoosePicking({ filterDvvts: v }) },
-    { key: 'npp', label: 'NPP', type: 'multi', options: nppOptions.map(n => ({ value: n, label: n })), selected: filterNpps, searchable: true,
-      onChange: v => setLoosePicking({ filterNpps: v }) },
+      onChange: v => setLoosePicking({ warehouseId: v, page: 1 }) },
+    { key: 'whType', label: 'Loại kho', type: 'multi', options: warehouseTypeOpts.map((t: string) => ({ value: t, label: t })), selected: filterWarehouseTypes,
+      onChange: v => setLoosePicking({ filterWarehouseTypes: v, page: 1 }) },
+    { key: 'exportType', label: 'Loại xuất', type: 'multi', options: typeOptions.map((t: string) => ({ value: t, label: t })), selected: filterTypes,
+      onChange: v => setLoosePicking({ filterTypes: v, page: 1 }) },
+    { key: 'dvvt', label: 'ĐVVT', type: 'multi', options: dvvtOptions.map((d: string) => ({ value: d, label: d })), selected: filterDvvts,
+      onChange: v => setLoosePicking({ filterDvvts: v, page: 1 }) },
+    { key: 'npp', label: 'NPP', type: 'multi', options: nppOptions.map((n: string) => ({ value: n, label: n })), selected: filterNpps, searchable: true,
+      onChange: v => setLoosePicking({ filterNpps: v, page: 1 }) },
   ]
 
   const viewSnapshot = {
@@ -208,7 +213,7 @@ export default function LoosePicking() {
               {totalPending} chưa xong
             </span>
           )}
-          <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setLoosePicking({ search: v, page: 1 })} placeholder="Tìm số xe, NPP, mã hàng…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -231,7 +236,7 @@ export default function LoosePicking() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setLoosePicking({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setLoosePicking({ dateFrom: TODAY(), dateTo: TODAY() })}>
               Hôm nay
             </button>
           )}
@@ -362,12 +367,11 @@ export default function LoosePicking() {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={f.page} totalPages={totalPages} onPage={p => setLoosePicking({ page: p })} />
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} chuyến xe` : '0 chuyến xe'}
-      </div>
+      <ListFooter page={f.page} pageSize={f.pageSize} total={totalTrips} unit="chuyến xe"
+        onPageSize={n => setLoosePicking({ pageSize: n, page: 1 })} />
      </div>
     </div>
   )

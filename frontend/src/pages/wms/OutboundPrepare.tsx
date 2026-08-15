@@ -9,16 +9,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { qtyEntryText, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { omniMatch } from '@/utils/omniSearch'
 import type { GDO } from '@/types'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'loc',     label: 'Vị trí (FEFO)', w: 150 },
@@ -30,17 +31,13 @@ const PREPARE_COLS: { id: string; label: string; w: number; align?: 'right' }[] 
 ]
 const PREPARE_COL_DEFAULTS = PREPARE_COLS.map(c => c.w)
 
-function pctColor(pct: number | null): string {
-  if (pct === null) return 'text-slate-400'
-  return pct <= 30 ? 'text-red-600' : pct <= 60 ? 'text-amber-600' : 'text-green-700'
-}
-
 // ─── Dialog tồn kho theo mã hàng (như search tồn ở xuất bình thường) ──
 function InventoryDialog({ materialId, materialCode, materialName, mat, warehouseId, onClose }: {
   materialId: string; materialCode: string; materialName: string; mat?: MatUnits | null; warehouseId: string | undefined; onClose: () => void
 }) {
   const { data: inv = [], isLoading } = useInventoryByMaterial(materialId, warehouseId)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const pctBands = usePctBands()
 
   type Agg = { key: string; pct_date: number | null; location_code: string | null; is_qa: boolean; cartons: number; entries: ItemInventoryEntry[] }
   const rows: Agg[] = useMemo(() => {
@@ -100,7 +97,7 @@ function InventoryDialog({ materialId, materialCode, materialName, mat, warehous
                         <TableCell className="px-3 py-1.5">
                           <div className="flex items-center gap-1.5">
                             {row.pct_date !== null
-                              ? <span className={`text-xs font-bold tabular-nums ${pctColor(row.pct_date)}`}>{row.pct_date}%</span>
+                              ? <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
                               : <span className="text-[10px] text-slate-400">Chưa có</span>}
                             {row.is_qa && <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>}
                           </div>
@@ -140,7 +137,7 @@ export default function OutboundPrepare() {
   // Filter (ngày + kho) lưu ở store → nhớ khi rời trang + riêng theo từng user (scopedPersist)
   const prep = useWmsFilterStore(s => s.outboundPrepare)
   const setOutboundPrepare = useWmsFilterStore(s => s.setOutboundPrepare)
-  const date = prep.date || TODAY
+  const date = prep.date || TODAY()
   const warehouseId = prep.warehouseId
   const setDate = (d: string) => setOutboundPrepare({ date: d })
   const setWarehouseId = (w: string) => setOutboundPrepare({ warehouseId: w })
@@ -300,7 +297,7 @@ export default function OutboundPrepare() {
         { label: 'Xe đã chọn', value: selected.size },
         { label: 'Mã hàng cần', value: rows.length },
         { label: 'Pallet cần', value: (board?.total_pallets ?? 0).toLocaleString('vi-VN'), accent: (board?.total_pallets ?? 0) > 0 },
-        { label: 'Thùng cần', value: (board?.total_cartons ?? 0).toLocaleString('vi-VN') },
+        { label: 'Cần (SL quy đổi)', value: (board?.total_cartons ?? 0).toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
       ]} />
 
       {/* Bảng chuẩn bị */}

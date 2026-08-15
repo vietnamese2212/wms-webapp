@@ -2,16 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
-import { omniMatch } from '@/utils/omniSearch'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { RowCheck } from '@/components/shared/RowCheck'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TableSkeleton }  from '@/components/shared/TableSkeleton'
 import { EmptyState }     from '@/components/shared/EmptyState'
@@ -22,13 +23,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import {
-  useLocationsReal, useWarehouses, useWarehouseZones,
-  useCreateLocation, useUpdateLocation, useDeleteLocation,
+  useLocationsPaged, useLocationsSummary, locationsQp, useWarehouses, useWarehouseZones,
+  useCreateLocation, useUpdateLocation, useDeleteLocation, useBulkFlagLocations,
+  useUploadLocationsExcel,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useWmsFilterStore, type FlagMode } from '@/stores/wmsFilterStore'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { can, type ModulePermissions } from '@/config/permissions'
 
@@ -39,13 +43,14 @@ interface RealLocation {
   sub_code:     string
   sub_name:     string | null
   sub_type:     string | null
-  category:     string | null
+  categories:   string[] | null
   row:          string
   shelf:        string
   max_pallets:        number
   used_slots:         number
   is_active:          boolean
   requires_stocktake: boolean
+  is_pick_face:       boolean   // vị trí NHẶT LẺ (với tay tới được) — nguồn của tính năng Fill hàng
   warehouse:          { id: string; code: string; name: string }
   created_at?:        string
   updated_at?:        string
@@ -62,13 +67,16 @@ interface WhWithCount {
   _count:     { locations: number }
 }
 
-const EMPTY_FORM = { warehouse_id: '', category: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'check',   label: '',                w: 34 },
   { id: 'wh',      label: 'Kho',             w: 160 },
   { id: 'cat',     label: 'Loại kho',        w: 120 },
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
   { id: 'loc',     label: 'Vị trí',          w: 160 },
+  { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
+  { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
   { id: 'status',  label: 'Trạng thái',      w: 100 },
@@ -76,12 +84,18 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
 ]
 const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 
+// Lựa chọn cho 2 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
+const FLAG_OPTS = [{ value: 'yes', label: 'Có' }, { value: 'no', label: 'Chưa' }]
+
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const { search, warehouseId, catFilter, statusFilter, flagFilter } = useWmsFilterStore(s => s.locations)
-  const setLocationsFilter = useWmsFilterStore(s => s.setLocations)
-  const viewSnapshot = { search, warehouseId, catFilter, statusFilter, flagFilter }
+  const locFilter = useWmsFilterStore(s => s.locations)
+  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode } = locFilter
+  const setLocations = useWmsFilterStore(s => s.setLocations)
+  // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
+  const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
+  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -105,52 +119,100 @@ export default function Locations() {
   const [form,          setForm]          = useState(EMPTY_FORM)
   const [editIsActive,         setEditIsActive]         = useState(true)
   const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
+  const [editIsPickFace,        setEditIsPickFace]        = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
+  // Dialog gắn/bỏ cờ HÀNG LOẠT — 2 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface' (vị trí nhặt lẻ)
+  const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | null>(null)
+  // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
+  // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
+  // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
+  const [selected,      setSelected]      = useState<Set<string>>(new Set())
+  const [allFiltered,   setAllFiltered]   = useState(false)
+  const canEditLoc = can(perms, 'locations', 'edit')
+  const [showUpload,    setShowUpload]    = useState(false)   // dialog upload Excel vị trí
+  const [bulkErr,       setBulkErr]       = useState('')
 
   // Data
   const { data: whTypes = [] }          = useScopedWhTypes()
   const categoryOptions                  = whTypes.map(t => t.value)
   const { data: formZones = [] }        = useWarehouseZones(form.warehouse_id || undefined)
+  const { data: filterZones = [] }      = useWarehouseZones(warehouseId || undefined)
   const { data: activeWhRaw = [] }      = useWarehouses(true)
-  // Chỉ nạp vị trí khi đã chọn kho (tránh kéo toàn bộ dữ liệu).
-  const { data: raw = [], isLoading }   = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId } : undefined,
-    !!warehouseId,
-  )
+  // PHÂN TRANG SERVER (chỉ khi đã chọn kho): 1 kho có thể vài nghìn vị trí — trước đây render hết
+  // + cộng tổng ở máy. Bộ lọc (loại/tìm/cờ) + 4 ô tổng nay tính bằng SQL trên toàn bộ kết quả lọc.
+  // Cờ 3 trạng thái: bỏ trống = không lọc · 'yes'/'no' = chỉ vị trí CÓ / CHƯA có cờ
+  const modeVal = (m: typeof flagMode) => (m === '' ? undefined : m === 'yes')
+  const listParams = useMemo(() => warehouseId ? {
+    warehouse_id: warehouseId, category: catFilter || undefined, search,
+    zones: zoneFilter.length ? zoneFilter : undefined,
+    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode),
+    include_inactive: statusFilter.includes('inactive'),
+  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode])
+  const { data: pageData, isLoading } = useLocationsPaged(
+    listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
+  const { data: locSummary } = useLocationsSummary(listParams)
+  const raw = useMemo(() => (pageData?.rows ?? []) as RealLocation[], [pageData])
+  const totalRows = pageData?.total ?? 0
 
   const allowedLocWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids)
     : null
   const warehouses   = (activeWhRaw as WhWithCount[]).filter(w => !allowedLocWhIds || allowedLocWhIds.has(w.id))
-  const showInactive = statusFilter.includes('inactive')
-  const locations    = showInactive
-    ? (raw as RealLocation[])
-    : (raw as RealLocation[]).filter(l => l.is_active)
+  const locations = raw   // server đã lọc theo trạng thái
 
   // Mutations
   const createLocation  = useCreateLocation()
   const updateLocation  = useUpdateLocation()
   const deleteLocation  = useDeleteLocation()
+  const bulkFlag        = useBulkFlagLocations()
+  const uploadLocations = useUploadLocationsExcel()
 
-  // ── Table filter ─────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    return locations.filter(l => {
-      if (catFilter && l.category !== catFilter) return false
-      if (!omniMatch([l.location_code, l.sub_code, l.sub_name, l.sub_type, l.category, l.row, l.shelf, l.warehouse?.code, l.warehouse?.name], search)) return false
-      if (flagFilter && !l.requires_stocktake) return false
-      return true
-    })
-  }, [locations, catFilter, search, flagFilter])
+  async function applyBulkFlag(flag: boolean) {
+    setBulkErr('')
+    try {
+      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag } : { requires_stocktake: flag }
+      await bulkFlag.mutateAsync(allFiltered
+        // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
+        ? { by_filter: true, filter: listParams ?? {}, ...cờ }
+        : { ids: [...selected], ...cờ })
+      setBulkMode(null)
+      setSelected(new Set())
+      setAllFiltered(false)
+    } catch (e: unknown) {
+      setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
+    }
+  }
 
-  const activeFiltered = filtered.filter(l => l.is_active)
-  const totalSlots = activeFiltered.reduce((s, l) => s + l.max_pallets, 0)
-  const usedSlots  = activeFiltered.reduce((s, l) => s + l.used_slots,  0)
-  const fullCount  = activeFiltered.filter(l => l.max_pallets > 0 && l.used_slots >= l.max_pallets).length
+  // Chọn dòng: "chọn hết" = TRANG đang xem (danh sách đã phân trang server); muốn cả bộ lọc thì
+  // bấm thêm dòng gợi ý trong thanh action. Đổi bộ lọc/trang → bỏ chọn (tránh áp nhầm dòng cũ).
+  const allPageSelected = locations.length > 0 && locations.every(l => selected.has(l.id))
+  const somePageSelected = selected.size > 0 && !allPageSelected
+  function toggleSelect(id: string) {
+    setAllFiltered(false)
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function toggleAllPage() {
+    setAllFiltered(false)
+    setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
+  }
+  useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
+    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
+
+  // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
+  const filtered = locations
+  // 4 ô tổng tính bằng SQL trên TOÀN BỘ bộ lọc (chỉ vị trí đang dùng) — không cộng trên trang
+  const activeCount = locSummary?.count ?? 0
+  const totalSlots  = locSummary?.capacity ?? 0
+  const usedSlots   = locSummary?.used ?? 0
+  const fullCount   = locSummary?.full ?? 0
+  const totalPages  = Math.max(1, Math.ceil(totalRows / locFilter.pageSize))
+  useEffect(() => {
+    if (!isLoading && locFilter.page > totalPages) setLocations({ page: totalPages })
+  }, [isLoading, totalPages, locFilter.page, setLocations])
 
   // ── Form cascaded options ────────────────────────────────────
-  const formCatOpts = categoryOptions
   const filteredZones = useMemo(() =>
     formZones.filter(z => z.is_active),
     [formZones]
@@ -170,7 +232,7 @@ export default function Locations() {
 
   function openAdd() {
     setEditing(null)
-    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId, category: catFilter })
+    setForm({ ...EMPTY_FORM, warehouse_id: warehouseId })
     setEditIsActive(true)
     setFormError('')
     setDialogMode('add')
@@ -180,7 +242,6 @@ export default function Locations() {
     setEditing(loc)
     setForm({
       warehouse_id: loc.warehouse.id,
-      category:     loc.category ?? '',
       sub_code:     loc.sub_code,
       sub_name:     loc.sub_name ?? '',
       row:          loc.row,
@@ -189,6 +250,7 @@ export default function Locations() {
     })
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
+    setEditIsPickFace(loc.is_pick_face ?? false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -209,7 +271,6 @@ export default function Locations() {
           warehouse_id: form.warehouse_id,
           sub_code:     form.sub_code.trim().toUpperCase(),
           sub_name:     form.sub_name.trim() || undefined,
-          category:     form.category || undefined,
           row:          form.row.trim(),
           shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
@@ -218,10 +279,10 @@ export default function Locations() {
         await updateLocation.mutateAsync({
           id:                 editing.id,
           sub_name:           form.sub_name.trim() || undefined,
-          category:           form.category || undefined,
           max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
+          is_pick_face:       editIsPickFace,
         })
       }
       closeDialog()
@@ -246,26 +307,74 @@ export default function Locations() {
   // ─── Filter chip bar (Manhattan) ───
   const filterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', options: warehouses.map(w => ({ value: w.id, label: w.name })), value: warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setLocationsFilter({ warehouseId: v, catFilter: '' }) },
+      // Khu vực thuộc kho → đổi kho phải reset khu đã chọn, không thì lọc theo khu của kho CŨ
+      // (mã khu trùng tên giữa 2 kho thì sai âm thầm, không trùng thì bảng trống khó hiểu)
+      onChange: v => setLocationsFilter({ warehouseId: v, catFilter: '', zoneFilter: [] }) },
     { key: 'category', label: 'Loại kho', type: 'single', options: categoryOptions.map((c: string) => ({ value: c, label: c })), value: catFilter, allLabel: 'Tất cả loại',
       onChange: v => setLocationsFilter({ catFilter: v }) },
+    { key: 'zone', label: 'Khu vực kho', type: 'multi',
+      options: filterZones.filter(z => z.is_active).map(z => ({
+        value: z.code, label: z.name && z.name !== z.code ? `${z.code} — ${z.name}` : z.code,
+      })),
+      selected: zoneFilter, onChange: v => setLocationsFilter({ zoneFilter: v }) },
     { key: 'status', label: 'Trạng thái', type: 'multi', options: [{ value: 'inactive', label: 'Đã xóa' }], selected: statusFilter, searchable: false,
       onChange: v => setLocationsFilter({ statusFilter: v }) },
-    { key: 'flag', label: 'Cần check hàng ngày', type: 'multi', options: [{ value: 'flag', label: 'Cần check hàng ngày' }], selected: flagFilter ? ['flag'] : [], searchable: false,
-      onChange: v => setLocationsFilter({ flagFilter: v.includes('flag') }) },
+    // 2 cờ = chọn-1 Có/Chưa (KHÔNG phải multi 1-lựa-chọn trùng tên filter — chip in ra
+    // "Vị trí nhặt lẻVị trí nhặt lẻ" và không lọc được chiều "chưa khai")
+    { key: 'flag', label: 'Cần check hàng ngày', type: 'single', options: FLAG_OPTS, value: flagMode,
+      onChange: v => setLocationsFilter({ flagMode: v as FlagMode }) },
+    { key: 'pick_face', label: 'Vị trí nhặt lẻ', type: 'single', options: FLAG_OPTS, value: pickFaceMode,
+      onChange: v => setLocationsFilter({ pickFaceMode: v as FlagMode }) },
   ]
 
-  function exportExcel() {
-    const sheet = filtered.map(l => ({
-      'Kho': l.warehouse?.name ?? '', 'Loại': l.category ?? '',
+  // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`
+  // thì file chỉ có 200 dòng của trang đang xem mà KHÔNG báo gì (đúng kiểu sai âm thầm).
+  // Params dựng bằng `locationsQp` DÙNG CHUNG với hook — bản tự chép tay ở đây từng bỏ quên
+  // `pick_face`, file xuất ra lờ luôn bộ lọc đó (cùng họ bug chip-lọc-không-cắt 04/08).
+  const [exporting, setExporting] = useState(false)
+  async function fetchAllFiltered(): Promise<RealLocation[]> {
+    if (!listParams) return []
+    const out: RealLocation[] = []
+    for (let page = 1; page <= 200; page++) {
+      const { data } = await apiClient.get('/masterdata/locations', {
+        params: { ...locationsQp(listParams), page, page_size: 1000 },
+      })
+      const d = data.data as { rows: RealLocation[]; total: number }
+      out.push(...d.rows)
+      if (!d.rows.length || out.length >= d.total) break
+    }
+    return out
+  }
+
+  async function exportExcel() {
+    setExporting(true)
+    try { await doExportExcel(await fetchAllFiltered()) } finally { setExporting(false) }
+  }
+
+  function doExportExcel(rowsToExport: RealLocation[]) {
+    // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
+    const sheet = rowsToExport.map(l => ({
+      'Kho': l.warehouse?.name ?? '', 'Loại': (l.categories ?? []).join(', '),
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
+      'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
-      'Cần check': l.requires_stocktake ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
+      'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Vị trí kho')
     saveWorkbook(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
+  }
+
+  // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key, dòng 3 = ví dụ (ghi đè bằng dữ liệu thật)
+  function downloadLocationTemplate() {
+    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Kiểu']
+    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'sub_type']
+    const ex     = ['20000016', 'TP1', '1', 'T1', 2, '']
+    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ViTriKho')
+    saveWorkbook(wb, 'mau_vi_tri_kho.xlsx')
   }
 
   return (
@@ -289,12 +398,19 @@ export default function Locations() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           <ActionCluster className="shrink-0" mobileInline items={[
-            {
-              key: 'excel', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách vị trí đang lọc',
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG locations.export (không đi ké 'view')
+            ...(can(perms, 'locations', 'export') ? [{
+              key: 'excel', icon: Download, label: 'Excel',
+              tip: 'Xuất Excel TOÀN BỘ vị trí đang lọc (không chỉ trang đang xem)',
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
-              disabled: !filtered.length,
+              disabled: !totalRows || exporting, busy: exporting,
               onClick: exportExcel,
-            } satisfies ActionItem,
+            } satisfies ActionItem] : []),
+            ...(can(perms, 'locations', 'import') ? [{
+              key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload Excel tạo vị trí hàng loạt (dựng kho mới)',
+              mobileHidden: true, // upload file là việc trên PC
+              onClick: () => setShowUpload(true),
+            } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'create') ? [{
               key: 'add', icon: Plus, label: 'Thêm vị trí', tip: 'Thêm vị trí kho mới',
               primary: true, variant: 'default',
@@ -312,7 +428,7 @@ export default function Locations() {
 
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={[
-        { label: 'Vị trí', value: activeFiltered.length },
+        { label: 'Vị trí', value: activeCount },
         { label: 'Pallet đang dùng', value: usedSlots },
         { label: 'Sức chứa', value: totalSlots },
         { label: 'Đầy', value: fullCount, accent: fullCount > 0 },
@@ -326,7 +442,7 @@ export default function Locations() {
               Chọn <span className="font-semibold text-slate-600">Kho</span> ở thanh lọc để xem vị trí
             </div>
           ) : isLoading ? (
-            <div className="p-4"><TableSkeleton rows={8} cols={8} /></div>
+            <div className="p-4"><TableSkeleton rows={8} cols={11} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState icon={MapPin} title="Không tìm thấy vị trí" />
           ) : (
@@ -339,7 +455,9 @@ export default function Locations() {
                   {LOC_COLS.map((c, i) => (
                     <TableHead key={c.id}
                       className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                      {c.label}
+                      {c.id === 'check'
+                        ? (canEditLoc && <RowCheck checked={allPageSelected} indeterminate={somePageSelected} onClick={toggleAllPage} />)
+                        : c.label}
                       {i > 0 && c.id !== 'actions' && (
                         <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
                           className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70"
@@ -361,11 +479,14 @@ export default function Locations() {
                   const showSubName = loc.sub_name && loc.sub_name !== loc.sub_code
                   return (
                     <TableRow key={loc.id} className={`${rowCls} ${dense ? '' : '[&_td]:py-2.5'}`} onClick={() => setSelectedLoc(prev => prev?.id === loc.id ? null : loc)}>
-                      <TableCell className={`px-2 py-1 text-[10px] sticky left-0 z-10 ${stickyBg}`}>
+                      <TableCell className={`px-2 py-1 sticky left-0 z-10 ${stickyBg}`}>
+                        {canEditLoc && <RowCheck checked={selected.has(loc.id)} onClick={() => toggleSelect(loc.id)} />}
+                      </TableCell>
+                      <TableCell className={`px-2 py-1 text-[10px] ${stickyBg}`}>
                         <span className="block truncate" title={loc.warehouse?.name ?? ''}>{loc.warehouse?.name ?? '—'}</span>
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-[10px]">
-                        {loc.category ?? <span className="text-slate-400">—</span>}
+                      <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                        {loc.categories?.length ? loc.categories.join(', ') : <span className="text-slate-400">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px]">
                         <span className="font-semibold">{loc.sub_code}</span>
@@ -373,9 +494,20 @@ export default function Locations() {
                       </TableCell>
                       <TableCell className="px-2 py-1">
                         <span className="font-mono font-semibold text-[10px]">{loc.location_code}</span>
-                        {loc.requires_stocktake && (
-                          <Flag className="inline-block ml-1 h-3 w-3 text-red-500 shrink-0" style={{ verticalAlign: 'middle' }} />
-                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {loc.is_pick_face
+                          ? <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700"
+                                  title="Vị trí nhặt lẻ — hàng ở đây với tay lấy được">Có</span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
+                        {loc.requires_stocktake
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700"
+                                  title="Vị trí phải kiểm kê hàng ngày">
+                              <Flag className="h-2.5 w-2.5" />Có
+                            </span>
+                          : <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                         {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
@@ -426,6 +558,7 @@ export default function Locations() {
               </TableBody>
             </Table>
           )}
+          <PagerNav page={locFilter.page} totalPages={totalPages} onPage={p => setLocations({ page: p })} />
         </div>
 
         {/* Detail panel */}
@@ -439,13 +572,14 @@ export default function Locations() {
             </div>
             <div className="px-3 py-3 space-y-2 text-xs">
               <div><span className="text-slate-400">Kho:</span> <span className="font-medium">{selectedLoc.warehouse?.name ?? '—'}</span></div>
-              <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.category ?? '—'}</span></div>
+              <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{selectedLoc.categories?.length ? selectedLoc.categories.join(', ') : '—'}</span></div>
               <div><span className="text-slate-400">Khu vực:</span> <span className="font-medium">{selectedLoc.sub_code}{selectedLoc.sub_name && selectedLoc.sub_name !== selectedLoc.sub_code ? ` — ${selectedLoc.sub_name}` : ''}</span></div>
               <div><span className="text-slate-400">Loại vị trí:</span> <span className="font-medium">{selectedLoc.sub_type ?? '—'}</span></div>
               <div><span className="text-slate-400">Hàng / Tầng:</span> <span className="font-mono font-semibold">{selectedLoc.row}{selectedLoc.shelf ? ` / ${selectedLoc.shelf}` : ''}</span></div>
               <div><span className="text-slate-400">Sức chứa:</span> <span className="font-semibold">{selectedLoc.max_pallets} pallet</span></div>
               <div><span className="text-slate-400">Đang dùng:</span> <span className="font-semibold">{selectedLoc.used_slots} pallet</span></div>
               <div><span className="text-slate-400">Cần check hàng ngày:</span> <span className="font-medium">{selectedLoc.requires_stocktake ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Vị trí nhặt lẻ:</span> <span className="font-medium">{selectedLoc.is_pick_face ? 'Có' : 'Không'}</span></div>
               <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedLoc.is_active ? 'Hoạt động' : 'Đã xóa'}</span></div>
               <div className="border-t pt-2 mt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thông tin tạo/sửa</p>
@@ -459,11 +593,38 @@ export default function Locations() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {filtered.length > 0 ? `1–${filtered.length} / ${filtered.length} vị trí` : '0 vị trí'}
-      </div>
+      {/* Footer đếm bản ghi + chọn dòng/trang (chuẩn chung ListPager) */}
+      <ListFooter page={locFilter.page} pageSize={locFilter.pageSize} total={totalRows} unit="vị trí"
+        onPageSize={n => setLocations({ pageSize: n, page: 1 })}>
+        {selected.size > 0 && <span className="ml-2 text-green-600 font-medium">· {allFiltered ? totalRows : selected.size} đang chọn</span>}
+      </ListFooter>
      </div>
+
+      {/* ── Thanh thao tác hàng loạt (hiện khi có dòng được chọn) ───────────── */}
+      {canEditLoc && selected.size > 0 && (
+        <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white rounded-xl px-4 py-2.5 flex items-center gap-4 shadow-2xl max-w-[95vw] flex-wrap">
+          <span className="text-xs text-slate-300">
+            {allFiltered ? `${totalRows} vị trí (toàn bộ bộ lọc)` : `${selected.size} vị trí đã chọn`}
+          </span>
+          {/* Chọn hết TRANG rồi mà bộ lọc còn nhiều hơn → cho chọn cả bộ lọc (BE tự resolve theo cờ lọc) */}
+          {!allFiltered && allPageSelected && totalRows > locations.length && (
+            <button onClick={() => setAllFiltered(true)} className="text-xs text-sky-300 hover:text-sky-200 underline underline-offset-2">
+              Chọn tất cả {totalRows} vị trí đang lọc
+            </button>
+          )}
+          <button onClick={() => { setBulkErr(''); setBulkMode('pickface') }}
+            className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+            <Hand className="h-3.5 w-3.5" />Vị trí nhặt lẻ
+          </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
+            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+            <Flag className="h-3.5 w-3.5" />Cần kiểm kê
+          </button>
+          <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Add / Edit FormSheet */}
       <FormSheet
@@ -496,37 +657,14 @@ export default function Locations() {
                 <WarehouseSingleSelect
                   warehouses={warehouses}
                   value={form.warehouse_id}
-                  onChange={v => { setField('warehouse_id', v); setField('category', ''); setField('sub_code', '') }}
+                  onChange={v => { setField('warehouse_id', v); setField('sub_code', '') }}
                   placeholder="Chọn kho"
                   triggerClassName="h-8 mt-1"
                 />
               </div>
             )}
 
-            {/* ── Loại kho ── */}
-            <div>
-              <Label className="text-xs">Loại kho</Label>
-              <Select value={form.category || '__none__'}
-                onValueChange={v => {
-                  setField('category', v === '__none__' ? '' : v)
-                  if (dialogMode === 'add') setField('sub_code', '')
-                }}>
-                <SelectTrigger className="h-8 text-sm mt-1">
-                  <SelectValue placeholder="Chưa phân loại" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Chưa phân loại</SelectItem>
-                  {formCatOpts.map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {dialogMode === 'add' && (
-                <p className="text-[10px] text-slate-400 mt-0.5">Quản lý loại kho tại Cài đặt WMS → Loại kho</p>
-              )}
-            </div>
-
-            {/* ── Khu vực kho (chỉ add) ── */}
+            {/* ── Khu vực kho (chỉ add) — Loại kho KẾ THỪA từ khu, không chọn tay ── */}
             {dialogMode === 'add' && (
               <div>
                 <Label className="text-xs">Khu vực kho <span className="text-red-500">*</span></Label>
@@ -537,7 +675,6 @@ export default function Locations() {
                       const z = filteredZones.find(z => z.code === v)
                       setField('sub_code', v)
                       setField('sub_name', z?.name ?? '')
-                      if (z?.category) setField('category', z.category)
                     }
                   }}>
                   <SelectTrigger className="h-8 text-sm mt-1">
@@ -546,13 +683,27 @@ export default function Locations() {
                   <SelectContent>
                     <SelectItem value="__none__">Chọn khu vực</SelectItem>
                     {filteredZones.map(z => (
-                      <SelectItem key={z.code} value={z.code}>{z.code} — {z.name}</SelectItem>
+                      <SelectItem key={z.code} value={z.code}>{z.code} — {z.name}{z.categories?.length ? ` (${z.categories.join(', ')})` : ''}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {form.sub_code && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Loại kho (theo khu): <span className="font-medium">{filteredZones.find(z => z.code === form.sub_code)?.categories?.join(', ') ?? '—'}</span>
+                  </p>
+                )}
                 {form.warehouse_id && filteredZones.length === 0 && (
                   <p className="text-[10px] text-amber-600 mt-0.5">Kho này chưa có khu vực. Tạo tại Cài đặt WMS → Khu vực kho.</p>
                 )}
+              </div>
+            )}
+
+            {/* ── Loại kho (edit) — read-only, kế thừa từ khu ── */}
+            {dialogMode === 'edit' && editing && (
+              <div>
+                <Label className="text-xs">Loại kho <span className="text-slate-400">(kế thừa từ Khu vực)</span></Label>
+                <p className="text-sm font-medium text-slate-700 mt-1">{editing.categories?.length ? editing.categories.join(', ') : '—'}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Muốn đổi loại → sửa Khu vực ở Cài đặt WMS (tự áp cho mọi vị trí trong khu)</p>
               </div>
             )}
 
@@ -622,6 +773,17 @@ export default function Locations() {
                   />
                   <span className="text-xs text-slate-600">Cần kiểm kê hàng ngày</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editIsPickFace}
+                    onChange={e => setEditIsPickFace(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer"
+                  />
+                  <span className="text-xs text-slate-600">
+                    Vị trí nhặt lẻ <span className="text-slate-400">(với tay lấy hàng được — dùng cho Fill hàng)</span>
+                  </span>
+                </label>
               </div>
             )}
 
@@ -630,6 +792,38 @@ export default function Locations() {
             )}
           </div>
       </FormSheet>
+
+      {/* Gắn / bỏ cờ hàng loạt — cần-kiểm kê HOẶC vị trí nhặt lẻ */}
+      <Dialog open={bulkMode !== null} onOpenChange={open => !open && setBulkMode(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5">
+              {bulkMode === 'pickface'
+                ? <><Hand className="h-4 w-4 text-sky-600" /> Khai vị trí nhặt lẻ hàng loạt</>
+                : <><Flag className="h-4 w-4 text-red-500" /> Cờ cần kiểm kê hàng loạt</>}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
+            {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
+            {bulkMode === 'pickface'
+              ? ' Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.'
+              : ' Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.'}
+          </p>
+          {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
+            <Button variant="outline" size="sm" className="border-slate-300"
+              onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? '…' : bulkMode === 'pickface' ? 'Bỏ khai' : 'Bỏ cờ'}
+            </Button>
+            <Button size="sm" className={bulkMode === 'pickface' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-red-600 hover:bg-red-700'}
+              onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? 'Đang lưu…' : bulkMode === 'pickface' ? 'Khai vị trí nhặt lẻ' : 'Gắn cờ cần check'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Location Confirmation */}
       <Dialog open={deleteTarget !== null} onOpenChange={open => !open && setDeleteTarget(null)}>
@@ -650,6 +844,20 @@ export default function Locations() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showUpload && (
+        <UploadExcelDialog
+          title="Upload Excel — Vị trí kho"
+          hint={'Điền dữ liệu từ DÒNG 3 của file mẫu (giữ nguyên 2 dòng tiêu đề); báo lỗi đếm theo dòng dữ liệu — '
+              + 'dòng dữ liệu #1 = dòng 3 trong Excel. Kho điền MÃ hoặc TÊN. '
+              + 'Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (tầng bỏ trống được). '
+              + 'Khu phải có sẵn trong Cài đặt WMS → Khu vực — Loại hàng & Tên khu lấy theo khu, không lấy từ file. '
+              + 'Vị trí đã có sẽ được CẬP NHẬT sức chứa/kiểu. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
+          onClose={() => setShowUpload(false)}
+          onDownloadTemplate={downloadLocationTemplate}
+          onUpload={(file, preflight) => uploadLocations.mutateAsync({ file, preflight })}
+        />
+      )}
     </div>
   )
 }

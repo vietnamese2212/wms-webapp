@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 interface OutboundFilters {
   search: string
@@ -14,6 +15,8 @@ interface OutboundFilters {
   warehouseId: string
   filterWarehouseTypes: string[]
   filterStatuses: string[]
+  page: number        // phân trang server (28/07) — mọi filter đổi phải reset page: 1
+  pageSize: number
 }
 interface OutboundPrepareFilters {
   date: string
@@ -31,6 +34,8 @@ interface InboundFilters {
   filterCycles: string[]
   filterMachines: string[]
   importerSearch: string
+  page: number        // phân trang server (27/07) — mọi filter đổi phải reset page: 1
+  pageSize: number
 }
 interface InventoryFilters {
   search: string
@@ -48,6 +53,8 @@ interface InventoryFilters {
   filterNmsx: string[]
   nccIds: string[]
   datePctRanges: string[]
+  importDateFrom: string   // lọc theo NGÀY NHẬP KHO (import_date), khác Ngày SX
+  importDateTo: string
 }
 interface LoosePickingFilters {
   warehouseId: string
@@ -58,6 +65,8 @@ interface LoosePickingFilters {
   filterNpps: string[]
   filterWarehouseTypes: string[]
   filterTypes: string[]
+  page: number
+  pageSize: number
 }
 export interface ScanLogFilters {
   from_date: string
@@ -73,6 +82,7 @@ export interface ScanLogFilters {
   cycles: string[]
   scanner_name: string
   nmsx: string[]
+  rotation: string   // '' = tất cả · 'BAD' = chỉ lượt lấy SAI thứ tự luân chuyển · 'OK' = chỉ đúng
   search: string   // SEARCH TỔNG (bypass Kho/Loại kho) — QR pallet/thùng, NPP, tên/mã hàng…
 }
 export interface ControlTowerFilters {
@@ -88,12 +98,20 @@ export interface WeighTicketFilters {
   warehouse_ids: string[]  // kho của trạm cân (nhiều kho tích hợp sau này)
   search: string
 }
+export type FlagMode = '' | 'yes' | 'no'
 interface LocationsFilters {
   search: string
   warehouseId: string
   catFilter: string
+  zoneFilter: string[]      // Khu vực kho (sub_code) — đổi Kho thì reset (khu thuộc kho)
   statusFilter: string[]
-  flagFilter: boolean
+  // Hai cờ vị trí, mỗi cờ 3 trạng thái: '' = không lọc · 'yes' = có cờ · 'no' = chưa có cờ.
+  // (Đổi tên khỏi flagFilter/pickFaceFilter cũ kiểu boolean — tên mới để giá trị đã nhớ của
+  // phiên cũ không bị đọc nhầm thành 'yes'/'no'.)
+  flagMode: FlagMode        // requires_stocktake — cần check hàng ngày
+  pickFaceMode: FlagMode    // is_pick_face — vị trí nhặt lẻ
+  page: number
+  pageSize: number
 }
 export type StocktakeView = 'problem' | 'flagged' | 'unchecked' | 'checked' | 'all'
 interface StocktakeFilters {
@@ -108,6 +126,19 @@ interface StocktakeSummaryFilters {
   locationIds: string[]
   requiresOnly: boolean
   view: StocktakeView
+  page: number
+  pageSize: number
+}
+interface StocktakeHistoryFilters {
+  warehouseId: string
+  category: string
+  locationIds: string[]
+  requiresOnly: boolean   // "Chỉ vị trí cần check" — giới hạn vào vị trí đã gắn cờ
+  dateFrom: string   // Ngày kiểm (mặc định 7 ngày gần nhất)
+  dateTo: string
+  search: string
+  page: number
+  pageSize: number
 }
 interface GateRegistrationFilters {
   fDate: string
@@ -125,6 +156,8 @@ interface MaterialsFilters {
   statusFilter: string[]
   qrFilter: string[]
   dqFilter: string[]   // chất lượng dữ liệu: 'incomplete' (thiếu thông tin) | 'dup' (trùng tên)
+  page: number
+  pageSize: number
 }
 interface InboundReportFilters {
   dateFrom: string
@@ -139,6 +172,7 @@ interface AssignmentFilters {
   dateFrom: string
 }
 interface TmsBookingsFilters {
+  search: string
   dateFrom: string
   dateTo: string
   warehouseId: string
@@ -148,8 +182,11 @@ interface TmsBookingsFilters {
   dvvt: string[]
   khungGio: string[]
   tab: 'main' | 'transfer'
+  page: number
+  pageSize: number
 }
 interface TmsTransferFilters {
+  search: string
   dateFrom: string
   dateTo: string
   khoXuat: string[]
@@ -162,6 +199,8 @@ interface UserAdminFilters {
   jtId: string
   status: 'active' | 'hidden' | 'all'
   jtDept: string          // tab Chức danh: lọc theo phòng ban
+  page: number
+  pageSize: number
 }
 interface AttendanceTeamFilters {
   view: 'matrix' | 'raw'
@@ -172,6 +211,8 @@ interface AttendanceTeamFilters {
   status: 'all' | 'done' | 'missing'
   from: string
   to: string
+  page: number
+  pageSize: number
 }
 interface AttendanceMyFilters {
   from: string
@@ -183,6 +224,8 @@ interface LeaveFilters {
   status: string
   from: string
   to: string
+  page: number
+  pageSize: number
 }
 interface SlottingFilters {
   warehouseId: string
@@ -195,6 +238,60 @@ interface SlottingFilters {
 }
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
+}
+// Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
+interface FillFilters {
+  warehouseId: string
+  date: string                                   // ngày xuất đang xem (tab Đề xuất)
+  tab: 'demand' | 'tasks' | 'report'
+  search: string
+  status: string[]                               // lọc trạng thái lệnh (tab Lệnh fill)
+  mine: boolean                                  // chỉ việc được giao cho tôi
+  onlyShort: boolean                             // tab Đề xuất: chỉ mã đang THIẾU
+  cats: string[]                                 // tab Đề xuất: lọc Loại kho của mã
+  reportFrom: string
+  reportTo: string
+  page: number
+  pageSize: number
+}
+interface StocktakeCycleFilters {
+  search: string
+  warehouseId: string    // bắt buộc chọn kho mới tải (như Slotting)
+  cats: string[]         // Loại kho
+  abc: string[]          // hạng A/B/C — [] = tất cả
+  dueOnly: boolean       // chỉ mã đến hạn/quá hạn (mặc định bật)
+}
+interface AlertFilters {
+  tab: 'personal' | 'general' | 'thresholds'   // Cá nhân (mọi user) | Thông báo chung (alerts.view) | Cài đặt ngưỡng (manage_system)
+  search: string
+  warehouseId: string    // '' = mọi kho trong scope
+  rules: string[]        // loại cảnh báo (EXPIRY/GATE_DWELL/…) — [] = tất cả
+  severity: string[]     // CRITICAL/WARNING — [] = cả hai
+  status: string         // open (mặc định) | acked | resolved | all
+}
+interface PackingFilters {
+  tab: 'board' | 'runs' | 'log'   // Board (trang sổ đang mở) | Trang sổ (tra cứu theo trang) | Sổ pallet
+  search: string
+  warehouseId: string    // '' = mọi kho trong scope (nhiều nhà máy cùng SX — tách sổ theo kho)
+  machine: string        // '' = mọi máy
+  cycle: string          // '' = mọi chu kỳ (tab Trang sổ — user 13/08)
+  status: string         // '' = tất cả | OPEN | CLOSED | CANCELLED
+  dateFrom: string
+  dateTo: string
+  page: number
+  pageSize: number
+  runStatus: string      // filter trạng thái riêng của tab Trang sổ (khỏi giằng với tab Sổ pallet)
+  runPage: number
+  received: string       // '' = tất cả | YES = kho đã nhận | NO = SX tạo mà kho CHƯA nhận (đối chiếu 13/08)
+}
+interface ForkliftFilters {
+  tab: 'board' | 'report' | 'matrix' | 'summary' | 'detail' | 'settings'
+  date: string          // ngày xem board check list (mặc định hôm nay)
+  warehouseId: string   // '' = mọi kho trong scope (dùng chung các tab)
+  from: string          // khoảng ngày báo cáo/ma trận/chi tiết (tối đa 92 ngày — BE chặn)
+  to: string
+  matrixFk: string      // xe đang soi ở tab Ma trận ('' = tự chọn xe đầu)
+  vehicleId: string     // filter Xe ở tab Tổng hợp/Chi tiết ('' = tất cả xe)
 }
 interface DoSapFilters {
   search: string
@@ -214,6 +311,8 @@ interface KhvcFilters {
   search: string
   dateFrom: string   // Ngày nạp (created_at) — mặc định RỖNG (bắt buộc chọn mới tải)
   dateTo: string
+  exportFrom: string // Ngày xuất (export_date — ngày xe chạy), độc lập với Ngày nạp
+  exportTo: string
   warehouse: string  // warehouse_code
   vehType: string
   source: string
@@ -244,9 +343,15 @@ interface WmsFilterState {
   scanLog:           ScanLogFilters
   weighTickets:      WeighTicketFilters
   controlTower:      ControlTowerFilters
+  alerts:            AlertFilters
+  stocktakeCycle:    StocktakeCycleFilters
   slotting:          SlottingFilters
+  fill:              FillFilters
+  forklift:          ForkliftFilters
+  packing:           PackingFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
+  stocktakeHistory:  StocktakeHistoryFilters
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   materials:         MaterialsFilters
@@ -276,9 +381,15 @@ interface WmsFilterState {
   setScanLog:           (f: Partial<ScanLogFilters>)          => void
   setWeighTickets:      (f: Partial<WeighTicketFilters>)      => void
   setControlTower:      (f: Partial<ControlTowerFilters>)     => void
+  setAlerts:            (f: Partial<AlertFilters>)             => void
+  setStocktakeCycle:    (f: Partial<StocktakeCycleFilters>)    => void
   setSlotting:          (f: Partial<SlottingFilters>)          => void
+  setFill:              (f: Partial<FillFilters>)              => void
+  setForklift:          (f: Partial<ForkliftFilters>)          => void
+  setPacking:           (f: Partial<PackingFilters>)           => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
+  setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
@@ -293,6 +404,7 @@ const INBOUND_DEFAULT: InboundFilters = {
   search: '', dateFrom: today(), dateTo: today(), filterShiftIds: [], filterSourceTypes: [],
   warehouseId: '', materialCategory: '',
   filterMaterials: [], filterCycles: [], filterMachines: [], importerSearch: '',
+  page: 1, pageSize: 500,
 }
 
 // Giá trị mặc định cho TẤT CẢ filter — gói trong hàm để reset() lấy được `today()` mới
@@ -305,6 +417,7 @@ function initialFilters() {
       search: '', dateFrom: today(), dateTo: today(),
       filterTypes: [], filterDvvts: [], filterNpps: [], filterMaterials: [],
       warehouseId: '', filterWarehouseTypes: [], filterStatuses: [],
+      page: 1, pageSize: 200,
     },
     outboundPrepare: { date: today(), warehouseId: '' },
     inbound:   { ...INBOUND_DEFAULT },
@@ -313,41 +426,52 @@ function initialFilters() {
       filterLocations: [], filterMaterialIds: [],
       qaStatusIds: [], status: '', page: 1, pageSize: 50, manufacturerId: '',
       filterCycles: [], filterMachines: [], filterNmsx: [], nccIds: [], datePctRanges: [],
+      importDateFrom: '', importDateTo: '',
     },
     loosePicking: {
       warehouseId: '', dateFrom: today(), dateTo: today(), search: '',
-      filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [],
+      filterDvvts: [], filterNpps: [], filterWarehouseTypes: [], filterTypes: [], page: 1, pageSize: 100,
     },
     scanLog: {
       from_date: today(), to_date: today(),
       warehouses: [], material_category: '',
       group_code: '', distributor: '', delivery_code: '',
       pallet_code: '', materials: [], machines: [], cycles: [], scanner_name: '', nmsx: [],
-      search: '',
+      rotation: '', search: '',
     },
     weighTickets: { from_date: today(), to_date: today(), direction: '', match_state: '', warehouse_ids: [], search: '' },
     controlTower: { warehouse_ids: [], categories: [], material_codes: [] },
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
+    fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,
+                    onlyShort: true, cats: [] as string[], reportFrom: today(), reportTo: today(), page: 1, pageSize: 100 },
+    forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
+    packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
+    alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
+    stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
-    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, view: 'problem' as StocktakeView },
-    locations:        { search: '', warehouseId: '', catFilter: '', statusFilter: [], flagFilter: false },
+    stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
+    stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [] },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],
     },
-    tmsBookings: { dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const },
-    tmsTransfer: { dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
-    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__' },
-    attendanceTeam: { view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
+    tmsBookings: { search: '', dateFrom: today(), dateTo: today(), warehouseId: '', loaiKho: [], loaiXe: [], huong: [], dvvt: [], khungGio: [], tab: 'main' as const, page: 1, pageSize: 200 },
+    tmsTransfer: { search: '', dateFrom: '', dateTo: '', khoXuat: [], khoNhan: [] },
+    userAdmin: { search: '', warehouseId: '__all__', deptId: '__all__', jtId: '__all__', status: 'active' as const, jtDept: '__all__', page: 1, pageSize: 100 },
+    attendanceTeam: { page: 1, pageSize: 100, view: 'matrix' as const, warehouseId: '', deptId: '', jt: '', q: '', status: 'all' as const, from: today().slice(0, 8) + '01', to: today() },
     attendanceMy: { from: today().slice(0, 8) + '01' },
-    leave: { warehouseId: '', deptId: '', jt: '', status: '', from: '', to: '' },
+    // Nghỉ phép mặc định = TỪ ĐẦU NĂM đến hôm nay. Trước đây để TRỐNG = kéo TOÀN BỘ lịch sử đơn
+    // nghỉ mỗi lần mở trang; vài trăm nhân sự × vài năm là vượt trần 10.000 dòng → trang chết hẳn
+    // (400 "thu hẹp khoảng ngày") chứ không chỉ chậm. Cần xem năm cũ thì tự nới khoảng ngày.
+    leave: { warehouseId: '', deptId: '', jt: '', status: '', from: today().slice(0, 4) + '-01-01', to: today(), page: 1, pageSize: 100 },
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', page: 1, pageSize: 50 },
-    khvc: { search: '', dateFrom: '', dateTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
+    khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },
   }
 }
@@ -366,8 +490,14 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setWeighTickets:     (f) => set(s => ({ weighTickets:     { ...s.weighTickets,     ...f } })),
       setControlTower:     (f) => set(s => ({ controlTower:     { ...s.controlTower,     ...f } })),
       setSlotting:         (f) => set(s => ({ slotting:         { ...s.slotting,         ...f } })),
+      setFill:             (f) => set(s => ({ fill:             { ...s.fill,             ...f } })),
+      setForklift:         (f) => set(s => ({ forklift:         { ...s.forklift,         ...f } })),
+      setPacking:          (f) => set(s => ({ packing:          { ...s.packing,          ...f } })),
+      setAlerts:           (f) => set(s => ({ alerts:           { ...s.alerts,           ...f } })),
+      setStocktakeCycle:   (f) => set(s => ({ stocktakeCycle:   { ...s.stocktakeCycle,   ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
+      setStocktakeHistory: (f) => set(s => ({ stocktakeHistory: { ...s.stocktakeHistory, ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),

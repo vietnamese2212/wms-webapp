@@ -138,8 +138,31 @@ function lunarHolidaysOf(year: number): Record<string, string> {
   return map
 }
 
+/**
+ * Lịch nghỉ lễ KHAI TAY theo năm (SystemSetting `vn_holidays`, tab Hệ thống): năm nào có khai thì
+ * dùng ĐÚNG danh sách khai — Chính phủ công bố lại hàng năm (nghỉ bù cuối tuần, Tết 5/7/9 ngày),
+ * thuật toán tự tính bên dưới không đoán được. Năm KHÔNG khai → tự tính như cũ.
+ */
+export type HolidayOverrides = Record<string, Record<string, string>>   // '2026' → { 'YYYY-MM-DD': tên }
+
+/**
+ * Toàn bộ ngày lễ app TỰ TÍNH của 1 năm (âm lịch + 4 lễ dương cố định), đã sắp theo ngày.
+ * Dùng làm bản NHÁP cho ô khai lịch nghỉ ở tab Hệ thống — người dùng nạp ra rồi sửa theo công bố
+ * của Chính phủ (nghỉ bù, Tết dài ngắn) thay vì gõ tay từ đầu.
+ */
+export function computedHolidaysOf(year: number): { date: string; name: string }[] {
+  const out: { date: string; name: string }[] = Object.entries(lunarHolidaysOf(year)).map(([date, name]) => ({ date, name }))
+  for (const [md, name] of Object.entries(FIXED)) {
+    const date = `${year}-${md}`
+    if (!out.some(x => x.date === date)) out.push({ date, name })
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1))
+}
+
 // Tên ngày lễ của 1 ngày dương 'YYYY-MM-DD', hoặc null
-export function getHoliday(ds: string): string | null {
-  const year = Number(ds.slice(0, 4))
-  return lunarHolidaysOf(year)[ds] ?? FIXED[ds.slice(5)] ?? null
+export function getHoliday(ds: string, overrides?: HolidayOverrides): string | null {
+  const year = ds.slice(0, 4)
+  const declared = overrides?.[year]
+  if (declared) return declared[ds] ?? null      // đã khai năm này → danh sách khai là DUY NHẤT
+  return lunarHolidaysOf(Number(year))[ds] ?? FIXED[ds.slice(5)] ?? null
 }

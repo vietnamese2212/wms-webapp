@@ -3,8 +3,13 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
-import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
+import { uuidList } from '../../utils/ids'
+import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
+import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
+import { heldSlotsByOrderId, slotHeldBlockingDate } from '../../utils/bookingGuards'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -97,6 +102,10 @@ export async function listOrders(req: Request, res: Response) {
     // (mỗi đơn xuất hoàn thành = 1 lệnh), kéo ALL sẽ chết theo thời gian; FE Bookings mặc định ~30 ngày.
     if (source_type === 'TRANSFER') {
       const tCats = scopeCategoriesOf(req)
+      // Scope KHO cho lệnh chuyển kho: user ASSIGNED chỉ thấy lệnh dính kho mình (NGUỒN hoặc ĐÍCH)
+      // — mirror guardOrderScope (write). NATIONAL/ĐVVT → null (không giới hạn). Chưa gán kho → rỗng.
+      const tScope = scopeWhIds(req)
+      if (tScope !== null && tScope.length === 0) return ok(res, [])
       // Phân trang né cap-1000: lệnh chuyển kho tích lũy không giới hạn ngày → 1 response sẽ cắt mất lệnh
       const orders = await fetchAllPaged(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,7 +117,8 @@ export async function listOrders(req: Request, res: Response) {
         if (destination_warehouse_id) q = q.eq('destination_warehouse_id', destination_warehouse_id)
         if (date_from) q = q.gte('date', date_from)
         if (date_to)   q = q.lte('date', date_to)
-        if (tCats) q = q.or(`warehouse_type.is.null,warehouse_type.in.(${tCats.map(c => `"${c}"`).join(',')})`)
+        if (tCats) q = q.or(categoryTextOrScopeFilter('warehouse_type', tCats))
+        if (tScope) q = q.or(`warehouse_id.in.(${tScope.join(',')}),destination_warehouse_id.in.(${tScope.join(',')})`)
         return q
       })
       const orderIds = orders.map((o: any) => o.id as string)
@@ -162,10 +172,11 @@ export async function listOrders(req: Request, res: Response) {
         }
 
         if (qrImportIds.length) {
-          // Phân trang né cap-1000: tổng entry qua TẤT CẢ chuyến trong list dễ vượt 1000
+          // Chunk 300 id/lô + phân trang né cap-1000: khoảng ngày rộng → hàng trăm/nghìn phiếu nhập,
+          // nhét cả danh sách vào `.in()` là vỡ URL (trần ~300 id — đo 27/07).
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
-            .select('import_order_id, cartons_imported, material:Material!material_id(units_per_carton, entry_unit, base_unit)').in('import_order_id', qrImportIds)
+          const entries = await fetchAllByIdChunks(qrImportIds, chunk => supabase.from('InventoryEntry')
+            .select('import_order_id, cartons_imported, material:Material!material_id(units_per_carton, entry_unit, base_unit)').in('import_order_id', chunk)
             .order('import_order_id', { ascending: true }))
           for (const entry of entries as any[]) {
             const ordId = importToOrder.get(entry.import_order_id)
@@ -190,6 +201,14 @@ export async function listOrders(req: Request, res: Response) {
     const from = date_from || date
     const to   = date_to || date
     if (!from) return fail(res, 'date_from là bắt buộc', 400)
+
+    // Có ?page= → TRANG (lưới Kế hoạch). Không có → giữ mode cũ trả MẢNG cho consumer khác
+    // (dialog chọn đơn, trang chi tiết…) — đổi hết một lượt là rủi ro, không cần thiết.
+    if (req.query.page) {
+      const ctx = getTmsListCtx(req)
+      if (!ctx.warehouseId && !ctx.nccUser) return fail(res, 'warehouse_id là bắt buộc', 400)
+      return await listOrdersPaged(req, res, ctx)
+    }
     if (!warehouse_id && !userNccId) return fail(res, 'warehouse_id là bắt buộc', 400)
 
     // Scope kho + Loại hàng: ASSIGNED không xem được kho ngoài phạm vi / loại ngoài allowed_categories
@@ -198,8 +217,10 @@ export async function listOrders(req: Request, res: Response) {
     const listCats = scopeCategoriesOf(req)
 
     // Phân trang né cap-1000 của PostgREST: >1000 đơn/ngày/kho sẽ bị mất nếu không page.
+    // Kèm TRẦN CỨNG: FE render toàn bộ lưới Kế hoạch ở client → kéo rộng khoảng ngày (cả năm)
+    // sẽ là hàng chục nghìn đơn. Vượt trần thì BÁO RÕ, KHÔNG cắt âm thầm (luật CLAUDE.md).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await fetchAllPaged(() => {
+    const { rows: data, truncated } = await fetchUpTo(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q = supabase.from('TmsOrder')
         .select(ORDER_SELECT)
@@ -210,10 +231,197 @@ export async function listOrders(req: Request, res: Response) {
         .order('created_at')
       if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
       if (userNccId)    q = q.eq('ncc_id', userNccId)
-      if (listCats)     q = q.or(`warehouse_type.is.null,warehouse_type.in.(${listCats.map(c => `"${c}"`).join(',')})`)
+      if (listCats)     q = q.or(categoryTextOrScopeFilter('warehouse_type', listCats))
       return q
-    })
+    }, LIST_ROW_CAP)
+    if (truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
     return ok(res, data)
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// ─── Phân trang SERVER lưới Kế hoạch (3 endpoint dùng CHUNG bộ lọc) ─────────────────────────────
+// Lệch bộ lọc giữa page/summary/facets = pager và tổng đá nhau → parse 1 CHỖ duy nhất ở đây.
+type TmsListCtx = {
+  from: string; to: string
+  warehouseId: string | null
+  nccUser: string | null
+  categories: string[] | null
+  scopeWh: string[] | null
+  directions: string[] | null
+  dvvt: string[] | null
+  whTypes: string[] | null
+  vehicleTypes: string[] | null
+  slotIds: string[] | null
+  unbooked: boolean
+  search: string | null     // ô tìm nhanh: mã đơn/Số xe · NPP · biển số · ghi chú (bỏ dấu)
+  blocked: boolean          // ngoài phạm vi kho được giao → trả rỗng (không lộ dữ liệu kho khác)
+}
+
+// Nhận cả chuỗi CSV (query-string) lẫn mảng (bộ lọc gửi trong body JSON) — sai kiểu ở đây từng
+// làm material-summary văng 500 khi client gửi mảng.
+const csv = (v?: string | string[]): string[] | null => {
+  const arr = parseListParam(v) ?? []
+  return arr.length ? arr : null
+}
+
+// `q` tách khỏi req để dùng được cả cho query-string (GET) lẫn object bộ lọc trong body (POST).
+type RawFilter = Record<string, string | string[] | boolean | undefined>
+function getTmsListCtx(req: Request, raw: RawFilter = req.query as RawFilter): TmsListCtx {
+  const q = raw
+  const str = (v: string | string[] | boolean | undefined): string => (typeof v === 'string' ? v : '')
+  const from = str(q.date_from) || str(q.date) || ''
+  const to   = str(q.date_to)   || str(q.date) || from
+  const scope = scopeWhIds(req)
+  const warehouseId = str(q.warehouse_id) || null
+  const slotIds = csv(q.slot_ids as string | string[] | undefined)
+  return {
+    from, to,
+    warehouseId,
+    nccUser: req.user?.ncc_id ?? null,
+    categories: scopeCategoriesOf(req),
+    // Chọn 1 kho cụ thể → đã gác bằng `blocked`; không chọn kho thì cắt theo danh sách kho được giao.
+    scopeWh: warehouseId ? null : scope,
+    directions:   csv(q.directions as string | string[] | undefined),
+    dvvt:         uuidList(csv(q.dvvt as string | string[] | undefined) ?? []).length
+                    ? uuidList(csv(q.dvvt as string | string[] | undefined) ?? []) : null,
+    whTypes:      csv(q.wh_types as string | string[] | undefined),
+    vehicleTypes: csv(q.vehicle_types as string | string[] | undefined),
+    slotIds:      slotIds && uuidList(slotIds).length ? uuidList(slotIds) : null,
+    unbooked:     q.unbooked === '1' || q.unbooked === true || (slotIds?.includes('__chua_dat__') ?? false),
+    search:       str(q.search).trim() || null,
+    blocked:      scope !== null && (scope.length === 0 || (!!warehouseId && !scope.includes(warehouseId))),
+  }
+}
+
+const tmsRpcFilterParams = (c: TmsListCtx) => ({
+  p_date_from: c.from, p_date_to: c.to,
+  p_warehouse_id: c.warehouseId, p_ncc_user: c.nccUser,
+  p_categories: c.categories, p_scope_wh: c.scopeWh,
+  p_directions: c.directions, p_dvvt: c.dvvt,
+  p_wh_types: c.whTypes, p_vehicle_types: c.vehicleTypes,
+  p_slot_ids: c.slotIds, p_unbooked: c.unbooked,
+  // Ô tìm nhanh đi CHUNG bộ tham số của cả page + summary — lệch là pager và ô tổng đá nhau
+  p_search: c.search,
+})
+
+// GET /api/tms/orders?page=1&page_size=200&… — 1 TRANG lưới Kế hoạch.
+// Đơn vị trang = CỤM xe gom (đơn chủ + đơn gom chung xe) để lưới rowspan không bị cắt ngang trang.
+async function listOrdersPaged(req: Request, res: Response, ctx: TmsListCtx) {
+  const q = req.query as Record<string, string>
+  const page     = Math.max(1, Number(q.page) || 1)
+  const pageSize = Math.min(1000, Math.max(1, Number(q.page_size) || 200))
+  if (ctx.blocked) {
+    return ok(res, { rows: [], total: 0, total_pages: 1, page_from: 0, page_to: 0 })
+  }
+
+  const { data: pageData, error: pageErr } = await supabase.rpc('tms_orders_page', {
+    p_offset: (page - 1) * pageSize, p_limit: pageSize, ...tmsRpcFilterParams(ctx),
+  })
+  if (pageErr) throw new Error(pageErr.message)
+  const p = (pageData ?? {}) as {
+    ids?: string[]; total_orders?: number; total_blocks?: number; page_from?: number; page_orders?: number
+    stt?: Record<string, number>
+  }
+  const ids = p.ids ?? []
+  const sttMap = p.stt ?? {}
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = ids.length
+    ? await fetchByIdChunks(ids, chunk => supabase.from('TmsOrder').select(ORDER_SELECT).in('id', chunk).order('id'))
+    : []
+  // PostgREST `.in()` KHÔNG giữ thứ tự → sắp lại đúng thứ tự hiển thị mà RPC đã quyết.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byId = new Map<string, any>(rows.map((r: any) => [r.id as string, r]))
+  const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+  for (const o of ordered) {
+    // Thứ tự xe trong 1 đơn phải KHỚP thứ tự RPC đánh STT (created_at, id) — PostgREST không đảm bảo.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    o.vehicle_slots = ((o.vehicle_slots ?? []) as any[]).sort((a, b) =>
+      (a.created_at ?? '') < (b.created_at ?? '') ? -1 : (a.created_at ?? '') > (b.created_at ?? '') ? 1 : (a.id < b.id ? -1 : 1))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of o.vehicle_slots as any[]) s.stt = sttMap[`${o.id}/${s.id}`] ?? null
+    o.stt_no_slot = sttMap[`${o.id}/`] ?? null   // đơn chưa có xe: STT của dòng ảo
+  }
+
+  const total      = p.total_orders ?? 0
+  const totalPages = Math.max(1, Math.ceil((p.total_blocks ?? 0) / pageSize))
+  const pageFrom   = p.page_orders ? (p.page_from ?? 1) : 0
+  return ok(res, {
+    rows: ordered, total, total_pages: totalPages,
+    page_from: pageFrom, page_to: pageFrom ? pageFrom + (p.page_orders ?? 0) - 1 : 0,
+  })
+}
+
+// GET /api/tms/orders/summary — tổng SummaryBand trên TOÀN BỘ bộ lọc (không phải trang đang xem)
+export async function listOrdersSummary(req: Request, res: Response) {
+  try {
+    const ctx = getTmsListCtx(req)
+    if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+    if (ctx.blocked) return ok(res, { orders: 0, vehicles: 0, boxes: 0, pallets: 0, tons: 0, done: 0 })
+    const { data, error } = await supabase.rpc('tms_orders_summary', tmsRpcFilterParams(ctx))
+    if (error) throw new Error(error.message)
+    return ok(res, data ?? {})
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// GET /api/tms/orders/facets — option filter ĐVVT / Loại kho / Loại xe + gợi ý NPP (DISTINCT dưới DB)
+export async function listOrdersFacets(req: Request, res: Response) {
+  try {
+    const ctx = getTmsListCtx(req)
+    if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+    if (ctx.blocked) return ok(res, { dvvt: [], wh_types: [], vehicle_types: [], npp_names: [] })
+    const { data, error } = await supabase.rpc('tms_orders_facets', {
+      p_date_from: ctx.from, p_date_to: ctx.to,
+      p_warehouse_id: ctx.warehouseId, p_ncc_user: ctx.nccUser,
+      p_categories: ctx.categories, p_scope_wh: ctx.scopeWh,
+    })
+    if (error) throw new Error(error.message)
+    return ok(res, data ?? {})
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400)
+    return fail(res, String(e))
+  }
+}
+
+// GET /api/tms/orders/consolidatable?order_id=… — đơn có thể GOM CHUNG XE với đơn đang đặt lịch.
+// Trước đây dialog lọc trong danh sách đã tải về máy; phân trang rồi thì phải hỏi server.
+export async function listConsolidatable(req: Request, res: Response) {
+  try {
+    const orderId = (req.query.order_id as string) || ''
+    if (!uuidList([orderId]).length) return ok(res, [])
+    const { data: cur } = await supabase.from('TmsOrder')
+      .select('id, date, ncc_id, direction, warehouse_id').eq('id', orderId).maybeSingle()
+    if (!cur) return ok(res, [])
+    const o = cur as { id: string; date: string; ncc_id: string | null; direction: string | null; warehouse_id: string }
+    const scope = scopeWhIds(req)
+    if (scope !== null && !scope.includes(o.warehouse_id)) return ok(res, [])
+    if (!o.ncc_id) return ok(res, [])
+    const cats = scopeCategoriesOf(req)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = supabase.from('TmsOrder').select(ORDER_SELECT)
+      .eq('date', o.date).eq('ncc_id', o.ncc_id).neq('id', o.id)
+      .eq('warehouse_id', o.warehouse_id)
+      .neq('source_type', 'TRANSFER')
+      .order('created_at')
+    if (o.direction) q = q.eq('direction', o.direction)
+    if (cats) q = q.or(categoryTextOrScopeFilter('warehouse_type', cats))
+    const { data, error } = await q.limit(500)
+    if (error) throw new Error(error.message)
+    // Điều kiện gom (mirror FE cũ): xe chính còn PENDING và CHƯA nằm trong cụm gom nào
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = ((data ?? []) as any[]).filter(row => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const slots = (row.vehicle_slots ?? []) as any[]
+      const main = slots.find(vs => vs.consolidation_group_id) ?? slots[0]
+      return main && main.status === 'PENDING' && !main.consolidation_group_id
+    })
+    return ok(res, list)
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -268,6 +476,7 @@ export async function createOrder(req: Request, res: Response) {
       planned_tons: planned_tons ?? null,
       gdo_refs: gdo_refs || null, notes: notes || null,
       priority: priority === true || priority === 'true',
+      origin: 'MANUAL',   // tạo tay — phân biệt với 'KHVC' tự sinh từ Kế hoạch xuất
       status: 'PENDING',
       created_by: user?.name || null, updated_by: user?.name || null,
       created_at: now, updated_at: now,
@@ -328,7 +537,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     const inputList = orders as any[]
 
     // Chặn ngày quá khứ với user thường; superadmin được back-date (nhập bù dữ liệu cũ).
-    if (user?.name !== 'Admin') {
+    if (user?.is_superadmin !== true) {
       const today = todayVN()
       const pastDated = inputList.filter(o => o.date && o.date < today).map(o => o.order_code || o.date)
       if (pastDated.length) return fail(res, `Không thể upload đơn ngày quá khứ: ${pastDated.join(', ')}`, 400)
@@ -337,21 +546,27 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     // Check trùng order_code trong DB → 409 (upload là TẠO MỚI, không cập nhật đơn đã có)
     // Chunk 300 code/lượt: file vài nghìn dòng mà .in() một phát → URL quá dài, PostgREST từ chối.
     const incomingCodes = inputList.map(o => o.order_code).filter(Boolean) as string[]
-    if (incomingCodes.length) {
+    // Chỉ rõ đơn trùng đang nằm Ở ĐÂU (kho + ngày) — tab Kế hoạch lọc theo 1 kho + khoảng ngày,
+    // không ghi vị trí thì user không tìm thấy để xóa (đã dính thật: file 2 kho, xóa 1 kho vẫn sót kho kia).
+    // Dùng cả ở pre-check LẪN khi thua đua 23505 (2 người cùng upload — người sau nhận đúng thông báo này).
+    const findDupMessage = async (): Promise<string | null> => {
+      if (!incomingCodes.length) return null
       const codeChunks: string[][] = []
       for (let i = 0; i < incomingCodes.length; i += 300) codeChunks.push(incomingCodes.slice(i, i + 300))
+      // Embed PHẢI chỉ rõ FK: TmsOrder có 2 FK tới Warehouse (warehouse_id + destination_warehouse_id từ
+      // tính năng chuyển kho) → 'Warehouse(name)' trần bị PGRST201 (ambiguous), data=null ÂM THẦM
+      // → pre-check trùng mã từng chết không ai biết (phát hiện qua test đua 26/07).
       const dupResults = await Promise.all(codeChunks.map(chunk =>
-        supabase.from('TmsOrder').select('order_code, date, warehouse:Warehouse(name)').in('order_code', chunk)
+        supabase.from('TmsOrder').select('order_code, date, warehouse:Warehouse!warehouse_id(name)').in('order_code', chunk)
       ))
       const existing = dupResults.flatMap(r => (r.data ?? []) as unknown as { order_code: string; date: string; warehouse: { name: string } | null }[])
-      if (existing.length) {
-        // Chỉ rõ đơn trùng đang nằm Ở ĐÂU (kho + ngày) — tab Kế hoạch lọc theo 1 kho + khoảng ngày,
-        // không ghi vị trí thì user không tìm thấy để xóa (đã dính thật: file 2 kho, xóa 1 kho vẫn sót kho kia).
-        const fmtD = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y}` }
-        const dupes = existing.map(r => `${r.order_code} (${r.warehouse?.name ?? 'kho ?'} — ngày ${fmtD(r.date)})`).join(', ')
-        return fail(res, `Mã đơn đã tồn tại: ${dupes}. Mở đúng kho + ngày ghi trong ngoặc để tìm và xóa đơn cũ, rồi upload lại.`, 409)
-      }
+      if (!existing.length) return null
+      const fmtD = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y}` }
+      const dupes = existing.map(r => `${r.order_code} (${r.warehouse?.name ?? 'kho ?'} — ngày ${fmtD(r.date)})`).join(', ')
+      return `Mã đơn đã tồn tại: ${dupes}. Mở đúng kho + ngày ghi trong ngoặc để tìm và xóa đơn cũ, rồi upload lại.`
     }
+    const preDup = await findDupMessage()
+    if (preDup) return fail(res, preDup, 409)
 
     const orderRows = inputList
       .filter(o => o.date && o.warehouse_id && o.order_code)
@@ -366,6 +581,7 @@ export async function bulkCreateOrders(req: Request, res: Response) {
         planned_tons: o.planned_tons ?? null,
         gdo_refs: o.gdo_refs || null, notes: o.notes || null,
         priority: o.priority === true || o.priority === 'true',
+        origin: 'EXCEL',   // luồng cũ (upload Excel bên TMS) — phân biệt với 'KHVC' tự sinh từ Kế hoạch xuất
         status: 'PENDING',
         created_by: user?.name || null, updated_by: user?.name || null,
         created_at: now, updated_at: now,
@@ -377,11 +593,21 @@ export async function bulkCreateOrders(req: Request, res: Response) {
     const scope = scopeWhIds(req)
     if (scope !== null && orderRows.some(r => !scope.includes(r.warehouse_id as string)))
       return fail(res, 'Ngoài phạm vi kho — file chứa lệnh của kho ngoài phạm vi được giao', 403)
+    // Guard LOẠI HÀNG — thiếu thì user chỉ được ['Thành phẩm'] vẫn upload được lệnh 'Raw'/'POSM'
+    // (verify 26/07: ghi thành công). updateOrder đã guard; upload phải khớp.
+    const badCat = orderRows.find(r => !categoryAllowed(req, r.warehouse_type as string | null))
+    if (badCat) return fail(res, `${CATEGORY_FORBIDDEN_MSG} (loại "${badCat.warehouse_type}" trong file)`, 403)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: insErr } = await supabase.from('TmsOrder').insert(orderRows)
     if (insErr) {
-      if (insErr.code === '23505') return fail(res, 'Mã đơn bị trùng, vui lòng kiểm tra lại file')
+      if (insErr.code === '23505') {
+        // Thua đua với upload khác (pre-check qua nhưng người kia ghi trước) — jitter rồi tra lại
+        // để trả đúng thông báo chi tiết (mã nào, kho nào, ngày nào) thay vì lỗi thô.
+        await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 300)))
+        const raceDup = await findDupMessage()
+        return fail(res, raceDup ?? 'Mã đơn bị trùng do có người khác vừa upload cùng lúc — kiểm tra rồi upload lại.', 409)
+      }
       return fail(res, insErr.message)
     }
 
@@ -414,8 +640,22 @@ export async function updateOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing, error: fetchErr } = await supabase.from('TmsOrder')
-      .select('id, date, status').eq('id', id).single()
+      .select('id, date, status, origin, order_code').eq('id', id).single()
     if (fetchErr || !existing) return fail(res, 'Không tìm thấy đơn hàng', 404)
+
+    // LỆNH TỰ SINH TỪ KẾ HOẠCH XUẤT = dữ liệu BỊ ĐỘNG (user chốt 03/08): sửa tay ở đây sẽ bị lượt
+    // đồng bộ kế tiếp ghi đè âm thầm → chặn thẳng, chỉ đường về nguồn. Các trường THUỘC VỀ ĐIỀU VẬN
+    // (ghi chú, ưu tiên, ETA, trạng thái) vẫn sửa được vì đồng bộ không đụng tới.
+    if ((existing as { origin?: string | null }).origin === 'KHVC') {
+      const derivedTouched = [
+        ['Ngày', date], ['Kho', warehouse_id], ['ĐVVT', ncc_id], ['NPP', npp_name],
+        ['Loại xe', vehicle_type], ['Chiều', direction], ['Loại kho', warehouse_type],
+        ['Thùng', planned_boxes], ['Pallet', planned_pallets], ['Tấn', planned_tons], ['Mã chuyến', gdo_refs],
+      ].filter(([, v]) => v !== undefined).map(([k]) => k as string)
+      if (derivedTouched.length)
+        return fail(res, 422, 'TMS_PLAN_DERIVED',
+          `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(existing as { order_code?: string }).order_code}) — không sửa ${derivedTouched.join('/')} tại đây. Sửa ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài), lệnh sẽ tự cập nhật theo.`)
+    }
 
     // Scope-write: lệnh phải thuộc kho trong phạm vi; nếu chuyển sang kho mới thì kho đó cũng phải trong phạm vi.
     if (!(await guardOrderScope(req, res, id))) return
@@ -425,9 +665,14 @@ export async function updateOrder(req: Request, res: Response) {
     // ĐỔI NGÀY chỉ cho đơn PENDING (mirror bulkUpdateOrderDate): đơn đã BOOKED/ARRIVED có TmsVehicleSlot
     // gắn DeliverySlot theo ngày cũ — đổi TmsOrder.date ở đây KHÔNG recount slot → booked_count lệch (xe ma).
     // Muốn đổi ngày đơn đã đặt lịch → huỷ đặt lịch (revoke) rồi đặt lại, hoặc dùng luồng đổi lịch chuyên dụng.
+    // ⚠️ Gác này TỪNG VÔ HIỆU (probe 04/08): nó soi `TmsOrder.status`, nhưng đặt lịch chỉ đổi
+    // `TmsVehicleSlot.status` — BOOKED/ARRIVED là giá trị của DÒNG XE, lệnh thì luôn ở 'PENDING'
+    // (chỉ nhận 'DONE' khi kho nhận xác nhận). Nên điều kiện không bao giờ đúng và ngày vẫn đổi được
+    // dù đang giữ khung giờ. Phải soi ĐÚNG chỗ giữ chỗ: khung giờ mà dòng xe đang gắn.
     if (date !== undefined && date !== existing.date) {
-      if (existing.status !== 'PENDING')
-        return fail(res, 'Đơn đã đặt lịch/đã đến — không đổi được ngày ở đây (huỷ đặt lịch trước rồi đặt lại)', 400)
+      const held = (await heldSlotsByOrderId([id])).get(id)
+      const heldMsg = slotHeldBlockingDate(held, String(date))
+      if (heldMsg) return fail(res, 422, 'BOOKING_SLOT_HELD_DATE', heldMsg)
       if (date < todayVN())
         return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
     }
@@ -467,33 +712,62 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
     if (!date) return fail(res, 'date là bắt buộc', 400)
     if (date < todayVN()) return fail(res, 'Không thể chuyển sang ngày quá khứ', 400)
 
+    // Chunk ids (300/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm
+    // scope; chunk 500 uuid vẫn cho URL ~18KB → PostgREST từ chối → 500 (verify 26/07 với 1.100 lệnh).
+    const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
+      .select('id, warehouse_id, destination_warehouse_id, origin, order_code').in('id', chunk).order('id'), 300) as
+      { id: string; warehouse_id: string | null; destination_warehouse_id: string | null; origin: string | null; order_code: string | null }[]
+
     // Scope-write: mọi lệnh trong lô phải thuộc kho trong phạm vi (ASSIGNED). NATIONAL/ĐVVT → bỏ qua.
     const scope = scopeWhIds(req)
     if (scope !== null) {
-      // Chunk ids (500/lượt) + phân trang — ids >1000 mà không chunk thì cap-1000 làm LỌT lệnh khỏi kiểm scope
-      const ords = await fetchAllByIdChunks(ids, chunk => supabase.from('TmsOrder')
-        .select('warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 500)
-      const bad = (ords ?? []).some((o: { warehouse_id: string | null; destination_warehouse_id: string | null }) =>
-        !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
+      const bad = (ords ?? []).some(o => !whInScope(scope, o.warehouse_id, o.destination_warehouse_id))
       if (bad) return fail(res, 'Ngoài phạm vi kho — có lệnh thuộc kho ngoài phạm vi được giao', 403)
     }
+
+    // LỆNH TỰ SINH TỪ KẾ HOẠCH XUẤT = dữ liệu BỊ ĐỘNG (user chốt 03/08): ngày đi theo Kế hoạch xuất
+    // (đổi ở tab Kế hoạch xuất — sync cả xe), đổi tay ở đây sẽ bị lượt đồng bộ kế tiếp ghi đè âm thầm.
+    // FE đã không cho tick; chặn ở BE là hàng rào thật (mirror updateOrder).
+    const derived = (ords ?? []).filter(o => o.origin === 'KHVC')
+    if (derived.length)
+      return fail(res, 422, 'TMS_PLAN_DERIVED',
+        `${derived.length} lệnh TỰ SINH từ Kế hoạch xuất (${derived.slice(0, 3).map(o => o.order_code).join(', ')}${derived.length > 3 ? '…' : ''}) — đổi Ngày xuất ở tab "Kế hoạch xuất" (Dữ liệu bên ngoài), lệnh sẽ tự cập nhật theo.`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const user = req.user
     const now = new Date().toISOString()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count)
-    const { data, error } = await supabase.from('TmsOrder')
-      .update({ date, updated_by: user?.name || null, updated_at: now })
-      .in('id', ids)
-      .eq('status', 'PENDING')
-      .select('id')
-    if (error) return fail(res, error.message)
+    // Đơn ĐANG GIỮ KHUNG GIỜ → chặn cả lô (mirror updateOrder). `.eq('status','PENDING')` bên dưới
+    // KHÔNG gánh được việc này: đó là trạng thái LỆNH, còn BOOKED/ARRIVED là trạng thái DÒNG XE
+    // (probe 04/08 — comment cũ tưởng đã gác, thực tế điều kiện không bao giờ đúng).
+    {
+      const codeById = new Map((ords ?? []).map(o => [o.id, o.order_code ?? o.id]))
+      const held = await heldSlotsByOrderId(ids, codeById)
+      const guilty = [...held].filter(([, h]) => slotHeldBlockingDate(h, date)).map(([oid]) => codeById.get(oid))
+      if (guilty.length)
+        return fail(res, 422, 'BOOKING_SLOT_HELD_DATE',
+          `${guilty.length} lệnh đang GIỮ KHUNG GIỜ của ngày khác (${guilty.slice(0, 3).join(', ')}${guilty.length > 3 ? '…' : ''})`
+          + ' — nhả khung giờ trước khi đổi ngày, rồi đặt lại khung của ngày mới.')
+    }
+
+    // Chỉ đổi ngày đơn PENDING (đơn đã BOOKED/ARRIVED không được đổi → tránh lệch slot booked_count).
+    // CHUNK 300: nhồi cả nghìn id vào `.in()` làm URL >40KB → PostgREST từ chối → 500, KHÔNG lệnh nào
+    // được đổi (verify 26/07: 1.100 lệnh → 500, đổi 0/1100). Đồng thời `.select('id')` bị cap 1000 dòng
+    // ⇒ updatedIds thiếu ⇒ dòng KH của lệnh thứ 1001+ không đổi ngày theo.
+    const updatedIds: string[] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await supabase.from('TmsOrder')
+        .update({ date, updated_by: user?.name || null, updated_at: now })
+        .in('id', ids.slice(i, i + 300))
+        .eq('status', 'PENDING')
+        .select('id')
+      if (error) return fail(res, error.message)
+      updatedIds.push(...((data ?? []) as { id: string }[]).map(o => o.id))
+    }
 
     // Đơn NHẬP: dòng KH (inbound_plan_lines) mang date riêng — đổi theo, không thì lệch ngày đơn vs dòng
     // (báo cáo nhập theo ngày + khóa gộp upload đều bám date của dòng). Đơn xuất không có lines → no-op.
-    const updatedIds = (data ?? []).map((o: { id: string }) => o.id)
     for (let i = 0; i < updatedIds.length; i += 300) {
       const { error: lineErr } = await supabase.from('inbound_plan_lines')
         .update({ date, updated_by: user?.name || null, updated_at: now })
@@ -607,8 +881,40 @@ export async function getPlanVsActual(req: Request, res: Response) {
 // vs thực nhận (ProductionImport → InventoryEntry; mã no-QR dùng posm_cartons). Khớp với actual_received của list.
 export async function getMaterialSummary(req: Request, res: Response) {
   try {
-    const { order_ids } = req.body as { order_ids?: string[] }
+    let { order_ids } = req.body as { order_ids?: string[] }
+    // Lưới Kế hoạch đã PHÂN TRANG → client không còn giữ đủ id đơn NHẬP của bộ lọc. Gửi CỜ bộ lọc
+    // (`by_filter`) để BE tự resolve — không nhồi hàng nghìn id qua mạng (luật id-list-url-limits).
+    if (!order_ids && (req.body as { by_filter?: boolean }).by_filter) {
+      const ctx = getTmsListCtx(req, (req.body as { filter?: Record<string, string> }).filter ?? {})
+      if (!ctx.from) return fail(res, 'date_from là bắt buộc', 400)
+      if (ctx.blocked) return ok(res, [])
+      // Chỉ đơn NHẬP mới có inbound_plan_lines; giao với filter Hướng đang chọn (chọn Xuất → rỗng).
+      const dirs = ctx.directions ? (ctx.directions.includes('INBOUND') ? ['INBOUND'] : []) : ['INBOUND']
+      if (!dirs.length) return ok(res, [])
+      const { data, error } = await supabase.rpc('tms_orders_page', {
+        p_offset: 0, p_limit: 2_000_000_000, p_with_stt: false,
+        ...tmsRpcFilterParams({ ...ctx, directions: dirs }),
+      })
+      if (error) throw new Error(error.message)
+      order_ids = ((data ?? {}) as { ids?: string[] }).ids ?? []
+    }
     if (!Array.isArray(order_ids) || order_ids.length === 0) return ok(res, [])
+    // Lọc id không phải UUID trước khi query cột uuid: id rác ("abc"/số/null) → Postgres lỗi cast
+    // 22P02 → controller nuốt thành 500 thô (fuzz API 26/07). Lọc xong rỗng → trả [] (không khớp gì).
+    const rawIds = uuidList(order_ids)
+    if (rawIds.length === 0) return ok(res, [])
+    // SCOPE KHO: order_ids do CLIENT truyền → phải cắt về lệnh thuộc kho được giao, không thì user kho A
+    // đọc được tổng hợp KH/thực nhận của kho B (IDOR — verify 26/07). Chunk 300 (né URL dài + cap-1000).
+    let validIds = rawIds
+    const msScope = scopeWhIds(req)
+    if (msScope !== null) {
+      const ords = await fetchAllByIdChunks(rawIds, chunk => supabase.from('TmsOrder')
+        .select('id, warehouse_id, destination_warehouse_id').in('id', chunk).order('id'), 300) as
+        { id: string; warehouse_id: string | null; destination_warehouse_id: string | null }[]
+      const allow = new Set((ords ?? []).filter(o => whInScope(msScope, o.warehouse_id, o.destination_warehouse_id)).map(o => o.id))
+      validIds = rawIds.filter(id => allow.has(id))
+      if (validIds.length === 0) return ok(res, [])
+    }
 
     type Row = { material_id: string; material_code: string; material_name: string; unit: string; planned_boxes: number; actual_boxes: number }
     const byMat: Record<string, Row> = {}
@@ -628,7 +934,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 1) Kế hoạch từ inbound_plan_lines
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const planLines = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('inbound_plan_lines')
+    const planLines = await fetchAllByIdChunks(validIds, (chunk) => supabase.from('inbound_plan_lines')
       .select('material_id, planned_boxes, material:Material!material_id(material_code, short_name, material_description, base_unit, entry_unit, units_per_carton)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('material_id', { ascending: true }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -639,7 +945,7 @@ export async function getMaterialSummary(req: Request, res: Response) {
 
     // 2) Thực nhận từ ProductionImport (+ InventoryEntry cho mã QR, posm_cartons cho mã no-QR)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const imports = await fetchAllByIdChunks(order_ids, (chunk) => supabase.from('ProductionImport')
+    const imports = await fetchAllByIdChunks(validIds, (chunk) => supabase.from('ProductionImport')
       .select('id, material_id, posm_cartons, material:Material!material_id(material_code, short_name, material_description, no_qr_tracking, base_unit, entry_unit, units_per_carton), warehouse:Warehouse!warehouse_id(inventory_mode)')
       .in('tms_order_id', chunk).neq('status', 'CANCELLED').order('id', { ascending: true }))
     const qrImportIds: string[] = []
@@ -680,6 +986,9 @@ export async function getInboundReport(req: Request, res: Response) {
   try {
     const { date_from, date_to, warehouse_id } = req.query as Record<string, string>
     if (!date_from || !date_to) return fail(res, 'date_from và date_to là bắt buộc', 400)
+    // Ngày sai định dạng ("not-a-date", "2026-13-45") → Postgres lỗi cast date → 500 thô (fuzz 26/07)
+    const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(`${s}T00:00:00Z`).getTime())
+    if (!isDate(date_from) || !isDate(date_to)) return fail(res, 'date_from/date_to phải theo định dạng YYYY-MM-DD', 400)
 
     // Scope kho + loại hàng (RULE user): chọn "Tất cả" vẫn CHỈ thấy kho/loại được gán —
     // trước đây không cắt gì → non-admin bỏ trống filter là xem được toàn bộ báo cáo nhập.
@@ -691,10 +1000,14 @@ export async function getInboundReport(req: Request, res: Response) {
 
     // 1. Fetch plan lines với join material, ncc, warehouse — PHÂN TRANG (cap ~1000/response):
     // khoảng ngày rộng có thể vài nghìn dòng KH, không phân trang = báo cáo cắt cụt âm thầm.
+    // TRẦN DÒNG: báo cáo trả MẢNG TRẦN 1 dòng/kế hoạch, không phân trang. Đo 28/07: 40.000 dòng
+    // KH (1 năm) ⇒ ~12MB, vượt trần 4,5MB của Vercel. Chặn KÈM HƯỚNG DẪN thu hẹp (không cắt âm
+    // thầm) — cùng cách đã dùng cho Nghỉ phép / Đăng ký cổng. Mặc định của trang là 30 ngày nên
+    // hàng rào này chỉ chạm khi user tự kéo rộng khoảng ngày.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let planLines: any[]
     try {
-      planLines = await fetchAllPaged(() => {
+      const pl = await fetchUpTo(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let q = supabase.from('inbound_plan_lines')
           .select(`
@@ -712,7 +1025,9 @@ export async function getInboundReport(req: Request, res: Response) {
           .order('id')
         if (whIds) q = whIds.length === 1 ? q.eq('warehouse_id', whIds[0]) : q.in('warehouse_id', whIds)
         return q
-      })
+      }, LIST_ROW_CAP)
+      if (pl.truncated) return fail(res, LIST_TOO_LARGE_MSG(LIST_ROW_CAP), 400)
+      planLines = pl.rows
     } catch (e) { return fail(res, (e as Error).message) }
     // Cắt theo Loại hàng của user (null-inclusive: dòng không khai loại vẫn hiện)
     planLines = planLines.filter((l: any) => categoryAllowed(req, l.material?.category))
@@ -776,11 +1091,16 @@ export async function getInboundReport(req: Request, res: Response) {
     }
 
     if (importIds.length > 0) {
-      // Phân trang né cap-1000 (báo cáo nhập gộp nhiều chuyến → có thể >1000 entry)
+      // CHUNK 300 id — trước đây nhồi CẢ tập importIds vào MỘT `.in()`: khoảng ngày rộng có
+      // 40.000 phiếu nhập ⇒ URL ~1,5MB, PostgREST đứt kết nối → 500 "Lỗi hệ thống" sau 43s
+      // (đo 28/07). Trần thật là ~300 id uuid/URL (memory id-list-url-limits) — `fetchAllPaged`
+      // chỉ phân trang KẾT QUẢ, không chia nhỏ FILTER nên không đỡ được.
+      // Dùng helper DÙNG CHUNG (chunk 300 + các lô chạy SONG SONG). Bản `fetchAllByIdChunks` cục
+      // bộ trong file này chunk 100 và chạy TUẦN TỰ ⇒ 4.400 phiếu = 44 lượt nối tiếp (đo: 10,3s).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const entries = await fetchAllPaged(() => supabase.from('InventoryEntry')
+      const entries = await fetchByIdChunks(importIds, chunk => supabase.from('InventoryEntry')
         .select('import_order_id, cartons_imported')
-        .in('import_order_id', importIds)
+        .in('import_order_id', chunk)
         .order('import_order_id', { ascending: true }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const e of entries as any[]) {
@@ -1211,6 +1531,65 @@ export async function selfCompleteTransfer(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// GET /api/tms/orders/:id/plan-goods — DÒNG HÀNG của lệnh XUẤT theo Số xe (order_code = group_code
+// chuyến Xuất), lấy từ Kế hoạch xuất + VL06O (user chốt 03/08). CHỈ ĐỂ ĐỌC cho điều vận biết xe chở
+// gì khi booking — chuyến chờ dữ liệu SAP thì trả danh sách DO đang thiếu, KHÔNG chặn booking nào.
+export async function getPlanGoods(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
+
+    const { data: order } = await supabase.from('TmsOrder')
+      .select('id, order_code, direction, origin').eq('id', id).maybeSingle()
+    if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
+    const empty = { gdo_status: null, awaiting_sap: false, awaiting_dos: [] as string[], plan_dropped: false, lines: [] as unknown[] }
+    if (!order.order_code || order.direction !== 'OUTBOUND') return ok(res, empty)
+
+    // Khớp theo Số xe — lệnh Excel luồng cũ nếu trùng Số xe với chuyến Xuất cũng thấy được hàng
+    const { data: gdo } = await supabase.from('GroupDeliveryOrder')
+      .select('id, status, awaiting_sap, awaiting_dos, plan_dropped')
+      .eq('group_code', order.order_code).order('id').limit(1).maybeSingle()
+    if (!gdo) return ok(res, empty)
+
+    const dos = await fetchAllPaged(() => supabase.from('OutboundDelivery')
+      .select('id, delivery_code, distributor_name').eq('gdo_id', gdo.id).order('id'))
+    const doIds = (dos ?? []).map((d: { id: string }) => d.id)
+    const items = doIds.length
+      ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
+          .select('do_id, cartons_ordered, cartons_scanned, od_refs, material_code_raw, material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
+          .in('do_id', chunk).order('id'))
+      : []
+    const doById = new Map((dos ?? []).map((d: { id: string; delivery_code: string | null; distributor_name: string | null }) => [d.id, d]))
+    const lines = (items ?? []).map((it: {
+      do_id: string; cartons_ordered: number | null; cartons_scanned: number | null
+      od_refs: unknown[] | null; material_code_raw: string | null
+      material: { material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
+    }) => {
+      const d = doById.get(it.do_id) as { delivery_code: string | null; distributor_name: string | null } | undefined
+      // od_refs = mảng OBJECT {od_number, od_item, qty_base} (liên kết ngược dòng OD) — bóc SỐ DO,
+      // đừng đưa nguyên object lên FE (in ra "[object Object]", bắt được khi verify sống 03/08)
+      const refs = [...new Set(((it.od_refs ?? []) as unknown[])
+        .map(r => typeof r === 'string' ? r : (r as { od_number?: string } | null)?.od_number)
+        .filter(Boolean))] as string[]
+      return {
+        do_refs: (refs.length ? refs : [d?.delivery_code]).filter(Boolean),
+        npp: d?.distributor_name ?? null,
+        material_code: it.material?.material_code ?? it.material_code_raw,
+        material_name: it.material?.short_name ?? null,
+        qty_base: Number(it.cartons_ordered ?? 0),          // BASE — FE quy đổi thùng+hộp per-mã
+        scanned_base: Number(it.cartons_scanned ?? 0),
+        base_unit: it.material?.base_unit ?? null,
+        entry_unit: it.material?.entry_unit ?? null,
+        units_per_carton: it.material?.units_per_carton ?? null,
+      }
+    })
+    return ok(res, {
+      gdo_status: gdo.status, awaiting_sap: gdo.awaiting_sap === true,
+      awaiting_dos: (gdo.awaiting_dos ?? []) as string[], plan_dropped: gdo.plan_dropped === true, lines,
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
 // GET /api/tms/orders/:id/transfer-goods
 export async function getTransferGoods(req: Request, res: Response) {
   try {
@@ -1377,8 +1756,15 @@ export async function deleteOrder(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: order } = await supabase.from('TmsOrder')
-      .select('id, source_type, transfer_gdo_id').eq('id', id).single()
+      .select('id, source_type, transfer_gdo_id, origin, order_code, plan_dropped').eq('id', id).single()
     if (!order) return fail(res, 'Không tìm thấy lệnh', 404)
+
+    // Lệnh tự sinh: xóa ở đây thì lượt đồng bộ kế tiếp tạo lại ngay → vô nghĩa. Muốn bỏ hẳn thì bỏ
+    // Số xe khỏi Kế hoạch xuất (lệnh sẽ tự ngừng hiệu lực + nhả khung giờ). Lệnh ĐÃ ngừng hiệu lực
+    // thì cho xóa để dọn bảng.
+    if ((order as { origin?: string | null }).origin === 'KHVC' && !(order as { plan_dropped?: boolean }).plan_dropped)
+      return fail(res, 422, 'TMS_PLAN_DERIVED',
+        `Lệnh này TỰ SINH từ Kế hoạch xuất (Số xe ${(order as { order_code?: string }).order_code}) — xóa ở đây sẽ được tạo lại. Bỏ Số xe khỏi tab "Kế hoạch xuất" thì lệnh tự ngừng hiệu lực và nhả khung giờ.`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: slots } = await supabase.from('TmsVehicleSlot')

@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useWarehouses, useLocationsReal,
-  useUnflagEntry, useStocktakeEntries, useInventoryEntry,
+  useUnflagEntry, useStocktakeEntries, useInventoryEntry, fetchAllStocktakeEntries,
+  usePctBands,
   type StocktakeEntryRow,
 } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -22,18 +24,23 @@ import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucid
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
 import { computePctDate } from '@/utils/shelfLife'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
+import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
 
 function parseDiff(note: string | null): { actual: number; app: number; diff: number } | null {
   if (!note) return null
-  const m = note.match(/Thực tế:\s*(\d+)\s*\/\s*App:\s*(\d+)/)
+  // Mã KG (base_unit thập phân) kiểm lệch → note có số lẻ ("Thực tế: 12.5 / App: 10.5") — nhận cả thập phân.
+  const m = note.match(/Thực tế:\s*([\d.]+)\s*\/\s*App:\s*([\d.]+)/)
   if (!m) return null
-  const actual = parseInt(m[1]), app = parseInt(m[2])
+  const actual = parseFloat(m[1]), app = parseFloat(m[2])
+  if (!Number.isFinite(actual) || !Number.isFinite(app)) return null
   return { actual, app, diff: actual - app }
 }
 
-function isCheckedToday(e: StocktakeEntryRow, todayVN: string, todayStart: string): boolean {
-  return !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
+// "Đã kiểm" = CÓ stocktake_at TRONG khoảng ngày kiểm đang xem (mirror BE — BỎ luật "nhập hôm nay=đã kiểm").
+function isCheckedInRange(e: StocktakeEntryRow, rangeStart: string, rangeEnd: string): boolean {
+  return !!(e.stocktake_at && e.stocktake_at >= rangeStart && e.stocktake_at <= rangeEnd)
 }
 
 // ─── Stat Card ───────────────────────────────────────────────────
@@ -91,9 +98,10 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
   const pct       = entry ? computePctDate(entry, entry.material) : null
   const diff      = entry ? parseDiff(entry.stocktake_flag_note ?? null) : null
+  const pctBands  = usePctBands()
 
   return (
-    <div className="w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 w-full lg:static lg:inset-auto lg:z-auto lg:w-72 shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-xl lg:shadow-none">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="font-mono text-[10px] font-semibold text-slate-700 truncate flex-1" title={entry?.pallet_code ?? ''}>
@@ -182,7 +190,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
                 )}
               {pct !== null && (
                 <DR label="%Date" value={`${pct}%`}
-                  cls={pct >= 70 ? 'text-green-600 font-semibold' : pct >= 40 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold'} />
+                  cls={`${pctDateCls(pct, pctBands)} font-semibold`} />
               )}
             </Sec>
 
@@ -230,13 +238,13 @@ export default function StocktakeDashboard() {
     ? new Set(user.warehouse_ids)
     : null
 
-  const { warehouseId, category, locationIds, requiresOnly, view } = useWmsFilterStore(s => s.stocktakeSummary)
+  const { warehouseId, category, locationIds, requiresOnly, view, page, pageSize } = useWmsFilterStore(s => s.stocktakeSummary)
   const setStocktakeSummary = useWmsFilterStore(s => s.setStocktakeSummary)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
   const [dense, setDense] = useState(() => localStorage.getItem('stocktake_summary_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('stocktake_summary_density', d ? '0' : '1'); return !d })
   const { widths: colW, startResize, totalWidth } = useColumnResize('stocktake_summary_col_widths', STK_COL_DEFAULTS)
-  const viewSnapshot = { warehouseId, category, locationIds, requiresOnly }
+  const viewSnapshot = { warehouseId, category, locationIds }
   const savedViews = useSavedViewsStore(s => s.views['stocktake_summary'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -256,44 +264,88 @@ export default function StocktakeDashboard() {
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
   )
 
-  const filteredLocations = requiresOnly
-    ? (locations as any[]).filter((l: any) => l.requires_stocktake)
-    : (locations as any[])
+  const filteredLocations = (locations as any[])
+  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn
+  const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
+  // "Chỉ vị trí cần check" bật (mặc định) → tự chọn hết vị trí quan trọng khi MỞ (1 lần/kho).
+  // Bỏ tick sẽ xoá chọn (requiresOnly=false) nên effect không tự điền lại.
+  const initedWh = useRef<string | null>(null)
+  useEffect(() => {
+    if (requiresOnly && initedWh.current !== warehouseId && locationIds.length === 0 && importantLocIds.length > 0) {
+      initedWh.current = warehouseId
+      setStocktakeSummary({ locationIds: importantLocIds })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouseId, requiresOnly, locationIds.length, importantLocIds.join(',')])
+  // Checkbox phản ánh THỰC TẾ: đang giới hạn đúng bộ vị trí quan trọng?
+  const isImportantScope = importantLocIds.length > 0
+    && locationIds.length === importantLocIds.length
+    && importantLocIds.every(id => locationIds.includes(id))
 
+  // Tổng hợp KK = trạng thái HÔM NAY (tiến độ kiểm của current stock). Xem lại ngày quá khứ → tab "Lịch sử kiểm".
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const rangeStart = new Date(`${todayVN}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${todayVN}T23:59:59.999+07:00`).toISOString()
+
+  // Đúng bộ "cần check" → gửi CỜ requires_only (BE tự resolve vị trí). Nhồi cả nghìn id vào query
+  // string là 414 trước khi tới BE (kho 1.517 vị trí = URL 55KB; ngưỡng ~800 id/32KB — đo 27/07).
+  const tooManyLocs = !isImportantScope && locationIds.length > LOC_ID_CAP
+  const queryParams = {                              // không truyền ngày → BE mặc định HÔM NAY
+    warehouse_id: isImportantScope ? (warehouseId || undefined) : undefined,
+    category: isImportantScope ? (category || undefined) : undefined,
+    requires_only: isImportantScope ? '1' : undefined,
+    location_ids: isImportantScope ? undefined : locationIds.join(','),
+    view,
+  }
   const { data, isFetching } = useStocktakeEntries(
-    { location_ids: locationIds.join(','), view },
-    locationIds.length > 0,
+    { ...queryParams, page, page_size: pageSize },
+    locationIds.length > 0 && !tooManyLocs,
   )
 
-  const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0 }
+  const stats   = data?.stats   ?? { total: 0, checked: 0, unchecked: 0, flagged: 0, matched: 0 }
   const entries = data?.entries ?? []
+  const totalRows  = data?.total_filtered ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize))
 
-  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+  // Chỉ số kết quả kiểm (đếm chính xác từ BE): bao phủ = đã kiểm/tổng; chính xác = khớp/đã kiểm.
+  // KHÔNG cộng "Σ lệch" cross-mã (đơn vị base khác nhau → tổng vô nghĩa; đã có số PALLET lệch ở thẻ Chênh lệch).
+  const coverage = stats.total   > 0 ? Math.round((stats.checked  / stats.total)   * 100) : 0
+  const accuracy = stats.checked > 0 ? Math.round((stats.matched  / stats.checked) * 100) : 100
 
   // Màu CHỮ theo trạng thái (không fill nền):
   // - chênh lệch=đỏ (cần xử lý) · đã quét trong ngày=xanh dương + GẠCH NGANG (xong, bỏ qua)
   // - chưa quét=xám đậm thường (cần tập trung tìm) → đẩy lên đầu (sort ở backend)
   function rowStatusKey(e: StocktakeEntryRow): RowStatusKey {
     if (e.stocktake_flagged) return 'paused'
-    if (isCheckedToday(e, todayVN, todayStart)) return 'completed'
+    if (isCheckedInRange(e, rangeStart, rangeEnd)) return 'completed'
     return 'pending'
   }
 
   const defs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
-      onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [] }),
+      onChange: v => setStocktakeSummary({ warehouseId: v, locationIds: [], page: 1 }),
       options: (warehouses as { id: string; name: string }[]).filter(w => !allowedDashWhIds || allowedDashWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
     { key: 'category', label: 'Loại hàng', type: 'single', value: category, allLabel: 'Tất cả loại',
-      onChange: v => setStocktakeSummary({ category: v, locationIds: [] }),
+      onChange: v => setStocktakeSummary({ category: v, locationIds: [], page: 1 }),
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
-      onChange: ids => { setStocktakeSummary({ locationIds: ids }); setSelectedId(null) },
+      onChange: ids => { setStocktakeSummary({ locationIds: ids, page: 1 }); setSelectedId(null) },
       options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
   ]
 
-  function exportExcel() {
-    const sheet = entries.map(e => {
+  // Xuất Excel = TOÀN BỘ kết quả lọc (duyệt hết trang), không phải trang đang xem — file cụt
+  // là kiểu sai âm thầm: người nhận không có cách nào biết là thiếu.
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    let all: StocktakeEntryRow[]
+    try {
+      all = await fetchAllStocktakeEntries(queryParams)
+    } catch {
+      setExporting(false)
+      return
+    }
+    const sheet = all.map(e => {
       const diff = parseDiff(e.stocktake_flag_note ?? null)
       return {
         'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
@@ -303,17 +355,19 @@ export default function StocktakeDashboard() {
         'Chênh lệch': diff ? qtyEntryDecimal(diff.diff, e.material) : '',
         'Người kiểm': e.stocktake_by_emp?.name ?? '',
         'TG kiểm': e.stocktake_at ? `${formatTimestampDate(e.stocktake_at, true)} ${formatTimestampTime(e.stocktake_at)}` : '',
-        'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedToday(e, todayVN, todayStart) ? 'Đã kiểm' : 'Chưa kiểm'),
+        'Trạng thái': e.stocktake_flagged ? 'Chênh lệch' : (isCheckedInRange(e, rangeStart, rangeEnd) ? 'Đã kiểm' : 'Chưa kiểm'),
       }
     })
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Tổng hợp KK')
     saveWorkbook(wb, `tong_hop_kk_${todayVN}.xlsx`)
+    setExporting(false)
   }
 
   return (
     <div className="flex flex-col h-full sm:p-3">
+     <StocktakeTabs />
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters — compact, ~70% kích thước cũ */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:space-y-1.5 sm:rounded-t-xl">
@@ -323,14 +377,18 @@ export default function StocktakeDashboard() {
             <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
             <span className="text-xs font-semibold text-slate-700">Tổng hợp KK</span>
           </div>
-          <label className="flex items-center gap-1 cursor-pointer select-none shrink-0">
-            <input type="checkbox" checked={requiresOnly} onChange={e => {
-              setStocktakeSummary({ requiresOnly: e.target.checked, locationIds: [] })
-            }} className="h-3 w-3 cursor-pointer" />
-            <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
-              <Flag className="h-2.5 w-2.5 text-red-500" /> Cần check
-            </span>
-          </label>
+          {importantLocIds.length > 0 && (
+            <label className="flex items-center gap-1 cursor-pointer select-none shrink-0"
+              title={`Chỉ xem ${importantLocIds.length} vị trí đã gắn cờ "cần kiểm kê" (ở trang Vị trí kho). Bỏ tick để chọn vị trí khác.`}>
+              <input type="checkbox" checked={isImportantScope} onChange={e => {
+                const on = e.target.checked
+                setStocktakeSummary(on ? { requiresOnly: true, locationIds: importantLocIds, page: 1 } : { requiresOnly: false, locationIds: [], page: 1 })
+              }} className="h-3 w-3 cursor-pointer" />
+              <span className="text-[11px] text-slate-600 flex items-center gap-0.5">
+                <Flag className="h-2.5 w-2.5 text-red-500" /> Chỉ vị trí cần check
+              </span>
+            </label>
+          )}
           <div className="flex-1" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -342,11 +400,15 @@ export default function StocktakeDashboard() {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* Cụm action toolbar (chuẩn ActionCluster) — Export chỉ dùng trên PC */}
-          <ActionCluster className="shrink-0" mobileInline items={[{
-            key: 'export', icon: Download, label: 'Excel', tip: 'Xuất Excel danh sách kiểm kê đang hiển thị',
-            mobileHidden: true, disabled: !entries.length,
-            onClick: exportExcel,
-          } satisfies ActionItem]} />
+          <ActionCluster className="shrink-0" mobileInline items={[
+            // Xuất file = mang dữ liệu ra ngoài → quyền RIÊNG stocktake.export
+            ...(can(perms, 'stocktake', 'export') ? [{
+              key: 'export', icon: Download, label: exporting ? 'Đang tải…' : 'Excel',
+              tip: 'Xuất Excel TOÀN BỘ danh sách theo bộ lọc đang áp (không chỉ trang đang xem)',
+              mobileHidden: true, disabled: !entries.length || exporting, busy: exporting,
+              onClick: exportExcel,
+            } satisfies ActionItem] : []),
+          ]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
           </div>
           <FilterBar defs={defs} className="hidden sm:flex" />
@@ -357,37 +419,51 @@ export default function StocktakeDashboard() {
           <div className="flex gap-1.5">
             <StatCard label="Tổng Pallet" value={stats.total}
               active={view === 'all'} color="bg-slate-100 text-slate-700 border-slate-300"
-              onClick={() => setStocktakeSummary({ view: 'all' })} />
+              onClick={() => setStocktakeSummary({ view: 'all', page: 1 })} />
             <StatCard label="Đã kiểm" value={stats.checked}
               active={view === 'checked'} color="bg-green-100 text-green-700 border-green-300"
-              onClick={() => setStocktakeSummary({ view: 'checked' })} />
+              onClick={() => setStocktakeSummary({ view: 'checked', page: 1 })} />
             <StatCard label="Chưa kiểm" value={stats.unchecked}
               active={view === 'unchecked'} color="bg-amber-100 text-amber-700 border-amber-300"
-              onClick={() => setStocktakeSummary({ view: 'unchecked' })} />
+              onClick={() => setStocktakeSummary({ view: 'unchecked', page: 1 })} />
             <StatCard label="Chênh lệch" value={stats.flagged}
               active={view === 'flagged'} color="bg-red-100 text-red-700 border-red-300"
-              onClick={() => setStocktakeSummary({ view: 'flagged' })} />
+              onClick={() => setStocktakeSummary({ view: 'flagged', page: 1 })} />
+          </div>
+        )}
+
+        {/* Row 3: chỉ số kết quả kiểm — bao phủ + độ chính xác của ĐỢT kiểm đang xem */}
+        {locationIds.length > 0 && (
+          <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-slate-500">
+            <span>Bao phủ <b className={coverage >= 90 ? 'text-green-600' : coverage >= 50 ? 'text-amber-600' : 'text-slate-700'}>{coverage}%</b> ({stats.checked}/{stats.total})</span>
+            <span className="text-slate-300">·</span>
+            <span>Chính xác <b className={accuracy >= 98 ? 'text-green-600' : accuracy >= 90 ? 'text-amber-600' : 'text-red-600'}>{accuracy}%</b> ({stats.matched}/{stats.checked} khớp)</span>
+            <span className="text-slate-300">·</span>
+            <span>Kiểm hôm nay <b className="text-slate-700">{todayVN}</b> — xem ngày khác ở <b className="text-blue-600">Lịch sử kiểm</b></span>
           </div>
         )}
       </div>
 
       {/* Content */}
       <div className="flex flex-1 min-h-0">
-        {locationIds.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+        {tooManyLocs ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 px-6 text-center">
             <MapPin className="h-8 w-8 mb-2 opacity-40" />
-            <p className="text-sm">Chọn vị trí để xem tổng hợp</p>
+            <p className="text-sm">Đang chọn {locationIds.length.toLocaleString('vi-VN')} vị trí — quá nhiều để lọc (tối đa {LOC_ID_CAP})</p>
+            <p className="text-[11px] mt-1 max-w-sm">Bỏ bớt vị trí, hoặc bật <b>“Chỉ vị trí cần check”</b> để xem trọn nhóm trọng yếu của kho.</p>
+          </div>
+        ) : locationIds.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-6 text-center">
+            <MapPin className="h-8 w-8 mb-2 opacity-40" />
+            <p className="text-sm">Chọn vị trí ở thanh lọc để xem tổng hợp</p>
+            {warehouseId && importantLocIds.length === 0 && (
+              <p className="text-[11px] mt-1 max-w-xs">Mẹo: gắn cờ <span className="text-red-500 font-medium">"cần kiểm kê"</span> cho các vị trí trọng yếu ở trang <b>Vị trí kho</b> → báo cáo sẽ tự lên nhóm đó mỗi khi mở.</p>
+            )}
           </div>
         ) : (
           <>
             {/* Table — overflow-auto cho cả scroll dọc lẫn ngang + sticky header */}
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
-              {data?.truncated && (
-                <div className="mx-3 mt-2 px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-                  Đang hiển thị {entries.length.toLocaleString('vi-VN')} / {(data.total_filtered ?? 0).toLocaleString('vi-VN')} dòng —
-                  thu hẹp <b>Vị trí</b> ở thanh lọc để xem đủ (xuất Excel cũng chỉ gồm dòng đang hiển thị). Số liệu thống kê phía trên vẫn tính trên TOÀN BỘ.
-                </div>
-              )}
               <Table className={`table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 ${dense ? '[&_td]:!py-0.5' : '[&_td]:!py-1.5'}`} style={{ width: totalWidth, minWidth: '100%' }}>
                 <colgroup>
                   {colW.map((w, i) => <col key={i} style={{ width: w }} />)}
@@ -415,12 +491,16 @@ export default function StocktakeDashboard() {
                   ) : entries.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={STK_COLS.length} className="text-center text-xs text-slate-400 py-8">
-                        {view === 'problem' ? 'Không có pallet cần xử lý 🎉' : 'Không có dữ liệu'}
+                        {view === 'problem'   ? 'Không có pallet cần xử lý 🎉'
+                          : view === 'checked'   ? 'Chưa có pallet nào được kiểm trong đợt này'
+                          : view === 'flagged'   ? 'Không có chênh lệch trong đợt này 🎉'
+                          : view === 'unchecked' ? 'Tất cả pallet đã được kiểm 🎉'
+                          : 'Không có dữ liệu'}
                       </TableCell>
                     </TableRow>
                   ) : entries.map(e => {
                     const diff    = parseDiff(e.stocktake_flag_note)
-                    const checked = isCheckedToday(e, todayVN, todayStart)
+                    const checked = isCheckedInRange(e, rangeStart, rangeEnd)
                     const sel     = selectedId === e.id
                     const stickyBg = sel ? 'bg-sky-50' : 'bg-white'
                     return (
@@ -494,6 +574,7 @@ export default function StocktakeDashboard() {
                   })}
                 </TableBody>
               </Table>
+              <PagerNav page={page} totalPages={totalPages} onPage={p => { setStocktakeSummary({ page: p }); setSelectedId(null) }} />
             </div>
 
             {/* Side detail panel */}
@@ -504,10 +585,16 @@ export default function StocktakeDashboard() {
         )}
       </div>
 
-      {/* Footer đếm bản ghi */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
-        {locationIds.length > 0 ? `${entries.length} pallet · ${locationIds.length} vị trí` : 'Chọn vị trí để xem tổng hợp'}
-      </div>
+      {/* Footer đếm bản ghi — chuẩn dùng chung mọi list page */}
+      {locationIds.length > 0 && !tooManyLocs ? (
+        <ListFooter page={page} pageSize={pageSize} total={totalRows} unit="pallet"
+          onPageSize={n => setStocktakeSummary({ pageSize: n, page: 1 })}
+          right={`${locationIds.length.toLocaleString('vi-VN')} vị trí`} />
+      ) : (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 sm:rounded-b-xl">
+          Chọn vị trí để xem tổng hợp
+        </div>
+      )}
      </div>
     </div>
   )

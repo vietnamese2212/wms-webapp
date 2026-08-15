@@ -1,7 +1,10 @@
 import { Request, Response } from 'express'
+import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { fetchAllRowsParallel } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
+import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 // ─── Phiếu cân trạm cân 100T (PM Cân Kinh Bắc) ────────────────────────────────
 // Agent LAN đọc Access TVTDB.mdb (bảng WeightForm) → POST lô phiếu lên đây (ApiKey
@@ -14,14 +17,14 @@ function ok(res: Response, data: unknown, status = 200) {
   return res.status(status).json({ success: true, data })
 }
 function fail(res: Response, message: string, status = 500, code = 'ERROR') {
-  return res.status(status).json({ success: false, error: { code, message } })
+  // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
 }
 
-// Biển số về dạng khớp: bỏ mọi ký tự không phải chữ/số + upper ("29K-06037" → "29K06037")
-export function normPlate(s: string | null | undefined): string | null {
-  const n = String(s ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
-  return n || null
-}
+// Biển số về dạng khớp ("29K-06037" → "29K06037") — dùng CHUNG helper của app (utils/plate),
+// trước đây chép lại luật ngay tại đây nên có 2 bản rời nhau.
+// LƯU Ý: chỉ dùng cho cột `license_plate_norm`; cột `license_plate` GIỮ NGUYÊN VĂN phiếu cân giấy.
+export const normPlate = normalizePlate
 
 // PM cân lưu giờ dạng "HH:mm:ss-dd/MM/yyyy" (WChar) → ISO UTC (giờ VN +07:00)
 function parseKbTime(s: string | null | undefined): string | null {
@@ -54,7 +57,12 @@ export async function ingestWeighTickets(req: Request, res: Response) {
   try {
     const { station_code, warehouse_id, tickets } =
       req.body as { station_code?: string; warehouse_id?: string; tickets?: KbTicket[] }
-    const station = String(station_code ?? 'KB01').trim() || 'KB01'
+    // MÃ TRẠM BẮT BUỘC — mỗi trạm cân khai mã RIÊNG (agent có sẵn tham số StationCode).
+    // KHÔNG có mã mặc định: source_id của phần mềm cân là autonumber đếm từ 1 ở MỖI trạm, nên
+    // hai trạm mang cùng mã sẽ ĐÈ phiếu của nhau qua khóa upsert (station_code, source_id).
+    const station = String(station_code ?? '').trim().toUpperCase()
+    if (!station || station.length > 20)
+      return fail(res, 'Thiếu station_code — mỗi trạm cân phải khai mã riêng (tối đa 20 ký tự)', 400, 'VALIDATION_ERROR')
     if (!Array.isArray(tickets)) return fail(res, 'tickets phải là mảng', 400, 'VALIDATION_ERROR')
     if (tickets.length === 0) return ok(res, { upserted: 0, matched: 0 })
     if (tickets.length > 500) return fail(res, 'Tối đa 500 phiếu/lần', 400, 'VALIDATION_ERROR')
@@ -64,6 +72,14 @@ export async function ingestWeighTickets(req: Request, res: Response) {
     if (whId) {
       const { data: wh } = await supabase.from('Warehouse').select('id').eq('id', whId).maybeSingle()
       if (!wh) return fail(res, `warehouse_id không tồn tại: ${whId}`, 400, 'VALIDATION_ERROR')
+      // Lưới bắt "cài agent trạm mới mà QUÊN đổi mã trạm": mã này đang mang phiếu của KHO KHÁC ⇒
+      // ghi tiếp là đè chồng dữ liệu 2 trạm. Chặn ngay, nêu rõ phải đặt mã khác.
+      const { data: other } = await supabase.from('WeighTicket')
+        .select('warehouse_id').eq('station_code', station).not('warehouse_id', 'is', null)
+        .neq('warehouse_id', whId).limit(1).maybeSingle()
+      if (other) return fail(res,
+        `Mã trạm ${station} đang dùng cho kho khác — đặt mã trạm RIÊNG cho trạm này (StationCode trong agent)`,
+        409, 'STATION_CODE_CONFLICT')
     }
 
     const t = now()
@@ -155,6 +171,24 @@ export async function ingestWeighTickets(req: Request, res: Response) {
   } catch (e) { return fail(res, String(e)) }
 }
 
+// Đắp ước tính KL HÀNG (kg) của chuyến đã gắn vào từng phiếu — đối chiếu với net_kg cân thực
+// (RPC gdo_weight_estimates, migration 20260801_weigh_gate: Σ SL÷đv/thùng×Material.weight_kg).
+// 1 lời gọi POST-body cho cả trang (không dính trần URL); RPC chưa apply → trả nguyên trạng.
+type WeightEst = { gdo_id: string; kg_planned: number | null; kg_actual: number | null; items_total: number; items_missing: number }
+async function attachWeightEstimates<T extends { gdo_id?: string | null }>(rows: T[]): Promise<T[]> {
+  const ids = [...new Set(rows.map(r => r.gdo_id).filter((v): v is string => !!v))]
+  if (!ids.length) return rows
+  const { data } = await supabase.rpc('gdo_weight_estimates', { p_gdo_ids: ids })
+  const ests = (Array.isArray(data) ? data : []) as WeightEst[]
+  const map = new Map(ests.map(e => [e.gdo_id, e]))
+  return rows.map(r => {
+    const e = r.gdo_id ? map.get(r.gdo_id) : undefined
+    return e
+      ? { ...r, est_kg_planned: e.kg_planned, est_kg_actual: e.kg_actual, est_items_missing: e.items_missing, est_items_total: e.items_total }
+      : r
+  })
+}
+
 // ─── API cho trang Phiếu cân (WMS UI) ─────────────────────────────────────────
 
 // GET /wms/weigh-tickets?from_date&to_date&q&direction&match_state&warehouse_ids&page&limit
@@ -163,42 +197,97 @@ export async function listWeighTickets(req: Request, res: Response) {
     const { from_date, to_date, q, direction, match_state, warehouse_ids, page = '1', limit = '500' } = req.query
     const pageNum = Math.max(1, parseInt(String(page)))
     const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit))))
+    // 2 ô SummaryBand ("Đã cân xong" / "Đã gắn chuyến") phải đếm trên TOÀN BỘ bộ lọc — đếm ở FE
+    // trên `rows` là đếm trang đang xem, đứng cạnh ô "Tổng" (toàn bộ) thành hai con số đá nhau.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const countQ = (): any => supabase.from('WeighTicket').select('id', { count: 'exact', head: true })
     let query = supabase.from('WeighTicket')
       .select('*', { count: 'exact' })
       // sort theo GIỜ CÂN LẦN 1 (in_time = GInTime, fallback mốc cân sớm nhất) — user chốt 16/07
       .order('in_time', { ascending: false, nullsFirst: false })
       .order('source_id', { ascending: false })
       .range((pageNum - 1) * limitNum, pageNum * limitNum - 1)
+    let qDone = countQ().eq('is_complete', true)
+    let qMatch = countQ().not('gdo_id', 'is', null)
     // Scope kho từ JWT (null-inclusive: phiếu chưa gắn kho vẫn hiện) + filter Kho user chọn
     const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : []
-    const requested = warehouse_ids ? String(warehouse_ids).split(',').filter(Boolean) : []
+    const requested = parseListParam(warehouse_ids) ?? []
     const effective = scopeWhIds.length > 0
       ? (requested.length > 0 ? requested.filter(id => scopeWhIds.includes(id)) : scopeWhIds)
       : requested
     if (requested.length > 0 && effective.length === 0)
-      return ok(res, { rows: [], total: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
-    if (requested.length > 0) query = query.in('warehouse_id', effective)
-    else if (effective.length > 0)
-      query = query.or(`warehouse_id.in.(${effective.join(',')}),warehouse_id.is.null`)
-    if (from_date) query = query.gte('weigh_date', String(from_date))
-    if (to_date)   query = query.lte('weigh_date', String(to_date))
-    if (direction) query = query.eq('direction', String(direction))
-    if (match_state === 'matched')   query = query.not('gdo_id', 'is', null)
-    if (match_state === 'unmatched') query = query.is('gdo_id', null)
-    if (match_state === 'pending')   query = query.eq('is_complete', false)
-    if (q) {
-      const nq = String(q).trim().replace(/[%_,()]/g, ' ').trim()
-      if (nq) {
-        const pl = normPlate(nq) ?? nq
-        query = query.or(`license_plate_norm.ilike.%${pl}%,ticket_no.ilike.%${nq}%,goods_name.ilike.%${nq}%`)
+      return ok(res, { rows: [], total: 0, done: 0, matched: 0, page: pageNum, limit: limitNum })  // chọn kho ngoài scope
+
+    // MỘT RPC cho cả trang: rows (đã đắp tên kho + group_code chuyến) + total + done + matched
+    // (migration 20260729). Đường cũ = 5 request (trang + 2 câu đếm + nạp Kho + nạp GDO) — mỗi
+    // request chiếm 1 khe pool ~10 khe của PostgREST. Filter trong RPC mirror applyFilters dưới
+    // (kể cả null-inclusive khi lọc theo scope). Fallback đường cũ khi RPC chưa apply.
+    {
+      const nq0 = q ? String(q).trim().replace(/[%_,()]/g, ' ').trim() : ''
+      const { data: rp, error: rpErr } = await supabase.rpc('weigh_tickets_page', {
+        p_wh_ids:   effective.length > 0 ? effective : null,
+        p_null_ok:  requested.length === 0,          // scope-mode: phiếu chưa gắn kho vẫn hiện
+        p_from:      from_date ? String(from_date) : null,
+        p_to:        to_date ? String(to_date) : null,
+        p_direction: direction ? String(direction) : null,
+        p_match:     match_state ? String(match_state) : null,
+        p_q:         nq0 || null,
+        p_plate:     nq0 ? normPlate(nq0) : null,
+        p_offset:    (pageNum - 1) * limitNum,
+        p_limit:     limitNum,
+      })
+      if (!rpErr && rp) {
+        const d = rp as { rows?: { gdo_id?: string | null }[]; total?: number; done?: number; matched?: number }
+        return ok(res, {
+          rows: await attachWeightEstimates(d.rows ?? []), total: d.total ?? 0,
+          done: d.done ?? 0, matched: d.matched ?? 0,
+          page: pageNum, limit: limitNum,
+        })
       }
     }
-    const { data, count, error } = await query
+
+    // ── Nhánh dự phòng cửa sổ triển khai (RPC chưa apply) — đường cũ nguyên vẹn ──
+    // Cùng 1 mệnh đề lọc cho trang và 2 ô đếm — lệch nhau là số trong band không khớp bảng
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = (qq: any): any => {
+      if (requested.length > 0) qq = qq.in('warehouse_id', effective)
+      else if (effective.length > 0)
+        qq = qq.or(`warehouse_id.in.(${effective.join(',')}),warehouse_id.is.null`)
+      if (from_date) qq = qq.gte('weigh_date', String(from_date))
+      if (to_date)   qq = qq.lte('weigh_date', String(to_date))
+      if (direction) qq = qq.eq('direction', String(direction))
+      if (match_state === 'matched')   qq = qq.not('gdo_id', 'is', null)
+      if (match_state === 'unmatched') qq = qq.is('gdo_id', null)
+      if (match_state === 'pending')   qq = qq.eq('is_complete', false)
+      if (q) {
+        const nq = String(q).trim().replace(/[%_,()]/g, ' ').trim()
+        if (nq) {
+          const pl = normPlate(nq) ?? nq
+          qq = qq.or(`license_plate_norm.ilike.%${pl}%,ticket_no.ilike.%${nq}%,goods_name.ilike.%${nq}%`)
+        }
+      }
+      return qq
+    }
+    query = applyFilters(query); qDone = applyFilters(qDone); qMatch = applyFilters(qMatch)
+    const [{ data, count, error }, doneRes, matchRes] = await Promise.all([query, qDone, qMatch])
     if (error) {
       if (/relation .*WeighTicket.* does not exist/i.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_tickets', 503, 'NOT_READY')
       if (/warehouse_id/.test(error.message))
         return fail(res, 'Chưa apply migration 20260716_weigh_ticket_warehouse', 503, 'NOT_READY')
+      // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống (PostgREST trả 416 khi offset ≥
+      // tổng dòng). Rất dễ gặp: đang ở trang cuối rồi gõ tìm cho kết quả co lại, hoặc số trang đã
+      // được nhớ theo user từ lần trước. Xem `isRangeNotSatisfiable`.
+      // Đếm tổng CHỈ chạy ở nhánh này (query chính đã mang `count:'exact'`) — thêm 1 câu đếm
+      // luôn chạy là tự làm nặng đường nóng dưới tải ghi.
+      if (isRangeNotSatisfiable(error)) {
+        const { count: totCount } = await applyFilters(countQ())
+        return ok(res, {
+          rows: [], total: totCount ?? 0,
+          done: doneRes.count ?? 0, matched: matchRes.count ?? 0,
+          page: pageNum, limit: limitNum,
+        })
+      }
       return fail(res, error.message, 500, 'DB_ERROR')
     }
     // Đính group_code của chuyến đã gắn + tên kho (soft link — join tay, ids ít)
@@ -217,32 +306,38 @@ export async function listWeighTickets(req: Request, res: Response) {
       for (const g of (gs ?? []) as { id: string; group_code: string | null; status: string | null }[])
         gdoMap.set(g.id, { group_code: g.group_code, status: g.status })
     }
-    const out = rows.map(r => ({
+    const out = await attachWeightEstimates(rows.map(r => ({
       ...r,
       warehouse_name: r.warehouse_id ? (whMap.get(r.warehouse_id) ?? null) : null,
       gdo_group_code: r.gdo_id ? (gdoMap.get(r.gdo_id)?.group_code ?? null) : null,
       gdo_status:     r.gdo_id ? (gdoMap.get(r.gdo_id)?.status ?? null) : null,
-    }))
-    return ok(res, { rows: out, total: count ?? 0, page: pageNum, limit: limitNum })
+    })))
+    return ok(res, {
+      rows: out, total: count ?? 0,
+      done: doneRes?.count ?? 0, matched: matchRes?.count ?? 0,
+      page: pageNum, limit: limitNum,
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 
 // GET /wms/weigh-tickets/warehouses — chỉ các kho THỰC CÓ phiếu cân (option filter Kho trên FE),
-// vẫn cắt scope kho JWT. Check tồn tại từng kho (limit 1, index warehouse_id) — chính xác ở mọi quy mô,
-// không dựa DISTINCT trên trang bị cap 1000.
+// vẫn cắt scope kho JWT.
+// Trước 14/08 hỏi "kho này có phiếu cân không?" cho TỪNG kho: 153 kho hoạt động = 153 request
+// PostgREST mỗi lần mở bộ lọc, qua pool ~10 khe ⇒ làm chậm cả app. Nay DISTINCT chạy TRONG DB
+// (RPC weigh_ticket_warehouses) — 1 lời gọi, số dòng về bị chặn bởi số KHO chứ không phải số phiếu,
+// nên cũng không dính cap-1000.
 export async function listWeighWarehouses(req: Request, res: Response) {
   try {
     const scoped = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
     if (scoped && scoped.length === 0) return ok(res, [])
-    let q = supabase.from('Warehouse').select('id, name').order('name')
-    if (scoped) q = q.in('id', scoped)
-    const { data: whs, error } = await q
-    if (error) return fail(res, error.message, 500, 'DB_ERROR')
-    const checks = await Promise.all(((whs ?? []) as { id: string; name: string }[]).map(async w => {
-      const { data } = await supabase.from('WeighTicket').select('id').eq('warehouse_id', w.id).limit(1)
-      return (data ?? []).length > 0 ? w : null
-    }))
-    return ok(res, checks.filter(Boolean))
+    const { data: whRows, error: rpcErr } = await supabase.rpc('weigh_ticket_warehouses')
+    if (rpcErr) return fail(res, rpcErr.message, 500, 'DB_ERROR')
+    let ids = ((whRows ?? []) as { warehouse_id: string }[]).map(r => r.warehouse_id).filter(Boolean)
+    if (scoped) ids = ids.filter(id => scoped.includes(id))
+    if (!ids.length) return ok(res, [])
+    const whs = await fetchAllByIdChunks(ids, chunk =>
+      supabase.from('Warehouse').select('id, name').in('id', chunk).order('name'))
+    return ok(res, (whs ?? []) as { id: string; name: string }[])
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -251,10 +346,23 @@ export async function matchWeighTicket(req: Request, res: Response) {
   try {
     const { gdo_id } = req.body as { gdo_id?: string | null }
     const t = now()
+    // Scope kho (chống IDOR gắn/gỡ chéo kho) + không CƯỚP phiếu đang gắn chuyến khác âm thầm
+    const scopeIds = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    const { data: tk } = await supabase.from('WeighTicket')
+      .select('id, gdo_id, warehouse_id').eq('id', req.params.id).maybeSingle()
+    if (!tk) return fail(res, 'Không tìm thấy phiếu cân', 404, 'NOT_FOUND')
+    const tkRow = tk as { gdo_id: string | null; warehouse_id: string | null }
+    if (scopeIds && tkRow.warehouse_id && !scopeIds.includes(tkRow.warehouse_id))
+      return fail(res, 'Phiếu cân không thuộc kho trong phạm vi của bạn', 403, 'FORBIDDEN')
+    if (gdo_id && tkRow.gdo_id && tkRow.gdo_id !== gdo_id)
+      return fail(res, 'Phiếu cân đang gắn chuyến khác — gỡ khỏi chuyến đó trước rồi mới gắn lại', 409, 'CONFLICT')
     if (gdo_id) {
       const { data: g } = await supabase.from('GroupDeliveryOrder')
-        .select('id, group_code').eq('id', gdo_id).maybeSingle()
+        .select('id, group_code, warehouse_id').eq('id', gdo_id).maybeSingle()
       if (!g) return fail(res, 'Không tìm thấy chuyến xe', 404, 'NOT_FOUND')
+      const gWh = (g as { warehouse_id?: string | null }).warehouse_id
+      if (scopeIds && gWh && !scopeIds.includes(gWh))
+        return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403, 'FORBIDDEN')
     }
     const { data, error } = await supabase.from('WeighTicket')
       .update({

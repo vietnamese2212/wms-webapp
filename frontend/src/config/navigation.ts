@@ -5,7 +5,8 @@ import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
-  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database,
+  ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
+  ArrowDownToLine, BellRing, NotebookPen,
 } from 'lucide-react'
 import { MODULES, type ModuleKey } from './permissions'
 
@@ -31,6 +32,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
+      // Không gate module: tab Cá nhân (feed việc của mình) dành cho MỌI user; tab Chung tự ẩn khi thiếu alerts.view
+      { to: '/wms/alerts',        icon: BellRing, label: 'Thông báo' },
     ],
   },
   {
@@ -40,10 +43,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/inbound',       icon: PackagePlus,    label: 'Nhập kho',          module: 'inbound' },
       { to: '/wms/outbound',      icon: PackageMinus,   label: 'Xuất kho',          module: 'outbound' },
       { to: '/wms/loosepicking',  icon: Scissors,       label: 'Nhặt lẻ',           module: 'loosepicking' },
+      { to: '/wms/fill',          icon: ArrowDownToLine, label: 'Fill hàng',        module: 'fill' },
       { to: '/wms/pallet-ops',    icon: Scissors,       label: 'Dồn / Tách pallet', module: 'pallet_ops' },
       { to: '/wms/pallet-labels', icon: QrCode,         label: 'In tem pallet',     module: 'pallet_print' },
-      { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Check vị trí',      module: 'stocktake' },
+      { to: '/wms/packing',       icon: NotebookPen,    label: 'Sổ đóng gói',       module: 'packing' },
+      { to: '/wms/stocktake',     icon: ClipboardCheck, label: 'Kiểm kê',           module: 'stocktake' },
       { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
+      { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
       { to: '/wms/multi-scan',    icon: ScanLine,       label: 'Quét loạt (test)',  adminOnly: true },
     ],
   },
@@ -69,7 +75,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/wms/inventory',         icon: Package,   label: 'Tồn kho',      module: 'inventory' },
       { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
-      { to: '/wms/stocktake/summary', icon: BarChart2, label: 'Tổng hợp KK',  module: 'stocktake' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
       { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'], anyActions: [['outbound', 'reconcile']] },
     ],

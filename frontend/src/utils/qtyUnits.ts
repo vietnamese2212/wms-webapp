@@ -14,7 +14,7 @@ export type MatUnits = {
   units_per_carton?: number | null
 }
 
-/** Nhãn tiếng Việt cho mã ĐVT — code lạ hiển thị NGUYÊN VĂN (ĐVT tùy biến). */
+/** Nhãn tiếng Việt cho mã ĐVT — chỉ là LƯỚI ĐỠ khi chưa nạp được danh mục (xem setUnitLabels). */
 const UNIT_LABELS: Record<string, string> = {
   CAR: 'thùng',
   HOP: 'hộp',
@@ -22,12 +22,32 @@ const UNIT_LABELS: Record<string, string> = {
   BAG: 'bao',
   EA: 'cái',
   BT: 'chai',
+  SET: 'bộ',
+  ROL: 'cuộn',
+  M2: 'mét vuông',
+  G: 'gram',
+  L: 'lít',
+}
+
+// Nhãn THẬT lấy từ danh mục Đơn vị tính (LookupValue `unit_of_measure`, tab Đơn vị tính của Cài đặt
+// WMS) — nạp một lần khi app khởi động (Shell). Trước 14/08 helper chỉ biết 6 mã cứng nên ĐVT do
+// người dùng tự thêm (SET/ROL/M2/G/L…) hiện ra MÃ THÔ: "5 SET" thay vì "5 bộ".
+// Vẫn giữ bảng cứng phía trên làm lưới đỡ: helper này chạy cả khi chưa có mạng/chưa nạp xong.
+let RUNTIME_UNIT_LABELS: Record<string, string> = {}
+export function setUnitLabels(rows: { value: string; label?: string | null }[]): void {
+  const next: Record<string, string> = {}
+  for (const r of rows) {
+    const code = (r.value ?? '').trim().toUpperCase()
+    const label = (r.label ?? '').trim()
+    if (code && label) next[code] = label.toLowerCase()
+  }
+  RUNTIME_UNIT_LABELS = next
 }
 
 export function unitLabel(code?: string | null): string {
   const c = (code ?? '').trim().toUpperCase()
   if (!c) return 'thùng' // thiếu khai báo → giữ hành vi cũ của app
-  return UNIT_LABELS[c] ?? c
+  return RUNTIME_UNIT_LABELS[c] ?? UNIT_LABELS[c] ?? c
 }
 
 /** Mã có Entry Unit + hệ số hợp lệ → hiển thị dạng "N thùng + M hộp". */
@@ -134,3 +154,16 @@ export function qtyEntryDecimal(qty: number, m?: MatUnits | null): number {
 export function qtyEntryText(qty: number, m?: MatUnits | null): string {
   return fmt(qtyEntryDecimal(qty, m))
 }
+
+/**
+ * NHÃN + TOOLTIP cho ô TỔNG cộng CROSS-MÃ (band/tile) — nguồn DUY NHẤT, đừng tự đặt chữ.
+ * Tổng cross-mã = qtyEntryDecimal per-mã rồi cộng: mã có thùng về thùng, mã KHÔNG entry
+ * (NVL kg / bao bì cái) góp SỐ BASE THÔ — nên gọi cả cụm là "thùng" là SAI ĐƠN VỊ và thổi số
+ * (Tồn kho 29/07: 118 triệu "thùng" thực chất 116 triệu là CÁI; TMS 26/07: 12,5 triệu tương tự).
+ * Từ vựng chốt 26/07: "SL (quy đổi)".
+ */
+export const QTY_CONVERTED_LABEL = 'SL (quy đổi)'
+export const QTY_CONVERTED_TIP =
+  'Số lượng quy đổi: mã có quy cách thùng được quy về THÙNG, mã tính theo KG/cái '
+  + '(nguyên liệu, bao bì) cộng theo đơn vị gốc — nên đây KHÔNG phải số thùng hàng thực tế. '
+  + 'Xem số đúng đơn vị ở cột số lượng của từng dòng.'

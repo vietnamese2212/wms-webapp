@@ -16,6 +16,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyEntryText, qtyUnitLabel, qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
+import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 
 interface StocktakeEntryData {
   id:                string
@@ -61,6 +64,7 @@ export default function Stocktake() {
 
   const [resultState,  setResultState]  = useState<ResultState>({ mode: 'none' })
   const [scannerOpen,  setScannerOpen]  = useState(false)
+  const [gunMode,      setGunMode]      = useState(false)   // súng PDA: 1 phát 'wedge' → tắt camera
   const [updateLoc,    setUpdateLoc]    = useState(false)
   const [showQty,      setShowQty]      = useState(false)
   const [physCount,    setPhysCount]    = useState('')
@@ -155,14 +159,28 @@ export default function Stocktake() {
   const entry       = resultState.mode === 'result' ? resultState.entry : null
   const locMismatch = !!entry && !!locationId && entry.location_id !== locationId
 
+  // Súng PDA: chỉ bật khi đã chọn vị trí (giao diện kiểm) + không đang lưu/tìm. Bắn 1 phát → tắt camera.
+  useWedgeScanner(code => {
+    if (saving || searching) return
+    if (!gunMode) setGunMode(true)
+    setScannerOpen(false)
+    handleQRScan(code)
+  }, !!locationId)
+
   return (
     <div className="flex flex-col h-full sm:p-3">
+     <StocktakeTabs />
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Filters */}
       <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
         <div className="flex items-center gap-1.5">
           <MapPin className="h-4 w-4 text-slate-500 shrink-0" />
           <p className="text-sm font-semibold text-slate-700">Check vị trí</p>
+          {gunMode && (
+            <span className="ml-1 rounded-full bg-sky-100 border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+              Súng · camera tắt
+            </span>
+          )}
         </div>
         <div className="flex gap-1.5 flex-wrap items-center">
           <WarehouseSingleSelect
@@ -248,6 +266,7 @@ export default function Stocktake() {
                 >
                   <QrCode className="h-4 w-4" />
                 </Button>
+                <PdaGunHint className="h-9 w-9" />
               </div>
             </form>
 

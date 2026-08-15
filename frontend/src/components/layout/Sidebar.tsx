@@ -61,7 +61,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
   const { user } = useAuthStore()
   const modulePerms = user?.module_permissions as ModulePermissions | null ?? null
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
 
   return (
     <TooltipProvider delayDuration={0}>

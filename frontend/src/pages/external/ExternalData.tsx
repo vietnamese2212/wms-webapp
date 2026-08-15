@@ -3,23 +3,26 @@
 // Thiết kế mảng tabs để sau này thêm nguồn dữ liệu khác (hiện chỉ 1 tab active).
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight, AlignJustify, Rows3, Download } from 'lucide-react'
+import { Database, Plus, Pencil, Trash2, X, AlignJustify, Rows3, Download, Upload, CalendarDays } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { TableSkeleton } from '@/components/shared/TableSkeleton'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import {
   useDoSapOrders, useDoSapFacets, useCreateDoSap, useUpdateDoSap, useBulkDeleteDoSap,
-  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc,
+  useKhvcLines, useKhvcFacets, useCreateKhvc, useUpdateKhvc, useBulkDeleteKhvc, useBulkDateKhvc,
   useReconcileTasks, useReconcileOpenCount, useResolveReconcileTask,
   type DoSapRow, type KhvcRow, type ReconcileTask,
 } from '@/api/hooks'
@@ -29,6 +32,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions, type ModuleKey } from '@/config/permissions'
 import { formatTimestampDate, formatDate } from '@/utils/formatters'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { VcUploadDialog, type VcUploadMode } from './VcUploadDialog'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
@@ -114,14 +118,16 @@ function apiError(err: unknown, fallback: string) {
   return (err as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? fallback
 }
 
-const PAGE_SIZES = [50, 100, 200]
-
 // ─── Shell: chọn tab theo quyền, render tab tương ứng ─────────────────────────
 export default function ExternalData() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const firstTab = (TABS.find(t => can(perms, t.module, t.action ?? 'view'))?.key ?? 'dosap') as TabKey
-  const [tab, setTab] = useState<TabKey>(firstTab)
+  // ?tab=reconcile — deep-link từ thông báo đẩy "Cần xử lý" vào thẳng đúng tab (nếu có quyền)
+  const urlTab = new URLSearchParams(window.location.search).get('tab') as TabKey | null
+  const urlTabDef = urlTab ? TABS.find(t => t.key === urlTab) : null
+  const initialTab = urlTabDef && can(perms, urlTabDef.module, urlTabDef.action ?? 'view') ? urlTabDef.key : firstTab
+  const [tab, setTab] = useState<TabKey>(initialTab)
   const tabBar = <TabBar tab={tab} setTab={setTab} perms={perms} />
   if (tab === 'reconcile') return <ReconcileTab tabBar={tabBar} />
   if (tab === 'khvc') return <KhvcTab tabBar={tabBar} />
@@ -145,6 +151,9 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
   const [doEditor, setDoEditor]     = useState<string[] | null>(null)   // sửa cả DO — danh sách od_number (bảng gom mọi mã cùng DO)
   const [exporting, setExporting]   = useState(false)
   const [exportErr, setExportErr]   = useState('')
+  const [upDialog, setUpDialog]     = useState<VcUploadMode | null>(null)   // nạp VL06O (chuyển về đây 02/08)
+  // Nút nạp nguồn: ai import được bên Xuất, hoặc ai được tạo dữ liệu SAP tại chính trang này
+  const canUploadVl06o = can(perms, 'outbound', 'import') || can(perms, 'external_do_sap', 'create')
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('dosap_col_widths_v4', COL_DEFAULTS)
   const { data: facets } = useDoSapFacets()
@@ -295,7 +304,15 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
-          {hasDate && (
+          {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
+          {/* Upload = việc thuần PC (chọn file Excel) → ẩn trên mobile như các nút Upload khác của app */}
+          {canUploadVl06o && (
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setUpDialog('vl06o')}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up VL06O
+            </Button>
+          )}
+          {/* Xuất file = mang dữ liệu SAP ra ngoài → quyền RIÊNG external_do_sap.export */}
+          {hasDate && can(perms, 'external_do_sap', 'export') && (
             <Button variant="outline" size="sm" className="h-9 sm:h-7 shrink-0" onClick={doExport} disabled={exporting}>
               <Download className="h-3.5 w-3.5 mr-1" /> {exporting ? 'Đang xuất…' : 'Xuất Excel'}
             </Button>
@@ -427,24 +444,10 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setDoSap({ page: p })} />
       </div>
 
-      {/* Footer phân trang */}
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setDoSap({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setDoSap({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setDoSap({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setDoSap({ pageSize: n })} />
      </div>
 
       {/* FormSheet Sửa cả DO — bảng gom mọi mã cùng od_number (mô hình base gốc).
@@ -458,6 +461,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setDoEditor(null); setSelected(new Set()) }}
         />
       )}
+      {upDialog && <VcUploadDialog mode={upDialog} onClose={() => setUpDialog(null)} />}
     </div>
   )
 }
@@ -875,6 +879,7 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'do_no',     label: 'DO' },
   { id: 'warehouse', label: 'Kho' },
   { id: 'npp',       label: 'NPP' },
+  { id: 'bkcat',     label: 'Cửa booking' },
   { id: 'veh_type',  label: 'Loại xe' },
   { id: 'dvvt',      label: 'ĐVVT' },
   { id: 'priority',  label: 'Ưu tiên' },
@@ -885,7 +890,9 @@ const KH_COLS: { id: string; label: string }[] = [
   { id: 'source',    label: 'Nguồn' },
   { id: 'updated',   label: 'Cập nhật' },
 ]
-const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 100, 90, 70, 70, 95, 90, 110, 80, 110]
+// PHẢI đủ 1 số cho MỖI cột của KH_COLS (thiếu 1 số → mọi cột từ đó trở đi lệch nhãn, cột cuối
+// rộng `undefined` và totalWidth tính thiếu → kéo giãn cột cuối cho ra NaN). Thêm cột = thêm số.
+const KH_COL_DEFAULTS = [40, 150, 110, 70, 150, 110, 100, 90, 70, 70, 95, 90, 110, 80, 110]
 
 function TripBadge({ materialized, gdoStatus, gdoDate, exportDate }: { materialized?: boolean; gdoStatus?: string | null; gdoDate?: string | null; exportDate?: string | null }) {
   if (!materialized) {
@@ -919,20 +926,26 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const canDelete = can(perms, 'external_khvc', 'delete')
 
   const { khvc: f, setKhvc } = useWmsFilterStore()
-  const { search, dateFrom, dateTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, gdoIssue: fGdoIssue, page, pageSize } = f
+  const { search, dateFrom, dateTo, exportFrom, exportTo, warehouse: fWh, vehType: fVeh, source: fSource, group: fGroup, doNo: fDo, inDoSap: fInDoSap, gdoIssue: fGdoIssue, page, pageSize } = f
 
   const [dense, setDense]         = useState(() => localStorage.getItem('khvc_density') !== 'comfortable')
   const [selected, setSelected]   = useState<Set<string>>(new Set())
   const [groupEditor, setGroupEditor] = useState<string[] | null>(null)   // sửa cả Số xe — danh sách group_code (bảng gom mọi DO cùng xe)
+  const [dateDialog, setDateDialog] = useState(false)                      // đổi Ngày xuất hàng loạt (theo Số xe)
+  const [showUpload, setShowUpload] = useState(false)                      // nạp KH điều vận (chuyển về đây 02/08)
+  const canUploadKhvc = can(perms, 'outbound', 'import') || can(perms, 'external_khvc', 'create')
 
   const { widths: colW, startResize, totalWidth } = useColumnResize('khvc_col_widths_v2', KH_COL_DEFAULTS)
   const { data: facets } = useKhvcFacets()
-  const hasDate = !!(dateFrom || dateTo)
+  // Cần MỘT trong hai khoảng ngày (nạp HOẶC xuất) mới tải — điều vận thường tìm theo NGÀY XE CHẠY
+  const hasDate = !!(dateFrom || dateTo || exportFrom || exportTo)
 
   const params = useMemo(() => ({
     q:              search.trim() || undefined,
     date_from:      dateFrom || undefined,
     date_to:        dateTo || undefined,
+    export_from:    exportFrom || undefined,
+    export_to:      exportTo || undefined,
     warehouse_code: fWh || undefined,
     veh_type:       fVeh || undefined,
     source:         fSource || undefined,
@@ -942,7 +955,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
     gdo_issue:      fGdoIssue || undefined,
     page,
     page_size:      pageSize,
-  }), [search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, page, pageSize])
+  }), [search, dateFrom, dateTo, exportFrom, exportTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, page, pageSize])
 
   const { data, isLoading, isError, error } = useKhvcLines(params, hasDate)
   const items = data?.items ?? []
@@ -951,7 +964,7 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   const doSapWarn = data?.do_sap_filter_warning
   const gdoIssueWarn = data?.gdo_issue_warning
 
-  const filterKey = JSON.stringify({ search, dateFrom, dateTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, pageSize })
+  const filterKey = JSON.stringify({ search, dateFrom, dateTo, exportFrom, exportTo, fWh, fVeh, fSource, fGroup, fDo, fInDoSap, fGdoIssue, pageSize })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setKhvc({ page: 1 }) }, [filterKey])
 
@@ -960,6 +973,8 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
   useEffect(() => { for (const r of items) idToGroup.current[r.id] = r.group_code }, [items])
 
   const filterDefs: FilterDef[] = [
+    { key: 'exportDate', label: 'Ngày xuất', type: 'daterange', from: exportFrom, to: exportTo,
+      onChange: (from, to) => setKhvc({ exportFrom: from, exportTo: to }) },
     { key: 'date', label: 'Ngày nạp', type: 'daterange', from: dateFrom, to: dateTo,
       onChange: (from, to) => setKhvc({ dateFrom: from, dateTo: to }) },
     { key: 'warehouse', label: 'Kho', type: 'single', allLabel: 'Tất cả kho', value: fWh,
@@ -1015,10 +1030,23 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
           {/* Action theo selection đặt NGAY TRÊN HEADER (user 22/07) — không chèn bar hiện/ẩn làm bảng nhảy layout */}
+          {/* NẠP NGUỒN đặt tại trang nguồn (user chốt 02/08 — chuyển từ trang Xuất kho về đây) */}
+          {canUploadKhvc && (
+            <Button size="sm" className="hidden sm:inline-flex h-7 shrink-0 bg-blue-600 hover:bg-blue-700" onClick={() => setShowUpload(true)}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Up KH điều vận
+            </Button>
+          )}
           {selected.size > 0 && (canEdit || canCreate) && selectedGroups.length > 0 && (
             <button type="button" onClick={() => setGroupEditor(selectedGroups)}
               className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-sky-300 bg-sky-50 text-xs text-sky-700 hover:bg-sky-100 transition-colors shrink-0">
               <Pencil className="h-3.5 w-3.5" /> Sửa {selectedGroups.length > 1 ? `${selectedGroups.length} Số xe` : `xe ${selectedGroups[0]}`}
+            </button>
+          )}
+          {selected.size > 0 && canEdit && selectedGroups.length > 0 && (
+            <button type="button" onClick={() => setDateDialog(true)}
+              className="inline-flex items-center gap-1 h-9 sm:h-7 px-2 rounded border border-blue-300 bg-blue-50 text-xs text-blue-700 hover:bg-blue-100 transition-colors shrink-0"
+              title="Đổi Ngày xuất cho CẢ các xe đã tick (1 xe chạy 1 ngày) — chuyến đang xuất/đã hoàn thành sẽ bị chặn">
+              <CalendarDays className="h-3.5 w-3.5" /> Đổi ngày ({selectedGroups.length} xe)
             </button>
           )}
           {selected.size > 0 && (
@@ -1047,11 +1075,16 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
         {!hasDate ? (
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
             <Database className="h-10 w-10 opacity-30" />
-            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày nạp</b> để xem dữ liệu</p>
-            <p className="text-xs">Kế hoạch vừa upload nằm ở <b>Ngày nạp = hôm nay</b> (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
-            <Button size="sm" className="mt-2 h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
-              Xem hôm nay
-            </Button>
+            <p className="text-sm font-medium text-slate-500">Chọn khoảng <b>Ngày xuất</b> hoặc <b>Ngày nạp</b> để xem dữ liệu</p>
+            <p className="text-xs"><b>Ngày xuất</b> = ngày xe chạy · <b>Ngày nạp</b> = ngày upload file (tránh tải toàn bộ bảng nên phải chọn ngày).</p>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" onClick={() => setKhvc({ exportFrom: TODAY_VN(), exportTo: TODAY_VN() })}>
+                Xe chạy hôm nay
+              </Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setKhvc({ dateFrom: TODAY_VN(), dateTo: TODAY_VN() })}>
+                Vừa nạp hôm nay
+              </Button>
+            </div>
           </div>
         ) : isLoading ? (
           <TableSkeleton cols={12} rows={12} />
@@ -1094,6 +1127,9 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                     </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.warehouse_code || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap truncate`} title={r.npp ?? undefined}>{r.npp || <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap font-medium`}>
+                      {r.booking_category || <span className="text-amber-600" title="Chưa chốt cửa đặt lịch — nạp lại KH có cột &quot;Loại kho booking&quot; hoặc sửa tại đây">chưa chốt</span>}
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.veh_type || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.dvvt || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`px-2 ${cellPad} text-[10px] whitespace-nowrap`}>{r.priority || <span className="text-slate-300">—</span>}</TableCell>
@@ -1118,23 +1154,10 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setKhvc({ page: p })} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 dòng'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setKhvc({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setKhvc({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setKhvc({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="dòng" onPageSize={n => setKhvc({ pageSize: n })} />
      </div>
 
       {/* FormSheet Sửa cả Số xe — bảng gom mọi DO cùng group_code.
@@ -1148,19 +1171,108 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
           onClose={() => { setGroupEditor(null); setSelected(new Set()) }}
         />
       )}
+      {showUpload && <VcUploadDialog mode="khvc" onClose={() => setShowUpload(false)} />}
+      {dateDialog && (
+        <KhvcBulkDateDialog
+          ids={[...selected]}
+          groups={selectedGroups}
+          onClose={done => { setDateDialog(false); if (done) setSelected(new Set()) }}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── Đổi Ngày xuất HÀNG LOẠT theo Số xe (user chốt 02/08) ─────────────────────
+// Đơn vị đổi = CẢ XE (mọi dòng của group_code — 1 xe chạy 1 ngày). BE chặn per-xe khi chuyến
+// bên Xuất ĐANG XUẤT/ĐÃ HOÀN THÀNH → hiện danh sách xe bị chặn ngay trong dialog.
+function KhvcBulkDateDialog({ ids, groups, onClose }: { ids: string[]; groups: string[]; onClose: (done: boolean) => void }) {
+  const bulkDate = useBulkDateKhvc()
+  const [date, setDate] = useState('')
+  const [errMsg, setErrMsg] = useState('')
+  const [result, setResult] = useState<{ updated_groups: number; updated_lines: number; blocked: { group_code: string; reason: string }[] } | null>(null)
+
+  async function submit() {
+    if (!date) { setErrMsg('Chọn Ngày xuất mới'); return }
+    setErrMsg('')
+    try {
+      const r = await bulkDate.mutateAsync({ ids, export_date: date })
+      if (!r.blocked.length) { onClose(true); return }
+      setResult(r)   // có xe bị chặn → giữ dialog cho user đọc lý do từng xe
+    } catch (err) {
+      setErrMsg(apiError(err, 'Không đổi được ngày — thử lại.'))
+    }
+  }
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(!!result) }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-base">Đổi Ngày xuất — {groups.length} Số xe</DialogTitle>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-2 text-sm">
+            <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+              Đã đổi ngày {result.updated_groups} xe ({result.updated_lines} dòng) — chuyến bên Xuất đã cập nhật theo.
+            </div>
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 space-y-1">
+              <div className="font-semibold">{result.blocked.length} xe KHÔNG đổi được:</div>
+              {result.blocked.map(b => (
+                <div key={b.group_code}><span className="font-mono font-semibold">{b.group_code}</span> — {b.reason}</div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Đổi Ngày xuất cho <b>CẢ XE</b> đã tick (mọi DO của xe — 1 xe chạy 1 ngày), chuyến bên Xuất tự cập nhật theo.
+              Xe có chuyến <b>đang xuất / đã hoàn thành</b> sẽ bị chặn.
+            </p>
+            <div className="max-h-24 overflow-auto rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-mono text-slate-600">
+              {groups.join(' · ')}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600">Ngày xuất mới</label>
+              <input type="date" value={date} min={TODAY_VN()} onChange={e => setDate(e.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-slate-200 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+            {errMsg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</div>}
+          </div>
+        )}
+        <DialogFooter>
+          {result ? (
+            <Button size="sm" onClick={() => onClose(true)}>Đóng</Button>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={() => onClose(false)} disabled={bulkDate.isPending}>Huỷ</Button>
+              <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={submit} disabled={bulkDate.isPending || !date}>
+                {bulkDate.isPending ? 'Đang đổi…' : 'Đổi ngày'}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 // ─── Sửa cả Số xe (bảng gom mọi DO cùng group_code) — mirror DoSapDoEditor ────
 // Mở như 1 chứng từ điều vận: mỗi dòng = 1 DO trên xe; sửa inline mọi field điều vận;
 // thêm DO vào xe / xóa DO khỏi xe ngay trong bảng; xóa hết dòng + Lưu = XÓA CẢ SỐ XE.
-const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note'] as const
+const KHVC_FIELDS = ['warehouse_code', 'npp', 'veh_type', 'dvvt', 'priority', 'cs', 'export_date', 'note', 'booking_category'] as const
+// Ô NHẬP THEO DÒNG — KHÁC danh sách trên (danh sách trên là các field mang theo khi lưu).
+// `booking_category` KHÔNG có ô theo dòng: cửa đặt lịch là thuộc tính CẤP XE, 1 ô duy nhất đặt
+// ngoài bảng. Nhét nó vào mảng render thì (a) đẻ ra ô cho từng DO — mời gọi khai lệch nhau, đúng
+// cái luật này cấm, (b) LỆCH cột vì hàng <th> không có cột tương ứng, (c) khối dán Excel bị đẩy
+// thêm 1 cột. Cả 3 đã xảy ra thật (bắt bằng Playwright 04/08). Thêm field mới mà user gõ theo
+// từng DO thì thêm vào ĐÂY và thêm <th>; field cấp xe thì chỉ thêm ở KHVC_FIELDS.
+type KhvcField = (typeof KHVC_FIELDS)[number]
+const KHVC_ROW_FIELDS: KhvcField[] = KHVC_FIELDS.filter(f => f !== 'booking_category')
 type KhvcDraft = Record<(typeof KHVC_FIELDS)[number], string>
 type KhvcNewLine = KhvcDraft & { key: string; group_code: string; do_no: string }
 const khvcDraftOf = (r: KhvcRow): KhvcDraft => ({
   warehouse_code: s(r.warehouse_code), npp: s(r.npp), veh_type: s(r.veh_type), dvvt: s(r.dvvt),
   priority: s(r.priority), cs: s(r.cs), export_date: s(r.export_date), note: s(r.note),
+  booking_category: s(r.booking_category),
 })
 function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }: {
   groupCodes: string[]
@@ -1191,6 +1303,9 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
     [...(fetched?.rows ?? [])].sort((a, b) => a.group_code.localeCompare(b.group_code) || a.do_no.localeCompare(b.do_no)),
   [fetched])
 
+  // Danh mục Loại kho theo SCOPE user (không dùng hook gốc — tránh cho chọn loại ngoài quyền)
+  const { data: whTypes = [] } = useScopedWhTypes()
+  const whTypeOpts = useMemo(() => whTypes.map(t => ({ value: t.value, label: t.value })), [whTypes])
   const update = useUpdateKhvc()
   const create = useCreateKhvc()
   const bulkDel = useBulkDeleteKhvc()
@@ -1217,6 +1332,9 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
   const changed = remaining.filter(isRowChanged)
   const validAdded = added.filter(l => l.do_no.trim() !== '')
   const wipesAll = rows.length > 0 && remaining.length === 0 && validAdded.length === 0
+  // Cửa đang áp cho xe = giá trị của dòng còn sống ĐẦU TIÊN (mọi dòng luôn bằng nhau — rule 1 xe 1 cửa)
+  const bookingCat = (remaining.map(r => draft[r.id]?.booking_category).find(Boolean)
+    ?? added.map(l => l.booking_category).find(Boolean) ?? '') as string
   const hasOps = changed.length > 0 || validAdded.length > 0 || removed.size > 0
 
   function addLine() {
@@ -1226,6 +1344,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       key: crypto.randomUUID(), group_code: g, do_no: '',
       warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
       priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
+      booking_category: s(base?.booking_category),   // 1 xe 1 cửa → dòng mới KẾ THỪA cửa của xe
     }])
   }
   const patchLine = (key: string, p: Partial<KhvcNewLine>) =>
@@ -1254,7 +1373,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
         if (!r || removed.has(r.id)) return
         const cur = { ...(next[r.id] ?? khvcDraftOf(r)) }
         line.split('\t').forEach((v, c) => {
-          const f = KHVC_FIELDS[fieldIdx + c]
+          const f = KHVC_ROW_FIELDS[fieldIdx + c]
           if (f) cur[f] = pasteVal(f, v)
         })
         next[r.id] = cur
@@ -1280,13 +1399,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
         if (pos >= work.length) {
           work.push({ key: crypto.randomUUID(), group_code: g, do_no: '',
             warehouse_code: s(base?.warehouse_code), npp: '', veh_type: s(base?.veh_type), dvvt: s(base?.dvvt),
-            priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '' })
+            priority: '', cs: s(base?.cs), export_date: s(base?.export_date), note: '',
+            booking_category: s(base?.booking_category) })
           pos = work.length - 1
         }
         const cols = line.split('\t')
         const p: Partial<KhvcNewLine> = { do_no: (cols[0] ?? '').trim() }
         cols.slice(1).forEach((v, c) => {
-          const f = KHVC_FIELDS[c]
+          const f = KHVC_ROW_FIELDS[c]
           if (f && v.trim() !== '') p[f] = pasteVal(f, v)
         })
         work[pos] = { ...work[pos], ...p }
@@ -1305,7 +1425,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
       if (off < 0 || off >= lines.length) return l
       const p: Partial<KhvcNewLine> = {}
       lines[off].split('\t').forEach((v, c) => {
-        const f = KHVC_FIELDS[fieldIdx + c]
+        const f = KHVC_ROW_FIELDS[fieldIdx + c]
         if (f) p[f] = pasteVal(f, v)
       })
       return { ...l, ...p }
@@ -1337,12 +1457,14 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
             group_code: r.group_code, do_no: r.do_no,
             warehouse_code: n(d.warehouse_code), npp: n(d.npp), veh_type: n(d.veh_type), dvvt: n(d.dvvt),
             priority: n(d.priority), cs: n(d.cs), export_date: n(d.export_date), note: n(d.note),
+            booking_category: n(d.booking_category),
           })
         }),
         ...validAdded.map(l => create.mutateAsync({
           group_code: l.group_code, do_no: l.do_no.trim(),
           warehouse_code: n(l.warehouse_code), npp: n(l.npp), veh_type: n(l.veh_type), dvvt: n(l.dvvt),
-          priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note), source: 'MANUAL',
+          priority: n(l.priority), cs: n(l.cs), export_date: n(l.export_date), note: n(l.note),
+          booking_category: n(l.booking_category), source: 'MANUAL',
         })),
       ])
       if (blockedNote) { setRemoved(new Set()); setAdded([]); setErrMsg(blockedNote) }
@@ -1385,6 +1507,27 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
           ⚠ Số xe này ĐÃ SINH CHUYẾN ở Xuất kho — xóa kế hoạch KHÔNG xóa chuyến; muốn hủy chuyến hãy xóa ở trang Xuất kho.
         </div>
       )}
+      {/* CỬA ĐẶT LỊCH = thuộc tính CẤP XE (1 xe vật lý đậu 1 cửa) ⇒ đặt NGOÀI bảng, 1 ô cho cả xe.
+          Mỗi dòng DO một ô sẽ mời gọi khai lệch nhau — đúng cái rule này cấm. Chỉ hiện khi sửa MỘT
+          Số xe; sửa nhiều xe cùng lúc thì mở từng xe (mỗi xe có cửa riêng). */}
+      {!multi && !isLoading && (rows.length > 0 || added.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs font-medium text-slate-600">Loại kho booking (cửa đặt lịch) *</span>
+          <div className="w-44">
+            <SingleSelect
+              options={whTypeOpts}
+              value={bookingCat}
+              placeholder="Chọn cửa…"
+              disabled={!canEdit}
+              onChange={v => {
+                setDraft(prev => Object.fromEntries(Object.entries(prev).map(([k, d]) => [k, { ...d, booking_category: v }])))
+                setAdded(prev => prev.map(l => ({ ...l, booking_category: v })))
+              }}
+            />
+          </div>
+          <span className="text-[10px] text-slate-500">Cả xe dùng 1 cửa — đổi ở đây áp cho MỌI DO của xe. Xe đang giữ khung giờ của cửa khác thì phải nhả khung trước.</span>
+        </div>
+      )}
       {isLoading ? (
         <TableSkeleton rows={6} />
       ) : rows.length === 0 && added.length === 0 ? (
@@ -1421,7 +1564,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                     <td className={`px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : ''}`}>{r.group_code}</td>
                     <td className={`px-2 py-1 text-[10px] font-mono whitespace-nowrap ${isRemoved ? 'line-through text-red-400' : 'font-semibold'}`}>{r.do_no}</td>
                     {/* 8 field theo đúng thứ tự cột — dán block Excel vào ô bất kỳ điền sang phải + xuống dưới */}
-                    {KHVC_FIELDS.map((fld, fi) => (
+                    {KHVC_ROW_FIELDS.map((fld, fi) => (
                       <td key={fld} className="px-1 py-1">
                         <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
                           disabled={isRemoved || !canEdit || incomplete}
@@ -1470,7 +1613,7 @@ function KhvcGroupEditor({ groupCodes, canEdit, canCreate, canDelete, onClose }:
                       onChange={e => patchLine(l.key, { do_no: e.target.value })}
                       onPaste={e => handlePasteAddedDoAt(l.key, e)} />
                   </td>
-                  {KHVC_FIELDS.map((fld, fi) => (
+                  {KHVC_ROW_FIELDS.map((fld, fi) => (
                     <td key={fld} className="px-1 py-1">
                       <input type={fld === 'export_date' ? 'date' : 'text'} className={inputCls}
                         value={l[fld]} onChange={e => patchLine(l.key, { [fld]: e.target.value })}
@@ -1529,7 +1672,6 @@ const ACTION_BADGE: Record<string, { label: string; cls: string }> = {
   BLOCKED:         { label: 'Chặn · trả hàng', cls: 'bg-red-100 text-red-700' },
   RECONCILE_ONLY:  { label: 'Chỉ đối soát', cls: 'bg-slate-100 text-slate-600' },
 }
-const RC_PAGE_SIZES = [50, 100, 200]
 
 function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
   const user  = useAuthStore(s => s.user)
@@ -1667,23 +1809,10 @@ function ReconcileTab({ tabBar }: { tabBar: ReactNode }) {
             </TableBody>
           </Table>
         )}
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setReconcile({ page: p })} />
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 flex items-center gap-3 text-[11px] text-slate-500 sm:rounded-b-xl">
-        <span>{items.length > 0 ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + items.length} / ${total.toLocaleString('vi-VN')}` : '0 việc'}</span>
-        <label className="flex items-center gap-1 ml-2">
-          <span className="hidden sm:inline">Mỗi trang</span>
-          <select value={pageSize} onChange={e => setReconcile({ pageSize: Number(e.target.value) })}
-            className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px] outline-none focus:border-blue-400">
-            {RC_PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page <= 1} onClick={() => setReconcile({ page: page - 1 })}><ChevronLeft className="h-4 w-4" /></button>
-          <span>{page}/{totalPages}</span>
-          <button className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 !min-h-0 !min-w-0" disabled={page >= totalPages} onClick={() => setReconcile({ page: page + 1 })}><ChevronRight className="h-4 w-4" /></button>
-        </div>
-      </div>
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="việc" onPageSize={n => setReconcile({ pageSize: n })} />
      </div>
 
       {/* Confirm xử lý */}

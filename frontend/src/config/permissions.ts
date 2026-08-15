@@ -56,12 +56,16 @@ export const MODULES = {
       uncomplete: 'Bỏ hoàn thành',
       cancel:     'Huỷ đơn',
       reconcile:  'Đối chiếu SAP — xử lý hàng chờ "Cần xử lý" [Dữ liệu bên ngoài]',
+      weigh_waive: 'Duyệt bỏ qua CÂN (rule 2) — xe không cân được (hỏng cân…), duyệt trên chuyến',
+      gate_waive:  'Duyệt bỏ qua ĐĂNG KÝ CỔNG (rule 1) — xe không đăng ký (giao lẻ/xe máy/NV nhận…), duyệt trên chuyến; duyệt cổng ⇒ biển số tùy chọn',
+      rotation_override: 'Duyệt LẤY KHÁC THỨ TỰ luân chuyển — chỉ cần khi kho bật "bắt buộc" trong Cài đặt WMS → Kho; phải chọn lý do, có ghi vết',
     },
   },
   scanlog: {
     page: 'Lịch sử quét',
     actions: {
-      view: 'Xem lịch sử quét',
+      view:   'Xem lịch sử quét',
+      export: 'Xuất Excel lịch sử quét',
     },
   },
   loosepicking: {
@@ -78,6 +82,7 @@ export const MODULES = {
       view:     'Xem danh sách',
       scan:     'Quét QR',
       complete: 'Bỏ cờ chênh lệch',
+      export:   'Xuất Excel (Kiểm kê + Lịch sử kiểm)',
     },
   },
   locations: {
@@ -87,6 +92,8 @@ export const MODULES = {
       create: 'Thêm vị trí',
       edit:   'Sửa vị trí',
       delete: 'Xóa vị trí',
+      import: 'Upload Excel vị trí (tạo hàng loạt)',
+      export: 'Xuất Excel danh sách vị trí',
     },
   },
   employees: {
@@ -128,6 +135,7 @@ export const MODULES = {
       manage_zone:      'Quản lý Khu vực kho (kho được gán)',
       manage_shift:     'Quản lý Ca nhập',
       manage_qa:        'Quản lý Tình trạng QA',
+      manage_machine:   'Quản lý Máy theo kho (tab Máy — Sổ đóng gói + In tem validate máy ở đây)',
       manage_system:    'Cờ hệ thống (tab Hệ thống — định dạng tem in…)',
     },
   },
@@ -147,6 +155,7 @@ export const MODULES = {
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload + thêm/sửa/xóa dòng kế hoạch nhập',
       confirm_receipt: 'Nhận hàng chuyển kho: xác nhận / hủy nhận / quét / hoàn thành [Chuyển kho]',
+      export:          'Xuất Excel Báo cáo nhập (menu Báo cáo TMS)',
     },
   },
   inbound_plan: {
@@ -224,13 +233,55 @@ export const MODULES = {
       view: 'Xem bảng giám sát + chế độ TV',
     },
   },
+  alerts: {
+    page: 'Cảnh báo vận hành',
+    actions: {
+      view: 'Xem danh sách cảnh báo + nhận thông báo đẩy cảnh báo mới (theo kho được gán)',
+      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu một cảnh báo',
+    },
+  },
   slotting: {
     page: 'Tối ưu vị trí (Slotting)',
     actions: {
       view:      'Xem phân tích ABC + kế hoạch sắp xếp',
-      plan:      'Tạo / xóa kế hoạch sắp xếp',
-      complete:  'Hoàn thành / hủy / mở lại kế hoạch',
+      plan:      'Tạo kế hoạch sắp xếp (xem trước + tạo)',
+      delete:    'Xóa kế hoạch sắp xếp',
+      complete:  'Hoàn thành kế hoạch',
+      cancel:    'Hủy kế hoạch',
+      reopen:    'Mở lại kế hoạch đã đóng',
       configure: 'Tab Cài đặt (hạng nhặt + luồng cửa khu)',
+    },
+  },
+  fill: {
+    page: 'Fill hàng (nhặt lẻ)',
+    actions: {
+      view:        'Xem đề xuất + lệnh fill + kết quả',
+      plan:        'Ra lệnh fill (tab Đề xuất — chỉ định date, tạo lệnh)',
+      cancel:      'Hủy dòng / hủy cả lệnh fill',
+      change_dest: 'Đổi vị trí đến của dòng lệnh',
+      assign:      'Gán lệnh fill cho người khác',
+      execute:     'Quét thực hiện (hạ hàng xuống vị trí nhặt lẻ)',
+    },
+  },
+  forklift: {
+    page: 'Xe nâng',
+    actions: {
+      view:           'Xem board check list + lịch sử + báo cáo vận hành',
+      check:          'Ghi / sửa check list ngày (kèm số đồng hồ giờ)',
+      delete_check:   'Xóa bản ghi check list ngày (ghi nhầm xe/ngày)',
+      manage_vehicle: 'Quản lý danh mục Xe nâng (tab Cài đặt)',
+      manage_item:    'Quản lý Hạng mục check list (tab Cài đặt)',
+    },
+  },
+  packing: {
+    page: 'Sổ đóng gói',
+    actions: {
+      view:     'Xem board đóng gói + sổ điện tử',
+      record:   'Quét tem mở / đóng pallet (ghi sổ tại xưởng)',
+      open_run: 'Mở / đóng TRANG SỔ (lệnh đóng gói: Kho + Ca + Mã + Máy + nút Giờ kết thúc)',
+      edit:     'Sửa giờ SX / số thùng / ghi chú sau khi đóng',
+      cancel:   'Hủy dòng sổ ghi nhầm',
+      export:   'Xuất Excel sổ đóng gói',
     },
   },
   materials: {
@@ -270,6 +321,7 @@ export const MODULES = {
       request: 'Gửi đơn nghỉ',
       approve: 'Duyệt / Từ chối',
       delete:  'Xóa đơn',
+      export:  'Xuất Excel đơn nghỉ (có lý do)',
     },
   },
   attendance: {
@@ -290,6 +342,7 @@ export const MODULES = {
       create: 'Thêm dòng (tay)',
       edit:   'Sửa dòng',
       delete: 'Xóa dòng (lẻ + hàng loạt)',
+      export: 'Xuất Excel DO SAP',
     },
   },
   external_khvc: {
@@ -300,6 +353,9 @@ export const MODULES = {
       create: 'Thêm dòng (tay)',
       edit:   'Sửa dòng',
       delete: 'Xóa dòng (lẻ + hàng loạt)',
+      // `export` cũ là action MỒ CÔI copy-paste từ external_do_sap (không nút FE, không route BE
+      // — gói QA 08-perm-coverage bắt 29/07): admin tick vào cũng không có tác dụng gì. Tab KHVC
+      // chưa có nút Xuất Excel; khi làm thì thêm lại đủ 4 nơi theo skill add-permission.
     },
   },
   work_assignment: {
@@ -351,6 +407,8 @@ export function canAccessAny(
   return modules.some(m => canAccess(perms, m))
 }
 
-export function isAdmin(name?: string | null): boolean {
-  return name === 'Admin'
+// Superadmin đọc CỜ is_superadmin trên user (nguồn = cột Employee.is_superadmin, BE nhét vào
+// /auth/login + /auth/me) — KHÔNG so tên 'Admin' (đổi tên hiển thị là mất quyền âm thầm).
+export function isAdmin(user?: { is_superadmin?: boolean } | null): boolean {
+  return user?.is_superadmin === true
 }

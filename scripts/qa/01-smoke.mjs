@@ -14,10 +14,17 @@ const GETS = [
   ['TMS transfer list',    `/tms/orders?source_type=TRANSFER&date_from=${FIX.DATE}`],
   ['TMS vehicle types',    '/tms/vehicle-types'],
   ['TMS transport cty',    '/tms/transport-companies'],
-  ['Gate registrations',   '/tms/gate-registrations'],
+  // Phải kèm ngày: không param = cả bảng → khi staging tích ≥3.352 bản ghi thì guard
+  // RANGE_TOO_WIDE trả 400 CHỦ ĐÍCH (đúng luật chặn-có-hướng-dẫn) — smoke đỏ oan (đo 10/08)
+  ['Gate registrations',   `/tms/gate-registrations?date=${FIX.EXEC_DATE}`],
   ['Materials',            '/masterdata/materials'],
   ['Warehouses',           '/masterdata/warehouses'],
   ['System settings',      '/wms/settings'],
+  // Lịch sử quét KHOẢNG RỘNG 90 ngày — bug 10/08: RPC get_outbound_scan_log (LANGUAGE sql,
+  // lọc ngày non-sargable, COUNT(*) OVER()) chết 500/8s khi bảng đạt 150k dòng; fix = plpgsql
+  // + cận ngày sargable (migration 20260810_scanlog_rpc_perf). Check này gác hồi quy 500;
+  // gác HIỆU NĂNG ở quy mô lớn = mục 'Lịch sử quét 90n' trong 06-readload (chạy tay/pre-go-live).
+  ['Scan-log 90 ngày',     `/wms/outbound/scan-log?from_date=${new Date(Date.now() - 90 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&to_date=${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&page=1&limit=100`],
 ]
 for (const [name, path] of GETS) {
   const r = await api(path)

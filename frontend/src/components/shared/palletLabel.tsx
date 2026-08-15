@@ -50,6 +50,13 @@ export function buildBatchV2(p: { prefix: string; yymmdd: string; machine: strin
   const seqStr = Number.isNaN(n) ? String(p.seq) : String(n).padStart(3, '0')
   return `${clean(p.prefix).toUpperCase()}${p.yymmdd}${clean(p.machine).toUpperCase()}${seqStr}`
 }
+/**
+ * Số MẺ tối đa trong 1 ca sản xuất (đoạn 6 của tem V2). Khai ở đây làm MỘT NGUỒN cho ô chọn Mẻ
+ * bên trang In tem — trước 14/08 con số 10 nằm thẳng trong JSX của form, sửa phải mò trong UI.
+ */
+export const MAX_BATCH_NO = 10
+export const batchNoOptions = (): string[] => Array.from({ length: MAX_BATCH_NO }, (_, i) => String(i + 1))
+
 // Chuỗi QR V2 in ra tem GIỮ NGUYÊN như nhà máy: MãHàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút (7 đoạn).
 // QA + Giờ ĐỆM SPACE canh phải width 7 (giống tem thật "      1") — KHÔNG trim khi in; chỉ trim khi bóc tách/so khớp (normalizeQR).
 export function buildQRv2(p: { code: string; qaOk: boolean; batch: string; nsxDisplay: string; hsdDisplay: string; hour: number; minSec: string }): string {

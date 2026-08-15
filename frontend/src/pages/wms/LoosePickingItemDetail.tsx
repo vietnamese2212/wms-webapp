@@ -4,16 +4,18 @@ import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare,
+  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info,
 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { Card }    from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { QRScanner } from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
-import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useManualLooseItem, useItemInventory, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDO, useScanLoosePickingItem, useCheckOutboundScan, useConfirmLoosePickingItem, useManualLooseItem, useItemInventory, usePctBands, type CheckOutboundScanResult, type ItemInventoryEntry } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
 import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { useActiveLoosePickingStore } from '@/stores/activeLoosePickingStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -22,6 +24,9 @@ import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { playBeep, unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyBaseLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { useRotationGate } from '@/components/wms/RotationGate'
+import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
 
 // ─── Status badge ──────────────────────────────────────────────
@@ -106,8 +111,14 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
+  // Nhặt lẻ chỉ GIỮ hàng (không trừ remaining) → pallet luôn còn hàng ⇒ luôn phải khai chỗ đặt lại
+  const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ → báo trong panel, giữ tem để chọn lại rồi Lưu (không bắt quét lại)
+  const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   const { mutate: scanItem,  isPending: saving    } = useScanLoosePickingItem()
+  // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
+  const rotGate = useRotationGate(checkResult?.rotation)
 
   const matName      = item.material?.short_name ?? item.material_code_raw ?? '—'
   const looseScanned = (item.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
@@ -127,6 +138,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    rotGate.reset()   // tem mới = câu hỏi lý do mới
     checkScan(
       // loose_picking_mode: chặn trùng CHỈ so với các lượt NHẶT LẺ — pallet đã quét ở giao diện Xuất
       // (hoặc ngược lại) vẫn quét được (user 22/07: 2 người 2 việc trên cùng 1 pallet là bình thường)
@@ -135,6 +147,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? Math.min(data.suggested_cartons, remaining) : 1))
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt lại sau khi nhặt
         },
         onError: (err) => {
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -144,10 +157,16 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
     )
   }
 
+  const qtyToTake   = Math.max(1, parseInt(pendingCartons) || 1)
+  const leftoverQty = checkResult?.pallet_remaining ?? 0
+  const needLeftoverLoc = !!checkResult && leftoverQty > 0
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+
   function handleSave() {
-    if (!checkResult || saving) return
+    if (!checkResult || saving || !canSave) return
     scanItem(
-      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: Math.max(1, parseInt(pendingCartons) || 1) },
+      { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake,
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
       {
         onSuccess: (data: any) => {
           setCheckResult(null)
@@ -160,8 +179,10 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
           }, 1500)
         },
         onError: (err) => {
-          setCheckResult(null)
           const msg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+          // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+          if (isLeftoverLocError(msg)) { setLocError(msg); setLeftoverLoc(null); return }
+          setCheckResult(null)
           setFeedback({ type: 'error', msg })
         },
       }
@@ -181,9 +202,6 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
   useEffect(() => {
     if (initialScan) handleScan(initialScan, 'wedge')
   }, []) // eslint-disable-line
-
-  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
-    checkResult.production_date > checkResult.best_available_date)
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -219,9 +237,15 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
           <div className="relative flex-1 min-h-0">
             {pdaMode ? (
               <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
-                <QrCode className="h-12 w-12 text-sky-400/70" />
-                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
-                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                {/* Hướng dẫn CHỈ hiện lúc đang chờ bắn tem — nút nổi đứng absolute GIỮA vùng này,
+                    để chữ lại là đè mất chữ trên màn nhỏ (user báo 2 lần, 30/07). */}
+                {!checkResult && !checking && (
+                  <>
+                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+                    <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                  </>
+                )}
               </div>
             ) : (
               <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
@@ -245,14 +269,16 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
               </button>
             )}
 
-            {checkResult && !saving && (
+            {/* Chưa chọn vị trí đặt lại → KHÔNG hiện pill giữa vùng quét (bấm không được mà lại
+                đè mất dòng hướng dẫn phía sau trên màn 360px) — việc cần làm ở khối vàng bên dưới */}
+            {checkResult && !saving && canSave && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), item.material)}
+                Lưu {qtyLabel(qtyToTake, item.material)}
               </button>
             )}
             {saving && (
@@ -265,22 +291,19 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
 
           {checkResult && !feedback && (
             <div className="space-y-2">
-              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
-                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${rotGate.blocked ? 'bg-red-50 border-red-200' : rotGate.warn ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${rotGate.blocked ? 'text-red-500' : rotGate.warn ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                  <p className={`text-sm font-semibold font-mono ${rotGate.blocked || rotGate.warn ? 'text-red-600' : 'text-green-800'}`}>
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
                     <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
-                  {isSubOptimal && checkResult.best_available_date && (
-                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
-                    </p>
-                  )}
+                  {rotGate.banner}
                 </div>
               </div>
+              {rotGate.reasonBox}
               {/* BASE GỐC (user 22/07): nhập 2 ô Thùng + Hộp (mã có entry) — số base read-only TỰ TÍNH
                   từ 2 ô, khỏi mất công quy đổi tay. Mã không entry = 1 ô base như cũ. Đồng bộ Xuất. */}
               <div className="flex items-center gap-3">
@@ -296,6 +319,19 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                 <p className="text-xs text-slate-500 tabular-nums">
                   = <b>{new Intl.NumberFormat('vi-VN').format(Math.max(0, parseInt(pendingCartons) || 0))}</b> {qtyBaseLabel(item.material)} <span className="text-slate-400">(base — app tự tính)</span>
                 </p>
+              )}
+              {needLeftoverLoc && (
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={item.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>}
+                </div>
               )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
@@ -329,12 +365,14 @@ export default function LoosePickingItemDetail() {
   const { vehicles } = useActiveLoosePickingStore()
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const pctBands = usePctBands()
 
   const { data: gdo, isLoading } = useGDO(gdoId)
   const { data: inventoryData = [], isLoading: invLoading } = useItemInventory(gdoId, itemId)
   const { mutate: confirmLoose, isPending: confirming } = useConfirmLoosePickingItem()
   const { mutateAsync: manualLooseAsync } = useManualLooseItem()
   const [showScan,          setShowScan]          = useState(false)
+  const [hdrOpen,           setHdrOpen]           = useState(false)   // mobile: popup thông tin tham khảo (Nhặt lẻ/Tổng)
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng tại trang → mở màn quét chế độ súng
   const [showInventory,     setShowInventory]     = useState(false)
   const [confirmLooseOpen,  setConfirmLooseOpen]  = useState(false)
@@ -533,8 +571,35 @@ export default function LoosePickingItemDetail() {
     }
   }
 
+  // Thông tin THAM KHẢO (Nhặt lẻ/Tổng) — desktop inline; mobile mở popup Info.
+  // (Điều kiện quét sống còn: tên+tiến độ+Batch/%Date+ghi chú đỏ vẫn LUÔN hiện, không vào popup.)
+  const refInfoJSX = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+      <span className="flex items-center gap-1">
+        <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
+        Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(effectiveLoose, item.material)}</span>
+        {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {qtyEntryText(item.loose_picking, item.material)})</span>}
+      </span>
+      <span className="flex items-center gap-1">
+        <Package className="h-3 w-3 text-slate-400 shrink-0" />
+        Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
+      </span>
+      {doCode && (
+        <span><span className="text-slate-400">DO:</span> <span className="font-mono break-all text-slate-600">{doCode}</span></span>
+      )}
+    </div>
+  )
+
   return (
     <>
+      {/* Mobile: popup thông tin tham khảo mã hàng (desktop hiện inline) */}
+      <Dialog open={hdrOpen} onOpenChange={setHdrOpen}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-3 gap-2">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Thông tin mã · {matCode}</DialogTitle></DialogHeader>
+          {doNpp && <p className="text-xs text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></p>}
+          {refInfoJSX}
+        </DialogContent>
+      </Dialog>
       {showScan && (
         <ScanDialog item={item} gdoId={gdoId!} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
@@ -605,9 +670,9 @@ export default function LoosePickingItemDetail() {
         {/* ── Header ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
 
-          {/* Row 1: back + code + status + cụm action — flex-wrap để cụm xuống dòng thay vì bị cắt trên màn hẹp */}
-          <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="flex items-center gap-1.5 min-w-0">
+          {/* Row 1: back + code + status + ⓘ + cụm action (1 dòng, không chen — NPP xuống Row3b) */}
+          <div className="flex items-center gap-x-2 gap-y-1.5">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <button
                 onClick={() => navigate(`/wms/loosepicking/${gdoId}`)}
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors"
@@ -616,37 +681,31 @@ export default function LoosePickingItemDetail() {
               </button>
               <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
               <Badge status={item.status} />
+              <button
+                onClick={() => setHdrOpen(true)}
+                className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"
+                title="Thông tin mã · NPP · DO"
+              >
+                <Info className="h-4 w-4" />
+              </button>
             </div>
 
-            <div className="flex items-center gap-1.5 max-sm:w-full">
+            <div className="flex items-center gap-1.5 shrink-0">
+              {can(perms, 'loosepicking', 'scan') && !isNoQr && !isDone && <PdaGunHint />}
               <ActionCluster items={actionItems} />
             </div>
           </div>
 
-          {/* Row 2: name + progress */}
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
-            <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
-          </div>
+          {/* Row 2: name — tiến độ gộp xuống dòng heading "Pallet đã quét" */}
+          <p className="text-sm font-medium text-slate-800 leading-tight">{matName}</p>
 
-          {/* Row 3: metadata */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
-            <span className="flex items-center gap-1">
-              <Scissors className="h-3 w-3 text-slate-400 shrink-0" />
-              Nhặt lẻ: <span className="font-medium text-slate-700 ml-0.5">{qtyLabel(effectiveLoose, item.material)}</span>
-              {effectiveLoose < item.loose_picking && <span className="text-slate-400 ml-0.5">(gốc {qtyEntryText(item.loose_picking, item.material)})</span>}
-            </span>
-            <span className="flex items-center gap-1">
-              <Package className="h-3 w-3 text-slate-400 shrink-0" />
-              Tổng: <span className="font-medium text-slate-700 ml-0.5">{qtyEntryText(item.cartons_ordered, item.material)}</span> {qtyUnitLabel(item.material)}
-            </span>
-          </div>
+          {/* Row 3: metadata THAM KHẢO — desktop inline; mobile xem qua popup Info (điều kiện đỏ vẫn hiện dưới) */}
+          <div className="hidden sm:block">{refInfoJSX}</div>
 
-          {/* Row 3b: DO (đầy đủ) + NPP tham khảo + điều kiện xuất Batch/%Date highlight ĐỎ (đồng bộ Xuất) */}
-          {(doNpp || doCode || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-              {doNpp && <span className="text-slate-600"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
-              {doCode && <span className="text-slate-500"><span className="text-slate-400">DO:</span> <span className="font-mono break-all">{doCode}</span></span>}
+          {/* Row 3b: NPP (dòng riêng, wrap an toàn — không chèn dòng 1 để khỏi bị che) + điều kiện xuất Batch/%Date ĐỎ. DO nằm trong nút Info */}
+          {(doNpp || item.batch_required || (item.date_required != null && item.date_required > 0)) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] min-w-0">
+              {doNpp && <span className="text-slate-600 truncate max-w-full"><span className="text-slate-400">NPP:</span> <span className="font-medium">{doNpp}</span></span>}
               {item.batch_required && (
                 <span className="font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">Batch: {item.batch_required}</span>
               )}
@@ -696,22 +755,20 @@ export default function LoosePickingItemDetail() {
                           className={`cursor-pointer ${row.is_qa ? 'bg-purple-50 hover:bg-purple-100' : 'hover:bg-slate-50'}`}
                           onClick={() => toggleInv(row.key)}
                         >
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <div className="flex items-center gap-1.5">
                               {row.pct_date !== null ? (
-                                <span className={`text-xs font-bold tabular-nums ${
-                                  row.pct_date <= 30 ? 'text-red-600' : row.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                                }`}>{row.pct_date}%</span>
+                                <span className={`text-xs font-bold tabular-nums ${pctDateCls(row.pct_date, pctBands)}`}>{row.pct_date}%</span>
                               ) : <span className="text-[10px] text-slate-400">Chưa có</span>}
                               {row.is_qa && (
                                 <span className="text-[9px] font-medium text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">QA giữ</span>
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <span className="text-[10px] font-mono text-slate-600">{row.location_code ?? '—'}</span>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                             <span className={`text-[10px] font-semibold tabular-nums ${row.is_qa ? 'text-purple-700' : ''}`}>{qtyEntryText(row.cartons, item.material)}</span>
                             <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(item.material)}</span>
                             <div className="text-[9px] text-slate-400">{row.entries.length} pl</div>
@@ -772,17 +829,22 @@ export default function LoosePickingItemDetail() {
           </div>
         )}
 
+        {/* Heading + tiến độ — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
+        <div className="border-b bg-white px-3 py-1.5 shrink-0 flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-slate-700 shrink-0 whitespace-nowrap">
+            Pallet đã quét (nhặt lẻ)
+            <span className="ml-1 text-xs font-normal text-slate-400">{scans.length} pallet</span>
+          </h2>
+          <div className="flex-1 min-w-0">
+            <ProgressBar scanned={looseDone} target={effectiveLoose} mat={item.material} />
+          </div>
+        </div>
+
         {/* ── Scan list ── */}
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <div className="p-3">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-700">
-                Pallet đã quét (nhặt lẻ)
-                <span className="ml-2 text-xs font-normal text-slate-400">{scans.length} pallet</span>
-              </h2>
-            </div>
-
-            <Card>
+            {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
+            <Card className="min-w-max">
               {scans.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
                   <QrCode className="h-10 w-10 opacity-30" />
@@ -813,41 +875,39 @@ export default function LoosePickingItemDetail() {
                   </TableHeader>
                   <TableBody>
                     {scans.map(se => {
-                      const isSubOptimal = !!(se.best_available_date && se.production_date && se.production_date > se.best_available_date)
+                      const { bad: isSubOptimal, bestDate: rotBest } = scanRotationOf(se)
                       return (
                         <TableRow key={se.id}>
-                          <TableCell className="px-2 py-1.5">
+                          <TableCell className="px-2 py-1">
                             <div className={`font-mono text-[10px] font-semibold ${isSubOptimal ? 'text-red-600' : 'text-slate-700'}`}>
                               {se.pallet_code}
                             </div>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 text-right tabular-nums text-[10px] font-semibold">
+                          <TableCell className="px-2 py-1 text-right tabular-nums text-[10px] font-semibold">
                             {qtyEntryText(se.cartons_scanned, item.material)}
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             {se.pct_date !== null ? (
-                              <span className={`text-[10px] font-bold tabular-nums ${
-                                se.pct_date <= 30 ? 'text-red-600' : se.pct_date <= 60 ? 'text-amber-600' : 'text-green-700'
-                              }`}>{se.pct_date}%</span>
+                              <span className={`text-[10px] font-bold tabular-nums ${pctDateCls(se.pct_date, pctBands)}`}>{se.pct_date}%</span>
                             ) : <span className="text-[10px] text-slate-300">—</span>}
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
                             <span className="text-[10px] font-mono tabular-nums text-slate-600">
                               {se.production_date ? format(parseISO(se.production_date), 'dd-MM-yyyy') : '—'}
                             </span>
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 whitespace-nowrap">
-                            {se.best_available_date ? (
+                          <TableCell className="px-2 py-1 whitespace-nowrap">
+                            {rotBest ? (
                               <span className={`text-[10px] font-mono tabular-nums ${isSubOptimal ? 'text-orange-600 font-semibold' : 'text-slate-500'}`}>
-                                {isSubOptimal ? '⚠ ' : ''}{format(parseISO(se.best_available_date), 'dd-MM-yyyy')}
+                                {isSubOptimal ? '⚠ ' : ''}{format(parseISO(rotBest), 'dd-MM-yyyy')}
                               </span>
                             ) : (
                               <span className="text-[10px] text-slate-300">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="px-2 py-1.5 whitespace-nowrap tabular-nums">
-                            <div className="text-[10px] text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
-                            <div className="text-[9px] text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
+                          <TableCell className="px-2 py-1 whitespace-nowrap tabular-nums">
+                            <div className="text-[10px] leading-tight text-slate-500">{se.scanned_at ? formatTimestampDate(se.scanned_at, true) : '—'}</div>
+                            <div className="text-[9px] leading-tight text-slate-400">{se.scanned_at ? formatTimestampTime(se.scanned_at) : ''}</div>
                           </TableCell>
                         </TableRow>
                       )

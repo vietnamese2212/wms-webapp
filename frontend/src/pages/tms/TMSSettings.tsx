@@ -15,12 +15,14 @@ import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useCreateVehicleType, useUpdateVehicleType, useReorderVehicleTypes, useDeleteVehicleType,
   useSlotTemplates, useUpdateSlotTemplate, useDeleteSlotTemplate, useBatchSlotTemplates, useSlotApplyInfo, useDeleteSlotTemplateCluster,
   useTransportCompanies, useCreateTransportCompany, useUpdateTransportCompany, useDeleteTransportCompany,
-  useTmsVehicles, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
+  useTmsVehicles, useTmsVehiclesPaged, useCreateTmsVehicle, useUpdateTmsVehicle, useDeleteTmsVehicle,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
@@ -478,6 +480,7 @@ export default function TMSSettings() {
     : showSlotsTab     ? 'slot-templates'
     : showCompaniesTab ? 'companies'
     : 'vehicles'
+  const [tab, setTab] = useState(defaultTab)
 
   // Warehouse selector — context cho tab Khung giờ. Scope theo phân quyền Kho + Loại kho
   // của user (rule: chỉ thấy/cài khung giờ trong phạm vi được phân).
@@ -582,20 +585,25 @@ export default function TMSSettings() {
     return (a.name ?? '').localeCompare(b.name ?? '', 'vi')
   })
 
-  // Vehicle — load tất cả, filter client-side
+  // Vehicle — PHÂN TRANG SERVER + 4 bộ lọc xuống server. Trước đây nạp CẢ đội xe rồi lọc client:
+  // 4.953 xe = 2.300KB/lần gọi, 10.000 xe ≈ 4,6MB là vượt trần 4,5MB của Vercel. Biển số xe nằm
+  // đúng nhóm danh mục KHÔNG được nạp cả vào trình duyệt (CLAUDE.md).
   const [filterNccs, setFilterNccs] = useState<string[]>([])
   const [vSearch, setVSearch] = useState('')
   const [vVtIds,  setVVtIds]  = useState<string[]>([])
   const [vStatus, setVStatus] = useState('')   // '' | active | inactive
-  const { data: vehicles = [], isLoading: loadingV } = useTmsVehicles({})
-  const filteredVehicles = (vehicles as TmsVehicle[]).filter(v => {
-    if (filterNccs.length && !filterNccs.includes(v.ncc_id)) return false
-    if (vVtIds.length && !vVtIds.includes(v.vehicle_type_id)) return false
-    if (vStatus && (vStatus === 'active') !== v.is_active) return false
-    const q = vSearch.trim().toLowerCase()
-    if (q && !`${v.license_plate} ${v.vehicle_type?.name ?? ''} ${v.ncc?.name ?? ''}`.toLowerCase().includes(q)) return false
-    return true
-  })
+  const [vPage, setVPage]         = useState(1)
+  const [vPageSize, setVPageSize] = useState(200)
+  const vSearchDeb = useDebouncedValue(vSearch, 250)   // gõ biển số: đợi 250ms mới gọi server
+  // Đổi bộ lọc → về trang 1 (đang ở trang 20 mà lọc còn 2 trang = bảng trống)
+  useEffect(() => { setVPage(1) }, [filterNccs, vVtIds, vStatus, vSearchDeb])
+  const { data: vehPage, isFetching: loadingV } = useTmsVehiclesPaged({
+    ncc_ids: filterNccs, vehicle_type_ids: vVtIds,
+    is_active: vStatus === '' ? undefined : String(vStatus === 'active'),
+    search: vSearchDeb.trim() || undefined,
+    page: vPage, page_size: vPageSize,
+  }, tab === 'vehicles')
+  const filteredVehicles = (vehPage?.items ?? []) as TmsVehicle[]
   const { mutate: deleteV, isPending: deletingV } = useDeleteTmsVehicle()
   const [editingV, setEditingV] = useState<TmsVehicle | null>(null)
   const [showVDlg, setShowVDlg] = useState(false)
@@ -630,7 +638,8 @@ export default function TMSSettings() {
   return (
     <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-      <Tabs defaultValue={defaultTab} className="flex flex-col flex-1 min-h-0">
+      {/* Tabs CÓ điều khiển: để mỗi tab chỉ gọi API của chính nó (tab Xe phân trang server) */}
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-col flex-1 min-h-0">
         {/* Phần trên gọn 1 hàng (tiêu đề + tab) — bảng chiếm toàn bộ phần còn lại */}
         <div className="border-b bg-white px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap sm:rounded-t-xl">
           <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
@@ -1002,7 +1011,7 @@ export default function TMSSettings() {
           </div>
           <div className="flex-1 min-h-0 flex">
             <div className="flex-1 min-w-0 overflow-auto pb-20 lg:pb-4">
-              {loadingV ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (vehicles as TmsVehicle[]).length === 0 ? (
+              {loadingV && !vehPage ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (vehPage?.total ?? 0) === 0 ? (
                 <div className="p-12 text-center text-slate-400 space-y-2">
                   <Truck className="h-10 w-10 mx-auto opacity-30" />
                   <p className="text-sm">Chưa có xe nào</p>
@@ -1076,7 +1085,11 @@ export default function TMSSettings() {
               </aside>
             )}
           </div>
-          <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">1–{filteredVehicles.length} / {(vehicles as TmsVehicle[]).length} xe</div>
+          <PagerNav page={vPage} totalPages={Math.max(1, Math.ceil((vehPage?.total ?? 0) / vPageSize))} onPage={setVPage} />
+          <ListFooter
+            page={vPage} pageSize={vPageSize} total={vehPage?.total ?? 0} unit="xe"
+            onPageSize={n => { setVPageSize(n); setVPage(1) }}
+            right={loadingV ? 'đang tải…' : `${(vehPage?.active ?? 0).toLocaleString('vi-VN')} đang dùng · ${(vehPage?.inactive ?? 0).toLocaleString('vi-VN')} ngừng`} />
         </TabsContent>
       </Tabs>
 

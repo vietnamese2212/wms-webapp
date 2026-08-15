@@ -2,7 +2,10 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
+import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
+import { parseListParam } from '../../utils/httpQuery'
+import { normalizePlate } from '../../utils/plate'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -22,11 +25,85 @@ async function withRelations(vehicles: Record<string, unknown>[]) {
   }))
 }
 
+// Danh mục XE — PHÂN TRANG SERVER (?page=). Tab "Xe" của Cài đặt TMS trước đây nạp CẢ đội xe rồi
+// lọc client: đo 28/07 với 4.953 xe = **2.300KB/lần gọi**, và 10.000 xe ≈ 4,6MB là vượt trần 4,5MB
+// của Vercel. Biển số xe nằm đúng danh sách "danh mục KHÔNG được nạp cả vào trình duyệt" trong
+// CLAUDE.md (cùng Mã hàng, Vị trí). 4 bộ lọc của tab cũng phải xuống server — lọc client sau khi
+// phân trang là lọc trên đúng 1 trang.
+async function listVehiclesPaged(req: Request, res: Response) {
+  const q = req.query as Record<string, string>
+  const userNccId: string | null = req.user?.ncc_id ?? null
+  if (q.search && searchLooksLikeInjection(q.search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+  const pageNum  = Math.max(1, parseInt(String(q.page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(q.page_size ?? '200'), 10) || 200))
+  const nccIds = parseListParam(q.ncc_ids) ?? []
+  const vtIds  = parseListParam(q.vehicle_type_ids) ?? []
+
+  const buildQ = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let qq: any = supabase.from('Vehicle').select('*', { count: 'exact' })
+    if (userNccId)          qq = qq.eq('ncc_id', userNccId)   // ĐVVT chỉ xem xe của mình
+    else if (nccIds.length) qq = qq.in('ncc_id', nccIds)
+    if (vtIds.length)       qq = qq.in('vehicle_type_id', vtIds)
+    if (q.is_active !== undefined && q.is_active !== '') qq = qq.eq('is_active', q.is_active === 'true')
+    if (q.search)           qq = qq.ilike('license_plate', `%${safeSearch(q.search)}%`)
+    return qq
+  }
+  // MỘT RPC cho cả trang: rows (đã ghép ĐVVT + loại xe) + total + active (migration 20260729).
+  // Đường cũ = 5 request (2 câu đếm + trang + TransportCompany + VehicleType) — mỗi request chiếm
+  // 1 khe pool ~10 khe của PostgREST, dưới tải là 5 lượt xếp hàng. `inactive = total − active`
+  // (Vehicle.is_active NOT NULL). Fallback đường cũ khi RPC chưa được apply (cửa sổ triển khai).
+  const { data: rp, error: rpErr } = await supabase.rpc('tms_vehicles_page', {
+    p_ncc_ids: userNccId ? [userNccId] : (nccIds.length ? nccIds : null),
+    p_vt_ids:  vtIds.length ? vtIds : null,
+    p_active:  (q.is_active !== undefined && q.is_active !== '') ? q.is_active === 'true' : null,
+    p_search:  q.search ? safeSearch(q.search) : null,
+    p_offset:  (pageNum - 1) * pageSize,
+    p_limit:   pageSize,
+  })
+  if (!rpErr && rp) {
+    const d = rp as { rows?: unknown[]; total?: number; active?: number }
+    const total = d.total ?? 0
+    const active = d.active ?? 0
+    return ok(res, {
+      items: d.rows ?? [], total, active, inactive: total - active,
+      page: pageNum, page_size: pageSize,
+    })
+  }
+
+  // ── Nhánh dự phòng cửa sổ triển khai (RPC chưa apply) — đường cũ nguyên vẹn ──
+  const [{ count: totalN }, { count: activeN }] = await Promise.all([
+    buildQ().limit(1),
+    buildQ().eq('is_active', true).limit(1),
+  ])
+  const total = totalN ?? 0
+  const active = activeN ?? 0
+  const offset = (pageNum - 1) * pageSize
+  const meta = { total, active, inactive: total - active, page: pageNum, page_size: pageSize }
+  // Trang vượt phạm vi → TRANG RỖNG, không phải lỗi. Đếm TRƯỚC rồi mới `.range()`: PostgREST trả
+  // 416 khi offset ≥ tổng số dòng, mà tình huống này rất dễ gặp (đang ở trang 25 rồi gõ tìm còn
+  // 1 trang; hoặc số trang đã nhớ theo user từ lần trước). Xem `isRangeNotSatisfiable`.
+  if (offset >= total) return ok(res, { items: [], ...meta })
+
+  const { data, error } = await buildQ()
+    .order('license_plate').order('id')
+    .range(offset, offset + pageSize - 1)
+  if (error) {
+    if (isRangeNotSatisfiable(error)) return ok(res, { items: [], ...meta })
+    return fail(res, 500, 'DB_ERROR', error.message)
+  }
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+  return ok(res, { items: await withRelations(rows), ...meta })
+}
+
 export async function listVehicles(req: Request, res: Response) {
   try {
+    if (req.query.page) return await listVehiclesPaged(req, res)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { ncc_id, is_active, unassigned, pool_branches } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned, pool_branches, search, limit } = req.query as Record<string, string>
+    if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
 
     // Gom CHI NHÁNH: 1 NCC/ĐVVT có thể có nhiều mã (cùng tên, khác mã) → lấy xe của TẤT CẢ
     // công ty cùng (type, tên chuẩn hoá) để booking/đăng ký không bị thiếu xe. (Resolve trước
@@ -52,11 +129,19 @@ export async function listVehicles(req: Request, res: Response) {
       else if (branchIds)          q = q.in('ncc_id', branchIds)
       else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
       if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
+      if (search)                  q = q.ilike('license_plate', `%${safeSearch(search)}%`)
       return q
     }
     let vehicles: Record<string, unknown>[]
     try {
-      vehicles = await fetchAllRowsParallel(buildQ) as Record<string, unknown>[]
+      // limit=N (ô gõ biển số): 1 round-trip N dòng — đội xe nghìn chiếc không dội hết về trình duyệt
+      if (cap > 0) {
+        const { data, error } = await buildQ().limit(cap)
+        if (error) throw error
+        vehicles = (data ?? []) as unknown as Record<string, unknown>[]
+      } else {
+        vehicles = await fetchAllRowsParallel(buildQ) as Record<string, unknown>[]
+      }
     } catch (e) {
       return fail(res, (e as Error).message)
     }
@@ -102,7 +187,10 @@ export async function createVehicle(req: Request, res: Response) {
     if (!effectiveNccId || !license_plate || !vehicle_type_id)
       return fail(res, 'ncc_id, license_plate, vehicle_type_id là bắt buộc', 400)
     const now = new Date().toISOString()
-    const plate = license_plate.toUpperCase().replace(/\s+/g, '')
+    // normalizePlate: bỏ MỌI ký tự ngăn cách, không chỉ khoảng trắng — bản cũ `replace(/\s+/g,'')`
+    // giữ nguyên dấu gạch nên chính nó đẻ ra "29E-09404", "98C-06739" trong danh mục (đo 30/07)
+    const plate = normalizePlate(license_plate)
+    if (!plate) return fail(res, 'Biển số phải có ít nhất 1 chữ hoặc số', 400)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
       .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })

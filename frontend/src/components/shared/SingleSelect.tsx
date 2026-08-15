@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 import { usePopoverAnchor } from './usePopoverAnchor'
@@ -11,7 +11,7 @@ export interface SingleSelectOption {
   disabled?: boolean
 }
 
-interface SingleSelectProps {
+type SingleSelectProps = {
   options: SingleSelectOption[]
   value: string
   onChange: (value: string) => void
@@ -21,7 +21,18 @@ interface SingleSelectProps {
   disabled?: boolean
   dropUp?: boolean          // giữ prop cho tương thích — vị trí thực do usePopoverAnchor tự tính
   triggerClassName?: string
-}
+} & (
+  | { serverSearch?: false; onSearchChange?: never; loading?: never; selectedLabel?: never }
+  /**
+   * Danh mục LỚN (mã hàng, vị trí, biển số): `options` do SERVER trả theo từ khóa.
+   * Bật cờ này thì KHÔNG lọc lại ở client (server đã lọc + cắt) và mỗi lần gõ sẽ gọi
+   * `onSearchChange` sau 250ms. Cha tự quản query (`useMaterials({ search, limit: 50 })`).
+   * `selectedLabel` là BẮT BUỘC KHAI (nghiệm thu 29/07): giá trị đang chọn không khớp từ khóa
+   * hiện tại thì không còn trong `options` → trigger sẽ hiện GIÁ TRỊ THÔ (uuid). Truyền nhãn
+   * của giá trị đang chọn (được phép `undefined` khi chưa chọn gì).
+   */
+  | { serverSearch: true; onSearchChange: (term: string) => void; loading?: boolean; selectedLabel: string | undefined }
+)
 
 /**
  * Dropdown chọn-1 dùng chung — ĐỒNG NHẤT look/behavior với WarehouseSingleSelect ("Kho").
@@ -32,20 +43,28 @@ export function SingleSelect({
   options, value, onChange,
   placeholder = 'Chọn…', searchPlaceholder = 'Tìm…',
   searchable = true, disabled, triggerClassName = '',
+  serverSearch = false, onSearchChange, loading = false, selectedLabel,
 }: SingleSelectProps) {
   const [open, setOpen]     = useState(false)
   const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const anchor = usePopoverAnchor(triggerRef, open)
 
-  const filtered = search
+  // Server-search: báo từ khóa lên cha sau 250ms (gõ nhanh không bắn mỗi phím 1 request)
+  useEffect(() => {
+    if (!serverSearch || !onSearchChange) return
+    const t = setTimeout(() => onSearchChange(search), 250)
+    return () => clearTimeout(t)
+  }, [search, serverSearch, onSearchChange])
+
+  const filtered = search && !serverSearch
     ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sub ?? '').toLowerCase().includes(search.toLowerCase()))
     : options
 
   const selected     = options.find(o => o.value === value)
-  const displayLabel = selected?.label ?? placeholder
+  const displayLabel = selected?.label ?? (value ? selectedLabel ?? value : placeholder)
 
-  function close() { setOpen(false); setSearch('') }
+  function close() { setOpen(false); setSearch(''); onSearchChange?.('') }
 
   return (
     <div className={triggerClassName}>
@@ -68,11 +87,13 @@ export function SingleSelect({
           <>
             <div className="fixed inset-0 z-[190] pointer-events-auto" onClick={close} />
             <div
-              className="z-[200] pointer-events-auto min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              // flex-col + list min-h-0: anchor.style có maxHeight (kẹp theo hộp dialog) —
+              // danh sách phải CO THEO chứ không giữ max-h cứng rồi bị cắt phần đuôi
+              className="z-[200] pointer-events-auto min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden flex flex-col"
               style={anchor.style}
             >
               {searchable && (
-                <div className="p-2 border-b border-slate-100">
+                <div className="p-2 border-b border-slate-100 shrink-0">
                   <input
                     type="text"
                     value={search}
@@ -83,9 +104,13 @@ export function SingleSelect({
                   />
                 </div>
               )}
-              <div className="max-h-48 overflow-y-auto">
-                {filtered.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 text-center py-3">Không tìm thấy</p>
+              <div className="max-h-48 min-h-0 overflow-y-auto">
+                {loading ? (
+                  <p className="text-[11px] text-slate-400 text-center py-3">Đang tìm…</p>
+                ) : filtered.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 text-center py-3">
+                    {serverSearch && !search ? 'Gõ để tìm…' : 'Không tìm thấy'}
+                  </p>
                 ) : filtered.map(o => (
                   <label key={o.value}
                     className={`flex items-center gap-2 px-3 py-1.5 ${o.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}>
@@ -98,8 +123,11 @@ export function SingleSelect({
                     />
                     {o.node ?? (
                       <>
-                        <span className="text-[11px] text-slate-700 flex-1 truncate" title={o.label}>{o.label}</span>
-                        {o.sub && <span className="text-[10px] text-slate-400 font-mono shrink-0">{o.sub}</span>}
+                        <span className="text-[11px] text-slate-700 flex-1 min-w-0 truncate" title={o.label}>{o.label}</span>
+                        {/* sub co được và cắt bớt: mã phụ ngắn vẫn hiện đủ, còn chuỗi dài (vd mẫu tem)
+                            KHÔNG được đẩy mất NHÃN CHÍNH khi menu hẹp — lỗi thật 13/08 ở ô chọn định
+                            dạng tem sau khi form cấu hình chuyển sang lưới 3 cột. */}
+                        {o.sub && <span className="text-[10px] text-slate-400 font-mono max-w-[55%] truncate" title={o.sub}>{o.sub}</span>}
                       </>
                     )}
                   </label>

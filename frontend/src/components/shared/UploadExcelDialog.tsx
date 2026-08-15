@@ -3,40 +3,59 @@ import { Upload, Download, CheckCircle2, AlertTriangle, Info, Loader2 } from 'lu
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { UPLOAD_TOO_LARGE_MSG, type UploadResult } from '@/api/hooks'
+import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
+import { UPLOAD_TOO_LARGE_MSG, type UploadResult, type UploadPreflight } from '@/api/hooks'
 
 /**
- * Dialog upload Excel dùng chung (Mã hàng / Tồn kho): nút Tải mẫu + Chọn file + hiển thị kết quả.
- * onUpload trả UploadResult { inserted, updated?, skipped?, errors[] }:
- *   - inserted/updated > 0 → banner xanh tóm tắt.
- *   - errors[] có phần tử → banner vàng liệt kê (all-or-nothing: inserted=0 nghĩa là chưa nhập gì).
+ * Dialog upload Excel DÙNG CHUNG (Mã hàng / Tồn kho / Vị trí kho) — CHUẨN 2 PHA (user chốt 29/07):
+ *
+ *   chọn file → KIỂM TRƯỚC trên server (không ghi gì) → báo cáo 80% màn hình
+ *   → bấm "Xác nhận nhập N …" → ghi thật → banner kết quả.
+ *
+ * Cùng 1 File được gửi 2 lần (kiểm rồi ghi) — xem backend/src/utils/uploadPreflight.ts để biết vì sao.
+ * `onUpload(file, preflight)`: preflight=true phải trả UploadPreflight, false trả UploadResult.
  */
 export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, onUpload }: {
   title: string
   hint?: string
   onClose: () => void
   onDownloadTemplate: () => void
-  onUpload: (file: File) => Promise<UploadResult>
+  onUpload: (file: File, preflight: boolean) => Promise<UploadResult & Partial<UploadPreflight>>
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{ file: File; report: UploadPreflight } | null>(null)
   const [result, setResult] = useState<UploadResult | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
+  function errMsg(ex: unknown): string {
+    const ax = ex as AxiosError<{ error?: { message?: string } }>
+    // 413 = Vercel chặn body >4.5MB, trả text thô (không phải JSON app)
+    return ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload file')
+  }
+
+  // PHA 1 — kiểm trước, KHÔNG ghi
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    setBusy(true); setErr(null); setResult(null)
+    setBusy(true); setErr(null); setResult(null); setPending(null)
     try {
-      setResult(await onUpload(file))
-    } catch (ex) {
-      const ax = ex as AxiosError<{ error?: { message?: string } }>
-      // 413 = Vercel chặn body >4.5MB, trả text thô (không phải JSON app)
-      setErr(ax?.response?.data?.error?.message ?? (ax?.response?.status === 413 ? UPLOAD_TOO_LARGE_MSG : 'Lỗi upload file'))
-    } finally {
-      setBusy(false)
-    }
+      const r = await onUpload(file, true)
+      if (r?.preflight) setPending({ file, report: r as UploadPreflight })
+      // Server chưa hỗ trợ kiểm trước (bản cũ) → giữ hành vi cũ: đó là kết quả ghi thật
+      else setResult(r as UploadResult)
+    } catch (ex) { setErr(errMsg(ex)) } finally { setBusy(false) }
+  }
+
+  // PHA 2 — user đã xem báo cáo và xác nhận → ghi thật
+  async function confirmWrite() {
+    if (!pending) return
+    setBusy(true); setErr(null)
+    try {
+      setResult(await onUpload(pending.file, false) as UploadResult)
+      setPending(null)
+    } catch (ex) { setErr(errMsg(ex)) } finally { setBusy(false) }
   }
 
   const okParts = result
@@ -47,54 +66,77 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
       ].filter(Boolean).join(' · ')
     : ''
   const hasErrors = (result?.errors?.length ?? 0) > 0
+  // Báo cáo kiểm-trước & danh sách lỗi dài → 80% màn hình (chuẩn upload-download mục D)
+  const big = !!pending || (result?.errors?.length ?? 0) > 12
 
   return (
-    <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle className="text-sm">{title}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-1">
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={onDownloadTemplate} className="h-8 text-xs gap-1">
-              <Download className="h-3.5 w-3.5" />Tải mẫu
-            </Button>
-            <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-              {busy ? 'Đang xử lý…' : 'Chọn file Excel'}
-            </Button>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
-          </div>
-          {hint && <p className="text-[11px] text-slate-500">{hint}</p>}
+    <Dialog open onOpenChange={v => !v && !busy && onClose()}>
+      <DialogContent className={big
+        ? 'w-[95vw] max-w-[95vw] h-[90dvh] max-h-[90dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] sm:max-h-[80vh] flex flex-col'
+        : 'max-w-lg'}>
+        <DialogHeader className="shrink-0">
+          <DialogTitle className="text-sm">{pending ? `Kiểm file trước khi nhập — ${title}` : title}</DialogTitle>
+        </DialogHeader>
 
-          {result && okParts && (
-            <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />{okParts}
+        {pending ? (
+          <UploadPreflightPanel report={pending.report} fileName={pending.file.name} busy={busy}
+            onCancel={() => setPending(null)} onConfirm={confirmWrite} />
+        ) : (
+          <div className="space-y-3 py-1">
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={onDownloadTemplate} className="h-8 text-xs gap-1">
+                <Download className="h-3.5 w-3.5" />Tải mẫu
+              </Button>
+              <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                {busy ? 'Đang kiểm file…' : 'Chọn file Excel'}
+              </Button>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
             </div>
-          )}
-          {result && !okParts && !hasErrors && (
-            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">
-              <Info className="h-4 w-4 shrink-0" />Không có dòng nào được nhập.
-            </div>
-          )}
-          {hasErrors && (
-            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
-              <div className="flex items-center gap-2 font-medium">
-                <Info className="h-4 w-4 shrink-0" />
-                {result!.inserted === 0
-                  ? `${result!.errors.length} dòng lỗi — CHƯA NHẬP GÌ, sửa rồi upload lại:`
-                  : `${result!.errors.length} dòng lỗi (đã nhập các dòng hợp lệ):`}
+            <p className="text-[11px] text-slate-500">
+              Chọn file xong sẽ <b>kiểm trước</b> và hiện các vấn đề của file — chưa ghi gì cho tới khi bạn bấm Xác nhận.
+            </p>
+            {hint && <p className="text-[11px] text-slate-500">{hint}</p>}
+
+            {result && okParts && (
+              <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />{okParts}
               </div>
-              <pre className="whitespace-pre-wrap font-sans max-h-60 overflow-auto">
-                {result!.errors.map(e => `• ${e}`).join('\n')}
-              </pre>
-            </div>
-          )}
-          {err && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <pre className="whitespace-pre-wrap font-sans">{err}</pre>
-            </div>
-          )}
-        </div>
+            )}
+            {result && !okParts && !hasErrors && (
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">
+                <Info className="h-4 w-4 shrink-0" />Không có dòng nào được nhập.
+              </div>
+            )}
+            {hasErrors && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
+                <div className="flex items-center gap-2 font-medium">
+                  <Info className="h-4 w-4 shrink-0" />
+                  {result!.inserted === 0
+                    ? `${result!.errors.length} dòng lỗi — CHƯA NHẬP GÌ, sửa rồi upload lại:`
+                    : `${result!.errors.length} dòng lỗi (đã nhập các dòng hợp lệ):`}
+                </div>
+                <pre className="whitespace-pre-wrap font-sans overflow-auto max-h-60">
+                  {result!.errors.map(e => `• ${e}`).join('\n')}
+                </pre>
+              </div>
+            )}
+            {err && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <pre className="whitespace-pre-wrap font-sans">{err}</pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Lỗi hạ tầng khi đang ở màn báo cáo (vd 413 lúc ghi thật) */}
+        {pending && err && (
+          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex gap-2 shrink-0">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <pre className="whitespace-pre-wrap font-sans">{err}</pre>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )

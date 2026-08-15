@@ -15,6 +15,10 @@ export type MatUnits = {
 }
 
 /** Nhãn tiếng Việt cho mã ĐVT — code lạ hiển thị NGUYÊN VĂN (ĐVT tùy biến). */
+// NGUỒN THẬT của nhãn ĐVT là danh mục LookupValue `unit_of_measure` (tab Đơn vị tính) — FE nạp
+// danh mục đó vào formatter lúc khởi động (setUnitLabels). BE chỉ dùng nhãn cho CÂU LỖI 422 nên
+// giữ bảng tĩnh cho helper thuần; khai thêm ĐVT mới trong danh mục thì bổ sung dòng ở đây nếu
+// muốn câu lỗi đọc xuôi (thiếu thì hiện MÃ THÔ, không sai nghiệp vụ).
 const UNIT_LABELS: Record<string, string> = {
   CAR: 'thùng',
   HOP: 'hộp',
@@ -22,6 +26,11 @@ const UNIT_LABELS: Record<string, string> = {
   BAG: 'bao',
   EA: 'cái',
   BT: 'chai',
+  SET: 'bộ',
+  ROL: 'cuộn',
+  M2: 'mét vuông',
+  G: 'gram',
+  L: 'lít',
 }
 
 export function unitLabel(code?: string | null): string {

@@ -9,6 +9,15 @@ interface QRScannerProps {
   // fill=true: camera lấp đầy chiều cao parent (dùng trong sheet quét 1-màn flex, không cuộn).
   // fill=false (mặc định): khung aspect-4/3 độc lập (dialog/khối inline như Stocktake, SearchInput…).
   fill?: boolean
+  // active=false: TẮT HẲN stream camera (đèn camera tắt) — bắt buộc truyền `active={open}` khi parent
+  // giữ scanner mount + ẩn bằng CSS (overlay keep-mounted); không thì camera chạy ngầm sau khi user đóng
+  // (user bắt 05/08 ở màn quét Fill). Mở lại KHÔNG hỏi quyền lại — trình duyệt đã nhớ quyền.
+  active?: boolean
+  // stopOnScan=true: bắt được mã → chụp khung hình cuối làm ảnh đóng băng rồi TẮT HẲN camera
+  // (đèn tắt, 0 pin) — cho flow KHÔNG auto-resume (Fill: hạ pallet xong còn chạy xe nâng).
+  // resume() tự bật lại camera (~0,5s). Flow auto-resume 1,5s (Xuất/Nhập) ĐỪNG bật cờ này —
+  // tắt/bật mỗi lượt quét liên tục chỉ thêm trễ.
+  stopOnScan?: boolean
 }
 
 export interface QRScannerHandle {
@@ -21,9 +30,10 @@ export interface QRScannerHandle {
 // Confirm-flow (Nhập): quét → onScan → parent hiện preview, gọi resume() cho lần kế. Instant-flow (Xuất): onScan → API.
 // KHÔNG phát bíp ở đây — parent tự bíp trong onScan (tránh bíp đôi).
 export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
-  function QRScanner({ onScan, fill }, ref) {
+  function QRScanner({ onScan, fill, active = true, stopOnScan = false }, ref) {
     const videoRef   = useRef<HTMLVideoElement>(null)
     const overlayRef = useRef<HTMLCanvasElement>(null)
+    const freezeRef  = useRef<HTMLCanvasElement>(null)   // ảnh chụp khung cuối khi stopOnScan tắt camera
     const wrapRef    = useRef<HTMLDivElement>(null)
 
     const streamRef  = useRef<MediaStream | null>(null)
@@ -31,7 +41,9 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const stoppedRef = useRef(false)
     const pausedRef  = useRef(false)
     const busyRef    = useRef(false)
+    const settingUpRef = useRef(false)                   // đang getUserMedia — resume() đừng bump epoch trùng
     const pendingRef = useRef<{ text: string; hits: number } | null>(null)   // mã lạ: cần thấy 2 lần mới nhận (lọc "bóng ma")
+    const [epoch, setEpoch] = useState(0)                // bump = mở lại camera sau khi stopOnScan đã tắt
 
     const [error, setError]         = useState<string | null>(null)
     const [torchOn, setTorchOn]     = useState(false)
@@ -43,20 +55,38 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     const pinchStartZoom = useRef(1)
 
     // resume(): xóa trạng thái xác nhận + phát lại video (bỏ đóng băng) + chạy tiếp vòng quét.
+    // stopOnScan đã tắt camera → bump epoch để effect mở lại stream (không hỏi quyền lại).
     useImperativeHandle(ref, () => ({
       resume: () => {
         pendingRef.current = null
         pausedRef.current = false
+        const fz = freezeRef.current
+        if (fz) fz.style.display = 'none'
+        if (!streamRef.current && !settingUpRef.current) { setEpoch(e => e + 1); return }
         videoRef.current?.play().catch(() => {})
       },
     }))
 
     // Nhận 1 mã → ĐÓNG BĂNG khung hình (video.pause) + tạm dừng loop (parent gọi resume() cho lần kế).
     // Đóng băng để thấy rõ "đã lấy tem này" + đỡ tốn pin (camera chạy tiếp lúc này vô ích). Không bíp (parent tự bíp).
+    // stopOnScan: chụp khung cuối ra canvas rồi TẮT HẲN track (đèn camera tắt, 0 pin) — vẫn giữ
+    // srcObject để drawBoxes vẽ được khung xanh của chính khung hình này (videoWidth còn nguyên).
     function handoff(text: string) {
       if (pausedRef.current) return
       pausedRef.current = true
       videoRef.current?.pause()
+      if (stopOnScan) {
+        const v = videoRef.current, fz = freezeRef.current
+        if (v && fz && v.videoWidth) {
+          fz.width = v.videoWidth; fz.height = v.videoHeight
+          fz.getContext('2d')?.drawImage(v, 0, 0)
+          fz.style.display = 'block'   // ảnh tĩnh thế chỗ — video có thể đen trên iOS khi track dừng
+        }
+        stoppedRef.current = true      // vòng quét không tự lên lịch lại — resume() dựng phiên mới
+        streamRef.current?.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+        setTorchOn(false)
+      }
       onScan(text)
     }
 
@@ -93,6 +123,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
     }, [])
 
     useEffect(() => {
+      if (!active) return          // đóng overlay → cleanup của lần active trước đã dừng track, không mở lại
       let destroyed = false
 
       async function loop() {
@@ -116,6 +147,7 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
       async function setup() {
         const video = videoRef.current
         if (!video) return
+        settingUpRef.current = true
         try {
           const engine = await createScanEngine()
           if (destroyed) return
@@ -140,9 +172,13 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
 
           stoppedRef.current = false
           pausedRef.current = false
+          const fz = freezeRef.current
+          if (fz) fz.style.display = 'none'
           loop()
         } catch {
           setError('Không thể mở camera. Kiểm tra quyền truy cập camera.')
+        } finally {
+          settingUpRef.current = false
         }
       }
 
@@ -154,9 +190,10 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
         streamRef.current = null
         const v = videoRef.current
         if (v) v.srcObject = null
+        setTorchOn(false)          // track mới luôn mở với đèn pin tắt — icon phải khớp
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [active, epoch])
 
     function applyZoom(raw: number) {
       const track = streamRef.current?.getVideoTracks()[0]
@@ -206,6 +243,8 @@ export const QRScanner = forwardRef<QRScannerHandle, QRScannerProps>(
           onTouchEnd={handleTouchEnd}
         >
           <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
+          {/* Ảnh khung cuối khi stopOnScan tắt camera — cùng object-cover nên trùng khít với video */}
+          <canvas ref={freezeRef} className="absolute inset-0 w-full h-full object-cover" style={{ display: 'none' }} />
           <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
           {error && (

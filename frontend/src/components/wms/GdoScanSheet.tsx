@@ -20,10 +20,12 @@ import {
   type CheckOutboundScanResult,
 } from '@/api/hooks'
 import { materialCodeOf, normalizeQR } from '@/utils/qr'
+import { useRotationGate } from '@/components/wms/RotationGate'
 import { formatTimestampDate } from '@/utils/formatters'
 import { playBeep } from '@/utils/audio'
 import { qtyLabel, qtyBaseLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
+import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
 import { enqueueScan, isConnectivityError, useScanQueue } from '@/offline/scanQueue'
 import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
@@ -60,9 +62,15 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
   const [pendingCartons, setPendingCartons] = useState('')
+  // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
+  const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  // Lỗi VỊ TRÍ → báo NGAY trong panel, GIỮ tem đang chờ để chọn lại rồi Lưu (không bắt quét lại)
+  const [locError,       setLocError]       = useState('')
   const [activeItemId,   setActiveItemId]   = useState<string | null>(null)   // mã hàng vừa nhận từ QR
   const [count,          setCount]          = useState(0)                      // pallet lưu OK trong phiên
   const [cartonFor,      setCartonFor]      = useState<{ scanId: string; palletCode: string } | null>(null)
+  // Luân chuyển: kết quả do BE tính, FE chỉ hiển thị + hỏi lý do khi kho bắt buộc
+  const rotGate = useRotationGate(checkResult?.rotation)
   const { mutate: checkScan,     isPending: checking }       = useCheckOutboundScan()
   const { mutate: scanOutbound,  isPending: savingOutbound } = useScanOutboundItem()
   const { mutate: scanLoose,     isPending: savingLoose }    = useScanLoosePickingItem()
@@ -95,12 +103,14 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     })
   }
 
-  function queueScanOffline(target: ItemWithDO, qr_code: string, cartonsOverride: number | undefined, uncertain: boolean) {
+  function queueScanOffline(target: ItemWithDO, qr_code: string, cartonsOverride: number | undefined, uncertain: boolean, leftoverLocation?: string | null) {
     const norm = normalizeQR(qr_code)
     const { queued, duplicate } = enqueueScan({
       kind: 'outbound',
       url: `/wms/outbound/${gdo.id}/items/${target.id}/scan`,
-      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride },
+      // Offline chưa hỏi được server pallet có dư không → mặc định GIỮ CHỖ CŨ (đúng hành vi cũ)
+      body: { qr_code, employee_id: user?.id ?? undefined, cartons_override: cartonsOverride,
+              leftover_ui: true, leftover_location_id: leftoverLocation ?? KEEP_LOCATION },
       pallet_code: norm,
       label: `${target.material?.material_code ?? target.material_code_raw ?? ''} · ${target.material?.short_name ?? target.material_code_raw ?? ''}`,
       orderId: gdo.id,
@@ -131,6 +141,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
+    rotGate.reset()   // tem mới = câu hỏi lý do mới, không kế thừa lượt trước
     const code = materialCodeOf(normalizeQR(qr_code))
     const matched = code ? matchItems(code) : []
     if (matched.length === 0) {
@@ -172,6 +183,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           setPendingCartons(String(data.suggested_cartons > 0
             ? (mode === 'loose' ? Math.min(data.suggested_cartons, rem) : data.suggested_cartons)
             : 1))
+          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           if (mode === 'outbound' && isConnectivityError(err)) { queueScanOffline(target, qr_code, undefined, false); return }
@@ -197,30 +209,48 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, 1500)
   }
 
+  // Số BASE còn lại trên pallet sau lượt này. Nhặt lẻ chỉ GIỮ hàng (không trừ remaining) nên
+  // pallet luôn còn hàng ⇒ luôn phải khai chỗ đặt lại.
+  const qtyToTake   = Math.max(1, parseInt(pendingCartons) || 1)
+  const palletRemain = checkResult?.pallet_remaining ?? 0
+  const leftoverQty = mode === 'loose' ? palletRemain : Math.max(0, palletRemain - qtyToTake)
+  const needLeftoverLoc = !!checkResult && leftoverQty > 0
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+
   function handleSave() {
-    if (!checkResult || saving || !activeItem) return
+    if (!checkResult || saving || !activeItem || !canSave) return
     const target = activeItem
-    const cartons = Math.max(1, parseInt(pendingCartons) || 1)
+    const cartons = qtyToTake
+    const leftoverArg = { leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}) }
+    const rotArg = rotGate.arg
     if (mode === 'loose') {
       scanLoose(
-        { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons },
+        { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, ...leftoverArg, ...rotArg },
         {
           onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
-          onError: (err) => { setCheckResult(null); setFeedback({ type: 'error', msg: apiMsg(err) }) },
+          onError: (err) => {
+            const m = apiMsg(err)
+            // Lỗi VỊ TRÍ → giữ tem, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+            if (isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
+            setCheckResult(null); setFeedback({ type: 'error', msg: m })
+          },
         }
       )
       return
     }
     scanOutbound(
-      { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, employee_id: user?.id ?? undefined },
+      { gdoId: gdo.id, itemId: target.id, qr_code: checkResult.pallet_code, cartons_override: cartons, employee_id: user?.id ?? undefined, ...leftoverArg, ...rotArg },
       {
         onSuccess: (data) => afterSaveSuccess(data as { scan_entry: { id: string; pallet_code: string; cartons_scanned: number } }, target),
         onError: (err) => {
           const qr = checkResult.pallet_code
+          // Lỗi VỊ TRÍ → giữ tem đang chờ, chọn lại rồi Lưu tiếp (không bắt quét lại pallet)
+          const m = apiMsg(err)
+          if (!isConnectivityError(err) && isLeftoverLocError(m)) { setLocError(m); setLeftoverLoc(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL đã xác nhận; lỗi SAU khi gửi → uncertain
-          if (isConnectivityError(err)) { queueScanOffline(target, qr, cartons, !(err instanceof OfflineError)); return }
-          setFeedback({ type: 'error', msg: apiMsg(err) })
+          if (isConnectivityError(err)) { queueScanOffline(target, qr, cartons, !(err instanceof OfflineError), leftoverLoc); return }
+          setFeedback({ type: 'error', msg: m })
         },
       }
     )
@@ -254,8 +284,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
     if (initialScan) handleScan(initialScan, 'wedge')
   }, []) // eslint-disable-line
 
-  const isSubOptimal = !!(checkResult?.production_date && checkResult?.best_available_date &&
-    checkResult.production_date > checkResult.best_available_date)
+  const rot = checkResult?.rotation ?? null
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col pointer-events-auto">
@@ -305,9 +334,17 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
           <div className="relative flex-1 min-h-0">
             {gunMode ? (
               <div className="h-full w-full rounded-lg bg-slate-900 flex flex-col items-center justify-center gap-2 px-4">
-                <QrCode className="h-12 w-12 text-sky-400/70" />
-                <p className="text-sm font-medium text-slate-200">Chế độ súng quét — bóp cò để quét tem</p>
-                <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                {/* Hướng dẫn CHỈ hiện lúc đang chờ bắn tem. Có tem chờ / đang kiểm thì bỏ hẳn:
+                    nút nổi ("Lưu…"/"Đang kiểm tra…") đứng absolute GIỮA vùng này, để chữ lại là đè
+                    mất chữ (user báo 2 lần, 30/07) — màn 360x640 vùng quét chỉ còn ~120px nên canh
+                    kiểu gì cũng đụng; lúc đã có tem thì việc cần làm là bấm Lưu, không phải đọc lại. */}
+                {!checkResult && !checking && (
+                  <>
+                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
+                    <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
+                  </>
+                )}
               </div>
             ) : (
               <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
@@ -331,14 +368,16 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
               </button>
             )}
 
-            {checkResult && !saving && (
+            {/* Chưa chọn vị trí hàng dư → KHÔNG hiện pill giữa vùng quét (bấm không được mà lại
+                đè mất dòng hướng dẫn phía sau trên màn 360px) — việc cần làm ở khối vàng bên dưới */}
+            {checkResult && !saving && canSave && (
               <button
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
                 onClick={handleSave}
               >
-                Lưu {qtyLabel(Math.max(1, parseInt(pendingCartons) || 1), activeItem?.material)}
+                Lưu {qtyLabel(qtyToTake, activeItem?.material)}
               </button>
             )}
             {saving && (
@@ -349,24 +388,22 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
             )}
           </div>
 
+          {/* Panel TỰ CUỘN: bàn phím (sửa số lượng) làm màn co lại, ô chọn vị trí không được khuất */}
           {checkResult && !feedback && (
-            <div className="space-y-2">
-              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${isSubOptimal ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
-                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${isSubOptimal ? 'text-orange-500' : 'text-green-600'}`} />
+            <div className="space-y-2 overflow-y-auto max-h-[52dvh] shrink-0">
+              <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-2 ${rotGate.blocked ? 'bg-red-50 border-red-200' : rotGate.warn ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'}`}>
+                <CheckCircle2 className={`h-4 w-4 shrink-0 mt-0.5 ${rotGate.blocked ? 'text-red-500' : rotGate.warn ? 'text-orange-500' : 'text-green-600'}`} />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold font-mono ${isSubOptimal ? 'text-red-600' : 'text-green-800'}`}>
+                  <p className={`text-sm font-semibold font-mono ${rotGate.blocked || rotGate.warn ? 'text-red-600' : 'text-green-800'}`}>
                     {checkResult.pallet_code}
                   </p>
                   {checkResult.production_date && (
                     <p className="text-[10px] text-slate-500 mt-0.5">NSX: {formatTimestampDate(checkResult.production_date)}</p>
                   )}
-                  {isSubOptimal && checkResult.best_available_date && (
-                    <p className="text-[10px] text-orange-600 font-medium mt-0.5">
-                      ⚠ Trong kho còn NSX {formatTimestampDate(checkResult.best_available_date)} (cũ hơn — nên ưu tiên lấy trước)
-                    </p>
-                  )}
+                  {rotGate.banner}
                 </div>
               </div>
+              {rotGate.reasonBox}
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? 'Lấy (lẻ):' : 'Số lượng:'}</label>
                 {/* BASE UNIT: cả quét thường lẫn quét lẻ đều nhập 2 ô Thùng+Hộp (lấy N thùng + M hộp từ pallet, trừ base) */}
@@ -378,6 +415,21 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 {mode === 'loose' && <span className="text-[10px] text-amber-600">lấy cả thùng lẻ + hộp lẻ</span>}
                 <span className="text-sm text-slate-400">/ {activeRemaining} {mode === 'loose' ? 'cần chuẩn bị' : 'cần xuất'}</span>
               </div>
+              {needLeftoverLoc && (
+                <div ref={el => el?.scrollIntoView({ block: 'nearest' })}>
+                  <LeftoverLocationPicker
+                    leftoverQty={leftoverQty}
+                    mat={activeItem?.material}
+                    currentLocationCode={checkResult.location_code ?? null}
+                    warehouseId={checkResult.warehouse_id ?? null}
+                    value={leftoverLoc}
+                    onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                  />
+                  {locError && (
+                    <p className="mt-1.5 text-xs font-medium text-red-600">⚠ {locError}</p>
+                  )}
+                </div>
+              )}
               <p className="text-[10px] text-slate-400">Súng quét: bắn lại đúng tem này = Lưu</p>
             </div>
           )}

@@ -16,6 +16,8 @@ import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { useColumnResize } from '@/components/shared/useColumnResize'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
   useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
@@ -86,8 +88,9 @@ export default function Slotting() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
-  const admin = isAdmin(user?.name)
-  const canPlan = admin || can(perms, 'slotting', 'plan')
+  const admin = isAdmin(user)
+  const canPlan   = admin || can(perms, 'slotting', 'plan')
+  const canDelete = admin || can(perms, 'slotting', 'delete')   // xóa kế hoạch — quyền riêng (tách 05/08)
   const canConfigure = admin || can(perms, 'slotting', 'configure')
 
   const { warehouseId, categories, days, level, principle, tab, palletKind: rawPalletKind } = useWmsFilterStore(s => s.slotting)
@@ -107,10 +110,18 @@ export default function Slotting() {
   }, [effectiveWhId, warehouseId, setSlotting])
 
   const [search, setSearch] = useState('')
+  const searchDeb = useDebouncedValue(search, 250)   // tìm trên SERVER → đợi 250ms mới gọi
+  const [matPage, setMatPage] = useState(1)
+  const [matPageSize, setMatPageSize] = useState(200)
+  // Đổi bộ lọc/từ khóa → về trang 1 (đang ở trang 12 mà lọc còn 1 trang = bảng trống)
+  useEffect(() => { setMatPage(1) }, [searchDeb, effectiveWhId, categories, days])
   const [showPlanSheet, setShowPlanSheet] = useState(false)
   // Query phân tích ở CHA để nút "Tạo kế hoạch" nằm trên toolbar (chuẩn table-format: action lên trên);
   // chỉ fetch khi đang ở tab Phân tích ('' = disabled)
-  const analysisQuery = useSlotting(tab === 'analysis' ? effectiveWhId : '', categories, days)
+  // Bảng ABC PHÂN TRANG SERVER: 2.378 mã = 902KB, danh mục 10.000 mã ≈ 3,8MB (trần 4,5MB).
+  const analysisQuery = useSlotting(
+    tab === 'analysis' ? effectiveWhId : '', categories, days, matPage, matPageSize, searchDeb,
+  )
   const { data: analysisData } = analysisQuery
 
   const filterDefs: FilterDef[] = [
@@ -180,8 +191,9 @@ export default function Slotting() {
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>
         </div>
 
-        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level} search={search} />}
-        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
+        {tab === 'analysis' && <AnalysisTab warehouseId={effectiveWhId} query={analysisQuery} days={days} level={level}
+            page={matPage} pageSize={matPageSize} onPage={setMatPage} onPageSize={n => { setMatPageSize(n); setMatPage(1) }} />}
+        {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} canDelete={canDelete} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
           ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
@@ -196,39 +208,38 @@ export default function Slotting() {
 }
 
 // ─── Tab Phân tích ABC ─────────────────────────────────────────────────────────
-function AnalysisTab({ warehouseId, query, days, level, search }: {
+function AnalysisTab({ warehouseId, query, days, level, page, pageSize, onPage, onPageSize }: {
   warehouseId: string; query: ReturnType<typeof useSlotting>; days: number
-  level: SlottingLevel; search: string
+  level: SlottingLevel
+  page: number; pageSize: number; onPage: (p: number) => void; onPageSize: (n: number) => void
 }) {
   const { data, isLoading, error, refetch } = query
 
-  const cols = ['Mã hàng', 'Tên hàng', 'Loại', 'Hạng', 'Lượt nhặt', 'Thùng xuất', '% lũy kế', 'Pallet tồn', 'Khu đang nằm', 'Khu đề xuất', 'Lệch chỗ']
+  // 'SL xuất' (không ghi "Thùng"): cartons_out lấy từ RPC theo base per-mã — mã KG/cái không phải thùng
+  const cols = ['Mã hàng', 'Tên hàng', 'Loại', 'Hạng', 'Lượt nhặt', 'SL xuất', '% lũy kế', 'Pallet tồn', 'Khu đang nằm', 'Khu đề xuất', 'Lệch chỗ']
   const { widths, startResize, totalWidth } = useColumnResize('slotting_col_widths',
     [96, 190, 84, 48, 72, 76, 66, 70, 200, 120, 76])
 
   const zoneByCode = useMemo(() => new Map((data?.zones ?? []).map(z => [z.code, z])), [data?.zones])
 
-  const displayMats = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const list = data?.materials ?? []
-    if (!q) return list
-    return list.filter(m => `${m.code} ${m.name ?? ''}`.toLowerCase().includes(q))
-  }, [data?.materials, search])
+  // Trang do SERVER trả (đã lọc theo từ khóa) — KHÔNG lọc lại ở client: lọc client sau khi phân
+  // trang là lọc trên đúng 1 trang, số dòng và ô tổng đều sai.
+  const displayMats = data?.materials ?? []
+  const matsTotal = data?.materials_total ?? 0
+  const totalPages = Math.max(1, Math.ceil(matsTotal / pageSize))
 
+  // 5 ô đếm lấy từ SERVER (đếm trên TOÀN BỘ mã khớp lọc). Đếm trên `data.materials` là chỉ đếm
+  // trang đang xem — và hạng A/B/C là % LŨY KẾ nên đếm theo trang còn sai bản chất.
   const tiles: BandTile[] = useMemo(() => {
-    const mats = data?.materials ?? []
-    const nA = mats.filter(m => m.abc === 'A').length
-    const nB = mats.filter(m => m.abc === 'B').length
-    const nC = mats.filter(m => m.abc === 'C').length
-    const misplacedMats = mats.filter(m => m.misplaced_pallets > 0)
-    const misplacedPallets = mats.reduce((s, m) => s + m.misplaced_pallets, 0)
+    const misMats = data?.misplaced_mats ?? 0
+    const misPallets = data?.misplaced_pallets ?? 0
     return [
       { label: `Lượt nhặt ${days} ngày`, value: nf.format(data?.total_picks ?? 0), accent: true },
-      { label: 'Mã hạng A', value: nf.format(nA) },
-      { label: 'Mã hạng B', value: nf.format(nB) },
-      { label: 'Mã hạng C', value: nf.format(nC) },
-      { label: 'Mã lệch chỗ', value: nf.format(misplacedMats.length), danger: misplacedMats.length > 0 },
-      { label: 'Pallet lệch chỗ', value: nf.format(misplacedPallets), danger: misplacedPallets > 0 },
+      { label: 'Mã hạng A', value: nf.format(data?.n_a ?? 0) },
+      { label: 'Mã hạng B', value: nf.format(data?.n_b ?? 0) },
+      { label: 'Mã hạng C', value: nf.format(data?.n_c ?? 0) },
+      { label: 'Mã lệch chỗ', value: nf.format(misMats), danger: misMats > 0 },
+      { label: 'Pallet lệch chỗ', value: nf.format(misPallets), danger: misPallets > 0 },
     ]
   }, [data, days])
 
@@ -242,7 +253,7 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
       <div className="border-b bg-slate-50 px-3 py-1 shrink-0 flex items-center gap-1.5 flex-nowrap overflow-x-auto">
         <span className="text-[9px] font-medium uppercase text-slate-400 shrink-0">Khu:</span>
         {(data?.zones ?? []).map(z => (
-          <span key={z.id} title={`${z.name} — loại ${z.category ?? 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
+          <span key={z.id} title={`${z.name} — loại ${z.categories?.length ? z.categories.join(', ') : 'đa dụng'} · sức chứa ${z.used_slots}/${z.capacity} pallet${z.pick_rank != null ? ` · hạng nhặt ${z.pick_rank}` : ' · chưa xếp hạng'}`}
             className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${z.band ? BAND_CHIP[z.band] : 'border-dashed border-slate-300 text-slate-400'}`}>
             {z.code}{z.pick_rank != null ? ` #${z.pick_rank}` : ''}{z.band ? ` · ${z.band}` : ''}
           </span>
@@ -257,7 +268,12 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
 
       {/* Cảnh báo pallet nằm SAI LOẠI khu (vd hàng thường trong khu SCA) — chỉ cảnh báo,
           muốn sinh lệnh kéo về thì tick ô trong sheet Tạo kế hoạch (user chốt) */}
-      {(data?.warnings ?? []).length > 0 && <CategoryWarnings warnings={data!.warnings} />}
+      {(data?.warnings ?? []).length > 0 && (
+        <CategoryWarnings
+          warnings={data!.warnings}
+          totalPallets={data!.warnings_pallets ?? data!.warnings.reduce((s, w) => s + w.pallets, 0)}
+          totalCount={data!.warnings_total ?? data!.warnings.length} />
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
         {error ? (
@@ -291,25 +307,31 @@ function AnalysisTab({ warehouseId, query, days, level, search }: {
           </Table>
         )}
       </div>
-      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">
-        1–{displayMats.length} / {(data?.materials ?? []).length} mã · xếp hạng theo lượt nhặt {days} ngày (A = 80% lượt nhặt lũy kế, B = 15% kế, C = còn lại)
-      </div>
+      <PagerNav page={page} totalPages={totalPages} onPage={onPage} />
+      <ListFooter
+        page={page} pageSize={pageSize} total={matsTotal} unit="mã"
+        onPageSize={onPageSize}
+        right={`xếp hạng theo lượt nhặt ${days} ngày (A = 80% lượt nhặt lũy kế, B = 15% kế, C = còn lại)`} />
     </>
   )
 }
 
 // Cảnh báo pallet nằm SAI LOẠI khu — chỉ cảnh báo; kéo về = checkbox lúc tạo kế hoạch.
 // NÉN 1 dòng (bảng chiếm ~80% — user 18/07): chi tiết đầy đủ trong tooltip.
-function CategoryWarnings({ warnings }: { warnings: SlottingWarning[] }) {
-  const total = warnings.reduce((s, w) => s + w.pallets, 0)
+function CategoryWarnings({ warnings, totalPallets, totalCount }: {
+  warnings: SlottingWarning[]     // chỉ PHẦN ĐẦU (server trả tối đa 50 dòng)
+  totalPallets: number            // tổng pallet trên TOÀN BỘ cảnh báo
+  totalCount: number              // tổng số dòng cảnh báo
+}) {
   const detail = warnings.map(w => `${w.material_code} [${w.material_category ?? 'chưa khai loại'}] — ${w.pallets} pallet ở ${w.zone_code} (khu ${w.zone_category})`).join('\n')
+    + (totalCount > warnings.length ? `\n… và ${nf.format(totalCount - warnings.length)} mã nữa (xem cột "Sai khu" trong bảng)` : '')
   return (
     <div className="border-b bg-amber-50/60 px-3 py-1 shrink-0 text-[10px] flex items-center gap-1 min-w-0" title={detail}>
       <AlertTriangle className="h-3 w-3 shrink-0 text-amber-700" />
       <span className="text-amber-800 truncate">
-        <b>{nf.format(total)} pallet nằm sai loại khu</b> (rê chuột xem chi tiết — muốn kéo về đúng khu, tick ô trong "Tạo kế hoạch"):{' '}
+        <b>{nf.format(totalPallets)} pallet nằm sai loại khu</b> (rê chuột xem chi tiết — muốn kéo về đúng khu, tick ô trong "Tạo kế hoạch"):{' '}
         {warnings.slice(0, 6).map(w => `${w.material_code}×${w.pallets}@${w.zone_code}`).join(' · ')}
-        {warnings.length > 6 ? ` … +${warnings.length - 6}` : ''}
+        {totalCount > 6 ? ` … +${nf.format(totalCount - 6)}` : ''}
       </span>
     </div>
   )
@@ -589,7 +611,7 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
               <TableRow key={z.id}>
                 <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{z.code}</TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{z.name}</TableCell>
-                <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">— đa dụng</span>}</TableCell>
+                <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">— đa dụng</span>}</TableCell>
                 <TableCell className="px-2 py-1 whitespace-nowrap">
                   <Input type="number" min={1} max={999} disabled={isPending}
                     className="h-7 w-20 text-xs !min-h-0"
@@ -630,7 +652,7 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
-  type LocRow = { id: string; location_code: string; category?: string | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
+  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
   const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
 
   // Nạp trạng thái hiện tại từ TOÀN BỘ vị trí của kho (không theo filter Loại kho) —
@@ -648,8 +670,8 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   const optionsFor = (selectedIds: string[]) => {
     const sel = new Set(selectedIds)
     return locs
-      .filter(l => categories.length === 0 || !l.category || categories.includes(l.category) || sel.has(l.id))
-      .map(l => ({ value: l.id, label: l.category ? `${l.location_code} · ${l.category}` : l.location_code }))
+      .filter(l => categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c)) || sel.has(l.id))
+      .map(l => ({ value: l.id, label: l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code }))
   }
 
   function handleSave() {
@@ -686,8 +708,8 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
 // ─── Tab Kế hoạch ──────────────────────────────────────────────────────────────
 // Nút Quét thực hiện KHÔNG đặt ở tab danh sách (user bỏ 19/07 — "ở ngoài không có tác dụng gì"),
 // chỉ nằm trong trang chi tiết kế hoạch (cuối ô Từ vị trí từng dòng).
-function PlansTab({ warehouseId, canPlan, onOpen }: {
-  warehouseId: string; canPlan: boolean; onOpen: (id: string) => void
+function PlansTab({ warehouseId, canPlan, canDelete, onOpen }: {
+  warehouseId: string; canPlan: boolean; canDelete: boolean; onOpen: (id: string) => void
 }) {
   const { data: plans = [], isLoading, error } = useSlottingPlans(warehouseId || undefined)
   const { mutate: deletePlan, isPending: deleting } = useDeleteSlottingPlan()
@@ -731,7 +753,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Nguyên tắc</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Người tạo</TableHead>
                 <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ngày tạo</TableHead>
-                {canPlan && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
+                {canDelete && <TableHead className="px-2 py-1.5 w-10 sticky right-0 z-20 bg-slate-50 border-l border-slate-200" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -758,7 +780,7 @@ function PlansTab({ warehouseId, canPlan, onOpen }: {
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{p.principle ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{p.created_by ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(p.created_at, true)}</TableCell>
-                    {canPlan && (
+                    {canDelete && (
                       <TableCell className="px-2 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-100">
                         <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" disabled={deleting}
                           onClick={e => { e.stopPropagation(); handleDelete(p) }}>

@@ -12,6 +12,7 @@ import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
 
@@ -33,7 +34,7 @@ export default function Dashboard() {
   // Kho đã chọn không còn trong scope (đổi phân quyền) → coi như "Tất cả kho"
   const effWhId = scopedWhs.length > 0 && whId && !scopedWhs.some(w => w.id === whId) ? '' : whId
   const { data: stats, isLoading, isError } = useDashboardStats(effWhId)
-  const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const today = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' })
 
   // Gộp theo kho (RPC trả dòng kho×loại) + tổng toàn scope
   const { byWarehouse, totals } = useMemo(() => {
@@ -54,7 +55,8 @@ export default function Dashboard() {
       w.cats.push({ category: r.category, pallets: Number(r.pallets), cartons: Number(r.cartons), materials: Number(r.materials) })
       pallets += Number(r.pallets); cartons += Number(r.cartons)
     }
-    const list = [...map.values()].sort((a, b) => b.cartons - a.cartons)
+    // Pallet chủ đạo (30/07) → bảng kho xếp theo pallet, không theo số quy đổi trộn đơn vị
+    const list = [...map.values()].sort((a, b) => b.pallets - a.pallets)
     return { byWarehouse: list, totals: { pallets, cartons, warehouses: list.length } }
   }, [stats])
 
@@ -106,10 +108,32 @@ export default function Dashboard() {
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
           ) : (
             <>
-              <StatsCard title="Tồn (thùng)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              {/* PALLET = số CHỦ ĐẠO (user chốt 30/07): đơn vị vật lý duy nhất so được giữa mọi
+                  loại hàng (thùng TP / cái POSM / kg NVL). Số theo đơn vị riêng nằm ở card bên. */}
               <StatsCard title="Pallet tồn" value={nf0(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
+              {/* Tồn TÁCH THEO ĐƠN VỊ — thay ô "Tồn (quy đổi)" trộn 6 đơn vị làm một (133tr mà
+                  131tr là CÁI). RPC cũ chưa có by_unit → fallback ô quy đổi như trước. */}
+              {(stats?.by_unit?.length ?? 0) > 0 ? (
+                <Card>
+                  <CardContent className="p-4 sm:p-5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+                      <Boxes className="h-3.5 w-3.5 text-sky-600" />Tồn theo đơn vị
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                      {stats!.by_unit!.map(u => (
+                        <div key={u.unit} className="flex items-baseline justify-between gap-1.5 min-w-0" title={`${nf(u.qty)} ${unitLabel(u.unit)} · ${nf(u.pallets)} pallet · ${nf(u.materials)} mã`}>
+                          <span className="text-[10px] text-muted-foreground truncate">{unitLabel(u.unit)}</span>
+                          <span className="text-[11px] font-bold tabular-nums">{nf0(u.qty)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <StatsCard title="Tồn (quy đổi)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+              )}
               <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
-              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'thùng'} icon={PackageMinus} iconColor="text-blue-600" />
+              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'SL quy đổi'} icon={PackageMinus} iconColor="text-blue-600" />
             </>
           )}
         </div>
@@ -118,9 +142,9 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {[
             { icon: PackagePlus, color: 'text-green-600 bg-green-100', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay' },
-            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'Thùng nhập hôm nay' },
+            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'SL nhập (quy đổi)' },
             { icon: Truck, color: 'text-blue-600 bg-blue-100', value: t?.outbound_gdos, label: 'Chuyến xuất hôm nay' },
-            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'Thùng KH xuất hôm nay' },
+            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'SL KH xuất (quy đổi)' },
           ].map(({ icon: Icon, color, value, label }) => (
             <Card key={label}>
               <CardContent className="p-4 sm:p-5">
@@ -129,9 +153,13 @@ export default function Dashboard() {
                     <Icon className={`h-5 w-5 ${color.split(' ')[0]}`} />
                   </div>
                   <div className="min-w-0">
+                    {/* Số 8+ chữ số (vd 15.385.846 sau bê tồn) bị truncate thành "15.385.8…" → đọc SAI
+                        cấp nghìn/triệu. Co cỡ chữ theo độ dài thay vì cắt cụt; tooltip = số đầy đủ. */}
                     {isLoading
                       ? <Skeleton className="h-7 w-16 mb-1" />
-                      : <p className="text-2xl font-bold tabular-nums truncate">{nf(Number(value ?? 0))}</p>}
+                      : (() => { const s = nf(Number(value ?? 0)); return (
+                          <p className={`${s.length >= 10 ? 'text-base' : s.length >= 8 ? 'text-xl' : 'text-2xl'} font-bold tabular-nums`} title={s}>{s}</p>
+                        ) })()}
                     <p className="text-xs text-muted-foreground">{label}</p>
                   </div>
                 </div>
@@ -225,7 +253,7 @@ export default function Dashboard() {
                           <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Kho</th>
                           <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Loại hàng</th>
                           <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Pallet</th>
-                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Thùng</th>
+                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}</th>
                           <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Mã hàng</th>
                         </tr>
                       </thead>

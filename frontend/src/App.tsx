@@ -10,10 +10,10 @@ import Login from '@/pages/Login'
 
 const {
   Dashboard, Inventory, Inbound, InboundDetail,
-  Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower,
-  Slotting, SlottingPlanDetail,
+  Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
+  Slotting, SlottingPlanDetail, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
-  Locations, Stocktake, StocktakeDashboard, PalletLabels, PalletOps, MultiScanTest,
+  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, IntegrationKeys, Materials, ExternalData, Settings,
@@ -38,7 +38,7 @@ function PermissionRoute({
 }) {
   const user = useAuthStore((s) => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
   const allowed = adminOnly
     ? admin
     : admin || (
@@ -57,7 +57,7 @@ function PermissionRoute({
 function ExternalRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const allowed = isAdmin(user?.name)
+  const allowed = isAdmin(user)
     || canAccessAny(perms, 'external_do_sap', 'external_khvc')
     || can(perms, 'outbound', 'reconcile')
   if (!allowed) return <Navigate to="/" replace />
@@ -91,6 +91,8 @@ export default function App() {
         <Route path="/wms/outbound/scan-log"                element={<PermissionRoute module="scanlog"><OutboundScanLog /></PermissionRoute>} />
         <Route path="/wms/weigh-tickets"                    element={<PermissionRoute module="weigh_station"><WeighTickets /></PermissionRoute>} />
         <Route path="/wms/control-tower"                    element={<PermissionRoute module="control_tower"><ControlTower /></PermissionRoute>} />
+        {/* Trang thông báo mở cho MỌI user (tab Cá nhân = feed của mình); tab Chung tự ẩn khi thiếu alerts.view */}
+        <Route path="/wms/alerts"                           element={<Alerts />} />
         <Route path="/external/do-sap"                      element={<ExternalRoute><ExternalData /></ExternalRoute>} />
         <Route path="/external"                             element={<ExternalRoute><ExternalData /></ExternalRoute>} />
         <Route path="/wms/outbound/:id"                     element={<PermissionRoute module="outbound"><OutboundDetail /></PermissionRoute>} />
@@ -107,10 +109,22 @@ export default function App() {
         {/* WMS — stocktake */}
         <Route path="/wms/stocktake"         element={<PermissionRoute module="stocktake"><Stocktake /></PermissionRoute>} />
         <Route path="/wms/stocktake/summary" element={<PermissionRoute module="stocktake"><StocktakeDashboard /></PermissionRoute>} />
+        <Route path="/wms/stocktake/history" element={<PermissionRoute module="stocktake"><StocktakeHistory /></PermissionRoute>} />
+        <Route path="/wms/stocktake/cycle" element={<PermissionRoute module="stocktake"><StocktakeCycle /></PermissionRoute>} />
 
         {/* WMS — slotting (tối ưu vị trí) */}
         <Route path="/wms/slotting"           element={<PermissionRoute module="slotting"><Slotting /></PermissionRoute>} />
         <Route path="/wms/slotting/plans/:id" element={<PermissionRoute module="slotting"><SlottingPlanDetail /></PermissionRoute>} />
+
+        {/* WMS — fill hàng phục vụ nhặt lẻ (hạ hàng từ tầng trên xuống vị trí nhặt lẻ) */}
+        <Route path="/wms/fill" element={<PermissionRoute module="fill"><FillPicking /></PermissionRoute>} />
+        <Route path="/wms/fill/orders/:id" element={<PermissionRoute module="fill"><FillOrderDetail /></PermissionRoute>} />
+
+        {/* WMS — xe nâng (check list an toàn + giờ vận hành) */}
+        <Route path="/wms/forklift" element={<PermissionRoute module="forklift"><Forklift /></PermissionRoute>} />
+
+        {/* WMS — sổ đóng gói điện tử tại xưởng (quét tem + chụp date thùng) */}
+        <Route path="/wms/packing" element={<PermissionRoute module="packing"><Packing /></PermissionRoute>} />
 
         {/* WMS — settings */}
         <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />

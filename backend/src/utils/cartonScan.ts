@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { splitCategories } from './categoryScope'
 
 // Cờ "quét tới THÙNG khi xuất" — setup TẠI TỪNG KHO (user chốt 12/07 lần 2):
 //   Warehouse.carton_scan_override = công tắc kho (mặc định TẮT)
@@ -25,7 +26,10 @@ export async function warehouseCartonScanPolicy(
   if (error) return { enabled: false, requireFull: false }
   const row = data as { carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null } | null
   if (row?.carton_scan_override !== true) return { enabled: false, requireFull: false }  // công tắc kho tắt → miễn xét
-  const enabled = (row.carton_scan_categories ?? []).includes(cargoCategory)             // đúng loại đã chọn tại kho
+  // Chuyến chở LẪN ('FG01+PM01'): có ≥1 loại phải quét thùng ⇒ chuyến đó quét thùng.
+  // (So khớp nguyên chuỗi như trước = chuyến ghép LỌT LƯỚI, không ai quét tem thùng.)
+  const cargoCats = splitCategories(cargoCategory)
+  const enabled = cargoCats.some(c => (row.carton_scan_categories ?? []).includes(c))    // đúng loại đã chọn tại kho
   return { enabled, requireFull: enabled && row.carton_scan_require_full === true }
 }
 

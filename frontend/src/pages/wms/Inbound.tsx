@@ -19,17 +19,22 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder,
-  useWarehouses, useMaterials, useLocationsReal, useImportShifts,
+  useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
+  useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
   useEmployeeRecords, useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
 } from '@/api/hooks'
+import { apiClient } from '@/api/client'
 import { usePrefetchInboundOrders } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { ListErrorBanner } from '@/components/shared/ListErrorBanner'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
@@ -43,14 +48,14 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
 interface LocationWithCapacity {
   id: string
   location_code: string
   sub_code: string
   sub_type: string | null
-  category: string | null
+  categories: string[] | null
   max_pallets: number
   used_slots: number
   has_same_material?: boolean
@@ -342,7 +347,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     [activePlanLines]
   )
 
-  const { data: locations = [] } = useLocationsReal(warehouseId ? { warehouse_id: warehouseId, material_id: materialId || undefined } : undefined)
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho — Bàu Bàng 1.517 vị trí
+  // = 616KB + hàng chục round-trip. BE đã ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng trả về,
+  // nên gợi ý gom pallet KHÔNG mất khi cắt danh sách.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [] } = useLocationsReal(warehouseId
+    ? { warehouse_id: warehouseId, material_id: materialId || undefined, search: locTermDeb || undefined, limit: 50 }
+    : undefined)
+  const { data: locPicked = [] } = useLocationsByIds([locationId])
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
   const allLocs = locations as LocationWithCapacity[]
 
@@ -355,24 +368,31 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     materialId !== '' && !!l.has_same_material && !(l.max_pallets > 0 && l.used_slots >= l.max_pallets)
   const filteredLocs = useMemo(() => {
     const base = subType
-      ? allLocs.filter(l => l.category === subType || (selectedZone && l.sub_code === selectedZone.code))
+      ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
       : allLocs
     if (!materialId) return base
     // sort ổn định: vị trí khuyến nghị lên đầu, phần còn lại giữ nguyên thứ tự gốc
     return [...base].sort((a, b) => (isRecommended(b) ? 1 : 0) - (isRecommended(a) ? 1 : 0))
   }, [allLocs, subType, selectedZone, materialId])
 
-  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập
-  const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined }, !!subType)
-  const { data: allMaterialsRaw = [] } = useMaterials(undefined, sourceType === 'NCC')
+  // Loại mã PHI HÀNG HÓA (chiết khấu/dịch vụ) khỏi picker chọn hàng nhập.
+  // Tìm TRÊN SERVER + 50 dòng: loại kho nhiều nghìn mã thì không dội hết về trình duyệt.
+  // `pickedMat` giữ mã đã chọn để nó không "biến mất" khi từ khóa đổi (server trả danh sách khác).
+  const [matTerm, setMatTerm] = useState('')
+  const [pickedMat, setPickedMat] = useState<MatItem | null>(null)
+  const { data: materialsRaw    = [] } = useMaterials({ category: subType || undefined, search: matTerm || undefined, limit: 50 }, !!subType)
   const materials    = useMemo(() => materialsRaw.filter(m => !m.is_non_stock), [materialsRaw])
-  const allMaterials = useMemo(() => allMaterialsRaw.filter(m => !m.is_non_stock), [allMaterialsRaw])
 
-  const { data: allEmployees = [] } = useEmployeeRecords({ is_active: 'true' })
+  // Chỉ cần id nhân sự của CHÍNH người đang đăng nhập → tìm trên server theo tên.
+  // Trước đây nạp TOÀN BỘ nhân sự đang hoạt động chỉ để dò 1 dòng: đo 28/07 = 1.230KB với
+  // 1.539 người, và ~830 B/dòng nghĩa là 5.400 người đã vượt trần 4,5MB của Vercel.
+  const { data: meEmployees = [] } = useEmployeeRecords(
+    user?.name ? { is_active: 'true', search: user.name } : undefined,
+  )
   type EmpItem = { id: string; name: string; employee_code: string }
   const importedByEmpId = useMemo(
-    () => (allEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
-    [allEmployees, user?.name]
+    () => (meEmployees as EmpItem[]).find(e => e.name.toLowerCase() === (user?.name ?? '').toLowerCase())?.id ?? '',
+    [meEmployees, user?.name]
   )
 
   useEffect(() => {
@@ -387,15 +407,32 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
   const [editRows, setEditRows] = useState<EditRow[]>([])
 
-  // NCC helpers
-  const nccMatByCode = useMemo(() =>
-    new Map((allMaterials as any[]).map(m => [String(m.material_code).trim().toUpperCase(), m])),
-    [allMaterials]
+  // NCC helpers — KHÔNG nạp cả danh mục mã hàng nữa (2.740 mã ≈ 2,5MB, chục nghìn mã về sau):
+  //  (a) dropdown chọn mã của DÒNG đang mở = tìm trên server, tối đa 50 dòng;
+  //  (b) map code→mã hàng chỉ tra ĐÚNG những mã đang có trên form (dán Excel / gõ tay / nạp từ KH).
+  const nccCodesOnForm = useMemo(() => [
+    ...nccRows.map(r => r.material_code),
+    ...editRows.map(r => r.materialCode),
+  ].map(c => (c ?? '').trim().toUpperCase()).filter(Boolean), [nccRows, editRows])
+  const { data: nccCodeMats = [] } = useMaterialsByCodes(nccCodesOnForm, sourceType === 'NCC')
+
+  const nccDropTerm = useDebouncedValue(
+    nccDropdownIdx !== null ? (nccRows[nccDropdownIdx]?.material_code ?? '') : '', 250)
+  const { data: nccDropMats = [] } = useMaterials(
+    { category: subType || undefined, search: nccDropTerm || undefined, limit: 50 },
+    sourceType === 'NCC' && nccDropdownIdx !== null,
   )
 
+  const nccMatByCode = useMemo(() =>
+    new Map([...nccCodeMats, ...nccDropMats].filter(m => !m.is_non_stock)
+      .map(m => [String(m.material_code).trim().toUpperCase(), m] as const)),
+    [nccCodeMats, nccDropMats]
+  )
+
+  // Server đã lọc theo từ khóa + loại kho; chỉ còn bỏ mã phi hàng hóa
   const filteredNccMats = useMemo(() =>
-    (allMaterials as any[]).filter(m => !subType || m.category === subType),
-    [allMaterials, subType]
+    nccDropMats.filter(m => !m.is_non_stock && (!subType || m.category === subType)),
+    [nccDropMats, subType]
   )
 
   const nccDuplicateCodes = useMemo(() => {
@@ -450,21 +487,34 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
     setNccDropdownIdx(null)
   }, [])
 
+  // Danh sách gợi ý đã do SERVER lọc theo từ khóa của dòng đang mở → không lọc lại ở client
   const getNccDropdownMatches = useCallback((code: string) => {
-    const list = filteredNccMats
-    let filtered: any[]
-    if (!code) {
-      filtered = list.slice(0, 12)
-    } else {
-      const q = code.toUpperCase()
-      filtered = list.filter(m =>
-        String(m.material_code).toUpperCase().includes(q) ||
-        String(m.short_name ?? '').toUpperCase().includes(q)
-      ).slice(0, 10)
-    }
+    const filtered = filteredNccMats.slice(0, code ? 10 : 12)
     if (planMatIds.size === 0) return filtered
     return [...filtered].sort((a, b) => (planMatIds.has(b.id) ? 1 : 0) - (planMatIds.has(a.id) ? 1 : 0))
   }, [filteredNccMats, planMatIds])
+
+  // Mã vừa dán/gõ được tra BẤT ĐỒNG BỘ → có kết quả thì điền tên + ĐVT + hệ số vào dòng.
+  // (Trước đây map có sẵn vì cả danh mục nằm trong trình duyệt.)
+  useEffect(() => {
+    if (sourceType !== 'NCC' || nccMatByCode.size === 0) return
+    setNccRows(prev => {
+      let changed = false
+      const next = prev.map(r => {
+        if (!r.material_code || (r.material_id && r.mat_units)) return r
+        const found = nccMatByCode.get(r.material_code.trim().toUpperCase())
+        const valid = found && (!subType || found.category === subType) ? found : null
+        if (!valid) return r
+        changed = true
+        return {
+          ...r, material_id: valid.id, mat_name: valid.short_name ?? '',
+          mat_unit: unitCodeOf(valid), unit_input: r.unit_input || unitCodeOf(valid),
+          mat_units: matUnitsOf(valid),
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [nccMatByCode, subType, sourceType])
 
   // Paste cột SL dự kiến từ Excel: điền lần lượt xuống các dòng bắt đầu từ dòng đang dán
   // (mirror handleNccMatCodePaste — dán cột mã trước, dán cột SL sau)
@@ -506,7 +556,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
       else merged.set(m.material_id, { line: m, qty })
     }
     setNccRows([...merged.values()].map(({ line: m, qty }) => {
-      const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase())
+      const fullMat = nccMatByCode.get((m.material?.material_code ?? '').trim().toUpperCase()) ?? m.material
       const unit = unitCodeOf(fullMat) || unitCodeOf(m.material)
       return {
         material_code: m.material?.material_code ?? '',
@@ -613,9 +663,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   }
 
   const selectedMat   = (materials as MatItem[]).find(m => m.id === materialId)
+    ?? (pickedMat?.id === materialId ? pickedMat : undefined)
   // Nhập SX cho phép cả mã no-QR (POSM/Loscam, nhập tồn đầu). No-QR hiệu lực = mã no_qr_tracking HOẶC kho QTY
   // → backend tự bỏ vị trí + nhập số lượng thủ công ở trang chi tiết, nên form không bắt buộc chọn Vị trí.
-  const factoryNoQr   = ((materials as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
+  const factoryNoQr   = (([...materials, ...(pickedMat ? [pickedMat] : [])] as any[]).find(m => m.id === materialId)?.no_qr_tracking === true)
     || isQtyLike((warehouses as any[]).find(w => w.id === warehouseId)?.inventory_mode)
 
   function handleFactorySubmit() {
@@ -711,8 +762,15 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Material <span className="text-red-500">*</span></Label>
                 <SingleSelect
                   value={materialId}
-                  onChange={v => { setMaterialId(v); setLocationId('') }}
+                  onChange={v => {
+                    setMaterialId(v)
+                    setLocationId('')
+                    setPickedMat((materials as MatItem[]).find(m => m.id === v) ?? null)
+                  }}
                   disabled={!subType}
+                  serverSearch
+                  onSearchChange={setMatTerm}
+                  selectedLabel={selectedMat ? `${selectedMat.material_code} ${selectedMat.short_name ?? ''}` : undefined}
                   searchPlaceholder={`Tìm hàng ${subType || ''}…`}
                   triggerClassName="h-8 mt-0.5"
                   placeholder={!subType ? 'Chọn loại kho trước' : 'Chọn mã hàng'}
@@ -745,6 +803,11 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   disabled={!subType || !materialId}
                   searchPlaceholder="Tìm vị trí…"
                   triggerClassName="h-8 mt-0.5"
+                  serverSearch
+                  onSearchChange={setLocTerm}
+                  selectedLabel={locationId
+                    ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
+                    : undefined}
                   placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
                   options={filteredLocs.map(l => {
                     const isFull = l.max_pallets > 0 && l.used_slots >= l.max_pallets
@@ -780,7 +843,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
 
               <div>
                 <Label className="text-xs">Ngày nhập <span className="text-red-500">*</span></Label>
-                <Input type="date" value={importDate} min={TODAY} className="h-8 text-xs mt-0.5" onChange={e => setImportDate(e.target.value)} />
+                <Input type="date" value={importDate} min={TODAY()} className="h-8 text-xs mt-0.5" onChange={e => setImportDate(e.target.value)} />
               </div>
 
               <div>
@@ -987,7 +1050,7 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Ngày nhập *</Label>
-                  <Input type="date" value={importDate} min={editGroup?.length ? undefined : TODAY} onChange={e => {
+                  <Input type="date" value={importDate} min={editGroup?.length ? undefined : TODAY()} onChange={e => {
                     setImportDate(e.target.value)
                     if (selectedGate && e.target.value < selectedGate.date) setGateRegId('')
                   }} className="h-8 text-xs mt-0.5" />
@@ -1155,9 +1218,6 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   )
 }
 
-// Ca sort order: Ca 1 → Ca 2 → Ca 3 → HC → unknown last
-const SHIFT_ORDER: Record<string, number> = { 'Ca 1': 0, 'Ca 2': 1, 'Ca 3': 2, 'HC': 3 }
-
 type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
 // Khóa nhóm "cùng chuyến" để vẽ bracket nối phiếu: theo lệnh TMS (chuyển kho) HOẶC biển số xe (gate) cho NCC nhiều mã cùng chuyến.
@@ -1169,26 +1229,9 @@ export function inboundGroupKey(o: InboundOrder): string | null {
   return null
 }
 
-// ─── Client-side cascade filter ───────────────────────────────
-
-function applyClientFilters(
-  orders: InboundOrder[],
-  mats: string[], cycles: string[], machines: string[], importer: string, shiftIds: string[], sourceTypes: string[],
-  exclude?: 'mat' | 'cycle' | 'machine' | 'importer' | 'shift' | 'source'
-) {
-  return orders.filter(order => {
-    // TRANSFER không có ca/máy/cycle — skip các filter này để không bị ẩn nhầm
-    const isTransfer = order.source_type === 'TRANSFER'
-    const importerName = (order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '').toLowerCase()
-    if (exclude !== 'source'   && sourceTypes.length > 0 && !sourceTypes.includes(order.source_type ?? ''))                  return false
-    if (exclude !== 'mat'      && mats.length     > 0 && !mats.includes(order.material_id ?? ''))                            return false
-    if (!isTransfer && exclude !== 'cycle'   && cycles.length   > 0 && !(order.cycles ?? []).some(c => cycles.includes(c)))  return false
-    if (!isTransfer && exclude !== 'machine' && machines.length > 0 && !(order.machine_codes ?? []).some(m => machines.includes(m))) return false
-    if (exclude !== 'importer' && importer             && !importerName.includes(importer.toLowerCase()))                     return false
-    if (!isTransfer && exclude !== 'shift'   && shiftIds.length > 0 && !shiftIds.includes(order.shift_id ?? ''))              return false
-    return true
-  })
-}
+// (27/07) Các filter Material/Chu kỳ/Máy/Ca/Nguồn/Người nhập đã chuyển XUỐNG SERVER
+// (RPC inbound_orders_page — TRANSFER vẫn được miễn filter Chu kỳ/Máy/Ca như trước).
+// List phân trang server nên KHÔNG còn lọc/sort client-side trên trang.
 
 // Cấu hình cột Inbound (thứ tự khớp với các <TableCell> trong InboundRow)
 const INBOUND_COLS: { id: string; label: string; w: number; align?: 'right'; resize?: false }[] = [
@@ -1314,16 +1357,6 @@ export default function Inbound() {
   // Resolve effective warehouse: UI filter override → user's single fixed warehouse → let backend scope handle multi-warehouse
   const effectiveWarehouseId = f.warehouseId || user?.warehouse_id || undefined
 
-  const { data: serverOrders = [], isLoading } = useInboundOrders({
-    warehouse_id:      effectiveWarehouseId,
-    search:            f.search           || undefined,
-    date_from:         f.dateFrom         || undefined,
-    date_to:           f.dateTo           || undefined,
-    material_category: f.materialCategory || undefined,
-  })
-  // Prefetch chi tiết phiếu ĐANG MỞ khi có mạng → offline quét được cả phiếu chưa bấm vào
-  usePrefetchInboundOrders(serverOrders)
-
   // Null-safe defaults for all array/string fields (guards against stale session state)
   const filterMaterials = f.filterMaterials ?? []
   const filterCycles    = f.filterCycles    ?? []
@@ -1331,12 +1364,37 @@ export default function Inbound() {
   const filterShiftIds  = f.filterShiftIds  ?? []
   const filterSourceTypes = f.filterSourceTypes ?? []
   const importerSearch  = f.importerSearch  ?? ''
+  const page     = f.page     || 1     // state cũ persist chưa có field → fallback
+  const pageSize = f.pageSize || 500
 
-  // Cascade-filtered orders
-  const filteredOrders = useMemo(
-    () => applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes),
-    [serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes]
-  )
+  // Ô gõ chữ (tìm kiếm + người nhập) debounce 250ms trước khi gọi server
+  const debSearch   = useDebouncedValue(f.search, 250)
+  const debImporter = useDebouncedValue(importerSearch, 250)
+
+  // PHÂN TRANG SERVER (27/07): mọi filter xuống SQL; list chỉ tải 1 trang; tổng
+  // SummaryBand + bảng vị trí = RPC tính trên TOÀN BỘ kết quả lọc (không phải trang).
+  const listParams = inboundListParamsOf(
+    { ...f, importerSearch: debImporter }, user?.warehouse_id, debSearch)
+  const { data: pageData, isLoading, error: listErr } = useInboundOrdersPaged({ ...listParams, page, limit: pageSize })
+  const serverOrders = pageData?.items ?? []
+  const total        = pageData?.total ?? 0
+  const totalPages   = Math.max(1, Math.ceil(total / pageSize))
+  const { data: summary } = useInboundSummary(listParams)
+  const { data: facets }  = useInboundFacets({
+    warehouse_id:      effectiveWarehouseId,
+    material_category: f.materialCategory || undefined,
+    date_from:         f.dateFrom || undefined,
+    date_to:           f.dateTo   || undefined,
+  })
+  // Prefetch chi tiết phiếu ĐANG MỞ khi có mạng → offline quét được cả phiếu chưa bấm vào
+  usePrefetchInboundOrders(serverOrders)
+
+  // Filter co kết quả lại khi đang đứng trang sau → kéo về trang cuối còn dữ liệu
+  useEffect(() => {
+    if (!isLoading && total > 0 && page > totalPages) setInbound({ page: totalPages })
+  }, [isLoading, total, page, totalPages, setInbound])
+
+  const filteredOrders = serverOrders   // filter đã áp ở server — giữ tên cho phần render phía dưới
 
   // Shift options for multi-select (from master data, not derived from orders)
   const shiftOptions = useMemo(() =>
@@ -1344,27 +1402,9 @@ export default function Inbound() {
     [shifts]
   )
 
-  // Sort: ngày desc → nhóm theo chuyến (lệnh TMS hoặc xe NCC) → ca asc → giờ tạo asc
-  const sortedOrders = useMemo(() =>
-    [...filteredOrders].sort((a, b) => {
-      const dateA = a.import_date ?? ''
-      const dateB = b.import_date ?? ''
-      if (dateA !== dateB) return dateB.localeCompare(dateA)
-      // Nhóm theo chuyến trong cùng ngày (phiếu có nhóm xếp trước, sắp theo khóa nhóm)
-      const keyA = inboundGroupKey(a) ?? ''
-      const keyB = inboundGroupKey(b) ?? ''
-      if (keyA !== keyB) {
-        if (!keyA && keyB) return 1
-        if (keyA && !keyB) return -1
-        return keyA.localeCompare(keyB)
-      }
-      const sA = SHIFT_ORDER[a.shift?.name ?? ''] ?? 99
-      const sB = SHIFT_ORDER[b.shift?.name ?? ''] ?? 99
-      if (sA !== sB) return sA - sB
-      return a.created_at.localeCompare(b.created_at)
-    }),
-    [filteredOrders]
-  )
+  // Thứ tự dòng do RPC quyết định (ngày desc → nhóm theo chuyến → ca → giờ tạo) —
+  // KHÔNG sort lại client (sort trong 1 trang sẽ phá thứ tự xuyên trang).
+  const sortedOrders = filteredOrders
 
   // Tính vị trí bracket cho mỗi row trong nhóm "cùng chuyến" (lệnh TMS hoặc xe NCC)
   const bracketPositions = useMemo(() => {
@@ -1384,80 +1424,42 @@ export default function Inbound() {
     return pos
   }, [sortedOrders])
 
-  function openEditNccGroup(order: InboundOrder) {
+  async function openEditNccGroup(order: InboundOrder) {
     // Nhóm sửa PHẢI khớp đúng nhóm bracket hiển thị (cùng inboundGroupKey = cùng chuyến/cổng).
     // Phiếu NCC chưa gắn xe → key null → chỉ chính nó, KHÔNG gom theo ngày+kho (tránh kéo nhầm phiếu khác chuyến vào).
-    const key = inboundGroupKey(order)
-    const group = key
-      ? sortedOrders.filter(o => o.source_type === 'NCC' && inboundGroupKey(o) === key)
-      : [order]
-    setEditNccGroup(group.length > 0 ? group : [order])
+    // Phân trang server: nhóm có thể nằm VẮT qua ranh giới trang → lấy đủ nhóm từ server theo
+    // lượt cổng (mode cũ trả mảng enrich đủ), lỗi mạng thì fallback nhóm trên trang hiện tại.
+    const gate = (order as { gate_registration_id?: string | null }).gate_registration_id
+    if (order.source_type === 'NCC' && gate) {
+      try {
+        const { data } = await apiClient.get('/wms/inbound-orders', { params: { gate_registration_id: gate } })
+        const group = ((data?.data ?? []) as InboundOrder[]).filter(o => o.source_type === 'NCC')
+        if (group.length > 0) { setEditNccGroup(group); return }
+      } catch { /* fallback dưới */ }
+      const key = inboundGroupKey(order)
+      const group = sortedOrders.filter(o => o.source_type === 'NCC' && inboundGroupKey(o) === key)
+      setEditNccGroup(group.length > 0 ? group : [order])
+      return
+    }
+    setEditNccGroup([order])
   }
 
-  // Options for each multi-select — computed from subset excluding that filter's own selection
-  const materialOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'mat')
-    const seen = new Map<string, string>()
-    for (const o of sub)
-      if (o.material_id && !seen.has(o.material_id))
-        seen.set(o.material_id, o.material?.short_name ?? o.material?.material_description ?? o.material_id)
-    return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [serverOrders, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
+  // Options cho các multi-select — DISTINCT dưới DB theo filter nền (RPC inbound_orders_facets),
+  // không còn gom từ toàn bộ dòng đã tải (đã bỏ nạp-cả-list vào trình duyệt)
+  const materialOptions = facets?.materials ?? []
+  const cycleOptions    = useMemo(() => (facets?.cycles ?? []).map(c => ({ value: c, label: c })), [facets])
+  const machineOptions  = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
 
-  const cycleOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'cycle')
-    return [...new Set(sub.flatMap(o => o.cycles ?? []))].map(c => ({ value: c, label: c }))
-  }, [serverOrders, filterMaterials, filterMachines, importerSearch, filterShiftIds, filterSourceTypes])
-
-  const machineOptions = useMemo(() => {
-    const sub = applyClientFilters(serverOrders, filterMaterials, filterCycles, filterMachines, importerSearch, filterShiftIds, filterSourceTypes, 'machine')
-    return [...new Set(sub.flatMap(o => o.machine_codes ?? []))].map(m => ({ value: m, label: m }))
-  }, [serverOrders, filterMaterials, filterCycles, importerSearch, filterShiftIds, filterSourceTypes])
-
-  // Totals
-  const totalPallets = useMemo(() => filteredOrders.reduce((s, o) => s + o._count.inventory_entries, 0), [filteredOrders])
-  // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (tổng hiển thị = thùng quy đổi)
-  const totalCartons = useMemo(() => filteredOrders.reduce((s, o) => s + qtyEntryDecimal(o.total_cartons ?? 0, o.material), 0), [filteredOrders])
-  const srcCounts = useMemo(() => {
-    let sx = 0, ncc = 0, tf = 0
-    for (const o of filteredOrders) {
-      if (o.source_type === 'NCC') ncc++
-      else if (o.source_type === 'TRANSFER') tf++
-      else sx++
-    }
-    return { sx, ncc, tf }
-  }, [filteredOrders])
-
-  // Location summary — aggregate theo vị trí thực tế của từng pallet (entries_by_location)
-  // không dùng order.location vì user có thể đổi vị trí phiếu sau khi đã quét
-  const locationSummary = useMemo(() => {
-    const map = new Map<string, { loc: string; pallets: number; cartons: number }>()
-    for (const order of filteredOrders) {
-      const byLoc = order.entries_by_location
-      if (byLoc && byLoc.length > 0) {
-        for (const { loc, pallets, cartons } of byLoc) {
-          const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
-          cur.pallets += pallets
-          cur.cartons += qtyEntryDecimal(cartons, order.material)   // BASE UNIT: quy đổi thùng per-mã
-          map.set(loc, cur)
-        }
-      } else if (order._count.inventory_entries > 0) {
-        // Fallback khi entries_by_location chưa có (dữ liệu cũ)
-        const loc = order.location
-          ? `${order.location.location_code}-${order.location.sub_code}`
-          : '(chưa xác định)'
-        const cur = map.get(loc) ?? { loc, pallets: 0, cartons: 0 }
-        cur.pallets += order._count.inventory_entries
-        cur.cartons += qtyEntryDecimal(order.total_cartons ?? 0, order.material)   // BASE UNIT: quy đổi thùng per-mã
-        map.set(loc, cur)
-      }
-    }
-    return [...map.values()].sort((a, b) => b.pallets - a.pallets)
-  }, [filteredOrders])
+  // Totals + bảng "Vị trí hàng nhập" — SQL tính trên TOÀN BỘ kết quả lọc (RPC inbound_orders_summary,
+  // quy đổi thùng per-mã như qtyEntryDecimal). Cộng trên trang hiện tại = SỐ SAI (thiếu các trang kia).
+  const totalPallets = Number(summary?.total_pallets ?? 0)
+  const totalCartons = Number(summary?.total_cartons ?? 0)
+  const srcCounts = { sx: summary?.sx ?? 0, ncc: summary?.ncc ?? 0, tf: summary?.tf ?? 0 }
+  const locationSummary = summary?.locations ?? []
 
   // Date label
   const hasDate = f.dateFrom || f.dateTo
-  const isToday = f.dateFrom === TODAY && f.dateTo === TODAY
+  const isToday = f.dateFrom === TODAY() && f.dateTo === TODAY()
   let dateLabel = 'Tất cả ngày'
   if (f.dateFrom && f.dateTo) {
     dateLabel = f.dateFrom === f.dateTo
@@ -1481,26 +1483,27 @@ export default function Inbound() {
     .filter(c => !inboundAllowedCats || inboundAllowedCats.includes(c))
     .map(c => ({ value: c, label: c }))
 
+  // Mọi filter đổi phải reset page: 1 (đang đứng trang 5 mà đổi lọc → trang 5 của bộ lọc mới là vô nghĩa)
   const filterDefs: FilterDef[] = [
     { key: 'date',     label: 'Ngày',       type: 'daterange', from: f.dateFrom, to: f.dateTo,
-      onChange: (from, to) => setInbound({ dateFrom: from, dateTo: to }) },
+      onChange: (from, to) => setInbound({ dateFrom: from, dateTo: to, page: 1 }) },
     { key: 'warehouse', label: 'Kho',       type: 'single', options: warehouseOptions, value: f.warehouseId || '', allLabel: 'Tất cả kho',
-      onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+      onChange: v => setInbound({ warehouseId: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
-      onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [] }) },
+      onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'source',   label: 'Nguồn gốc',  type: 'multi', searchable: false, selected: filterSourceTypes,
       options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }],
-      onChange: v => setInbound({ filterSourceTypes: v }) },
+      onChange: v => setInbound({ filterSourceTypes: v, page: 1 }) },
     { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
-      onChange: v => setInbound({ filterShiftIds: v }) },
+      onChange: v => setInbound({ filterShiftIds: v, page: 1 }) },
     { key: 'material', label: 'Material',   type: 'multi', options: materialOptions, selected: filterMaterials, searchable: true,
-      onChange: v => setInbound({ filterMaterials: v }) },
+      onChange: v => setInbound({ filterMaterials: v, page: 1 }) },
     { key: 'cycle',    label: 'Chu kỳ',     type: 'multi', options: cycleOptions,    selected: filterCycles,
-      onChange: v => setInbound({ filterCycles: v }) },
+      onChange: v => setInbound({ filterCycles: v, page: 1 }) },
     { key: 'machine',  label: 'Máy',        type: 'multi', options: machineOptions,  selected: filterMachines,
-      onChange: v => setInbound({ filterMachines: v }) },
+      onChange: v => setInbound({ filterMachines: v, page: 1 }) },
     { key: 'importer', label: 'Người nhập', type: 'text',  value: importerSearch, placeholder: 'Tên người nhập…',
-      onChange: v => setInbound({ importerSearch: v }) },
+      onChange: v => setInbound({ importerSearch: v, page: 1 }) },
   ]
 
   // ─── Saved Views ───
@@ -1525,7 +1528,7 @@ export default function Inbound() {
         {/* Row 1: Title + Search + Views + Density + Create */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-700 shrink-0">Nhập kho</span>
-          <SearchInput value={f.search} onChange={v => setInbound({ search: v })} placeholder="Tìm mã phiếu, hàng hóa, tem pallet…" className="flex-1 min-w-[140px]" />
+          <SearchInput value={f.search} onChange={v => setInbound({ search: v, page: 1 })} placeholder="Tìm mã phiếu, hàng hóa, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -1533,7 +1536,7 @@ export default function Inbound() {
             module="inbound"
             currentFilters={viewSnapshot}
             activeId={activeViewId}
-            onApply={(filters) => setInbound(filters as Partial<typeof f>)}
+            onApply={(filters) => setInbound({ ...(filters as Partial<typeof f>), page: 1 })}
           />
           <button type="button" onClick={toggleDensity}
             className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
@@ -1555,7 +1558,7 @@ export default function Inbound() {
           <FilterBar defs={filterDefs} />
           {!isToday && (
             <button className="inline-flex h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-              onClick={() => setInbound({ dateFrom: TODAY, dateTo: TODAY })}>
+              onClick={() => setInbound({ dateFrom: TODAY(), dateTo: TODAY(), page: 1 })}>
               Hôm nay
             </button>
           )}
@@ -1573,8 +1576,8 @@ export default function Inbound() {
           )}
         </p>
 
-        {/* Vị trí hàng nhập – collapsible trong header */}
-        {!isLoading && filteredOrders.length > 0 && (
+        {/* Vị trí hàng nhập – collapsible trong header (số liệu = RPC summary, toàn bộ kết quả lọc) */}
+        {!isLoading && locationSummary.length > 0 && (
           <div className="rounded-md border border-slate-200 overflow-hidden">
             <button
               className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left"
@@ -1629,14 +1632,16 @@ export default function Inbound() {
       </div>
 
       {/* Dải tile tổng hợp (Manhattan Insight) */}
+      <ListErrorBanner error={listErr} />
       <SummaryBand tiles={[
-        { label: 'Phiếu nhập', value: filteredOrders.length },
+        { label: 'Phiếu nhập', value: summary?.total_orders ?? total },
         { label: 'SX',         value: srcCounts.sx },
         { label: 'NCC',        value: srcCounts.ncc },
         { label: 'TF',         value: srcCounts.tf },
         { label: 'Pallet',     value: totalPallets },
         { label: 'Thực nhập',  value: totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
-        { label: 'Hoàn thành', value: filteredOrders.filter(o => o.status === 'COMPLETED').length },
+        { label: 'Hoàn thành', value: summary?.completed ?? 0 },
+        ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
       ]} />
 
       {/* Scrollable content + Pane (Manhattan Insight) */}
@@ -1718,6 +1723,8 @@ export default function Inbound() {
                   })}
                 </TableBody>
               </Table>
+
+              <PagerNav page={page} totalPages={totalPages} onPage={p => setInbound({ page: p })} />
           </>
         )}
        </div>
@@ -1726,12 +1733,12 @@ export default function Inbound() {
        )}
       </div>
 
-      {/* Footer đếm bản ghi (Manhattan) */}
-      {!isLoading && filteredOrders.length > 0 && (
-        <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>1–{filteredOrders.length} / {filteredOrders.length} phiếu</span>
-          <span className="text-slate-400">{totalPallets} pallet · {totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng</span>
-        </div>
+      {!isLoading && (
+        <ListFooter
+          page={page} pageSize={pageSize} total={total} unit="phiếu"
+          onPageSize={n => setInbound({ pageSize: n, page: 1 })}
+          right={`${totalPallets} pallet · ${totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`}
+        />
       )}
      </div>
 
@@ -1782,7 +1789,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
   selected?: boolean
 }) {
   const dateFull = order.import_date ? format(parseISO(order.import_date), 'dd-MM-yy', { locale: vi }) : '—'
-  const isRowToday = order.import_date?.slice(0, 10) === TODAY
+  const isRowToday = order.import_date?.slice(0, 10) === TODAY()
   const importer = order.imported_by_emp?.name ?? order.created_by_emp?.name ?? '—'
   const matName  = order.material?.short_name ?? order.material?.material_description ?? '—'
   const matCode  = order.material?.material_code ?? ''

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
-import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen } from 'lucide-react'
+import { KeyRound, Plus, Ban, Copy, Check, ShieldAlert, Eye, EyeOff, Trash2, BookOpen, Sparkles } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin } from '@/config/permissions'
@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SettingLabel } from '@/components/shared/SettingsForm'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatDateTime } from '@/utils/formatters'
 
@@ -40,11 +42,171 @@ const ENDPOINT_DOCS: { path: string; scope: string; label: string; fields: strin
 const errMsg = (e: unknown) =>
   (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Có lỗi xảy ra, thử lại'
 
+// ─── AI Vision (Sổ đóng gói) — key AI đặt Ở ĐÂY để "hết hạn thì thay" (user chốt 12/08) ──
+// 14/08: chọn được NHÀ CUNG CẤP (Gemini / GPT). Form rút còn ĐÚNG 3 ô — Tên AI · Model · API key —
+// mọi diễn giải nằm trong tooltip ⓘ (user chốt: "đưa các diễn giải vào tooltip thôi, để đơn giản").
+interface VisionCfg {
+  configured: boolean; provider: string; model: string; key_tail: string | null
+  providers?: string[]; default_models?: Record<string, string>
+}
+const AI_PROVIDERS = [
+  { value: 'gemini', label: 'Google Gemini', sub: 'có bậc miễn phí' },
+  { value: 'openai', label: 'OpenAI GPT',    sub: 'trả theo lượt dùng' },
+]
+const AI_KEY_PAGE: Record<string, string> = {
+  gemini: 'aistudio.google.com/apikey',
+  openai: 'platform.openai.com/api-keys',
+}
+function VisionConfigCard() {
+  const qc = useQueryClient()
+  const [keyInput, setKeyInput] = useState('')
+  const [model, setModel] = useState('')
+  const [provider, setProvider] = useState('')
+  const [keyLocked, setKeyLocked] = useState(true)   // chặn trình duyệt tự điền mật khẩu vào ô key
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const { data: cfg } = useQuery<VisionCfg>({
+    queryKey: ['vision-config'],
+    queryFn: () => apiClient.get('/wms/vision-config').then(r => r.data.data),
+  })
+
+  const saveMut = useMutation({
+    mutationFn: (body: { api_key?: string | null; model?: string; provider?: string }) =>
+      apiClient.put('/wms/vision-config', body).then(r => r.data.data as { configured: boolean }),
+    onSuccess: (d) => {
+      setKeyInput(''); setModel(''); setProvider(''); setKeyLocked(true)
+      setMsg({ kind: 'ok', text: d.configured ? 'Đã lưu — bấm "Kiểm tra" để thử key' : 'Đã gỡ key — app quay về OCR thường' })
+      qc.invalidateQueries({ queryKey: ['vision-config'] })
+    },
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+  const testMut = useMutation({
+    mutationFn: () => apiClient.post('/wms/vision-config/test').then(r => r.data.data as { model: string; latency_ms: number }),
+    onSuccess: (d) => setMsg({ kind: 'ok', text: `Key hoạt động — ${d.model} phản hồi ${d.latency_ms}ms` }),
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+  // Danh sách model lấy TỪ CHÍNH KEY (không phải danh sách viết cứng — tên model hai bên đổi liên tục)
+  const modelsMut = useMutation({
+    mutationFn: (body: { provider: string; api_key?: string }) =>
+      apiClient.post('/wms/vision-config/models', body).then(r => r.data.data as { models: { id: string; cheap: boolean }[]; suggested: string | null }),
+    onSuccess: (d) => setMsg({ kind: 'ok', text: `Đã tải ${d.models.length} model — bản rẻ nhất gợi ý: ${d.suggested ?? '—'}` }),
+    onError: (e) => setMsg({ kind: 'err', text: errMsg(e) }),
+  })
+
+  const busy = saveMut.isPending || testMut.isPending || modelsMut.isPending
+  const curProvider = provider || cfg?.provider || 'gemini'
+  // Danh sách chỉ đúng với nhà cung cấp vừa hỏi; đổi bên khác thì phải tải lại
+  const modelList = modelsMut.data && modelsMut.variables?.provider === curProvider ? modelsMut.data.models : null
+  const labelOf = (v?: string) => AI_PROVIDERS.find(p => p.value === v)?.label ?? v ?? ''
+  // ⚠️ Badge trạng thái phải đọc ĐÚNG giá trị ĐÃ LƯU (cfg), KHÔNG lấy lựa chọn đang nháp — trộn hai
+  // nguồn thì badge ghi "Đang dùng · OpenAI GPT · gemini-flash-lite-latest" khi mới chỉ đổi dropdown.
+  const savedProviderLabel = labelOf(cfg?.provider)
+  // Đổi nhà cung cấp mà chưa gõ model → hiện model mặc định của bên đó (BE cũng tự đắp y hệt)
+  const modelShown = model || (provider && provider !== cfg?.provider ? (cfg?.default_models?.[provider] ?? '') : (cfg?.model ?? ''))
+  return (
+    <div className="shrink-0 mt-3 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm border-t sm:border-t-slate-200">
+      <div className="px-3 py-2 border-b flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+          <Sparkles className="h-4 w-4 text-violet-500" /> AI Vision — đọc chữ in phun (Sổ đóng gói)
+        </span>
+        {cfg && (
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
+            {cfg.configured ? `Đang dùng · ${savedProviderLabel} · ${cfg.model} · key ${cfg.key_tail}` : 'Chưa cấu hình — đang dùng OCR thường'}
+          </span>
+        )}
+        {cfg?.configured && (provider && provider !== cfg.provider) && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+            Chưa lưu — sẽ đổi sang {labelOf(provider)}
+          </span>
+        )}
+      </div>
+      <div className="px-3 py-2.5 space-y-2 text-[12px] text-slate-600">
+        <div className="flex items-end gap-2 flex-wrap">
+          <div>
+            <SettingLabel text="Tên AI" tip={<>Bên nào đọc ảnh chữ in phun trên thùng.<br />
+              <b>Google Gemini</b> — có bậc miễn phí ~1.000 ảnh/ngày, không cần thẻ.<br />
+              <b>OpenAI GPT</b> — trả tiền theo lượt dùng, cần gắn billing.<br />
+              Đổi bên nào cũng dùng chung một cách đọc; key lỗi / hết hạn mức → app <b>tự rơi về OCR thường</b>, công nhân không bị chặn.</>} />
+            <div className="w-44">
+              <SingleSelect options={AI_PROVIDERS} value={curProvider} onChange={setProvider} searchable={false} triggerClassName="w-full" />
+            </div>
+          </div>
+          <div>
+            <SettingLabel text="Model" tip={<>Bấm <b>Tải model</b> để lấy danh sách <b>trực tiếp từ tài khoản của bạn</b> (không phải danh sách
+              viết sẵn — tên model hai bên đổi liên tục), rồi chọn. Bản gắn nhãn <b>rẻ</b> là dòng nhỏ (mini/nano/lite/flash).<br />
+              Để trống = mặc định {cfg?.default_models?.[curProvider] ?? '—'}. Model nghỉ hưu / gõ sai → hệ thống <b>tự dò model còn sống</b> của chính key đó rồi lưu lại.<br />
+              Danh sách lọc theo tên nên vẫn có thể lọt bản không đọc được ảnh — bấm <b>Kiểm tra</b> là biết ngay.</>} />
+            <div className="flex items-center gap-1">
+              <div className="w-56">
+                {modelList
+                  ? <SingleSelect
+                      options={modelList.map(m => ({ value: m.id, label: m.id, sub: m.cheap ? 'rẻ' : undefined }))}
+                      value={modelShown} onChange={setModel} triggerClassName="w-full" />
+                  : <Input value={modelShown} onChange={e => setModel(e.target.value)}
+                      placeholder={cfg?.default_models?.[curProvider] ?? ''} className="h-8 w-full text-[12px] font-mono" />}
+              </div>
+              <Button size="sm" variant="outline" className="h-8 px-2 text-[11px]" disabled={busy}
+                onClick={() => { setMsg(null); modelsMut.mutate({ provider: curProvider, ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}) }) }}>
+                {modelsMut.isPending ? 'Đang tải…' : 'Tải model'}
+              </Button>
+            </div>
+          </div>
+          <div>
+            <SettingLabel text="API key" tip={<>Key được lưu <b>mã hóa</b>, không hiện lại và không lộ qua API đọc chung.
+              Hết hạn / bị khóa → dán key mới vào đây là xong, không cần sửa gì khác. Để trống ô này khi chỉ muốn đổi model hoặc nhà cung cấp.</>} />
+            {/* Ô mật khẩu trong trang có form đăng nhập → trình duyệt TỰ ĐIỀN mật khẩu đã lưu vào đây
+                (thấy trên ảnh user 14/08: ô hiện sẵn 8 chấm, nút Lưu sáng dù chưa ai gõ). Lưu nhầm
+                = ghi key rác, AI Vision chết câm. `new-password` + readOnly-tới-khi-focus chặn cả
+                Chrome/Edge lẫn trình quản lý mật khẩu. */}
+            <Input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
+              readOnly={keyLocked} onFocus={() => setKeyLocked(false)}
+              name="wms-ai-vision-key" autoComplete="new-password" spellCheck={false}
+              data-lpignore="true" data-1p-ignore="true"
+              placeholder={curProvider === 'openai' ? 'sk-… (dán key OpenAI)' : 'AIza… (dán key Google)'}
+              className="h-8 w-72 text-[12px] font-mono" />
+            <span className="block text-[9px] text-slate-400 mt-0.5">
+              {cfg?.configured ? `Đang dùng key ${cfg.key_tail} · ` : ''}Lấy key tại{' '}
+              <a href={`https://${AI_KEY_PAGE[curProvider]}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                {AI_KEY_PAGE[curProvider]}
+              </a>
+            </span>
+          </div>
+          <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700"
+            disabled={busy || (!keyInput.trim() && !model.trim() && (!provider || provider === cfg?.provider))}
+            onClick={() => {
+              setMsg(null)
+              saveMut.mutate({
+                ...(keyInput.trim() ? { api_key: keyInput.trim() } : {}),
+                ...(model.trim() ? { model: model.trim() } : {}),
+                ...(provider ? { provider } : {}),
+              })
+            }}>
+            {saveMut.isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={busy || !cfg?.configured}
+            onClick={() => { setMsg(null); testMut.mutate() }}>
+            {testMut.isPending ? 'Đang thử…' : 'Kiểm tra'}
+          </Button>
+          {cfg?.configured && (
+            <Button size="sm" variant="ghost" className="h-8 text-red-600 hover:text-red-700 hover:bg-red-50" disabled={busy}
+              onClick={() => { setMsg(null); saveMut.mutate({ api_key: null }) }}>
+              Gỡ key
+            </Button>
+          )}
+        </div>
+        {msg && (
+          <div className={`rounded px-2 py-1.5 text-[12px] ${msg.kind === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{msg.text}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 type Confirm = { action: 'revoke' | 'delete'; ids: string[] }
 
 export default function IntegrationKeys() {
   const user = useAuthStore(s => s.user)
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
   const qc = useQueryClient()
 
   const [showForm, setShowForm] = useState(false)
@@ -237,6 +399,9 @@ export default function IntegrationKeys() {
         </div>
         <div className="border-t px-3 py-1.5 text-[10px] text-slate-400 shrink-0">{keys.length} key{selected.size > 0 ? ` · đã chọn ${selected.size}` : ''}</div>
       </div>
+
+      {/* AI Vision — key Gemini cho Sổ đóng gói (đặt cùng trang kết nối để Admin thay khi hết hạn) */}
+      <VisionConfigCard />
 
       {/* Form tạo key */}
       <FormSheet

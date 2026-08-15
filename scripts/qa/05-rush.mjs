@@ -1,10 +1,14 @@
 // GÓI RUSH — "giờ cao điểm": 4 nhóm thao tác THẬT chạy đồng thời ~2', ~25 in-flight.
 // Không nằm trong run-all mặc định (nặng) — chạy tay trước go-live: node scripts/qa/05-rush.mjs
 // Trong lúc chạy nên mở app refresh vài lần (không được văng /login). Kết thúc: tự dọn + tự check bất biến.
-import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, FIX } from './lib.mjs'
+import { login, api, check, finish, pool, restAll, teardownGdo, cleanupTagged, resolveFixtures, FIX } from './lib.mjs'
 
 console.log('── GÓI RUSH (giờ cao điểm ~2 phút) ──')
 await login()
+// FIX.MAT_POOL_ID phải tra lúc CHẠY: id hardcode cũ (4a55517f…) đã không còn trong DB
+// ⇒ mọi lần tạo phiếu nhập của gói này trả 404 "không tìm thấy hàng hóa" mà không ai biết
+// (gói không nằm trong run-all). Đo 28/07.
+await resolveFixtures()
 
 async function poolRemaining() {
   const rows = await restAll('InventoryEntry',
@@ -19,7 +23,7 @@ const t0 = Date.now()
 // A. 8 người tạo & xuất luôn (kho NONE — không đụng pool)
 const groupA = Array.from({ length: 8 }, (_, k) => async () => {
   const q = await api('/wms/outbound/quick-export', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_NONE.id, dvvt: FIX.DVVT_TAG,   // xuất luôn = ngày hôm nay (luật FUTURE_DATE 02/08)
     delivery_code: `RUSH-A${k}-` + Math.floor(Math.random() * 1e6), license_plate: '88A-' + (100 + k),
     customer_name: 'RUSH KH ' + k, items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 1 + (k % 3) }],
   })
@@ -29,7 +33,7 @@ const groupA = Array.from({ length: 8 }, (_, k) => async () => {
 // B. 6 người nhập kho (tạo phiếu + nhập tay + hủy) — đụng pool 510000306@Bluestar 2 chiều
 const groupB = Array.from({ length: 6 }, (_, k) => async () => {
   const c = await api('/wms/inbound-orders', 'POST', {
-    warehouse_id: FIX.WH_QTY.id, material_id: '4a55517f-a069-4f43-a889-376eb285cfce',
+    warehouse_id: FIX.WH_QTY.id, material_id: FIX.MAT_POOL_ID,
     planned_cartons: 3, source_type: 'FACTORY', notes: 'QA-RUSH',
   })
   const ord = c.j?.data?.order ?? c.j?.data
@@ -46,7 +50,7 @@ const groupB = Array.from({ length: 6 }, (_, k) => async () => {
 // C. 4 người xuất kho QTY (tạo PENDING → Xuất luôn → gỡ HT → xuất lại → dọn)
 const groupC = Array.from({ length: 4 }, (_, k) => async () => {
   const c = await api('/wms/outbound', 'POST', {
-    delivery_date: FIX.DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,
+    delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,   // sẽ Xuất luôn → ngày hôm nay
     customer_name: 'An Sơn', shipto_party: FIX.WH_NONE.code,
     delivery_code: `RUSH-C${k}-` + Math.floor(Math.random() * 1e6),
     items: [{ material_code: FIX.MAT_POOL, cartons_ordered: 2 }],
@@ -81,7 +85,7 @@ const groupD = Array.from({ length: 3 }, (_, k) => async () => {
 // E. 6 "người xem" GET dồn dập trong lúc trên chạy
 const groupE = Array.from({ length: 6 }, (_, k) => async () => {
   for (let i = 0; i < 5; i++) {
-    const paths = ['/wms/outbound?date_from=' + FIX.DATE + '&date_to=' + FIX.DATE, '/wms/inbound-orders?limit=20',
+    const paths = ['/wms/outbound?date_from=' + FIX.EXEC_DATE + '&date_to=' + FIX.EXEC_DATE, '/wms/inbound-orders?limit=20',
       '/wms/inventory?limit=50', '/tms/orders?source_type=TRANSFER&date_from=2026-12-01', '/tms/gate-registrations']
     const r = await api(paths[(k + i) % paths.length])
     if (r.s !== 200) errs.push(`E${k}.${i}:${r.s}`)

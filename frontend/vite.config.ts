@@ -21,6 +21,9 @@ export default defineConfig({
         icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
       },
       workbox: {
+        // Web Push: handler push/notificationclick nằm ở public/push-sw.js, nạp vào SW
+        // qua importScripts (generateSW không cho viết code SW trực tiếp).
+        importScripts: ['push-sw.js'],
         // PHẢI có 'wasm': máy không có BarcodeDetector native (iPhone/desktop) giải mã QR
         // bằng zxing_reader.wasm nạp lúc chạy — thiếu precache → offline camera lên
         // nhưng KHÔNG giải mã được tem (bug thật user báo 12/07).
@@ -52,6 +55,8 @@ export default defineConfig({
   // ID build — buster cho persist cache React Query (xem vite-env.d.ts)
   define: {
     __BUILD_ID__: JSON.stringify(new Date().toISOString()),
+    // SHA commit của bản build — FE so với GET /api/version để biết máy có đang giữ bản cũ không
+    __BUILD_SHA__: JSON.stringify((process.env.VERCEL_GIT_COMMIT_SHA ?? 'local').slice(0, 8)),
   },
   resolve: {
     alias: {

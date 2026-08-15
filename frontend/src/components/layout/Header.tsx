@@ -1,7 +1,8 @@
 import { useLocation, Link } from 'react-router-dom'
-import { Sun, Moon, Bell, Menu, ChevronRight } from 'lucide-react'
+import { Sun, Moon, Menu, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { NotificationBell } from './NotificationBell'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -12,8 +13,8 @@ import {
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { MobileNav } from './MobileNav'
-import { Badge } from '@/components/ui/badge'
 import { OfflineQueueHeaderButton } from '@/offline/OfflineQueuePanel'
+import { AppUpdateButton } from '@/components/shared/AppUpdateButton'
 
 const breadcrumbMap: Record<string, { label: string; parent?: string; parentPath?: string }> = {
   '/': { label: 'Dashboard' },
@@ -64,7 +65,7 @@ export function Header() {
     .toUpperCase() ?? 'U'
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-4 gap-4">
+    <header className="sticky top-0 z-40 flex h-12 lg:h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-3 lg:px-4 gap-2 lg:gap-4">
       {/* Mobile menu */}
       <Sheet>
         <SheetTrigger asChild>
@@ -96,16 +97,11 @@ export function Header() {
       <div className="flex flex-1 lg:flex-none justify-end items-center gap-2">
         {/* Hàng đợi quét offline — chỉ báo lệnh chưa lên, cạnh chuông (bấm mở danh sách) */}
         <OfflineQueueHeaderButton />
-        {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative text-slate-300 hover:bg-white/10 hover:text-white">
-          <Bell className="h-5 w-5" />
-          <Badge
-            variant="danger"
-            className="absolute -top-0.5 -right-0.5 h-4 w-4 p-0 text-[10px] flex items-center justify-center rounded-full"
-          >
-            3
-          </Badge>
-        </Button>
+        {/* Cập nhật app — cạnh chuông (user chốt 30/07): PWA giữ bản cũ trong máy, phải có nút
+            ép lấy bản mới; điện thoại không có Ctrl+Shift+R. Sáng lên khi phát hiện bản mới. */}
+        <AppUpdateButton />
+        {/* Chuông = trung tâm thông báo thật (06/08): tab Cá nhân / Chung / Cài đặt chuông */}
+        <NotificationBell />
 
         {/* Theme toggle */}
         <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-slate-300 hover:bg-white/10 hover:text-white">

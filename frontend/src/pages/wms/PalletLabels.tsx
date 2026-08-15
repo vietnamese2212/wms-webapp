@@ -14,15 +14,18 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
-import { parseCodeFields } from '@/components/shared/palletLabel'
+import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import {
-  useWarehouses, useMaterials, useInventoryEntries, useInventoryFacets,
-  useLogPalletPrints, usePalletPrints, useTransportCompanies, useSystemSettings, type PalletPrintRow,
+  useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
+  useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
+  useTransportCompanies, useSystemSettings, useMachines, type PalletPrintRow,
 } from '@/api/hooks'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
@@ -181,7 +184,7 @@ function PalletLabel({ d }: { d: LabelData }) {
   )
 }
 
-const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 // ─── Material combobox (lọc theo Loại hàng nếu có) ─────────────
 function MatPicker({ value, label, category, onPick }: {
@@ -189,8 +192,11 @@ function MatPicker({ value, label, category, onPick }: {
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
-  const enabled = q.length > 1 || !!category
-  const { data: mats = [] } = useMaterials({ search: q.length > 1 ? q : undefined, category: category || undefined }, enabled)
+  // Tìm TRÊN SERVER, tối đa 50 dòng — trước đây chọn Loại hàng là kéo cả danh mục mã của loại đó
+  // về trình duyệt. Vẫn giữ hành vi cũ: bấm vào ô (chưa gõ) mà đã chọn Loại hàng thì hiện 50 mã đầu.
+  const qDeb = useDebouncedValue(q, 250)
+  const enabled = open && (qDeb.length > 1 || !!category)
+  const { data: mats = [] } = useMaterials({ search: qDeb.length > 1 ? qDeb : undefined, category: category || undefined, limit: 50 }, enabled)
   const showList = open && enabled && mats.length > 0
   return (
     <div className="relative">
@@ -266,7 +272,7 @@ export default function PalletLabels() {
   // ── Generate form ──
   const [genCat, setGenCat]   = useState<string>(SAVED.genCat ?? '')   // Loại hàng — lọc nhanh mã hàng
   const [mat, setMat]         = useState<Material | null>(null)
-  const [prodDate, setProdDate] = useState(TODAY)
+  const [prodDate, setProdDate] = useState(TODAY())
   const [cycle, setCycle]     = useState<string>(SAVED.cycle ?? '')
   const [machine, setMachine] = useState<string>(SAVED.machine ?? '')
   const [nmsx, setNmsx]       = useState<string>(SAVED.nmsx ?? '')
@@ -277,7 +283,7 @@ export default function PalletLabels() {
   // ── Sinh tem V2 (tem `;`) — HSD tường minh + QA; mã lô = mã tắt mã hàng + NGÀY NHẬP KHO + Máy + STT ──
   // Thành phần ngày trong mã lô = ngày NHẬP KHO (user chốt 10/07 — vd SI260612N021 in ngày 12/06/26,
   // NSX 11/03/26 nằm riêng ở đoạn 4). Mặc định hôm nay, sửa được.
-  const [entryDateV2, setEntryDateV2] = useState<string>(TODAY)
+  const [entryDateV2, setEntryDateV2] = useState<string>(TODAY())
   const [hsdV2, setHsdV2]     = useState('')      // HSD (auto NSX + hạn dùng mã, sửa được)
   const [qaOkV2, setQaOkV2]   = useState(true)    // QA đạt (1) / X (0)
   const [hourV2, setHourV2]   = useState('1')     // MẺ SX (đoạn 6) — chọn 1..10
@@ -304,6 +310,16 @@ export default function PalletLabels() {
 
   // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
   const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
+  // DANH MỤC MÁY theo kho NMSX (user 13/08): kho có khai máy → ô Máy thành dropdown PHẢI chọn;
+  // chưa khai (hoặc NMSX 'O'/trống) → điền tự do như cũ. Chỉ áp form V1 hàng thành phẩm (không NCC).
+  const { data: nmsxMachines } = useMachines(nmsxWarehouseId ?? undefined)
+  const nmsxMachineOpts = useMemo(() => (nmsxWarehouseId ? (nmsxMachines ?? []) : [])
+    .filter(m => m.is_active).map(m => ({ value: m.code, label: m.code + (m.note ? ` — ${m.note}` : '') })), [nmsxMachines, nmsxWarehouseId])
+  useEffect(() => {
+    // đổi NMSX → máy đang điền không thuộc danh mục kho mới thì xóa (khỏi sinh tem máy lạ)
+    if (nmsxMachineOpts.length && machine && !nmsxMachineOpts.some(o => o.value === machine)) setMachine('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nmsxMachineOpts])
   // Số lượng auto theo định mức thùng/pallet (ngoại lệ theo kho NMSX nếu có) khi chọn mã / đổi kho
   useEffect(() => {
     if (!mat) return
@@ -442,6 +458,13 @@ export default function PalletLabels() {
     warehouse_ids: rpWh ? [rpWh] : undefined,
     categories: rpCats.length ? rpCats : undefined,
   }).data
+  // Filter Tên hàng: tìm trên server (facet không còn nhồi cả danh mục mã hàng vào payload)
+  const [rpMatTerm, setRpMatTerm] = useState('')
+  const { data: rpMatRows = [], isFetching: rpMatLoading } = useMaterials(
+    { search: rpMatTerm || undefined, category: rpCats.length === 1 ? rpCats[0] : undefined, limit: 50 },
+    !!rpMatTerm)
+  // Nhãn cho mã ĐANG CHỌN (state này được lưu lại) — kẻo chip lọc in uuid thô khi mở lại tab.
+  const { data: rpPickedMats = [] } = useMaterialsByIds(rpMatIds)
   const { data: invData } = useInventoryEntries({
     warehouse_ids: rpWh ? [rpWh] : undefined,
     categories: rpCats.length ? rpCats : undefined,
@@ -509,6 +532,11 @@ export default function PalletLabels() {
     warehouse_ids: auWh ? [auWh] : undefined,
     categories: auCats.length ? auCats : undefined,
   }).data
+  const [auMatTerm, setAuMatTerm] = useState('')
+  const { data: auMatRows = [], isFetching: auMatLoading } = useMaterials(
+    { search: auMatTerm || undefined, category: auCats.length === 1 ? auCats[0] : undefined, limit: 50 },
+    !!auMatTerm)
+  const { data: auPickedMats = [] } = useMaterialsByIds(auMatIds)
 
   // (1) Lấy pallet THẬT từ tồn kho theo filter
   const { data: auInvData } = useInventoryEntries({
@@ -635,12 +663,6 @@ export default function PalletLabels() {
   const [histCycles, setHistCycles]   = useState<string[]>([])
   const [histMachines, setHistMachines] = useState<string[]>([])
   const [histBy, setHistBy]     = useState<string[]>([])
-  const { data: allMats = [] } = useMaterials(undefined, tab === 'history')
-  const matByCode = useMemo(() => {
-    const m = new Map<string, Material>()
-    for (const x of allMats as Material[]) m.set(x.material_code, x)
-    return m
-  }, [allMats])
   // Search server-side (mã pallet / mã hàng / người in) — debounce 400ms, tối thiểu 3 ký tự
   const [histSearch, setHistSearch] = useState('')
   const [histSearchDeb, setHistSearchDeb] = useState('')
@@ -649,30 +671,58 @@ export default function PalletLabels() {
   // Bắt buộc tối thiểu 1 filter (khoảng ngày HOẶC search) mới tải — tránh dump toàn bộ log in.
   // Các filter còn lại (Chế độ/Tên hàng/Chu kỳ/Máy-NCC/Người in) lọc client-side trên tập đã tải.
   const histReady = !!(histFrom || histTo || histSearchOk)
-  const { data: histRows = [] } = usePalletPrints({
+  const [histPage, setHistPage] = useState(1)
+  const [histPageSize, setHistPageSize] = useState(50)
+  // MỌI bộ lọc xuống server: lọc trên tập đã tải là lọc trong 1 trang (ra thiếu mà không báo).
+  // Trang cắt theo PHIẾU IN nên 1 lệnh in không bị xẻ đôi qua 2 trang.
+  const histBase = {
     date_from: histFrom || undefined, date_to: histTo || undefined,
     search: histSearchOk ? histSearchDeb : undefined,
-  }, tab === 'history' && histReady)
-  const histMatOpts = useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))]
-    .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histRows, matByCode])
-  const histByOpts = useMemo(() => [...new Set(histRows.map(r => r.printed_by_name).filter((x): x is string => !!x))].map(n => ({ value: n, label: n })), [histRows])
-  const histCycleOpts = useMemo(() => [...new Set(histRows.map(r => r.cycle).filter((x): x is string => !!x))].map(c => ({ value: c, label: c })), [histRows])
+    modes: histMode.join(',') || undefined,
+    material_codes: histMats.join(',') || undefined,
+    cycles: histCycles.join(',') || undefined,
+    machines: histMachines.join(',') || undefined,
+    printers: histBy.join(',') || undefined,
+  }
+  const { data: histData } = usePalletPrintsPaged(
+    { ...histBase, page: histPage, page_size: histPageSize },
+    tab === 'history' && histReady,
+  )
+  const histRows = histData?.rows ?? []
+  const histTotalBatches = histData?.total ?? 0
+  const histTotalPages   = Math.max(1, Math.ceil(histTotalBatches / histPageSize))
+  // Ô chọn bộ lọc lấy trên TOÀN BỘ khoảng ngày/từ khoá (không phải trang đang xem)
+  const { data: histFacets } = usePalletPrintFacets(
+    { date_from: histFrom || undefined, date_to: histTo || undefined, search: histSearchOk ? histSearchDeb : undefined },
+    tab === 'history' && histReady,
+  )
+  // Đổi bộ lọc → về trang 1 (nếu không, đang ở trang 7 mà lọc còn 2 trang thì bảng rỗng khó hiểu)
+  useEffect(() => { setHistPage(1) },
+    [histFrom, histTo, histSearchDeb, histMode.join(','), histMats.join(','), histCycles.join(','), histMachines.join(','), histBy.join(',')])
+  // Tên hàng + hệ số thùng/hộp: chỉ tra ĐÚNG các mã có trong lịch sử đang xem
+  // (trước đây nạp cả danh mục mã hàng về trình duyệt).
+  const { data: allMats = [] } = useMaterialsByCodes(
+    useMemo(() => [...new Set(histRows.map(r => r.material_code).filter((x): x is string => !!x))], [histRows]),
+    tab === 'history',
+  )
+  const matByCode = useMemo(() => {
+    const m = new Map<string, MaterialLite>()
+    for (const x of allMats) m.set(x.material_code, x)
+    return m
+  }, [allMats])
+  const histMatOpts = useMemo(() => (histFacets?.materials ?? [])
+    .map(c => ({ value: c, label: matByCode.get(c)?.short_name ? `${c} – ${matByCode.get(c)!.short_name}` : c })), [histFacets, matByCode])
+  const histByOpts = useMemo(() => (histFacets?.printers ?? []).map(n => ({ value: n, label: n })), [histFacets])
+  const histCycleOpts = useMemo(() => (histFacets?.cycles ?? []).map(c => ({ value: c, label: c })), [histFacets])
   // Đoạn 4 (Máy / NCC): value = giá trị thô trong log; nhãn = tên NCC nếu là hàng NCC, ngược lại giữ mã Máy
   const histMachineOpts = useMemo(() => {
     const seen = new Map<string, string>()
-    for (const r of histRows) { if (r.machine && !seen.has(r.machine)) seen.set(r.machine, seg4Display(r.category, r.machine)) }
+    for (const m of (histFacets?.machines ?? [])) if (m.v && !seen.has(m.v)) seen.set(m.v, seg4Display(m.c, m.v))
     return [...seen.entries()].map(([value, label]) => ({ value, label }))
-  }, [histRows, nccNameByCode])
-  const histFiltered = useMemo(() => histRows.filter(r =>
-    (!histMode.length || histMode.includes(r.mode)) &&
-    (!histMats.length || (r.material_code != null && histMats.includes(r.material_code))) &&
-    (!histCycles.length || (r.cycle != null && histCycles.includes(r.cycle))) &&
-    (!histMachines.length || (r.machine != null && histMachines.includes(r.machine))) &&
-    (!histBy.length || (r.printed_by_name != null && histBy.includes(r.printed_by_name)))
-  ), [histRows, histMode, histMats, histCycles, histMachines, histBy])
+  }, [histFacets, nccNameByCode])
   const histBatches = useMemo(() => {
     const m = new Map<string, { key: string; at: string; mode: string; by: string | null; rows: PalletPrintRow[] }>()
-    for (const r of histFiltered) {
+    for (const r of histRows) {
       // Có batch_id thì gom theo batch; chưa có (log cũ) → gom theo created_at+mode+người in
       // (mọi tem trong 1 lần bấm In chia sẻ cùng created_at vì backend set 1 lần)
       const key = r.batch_id ?? `${r.created_at}|${r.mode}|${r.printed_by_name ?? ''}`
@@ -681,7 +731,7 @@ export default function PalletLabels() {
       else m.set(key, { key, at: r.created_at, mode: r.mode, by: r.printed_by_name, rows: [r] })
     }
     return [...m.values()].sort((a, b) => b.at.localeCompare(a.at))
-  }, [histFiltered])
+  }, [histRows])
 
   function logRowToLabel(r: PalletPrintRow): LabelData {
     const f = parseCodeFields(r.qr_code)   // đúng cả 2 format (V1 `_` / V2 `;`)
@@ -731,7 +781,9 @@ export default function PalletLabels() {
     { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: rpCats,
       onChange: v => { setRpCats(v); setRpMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: rpMatIds, onChange: setRpMatIds,
-      options: (rpFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+      serverSearch: true, onSearchChange: setRpMatTerm, loading: rpMatLoading,
+      selectedOpts: rpPickedMats.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })),
+      options: rpMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: rpCycles, onChange: setRpCycles,
       searchable: (rpFacets?.cycles ?? []).length > 6, options: (rpFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: rpMachines, onChange: setRpMachines,
@@ -746,7 +798,9 @@ export default function PalletLabels() {
     { key: 'cat', label: 'Loại hàng', type: 'multi', searchable: false, options: catOpts, selected: auCats,
       onChange: v => { setAuCats(v); setAuMatIds([]) } },
     { key: 'mat', label: 'Tên hàng', type: 'multi', selected: auMatIds, onChange: setAuMatIds,
-      options: (auFacets?.materials ?? []).map((m: { id: string; code: string; name: string | null }) => ({ value: m.id, label: m.name ? `${m.code} – ${m.name}` : m.code })) },
+      serverSearch: true, onSearchChange: setAuMatTerm, loading: auMatLoading,
+      selectedOpts: auPickedMats.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })),
+      options: auMatRows.map(m => ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })) },
     { key: 'cyc', label: 'Chu kỳ', type: 'multi', selected: auCycles, onChange: setAuCycles,
       searchable: (auFacets?.cycles ?? []).length > 6, options: (auFacets?.cycles ?? []).map((c: string) => ({ value: c, label: c })) },
     { key: 'mac', label: 'Máy', type: 'multi', selected: auMachines, onChange: setAuMachines,
@@ -853,10 +907,11 @@ export default function PalletLabels() {
           ]
         : tab === 'history'
         ? [
-            { label: 'Số lệnh in', value: histBatches.length, accent: histBatches.length > 0 },
-            { label: 'Tổng tem', value: histRows.length },
-            { label: 'Sinh mới', value: histBatches.filter(b => b.mode !== 'REPRINT').length },
-            { label: 'In lại', value: histBatches.filter(b => b.mode === 'REPRINT').length },
+            // 4 ô đếm trên TOÀN BỘ bộ lọc (BE trả) — đếm `histBatches` là đếm trang đang xem
+            { label: 'Số lệnh in', value: histTotalBatches, accent: histTotalBatches > 0 },
+            { label: 'Tổng tem', value: histData?.total_rows ?? 0 },
+            { label: 'Sinh mới', value: histData?.new_n ?? 0 },
+            { label: 'In lại', value: histData?.reprint_n ?? 0 },
           ]
         : [
             { label: 'Số tem', value: labels.length, accent: labels.length > 0 },
@@ -956,7 +1011,7 @@ export default function PalletLabels() {
                   <Select value={hourV2} onValueChange={setHourV2}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 10 }, (_, i) => String(i + 1)).map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                      {batchNoOptions().map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1038,7 +1093,13 @@ export default function PalletLabels() {
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Máy <span className="text-red-500">*</span></Label>
-                    <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                    {nmsxMachineOpts.length ? (
+                      /* Kho NMSX đã khai danh mục máy (Cài đặt WMS → Máy) → PHẢI chọn trong danh mục (user 13/08) */
+                      <SingleSelect options={nmsxMachineOpts} value={machine} onChange={setMachine}
+                        placeholder="Chọn máy…" triggerClassName="h-8 w-full" />
+                    ) : (
+                      <Input className="h-8 text-sm" placeholder="M1" value={machine} onChange={e => setMachine(e.target.value)} />
+                    )}
                   </div>
                 </div>
               )}
@@ -1372,6 +1433,17 @@ export default function PalletLabels() {
                 )})}
               </tbody>
             </table>
+            {histReady && (
+              <>
+                <PagerNav page={histPage} totalPages={histTotalPages} onPage={setHistPage} />
+                {/* Dòng/trang chỉ tới 100: 1 lệnh in nở ra ~30 tem, nên 500 lệnh ≈ 15.000 tem
+                    ≈ 4,9MB → vượt trần 4,5MB của Vercel (đo 28/07). */}
+                <ListFooter page={histPage} pageSize={histPageSize} total={histTotalBatches} unit="lệnh in"
+                  options={[20, 50, 100]}
+                  onPageSize={n => { setHistPageSize(n); setHistPage(1) }}
+                  right={`${(histData?.total_rows ?? 0).toLocaleString('vi-VN')} tem`} />
+              </>
+            )}
             </div>
           </div>
         ) : (

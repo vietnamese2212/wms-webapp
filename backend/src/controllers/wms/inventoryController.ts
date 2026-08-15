@@ -3,15 +3,19 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { randomUUID } from 'crypto'
-import { computePctDate } from '../../utils/shelfLife'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
-import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { safeSearch, safeFilterValue } from '../../utils/search'
+import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from '../../utils/pagination'
+import { scopeCategoriesOf, categoryAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
 import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
+import { getOrgProfile } from '../../utils/settings'
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -19,7 +23,7 @@ const ENTRY_SELECT = `
   production_date, status, import_date, update_date, adjustment_qty, ncc_id, shelf_life_days,
   batch, expiry_date, parent_pallet_code, origin,
   stocktake_at, stocktake_flagged, stocktake_flag_note,
-  created_at, updated_at,
+  created_at, updated_at, created_by, updated_by,
   location:Location(id, location_code, sub_code, sub_name, sub_type, warehouse:Warehouse(id, name, code)),
   material:Material(id, material_code, short_name, shelf_life_days, supplier_shelf_life_overrides, category, base_unit, entry_unit, units_per_carton),
   ncc:TransportCompany!ncc_id(id, name),
@@ -40,25 +44,35 @@ function scopeWhIds(req: Request): string[] | null {
 // KHÔNG tin riêng cột warehouse_id (đa số NULL với pallet QR).
 async function guardEntriesScope(req: Request, res: Response, ids: string[]): Promise<boolean> {
   const scope = scopeWhIds(req)
-  if (scope === null) return true
-  // Chunk ids (cap ~1000 dòng/response + URL dài) — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu
+  const cats = scopeCategoriesOf(req)
+  if (scope === null && cats === null) return true
+  // Chunk ids 300 — phải kiểm ĐỦ MỌI id, không chỉ 1000 đầu.
+  // ⚠️ 300 là TRẦN CỨNG của filter `.in()` (id 36 ký tự): đo 27/07 trên PostgREST staging —
+  // 300 id = URL 11KB → 200; 400 id = 14,5KB → đứt kết nối; 700 id = 25KB → 400 Bad Request.
+  // Trước đây chunk 500 (18KB) → user có scope kho bulk >400 pallet là hỏng.
   const data: unknown[] = []
-  for (let i = 0; i < ids.length; i += 500) {
-    const chunk = ids.slice(i, i + 500)
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300)
     const r = await supabase.from('InventoryEntry')
-      .select('id, warehouse_id, location:Location!location_id(warehouse_id)')
+      .select('id, warehouse_id, location:Location!location_id(warehouse_id), material:Material(category)')
       .in('id', chunk)
     if (r.error) { fail(res, 500, 'DB_ERROR', r.error.message); return false }
     data.push(...(r.data ?? []))
   }
   type LocWh = { warehouse_id: string | null }
-  const rows = data as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null }>
+  type MatCat = { category: string | null }
+  const rows = data as unknown as Array<{ warehouse_id: string | null; location: LocWh | LocWh[] | null; material: MatCat | MatCat[] | null }>
   for (const e of rows) {
     const loc = Array.isArray(e.location) ? e.location[0] : e.location
     const wh = loc?.warehouse_id ?? e.warehouse_id ?? null
-    if (!wh || !scope.includes(wh)) {
+    if (scope !== null && (!wh || !scope.includes(wh))) {
       fail(res, 403, 'FORBIDDEN', 'Pallet không thuộc kho trong phạm vi của bạn')
       return false
+    }
+    // Mirror guardEntryRead: chặn ghi lên pallet LOẠI ngoài phạm vi (dù cùng kho) — chống IDOR-loại.
+    const mat = Array.isArray(e.material) ? e.material[0] : e.material
+    if (!categoryAllowed(req, mat?.category)) {
+      fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return false
     }
   }
   return true
@@ -111,25 +125,44 @@ interface FilterParams {
 // PostgreSQL dùng '\' làm ESCAPE mặc định nên '\_' = literal '_'. Áp cả term truyền vào RPC omni.
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m)
 
+// Trần an toàn cho số id nhét vào filter `col.in.(…)`: mỗi id ~37 ký tự → 350 id ≈ 13KB URL là mức
+// PostgREST bắt đầu từ chối (đo 26/07: term khớp 350 id còn OK, 371 id → API 500). Giữ dưới mức đó.
+const OMNI_ID_CAP = 300
+
+// Thu hẹp id omni-search về id THỰC SỰ có dữ liệu trong bảng tồn (RPC DISTINCT trong DB — migration
+// 20260726_omni_search_narrow.sql). KHÔNG mất dòng (id không có trong bảng thì không khớp dòng nào),
+// chỉ để URL filter không phình: term "-" 453 mã → 38, "_" 194 vị trí → 171.
+// RPC chưa apply → trả nguyên (giữ hành vi cũ) rồi bị chặn bởi trần trên với thông báo rõ.
+async function narrowOmniIds(matIds?: string[], locIds?: string[]): Promise<[string[] | undefined, string[] | undefined]> {
+  const call = async (fn: string, ids?: string[]): Promise<string[] | undefined> => {
+    if (!ids || ids.length <= 60) return ids   // ít id → khỏi thêm roundtrip
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc(fn, { p_ids: ids }) as any)
+    if (error) return ids
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((data ?? []) as any[]).map(r => String(r.id))
+  }
+  return [await call('omni_narrow_material_ids', matIds), await call('omni_narrow_location_ids', locIds)]
+}
+
+// Mảng rỗng → null cho tham số RPC (null = "không lọc theo chiều này")
+const arrOrNull = (v: string[] | null | undefined): string[] | null => (v && v.length ? v : null)
+
 function applyInventoryFilters(q: any, p: FilterParams): any {
   // Mặc định "Còn tồn" = status active VÀ tồn > 0 (user 18/07: upload cho phép tồn=0 → 31k dòng
   // tồn=0 status IN_STOCK lọt list dù filter ghi "Còn tồn"). Muốn xem cả tồn=0 → chọn "Tất cả".
   if (!p.status || p.status === '') q = q.in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING']).gt('cartons_remaining', 0)
   else if (p.status !== 'ALL')       q = q.eq('status', p.status)
 
-  if (p.locationFilter !== null && p.locationFilter !== undefined) {
-    const whIds = p.warehouseIds ?? []
-    if (p.locationFilter.length > 0 && whIds.length > 0) {
-      const locStr = p.locationFilter.join(',')
-      const whStr  = whIds.join(',')
-      q = q.or(`location_id.in.(${locStr}),and(location_id.is.null,warehouse_id.in.(${whStr}))`)
-    } else if (p.locationFilter.length > 0) {
-      q = q.in('location_id', p.locationFilter)
-    } else if (whIds.length > 0) {
-      // Kho chưa có location nào nhưng có thể có POSM
-      q = q.is('location_id', null).in('warehouse_id', whIds)
-    }
-  }
+  // Lọc KHO = cột warehouse_id TRỰC TIẾP (index idx_ie_wh_importdate) — cột đã backfill từ Location
+  // + mọi writer set khi tạo / sync khi đổi vị trí (migration 20260727_entry_warehouse_id_direct).
+  // ⚠️ TRƯỚC ĐÂY liệt kê mọi location_id của kho nhét vào .or(): kho 1.517 vị trí → filter ~56KB
+  // → PostgREST nghiền 60s → Vercel 504 (bug filter Kho Bàu Bàng 27/07). KHÔNG quay lại cách cũ.
+  const whIds = p.warehouseIds ?? []
+  if (whIds.length === 1)    q = q.eq('warehouse_id', whIds[0])
+  else if (whIds.length > 1) q = q.in('warehouse_id', whIds)
+  // Lọc VỊ TRÍ cụ thể (facet chọn lẻ vài vị trí — id đã resolve + cắt scope ở resolveInventoryFilter)
+  if (p.locationFilter && p.locationFilter.length > 0) q = q.in('location_id', p.locationFilter)
   if (p.materialFilter)  q = q.in('material_id', p.materialFilter)
   // Dùng embedded filter thay vì IN (material_id) để tránh URL quá dài khi nhiều material
   if (p.categoryFilter && p.categoryFilter.length === 1)    q = q.eq('material.category', p.categoryFilter[0])
@@ -162,7 +195,7 @@ function applyInventoryFilters(q: any, p: FilterParams): any {
 }
 
 function parseArr(raw: string | undefined): string[] {
-  return raw ? raw.split(',').filter(Boolean) : []
+  return parseListParam(raw) ?? []
 }
 
 function matchDatePct(pct: number, range: string): boolean {
@@ -233,6 +266,17 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 }
 const IN_CHUNK = 300
 
+// UPDATE hàng loạt theo tập id: BẮT BUỘC chunk — filter `.in()` nằm trên URL nên >300 id (36 ký tự)
+// là vỡ (đo 27/07: 400 id đứt kết nối, 700 id → 400). Bulk chọn cả trang/cả kho vài nghìn pallet
+// trước đây ném lỗi toàn bộ. Trả message lỗi đầu tiên (lô trước đã ghi — vẫn hơn hỏng sạch).
+async function updateEntriesByIds(ids: string[], patch: Record<string, unknown>): Promise<string | null> {
+  for (const c of chunkArray(ids, IN_CHUNK)) {
+    const { error } = await supabase.from('InventoryEntry').update(patch).in('id', c)
+    if (error) return error.message
+  }
+  return null
+}
+
 // Tổng cartons_remaining của 1 tập id (chunk 300 → tránh URL 414). Song song các lô.
 async function sumRemainingByIds(ids: string[]): Promise<number> {
   if (!ids.length) return 0
@@ -286,6 +330,8 @@ async function fetchAllPaged(makeQuery: () => any, pageSize = 1000): Promise<any
 interface ResolvedFilter {
   empty?: boolean
   error?: string
+  tooBroad?: string   // từ khóa khớp quá nhiều mã/vị trí → 400 kèm thông báo, KHÔNG để thành 500
+  badParam?: string   // id sai dạng uuid (warehouse_ids/ncc_ids) → 400, kẻo 22P02 thành 500
   params: FilterParams
   datePctIds: string[] | null
   pageNum: number
@@ -306,6 +352,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   // Multi-value params (comma-separated)
   const warehouseIds      = parseArr(q.warehouse_ids)
   const categories        = parseArr(q.categories)
+  // warehouse_id/ncc_id là CỘT uuid — chuỗi lạ lọt xuống Postgres = 22P02 → 500 (fuzz 29/07)
+  const badIds = nonUuidEntries([...warehouseIds, ...parseArr(q.ncc_ids)])
 
   // Enforce user's warehouse + category scope from JWT
   const scopeWarehouses = req.user?.warehouse_scope !== 'NATIONAL'
@@ -339,13 +387,17 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 
   const base = { params: {} as FilterParams, datePctIds: null as string[] | null, pageNum, limitNum, offset }
 
+  if (badIds.length) return { ...base, badParam: `Tham số id không hợp lệ: ${badIds.slice(0, 3).join(', ')}` }
+
   // Empty intersection → user's scope and UI filter don't overlap → return empty immediately
   if (scopeWarehouses.length > 0 && warehouseIds.length > 0 && effectiveWarehouseIds.length === 0)
     return { ...base, empty: true }
   if (scopeCategories.length > 0 && categories.length > 0 && effectiveCategories.length === 0)
     return { ...base, empty: true }
 
-  const needLocFilter = effectiveWarehouseIds.length > 0 || filterLocations.length > 0
+  // Chỉ resolve id vị trí khi user CHỌN vị trí cụ thể trong facet. Lọc theo KHO đi thẳng cột
+  // warehouse_id (applyInventoryFilters) — KHÔNG liệt kê nghìn vị trí của kho vào URL nữa.
+  const needLocFilter = filterLocations.length > 0
 
   const locResult = needLocFilter ? await (async () => {
     try {
@@ -373,10 +425,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   if ((locResult as any).data !== null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     locationFilter = ((locResult as any).data ?? []).map((l: any) => l.id as string)
-    // Trả về rỗng nếu: không tìm được location VÀ (có filter location cụ thể HOẶC không có warehouse scope nào)
-    // → Không áp dụng khi chỉ có warehouse scope — vẫn có thể có POSM (location_id IS NULL)
-    if (locationFilter!.length === 0 && (filterLocations.length > 0 || effectiveWarehouseIds.length === 0))
-      return { ...base, empty: true }
+    // Có chọn vị trí cụ thể mà không resolve ra id nào (sai mã / ngoài scope kho) → list rỗng
+    if (locationFilter!.length === 0) return { ...base, empty: true }
   }
 
   // filter_material_ids từ facet ĐÃ là material_id → dùng thẳng, không cần query Material resolve.
@@ -387,6 +437,7 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
   // (ilike Postgres KHÔNG bỏ dấu — bỏ dấu server-side cần extension unaccent, xem ghi chú.)
   let searchMatIds: string[] | undefined
   let searchLocIds: string[] | undefined
+  if (search && searchLooksLikeInjection(search)) return { ...base, tooBroad: SEARCH_INVALID_MSG }
   if (search) {
     const term = escapeLike(search.replace(/[,()]/g, ' ').trim())   // escape '_'/'%' → literal (mã đầy '_')
     if (term) {
@@ -413,6 +464,14 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
         searchMatIds = ((fmat as any).data ?? []).map((m: any) => m.id as string)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         searchLocIds = ((floc as any).data ?? []).map((l: any) => l.id as string)
+      }
+      // Term NGẮN/PHỔ BIẾN khớp hàng trăm mã ("51" → 371 mã, "-" → 453, "_" → 374, "a" → 500) làm
+      // filter `material_id.in.(…)` phình >13KB → PostgREST từ chối → API 500, trang trắng (đo 26/07).
+      // B1: thu hẹp về id thực có dữ liệu. B2: vẫn quá nhiều → 400 báo rõ (KHÔNG cắt id âm thầm = mất dòng).
+      ;[searchMatIds, searchLocIds] = await narrowOmniIds(searchMatIds, searchLocIds)
+      if ((searchMatIds?.length ?? 0) + (searchLocIds?.length ?? 0) > OMNI_ID_CAP) return {
+        ...base,
+        tooBroad: `Từ khóa "${search}" quá chung (khớp ${searchMatIds?.length ?? 0} mã hàng · ${searchLocIds?.length ?? 0} vị trí). Gõ thêm ký tự để thu hẹp.`,
       }
     }
   }
@@ -460,6 +519,8 @@ async function resolveInventoryFilter(req: Request): Promise<ResolvedFilter> {
 
 export async function listInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [], total: 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining: 0, total_pallets_in_stock: 0 })
 
@@ -509,136 +570,160 @@ export async function listInventory(req: Request, res: Response) {
   // material!inner để lọc category → PostgREST group-by category (mỗi category 1 dòng) nên cộng .sum tất cả.
   // BASE UNIT: SUM group theo material_id để chia hệ số ra "thùng quy đổi" (JS chia sau khi nhận group).
   // Group rows ≤ số mã khớp filter — phân trang qua fetchAllPaged để không dính cap 1000.
-  const sumSelect = catActive ? 'material_id, cartons_remaining.sum(), material:Material!inner(category)' : 'material_id, cartons_remaining.sum()'
-  const sumQ = (async () => {
-    try {
-      const groups = await fetchAllPaged(() =>
-        applyInventoryFilters(supabase.from('InventoryEntry').select(sumSelect), r.params).order('material_id'))
-      const matIds = [...new Set(groups.map((g: any) => g.material_id).filter(Boolean))] as string[]
-      const unitRows = matIds.length
-        ? (await Promise.all(chunkArray(matIds, IN_CHUNK).map(c =>
-            supabase.from('Material').select('id, base_unit, entry_unit, units_per_carton').in('id', c)))).flatMap(r2 => (r2.data ?? []) as any[])
-        : []
-      const uMap = new Map(unitRows.map((m: any) => [m.id, m]))
-      return { data: groups.map((g: any) => ({ sum: qtyEntryDecimal(Number(g.sum ?? 0), uMap.get(g.material_id) ?? null) })), error: null }
-    } catch (e) { return { data: null, error: { message: (e as Error).message } } }
-  })()
+  // 2 ô SummaryBand ("Thùng tồn" + "Pallet") gom trong MỘT lời gọi RPC `inventory_band_totals`.
+  //
+  // Bản cũ không phải 1 query mà là một CHUỖI round-trip: `fetchAllPaged` nạp nhóm SUM theo
+  // material_id (tới ~2.700 dòng) → rồi chunk 300 tra `Material` lấy hệ số thùng → quy đổi trong
+  // Node → cộng thêm 1 query đếm pallet còn tồn. Đo 28/07 (gói QA `06-readload` + đường cong sức
+  // chứa): trang Tồn kho từ 1.955ms (0 người ghi) lên **19.774ms ở 24 người ghi** rồi vượt trần
+  // 8s của PostgREST thành 500 — trong khi câu NHẸ cùng lúc vẫn 1.147ms và connection chỉ 26/60,
+  // tức nút thắt nằm ở chính chuỗi round-trip này.
+  const bandQ = supabase.rpc('inventory_band_totals', {
+    p_ids:            r.datePctIds,
+    p_status:         r.params.status ?? null,
+    p_wh_ids:         arrOrNull(r.params.warehouseIds),
+    p_location_ids:   arrOrNull(r.params.locationFilter),
+    p_material_ids:   arrOrNull(r.params.materialFilter),
+    p_categories:     arrOrNull(r.params.categoryFilter),
+    p_qa_ids:         arrOrNull(r.params.qa_status_ids),
+    p_search:         r.params.search ? r.params.search.replace(/[,()]/g, ' ').trim() : null,
+    p_search_mat_ids: arrOrNull(r.params.searchMatIds),
+    p_search_loc_ids: arrOrNull(r.params.searchLocIds),
+    p_manufacturer:   r.params.manufacturer_id ?? null,
+    p_cycles:         arrOrNull(r.params.filterCycles),
+    p_machines:       arrOrNull(r.params.filterMachines),
+    p_nmsx:           arrOrNull(r.params.filterNmsx),
+    p_ncc_ids:        arrOrNull(r.params.nccIds),
+    p_import_from:    r.params.import_date_from ?? null,
+    p_import_to:      r.params.import_date_to ?? null,
+  })
 
-  // Ô "Pallet" chỉ đếm pallet CÒN TỒN (>0) — list chỉ hiện pallet 0 khi chọn "Tất cả" (user 18/07,
-  // sau khi upload cho phép tồn=0). Count head:true cùng bộ filter → khớp tuyệt đối list.
-  // catActive PHẢI embed Material!inner (filter category lọc trên bảng nhúng — thiếu là PostgREST lỗi → tile về 0).
-  const cntSelect = catActive ? 'id, material:Material!inner(category)' : 'id'
-  const cntQ = applyInventoryFilters(
-    supabase.from('InventoryEntry').select(cntSelect, { count: 'exact', head: true }), r.params,
-  ).gt('cartons_remaining', 0)
-
-  // Chạy SONG SONG: list rows (main) + tổng (sum) + đếm còn tồn (cnt) độc lập nhau.
-  const [mainRes, sumRes, cntRes] = await Promise.all([mainQ, sumQ, cntQ])
+  // Chạy SONG SONG: list rows (main) + 2 ô band (1 RPC) — độc lập nhau.
+  const [mainRes, bandRes] = await Promise.all([mainQ, bandQ])
   const { data, count, error } = mainRes
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  if (error) {
+    // Trang vượt phạm vi = TRANG RỖNG, không phải lỗi hệ thống. Số trang được NHỚ THEO USER
+    // (`scopedPersist`) nên mở lại app khi dữ liệu đã ít đi là gặp ngay. Xem `isRangeNotSatisfiable`.
+    // Đếm tổng CHỈ chạy ở nhánh này (query chính đã mang `count:'exact'`) — thêm 1 câu đếm luôn
+    // chạy là tự làm nặng đường nóng: đo 28/07 dưới tải ghi, mỗi câu đếm thừa đẩy trang này thêm
+    // vài giây và tới trần 8s của PostgREST thì thành 500.
+    if (isRangeNotSatisfiable(error)) {
+      const { count: totCount } = await applyInventoryFilters(
+        supabase.from('InventoryEntry').select('id', { count: 'exact', head: true }), r.params,
+      )
+      const band0 = (bandRes.data ?? {}) as { total_pallets_in_stock?: number }
+      return ok(res, {
+        entries: [], total: totCount ?? 0,
+        page: r.pageNum, limit: r.limitNum,
+        total_cartons_remaining: 0, total_pallets_in_stock: Number(band0.total_pallets_in_stock) || 0,
+      })
+    }
+    return fail(res, 500, 'DB_ERROR', error.message)
+  }
 
-  // Lỗi sum/cnt KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
+  // Lỗi band KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((sumRes as any).error) console.error('[inventory] tính tổng thùng tồn lỗi:', (sumRes as any).error.message)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  else total_cartons_remaining = (((sumRes as any).data ?? []) as any[]).reduce((s, row) => s + Number(row.sum ?? 0), 0)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((cntRes as any).error) console.error('[inventory] đếm pallet còn tồn lỗi:', (cntRes as any).error.message)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const total_pallets_in_stock = ((cntRes as any).count as number | null) ?? 0
+  let total_pallets_in_stock = 0
+  if (bandRes.error) console.error('[inventory] tính 2 ô band lỗi:', bandRes.error.message)
+  else {
+    const b = (bandRes.data ?? {}) as { total_cartons_remaining?: number; total_pallets_in_stock?: number }
+    total_cartons_remaining = Number(b.total_cartons_remaining) || 0
+    total_pallets_in_stock  = Number(b.total_pallets_in_stock)  || 0
+  }
 
   return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
 }
 
 // View tổng hợp: gom tồn kho theo (Kho × Mã hàng × Ngày SX) — KHÔNG chi tiết tới pallet.
 // Vì %date suy ra từ ngày SX + hạn dùng nên mỗi nhóm có 1 giá trị %date duy nhất.
+//
+// GOM + PHÂN TRANG TRONG SQL (RPC `inventory_summary_page`). Đo 28/07 với 52.635 pallet →
+// 41.107 nhóm: đường cũ trả HẾT nhóm = **18.147KB / 12,8s** (4× trần 4,5MB của Vercel — local
+// "chạy được", production đứt); gom trong Node vẫn phải kéo 52.635 dòng thô MỖI lần đổi trang
+// (duyệt 42 trang = 251s). Nay DB gom 1 lượt, chỉ trả 1 trang.
+// ⚠️ Bộ lọc trong RPC phải KHỚP `applyInventoryFilters` — đổi 1 bên mà quên bên kia là bảng và
+// ô tổng lệch nhau. Xem migration 20260728c_inventory_summary_paged_rpc.sql
 export async function summaryInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
-  if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0 })
+  if (r.empty) return ok(res, { groups: [], total: 0, total_cartons_remaining: 0, page: r.pageNum, limit: r.limitNum })
 
-  // Lấy TOÀN BỘ entry khớp filter (phân trang 1000 — cap response + aggregate tắt) rồi gom JS.
-  // !inner: lọc category phải loại HẲN entry khác loại, không để lọt với material=null.
-  const summarySelect = 'id, warehouse_id, production_date, expiry_date, cartons_imported, cartons_remaining, material_id, ncc_id, shelf_life_days, '
-    + 'location:Location(warehouse:Warehouse(id, name)), '
-    + 'ncc:TransportCompany!ncc_id(id, name), '
-    + 'material:Material!inner(material_code, short_name, category, shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton)'
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let rows: any[]
-  try {
-    rows = await fetchAllInventory(summarySelect, r.params, r.datePctIds)
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
-  }
-  // Map id→tên kho (fallback cho POSM: location_id null nhưng có warehouse_id)
-  const { data: whRows } = await supabase.from('Warehouse').select('id, name')
+  const p = r.params
+  const arr = (v: string[] | null | undefined) => (v && v.length ? v : null)
+  const { data, error } = await supabase.rpc('inventory_summary_page', {
+    // Lọc %Date: tầng TS đã resolve tập id ĐÃ áp đủ filter khác → chỉ cần lọc theo id.
+    // Danh sách id đi POST body của RPC nên KHÔNG dính trần ~300 id của URL PostgREST.
+    p_ids:            r.datePctIds,
+    p_status:         p.status ?? null,
+    p_wh_ids:         arr(p.warehouseIds),
+    p_location_ids:   arr(p.locationFilter),
+    p_material_ids:   arr(p.materialFilter),
+    p_categories:     arr(p.categoryFilter),
+    p_qa_ids:         arr(p.qa_status_ids),
+    p_search:         p.search ? p.search.replace(/[,()]/g, ' ').trim() : null,
+    p_search_mat_ids: arr(p.searchMatIds),
+    p_search_loc_ids: arr(p.searchLocIds),
+    p_manufacturer:   p.manufacturer_id ?? null,
+    p_cycles:         arr(p.filterCycles),
+    p_machines:       arr(p.filterMachines),
+    p_nmsx:           arr(p.filterNmsx),
+    p_ncc_ids:        arr(p.nccIds),
+    p_import_from:    p.import_date_from ?? null,
+    p_import_to:      p.import_date_to ?? null,
+    p_offset:         r.offset,
+    p_limit:          r.limitNum,
+  })
+  if (error) return fail(res, 500, 'DB_ERROR', error.message)
 
-  const whMap: Record<string, string> = Object.fromEntries(((whRows ?? []) as any[]).map(w => [w.id, w.name]))
-  const now = Date.now()
-
-  interface Group {
+  type RpcGroup = MaterialShelfInfo & {
     warehouse_id: string | null; warehouse_name: string; material_id: string
     material_code: string | null; short_name: string | null; category: string | null
-    production_date: string | null; date_pct: number | null; ncc_name: string | null
-    cartons_imported: number; cartons_remaining: number; pallet_count: number
-    base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+    production_date: string | null; expiry_date: string | null
+    ncc_id: string | null; ncc_name: string | null
+    mat_shelf_life_days: number | null
+    cartons_imported: number; cartons_remaining: number; cartons_exported: number
+    pallet_count: number; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   }
-  const map = new Map<string, Group>()
-
-  for (const e of (rows ?? []) as any[]) {
-    const whId   = (e.location?.warehouse?.id ?? e.warehouse_id ?? null) as string | null
-    const whName = e.location?.warehouse?.name ?? (whId ? whMap[whId] : null) ?? '—'
-    const matId  = e.material_id as string
-    const prod   = (e.production_date ?? null) as string | null
-    const expiry = (e.expiry_date ?? null) as string | null
-    const nccId  = (e.ncc_id ?? null) as string | null
-    const shelfDays = (e.shelf_life_days ?? null) as number | null
-    // Gom theo NCC + shelflife-lô + HSD (cùng mã/kho/ngày nhưng khác NCC/shelflife/HSD → %Date khác)
-    const key    = `${whId}|${matId}|${prod}|${nccId ?? ''}|${shelfDays ?? ''}|${expiry ?? ''}`
-
-    let g = map.get(key)
-    if (!g) {
-      const pct = computePctDate(e, e.material, now)   // ưu tiên HSD tường minh (tem V2)
-      g = {
-        warehouse_id: whId, warehouse_name: whName, material_id: matId,
-        material_code: e.material?.material_code ?? null,
-        short_name:    e.material?.short_name ?? null,
-        category:      e.material?.category ?? null,
-        production_date: prod,
-        date_pct: pct == null ? null : Math.round(pct),
-        ncc_name: e.ncc?.name ?? null,
-        cartons_imported: 0, cartons_remaining: 0, pallet_count: 0,
-        base_unit: e.material?.base_unit ?? null,
-        entry_unit: e.material?.entry_unit ?? null,
-        units_per_carton: e.material?.units_per_carton ?? null,
-      }
-      map.set(key, g)
+  const out = (data ?? {}) as { total?: number; total_cartons_remaining?: number; groups?: RpcGroup[] }
+  const now = Date.now()
+  // %Date tính bằng hàm TẬP TRUNG `computePctDate` cho ĐÚNG các nhóm của trang — cố tình KHÔNG
+  // viết lại công thức trong SQL (shelf-life có ngoại lệ theo NCC; tách 2 nơi là lệch số).
+  const groups = (out.groups ?? []).map(g => {
+    const pct = computePctDate(
+      { production_date: g.production_date, expiry_date: g.expiry_date, ncc_id: g.ncc_id, shelf_life_days: g.shelf_life_days },
+      { shelf_life_days: g.mat_shelf_life_days, supplier_shelf_life_overrides: g.supplier_shelf_life_overrides },
+      now,
+    )
+    return {
+      warehouse_id: g.warehouse_id, warehouse_name: g.warehouse_name, material_id: g.material_id,
+      material_code: g.material_code, short_name: g.short_name, category: g.category,
+      production_date: g.production_date,
+      date_pct: pct == null ? null : Math.round(pct),
+      ncc_name: g.ncc_name,
+      cartons_imported: Number(g.cartons_imported) || 0,
+      cartons_remaining: Number(g.cartons_remaining) || 0,
+      cartons_exported: Number(g.cartons_exported) || 0,
+      pallet_count: Number(g.pallet_count) || 0,
+      base_unit: g.base_unit, entry_unit: g.entry_unit, units_per_carton: g.units_per_carton,
     }
-    g.cartons_imported  += Number(e.cartons_imported ?? 0)
-    g.cartons_remaining += Number(e.cartons_remaining ?? 0)
-    g.pallet_count      += Number(e.cartons_remaining ?? 0) > 0 ? 1 : 0   // chỉ đếm pallet CÒN TỒN (user chốt 05/07)
-  }
-
-  const groups = [...map.values()]
-    .map(g => ({ ...g, cartons_exported: Math.max(0, g.cartons_imported - g.cartons_remaining) }))
-    .sort((a, b) => {
-      const mc = (a.material_code ?? '').localeCompare(b.material_code ?? '')
-      if (mc !== 0) return mc
-      const wn = a.warehouse_name.localeCompare(b.warehouse_name)
-      if (wn !== 0) return wn
-      return (b.production_date ?? '').localeCompare(a.production_date ?? '') // ngày SX mới nhất trước
-    })
-
-  // BASE UNIT: tổng cross-mã = thùng quy đổi (group per mã đã mang units)
-  const total_cartons_remaining = groups.reduce((s, g) => s + qtyEntryDecimal(g.cartons_remaining, g), 0)
-  return ok(res, { groups, total: groups.length, total_cartons_remaining })
+  })
+  return ok(res, {
+    groups,
+    total: out.total ?? 0,
+    // BASE UNIT: tổng cross-mã = thùng quy đổi per-mã rồi mới cộng (SQL dùng chung qty_entry_decimal)
+    total_cartons_remaining: Number(out.total_cartons_remaining) || 0,
+    page: r.pageNum, limit: r.limitNum,
+  })
 }
 
 // Export chi tiết pallet: trả TOÀN BỘ entry khớp filter (phân trang 1000) để FE dựng Excel.
 // Cùng resolveInventoryFilter → khớp tuyệt đối view pallet. (Summary export dùng dữ liệu /summary sẵn có ở FE.)
 export async function exportInventory(req: Request, res: Response) {
   const r = await resolveInventoryFilter(req)
+  if (r.tooBroad) return fail(res, 400, 'SEARCH_TOO_BROAD', r.tooBroad)
+  if (r.badParam) return fail(res, 400, 'INVALID_ID', r.badParam)
   if (r.error) return fail(res, 500, 'DB_ERROR', r.error)
   if (r.empty) return ok(res, { entries: [] })
 
@@ -659,68 +744,36 @@ export async function listFacets(req: Request, res: Response) {
   const scopeCats = scopeCategoriesOf(req)
   const reqWh  = parseArr(q.warehouse_ids)
   const reqCat = parseArr(q.categories)
+  if (nonUuidEntries(reqWh).length) return fail(res, 400, 'INVALID_ID', 'Tham số warehouse_ids không hợp lệ')
   const warehouseIds = scopeWh.length > 0 ? (reqWh.length > 0 ? reqWh.filter(id => scopeWh.includes(id)) : scopeWh) : reqWh
   const categories   = scopeCats ? (reqCat.length > 0 ? reqCat.filter(c => scopeCats.includes(c)) : scopeCats) : reqCat
   if ((scopeWh.length > 0 && warehouseIds.length === 0) || (scopeCats && categories.length === 0)) {
     return ok(res, { cycles: [], machines: [], locations: [], materials: [], nccs: [] })
   }
 
-  // Materials: PHÂN TRANG để trả ĐỦ — >1000 mã (hiện 1788) → cap 1000/response CẮT MẤT ~788 mã khỏi
-  // filter "Tên hàng" (facet.materials). Batch song song (fetchAllRowsParallel).
-  const buildMatQ = () => {
-    let q = supabase.from('Material').select('id, material_code, short_name').order('material_code')
-    if (categories.length === 1)    q = q.eq('category', categories[0])
-    else if (categories.length > 1) q = q.in('category', categories)
-    return q
-  }
-  // Locations: phân trang đủ (kho lớn có thể >1000 vị trí).
-  const buildLocQ = () => {
-    let q = supabase.from('Location').select('id, location_code').order('location_code').order('id')
-    if (warehouseIds.length === 1)    q = q.eq('warehouse_id', warehouseIds[0])
-    else if (warehouseIds.length > 1) q = q.in('warehouse_id', warehouseIds)
-    return q
-  }
-
-  // Cycles & machines & ncc: no reference table — query InventoryEntry, lọc theo category/warehouse
-  // bằng INNER JOIN (Material/Location) thay vì nhồi hàng nghìn id vào .in() (URL quá dài → 500).
-  // Phân trang ĐỦ dòng (cap ~1000/response) — không lấy mẫu, tránh sót giá trị Chu kỳ/Máy/NCC.
-  const invSelect = 'id, cycle, machine_code, ncc_id'
-    + (categories.length > 0   ? ', material:Material!inner(category)'    : '')
-    + (warehouseIds.length > 0 ? ', location:Location!inner(warehouse_id)' : '')
-  const buildInvQ = () => {
-    let q = supabase.from('InventoryEntry').select(invSelect)
-      .in('status', ['IN_STOCK', 'PARTIAL'])
-      .order('id', { ascending: true })
-    if (warehouseIds.length === 1)    q = q.eq('location.warehouse_id', warehouseIds[0])
-    else if (warehouseIds.length > 1) q = q.in('location.warehouse_id', warehouseIds)
-    if (categories.length === 1)      q = q.eq('material.category', categories[0])
-    else if (categories.length > 1)   q = q.in('material.category', categories)
-    return q
-  }
-
-  // Tất cả fetch chạy SONG SONG (materials + inventory + locations phân trang song song) —
-  // né cap 1000 + giảm round-trip tuần tự (trước fetchAllPaged tuần tự ~5s).
+  // Chu kỳ / Máy / NCC: DISTINCT DƯỚI DB (RPC `inventory_facet_values`) — trước đây kéo TOÀN BỘ
+  // dòng tồn IN_STOCK/PARTIAL về Node chỉ để gom tập giá trị: 12.637 dòng ≈ 13 round-trip hôm nay,
+  // vài triệu dòng/năm là hàng nghìn round-trip mỗi lần mở trang Tồn kho.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let matData: any[], invData: any[], locData: any[]
+  let facetVals: { kind: string; val: string }[]
   try {
-    const [m, inv, loc] = await Promise.all([
-      fetchAllRowsParallel(buildMatQ),
-      fetchAllRowsParallel(buildInvQ, 1000, 4),   // tồn ~4000 dòng → batch 4 lấy trong 1 round-trip
-      fetchAllRowsParallel(buildLocQ),
-    ])
-    matData = m
-    invData = inv
-    locData = loc
+    const { data, error } = await supabase.rpc('inventory_facet_values', {
+      p_warehouse_ids: warehouseIds.length ? warehouseIds : null,
+      p_categories:    categories.length   ? categories   : null,
+    })
+    if (error) throw error
+    facetVals = (data ?? []) as { kind: string; val: string }[]
   } catch (e) {
     return fail(res, 500, 'DB_ERROR', (e as Error).message)
   }
 
-  const cycles   = [...new Set(invData.map((e: any) => e.cycle).filter(Boolean))].sort() as string[]
-  const machines = [...new Set(invData.map((e: any) => e.machine_code).filter(Boolean))].sort() as string[]
+  const pick = (k: string) => facetVals.filter(v => v.kind === k).map(v => v.val)
+  const cycles   = pick('cycle').sort()
+  const machines = pick('machine').sort()
 
   // NCC facet: hàng nhập NCC có ncc_id (đoạn 4 QR = mã NCC, machine_code = null) → lọc "Máy" không ra.
   // Lấy tên NCC từ TransportCompany cho các ncc_id thực có trong tồn (scope kho/loại hàng).
-  const nccIds = [...new Set(invData.map((e: any) => e.ncc_id).filter(Boolean))] as string[]
+  const nccIds = pick('ncc')
   let nccs: { id: string; name: string }[] = []
   if (nccIds.length) {
     // Chunk 300 + phân trang (fetchAllByIdChunks) — >1000 NCC distinct trong tồn thì facet NCC bị cắt âm thầm
@@ -731,15 +784,17 @@ export async function listFacets(req: Request, res: Response) {
       .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
   }
 
-  const materials = ((matData ?? []) as any[])
-    .map((m: any) => ({ id: m.id as string, code: m.material_code as string, name: (m.short_name ?? null) as string | null }))
-  const locations = ((locData ?? []) as any[])
-    .map((l: any) => ({ id: l.id as string, code: l.location_code as string }))
-
-  return ok(res, { cycles, machines, locations, materials, nccs })
+  // `materials` + `locations` KHÔNG còn nằm trong facet: 2.740 mã + 1.753 vị trí = phần lớn
+  // của 420KB mỗi lần mở trang. Hai filter đó nay TÌM TRÊN SERVER
+  // (`/masterdata/materials?search=&limit=` và `/masterdata/locations?search=&limit=`).
+  return ok(res, { cycles, machines, nccs })
 }
 
-const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
+// Trạng thái mà ĐIỀU CHỈNH TỒN được phép TỰ SUY LẠI status (hết → EXPORTED, đủ → IN_STOCK,
+// còn dở → PARTIAL). KHÁC danh sách "pallet còn sống" của upload bên dưới (`ACTIVE_PALLET_STATUSES`)
+// — hai tập KHÔNG trùng nhau (ở đây có EXPORTED, không có QUARANTINE/LOOSE_PICKING) nên phải mang
+// TÊN RIÊNG; trước 14/08 cả hai đều tên `ACTIVE_STATUSES` trong CÙNG file, rất dễ dùng nhầm.
+const STATUS_RECALC_ON_ADJUST = ['IN_STOCK', 'PARTIAL', 'EXPORTED']
 
 export async function adjustInventory(req: Request, res: Response) {
   const { id } = req.params
@@ -794,7 +849,7 @@ export async function adjustInventory(req: Request, res: Response) {
     if (newRemaining < 0) return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
 
     let newStatus = entry.status
-    if (ACTIVE_STATUSES.includes(entry.status)) {
+    if (STATUS_RECALC_ON_ADJUST.includes(entry.status)) {
       if (newRemaining <= 0) newStatus = 'EXPORTED'
       else if (newRemaining >= Number(entry.cartons_imported)) newStatus = 'IN_STOCK'
       else newStatus = 'PARTIAL'
@@ -868,8 +923,8 @@ export async function bulkUpdateQA(req: Request, res: Response) {
   const patch: Record<string, unknown> = { qa_status_id: qa_status_id ?? null, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 
@@ -894,8 +949,8 @@ export async function bulkUpdateNcc(req: Request, res: Response) {
   }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 
@@ -935,7 +990,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
 
   const { data: loc } = await supabase.from('Location')
-    .select('id, is_active, location_code, max_pallets')
+    .select('id, is_active, location_code, max_pallets, warehouse_id')
     .eq('id', location_id).maybeSingle()
   if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
   if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
@@ -951,10 +1006,11 @@ export async function bulkTransferLocation(req: Request, res: Response) {
         `Vị trí ${loc.location_code} không đủ chỗ (còn ${Math.max(0, available)} slot, cần ${ids.length})`)
     }
   }
-  const patch: Record<string, unknown> = { location_id, updated_at: now, update_date: vnDate }
+  // Sync cột lọc theo kho (đổi vị trí = có thể đổi kho thật — filter Tồn kho lọc thẳng cột này)
+  const patch: Record<string, unknown> = { location_id, warehouse_id: (loc as { warehouse_id?: string }).warehouse_id ?? null, updated_at: now, update_date: vnDate }
   if (updatedBy) patch.updated_by = updatedBy
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length, location_code: loc.location_code })
 }
 
@@ -978,8 +1034,8 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
   const patch: Record<string, unknown> = { material_id, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length, material_code: mat.material_code })
 }
 
@@ -994,6 +1050,7 @@ export async function stocktakeCheck(req: Request, res: Response) {
     .select(ENTRY_SELECT)
     .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
+    .gt('cartons_remaining', 0)   // bỏ pallet đã HẾT TỒN (remaining 0 = đã xuất hết, không kiểm)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -1012,7 +1069,9 @@ export async function stocktakeEntry(req: Request, res: Response) {
   }
 
   const { data: existing, error: fetchErr } = await supabase.from('InventoryEntry')
-    .select('id, location_id, cartons_remaining, material:Material!material_id(base_unit, entry_unit, units_per_carton)')
+    .select(`id, pallet_code, location_id, cartons_remaining, material_id,
+      material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
+      location:Location!location_id(location_code, warehouse_id, categories)`)
     .eq('id', id).maybeSingle()
 
   if (fetchErr) return fail(res, 500, 'DB_ERROR', fetchErr.message)
@@ -1035,7 +1094,18 @@ export async function stocktakeEntry(req: Request, res: Response) {
     patch.updated_by   = employee_id
   }
 
-  if (new_location_id) patch.location_id = new_location_id
+  // Đổi vị trí khi kiểm: nạp vị trí mới 1 lần — sync cả warehouse_id (cột lọc theo kho) + dùng lại cho snapshot log
+  type SnapLoc = { location_code?: string; warehouse_id?: string; categories?: string[] | null }
+  let newLoc: SnapLoc | null = null
+  if (new_location_id) {
+    if (new_location_id !== existing.location_id) {
+      const { data: nl } = await supabase.from('Location')
+        .select('location_code, warehouse_id, categories').eq('id', new_location_id).maybeSingle()
+      newLoc = (nl as SnapLoc | null) ?? null
+    }
+    patch.location_id = new_location_id
+    if (newLoc?.warehouse_id) patch.warehouse_id = newLoc.warehouse_id
+  }
 
   if (physical_count !== undefined && physical_count !== null) {
     const appCount = Number(existing.cartons_remaining ?? 0)
@@ -1050,31 +1120,81 @@ export async function stocktakeEntry(req: Request, res: Response) {
 
   const { error } = await supabase.from('InventoryEntry').update(patch).eq('id', id)
   if (error) return fail(res, 500, 'DB_ERROR', error.message)
+
+  // Nhật ký kiểm kê (append-only): 1 dòng mỗi lần kiểm → xem lại quá khứ vô thời hạn.
+  // Snapshot đủ trường để độc lập dòng tồn sống. Lỗi ghi log KHÔNG làm hỏng lượt kiểm (đã lưu xong).
+  try {
+    const appCount = Number(existing.cartons_remaining ?? 0)
+    const phys = (physical_count !== undefined && physical_count !== null) ? Number(physical_count) : null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mat = (existing as any).material as { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
+    // Vị trí nơi ĐẾM: nếu đổi vị trí → lấy vị trí mới; ngược lại vị trí app hiện tại
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; categories?: string[] | null } | null
+    let snapLocId = existing.location_id as string | null
+    if (newLoc) { snapLoc = newLoc; snapLocId = new_location_id ?? snapLocId }
+    await supabase.from('StocktakeLog').insert({
+      id: randomUUID(),
+      entry_id: id,
+      pallet_code: existing.pallet_code,
+      location_id: snapLocId,
+      location_code: snapLoc?.location_code ?? null,
+      warehouse_id: snapLoc?.warehouse_id ?? null,
+      categories: snapLoc?.categories ?? null,
+      material_id: existing.material_id,
+      material_code: mat?.material_code ?? null,
+      short_name: mat?.short_name ?? null,
+      base_unit: mat?.base_unit ?? null,
+      entry_unit: mat?.entry_unit ?? null,
+      units_per_carton: mat?.units_per_carton ?? null,
+      app_qty: appCount,
+      physical_qty: phys,
+      diff: phys !== null ? phys - appCount : null,
+      is_flagged: patch.stocktake_flagged === true,
+      note: (patch.stocktake_flag_note as string | null) ?? null,
+      location_changed_to: (new_location_id && new_location_id !== existing.location_id) ? new_location_id : null,
+      counted_by: (patch.stocktake_by as string | undefined) ?? null,
+      counted_by_name: req.user?.name ?? null,
+      counted_at: now,
+      created_at: now,
+      updated_at: now,
+    })
+  } catch (e) {
+    console.error('StocktakeLog insert failed:', (e as Error).message)
+  }
   return ok(res, { ok: true })
 }
 
 export async function stocktakeEntries(req: Request, res: Response) {
-  const { warehouse_id, category, location_id, location_ids, view = 'problem' } = req.query as Record<string, string>
+  const { warehouse_id, category, location_id, location_ids, requires_only, view = 'problem', date_from, date_to, page, page_size } = req.query as Record<string, string>
   // view: 'all' | 'flagged' | 'unchecked' | 'checked' | 'problem' (flagged + unchecked)
+  // requires_only='1': lọc "chỉ vị trí cần check" bằng CỜ — BE tự resolve vị trí từ kho. FE KHÔNG
+  // được nhồi hàng nghìn id vào query string (kho 1.517 vị trí = URL 55KB → Vercel 414 trước khi
+  // request tới được BE; đo 27/07 ngưỡng ~800 id / 32KB).
+  const reqOnly = String(requires_only ?? '') === '1'
 
   const scopeWhIds = req.user?.warehouse_scope !== 'NATIONAL'
     ? (req.user?.warehouse_ids ?? [])
     : []
 
   // Resolve location IDs to query against. Ưu tiên danh sách vị trí chọn (CSV); fallback location_id đơn.
-  const explicitIds = location_ids
-    ? String(location_ids).split(',').filter(Boolean)
-    : (location_id ? [location_id] : [])
+  const locIdsParam = parseListParam(location_ids) ?? []
+  const explicitIds = locIdsParam.length ? locIdsParam : (location_id ? [location_id] : [])
   const stCats = scopeCategoriesOf(req)
   let resolvedLocationIds: string[]
   if (explicitIds.length) {
-    // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user
-    let vQ = supabase.from('Location').select('id').in('id', explicitIds)
-    if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
-    if (stCats) vQ = vQ.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
-    const { data: valid, error: vErr } = await vQ
-    if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
-    resolvedLocationIds = ((valid ?? []) as { id: string }[]).map(l => l.id)
+    // KHÔNG tin location_ids từ client — chỉ giữ vị trí thuộc kho + loại trong phạm vi user.
+    // Chunk 300: user chọn cả trăm/nghìn vị trí thì `.in()` 1 phát là vỡ URL (trần ~300 id).
+    const validIds: string[] = []
+    for (const c of chunkArray(explicitIds, IN_CHUNK)) {
+      let vQ = supabase.from('Location').select('id').in('id', c)
+      if (scopeWhIds.length > 0) vQ = scopeWhIds.length === 1 ? vQ.eq('warehouse_id', scopeWhIds[0]) : vQ.in('warehouse_id', scopeWhIds)
+      if (stCats) vQ = vQ.or(categoriesOrScopeFilter('categories', stCats))
+      const { data: valid, error: vErr } = await vQ
+      if (vErr) return fail(res, 500, 'DB_ERROR', vErr.message)
+      validIds.push(...((valid ?? []) as { id: string }[]).map(l => l.id))
+    }
+    resolvedLocationIds = validIds
     if (!resolvedLocationIds.length) return ok(res, { stats: { total: 0, checked: 0, unchecked: 0, flagged: 0 }, entries: [] })
   } else {
     if (scopeWhIds.length > 0 && warehouse_id && !scopeWhIds.includes(warehouse_id))
@@ -1085,6 +1205,7 @@ export async function stocktakeEntries(req: Request, res: Response) {
     try {
       locs = await fetchAllRowsParallel(() => {
         let locQuery = supabase.from('Location').select('id').eq('is_active', true).order('id')
+        if (reqOnly) locQuery = locQuery.eq('requires_stocktake', true)
 
         if (scopeWhIds.length > 0) {
           const effective = warehouse_id
@@ -1097,8 +1218,8 @@ export async function stocktakeEntries(req: Request, res: Response) {
           if (warehouse_id) locQuery = locQuery.eq('warehouse_id', warehouse_id)
         }
 
-        if (category)     locQuery = locQuery.or(`category.eq.${safeFilterValue(category)},category.is.null`)
-        if (stCats)       locQuery = locQuery.or(`category.is.null,category.in.(${stCats.map(c => `"${c}"`).join(',')})`)
+        if (category)     locQuery = locQuery.or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+        if (stCats)       locQuery = locQuery.or(categoriesOrScopeFilter('categories', stCats))
         return locQuery
       })
     } catch (e) {
@@ -1108,97 +1229,152 @@ export async function stocktakeEntries(req: Request, res: Response) {
     resolvedLocationIds = (locs as { id: string }[]).map(l => l.id)
   }
 
-  const todayVN    = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-  const todayStart = new Date(`${todayVN}T00:00:00+07:00`).toISOString()
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // KHOẢNG NGÀY KIỂM (đợt kiểm) — mặc định hôm nay. "Đã kiểm" = CÓ stocktake_at TRONG khoảng.
+  // BỎ luật cũ "nhập hôm nay = đã kiểm": hàng mới nhập KHÔNG phải kết quả đếm thật, tính vào sẽ thổi
+  // phồng số đã-kiểm. Trang này là BÁO CÁO KẾT QUẢ KIỂM nên chỉ đếm pallet thực sự được kiểm trong đợt.
+  const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
+  const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
+  const dto    = dtoRaw < dfrom ? dfrom : dtoRaw
+  const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
 
-  // "Đã kiểm" = quét hôm nay HOẶC nhập hôm nay. Điều kiện dựng bằng .or() PostgREST để LỌC + ĐẾM
-  // trong DB — kho lớn (vài chục nghìn pallet, chọn cả kho) không kéo toàn bộ dòng về Node nữa.
-  const CHECKED_OR   = `stocktake_at.gte.${todayStart},import_date.eq.${todayVN}`
-  // Chưa kiểm = (chưa quét hôm nay) AND (không nhập hôm nay) — tách 2 nhánh vì or/and lồng nhau;
-  // import_date.neq bỏ sót NULL nên phải or(is.null, neq).
-  const UNCHECKED_OR = `and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.is.null),and(or(import_date.is.null,import_date.neq.${todayVN}),stocktake_at.lt.${todayStart})`
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const applyView = (q: any): any => {
-    if (view === 'flagged')   return q.eq('stocktake_flagged', true)
-    if (view === 'unchecked') return q.or(UNCHECKED_OR)
-    if (view === 'checked')   return q.or(CHECKED_OR)
-    if (view === 'problem')   return q.or(`stocktake_flagged.eq.true,${UNCHECKED_OR}`)
-    return q
-  }
+  // LỌC + SẮP + ĐẾM + CẮT TRANG đều nằm trong RPC `stocktake_entries_page` (migration
+  // 20260728_stocktake_paged_rpc.sql). Đường cũ chặn cứng 2000 dòng: kho 8.074 pallet chỉ xem
+  // được 25% và không có cách nào tới phần còn lại. Danh sách vị trí đi qua THAM SỐ MẢNG của
+  // RPC (POST body) nên không dính trần ~300 id trên URL ⇒ bỏ luôn vòng chunk 300 × 4 câu đếm.
+  const pageNum  = Math.max(1, parseInt(String(page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(page_size ?? '200'), 10) || 200))
 
-  // Stats bằng COUNT head (không kéo dòng) — chunk vị trí 300/lô né URL dài, cộng dồn qua lô
-  const locChunks: string[][] = []
-  for (let i = 0; i < resolvedLocationIds.length; i += 300) locChunks.push(resolvedLocationIds.slice(i, i + 300))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseCount = (chunk: string[]): any => supabase.from('InventoryEntry')
-    .select('id', { count: 'exact', head: true })
-    .in('location_id', chunk)
-    .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-  let total = 0, checked = 0, flagged = 0, totalFiltered = 0
-  try {
-    for (const chunk of locChunks) {
-      const [t, c, f, v] = await Promise.all([
-        baseCount(chunk),
-        baseCount(chunk).or(CHECKED_OR),
-        baseCount(chunk).eq('stocktake_flagged', true),
-        applyView(baseCount(chunk)),
-      ])
-      for (const r of [t, c, f, v]) if (r.error) throw new Error(r.error.message)
-      total += t.count ?? 0; checked += c.count ?? 0; flagged += f.count ?? 0; totalFiltered += v.count ?? 0
-    }
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
-  }
-  const unchecked = total - checked
-
-  // Entries: lọc view TRONG SQL + CAP 2000 dòng (chọn cả kho vài chục nghìn pallet → payload/thời gian
-  // bị chặn; FE hiện cảnh báo thu hẹp vị trí khi truncated). Chưa-quét-bao-giờ lên đầu (nullsFirst).
-  const CAP = 2000
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const entries: any[] = []
-  try {
-    for (const chunk of locChunks) {
-      if (entries.length >= CAP) break
-      for (let p = 0; entries.length < CAP; p++) {
-        const { data, error } = await applyView(supabase.from('InventoryEntry')
-          .select(`
-            id, pallet_code, cartons_remaining, import_date,
-            stocktake_flagged, stocktake_flag_note, stocktake_at,
-            location:Location(id, location_code),
-            material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton),
-            stocktake_by_emp:Employee!stocktake_by(id, name)
-          `)
-          .in('location_id', chunk)
-          .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-          .order('stocktake_at', { ascending: true, nullsFirst: true })
-          .order('id', { ascending: true }))
-          .range(p * 1000, p * 1000 + 999)
-        if (error) return fail(res, 500, 'DB_ERROR', error.message)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const batch = (data ?? []) as any[]
-        entries.push(...batch.slice(0, CAP - entries.length))
-        if (batch.length < 1000) break
-      }
-    }
-  } catch (e) {
-    return fail(res, 500, 'DB_ERROR', (e as Error).message)
-  }
-
-  type E = { id: string; import_date: string; stocktake_at: string | null; stocktake_flagged: boolean }
-  const isChecked = (e: E) => !!(e.stocktake_at && e.stocktake_at >= todayStart) || e.import_date === todayVN
-  // Sort chính xác trên tập đã cap (rẻ): CHƯA quét lên đầu; trong nhóm đã quét: lệch trước
-  ;(entries as E[]).sort((a, b) => {
-    const aOk = isChecked(a), bOk = isChecked(b)
-    if (aOk !== bOk) return aOk ? 1 : -1
-    if (a.stocktake_flagged !== b.stocktake_flagged) return a.stocktake_flagged ? -1 : 1
-    return 0
+  const { data: pageData, error: pageErr } = await supabase.rpc('stocktake_entries_page', {
+    p_loc_ids: resolvedLocationIds,
+    p_from:    rangeStart,
+    p_to:      rangeEnd,
+    p_view:    view,
+    p_offset:  (pageNum - 1) * pageSize,
+    p_limit:   pageSize,
   })
+  if (pageErr) return fail(res, 500, 'DB_ERROR', pageErr.message)
+  const pd = (pageData ?? {}) as { ids?: string[]; total?: number; st_total?: number; checked?: number; flagged?: number }
+  const pageIds = pd.ids ?? []
+  const total   = pd.st_total ?? 0
+  const checked = pd.checked ?? 0
+  const flagged = pd.flagged ?? 0
+  const unchecked = total - checked
+  const matched   = Math.max(0, checked - flagged)   // đã kiểm KHỚP = đã kiểm − chênh lệch
+
+  // Nạp dòng đầy đủ của ĐÚNG trang này rồi xếp lại theo thứ tự RPC đã quyết (join làm ở PostgREST
+  // cho gọn — 1 trang ≤1000 id nên chunk 300 là đủ, không cần đưa join vào SQL).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let entries: any[] = []
+  if (pageIds.length) {
+    try {
+      const rows = await fetchAllByIdChunks(pageIds, chunk => supabase.from('InventoryEntry')
+        .select(`
+          id, pallet_code, cartons_remaining, import_date,
+          stocktake_flagged, stocktake_flag_note, stocktake_at,
+          location:Location(id, location_code),
+          material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton),
+          stocktake_by_emp:Employee!stocktake_by(id, name)
+        `)
+        .in('id', chunk))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const byId = new Map((rows as any[]).map(r => [r.id as string, r]))
+      entries = pageIds.map(id => byId.get(id)).filter(Boolean)
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
+    }
+  }
 
   return ok(res, {
-    stats: { total, checked, unchecked, flagged },
+    stats: { total, checked, unchecked, flagged, matched },
     entries,
-    total_filtered: totalFiltered,
-    truncated: totalFiltered > entries.length,
+    total_filtered: pd.total ?? 0,
+    page: pageNum, page_size: pageSize,
+    date_from: dfrom, date_to: dto,
+  })
+}
+
+// Lịch sử kiểm kê: đọc từ StocktakeLog (append-only) — xem lại kết quả kiểm mọi ngày/đợt,
+// kể cả pallet đã xuất / đã kiểm lại. Scope kho + loại (null-inclusive) như báo cáo tổng hợp.
+export async function stocktakeLog(req: Request, res: Response) {
+  const { warehouse_id, category, location_ids, requires_only, date_from, date_to, search, page, page_size } = req.query as Record<string, string>
+  const reqOnly = String(requires_only ?? '') === '1'   // cờ thay cho danh sách id (xem stocktakeEntries)
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
+  const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
+  const dto    = dtoRaw < dfrom ? dfrom : dtoRaw
+  const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
+
+  const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+  let whFilter: string[] | null = null
+  if (scope !== null) {
+    if (warehouse_id && !scope.includes(warehouse_id)) return ok(res, { rows: [], total: 0 })
+    whFilter = warehouse_id ? [warehouse_id] : scope
+    if (!whFilter.length) return ok(res, { rows: [], total: 0 })
+  } else if (warehouse_id) {
+    whFilter = [warehouse_id]
+  }
+  const stCats = scopeCategoriesOf(req)
+
+  let locIdList = parseListParam(location_ids) ?? []
+  // Cờ "chỉ vị trí cần check": BE tự resolve id (phân trang) → client không phải gửi nghìn id
+  if (reqOnly && !locIdList.length) {
+    try {
+      const impLocs = await fetchAllRowsParallel(() => {
+        let lq = supabase.from('Location').select('id').eq('is_active', true).eq('requires_stocktake', true).order('id')
+        if (whFilter) lq = whFilter.length === 1 ? lq.eq('warehouse_id', whFilter[0]) : lq.in('warehouse_id', whFilter)
+        if (category) lq = lq.or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+        if (stCats)   lq = lq.or(categoriesOrScopeFilter('categories', stCats))
+        return lq
+      })
+      locIdList = (impLocs as { id: string }[]).map(l => l.id)
+      if (!locIdList.length) return ok(res, { rows: [], total: 0, date_from: dfrom, date_to: dto })
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
+    }
+  }
+  // Lọc + sắp + đếm + cắt trang trong RPC `stocktake_log_page`. Đường cũ cắt cứng 2000 dòng và
+  // chunk vị trí 300/lô rồi gộp ở Node — vừa không tới được phần sau, vừa lệch thứ tự giữa các lô.
+  // 1 lần quét kiểm = 1 dòng ⇒ bảng này phình nhanh nhất module (kho 12k pallet ≈ 150k dòng/năm).
+  const pageNum  = Math.max(1, parseInt(String(page ?? '1'), 10) || 1)
+  const pageSize = Math.min(1000, Math.max(1, parseInt(String(page_size ?? '200'), 10) || 200))
+
+  const { data: pageData, error: rpcErr } = await supabase.rpc('stocktake_log_page', {
+    p_wh_ids:     whFilter,
+    p_loc_ids:    locIdList.length ? locIdList : null,
+    p_category:   category || null,
+    p_scope_cats: stCats,
+    p_search:     search ? safeFilterValue(String(search)) : null,
+    p_from:       rangeStart,
+    p_to:         rangeEnd,
+    p_offset:     (pageNum - 1) * pageSize,
+    p_limit:      pageSize,
+  })
+  if (rpcErr) return fail(res, 500, 'DB_ERROR', rpcErr.message)
+  const pd = (pageData ?? {}) as { ids?: string[]; total?: number; counted?: number; flagged?: number }
+  const pageIds = pd.ids ?? []
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rows: any[] = []
+  if (pageIds.length) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = await fetchAllByIdChunks(pageIds, chunk => supabase.from('StocktakeLog').select('*').in('id', chunk)) as any[]
+      const byId = new Map(raw.map(r => [r.id as string, r]))
+      rows = pageIds.map(id => byId.get(id)).filter(Boolean)
+    } catch (e) {
+      return fail(res, 500, 'DB_ERROR', (e as Error).message)
+    }
+  }
+  return ok(res, {
+    rows,
+    total: pd.total ?? 0,
+    counted: pd.counted ?? 0,     // 2 ô SummaryBand tính trên TOÀN BỘ bộ lọc, không phải trang
+    flagged: pd.flagged ?? 0,
+    page: pageNum, page_size: pageSize,
+    date_from: dfrom, date_to: dto,
   })
 }
 
@@ -1231,8 +1407,8 @@ export async function bulkUpdateProductionDate(req: Request, res: Response) {
   const patch: Record<string, unknown> = { production_date, updated_at: now, update_date: vnDate }
   if (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id)) patch.updated_by = employee_id
 
-  const { error } = await supabase.from('InventoryEntry').update(patch).in('id', ids)
-  if (error) return fail(res, 500, 'DB_ERROR', error.message)
+  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
+  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
   return ok(res, { updated: ids.length })
 }
 
@@ -1252,30 +1428,56 @@ export async function getInventoryEntry(req: Request, res: Response) {
 // Mirror scripts/import_inventory.js: kiểm TOÀN BỘ file trước — có BẤT KỲ lỗi nào thì KHÔNG nhập gì
 // (trả về danh sách lỗi để sửa & up lại). File sạch 100% → nhập theo lô. status=IN_STOCK, origin=IMPORT.
 // NMSX = đoạn 6 mã pallet (QR), thiếu → nmsx_code của kho. Trùng pallet (trong file / đã có) = lỗi.
-// BASE UNIT (đợt 2): thêm cột CUỐI 'boxes_base' (Hộp — đơn vị gốc, mã có entry). File cũ 9 cột vẫn đọc được.
-const INV_KEYS = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base'] as const
-const INV_LEGACY_LEN = 9
+// BASE UNIT (đợt 2): cột 'boxes_base' (Hộp — đơn vị gốc, mã có entry). File cũ không có cột này thì bỏ trống.
+// Map theo TÊN CỘT (đồng bộ VL06O/KHVC) — chịu ĐẢO cột + đổi tên nhãn; alias = {key + nhãn VN}.
+const INV_FIELDS: FieldDef[] = [
+  { key: 'pallet_code',     label: 'Mã pallet',   aliases: ['ma pallet'], required: true },
+  { key: 'material_code',   label: 'Mã hàng',     aliases: ['ma hang'], required: true },
+  { key: 'warehouse',       label: 'Kho (mã)',    aliases: ['kho ma', 'kho'], required: true },
+  { key: 'location_code',   label: 'Mã vị trí',   aliases: ['ma vi tri', 'vi tri'], required: true },
+  { key: 'cartons',         label: 'Số thùng',    aliases: ['so thung', 'so thung so nguyen'], required: true },
+  { key: 'production_date', label: 'Ngày SX',     aliases: ['ngay sx', 'ngay san xuat', 'ngay sx yyyy mm dd'], required: true },
+  { key: 'ncc',             label: 'NCC',         aliases: ['ncc ma ten tuy'] },
+  { key: 'qa_status',       label: 'QA',          aliases: ['qa', 'qa mac dinh ok'] },
+  { key: 'shelf_life_days', label: 'HSD (ngày)',  aliases: ['hsd', 'hsd ngay', 'hsd ngay tuy'] },
+  { key: 'boxes_base',      label: 'Hộp (lẻ)',    aliases: ['hop', 'hop phan le', 'hop phan le tuy'] },
+  // 2 cột TÙY CHỌN (29/07) — bê tồn kho cũ vào thì phải khai được NGÀY VÀO KHO THẬT + AI nhận,
+  // không thì mọi số "nhập trong ngày" (Giám sát vận hành/Dashboard) tính cả tồn upload thành hàng mới nhận.
+  { key: 'import_date',     label: 'Ngày nhập',   aliases: ['ngay nhap', 'ngay nhap kho', 'ngay nhap tuy', 'ngay nhap trong hom nay'] },
+  { key: 'created_by',      label: 'Người nhập',  aliases: ['nguoi nhap', 'nguoi nhan', 'nguoi nhap tuy'] },
+]
 
 const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
 const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
 const invStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 
 const HASH8 = /^[0-9a-f]{8}$/i
-const NMSX_ALIAS: Record<string, string> = { A: 'O' }   // "A" là mã cũ của nhà máy O → gộp về O
-function nmsxFromPallet(code: string, fallback: string | null): string | null {
+// Ánh xạ mã nhà máy CŨ → MỚI lấy từ cấu hình đơn vị (org_profile.nmsx_alias, mặc định { A: 'O' } =
+// đúng giá trị LOF đang chạy). Truyền vào thay vì đọc hằng số toàn cục: alias là dữ liệu của ĐƠN VỊ.
+function nmsxFromPallet(code: string, fallback: string | null, alias: Record<string, string>): string | null {
   const parts = String(code || '').split('_')
   const raw = (parts.length >= 6 && parts[5] && !HASH8.test(parts[5])) ? parts[5] : fallback
-  return raw ? (NMSX_ALIAS[raw] ?? raw) : raw
+  return raw ? (alias[raw] ?? raw) : raw
 }
-// Ngày SX → yyyy-mm-dd. Chịu: yyyy-mm-dd / dd-mm-yyyy (- hoặc /), số serial Excel.
+// Ngày phải TỒN TẠI trên lịch: regex chỉ soi hình dạng nên "32/13/2026" hay "31/02/2026" vẫn khớp
+// → ghép thành '2026-02-31' rồi Postgres nổ "date out of range" LÚC GHI (vỡ cam kết "lỗi hiện ở bước
+// kiểm trước"). Round-trip qua Date để loại ngày không có thật.
+function isRealISODate(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return false
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+}
+// Ngày SX / Ngày nhập → yyyy-mm-dd. Chịu: yyyy-mm-dd / dd-mm-yyyy (- hoặc /), số serial Excel.
 function invToISODate(v: unknown): string | null {
   if (v == null || v === '') return null
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10)
   const s = String(v).trim()
+  const ok = (iso: string) => (isRealISODate(iso) ? iso : null)
   let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(s)
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  if (m) return ok(`${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`)
   m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(s)
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  if (m) return ok(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`)
   if (/^\d+(\.\d+)?$/.test(s)) {
     const d = new Date(Math.round((Number(s) - 25569) * 86400000))
     return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
@@ -1307,27 +1509,20 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!req.file) return fail(res, 'Không có file upload', 400)
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
     const ws = wb.Sheets[wb.SheetNames[0]]
-    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { defval: '', header: 1 })
-    if (raw.length < 2) return fail(res, 'File Excel trống hoặc không đúng định dạng', 400)
-
-    const norm = (a: unknown[]) => (a || []).map(x => String(x ?? '').trim())
-    const isKeyRow = (r: unknown[]) => INV_KEYS.every((k, i) => norm(r)[i] === k || (i >= INV_LEGACY_LEN && !norm(r)[i]))
-    const start = isKeyRow(raw[1] as unknown[]) ? 2 : 1
-    const rows = raw.slice(start)
-      .map(r => Object.fromEntries(INV_KEYS.map((k, i) => [k, (r as unknown[])[i]])) as Record<string, unknown>)
-      .filter(r => Object.values(r).some(v => String(v ?? '').trim()))
+    const { rows, missingRequired } = parseSheetByHeader(ws, INV_FIELDS)   // map theo TÊN cột (chịu đảo cột)
+    if (missingRequired.length) return fail(res, `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Tồn kho`, 400)
     if (!rows.length) return fail(res, 'Không có dòng dữ liệu nào', 400)
 
     const [mats, whs, locs, cos, qas] = await Promise.all([
       fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, category, base_unit, entry_unit, units_per_carton')),
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
-      fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code')),
+      fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code, warehouse_id')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
       fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
     ]) as [
       ({ id: string; material_code: string; category: string | null } & MatUnits)[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
-      { id: string; location_code: string }[],
+      { id: string; location_code: string; warehouse_id: string | null }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
       { id: string; name: string }[],
     ]
@@ -1336,24 +1531,48 @@ export async function uploadExcel(req: Request, res: Response) {
     const matCatMap = new Map(mats.map(m => [m.id, m.category ?? '']))
     const matUnitsById = new Map<string, MatUnits>(mats.map(m => [m.id, m]))
     const whTypeMeta = await getWhTypeMetaMap()   // cờ requires_ncc per Loại kho (kiểm dòng thiếu NCC)
+    const nmsxAlias = (await getOrgProfile()).nmsx_alias   // gộp mã nhà máy cũ→mới theo cấu hình đơn vị
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
     const locMap = new Map(locs.map(l => [String(l.location_code).trim().toLowerCase(), l.id]))
+    // Vị trí thuộc kho nào — kiểm chéo với cột "Kho" của dòng: mã vị trí trùng nhau giữa các kho là
+    // chuyện thường, thiếu kiểm này thì pallet khai kho A nhưng nằm ở vị trí kho B (list/summary/export
+    // cắt scope theo Location.warehouse_id → pallet BIẾN khỏi kho A, hiện ở kho B; verify 26/07 ghi được 1 entry lệch).
+    const locWhMap = new Map(locs.map(l => [l.id, l.warehouse_id]))
     const resolveNcc = makeNccResolver(cos.filter(c => c.type === 'NCC'))
     const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
     const qaNames = qas.map(q => q.name).join(' / ')
 
+    // NGƯỜI NHẬP (cột tùy chọn): `created_by` là FK → Employee.id, KHÔNG phải tên. File khai
+    // mã nhân viên hoặc tên → resolve sang id; sai/trùng tên thì báo lỗi dòng (đừng ghi bừa → 23503).
+    // Chỉ nạp danh sách nhân sự KHI file thật sự có khai (đỡ 1 query cho phần lớn file).
+    const hasImporterCol = rows.some(r => invStr(r.created_by))
+    const empByCode = new Map<string, string>()
+    const empByName = new Map<string, string[]>()
+    if (hasImporterCol) {
+      const emps = await fetchAllRowsParallel(() => supabase.from('Employee')
+        .select('id, employee_code, name').order('id')) as { id: string; employee_code: string | null; name: string | null }[]
+      for (const e of emps) {
+        const code = String(e.employee_code ?? '').trim().toLowerCase()
+        const name = String(e.name ?? '').trim().toLowerCase()
+        if (code) empByCode.set(code, e.id)
+        if (name) empByName.set(name, [...(empByName.get(name) ?? []), e.id])
+      }
+    }
+
     // Pallet ĐÃ CÓ (active) khớp mã trong file → CẬP NHẬT thay vì báo lỗi (user chốt 05/07).
     // Khóa khớp = (kho, mã pallet) — 1 mã pallet tồn tại hợp lệ ở NHIỀU kho (no-QR pallet_code=mã hàng),
     // khớp unique index uq_inventory_active_wh_pallet. Chỉ fetch entry theo mã trong file (không kéo cả bảng).
-    const ACTIVE_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
+    // Pallet CÒN SỐNG (đang chiếm chỗ trong kho) — KHÔNG gồm EXPORTED. Tên riêng để không lẫn với
+    // `STATUS_RECALC_ON_ADJUST` ở đầu file (tập khác nghĩa, khác phần tử).
+    const ACTIVE_PALLET_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
     const filePallets = [...new Set(rows
       .flatMap(r => { const p = invStr(r.pallet_code); return p ? [p, p.toUpperCase()] : [] }))]
     const exRows: Record<string, unknown>[] = []
     for (let i = 0; i < filePallets.length; i += 400) {
       const chunk = filePallets.slice(i, i + 400)
       exRows.push(...await fetchAllRowsParallel(() =>
-        supabase.from('InventoryEntry').select('*').in('pallet_code', chunk).in('status', ACTIVE_STATUSES).order('id')))
+        supabase.from('InventoryEntry').select('*').in('pallet_code', chunk).in('status', ACTIVE_PALLET_STATUSES).order('id')))
     }
     const exMap = new Map(exRows.map(e =>
       [`${e.warehouse_id}|${String(e.pallet_code ?? '').trim().toLowerCase()}`, e]))
@@ -1392,6 +1611,27 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!prodIso)        missing.push(prodRaw ? `ngày SX sai định dạng "${prodRaw}"` : 'ngày SX')
       if (missing.length) { errors.push(`${at} — thiếu/sai: ${missing.join(', ')}`); continue }
 
+      // NGÀY NHẬP (tùy): khai thì dùng ngày trong file, trống thì = hôm nay. Ngày ở TƯƠNG LAI là
+      // gõ sai (hàng chưa vào kho) → chặn, không thì mọi báo cáo "nhập trong ngày" lệch âm thầm.
+      const impRaw = invStr(r.import_date)
+      const impIso = invToISODate(r.import_date)
+      if (impRaw && !impIso) { errors.push(`${at} — Ngày nhập sai định dạng "${impRaw}" (dùng dd/mm/yyyy hoặc yyyy-mm-dd)`); continue }
+      if (impIso && impIso > importDateVN) { errors.push(`${at} — Ngày nhập ${impIso} ở TƯƠNG LAI (hôm nay ${importDateVN})`); continue }
+
+      // NGƯỜI NHẬP: trống = người bấm upload. Khai thì phải khớp nhân sự (mã ưu tiên, rồi tên).
+      const impByRaw = invStr(r.created_by)
+      let importerId: string | null = null
+      if (impByRaw) {
+        const k = impByRaw.toLowerCase()
+        importerId = empByCode.get(k) ?? null
+        if (!importerId) {
+          const hits = empByName.get(k) ?? []
+          if (hits.length === 1) importerId = hits[0]
+          else if (hits.length > 1) { errors.push(`${at} — "Người nhập" trùng ${hits.length} nhân sự cùng tên "${impByRaw}" — điền MÃ nhân viên`); continue }
+          else { errors.push(`${at} — "Người nhập" không khớp nhân sự: "${impByRaw}" (điền mã nhân viên hoặc tên đúng)`); continue }
+        }
+      }
+
       const palletLc = pallet!.toLowerCase()
       const matId = matMap.get(mcode!.toLowerCase())
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
@@ -1417,6 +1657,14 @@ export async function uploadExcel(req: Request, res: Response) {
       if (seenInFile.has(fileKey)) { errors.push(`${at} — trùng mã pallet trong file (cùng kho ${whRaw})`); continue }
       const locId = locMap.get(locRaw!.toLowerCase())
       if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
+      // Vị trí phải THUỘC ĐÚNG kho của dòng — lệch thì pallet biến khỏi kho khai báo (list/export cắt
+      // theo Location.warehouse_id) và vượt biên scope kho. Verify 26/07: từng ghi được, không báo lỗi.
+      {
+        const locWh = locWhMap.get(locId)
+        if (locWh && locWh !== wh.id) {
+          errors.push(`${at} — vị trí "${locRaw}" không thuộc kho "${whRaw}" (vị trí này thuộc kho khác)`); continue
+        }
+      }
       const nccRaw = invStr(r.ncc)
       let nccId: string | null = null
       if (nccRaw) { const resu = resolveNcc(nccRaw); if (!resu.id) { errors.push(`${at} — NCC ${resu.error ?? 'không khớp'}: ${nccRaw}`); continue } nccId = resu.id }
@@ -1434,7 +1682,7 @@ export async function uploadExcel(req: Request, res: Response) {
         qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
         if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qaNames})`); continue }
       }
-      const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null)
+      const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null, nmsxAlias)
 
       seenInFile.add(fileKey)
       const ex = exMap.get(fileKey)
@@ -1453,7 +1701,11 @@ export async function uploadExcel(req: Request, res: Response) {
           cartons_remaining: qtyBase,
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-          updated_at: now,
+          // Ngày nhập / Người nhập: CHỈ đè khi file có khai (ô trống giữ giá trị cũ — đúng luật merge,
+          // không được lấy "hôm nay" đè lên ngày nhập thật của pallet đã có).
+          ...(impIso ? { import_date: impIso } : {}),
+          ...(importerId ? { created_by: importerId } : {}),
+          updated_at: now, updated_by: actorId,   // FK → Employee.id (KHÔNG phải tên)
         })
         if (qtyBase !== before) {
           adjustLogs.push({
@@ -1470,10 +1722,23 @@ export async function uploadExcel(req: Request, res: Response) {
           stack_layer: 1, status: 'IN_STOCK', origin: 'IMPORT',
           production_date: `${prodIso}T00:00:00`,
           shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
-          import_date: importDateVN, created_at: now, updated_at: now,
+          // Ngày nhập từ file nếu có (bê tồn cũ giữ đúng ngày vào kho), trống = hôm nay.
+          // created_by/updated_by là FK → Employee.id: trước 29/07 upload KHÔNG ghi gì nên mọi
+          // pallet bê vào đều "không rõ ai nhập"; nay = nhân sự khai ở file, trống = người upload.
+          import_date: impIso ?? importDateVN,
+          created_by: importerId ?? actorId, updated_by: actorId,
+          created_at: now, updated_at: now,
         })
       }
     }
+
+    // KIỂM TRƯỚC (preflight): trả báo cáo từ CHÍNH kết quả PHA 1 — số trên dialog = số sẽ ghi thật.
+    // Kèm số dòng ghi AdjustmentLog (pallet đã có bị đổi số lượng) để user thấy tác động lên tồn.
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'pallet', total: rows.length, errors,
+      toInsert: records.length, toUpdate: updates.length,
+      extra: adjustLogs.length ? [{ label: 'Pallet bị ĐỔI số lượng', value: adjustLogs.length, warn: true }] : [],
+    }))
 
     if (errors.length) return ok(res, { inserted: 0, updated: 0, errors })
     if (!records.length && !updates.length) return ok(res, { inserted: 0, updated: 0, errors: [] })
@@ -1481,7 +1746,13 @@ export async function uploadExcel(req: Request, res: Response) {
     // ── PHA 2: file sạch → ghi theo lô 500 (validate đã chặn hết lỗi dữ liệu). ──
     for (let i = 0; i < records.length; i += 500) {
       const { error } = await supabase.from('InventoryEntry').insert(records.slice(i, i + 500))
-      if (error) return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
+      if (error) {
+        // Thua đua: pallet vừa được người khác upload cùng lúc (unique pallet/kho) — upload lại là
+        // idempotent (pallet đã tồn tại → đi nhánh cập nhật), không double.
+        if (error.code === '23505')
+          return fail(res, `Có người khác vừa upload trùng pallet đúng cùng lúc (đã nhập ${i} pallet trước đó) — bấm Upload lại file để cập nhật phần còn lại.`, 409)
+        return fail(res, `Lỗi khi nhập (đã nhập ${i} pallet trước đó): ${error.message}`, 500)
+      }
     }
     // Cập nhật pallet đã có: merge full record (đắp field file lên record cũ) → upsert theo id
     for (let i = 0; i < updates.length; i += 500) {

@@ -14,10 +14,11 @@ import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
-  useDepartments, useJobTitles, useEmployeeRecords,
+  useDepartments, useJobTitles, useAttendanceMatrix,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
-  useLeaves,
+  useLeaves, useHolidayOverrides, useStandardWorkHours,
 } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -25,15 +26,11 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate } from '@/utils/formatters'
 import { getHoliday } from '@/utils/vnHolidays'
 import { LeaveSection, CreateLeaveDialog } from './LeaveManagement'
+import { ATTENDANCE_KINDS, shiftOptions, shiftLabel, shiftShort, shiftCell } from '@/config/shifts'
 
-const KINDS: { value: string; label: string }[] = [
-  { value: 'CA1', label: 'Ca 1' },
-  { value: 'CA2', label: 'Ca 2' },
-  { value: 'CA3', label: 'Ca 3' },
-  { value: 'HC',  label: 'Hành chính' },
-  { value: 'LEAVE', label: 'Nghỉ phép' },
-]
-const kindLabel = (k: string) => KINDS.find(o => o.value === k)?.label ?? k
+// Ca làm việc: MỘT nguồn ở config/shifts.ts (mã · nhãn · thứ tự · màu) — xem ghi chú ở file đó
+const KINDS = shiftOptions(ATTENDANCE_KINDS)
+const kindLabel = shiftLabel
 const kindVariant = (k: string): 'info' | 'success' | 'warning' | 'slate' =>
   k === 'LEAVE' ? 'slate' : k === 'HC' ? 'success' : 'info'
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -53,15 +50,7 @@ function eachDate(from: string, to: string): string[] {
   return out
 }
 
-// màu ô lịch theo loại công
-const KIND_CELL: Record<string, string> = {
-  CA1:   'bg-sky-100 text-sky-700',
-  CA2:   'bg-indigo-100 text-indigo-700',
-  CA3:   'bg-violet-100 text-violet-700',
-  HC:    'bg-green-100 text-green-700',
-  LEAVE: 'bg-slate-200 text-slate-600',
-}
-const KIND_SHORT: Record<string, string> = { CA1: 'Ca 1', CA2: 'Ca 2', CA3: 'Ca 3', HC: 'HC', LEAVE: 'Nghỉ' }
+// màu ô lịch + nhãn ngắn theo loại công — lấy từ sổ ca dùng chung
 const DOW = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 const dowOf = (ds: string) => DOW[(new Date(`${ds}T00:00:00`).getDay() + 6) % 7]
 
@@ -135,6 +124,7 @@ function MySection() {
     return m
   }, [myLeaves])
 
+  const holidayOverrides = useHolidayOverrides()   // lịch nghỉ lễ khai tay (tab Hệ thống)
   const today = TODAY()
   const [sel, setSel]     = useState<string | null>(null)
   const [kind, setKind]   = useState('CA1')
@@ -153,7 +143,7 @@ function MySection() {
 
   const selEntry = sel ? byDate.get(sel) : undefined
   const selLeave = sel ? leaveByDate.get(sel) : undefined
-  const selHoliday = sel ? getHoliday(sel) : null
+  const selHoliday = sel ? getHoliday(sel, holidayOverrides) : null
   const isPast = !!sel && sel < today
   const approvedLeave = selLeave === 'APPROVED'                 // đã duyệt nghỉ → khỏi chấm công
   const locked = (isPast && !canEditPast) || approvedLeave
@@ -209,14 +199,14 @@ function MySection() {
               const isFuture = ds > today
               const isSel = ds === sel
               const cong = e ? toCong(rowTotal(e)) : 0
-              const hol = getHoliday(ds)
+              const hol = getHoliday(ds, holidayOverrides)
               return (
                 <button key={ds} type="button" disabled={isFuture}
                   onClick={() => setSel(ds)}
                   className={`relative min-h-[58px] rounded-lg border p-1 text-left flex flex-col transition-colors
                     ${isSel ? 'border-sky-500 ring-1 ring-sky-400' : 'border-slate-200'}
                     ${!inMonth ? 'opacity-40' : ''} ${isFuture ? 'bg-slate-50 cursor-not-allowed' : 'hover:border-sky-300'}
-                    ${e ? KIND_CELL[e.kind] : 'bg-white'}`}>
+                    ${e ? shiftCell(e.kind) : 'bg-white'}`}>
                   <div className="flex items-center justify-between gap-0.5">
                     <span className={`text-[11px] font-semibold leading-none ${hol ? 'text-red-600' : isToday ? 'text-sky-600' : ''}`}>{format(day, 'd')}</span>
                     <span className="flex items-center gap-0.5">
@@ -227,7 +217,7 @@ function MySection() {
                   </div>
                   {e && (
                     <div className="mt-auto flex items-end justify-between gap-0.5 leading-none">
-                      <span className="text-[10px] font-medium">{KIND_SHORT[e.kind]}{(e.ot_hours > 0 || e.early_leave_hours > 0) && <span className="text-[8px] text-slate-500 ml-0.5">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</span>}</span>
+                      <span className="text-[10px] font-medium">{shiftShort(e.kind)}{(e.ot_hours > 0 || e.early_leave_hours > 0) && <span className="text-[8px] text-slate-500 ml-0.5">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</span>}</span>
                       {e.kind !== 'LEAVE' && <span className="text-xs font-bold tabular-nums">{cong}</span>}
                     </div>
                   )}
@@ -236,7 +226,7 @@ function MySection() {
             })}
           </div>
           <div className="flex flex-wrap gap-2 mt-2 items-center">
-            {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${KIND_CELL[k.value]}`}>{k.label}</span>)}
+            {KINDS.map(k => <span key={k.value} className={`text-[10px] px-1.5 py-0.5 rounded ${shiftCell(k.value)}`}>{k.label}</span>)}
             <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><CheckCircle2 className="h-3 w-3 text-slate-500" /> Nghỉ đã duyệt</span>
             <span className="text-[10px] text-slate-500 flex items-center gap-0.5"><Clock className="h-3 w-3 text-amber-500" /> Chờ duyệt</span>
           </div>
@@ -294,6 +284,7 @@ function MySection() {
 
 // Bảng công của bản thân theo khoảng ngày tùy chọn (chu kỳ công không tròn tháng)
 function MyRangeSheet({ employeeId }: { employeeId?: string }) {
+  const stdHours = useStandardWorkHours()   // giờ công chuẩn — cấu hình ở tab Hệ thống, cùng nguồn với BE
   const from = useWmsFilterStore(s => s.attendanceMy.from)
   const setFrom = (v: string) => useWmsFilterStore.getState().setAttendanceMy({ from: v })
   const [to, setTo]     = useState<string>(TODAY())
@@ -308,9 +299,9 @@ function MyRangeSheet({ employeeId }: { employeeId?: string }) {
       if (r.kind === 'LEAVE') { leave++; continue }
       workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
     }
-    const hours = workDays * 8 + ot - early
+    const hours = workDays * stdHours + ot - early
     return { workDays, ot, early, leave, cong: toCong(hours) }
-  }, [rows])
+  }, [rows, stdHours])
 
   return (
     <div className="border-t border-slate-200 pt-3 space-y-2 max-w-4xl">
@@ -343,10 +334,10 @@ type MatrixRow = { id: string; name: string; code: string; job: string | null; b
 
 function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const canEdit = can(perms, 'attendance', 'edit')
+  const stdHours = useStandardWorkHours()   // giờ công chuẩn — cấu hình ở tab Hệ thống, cùng nguồn với BE
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: departments = [] } = useDepartments()
   const { data: jobTitles = [] } = useJobTitles()
-  const { data: employees = [] } = useEmployeeRecords()
   const del = useDeleteAttendance()
   const today = TODAY()
 
@@ -357,81 +348,79 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const [dense, setDense] = useState(() => localStorage.getItem('attendance_density') === '1')
   const toggleDense = () => setDense(d => { localStorage.setItem('attendance_density', d ? '0' : '1'); return !d })
 
-  const { data: rows = [], isLoading } = useAttendance(
-    { warehouse_id: wh || undefined, department_id: dept || undefined, date_from: from, date_to: to }, true,
-  )
-  const ql = q.trim().toLowerCase()
-  const filtered = rows.filter(r =>
-    (!jt || r.employee?.job_title === jt) &&
-    (!ql || (r.employee?.name ?? '').toLowerCase().includes(ql) || (r.employee?.employee_code ?? '').toLowerCase().includes(ql)),
-  )
-
+  const holidayOverrides = useHolidayOverrides()
   const dates = useMemo(() => eachDate(from, to), [from, to])
   // ngày cần chấm công = trong khoảng, đã qua (≤ hôm nay), không phải Chủ nhật, không phải ngày lễ
-  const isWorkDay = (ds: string) => ds <= today && dowOf(ds) !== 'CN' && !getHoliday(ds)
+  const isWorkDay = (ds: string) => ds <= today && dowOf(ds) !== 'CN' && !getHoliday(ds, holidayOverrides)
 
-  // roster nhân viên thuộc phạm vi lọc (kho/phòng/chức danh/tìm) — để biết ai CHƯA chấm
+  // TRANG = NGƯỜI. Đo thật 28/07: trả cả bảng thì 3.000 NV × 28 ngày = 82.914 dòng = 44MB /
+  // 18,9s ⇒ vượt trần 4,5MB response của Vercel từ khoảng ~290 NV. Nay chỉ tải công của người
+  // trên trang; các ô tổng + "Lượt thiếu" do server đếm trên TOÀN BỘ roster.
+  // Danh sách ngày CẦN chấm gửi xuống server (FE giữ bảng lễ VN + luật bỏ CN + chỉ ngày đã qua).
+  const workDatesParam = useMemo(() => dates.filter(isWorkDay).join(','),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dates.join(','), today])
+  const { data: mx, isLoading } = useAttendanceMatrix({
+    warehouse_id: wh || undefined, department_id: dept || undefined,
+    job_title: jt || undefined, search: q.trim() || undefined,
+    date_from: from, date_to: to, work_dates: workDatesParam, status,
+    page: f.page, page_size: f.pageSize,
+  })
+  const rows = mx?.rows ?? []
+  const rosterTotal = mx?.total ?? 0
+  const rosterPages = Math.max(1, Math.ceil(rosterTotal / f.pageSize))
+  // Server đã lọc theo chức danh + tìm kiếm → KHÔNG lọc lại (lọc lần hai chỉ mất dòng)
+  const filtered = rows
+
+  // Ma trận của TRANG hiện tại: roster do server trả (đã lọc + sắp theo tên), ô lấy từ công của trang
   const recByKey = useMemo(() => {
     const m = new Map<string, AttendanceRow>()
     for (const r of rows) m.set(`${r.employee_id}|${r.work_date}`, r)
     return m
   }, [rows])
-  const matrixAll = useMemo(() => {
-    return employees
-      .filter(e =>
-        e.is_active && !e.deleted_at &&
-        (!wh || e.warehouse_access?.some(w => w.warehouse_id === wh)) &&
-        (!dept || e.department_id === dept) &&
-        (!jt || e.job_title?.name === jt) &&
-        (!ql || e.name.toLowerCase().includes(ql) || e.employee_code.toLowerCase().includes(ql)),
-      )
-      .map<MatrixRow>(e => {
-        const byDate = new Map<string, AttendanceRow>()
-        let hours = 0
-        for (const d of dates) {
-          const r = recByKey.get(`${e.id}|${d}`)
-          if (r) { byDate.set(d, r); hours += rowTotal(r) }
-        }
-        const missingDays = dates.filter(d => isWorkDay(d) && !byDate.has(d))
-        return { id: e.id, name: e.name, code: e.employee_code, job: e.job_title?.name ?? null, byDate, hours, missingDays }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employees, wh, dept, jt, ql, dates, recByKey, today])
-  const matrixEmps = matrixAll.filter(g => status === 'all' || (status === 'done' ? g.missingDays.length === 0 : g.missingDays.length > 0))
-  const totalMissing = matrixAll.reduce((s, g) => s + g.missingDays.length, 0)
-
-  const sum = useMemo(() => {
-    let workDays = 0, ot = 0, early = 0, leave = 0
-    for (const r of filtered) {
-      if (r.kind === 'LEAVE') { leave++; continue }
-      workDays++; ot += r.ot_hours || 0; early += r.early_leave_hours || 0
+  const matrixEmps = useMemo<MatrixRow[]>(() => (mx?.employees ?? []).map(e => {
+    const byDate = new Map<string, AttendanceRow>()
+    let hours = 0
+    for (const d of dates) {
+      const r = recByKey.get(`${e.id}|${d}`)
+      if (r) { byDate.set(d, r); hours += rowTotal(r) }
     }
-    const hours = workDays * 8 + ot - early
-    return { workDays, ot, early, leave, cong: toCong(hours) }
-  }, [filtered])
+    const missingDays = dates.filter(d => isWorkDay(d) && !byDate.has(d))
+    return { id: e.id, name: e.name, code: e.code, job: e.job, byDate, hours, missingDays }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [mx?.employees, dates.join(','), recByKey, today])
+
+  // MỌI ô tổng đếm trên TOÀN BỘ bộ lọc (server), không phải trang đang xem
+  const totalMissing = mx?.missing_total ?? 0
+  const sum = {
+    workDays: mx?.work_days ?? 0,
+    ot:       mx?.ot ?? 0,
+    early:    mx?.early ?? 0,
+    leave:    mx?.leave_days ?? 0,
+    cong:     toCong((mx?.work_days ?? 0) * stdHours + (mx?.ot ?? 0) - (mx?.early ?? 0)),
+  }
 
   const defs: FilterDef[] = [
-    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setAtt({ warehouseId: v }), allLabel: 'Tất cả kho',
+    { key: 'warehouse', label: 'Kho', type: 'single', value: wh, onChange: v => setAtt({ warehouseId: v, page: 1 }), allLabel: 'Tất cả kho',
       options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })) },
-    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setAtt({ deptId: v }), allLabel: 'Tất cả phòng',
+    { key: 'dept', label: 'Phòng ban', type: 'single', value: dept, onChange: v => setAtt({ deptId: v, page: 1 }), allLabel: 'Tất cả phòng',
       options: (departments as { id: string; name: string }[]).map(d => ({ value: d.id, label: d.name })) },
-    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setAtt({ jt: v }), allLabel: 'Tất cả chức danh',
+    { key: 'jt', label: 'Chức danh', type: 'single', value: jt, onChange: v => setAtt({ jt: v, page: 1 }), allLabel: 'Tất cả chức danh',
       options: jobTitles.map(j => ({ value: j.name, label: j.name })) },
     ...(view === 'matrix' ? [{ key: 'status', label: 'Tình trạng', type: 'single' as const,
-      value: status === 'all' ? '' : status, onChange: (v: string) => setAtt({ status: (v || 'all') as 'all' | 'done' | 'missing' }),
+      value: status === 'all' ? '' : status, onChange: (v: string) => setAtt({ status: (v || 'all') as 'all' | 'done' | 'missing', page: 1 }),
       allLabel: 'Tất cả tình trạng',
       options: [{ value: 'done', label: 'Đã chấm đủ' }, { value: 'missing', label: 'Còn thiếu' }] }] : []),
-    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (ff, tt) => setAtt({ from: ff, to: tt }) },
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', from, to, onChange: (ff, tt) => setAtt({ from: ff, to: tt, page: 1 }) },
   ]
   const viewSnapshot = { warehouseId: wh, deptId: dept, jt, q, status, from, to }
   const savedViews = useSavedViewsStore(s => s.views['attendance'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
   function exportExcel() {
-    const sheet = filtered.map(r => ({
+    const sheet = filtered.map((r: AttendanceRow) => ({
       'Ngày': formatDate(r.work_date), 'Nhân viên': r.employee?.name ?? '', 'Mã NV': r.employee?.employee_code ?? '',
-      'Chức danh': r.employee?.job_title ?? '', 'Loại': KIND_SHORT[r.kind] ?? r.kind,
+      'Chức danh': r.employee?.job_title ?? '', 'Loại': shiftShort(r.kind),
       'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
@@ -447,7 +436,7 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           <button onClick={() => setAtt({ view: 'matrix' })} className={`px-2.5 py-1 ${view === 'matrix' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Ma trận</button>
           <button onClick={() => setAtt({ view: 'raw' })} className={`px-2.5 py-1 border-l border-slate-200 ${view === 'raw' ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Raw data</button>
         </div>
-        <Input value={q} onChange={e => setAtt({ q: e.target.value })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
+        <Input value={q} onChange={e => setAtt({ q: e.target.value, page: 1 })} placeholder="Tìm tên / mã NV…" className="h-7 text-xs w-44" />
         <div className="flex-1" />
         {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
         <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
@@ -458,19 +447,23 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
           {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
         </button>
-        <ActionCluster className="shrink-0" mobileInline items={[{
-          key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
-          mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
-          disabled: !filtered.length,
-          onClick: exportExcel,
-        } satisfies ActionItem]} />
+        <ActionCluster className="shrink-0" mobileInline items={[
+          // Xuất bảng công = dữ liệu nhân sự → dùng quyền attendance.report (đã có sẵn, đúng nghĩa "báo cáo"),
+          // KHÔNG để ai xem được là xuất được (attendance.self_log có ở 10/19 chức danh).
+          ...(can(perms, 'attendance', 'report') ? [{
+            key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất Excel bảng công (raw data)',
+            mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
+            disabled: !filtered.length,
+            onClick: exportExcel,
+          } satisfies ActionItem] : []),
+        ]} />
         <FilterSheetButton defs={defs} className="sm:hidden" />
         </div>
         <div className="hidden sm:block"><FilterBar defs={defs} /></div>
       </div>
 
       <SummaryBand className="rounded-lg shrink-0" tiles={[
-        { label: 'Số người', value: matrixAll.length },
+        { label: 'Số người', value: rosterTotal },
         { label: 'Tổng công', value: sum.cong, accent: true },
         { label: 'Ngày công', value: sum.workDays },
         { label: 'Giờ OT', value: sum.ot || '—' },
@@ -483,6 +476,14 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
         : view === 'matrix'
           ? <MatrixTable emps={matrixEmps} dates={dates} isWorkDay={isWorkDay} dense={dense} />
           : <AttTable rows={filtered} onDelete={canEdit ? (id => del.mutate(id)) : undefined} showName dense={dense} />}
+
+      {/* Phân trang theo NGƯỜI — chuẩn dùng chung mọi list page */}
+      <div className="shrink-0">
+        <PagerNav page={f.page} totalPages={rosterPages} onPage={p => setAtt({ page: p })} />
+        <ListFooter page={f.page} pageSize={f.pageSize} total={rosterTotal} unit="nhân viên"
+          onPageSize={n => setAtt({ pageSize: n, page: 1 })}
+          right={view === 'raw' ? `${filtered.length.toLocaleString('vi-VN')} dòng công trên trang` : undefined} />
+      </div>
     </div>
   )
 }
@@ -520,9 +521,9 @@ function MatrixTable({ emps, dates, isWorkDay, dense }: { emps: MatrixRow[]; dat
                 const e = g.byDate.get(d)
                 if (e) {
                   return (
-                    <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${KIND_CELL[e.kind]}`}>
+                    <td key={d} className={`px-1 ${pad} text-center border-r border-slate-100 ${shiftCell(e.kind)}`}>
                       <div className="leading-none">
-                        <div className="text-[10px] font-medium">{KIND_SHORT[e.kind]}</div>
+                        <div className="text-[10px] font-medium">{shiftShort(e.kind)}</div>
                         {(e.ot_hours > 0 || e.early_leave_hours > 0) && <div className="text-[8px] text-slate-500">{e.ot_hours > 0 ? `+${e.ot_hours}` : `−${e.early_leave_hours}`}</div>}
                       </div>
                     </td>

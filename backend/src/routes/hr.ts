@@ -52,6 +52,8 @@ router.delete('/shift-rules/:id', requirePerm('work_assignment', 'manage_shift_r
 
 // ─── Chấm công ───────────────────────────────────────────────────────────────
 router.get('/attendance/report', requirePerm('attendance', 'report'), att.reportAttendance)
+// Bảng công ma trận — phân trang theo NGƯỜI (phải khai trước '/attendance' để không bị nuốt)
+router.get('/attendance/matrix', requireAnyPerm(['attendance', 'view'], ['attendance', 'report']), att.getAttendanceMatrix)
 router.get('/attendance',     requireAnyPerm(['attendance', 'view'], ['attendance', 'self_log']), att.listAttendance)
 router.post('/attendance',    requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']),  att.upsertAttendance)
 router.delete('/attendance/:id', requireAnyPerm(['attendance', 'self_log'], ['attendance', 'edit']), att.deleteAttendance)

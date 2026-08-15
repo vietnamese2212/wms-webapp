@@ -4,7 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 
 function isSuperadmin(req: Request): boolean {
-  return (req as { user?: { name?: string } }).user?.name === 'Admin'
+  // Cờ is_superadmin trong token = cột Employee.is_superadmin (migration 20260813f) — không so tên
+  const u = (req as { user?: { is_superadmin?: boolean } }).user
+  return u?.is_superadmin === true
 }
 const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / chức danh & phân quyền'
 
@@ -13,7 +15,7 @@ const ADMIN_ONLY_MSG = 'Chỉ Admin được sửa cấu trúc phòng ban / ch�
 function escalationError(req: Request, perms?: Record<string, string[]>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = req.user
-  if (u?.name === 'Admin') return null
+  if (u?.is_superadmin === true) return null
   const mine: Record<string, string[]> = u?.module_permissions ?? {}
   for (const [mod, actions] of Object.entries(perms ?? {})) {
     for (const a of (actions ?? [])) {
@@ -23,8 +25,8 @@ function escalationError(req: Request, perms?: Record<string, string[]>): string
   return null
 }
 
-const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_active, created_at, updated_at, created_by, updated_by'
-const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
+const DEPT_SELECT = 'id, name, code, allowed_modules, requires_scheduling, is_carrier, is_active, created_at, updated_at, created_by, updated_by'
+const JT_SELECT   = 'id, name, department_id, parent_id, in_chart, is_driver, is_active, module_permissions, created_at, updated_at, created_by, updated_by, department:Department(id,name,code)'
 
 // ─── Departments ──────────────────────────────────────────────────────────────
 
@@ -43,15 +45,15 @@ export async function listDepartments(_req: Request, res: Response) {
 export async function createDepartment(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
-    const { name, code, allowed_modules = [] } = req.body as {
-      name: string; code: string; allowed_modules?: string[]
+    const { name, code, allowed_modules = [], is_carrier } = req.body as {
+      name: string; code: string; allowed_modules?: string[]; is_carrier?: boolean
     }
     if (!name || !code) return fail(res, 'name và code là bắt buộc', 400)
 
     const actor = req.user?.name || null
     const { data, error } = await supabase
       .from('Department')
-      .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, updated_at: new Date().toISOString(), created_by: actor, updated_by: actor })
+      .insert({ id: randomUUID(), name, code: code.toUpperCase(), allowed_modules, is_carrier: is_carrier === true, updated_at: new Date().toISOString(), created_by: actor, updated_by: actor })
       .select(DEPT_SELECT)
       .single()
     if (error) return fail(res, error.message)
@@ -63,12 +65,12 @@ export async function updateDepartment(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
-    const { name, code, allowed_modules, is_active, requires_scheduling } = req.body as {
-      name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean; requires_scheduling?: boolean
+    const { name, code, allowed_modules, is_active, requires_scheduling, is_carrier } = req.body as {
+      name?: string; code?: string; allowed_modules?: string[]; is_active?: boolean; requires_scheduling?: boolean; is_carrier?: boolean
     }
     const { data, error } = await supabase
       .from('Department')
-      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+      .update({ name, code: code?.toUpperCase(), allowed_modules, is_active, requires_scheduling, is_carrier, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(DEPT_SELECT)
       .single()
@@ -157,15 +159,15 @@ export async function updateJobTitle(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
-    const { name, is_active, module_permissions } = req.body as {
-      name?: string; is_active?: boolean
+    const { name, is_active, module_permissions, is_driver } = req.body as {
+      name?: string; is_active?: boolean; is_driver?: boolean
       module_permissions?: Record<string, string[]>
     }
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
     const { data, error } = await supabase
       .from('JobTitle')
-      .update({ name, is_active, module_permissions, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
+      .update({ name, is_active, module_permissions, is_driver, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
       .eq('id', id)
       .select(JT_SELECT)
       .single()

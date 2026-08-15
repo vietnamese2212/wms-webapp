@@ -6,10 +6,12 @@ import { fileURLToPath } from 'url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+// `||` chứ không `??`: trong CI, secret chưa khai đi vào env là CHUỖI RỖNG (không phải undefined)
+// — `??` sẽ giữ chuỗi rỗng và login bằng tài khoản rỗng.
 export const BASE = process.env.QA_BASE_URL
-  ?? 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
-const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL ?? 'admin'
-const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD ?? 'Bavi1234'   // tài khoản test STAGING
+  || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL || 'admin'
+const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD || 'Bavi1234'   // tài khoản test STAGING
 
 // ── Dữ liệu nền cố định của staging dùng cho test (đổi ở đây nếu staging thay data nền) ──
 export const FIX = {
@@ -18,7 +20,10 @@ export const FIX = {
   WH_QR:   { id: '56cf7a64-d3aa-4fd2-948d-490ec487acb9', code: '20000016', name: 'Kho Ba Vì' },// kho QR
   MAT_POOL: '510000306',   // mã có dòng tồn pool tại WH_QTY
   DVVT_TAG: 'QA-SUITE',    // mọi GDO test gắn dvvt này để nhận diện + dọn
-  DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật)
+  DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật) — CHỈ cho đơn nằm im (create/sửa/xóa PENDING)
+  // Chuyến sẽ THỰC THI (start / quick-export / manual-complete) phải dùng NGÀY HÔM NAY —
+  // luật 02/08: đơn Ngày xuất tương lai bị chặn 422 FUTURE_DATE ở mọi đường xuất.
+  EXEC_DATE: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }),
 }
 
 // ── App API ──
@@ -62,9 +67,22 @@ function readBackendEnv() {
 const ENV = readBackendEnv()
 export const HAS_DB = !!(ENV.SUPABASE_URL && ENV.SUPABASE_SERVICE_ROLE_KEY)
 
+// Thử lại khi ĐỨT MẠNG (DNS/timeout/reset) — KHÔNG thử lại khi server trả lỗi HTTP.
+// Lý do: lỗi mạng thoáng qua làm cổng QA ĐỎ OAN, mà đỏ oan thì cổng sẽ bị bỏ qua — nguy hiểm hơn
+// là không có cổng. Ngược lại, 4xx/5xx của app là TÍN HIỆU THẬT, thử lại sẽ che mất.
+async function fetchNetRetry(url, init, tries = 3) {
+  for (let i = 0; ; i++) {
+    try { return await fetch(url, init) }
+    catch (e) {
+      if (i >= tries - 1) throw e
+      await new Promise(r => setTimeout(r, 400 * (i + 1) + Math.random() * 300))
+    }
+  }
+}
+
 // GET 1 trang PostgREST (limit/offset). filter = chuỗi query PostgREST.
 async function restPage(table, filter, offset, limit) {
-  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
+  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}?${filter}&limit=${limit}&offset=${offset}`, {
     headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` },
   })
   if (!r.ok) throw new Error(`PostgREST ${table}: ${r.status} ${await r.text()}`)
@@ -81,6 +99,60 @@ export async function restAll(table, filter, maxRows = 50_000) {
   console.warn(`  ⚠ ${table}: chạm cầu chì ${maxRows} dòng — kiểm tra có thể THIẾU (cần chuyển check này sang RPC)`)
   return out
 }
+// Ghi thẳng PostgREST (chỉ dùng để DỰNG/DỌN fixture test, không dùng cho logic nghiệp vụ)
+export async function restWrite(table, method, filter, body) {
+  const r = await fetchNetRetry(`${ENV.SUPABASE_URL}/rest/v1/${table}${filter ? "?" + filter : ""}`, {
+    method,
+    headers: {
+      apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json', Prefer: 'return=representation',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const t = await r.text()
+  if (!r.ok) throw new Error(`PostgREST ${method} ${table}: ${r.status} ${t}`)
+  try { return JSON.parse(t) } catch { return [] }
+}
+
+/**
+ * RESOLVE fixture theo MÃ/TÊN thay vì UUID cứng.
+ *
+ * Bài học 27/07: reset dữ liệu demo TRUNCATE Material + Location rồi upload lại → UUID mới,
+ * mọi id hard-code trong QA chết ⇒ cổng QA đỏ vì FIXTURE, không phải vì code. Cổng gác mà tự
+ * hỏng thì hoặc bị bỏ qua, hoặc chặn oan — cả hai đều nguy hiểm hơn là không có cổng.
+ * ⇒ Fixture phải tự tìm lại theo khoá NGHIỆP VỤ (mã hàng, mã kho), không phải id.
+ */
+export async function resolveFixtures() {
+  const mats = await restAll('Material', `select=id,material_code,category&material_code=eq.${FIX.MAT_POOL}`)
+  if (!mats.length) throw new Error(`Fixture: không tìm thấy mã hàng ${FIX.MAT_POOL} — cập nhật FIX.MAT_POOL`)
+  FIX.MAT_POOL_ID = mats[0].id
+  FIX.MAT_POOL_CAT = mats[0].category
+
+  // 1 vị trí ĐANG HOẠT ĐỘNG ở kho QR, nhận đúng loại hàng của mã test (hoặc chưa gán loại)
+  const cat = FIX.MAT_POOL_CAT
+  const locs = await restAll('Location',
+    `select=id,location_code,categories&warehouse_id=eq.${FIX.WH_QR.id}&is_active=is.true&order=location_code&limit=200`)
+  const hit = locs.find(l => !l.categories?.length || (cat && l.categories.includes(cat))) ?? locs[0]
+  if (!hit) throw new Error(`Fixture: kho QR ${FIX.WH_QR.name} không có vị trí nào`)
+  FIX.LOC_QR_ID = hit.id
+  FIX.LOC_QR_CODE = hit.location_code
+}
+
+// Gọi thẳng 1 RPC (Postgres function) — dùng để kiểm ĐÚNG câu lọc dưới DB, không qua controller
+export async function restRpc(fn, args = {}) {
+  const r = await fetch(`${ENV.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  })
+  const t = await r.text()
+  if (!r.ok) throw new Error(`RPC ${fn}: ${r.status} ${t}`)
+  try { return JSON.parse(t) } catch { return null }
+}
+
 export function chunk(arr, n = 300) {
   const out = []
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
@@ -122,11 +194,16 @@ export async function teardownGdo(id, status) {
   return (await api(`/wms/outbound/${id}`, 'DELETE')).s === 200
 }
 
-// Dọn MỌI GDO gắn tag QA (an toàn: chỉ đụng dvvt = FIX.DVVT_TAG)
+// Dọn MỌI GDO gắn tag QA (an toàn: chỉ đụng dvvt = FIX.DVVT_TAG) — quét CẢ 2 cửa sổ ngày
+// (DATE tương lai cho đơn nằm im + EXEC_DATE hôm nay cho chuyến đã thực thi)
 export async function cleanupTagged() {
-  const list = await api(`/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`, 'GET')
-  const gdos = (list.j?.data?.items ?? list.j?.data ?? []).filter(g => g.dvvt === FIX.DVVT_TAG)
-  if (!gdos.length) return 0
-  const rs = await pool(gdos.map(g => () => teardownGdo(g.id, g.status)), 15)
-  return rs.filter(Boolean).length
+  let total = 0
+  for (const d of [...new Set([FIX.DATE, FIX.EXEC_DATE])]) {
+    const list = await api(`/wms/outbound?date_from=${d}&date_to=${d}`, 'GET')
+    const gdos = (list.j?.data?.items ?? list.j?.data ?? []).filter(g => g.dvvt === FIX.DVVT_TAG)
+    if (!gdos.length) continue
+    const rs = await pool(gdos.map(g => () => teardownGdo(g.id, g.status)), 15)
+    total += rs.filter(Boolean).length
+  }
+  return total
 }

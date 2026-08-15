@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -8,14 +8,17 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/use-toast'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
+import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
+import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
   useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehouse,
   useWarehouseTypes, useAddWarehouseType, useUpdateWarehouseType, useDeleteWarehouseType, useReorderWarehouseTypes,
@@ -23,6 +26,7 @@ import {
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting,
+  useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
   type WarehouseZone, type UnitRow, type UnitRole,
 } from '@/api/hooks'
@@ -30,6 +34,7 @@ import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { WH_BADGE_COLORS, whTypeBadgeCls, type WhTypeMeta } from '@/utils/cargoCategory'
+import { computedHolidaysOf } from '@/utils/vnHolidays'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -38,14 +43,16 @@ function apiMsg(err: unknown) {
 // ─── Tab Hệ thống (SystemSetting — cờ hành vi per-DB, multi-tenant silo) ─────
 // Cờ theo KHÁC BIỆT giữa các đơn vị, không theo tên đơn vị. Sổ cờ: backend systemSettingController.
 
+// `sub` để NGẮN — trong lưới 3 cột menu chỉ rộng ~450px, chuỗi dài sẽ nuốt chỗ của nhãn chính.
+// Ví dụ đầy đủ nằm ở tooltip ⓘ của nhãn (chuẩn form cấu hình: diễn giải vào tooltip).
 const LABEL_FORMAT_OPTS = [
-  { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_Máy_STT_NMSX — vd 070526_510000127_C05_M1_001_B' },
-  { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26' },
+  { value: 'underscore', label: 'Tem gạch dưới ( _ )', sub: 'ddmmyy_Mã_ChuKỳ_…' },
+  { value: 'semicolon',  label: 'Tem chấm phẩy ( ; )', sub: 'Mã;QA;Lô;NSX;HSD…' },
 ]
 
 const DEC_SEP_OPTS = [
-  { value: 'dot',   label: 'Dấu chấm ( . )',  sub: 'vd 1.5 kg · 0.00005' },
-  { value: 'comma', label: 'Dấu phẩy ( , )',  sub: 'vd 1,5 kg · 0,00005 (chuẩn VN, khớp file Excel)' },
+  { value: 'dot',   label: 'Dấu chấm ( . )',  sub: '1.5 kg' },
+  { value: 'comma', label: 'Dấu phẩy ( , )',  sub: '1,5 kg' },
 ]
 
 // Cờ xác nhận giao hàng — quyết định xuất kho có tạo booking TMS (Chuyển kho) không + theo hình thức kho nhận nào.
@@ -71,6 +78,191 @@ function parseDc(v: unknown): DeliveryConf {
   return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1
 }
 
+// ── Tham số vận hành (đợt 2 chống hardcode 13/08) — MIRROR mặc định BE utils/settings.ts ──
+const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30 }
+const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
+const INB_WINDOW_DEFAULT = 2
+const PACK_MAX_DEFAULT = 10
+function numRec<T extends Record<string, number>>(v: unknown, def: T): T {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...def }
+  const o = v as Record<string, unknown>
+  const out = { ...def }
+  for (const k of Object.keys(def) as (keyof T)[]) {
+    const n = Number(o[k as string])
+    if (Number.isFinite(n) && n > 0) out[k] = n as T[keyof T]
+  }
+  return out
+}
+const recToStr = (o: Record<string, number>): Record<string, string> =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, String(v)]))
+// Ô nhập phải ra SỐ NGUYÊN trong khoảng — trả null để chặn trước khi gửi (BE vẫn là chốt cuối)
+const intIn = (s: string, min: number, max: number): number | null => {
+  const n = Number(s)
+  return Number.isInteger(n) && n >= min && n <= max ? n : null
+}
+
+// ── org_profile (đợt 3 chống hardcode 14/08) — nhận diện & tham số RIÊNG của đơn vị.
+// MIRROR mặc định BE ORG_PROFILE_DEFAULT: chưa cấu hình = đúng giá trị đang chạy của đơn vị 1.
+interface OrgProfileDraft { contact_email: string; nmsx_alias: string; l: string; w: string; h: string }
+interface OrgProfileValue {
+  contact_email: string
+  nmsx_alias: Record<string, string>
+  assumed_carton_mm: { l: number; w: number; h: number }
+}
+const ORG_DEFAULT: OrgProfileValue = { contact_email: 'wms@lof.vn', nmsx_alias: { A: 'O' }, assumed_carton_mm: { l: 422, w: 233, h: 100 } }
+// alias hiện dạng "CŨ=MỚI, CŨ=MỚI" cho dễ gõ (ánh xạ vài mã, không đáng dựng bảng riêng)
+const aliasToStr = (o: Record<string, string>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(', ')
+function aliasFromStr(s: string): Record<string, string> | null {
+  const out: Record<string, string> = {}
+  for (const part of s.split(',').map(x => x.trim()).filter(Boolean)) {
+    const [k, v] = part.split('=').map(x => (x ?? '').trim())
+    if (!k || !v || k.length > 10 || v.length > 10) return null
+    out[k] = v
+  }
+  return out
+}
+// ── vn_holidays — lịch nghỉ lễ KHAI theo năm. KHÔNG gõ văn bản tự do (bản đầu 14/08 dùng textarea
+// "YYYY-MM-DD Tên": gõ sai một ký tự là hỏng cả cụm, user bắt ngay) — mỗi ngày là MỘT DÒNG có ô
+// chọn ngày + ô tên, nạp sẵn được lịch app tự tính rồi sửa theo công bố của Chính phủ.
+type HolidayItem = { date: string; name: string }
+type HolidayMap = Record<string, HolidayItem[]>
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const isRealDate = (ds: string) => {
+  if (!DATE_RE.test(ds)) return false
+  const [y, mo, d] = ds.split('-').map(Number)
+  const chk = new Date(Date.UTC(y, mo - 1, d))
+  return chk.getUTCFullYear() === y && chk.getUTCMonth() === mo - 1 && chk.getUTCDate() === d
+}
+/** Lỗi đầu tiên tìm thấy (câu tiếng Việt để hiện thẳng), hoặc null nếu khai hợp lệ. */
+function holidayError(h: HolidayMap): string | null {
+  for (const year of Object.keys(h).sort()) {
+    const list = h[year]
+    if (list.length > 60) return `Lịch nghỉ lễ ${year}: khai quá 60 ngày.`
+    const seen = new Set<string>()
+    for (const it of list) {
+      if (!it.date) return `Lịch nghỉ lễ ${year}: có dòng chưa chọn ngày.`
+      if (!isRealDate(it.date)) return `Lịch nghỉ lễ ${year}: ngày "${it.date}" không có thật.`
+      if (it.date.slice(0, 4) !== year) return `Lịch nghỉ lễ ${year}: ngày ${it.date} không thuộc năm ${year}.`
+      if (seen.has(it.date)) return `Lịch nghỉ lễ ${year}: ngày ${it.date} bị khai 2 lần.`
+      seen.add(it.date)
+      if (!it.name.trim()) return `Lịch nghỉ lễ ${year}: ngày ${it.date} chưa có tên.`
+    }
+  }
+  return null
+}
+/** Chuẩn hóa trước khi gửi: bỏ khoảng trắng thừa, cắt 80 ký tự, sắp theo ngày. */
+const holidaysNormalize = (h: HolidayMap): HolidayMap => Object.fromEntries(
+  Object.keys(h).sort().map(y => [y, [...h[y]]
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .map(i => ({ date: i.date, name: i.name.trim().slice(0, 80) }))]))
+
+function parseHolidays(v: unknown): HolidayMap {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: HolidayMap = {}
+  for (const [year, list] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue
+    out[year] = list
+      .filter((it): it is { date: string; name: string } =>
+        !!it && typeof (it as { date?: unknown }).date === 'string' && typeof (it as { name?: unknown }).name === 'string')
+      .map(it => ({ date: it.date, name: it.name }))
+  }
+  return out
+}
+
+function parseOrg(v: unknown): OrgProfileValue {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return ORG_DEFAULT
+  const o = v as Record<string, unknown>
+  const c = (o.assumed_carton_mm ?? {}) as Record<string, unknown>
+  const num = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : d)
+  const alias = (o.nmsx_alias && typeof o.nmsx_alias === 'object' && !Array.isArray(o.nmsx_alias))
+    ? Object.fromEntries(Object.entries(o.nmsx_alias as Record<string, unknown>)
+        .filter(([, val]) => typeof val === 'string').map(([k, val]) => [k, String(val)]))
+    : ORG_DEFAULT.nmsx_alias
+  return {
+    contact_email: typeof o.contact_email === 'string' && o.contact_email.trim() ? o.contact_email.trim() : ORG_DEFAULT.contact_email,
+    nmsx_alias: alias,
+    assumed_carton_mm: { l: num(c.l, 422), w: num(c.w, 233), h: num(c.h, 100) },
+  }
+}
+
+/**
+ * Soạn lịch nghỉ lễ theo NĂM. Mỗi ngày một dòng (ô chọn ngày + tên) — không gõ văn bản tự do.
+ * "Nạp lịch tự tính" đổ ra danh sách app đang tự suy (Tết âm lịch + 4 lễ dương) để sửa cho khớp
+ * công bố hằng năm; "Bỏ khai" xóa hẳn năm đó → app quay lại tự tính.
+ * ⚠️ Phải nằm ở CẤP MODULE (khai trong component khác = ô nhập mất focus sau 1 ký tự).
+ */
+function HolidayEditor({ value, onChange, readOnly }: {
+  value: HolidayMap
+  onChange: (v: HolidayMap) => void
+  readOnly?: boolean
+}) {
+  const thisYear = new Date().getFullYear()
+  const [year, setYear] = useState(String(thisYear))
+  const yearOpts = [...new Set([...[-1, 0, 1, 2].map(d => String(thisYear + d)), ...Object.keys(value)])]
+    .sort().map(y => ({ value: y, label: `Năm ${y}` }))
+
+  const rows = value[year]                       // undefined = CHƯA khai năm này (app tự tính)
+  const computed = computedHolidaysOf(Number(year))
+  const dupes = new Set((rows ?? []).filter((r, i) => r.date && (rows ?? []).findIndex(x => x.date === r.date) !== i).map(r => r.date))
+  const setRows = (next: HolidayItem[]) => onChange({ ...value, [year]: next })
+  const dropYear = () => { const next = { ...value }; delete next[year]; onChange(next) }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <div className="w-28"><SingleSelect options={yearOpts} value={year} onChange={setYear} searchable={false} triggerClassName="w-full" /></div>
+        <span className={`text-[9px] ${rows ? 'text-sky-700' : 'text-slate-400'}`}>
+          {rows ? `đã khai ${rows.length} ngày` : `đang tự tính (${computed.length} ngày)`}
+        </span>
+      </div>
+
+      {rows && (
+        <div className="space-y-1 max-h-52 overflow-auto pr-0.5">
+          {rows.length === 0 && (
+            <p className="text-[9px] text-amber-600">Khai 0 ngày = năm {year} KHÔNG có ngày nghỉ lễ nào. Muốn quay lại lịch tự tính thì bấm "Bỏ khai".</p>
+          )}
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <input type="date" value={r.date} disabled={readOnly}
+                min={`${year}-01-01`} max={`${year}-12-31`}
+                onChange={e => setRows(rows.map((x, j) => (j === i ? { ...x, date: e.target.value } : x)))}
+                className={`h-7 w-[118px] shrink-0 rounded-md border px-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400
+                  ${dupes.has(r.date) || (r.date && r.date.slice(0, 4) !== year) ? 'border-red-400 bg-red-50' : 'border-slate-200'}`} />
+              <Input value={r.name} disabled={readOnly} placeholder="Tên ngày nghỉ"
+                onChange={e => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                className={`h-7 flex-1 min-w-0 text-[11px] px-1.5 ${r.name.trim() ? '' : 'border-red-400 bg-red-50'}`} />
+              {!readOnly && (
+                <button type="button" title="Bỏ ngày này" onClick={() => setRows(rows.filter((_, j) => j !== i))}
+                  className="h-7 w-6 shrink-0 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Button type="button" variant="outline" className="h-7 px-2 text-[10px]"
+            onClick={() => setRows([...(rows ?? []), { date: '', name: '' }])}>
+            <Plus className="h-3 w-3 mr-1" /> Thêm ngày
+          </Button>
+          <Button type="button" variant="outline" className="h-7 px-2 text-[10px]"
+            onClick={() => setRows(computed.map(c => ({ ...c })))}>
+            {rows?.length ? 'Nạp lại lịch tự tính' : `Nạp lịch tự tính (${computed.length} ngày)`}
+          </Button>
+          {rows && (
+            <Button type="button" variant="outline" className="h-7 px-2 text-[10px] text-red-600 border-red-200" onClick={dropYear}>
+              Bỏ khai năm {year}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SystemTab({ canManage }: { canManage: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
@@ -79,119 +271,256 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const labelRow = settings.find(s => s.key === 'label_format')
   const dcRow    = settings.find(s => s.key === 'delivery_confirmation')
   const decRow   = settings.find(s => s.key === 'decimal_separator')
+  const retRow   = settings.find(s => s.key === 'retention_days')
+  const cycRow   = settings.find(s => s.key === 'cycle_count')
+  const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
+  const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
+  const orgRow   = settings.find(s => s.key === 'org_profile')
+  const holRow   = settings.find(s => s.key === 'vn_holidays')
+  const stdRow   = settings.find(s => s.key === 'standard_work_hours')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
+  const srvRet   = numRec(retRow?.value, RET_DEFAULT)
+  const srvCyc   = numRec(cycRow?.value, CYC_DEFAULT)
+  const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
+  const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
+  const srvOrg   = parseOrg(orgRow?.value)
+  const srvHol   = parseHolidays(holRow?.value)
+  // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
+  const srvStd   = typeof stdRow?.value === 'number' && stdRow.value >= 1 && stdRow.value <= 24 ? stdRow.value : 8
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
   const [draftDc,    setDraftDc]    = useState<DeliveryConf>(srvDc)
   const [draftDec,   setDraftDec]   = useState(srvDec)
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec])
+  const [draftRet,   setDraftRet]   = useState<Record<string, string>>(recToStr(srvRet))
+  const [draftCyc,   setDraftCyc]   = useState<Record<string, string>>(recToStr(srvCyc))
+  const [draftInb,   setDraftInb]   = useState(String(srvInb))
+  const [draftPack,  setDraftPack]  = useState(String(srvPack))
+  const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
+    contact_email: o.contact_email, nmsx_alias: aliasToStr(o.nmsx_alias),
+    l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
+  })
+  const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
+  const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
+  const [draftStd, setDraftStd] = useState(String(srvStd))
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd])
   const [baseKey, setBaseKey] = useState(srvKey)
+  const syncDrafts = () => {
+    setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
+    setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
+    setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
+    setDraftStd(String(srvStd))
+  }
   useEffect(() => {
-    if (srvKey !== baseKey) { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setBaseKey(srvKey) }
+    if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srvKey])
 
   const labelDirty = draftLabel !== srvLabel
   const dcDirty    = JSON.stringify(draftDc) !== JSON.stringify(srvDc)
   const decDirty   = draftDec !== srvDec
-  const dirty      = labelDirty || dcDirty || decDirty
+  const retDirty   = JSON.stringify(draftRet) !== JSON.stringify(recToStr(srvRet))
+  const cycDirty   = JSON.stringify(draftCyc) !== JSON.stringify(recToStr(srvCyc))
+  const inbDirty   = draftInb !== String(srvInb)
+  const packDirty  = draftPack !== String(srvPack)
+  const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
+  const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
+  const stdDirty   = draftStd !== String(srvStd)
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty || stdDirty
 
   async function applyChanges() {
     setErr('')
+    // Kiểm nhanh phía FE (khoảng hợp lệ MIRROR validator BE) — chặn sớm cho thông báo rõ; BE vẫn là chốt cuối
+    let ret: { photos: number; feed: number; error_logs: number } | null = null
+    let cyc: { A: number; B: number; C: number; window_days: number } | null = null
+    let inb: number | null = null, pack: number | null = null
+    if (retDirty) {
+      const photos = intIn(draftRet.photos, 7, 730), feed = intIn(draftRet.feed, 1, 90), error_logs = intIn(draftRet.error_logs, 7, 365)
+      if (!photos || !feed || !error_logs) return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 (ngày, số nguyên).')
+      ret = { photos, feed, error_logs }
+    }
+    if (cycDirty) {
+      const A = intIn(draftCyc.A, 1, 365), B = intIn(draftCyc.B, 1, 365), C = intIn(draftCyc.C, 1, 365), window_days = intIn(draftCyc.window_days, 7, 365)
+      if (!A || !B || !C || !window_days) return setErr('Kiểm kê luân phiên: chu kỳ 1–365 ngày, cửa sổ phân hạng 7–365 ngày (số nguyên).')
+      if (!(A <= B && B <= C)) return setErr('Kiểm kê luân phiên: hạng A phải kiểm DÀY nhất — cần A ≤ B ≤ C.')
+      cyc = { A, B, C, window_days }
+    }
+    if (inbDirty) {
+      inb = intIn(draftInb, 1, 90)
+      if (!inb) return setErr('Cửa sổ sửa/xóa phiếu nhập: 1–90 ngày (số nguyên).')
+    }
+    if (packDirty) {
+      pack = intIn(draftPack, 1, 50)
+      if (!pack) return setErr('Sổ đóng gói: tối đa mã / trang sổ trong khoảng 1–50 (số nguyên).')
+    }
+    let org: OrgProfileValue | null = null
+    if (orgDirty) {
+      const email = draftOrg.contact_email.trim()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Đơn vị: email kỹ thuật không hợp lệ (dùng cho thông báo đẩy).')
+      const alias = aliasFromStr(draftOrg.nmsx_alias)
+      if (!alias) return setErr('Đơn vị: mã nhà máy cũ→mới phải viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy.')
+      const l = intIn(draftOrg.l, 1, 5000), w = intIn(draftOrg.w, 1, 5000), h = intIn(draftOrg.h, 1, 5000)
+      if (!l || !w || !h) return setErr('Đơn vị: cỡ thùng giả định phải là số nguyên 1–5000 mm cho cả D, R, C.')
+      org = { contact_email: email, nmsx_alias: alias, assumed_carton_mm: { l, w, h } }
+    }
+    let std: number | null = null
+    if (stdDirty) {
+      const n = Number(draftStd)
+      // bước 0,5 giờ — 7,5h là ca thật, nhưng 7,37h thì là gõ nhầm
+      if (!Number.isFinite(n) || n < 1 || n > 24 || !Number.isInteger(n * 2))
+        return setErr('Chấm công: giờ công chuẩn phải trong khoảng 1–24 giờ và là bội của 0,5 (vd 8 hoặc 7.5).')
+      std = n
+    }
+    let hol: HolidayMap | null = null
+    if (holDirty) {
+      const e = holidayError(draftHol)
+      if (e) return setErr(e)
+      hol = holidaysNormalize(draftHol)
+    }
     try {
       if (labelDirty) await save({ key: 'label_format', value: draftLabel })
       if (dcDirty)    await save({ key: 'delivery_confirmation', value: draftDc })
       if (decDirty)   await save({ key: 'decimal_separator', value: draftDec })
+      if (ret)        await save({ key: 'retention_days', value: ret })
+      if (cyc)        await save({ key: 'cycle_count', value: cyc })
+      if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
+      if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
+      if (std)        await save({ key: 'standard_work_hours', value: std })
+      if (org)        await save({ key: 'org_profile', value: org })
+      if (hol)        await save({ key: 'vn_holidays', value: hol })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
-  const resetDraft = () => { setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec); setErr('') }
-  const roClass = canManage ? '' : 'pointer-events-none opacity-60'   // non-manager: xem, không sửa
+  const resetDraft = () => { syncDrafts(); setErr('') }
 
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto p-4">
+      <div className="flex-1 min-h-0 overflow-auto p-3">
         {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{err}</p>}
 
-        <div className="divide-y divide-slate-100 border-y border-slate-100">
-          {/* 1. Định dạng tem pallet */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">1. Định dạng tem pallet</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Chỉ áp cho chiều IN tem từ app. Chiều quét nhận theo định dạng của đơn vị.</p>
-              {labelRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {labelRow.updated_by} · {formatDateTime(labelRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 ${roClass}`}>
+        <div className={SETTINGS_GRID}>
+          <SettingGroup readOnly={!canManage} title="Định dạng & nhập liệu" meta={labelRow}>
+            <SettingField label="Định dạng tem pallet"
+              tip={<>Chỉ áp cho chiều IN tem từ app. Chiều quét nhận vẫn theo định dạng của đơn vị.<br />
+                <b>Gạch dưới:</b> ddmmyy_Mã_ChuKỳ_Máy_STT_NMSX — vd 070526_510000127_C05_M1_001_B<br />
+                <b>Chấm phẩy:</b> Mã hàng;QA;Mã lô;NSX;HSD;Mẻ;Giờ:Phút — vd 50033;1;TA260705A045;05/07/2026;05/03/2027;1;05:26</>}>
               <SingleSelect options={LABEL_FORMAT_OPTS} value={draftLabel}
-                onChange={setDraftLabel} searchable={false} triggerClassName="w-56" />
-            </div>
-          </div>
-
-          {/* 2. Xác nhận giao hàng */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">2. Xác nhận giao hàng</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Khi xuất kho: "Không" → không tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên.</p>
-              {dcRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {dcRow.updated_by} · {formatDateTime(dcRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 flex flex-col items-end gap-1.5 ${roClass}`}>
-              <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
-                onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-56" />
-              {draftDc.enabled && (
-                <>
-                  <MultiSelectFilter label="Hình thức kho nhận" options={DC_MODE_OPTS}
-                    selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
-                    searchable={false} width="w-56" />
-                  <p className="text-[10px] text-right max-w-[14rem] break-words">
-                    {draftDc.modes.length
-                      ? <span className="text-slate-500">Đã chọn: {draftDc.modes.join(', ')}</span>
-                      : <span className="text-amber-600">Chưa chọn → không tạo booking</span>}
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* 3. Dấu thập phân — ô nhập số (KG/decimal) ở các form; app chặn dấu còn lại */}
-          <div className="flex items-start justify-between gap-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800">3. Dấu thập phân</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.</p>
-              {decRow?.updated_by && <p className="text-[10px] text-slate-400 mt-0.5">Cập nhật: {decRow.updated_by} · {formatDateTime(decRow.updated_at)}</p>}
-            </div>
-            <div className={`shrink-0 ${roClass}`}>
+                onChange={setDraftLabel} searchable={false} triggerClassName="w-full" />
+            </SettingField>
+            <SettingField label="Dấu thập phân"
+              tip={<>Dùng cho ô nhập số lẻ (KG, Pallet/EA, kích thước…) ở form Mã hàng. Chọn dấu nào thì app CHẶN dấu còn lại khi nhập.<br />
+                Dấu phẩy là chuẩn VN, khớp file Excel (vd 1,5 kg · 0,00005).</>}>
               <SingleSelect options={DEC_SEP_OPTS} value={draftDec}
-                onChange={setDraftDec} searchable={false} triggerClassName="w-56" />
+                onChange={setDraftDec} searchable={false} triggerClassName="w-full" />
+            </SettingField>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Xác nhận giao hàng" meta={dcRow}>
+            <SettingField label="Tạo booking Chuyển kho khi xuất" tip={'"Không" → xuất kho KHÔNG tạo booking Chuyển kho. "Có" → tạo booking theo hình thức kho nhận chọn bên dưới.'}>
+              <SingleSelect options={DC_ENABLED_OPTS} value={draftDc.enabled ? 'on' : 'off'}
+                onChange={v => setDraftDc(d => ({ ...d, enabled: v === 'on' }))} searchable={false} triggerClassName="w-full" />
+            </SettingField>
+            {draftDc.enabled && (
+              <SettingField label="Hình thức kho nhận"
+                tip={draftDc.modes.length
+                  ? `Đang tạo booking cho kho nhận dạng: ${draftDc.modes.join(', ')}`
+                  : 'Chưa chọn hình thức nào → sẽ KHÔNG tạo booking cho chuyến nào cả.'}>
+                <MultiSelectFilter label="Hình thức kho nhận" options={DC_MODE_OPTS}
+                  selected={draftDc.modes} onChange={m => setDraftDc(() => ({ enabled: true, modes: m }))}
+                  searchable={false} width="w-full" />
+                {!draftDc.modes.length && <span className="text-[9px] text-amber-600">Chưa chọn → không tạo booking</span>}
+              </SettingField>
+            )}
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Kiểm kê luân phiên ABC" meta={cycRow}>
+            <div>
+              <SettingLabel text="Chu kỳ kiểm theo hạng" tip="Hạng A nhặt nhiều nhất nên kiểm dày nhất. Bắt buộc A ≤ B ≤ C. Áp cho tab Luân phiên ABC của Kiểm kho." />
+              <div className="grid grid-cols-3 gap-1.5">
+                <SettingNum label="Hạng A" unit="ngày" value={draftCyc.A} onChange={v => setDraftCyc(d => ({ ...d, A: v }))} />
+                <SettingNum label="Hạng B" unit="ngày" value={draftCyc.B} onChange={v => setDraftCyc(d => ({ ...d, B: v }))} />
+                <SettingNum label="Hạng C" unit="ngày" value={draftCyc.C} onChange={v => setDraftCyc(d => ({ ...d, C: v }))} />
+              </div>
             </div>
-          </div>
+            <SettingField label="Cửa sổ lượt nhặt để phân hạng" tip="Số ngày lấy lượt nhặt gần đây làm căn cứ xếp hạng ABC.">
+              <div className="w-20"><SettingNum unit="ngày" value={draftCyc.window_days} onChange={v => setDraftCyc(d => ({ ...d, window_days: v }))} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Thời gian lưu dữ liệu" meta={retRow}>
+            <div>
+              <SettingLabel text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày." />
+              <div className="grid grid-cols-3 gap-1.5">
+                <SettingNum label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
+                <SettingNum label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
+                <SettingNum label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
+              </div>
+            </div>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Nhập kho" meta={inbRow}>
+            <SettingField label="Cửa sổ tự sửa/xóa pallet" tip="Người NHẬP tự sửa/xóa pallet của mình trong bấy nhiêu ngày kể từ ngày nhập. Quá hạn phải nhờ người có quyền force (chứng từ đã chốt).">
+              <div className="w-20"><SettingNum unit="ngày" value={draftInb} onChange={setDraftInb} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Chấm công" meta={stdRow}>
+            <SettingField label="Giờ công chuẩn / ngày"
+              tip="Bảng công quy ngày công ra giờ: tổng giờ = số ngày công × giờ chuẩn + tăng ca − về sớm. Nhận số lẻ 0,5 (vd 7.5). Đổi ở đây là đổi CẢ số trên màn lẫn số trong báo cáo (backend đọc cùng cờ).">
+              <div className="w-20"><SettingNum unit="giờ" value={draftStd} onChange={setDraftStd} step={0.5} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          <SettingGroup readOnly={!canManage} title="Sổ đóng gói" meta={packRow}>
+            <SettingField label="Số mã tối đa / trang sổ" tip="Một trang sổ ghi được nhiều mã SX chung chu kỳ + máy; trần này chặn chọn quá tay khi mở trang.">
+              <div className="w-20"><SettingNum unit="mã" value={draftPack} onChange={setDraftPack} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Lịch nghỉ lễ — công bố đổi hàng năm, trước 14/08 phải sửa code mới đúng */}
+          <SettingGroup readOnly={!canManage} title="Lịch nghỉ lễ" meta={holRow}>
+            <SettingField label="Ngày nghỉ theo năm"
+              tip='NĂM NÀO CÓ KHAI thì bảng công dùng ĐÚNG danh sách khai (kể cả nghỉ bù, Tết dài ngắn theo công bố của Chính phủ); năm không khai vẫn tự tính bằng lịch âm + 4 lễ dương như trước. Bấm "Nạp lịch tự tính" để lấy bản nháp rồi sửa. Ngày lễ = không tính là ngày cần chấm công.'>
+              <HolidayEditor value={draftHol} onChange={setDraftHol} readOnly={!canManage} />
+            </SettingField>
+          </SettingGroup>
+
+          {/* Nhận diện & tham số riêng của ĐƠN VỊ — trước 14/08 là hằng số của LOF nằm rải trong code */}
+          <SettingGroup readOnly={!canManage} title="Đơn vị" meta={orgRow}>
+            <SettingField label="Email kỹ thuật (thông báo đẩy)"
+              tip="Chuẩn Web Push bắt buộc khai MỘT địa chỉ liên hệ kỹ thuật để dịch vụ push của trình duyệt (Google/Apple) báo về khi máy chủ gửi thông báo có vấn đề. KHÔNG gửi/nhận thư ở đây, người dùng không nhìn thấy — nên điền hòm thư quản trị CÓ THẬT của đơn vị. Lưu là áp ngay cho khóa push đang dùng.">
+              <Input value={draftOrg.contact_email} onChange={e => setDraftOrg(d => ({ ...d, contact_email: e.target.value }))}
+                className="h-7 w-full text-[11px] px-1.5" placeholder="quantri@congty.vn" />
+            </SettingField>
+            <SettingField label="Mã nhà máy cũ → mới" tip='Khi đọc đoạn NMSX trên tem pallet, mã cũ được quy về mã mới. Viết dạng "A=O", nhiều cặp ngăn bằng dấu phẩy. Để trống nếu đơn vị không có mã cũ.'>
+              <Input value={draftOrg.nmsx_alias} onChange={e => setDraftOrg(d => ({ ...d, nmsx_alias: e.target.value.toUpperCase() }))}
+                className="h-7 w-full text-[11px] px-1.5 font-mono" placeholder="A=O" />
+            </SettingField>
+            <div>
+              <SettingLabel text="Cỡ thùng giả định" tip="Dùng cho sơ đồ xếp xe 3D khi mã hàng CHƯA khai kích thước thùng. Khai kích thước thật ở Mã hàng thì sơ đồ dùng số thật, ô này không ảnh hưởng." />
+              <div className="grid grid-cols-3 gap-1.5">
+                <SettingNum label="Dài" unit="mm" value={draftOrg.l} onChange={v => setDraftOrg(d => ({ ...d, l: v }))} />
+                <SettingNum label="Rộng" unit="mm" value={draftOrg.w} onChange={v => setDraftOrg(d => ({ ...d, w: v }))} />
+                <SettingNum label="Cao" unit="mm" value={draftOrg.h} onChange={v => setDraftOrg(d => ({ ...d, h: v }))} />
+              </div>
+            </div>
+          </SettingGroup>
         </div>
       </div>
 
       {/* Thanh Lưu dính đáy — stage rồi mới áp dụng */}
-      {canManage && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5 flex items-center gap-3">
-          <span className={`text-[11px] ${dirty ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
-            {dirty ? '● Có thay đổi chưa lưu' : 'Đã lưu'}
-          </span>
-          <div className="ml-auto flex gap-2">
-            <Button variant="outline" size="sm" disabled={!dirty || isPending} onClick={resetDraft}>Hoàn tác</Button>
-            <Button size="sm" disabled={!dirty || isPending} onClick={applyChanges}>
-              {isPending ? 'Đang lưu…' : 'Lưu thay đổi'}
-            </Button>
-          </div>
-        </div>
-      )}
+      {canManage && <SettingSaveBar dirty={dirty} saving={isPending} onReset={resetDraft} onSave={applyChanges} />}
     </div>
   )
 }
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -218,6 +547,16 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
+  const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
+  const [sapSlocs,      setSapSlocs]      = useState((wh?.sap_storage_locations ?? []).join(', '))
+  // 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08): rule 1 đăng ký cổng · rule 2 cân — độc lập,
+  // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
+  const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
+  const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
+  // Nguyên tắc luân chuyển (14/08): thứ tự lấy hàng + có BẮT BUỘC hay chỉ cảnh báo.
+  // Mặc định FEFO + không bắt buộc = đúng hành vi trước đây, kho không tick thì không đổi gì.
+  const [rotPrinciple,  setRotPrinciple]  = useState<string>(wh?.rotation_principle ?? 'FEFO')
+  const [rotRequired,   setRotRequired]   = useState(wh?.rotation_required === true)
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -250,12 +589,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -324,6 +663,61 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
             <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
           </div>
+          {/* Map SAP → kho: để CHẶN upload VL06O của kho khác (user chốt 26/07). File VL06O mang mã SAP
+              Plant/Storage Location, không phải mã kho app → phải khai ở đây mới siết được theo kho. */}
+          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Mã SAP của kho (để chặn upload VL06O của kho khác)</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-slate-500">Plant SAP</Label>
+                <Input value={sapPlant} onChange={e => setSapPlant(e.target.value.toUpperCase())} placeholder="vd: 1102" maxLength={12} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-slate-500">Storage Location</Label>
+                <Input value={sapSlocs} onChange={e => setSapSlocs(e.target.value.toUpperCase())} placeholder="vd: FG01, FG02" className="h-8 text-sm" />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400">Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</p>
+          </div>
+          {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
+              rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
+          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Rule khi Bắt đầu chuyến xuất</Label>
+            <label htmlFor="wh-requiregate" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</span>
+              </span>
+            </label>
+            <label htmlFor="wh-requireweigh" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</span>
+              </span>
+            </label>
+          </div>
+          {/* Nguyên tắc luân chuyển (14/08) — thứ tự lấy hàng của kho + có siết hay không.
+              Mặc định FEFO + chỉ cảnh báo = hành vi cũ, không kho nào bị đổi khi lên bản này. */}
+          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+            <Label className="text-xs">Nguyên tắc luân chuyển (thứ tự lấy hàng)</Label>
+            <SingleSelect
+              value={rotPrinciple} onChange={setRotPrinciple}
+              options={[
+                { value: 'FEFO', label: 'FEFO — hạn dùng ngắn nhất đi trước', sub: 'mặc định, hợp hàng có HSD' },
+                { value: 'FIFO', label: 'FIFO — hàng vào trước đi trước',      sub: 'hợp bao bì/vật tư không HSD' },
+                { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
+              ]}
+            />
+            <label htmlFor="wh-rotrequired" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Bắt buộc lấy đúng thứ tự</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</span>
+              </span>
+            </label>
+          </div>
           <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
               <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
@@ -372,7 +766,8 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
   const [selectedWhId, setSelectedWhId] = useState(zone?.warehouse_id ?? warehouseId)
   const [code,     setCode]     = useState(zone?.code ?? '')
   const [name,     setName]     = useState(zone?.name ?? '')
-  const [category, setCategory] = useState(zone?.category ?? '')
+  // Multi loại kho (27/07): khu chứa được NHIỀU loại, BẮT BUỘC chọn ≥1
+  const [categories, setCategories] = useState<string[]>(zone?.categories ?? [])
   const [maxPallets, setMaxPallets] = useState(zone?.max_pallets != null ? String(zone.max_pallets) : '')
   const [isActive, setIsActive] = useState(zone?.is_active ?? true)
   const [err, setErr] = useState('')
@@ -385,17 +780,18 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
     setErr('')
     if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
     if (!name.trim()) { setErr('Tên khu vực là bắt buộc'); return }
+    if (categories.length === 0) { setErr('Chọn ít nhất 1 Loại kho cho khu vực'); return }
     const mpRaw = maxPallets.trim()
     if (mpRaw && (!Number.isFinite(Number(mpRaw)) || Number(mpRaw) < 0)) { setErr('Pallet tối đa phải là số ≥ 0'); return }
     const mp = mpRaw ? Math.round(Number(mpRaw)) : null
     if (isEdit) {
       update(
-        { id: zone.id, name: name.trim(), category: category || null, is_active: isActive, max_pallets: mp },
+        { id: zone.id, name: name.trim(), categories, is_active: isActive, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { warehouse_id: selectedWhId, name: name.trim(), category: category || undefined, code: code.trim() || undefined, max_pallets: mp },
+        { warehouse_id: selectedWhId, name: name.trim(), categories, code: code.trim() || undefined, max_pallets: mp },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -436,20 +832,18 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
             </div>
           )}
 
-          {/* Loại kho */}
+          {/* Loại kho — chọn NHIỀU, bắt buộc ≥1 (khu chứa cả RM01 + PK01…) — dropdown chuẩn form */}
           <div className="space-y-1">
-            <Label className="text-xs">Loại kho</Label>
-            <Select value={category || '__none__'} onValueChange={v => setCategory(v === '__none__' ? '' : v)}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder="Chưa gắn loại kho" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Chưa gắn loại kho</SelectItem>
-                {warehouseTypes.map(t => (
-                  <SelectItem key={t.id} value={t.value}>{t.value}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-xs">Loại kho <span className="text-red-500">*</span> <span className="text-slate-400 font-normal">(chọn được nhiều)</span></Label>
+            <WarehouseMultiSelect
+              warehouses={warehouseTypes.map(t => ({ id: t.value, name: t.value }))}
+              selected={categories}
+              onChange={setCategories}
+              placeholder="Chọn loại kho…"
+              unitLabel="loại kho"
+              searchPlaceholder="Tìm loại kho…"
+            />
+            <p className="text-[10px] text-slate-400">Khu chỉ nhận hàng đúng các loại đã chọn; vị trí trong khu tự kế thừa</p>
           </div>
 
           {/* Mã khu vực */}
@@ -903,7 +1297,7 @@ function UnitTab({ canManage }: { canManage: boolean }) {
 export default function WMSSettings() {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
-  const admin = isAdmin(user?.name)
+  const admin = isAdmin(user)
   // Mỗi tab = 1 quyền riêng (ẩn tab nếu không có quyền). Admin thấy hết.
   const canManageWarehouse = admin || can(perms, 'wms_settings', 'manage_warehouse')
   const canManageType      = admin || can(perms, 'wms_settings', 'manage_type')
@@ -911,6 +1305,7 @@ export default function WMSSettings() {
   const canManageZone      = admin || can(perms, 'wms_settings', 'manage_zone')
   const canManageShift     = admin || can(perms, 'wms_settings', 'manage_shift')
   const canManageQA        = admin || can(perms, 'wms_settings', 'manage_qa')
+  const canManageMachine   = admin || can(perms, 'wms_settings', 'manage_machine')
   const canManageSystem    = admin || can(perms, 'wms_settings', 'manage_system')
   const visibleTabs = [
     canManageWarehouse && 'warehouses',
@@ -919,6 +1314,7 @@ export default function WMSSettings() {
     canManageZone      && 'zones',
     canManageShift     && 'shifts',
     canManageQA        && 'qa',
+    canManageMachine   && 'machines',
     canManageSystem    && 'system',
   ].filter(Boolean) as string[]
   const defaultTab = visibleTabs[0]
@@ -1030,7 +1426,7 @@ export default function WMSSettings() {
   const [zoneCat,    setZoneCat]    = useState('')
   const [zoneStatus, setZoneStatus] = useState('')
   const filteredZones = (zones as WarehouseZone[]).filter(z => {
-    if (zoneCat && (z.category ?? '') !== zoneCat) return false
+    if (zoneCat && !(z.categories ?? []).includes(zoneCat)) return false
     if (zoneStatus && (zoneStatus === 'active') !== z.is_active) return false
     const q = zoneSearch.trim().toLowerCase()
     if (q && !`${z.code} ${z.name}`.toLowerCase().includes(q)) return false
@@ -1074,6 +1470,7 @@ export default function WMSSettings() {
             {canManageZone      && <TabsTrigger value="zones"      className="gap-1.5 text-xs"><MapPin     className="h-3.5 w-3.5" /> Khu vực</TabsTrigger>}
             {canManageShift     && <TabsTrigger value="shifts"     className="gap-1.5 text-xs"><Clock      className="h-3.5 w-3.5" /> Ca nhập</TabsTrigger>}
             {canManageQA        && <TabsTrigger value="qa"         className="gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5" /> QA</TabsTrigger>}
+            {canManageMachine   && <TabsTrigger value="machines"   className="gap-1.5 text-xs"><Cog className="h-3.5 w-3.5" /> Máy</TabsTrigger>}
             {canManageSystem    && <TabsTrigger value="system"     className="gap-1.5 text-xs"><SlidersHorizontal className="h-3.5 w-3.5" /> Hệ thống</TabsTrigger>}
           </TabsList>
         </div>
@@ -1366,7 +1763,7 @@ export default function WMSSettings() {
                           onClick={() => setDetailZone(prev => prev?.id === z.id ? null : z)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{z.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{z.name}</TableCell>
-                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.category ?? <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{z.max_pallets != null ? z.max_pallets.toLocaleString('vi-VN') : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
@@ -1400,7 +1797,7 @@ export default function WMSSettings() {
                   <span className="font-semibold text-slate-700">{detailZone.code} — {detailZone.name}</span>
                   <button onClick={() => setDetailZone(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
-                <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.category ?? '—'}</span></div>
+                <div><span className="text-slate-400">Loại kho:</span> <span className="font-medium">{detailZone.categories?.length ? detailZone.categories.join(', ') : '—'}</span></div>
                 <div><span className="text-slate-400">Pallet tối đa:</span> <span className="font-medium tabular-nums">{detailZone.max_pallets != null ? detailZone.max_pallets.toLocaleString('vi-VN') : 'Chưa khai'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailZone.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
@@ -1430,6 +1827,11 @@ export default function WMSSettings() {
             onEdit={r => { setEditQA(r); setShowQADlg(true) }} />
         </TabsContent>
 
+        {/* ── Tab: Máy theo Kho (user 13/08 — Sổ đóng gói + Sinh tem validate máy ở đây) ── */}
+        <TabsContent value="machines" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <MachineTab canManage={canManageMachine} warehouses={allWh as { id: string; name: string }[]} />
+        </TabsContent>
+
         {/* ── Tab: Hệ thống (cờ SystemSetting) ── */}
         <TabsContent value="system" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <SystemTab canManage={canManageSystem} />
@@ -1454,5 +1856,195 @@ export default function WMSSettings() {
       )}
      </div>
     </div>
+  )
+}
+
+// ─── Tab Máy theo Kho (user 13/08; đồng bộ khuôn tab KHU VỰC theo yêu cầu cùng ngày) ──
+// Máy THUỘC Kho — mỗi kho danh mục riêng. Kho có máy → Sổ đóng gói (mở/sửa trang) + Sinh tem
+// (theo NMSX) PHẢI chọn trong danh mục (BE 422 MACHINE_INVALID); kho chưa khai → điền tự do.
+function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string; code?: string }[] }) {
+  const [whId, setWhId] = useState('')
+  const [search, setSearch] = useState('')
+  const { data: machines = [], isLoading } = useMachines(whId || undefined)
+  const { mutate: deleteM, isPending: deleting } = useDeleteMachine()
+  const [showDlg, setShowDlg] = useState(false)
+  const [editing, setEditing] = useState<WarehouseMachine | null>(null)
+  const whName = new Map(warehouses.map(w => [w.id, w.name]))
+  const term = search.trim().toLowerCase()
+  const filtered = term
+    ? machines.filter(m => m.code.toLowerCase().includes(term) || (m.note ?? '').toLowerCase().includes(term))
+    : machines
+
+  function handleDelete(m: WarehouseMachine) {
+    if (!confirm(`Xóa máy "${m.code}" (${whName.get(m.warehouse_id) ?? ''})?`)) return
+    deleteM(m.id, { onError: e => toast({ variant: 'destructive', title: 'Không xóa được máy', description: apiMsg(e) }) })
+  }
+
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <SingleSelect
+          options={warehouses.map(w => ({ value: w.id, label: w.name, sub: w.code }))}
+          value={whId} onChange={setWhId}
+          placeholder="Tất cả kho" searchPlaceholder="Tìm kho…"
+          triggerClassName="h-8 w-44 text-xs shrink-0"
+        />
+        <SearchInput value={search} onChange={setSearch} placeholder="Tìm tên máy, ghi chú…" className="flex-1 min-w-[140px]" />
+        {canManage && (
+          <ActionCluster className="ml-auto shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm máy', tip: 'Thêm máy vào danh mục của 1 kho',
+            primary: true, variant: 'default',
+            onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? (
+          <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
+        ) : machines.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 space-y-2">
+            <Cog className="h-10 w-10 mx-auto opacity-30" />
+            <p className="text-sm">{whId ? 'Kho này chưa khai máy — Sổ đóng gói / Sinh tem đang cho điền máy tự do' : 'Chưa có máy nào'}</p>
+            {canManage && <p className="text-xs">Nhấn "Thêm máy" để khai máy đầu tiên — kho có danh mục máy thì các form PHẢI chọn trong danh mục</p>}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 text-sm">Không có máy khớp tìm kiếm</div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Kho</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên máy</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ghi chú</TableHead>
+                <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                {canManage && <TableHead className="px-2 py-1.5 w-16" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map(m => (
+                <TableRow key={m.id} className={!m.is_active ? 'opacity-50' : 'hover:bg-slate-50'}>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{whName.get(m.warehouse_id) ?? m.warehouse_id}</TableCell>
+                  <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800 whitespace-nowrap">{m.code}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{m.note || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 whitespace-nowrap">
+                    <Badge variant={m.is_active ? 'default' : 'secondary'} className="text-xs">
+                      {m.is_active ? 'Hoạt động' : 'Tạm dừng'}
+                    </Badge>
+                  </TableCell>
+                  {canManage && (
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <div className="flex justify-end gap-0.5">
+                        <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" title="Sửa"
+                          onClick={e => { e.stopPropagation(); setEditing(m); setShowDlg(true) }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" title="Xóa" disabled={deleting}
+                          onClick={e => { e.stopPropagation(); handleDelete(m) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+      <div className="border-t px-3 py-1 text-[10px] text-slate-500 shrink-0">
+        1–{filtered.length} / {machines.length} máy{whId ? ` · ${whName.get(whId) ?? ''}` : ''} — kho có danh mục máy thì Sổ đóng gói + Sinh tem phải chọn trong danh mục; kho chưa khai thì điền tự do
+      </div>
+      {showDlg && (
+        <MachineDialog machine={editing} warehouseId={whId} warehouses={warehouses} open={showDlg} onClose={() => setShowDlg(false)} />
+      )}
+    </>
+  )
+}
+
+// Form Thêm/Sửa máy — FormSheet như ZoneDialog (user 13/08 "Thêm máy mở ra form, đồng bộ như Khu vực")
+function MachineDialog({ machine, warehouseId, warehouses, open, onClose }: {
+  machine: WarehouseMachine | null; warehouseId: string
+  warehouses: { id: string; name: string; code?: string }[]; open: boolean; onClose: () => void
+}) {
+  const isEdit = !!machine
+  const [selectedWhId, setSelectedWhId] = useState(machine?.warehouse_id ?? warehouseId)
+  const [code, setCode] = useState(machine?.code ?? '')
+  const [note, setNote] = useState(machine?.note ?? '')
+  const [isActive, setIsActive] = useState(machine?.is_active ?? true)
+  const [err, setErr] = useState('')
+  const { mutate: create, isPending: creating } = useCreateMachine()
+  const { mutate: update, isPending: updating } = useUpdateMachine()
+  const isPending = creating || updating
+
+  function handleSubmit() {
+    setErr('')
+    if (!isEdit && !selectedWhId) { setErr('Chọn kho là bắt buộc'); return }
+    if (!code.trim()) { setErr('Tên máy là bắt buộc'); return }
+    if (isEdit) {
+      update({ id: machine.id, code: code.trim(), note: note.trim(), is_active: isActive },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    } else {
+      create({ warehouse_id: selectedWhId, code: code.trim(), note: note.trim() || undefined },
+        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+    }
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa máy' : 'Thêm máy'} widthClass="sm:max-w-lg" footer={<>
+        <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={isPending || !code.trim() || (!isEdit && !selectedWhId)}>
+          {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+
+        {/* Kho — khóa khi sửa (máy thuộc kho, đổi kho = xóa rồi thêm ở kho kia) */}
+        {isEdit ? (
+          <div className="space-y-1">
+            <Label className="text-xs">Kho</Label>
+            <p className="text-sm font-medium text-slate-700">{warehouses.find(w => w.id === machine.warehouse_id)?.name ?? '—'}</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <Label className="text-xs">Kho <span className="text-red-500">*</span></Label>
+            <Select value={selectedWhId || '__none__'} onValueChange={v => setSelectedWhId(v === '__none__' ? '' : v)}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— Chọn kho</SelectItem>
+                {warehouses.map(w => (
+                  <SelectItem key={w.id} value={w.id}>{w.name}{w.code ? ` (${w.code})` : ''}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <Label className="text-xs">Tên máy <span className="text-red-500">*</span></Label>
+          <Input value={code} onChange={e => setCode(e.target.value.toUpperCase().replace(/\s+/g, ''))} placeholder="VD: A, M1" maxLength={10} />
+          <p className="text-[10px] text-slate-400">In trên tem pallet (đoạn Máy) — tự viết HOA, tối đa 10 ký tự, không trùng trong cùng kho</p>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">Ghi chú</Label>
+          <Input value={note} onChange={e => setNote(e.target.value)} placeholder="VD: dây chuyền 180ml…" />
+        </div>
+
+        {isEdit && (
+          <div className="space-y-1">
+            <Label className="text-xs">Trạng thái</Label>
+            <Select value={isActive ? '1' : '0'} onValueChange={v => setIsActive(v === '1')}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Hoạt động</SelectItem>
+                <SelectItem value="0">Tạm dừng (khỏi hiện trong danh sách chọn — trang sổ cũ giữ nguyên)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+    </FormSheet>
   )
 }

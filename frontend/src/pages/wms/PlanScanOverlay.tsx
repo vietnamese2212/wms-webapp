@@ -2,7 +2,8 @@
 // instant flow theo skill qr-scan-flow — quét tem pallet → BE kiểm pallet ĐANG Ở đúng vị trí nguồn
 // của lệnh → TỰ chuyển sang vị trí đích (RPC khóa sức chứa) → beep + card xanh → camera tự chạy lại
 // 1.5s. Lỗi (không thuộc KH / lệch nguồn / đã ở đích / đích đầy) → banner đỏ + nút "Quét tiếp".
-// Mount 1 lần, CSS hidden khi đóng (camera keep-alive, không hỏi lại quyền).
+// Mount 1 lần, CSS hidden khi đóng; camera TẮT HẲN khi đóng (`active={open}` — cùng fix với màn quét
+// Fill 05/08: camera chạy ngầm sau khi đóng), mở lại tự bật không hỏi quyền lại.
 // Dùng chung: tab Kế hoạch (nút inline) + trang chi tiết kế hoạch (nút cuối ô Từ vị trí).
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
@@ -69,7 +70,7 @@ export function PlanScanOverlay({ plan, open, onClose }: {
         </button>
       </div>
       <div className="flex-1 min-h-0">
-        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
       </div>
       <div className="shrink-0 p-3 space-y-2">
         {err && (

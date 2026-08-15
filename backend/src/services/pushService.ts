@@ -1,0 +1,271 @@
+// Web Push (Đợt 1 roadmap 06/08) — gửi thông báo đẩy tới thiết bị đã đăng ký.
+// Nguyên tắc: (1) VAPID key TỰ SINH lần đầu + lưu bảng push_config (per-silo, RLS đóng —
+// KHÔNG để SystemSetting vì GET /wms/settings hở đọc); (2) mọi hàm gửi KHÔNG BAO GIỜ throw —
+// push là phụ trợ, không được làm fail nghiệp vụ chính; (3) endpoint chết (404/410) tự dọn.
+import webpush from 'web-push'
+import { randomUUID } from 'crypto'
+import { supabase } from '../lib/supabase'
+import { getOrgProfile } from '../utils/settings'
+
+export interface PushPayload {
+  title: string
+  body: string
+  url?: string   // đường dẫn trong app khi bấm vào thông báo (vd /wms/fill/orders/<id>)
+  tag?: string   // gộp thông báo cùng tag (thay vì xếp chồng)
+}
+
+interface VapidKeys { publicKey: string; privateKey: string; subject: string }
+
+let _vapidCache: VapidKeys | null = null
+
+/** Lấy (hoặc tự sinh lần đầu) cặp khóa VAPID của silo này. */
+export async function getVapid(): Promise<VapidKeys | null> {
+  if (_vapidCache) return _vapidCache
+  try {
+    const { data } = await supabase.from('push_config')
+      .select('vapid_public, vapid_private, subject').eq('id', 1).maybeSingle()
+    if (data) {
+      _vapidCache = { publicKey: data.vapid_public, privateKey: data.vapid_private, subject: data.subject }
+      return _vapidCache
+    }
+    // Chưa có → sinh mới. Đua 2 instance cùng sinh: PK id=1 → người thua 23505 → đọc lại của người thắng.
+    const keys = webpush.generateVAPIDKeys()
+    const { error } = await supabase.from('push_config').insert({
+      id: 1, vapid_public: keys.publicKey, vapid_private: keys.privateKey,
+      subject: `mailto:${(await getOrgProfile()).contact_email}`, updated_at: new Date().toISOString(),
+    })
+    if (error) {
+      const { data: again } = await supabase.from('push_config')
+        .select('vapid_public, vapid_private, subject').eq('id', 1).maybeSingle()
+      if (!again) return null
+      _vapidCache = { publicKey: again.vapid_public, privateKey: again.vapid_private, subject: again.subject }
+      return _vapidCache
+    }
+    _vapidCache = { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: `mailto:${(await getOrgProfile()).contact_email}` }
+    return _vapidCache
+  } catch { return null }
+}
+
+/**
+ * Đổi địa chỉ liên hệ VAPID (org_profile.contact_email) → ghi luôn vào khóa ĐANG DÙNG.
+ * Không có bước này thì ô cấu hình là ô ma: khóa push sinh 1 lần rồi giữ subject cũ mãi.
+ * Không throw — push là phụ trợ, đổi cấu hình không được vì thế mà lỗi.
+ */
+export async function syncVapidSubject(email: string): Promise<void> {
+  try {
+    await supabase.from('push_config')
+      .update({ subject: `mailto:${email}`, updated_at: new Date().toISOString() }).eq('id', 1)
+    _vapidCache = null   // lần gửi sau đọc lại từ DB
+  } catch { /* bỏ qua */ }
+}
+
+interface SubRow { id: string; employee_id: string; endpoint: string; p256dh: string; auth: string; failed_n: number }
+
+/** Gửi payload tới MỌI thiết bị của danh sách nhân viên. Không throw; trả về số gửi được. */
+export async function sendPushToEmployees(employeeIds: string[], payload: PushPayload): Promise<{ sent: number; failed: number }> {
+  const out = { sent: 0, failed: 0 }
+  try {
+    const ids = [...new Set(employeeIds.filter(Boolean))]
+    if (!ids.length) return out
+    const vapid = await getVapid()
+    if (!vapid) return out
+    webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey)
+
+    // Nạp subscription theo lô .in ≤300 (luật id-list-url-limits)
+    const subs: SubRow[] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('push_subscriptions')
+        .select('id, employee_id, endpoint, p256dh, auth, failed_n')
+        .in('employee_id', ids.slice(i, i + 300)).limit(1000)
+      subs.push(...((data ?? []) as SubRow[]))
+    }
+    if (!subs.length) return out
+
+    const body = JSON.stringify(payload)
+    const results = await Promise.allSettled(subs.map(s =>
+      webpush.sendNotification(
+        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+        body,
+        { TTL: 24 * 3600 },
+      )))
+
+    const deadIds: string[] = []
+    const failIds: string[] = []
+    const okIds: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { out.sent++; if (subs[i].failed_n > 0) okIds.push(subs[i].id); return }
+      out.failed++
+      const st = (r.reason as { statusCode?: number })?.statusCode
+      // 404/410 = subscription đã chết (user gỡ quyền/đổi trình duyệt) → dọn ngay.
+      // Lỗi khác (mạng, 5xx push service) → đếm; quá 10 lần liên tiếp coi như chết.
+      if (st === 404 || st === 410 || subs[i].failed_n + 1 >= 10) deadIds.push(subs[i].id)
+      else failIds.push(subs[i].id)
+    })
+    if (deadIds.length) await supabase.from('push_subscriptions').delete().in('id', deadIds.slice(0, 300))
+    if (failIds.length) {
+      for (const sid of failIds.slice(0, 50)) {
+        const row = subs.find(s => s.id === sid)
+        await supabase.from('push_subscriptions')
+          .update({ failed_n: (row?.failed_n ?? 0) + 1, updated_at: new Date().toISOString() })
+          .eq('id', sid)
+      }
+    }
+    if (okIds.length) {
+      await supabase.from('push_subscriptions')
+        .update({ failed_n: 0, updated_at: new Date().toISOString() })
+        .in('id', okIds.slice(0, 300))
+    }
+  } catch (e) { console.error('[push] sendPushToEmployees:', e) }
+  return out
+}
+
+/**
+ * Gửi tới mọi nhân viên CÓ QUYỀN (module, action) và thấy được kho warehouseId
+ * (null = mọi kho). Superadmin (cột Employee.is_superadmin) luôn nhận.
+ * Dùng cho thông báo "có việc cần xử" không gắn đích danh (vd task Cần xử lý SAP).
+ */
+interface PermEmp { id: string; warehouse_scope: string | null }
+interface PermTargets { emps: PermEmp[]; whOf: Map<string, Set<string>> }
+const _permCache = new Map<string, { at: number; v: PermTargets }>()
+const PERM_CACHE_MS = 60_000
+
+/**
+ * Danh sách người có quyền (module, action) + bản đồ kho được gán — NẠP MỘT LẦN rồi dùng lại.
+ * Trước đây mỗi lời gọi sendPushToPerm tự query JobTitle + Employee + UserWarehouseAccess; một lượt
+ * quét cảnh báo gọi 1 lần cho MỖI cặp (kho, rule) ⇒ 20 kho × 5 rule ≈ hàng trăm request PostgREST,
+ * trong khi pool chỉ ~10 khe (luật CLAUDE.md). Cache 60s: đủ cho cả lượt quét, quyền đổi trễ tối đa
+ * 1 phút (cùng tinh thần cache cờ hệ thống 30s).
+ */
+async function permTargets(module: string, action: string): Promise<PermTargets> {
+  const key = `${module}.${action}`
+  const hit = _permCache.get(key)
+  if (hit && Date.now() - hit.at < PERM_CACHE_MS) return hit.v
+
+  const { data: jts } = await supabase.from('JobTitle').select('id, module_permissions').limit(1000)
+  const jtIds = ((jts ?? []) as { id: string; module_permissions: Record<string, string[]> | null }[])
+    .filter(j => Array.isArray(j.module_permissions?.[module]) && (j.module_permissions?.[module] ?? []).includes(action))
+    .map(j => j.id)
+
+  const emps: PermEmp[] = []
+  for (let i = 0; i < jtIds.length; i += 300) {
+    const { data } = await supabase.from('Employee')
+      .select('id, warehouse_scope')
+      .in('job_title_id', jtIds.slice(i, i + 300)).eq('is_active', true).limit(1000)
+    emps.push(...((data ?? []) as PermEmp[]))
+  }
+  const { data: admins } = await supabase.from('Employee')
+    .select('id, warehouse_scope').eq('is_superadmin', true).eq('is_active', true).limit(10)
+  for (const a of (admins ?? []) as PermEmp[]) if (!emps.some(e => e.id === a.id)) emps.push(a)
+
+  // Kho được gán của những người scope ASSIGNED — nạp 1 lượt cho MỌI kho (thay vì mỗi kho 1 query)
+  const whOf = new Map<string, Set<string>>()
+  const assigned = emps.filter(e => e.warehouse_scope === 'ASSIGNED').map(e => e.id)
+  for (let i = 0; i < assigned.length; i += 300) {
+    const { data } = await supabase.from('UserWarehouseAccess')
+      .select('employee_id, warehouse_id').in('employee_id', assigned.slice(i, i + 300)).limit(5000)
+    for (const r of (data ?? []) as { employee_id: string; warehouse_id: string }[]) {
+      const s = whOf.get(r.employee_id) ?? new Set<string>()
+      s.add(r.warehouse_id); whOf.set(r.employee_id, s)
+    }
+  }
+  const v: PermTargets = { emps, whOf }
+  _permCache.set(key, { at: Date.now(), v })
+  return v
+}
+
+export async function sendPushToPerm(
+  module: string, action: string, warehouseId: string | null, payload: PushPayload,
+  prefKey?: PrefKey,   // lọc theo cài đặt chuông per user (thiếu = gửi hết)
+): Promise<{ sent: number; failed: number }> {
+  try {
+    const { emps, whOf } = await permTargets(module, action)
+    if (!emps.length) return { sent: 0, failed: 0 }
+    const targets = warehouseId
+      ? emps.filter(e => e.warehouse_scope !== 'ASSIGNED' || whOf.get(e.id)?.has(warehouseId))
+      : emps
+    const targetIds = prefKey ? await filterByPref(targets.map(e => e.id), prefKey) : targets.map(e => e.id)
+    return await sendPushToEmployees(targetIds, payload)
+  } catch (e) { console.error('[push] sendPushToPerm:', e); return { sent: 0, failed: 0 } }
+}
+
+// ── Cài đặt thông báo per user (nút chuông > tab Cài đặt — user chốt 06/08) ──
+// prefs jsonb key→bool, THIẾU KEY = BẬT. Cài đặt chỉ tắt CHUÔNG (push); feed/list vẫn đủ.
+export const PREF_KEYS = ['assign', 'reconcile', 'EXPIRY', 'GATE_DWELL', 'TRIP_LATE', 'WEIGH_DIFF', 'BE_ERRORS', 'PACKING_UNRECEIVED'] as const
+export type PrefKey = typeof PREF_KEYS[number]
+
+/** Lọc danh sách nhân viên còn BẬT chuông cho trường hợp prefKey (thiếu dòng prefs = bật). */
+export async function filterByPref(employeeIds: string[], prefKey: PrefKey): Promise<string[]> {
+  try {
+    const ids = [...new Set(employeeIds.filter(Boolean))]
+    if (!ids.length) return []
+    const off = new Set<string>()
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('notification_prefs')
+        .select('employee_id, prefs').in('employee_id', ids.slice(i, i + 300)).limit(1000)
+      for (const r of (data ?? []) as { employee_id: string; prefs: Record<string, boolean> | null }[]) {
+        if (r.prefs?.[prefKey] === false) off.add(r.employee_id)
+      }
+    }
+    return ids.filter(id => !off.has(id))
+  } catch { return employeeIds }
+}
+
+/**
+ * Thông báo ĐÍCH DANH (giao việc…): LUÔN ghi feed cá nhân (tab "Cá nhân" trên chuông — lịch sử),
+ * và đổ chuông (Web Push) cho những người còn bật trường hợp `prefKey`. Không bao giờ throw.
+ */
+export async function notifyEmployees(
+  employeeIds: string[], kind: string, prefKey: PrefKey, payload: PushPayload,
+): Promise<void> {
+  try {
+    const ids = [...new Set(employeeIds.filter(Boolean))]
+    if (!ids.length) return
+    const t = new Date().toISOString()
+    const rows = ids.map(id => ({
+      id: randomUUID(), employee_id: id, kind,
+      title: payload.title, body: payload.body, url: payload.url ?? null,
+      created_at: t, updated_at: t,
+    }))
+    // Việc CŨ đã đọc xong thì cho phép báo lại: dọn dòng ĐÃ ĐỌC cùng đích trước khi ghi.
+    // (Dòng CHƯA đọc thì giữ — người ta còn chưa xem việc trước, báo thêm chỉ gây nhiễu.)
+    {
+      let del = supabase.from('user_notifications').delete()
+        .in('employee_id', ids.slice(0, 300)).eq('kind', kind).not('read_at', 'is', null)
+      del = payload.url ? del.eq('url', payload.url) : del.is('url', null)
+      await del
+    }
+    // GỘP Ở TẦNG DB (unique `uq_user_notif_target`) — kiểm-rồi-ghi trong JS thua đua (đo 06/08:
+    // giao 6 dòng song song → 4 thông báo). `ignoreDuplicates` + `.select()` trả về ĐÚNG những
+    // người THỰC SỰ có thông báo mới ⇒ CHUÔNG cũng chỉ kêu cho họ, không dội N lần (đo: 5 lần).
+    const { data: inserted, error } = await supabase.from('user_notifications')
+      .upsert(rows, { onConflict: 'employee_id,kind,url', ignoreDuplicates: true })
+      .select('employee_id')
+    if (error) console.error('[push] ghi feed lỗi:', error.message)
+    const freshIds = [...new Set(((inserted ?? []) as { employee_id: string }[]).map(r => r.employee_id))]
+    const pushIds = await filterByPref(freshIds, prefKey)
+    if (pushIds.length) await sendPushToEmployees(pushIds, payload)
+  } catch (e) { console.error('[push] notifyEmployees:', e) }
+}
+
+/** Đăng ký/ghi đè 1 thiết bị cho nhân viên (endpoint là khóa — đổi user trên cùng máy = chuyển chủ). */
+export async function upsertSubscription(employeeId: string, endpoint: string, p256dh: string, auth: string, userAgent: string | null) {
+  const now = new Date().toISOString()
+  const { data: ex } = await supabase.from('push_subscriptions').select('id').eq('endpoint', endpoint).maybeSingle()
+  if (ex) {
+    const { error } = await supabase.from('push_subscriptions')
+      .update({ employee_id: employeeId, p256dh, auth, user_agent: userAgent, failed_n: 0, updated_at: now })
+      .eq('id', ex.id)
+    return { error }
+  }
+  const { error } = await supabase.from('push_subscriptions').insert({
+    id: randomUUID(), employee_id: employeeId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: now,
+  })
+  // Đua 2 request cùng endpoint: người thua 23505 → update dòng người thắng
+  if (error && error.code === '23505') {
+    const { error: e2 } = await supabase.from('push_subscriptions')
+      .update({ employee_id: employeeId, p256dh, auth, user_agent: userAgent, failed_n: 0, updated_at: now })
+      .eq('endpoint', endpoint)
+    return { error: e2 }
+  }
+  return { error }
+}

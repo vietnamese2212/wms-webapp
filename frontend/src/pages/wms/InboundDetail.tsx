@@ -24,7 +24,8 @@ import {
   useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
-  useLocationsReal, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
+  useLocationsReal, useLocationsByIds, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
+  useSettingNumber,
 } from '@/api/hooks'
 import { useAuthStore }            from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -34,24 +35,30 @@ import { inboundKey, inboundGroupKey } from './Inbound'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
+import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
+import { useDebouncedValue }        from '@/hooks/useDebouncedValue'
+import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
 // Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
-function LocPickerPill({ trigger, triggerClass, options, onPick }: {
+// onSearch có = TÌM TRÊN SERVER (cha tự query theo từ khoá): KHÔNG lọc lại ở client vì `options`
+// chỉ là 50 dòng khớp từ khoá hiện tại, lọc lần nữa sẽ giấu mất kết quả server vừa trả.
+function LocPickerPill({ trigger, triggerClass, options, onPick, onSearch }: {
   trigger: ReactNode
   triggerClass: string
   options: { id: string; node: ReactNode; searchText: string }[]
   onPick: (id: string) => void
+  onSearch?: (term: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const btnRef = useRef<HTMLButtonElement>(null)
   const anchor = usePopoverAnchor(btnRef, open)
-  const filtered = q ? options.filter(o => o.searchText.toLowerCase().includes(q.toLowerCase())) : options
-  function close() { setOpen(false); setQ('') }
+  const filtered = onSearch ? options : (q ? options.filter(o => o.searchText.toLowerCase().includes(q.toLowerCase())) : options)
+  function close() { setOpen(false); setQ(''); onSearch?.('') }
   return (
     <>
       <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)} className={triggerClass}>
@@ -65,7 +72,7 @@ function LocPickerPill({ trigger, triggerClass, options, onPick }: {
             style={{ ...anchor.style, width: 280, left: Math.min(Number(anchor.style.left ?? 0), window.innerWidth - 288) }}
           >
             <div className="p-2 border-b border-slate-100">
-              <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm vị trí…"
+              <input type="text" value={q} onChange={e => { setQ(e.target.value); onSearch?.(e.target.value) }} placeholder="Tìm vị trí…"
                 autoFocus className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
             </div>
             <div className="max-h-56 overflow-y-auto">
@@ -153,11 +160,21 @@ export default function InboundDetail() {
   const autoScan = searchParams.get('scan') === '1'
 
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
+  // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho (Bàu Bàng 1.517 = 616KB
+  // mỗi lần mở phiếu). BE ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng nên gợi ý không mất.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
   const { data: allLocations = [] } = useLocationsReal(
     order?.warehouse_id
-      ? { warehouse_id: order.warehouse_id, ...(order.warehouse_type ? { category: order.warehouse_type } : {}), ...(order.material_id ? { material_id: order.material_id } : {}) }
+      ? {
+          warehouse_id: order.warehouse_id,
+          ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
+          ...(order.material_id ? { material_id: order.material_id } : {}),
+          search: locTermDeb || undefined, limit: 50,
+        }
       : undefined
   )
+  const { data: locPicked = [] } = useLocationsByIds([order?.location_id])
 
   // Tab bar: các phiếu cùng kho + ngày, rồi lọc về CÙNG CHUYẾN (cùng nhóm bracket) với phiếu đang xem.
   const { data: openOrders = [] } = useInboundOrders(
@@ -202,7 +219,9 @@ export default function InboundDetail() {
   type LocOpt = { id: string; location_code: string; used_slots?: number; max_pallets: number; has_same_material?: boolean }
   const locFull = (l: LocOpt) => l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
   const locRec  = (l: LocOpt) => !!l.has_same_material && !locFull(l)
-  const locOptions = [...(allLocations as LocOpt[])].sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
+  // gộp vị trí ĐANG CHỌN (tra theo id) — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
+  const locAll = [...(allLocations as LocOpt[]), ...(locPicked as unknown as LocOpt[]).filter(p => !(allLocations as LocOpt[]).some(l => l.id === p.id))]
+  const locOptions = locAll.sort((a, b) => (locRec(b) ? 1 : 0) - (locRec(a) ? 1 : 0))
   const locPickOptions = locOptions.map(l => {
     const isPartial = (l.used_slots ?? 0) > 0 && !locFull(l)
     return {
@@ -222,6 +241,7 @@ export default function InboundDetail() {
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
 
   const [showScan,          setShowScan]          = useState(false)
+  const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng cấp trang
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
   const [manualCartons,     setManualCartons]     = useState('')
@@ -286,6 +306,22 @@ export default function InboundDetail() {
   const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
   const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
 
+  // Súng "sẵn sàng" ở trang phiếu = đúng điều kiện nút "Thêm pallet": phiếu OPEN + có vị trí + quyền scan
+  // + chưa đủ kế hoạch NCC + hàng CÓ tem (không phải no-QR). Dùng cho cả cò súng + chỉ báo icon PdaGunHint.
+  const gunArmed = !!order && isOpen && !isNccFull && !isManualEntry && !!order.location_id && can(perms, 'inbound', 'scan')
+
+  // Cò súng cấp trang (user chốt: Nhập thì bóp cò NGAY tại trang phiếu) → tự mở màn quét chế độ SÚNG + xử lý tem.
+  // Đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
+  useWedgeScanner(code => {
+    if (!gunArmed || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
+    unlockAudio()
+    setPdaScan(code)
+    setShowScan(true)
+  }, true)
+
+  // Cửa sổ người nhập tự sửa/xóa = cờ `inbound_edit_window_days` (mặc định 2) — mirror gate BE checkDeletePermission
+  const editWindowDays = useSettingNumber('inbound_edit_window_days', 2)
+
   function canDeleteEntry(entry: PalletEntry): boolean {
     if (!isOpen) return false
     // Mã no-QR là pool dùng chung (có thể PARTIAL khi đã xuất 1 phần) — không chặn theo status; backend tự validate phần còn trống
@@ -294,7 +330,7 @@ export default function InboundDetail() {
     if (!can(perms, 'inbound', 'delete_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
-    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= editWindowDays
   }
 
   function canEditEntry(entry: PalletEntry): boolean {
@@ -304,7 +340,7 @@ export default function InboundDetail() {
     if (!can(perms, 'inbound', 'edit_pallet')) return false
     if (!user?.id || entry.created_by_emp?.id !== user.id) return false
     const importDate = new Date(entry.import_date ?? entry.created_at)
-    return (Date.now() - importDate.getTime()) / 86_400_000 <= 2
+    return (Date.now() - importDate.getTime()) / 86_400_000 <= editWindowDays
   }
 
   function toggleAll() {
@@ -370,9 +406,12 @@ export default function InboundDetail() {
       {showScan && (
         <InboundScanSheet
           order={order}
-          onClose={() => setShowScan(false)}
+          onClose={() => { setShowScan(false); setPdaScan(null) }}
           employeeId={user?.id}
           allLocations={allLocations as any}
+          onLocSearch={setLocTerm}
+          pdaMode={!!pdaScan}
+          initialScan={pdaScan ?? undefined}
         />
       )}
 
@@ -707,6 +746,7 @@ export default function InboundDetail() {
                         triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
                         options={locPickOptions}
                         onPick={changeLoc}
+                        onSearch={setLocTerm}
                       />
                     )}
                     {locHistory.length > 0 && (
@@ -726,6 +766,7 @@ export default function InboundDetail() {
                         triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
                         options={locPickOptions}
                         onPick={changeLoc}
+                        onSearch={setLocTerm}
                       />
                     )}
                   </span>
@@ -843,10 +884,8 @@ export default function InboundDetail() {
           ...(order.transfer_production_date ? [{ label: 'NSX', value: formatDate(order.transfer_production_date) }] : []),
         ]} />
 
-        {/* ── Pallet table (~80%) ── */}
-        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
-
-          <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+        {/* Heading + action — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
+        <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
               Pallet đã quét
@@ -856,7 +895,9 @@ export default function InboundDetail() {
               )}
             </h2>
             {/* Cụm action bảng pallet — ActionCluster chuẩn (Thêm pallet/Lưu thủ công = hành động tiến chính) */}
-            <ActionCluster items={[
+            <div className="flex items-center gap-1.5">
+              {gunArmed && <PdaGunHint />}
+              <ActionCluster items={[
               ...(isOpen && selectedIds.size > 0 ? [{
                 key: 'delete-selected', icon: Trash2, label: `Xóa (${selectedIds.size})`,
                 tip: `Xóa ${selectedIds.size} pallet đã chọn (không hoàn tác được)`,
@@ -888,9 +929,13 @@ export default function InboundDetail() {
                 onClick: () => { unlockAudio(); setShowScan(true) },
               } satisfies ActionItem] : []),
             ]} />
+            </div>
           </div>
 
-          <Card>
+        {/* ── Pallet table (~80%) ── */}
+        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
+          {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
+          <Card className="min-w-max">
             {isPlaceholderData ? (
               <TableSkeleton rows={5} cols={7} />
             ) : entries.length === 0 ? (
@@ -974,7 +1019,7 @@ export default function InboundDetail() {
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                           {qtyEntryText(entry.cartons_imported, order.material)}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600">
+                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600 whitespace-nowrap">
                           {entry.location?.location_code ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
@@ -986,13 +1031,13 @@ export default function InboundDetail() {
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">
                           {formatTimestampTime(entry.created_at)}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.manufacturer?.code ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.cycle ?? '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] text-slate-500">
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
                           {entry.machine_code ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums text-slate-500">

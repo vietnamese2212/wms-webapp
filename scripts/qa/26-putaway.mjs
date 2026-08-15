@@ -201,6 +201,34 @@ try {
       && mine.filter(x => x.putaway_checked && x.putaway_violation).length === 2,
     `mẫu số ${mine.filter(x => x.putaway_checked).length} · vi phạm ${mine.filter(x => x.putaway_checked && x.putaway_violation).length}`)
 
+  // ── 6. ĐUA: luật "tối đa N mã/ô" phải chốt DƯỚI ROW-LOCK ───────────────────────────
+  // Đo 15/08 trước khi sửa: 6 lượt quét đồng thời 6 mã khác nhau vào ô trống giới hạn 1 mã →
+  // LỌT 3 MÃ (backend đọc-rồi-ghi, nhiều lượt cùng đọc "ô đang có 0 mã"). Nay đếm trong RPC.
+  // Chỉ lấy mã CÓ khai thùng/pallet: mã chưa khai → nhập 0 thùng → tồn 0 → theo luật app KHÔNG
+  // tính chiếm chỗ, đưa vào phép đo sẽ nhiễu.
+  // `restAll` tự phân trang nên `limit=` trong filter KHÔNG có tác dụng → cắt bằng JS cho tiền định
+  const raceMats = (await restAll('Material',
+    `select=id,material_code&category=eq.${encodeURIComponent(mat.category)}&no_qr_tracking=not.is.true&cartons_per_pallet=gt.0`)).slice(0, 6)
+  if (raceMats.length >= 3) {
+    const locRace = await mkLoc('RACE')
+    await setRules({ putaway_max_materials: 1, putaway_required: true })
+    const raceOrders = []
+    for (const m of raceMats) {
+      const rr = await mkOrder(locRace.id, { material_id: m.id })
+      if (rr.j?.data?.order?.id) raceOrders.push({ oid: rr.j.data.order.id, m })
+    }
+    const raceRes = await Promise.all(raceOrders.map(({ oid, m }, i) =>
+      api(`/wms/inbound-orders/${oid}/scan`, 'POST',
+        { qr_code: `${ddmmyy}_${m.material_code}_${TAG.replace(/-/g, '')}_M9_${960 + i}_${wh.nmsx_code ?? 'B'}`,
+          location_id: locRace.id, qty_semantics: 'base' })))
+    const inSlot = await restAll('InventoryEntry',
+      `select=material_id&location_id=eq.${locRace.id}&stack_layer=eq.1&status=in.(IN_STOCK,PARTIAL)&cartons_remaining=gt.0`)
+    const distinct = new Set(inSlot.map(x => x.material_id)).size
+    check('[18] ĐUA nhiều mã vào 1 ô giới hạn 1 mã → vẫn chỉ 1 mã chiếm chỗ (đếm dưới row-lock)',
+      distinct <= 1, `${raceOrders.length} lượt đồng thời · ${raceRes.filter(x => x.s === 200).length} HTTP 200 · ${distinct} mã chiếm chỗ`)
+    await setRules({ putaway_max_materials: null, putaway_required: false })
+  } else check('[18] ĐUA tối đa N mã/ô', true, 'bỏ qua — không đủ 3 mã có khai thùng/pallet')
+
 } catch (e) {
   check('gói chạy trọn', false, e?.message ?? String(e))
 } finally {

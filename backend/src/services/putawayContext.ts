@@ -9,8 +9,8 @@ import { fetchAllByIdChunks } from '../utils/pagination'
 import { asRotationPrinciple, rotationSortKey, type RotationPrinciple } from '../utils/rotation'
 import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
-  putawayRulesOf, putawayNeedsLots, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
-  putawayBlock, putawayBlockMessage, isPutawayOverrideReason, PUTAWAY_RULES_DEFAULT,
+  putawayRulesOf, putawayNeedsLots, putawayNeedsMats, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
+  putawayBlock, putawayBlockBatch, putawayBlockMessage, isPutawayOverrideReason, PUTAWAY_RULES_DEFAULT,
   NO_ABC,
   type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc, type PutawayAbc,
 } from '../utils/putaway'
@@ -44,7 +44,7 @@ const MAT_SHELF_COLS = 'id, shelf_life_days, supplier_shelf_life_overrides'
 // (Bàu Bàng 1.517 vị trí = 15.009 dòng tồn nếu kéo về; RPC trả tối đa 1.517 dòng.)
 // Danh sách id đi trong BODY của RPC nên KHÔNG dính trần ~300 id trên URL.
 export async function loadSlotFactsRaw(
-  locIds: string[], materialId: string | null, withLots: boolean,
+  locIds: string[], materialId: string | null, withLots: boolean, withMats = false,
 ): Promise<SlotFactsRaw[]> {
   const out: SlotFactsRaw[] = []
   for (let i = 0; i < locIds.length; i += 500) {
@@ -52,6 +52,7 @@ export async function loadSlotFactsRaw(
       p_loc_ids: locIds.slice(i, i + 500),
       p_material_id: materialId,
       p_with_lots: withLots,
+      p_with_mats: withMats,
     })
     if (error) throw error
     out.push(...((data ?? []) as SlotFactsRaw[]))
@@ -116,6 +117,77 @@ export async function guardPutaway(opts: {
     return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules: ctx.rules, trace: NO_TRACE, warning: null }
 
   return { blocked: block, rules: ctx.rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
+}
+
+// ─── CỬA GHI cất NHIỀU pallet một lượt (đợt D) ───────────────────────────────
+// "Chuyển vị trí hàng loạt" (trang Tồn kho) đẩy N pallet vào MỘT ô trong một request. Không thể
+// gọi `guardPutaway` N lần: mỗi lần sẽ đọc lại sự thật của ô ở trạng thái CHƯA có pallet nào của
+// lô ⇒ ràng buộc trên tập (số mã, một NCC) bị vô hiệu. Nạp sự thật MỘT lần rồi chấm cả lô.
+export async function guardPutawayBatch(opts: {
+  warehouseId:     string | null
+  locationId:      string
+  entries:         IncomingInput[]
+  overrideReason?: unknown
+  canOverride:     boolean
+}): Promise<PutawayGuardResult> {
+  const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
+  const { data: loc } = await supabase.from('Location')
+    .select('id, location_code, max_pallets, slot_no_in, is_pick_face')
+    .eq('id', opts.locationId).maybeSingle()
+  // Vị trí sai/không tồn tại đã có guard riêng trong RPC move (NOT_FOUND/INACTIVE)
+  if (!loc || opts.entries.length === 0)
+    return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, trace: NO_TRACE, warning: null }
+  const l = loc as PutawayLocRow
+
+  const wh = opts.warehouseId ? await whConfig(opts.warehouseId) : {}
+  const rules = putawayRulesOf(wh)
+  const principle = asRotationPrinciple(wh.rotation_principle)
+
+  const raws = await loadSlotFactsRaw(
+    [opts.locationId], null, putawayNeedsLots(rules), putawayNeedsMats(rules))
+
+  // Shelf-life của mã trong ô LẪN mã của lô — một lượt hỏi, chunk 300 theo luật id-trên-URL
+  const matIds = [...new Set([
+    ...raws.flatMap(r => (r.lots ?? []).map(x => x.m)),
+    ...opts.entries.map(e => e.material_id),
+  ].filter(Boolean))]
+  const matById = new Map<string, MaterialShelfInfo>()
+  if (matIds.length > 0) {
+    const rows = await fetchAllByIdChunks(matIds, chunk =>
+      supabase.from('Material').select(MAT_SHELF_COLS).in('id', chunk))
+    for (const m of rows as ({ id: string } & MaterialShelfInfo)[]) matById.set(m.id, m)
+  }
+
+  const facts = raws[0] ? slotFactsOf(raws[0], principle, matById) : EMPTY_SLOT
+  const batch: IncomingPallet[] = opts.entries.map(e => ({
+    material_id: e.material_id,
+    ncc_id:      e.ncc_id ?? null,
+    key: (e.production_date || e.expiry_date)
+      ? rotationSortKey(
+          { production_date: e.production_date ?? null, expiry_date: e.expiry_date ?? null,
+            shelf_life_days: e.shelf_life_days ?? null, ncc_id: e.ncc_id ?? null },
+          matById.get(e.material_id) ?? null, principle)
+      : null,
+  }))
+
+  const block = putawayBlockBatch(l, facts, batch, rules)
+  if (!block)
+    return { blocked: null, rules, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
+
+  const msg = putawayBlockMessage(block, l.location_code, facts, rules, principle)
+  if (!rules.required)
+    return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
+
+  const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''
+  if (!reason)
+    return { error: { code: 'PUTAWAY_VIOLATION', message: `${msg} Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.` },
+             blocked: block, rules, trace: NO_TRACE, warning: null }
+  if (!opts.canOverride)
+    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, blocked: block, rules, trace: NO_TRACE, warning: null }
+  if (!isPutawayOverrideReason(reason))
+    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules, trace: NO_TRACE, warning: null }
+
+  return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
 // Cấu hình kho đổi rất hiếm (form Cài đặt) nhưng bị đọc MỖI LƯỢT QUÉT → cache 30s, cùng khuôn với

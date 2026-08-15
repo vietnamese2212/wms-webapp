@@ -286,6 +286,25 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       (line) => /\.update\(\s*\{[^}]*\blocation_id\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line), s),
   },
+  {
+    key: 'putaway_door_unreviewed',
+    label: 'cửa ghi MỚI đặt pallet vào vị trí (gọi move_pallets_to_location) ngoài 4 cửa ĐÃ soi quy tắc cất hàng',
+    // Bài học 15/08 (đợt D): đợt B gác luật cất hàng ở 4 cửa của Nhập kho rồi coi như xong, trong
+    // khi "Chuyển vị trí hàng loạt" (Tồn kho) vẫn đẩy pallet vào ô CẤM NHẬN HÀNG mà không hỏi luật
+    // câu nào — công tắc "bắt buộc" của kho chỉ gác được một nửa số cửa. Không mechanize được
+    // "đã liệt kê đủ cửa chưa", nhưng mechanize được "có cửa THỨ 5 xuất hiện":
+    //   • inventoryController  — Chuyển vị trí hàng loạt: CÓ gác (guardPutawayBatch)
+    //   • outboundController   — chỗ đặt phần dư khi quét xuất: KHÔNG gác, cố ý (người quét bắt
+    //     buộc phải khai được chỗ đặt; chặn giữa lượt nhặt là dồn họ vào ngõ cụt)
+    //   • slottingController   — quét thực hiện kế hoạch: đích do engine chọn, đã loại slot_no_in
+    //   • fillController       — đích BẮT BUỘC là vị trí nhặt lẻ ⇒ luật block_pick_face mà áp vào
+    //     đây thì tự chặn chính mình; Fill có validate riêng
+    // Thêm cửa mới = phải trả lời câu hỏi đó rồi mới thêm file vào danh sách. Baseline 0.
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && /rpc\(\s*['"]move_pallets_to_location['"]/.test(line)
+        && !/(inventoryController|outboundController|slottingController|fillController)\.ts$/.test(file), s),
+  },
   // Overlay quét KEEP-MOUNTED (ẩn bằng CSS `${open ? '' : 'hidden'}`) mà <QRScanner> không truyền
   // `active={open}` = camera CHẠY NGẦM sau khi user đóng (đèn camera sáng, tốn pin, lo ngại riêng
   // tư — user bắt 05/08 ở màn quét Fill). Màn quét unmount khi đóng thì không cần active.

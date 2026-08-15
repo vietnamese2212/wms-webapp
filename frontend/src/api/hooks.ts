@@ -1720,11 +1720,15 @@ export function useBulkUpdateInventoryNcc() {
 export function useBulkTransferLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, location_id, employee_id }: { ids: string[]; location_id: string; employee_id?: string }) => {
-      const { data } = await apiClient.patch('/wms/inventory/bulk-location', { ids, location_id, employee_id })
-      return data.data as { updated: number; location_code: string }
+    mutationFn: async ({ ids, location_id, employee_id, putaway_override_reason }: {
+      ids: string[]; location_id: string; employee_id?: string; putaway_override_reason?: string
+    }) => {
+      const { data } = await apiClient.patch('/wms/inventory/bulk-location',
+        { ids, location_id, employee_id, putaway_override_reason })
+      return data.data as { updated: number; location_code: string; putaway_warning?: string }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
+    // Kho CHƯA bật "bắt buộc": vẫn chuyển được nhưng phải nói ra là lệch quy tắc (không im lặng)
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inventory-entries'] }) },
   })
 }
 

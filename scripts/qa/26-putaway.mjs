@@ -316,6 +316,70 @@ try {
     }
   }
 
+  // ── 8. CỬA "CHUYỂN VỊ TRÍ HÀNG LOẠT" (đợt D) ────────────────────────────────────────
+  // Đợt B gác 4 cửa của Nhập kho rồi coi như xong; cửa này — công nhân kho dùng nhiều thứ hai —
+  // vẫn đi THẲNG xuống RPC move, nên kho bật "bắt buộc" vẫn dồn được pallet vào ô CẤM NHẬN HÀNG.
+  // [28] là phép kiểm quan trọng nhất: chấm TỪNG pallet với sự thật TĨNH của ô sẽ LỌT, chỉ gộp
+  // cả lô mới bắt được.
+  {
+    const mat2 = (raceMats ?? []).find(m => m.id !== mat.id)
+    await setRules({ putaway_required: false, putaway_max_materials: null, putaway_date_mix: 'ANY' })
+    const locBulk = await mkLoc('BULK')
+    const qrFor = (code, s) => `${ddmmyy}_${code}_${TAG.replace(/-/g, '')}_M9_${s}_${wh.nmsx_code ?? 'B'}`
+    const mkPallet = async (m, s) => {
+      const oid = (await mkOrder(locOk.id, { material_id: m.id })).j?.data?.order?.id
+      const code = qrFor(m.material_code, s)
+      await api(`/wms/inbound-orders/${oid}/scan`, 'POST', { qr_code: code, location_id: locOk.id, qty_semantics: 'base' })
+      const row = (await restAll('InventoryEntry', `select=id&pallet_code=eq.${encodeURIComponent(code)}`))[0]
+      return row ? { id: row.id, code } : null
+    }
+    const p1 = await mkPallet(mat, 980)
+    const p2 = mat2 ? await mkPallet(mat2, 981) : null
+    const move = (ids, location_id, extra = {}) =>
+      api('/wms/inventory/bulk-location', 'PATCH', { ids, location_id, ...extra })
+
+    if (p1) {
+      let rb = await move([p1.id], locNoIn.id)
+      check('[25] Chuyển vị trí hàng loạt — kho chỉ CẢNH BÁO: vẫn chuyển được nhưng nói ra là lệch luật',
+        rb.s === 200 && /không nhận hàng vào/i.test(rb.j?.data?.putaway_warning ?? ''),
+        `HTTP ${rb.s} · ${rb.j?.data?.putaway_warning ?? 'không có cảnh báo'}`)
+
+      await setRules({ putaway_required: true })
+      rb = await move([p1.id], locNoIn.id)
+      check('[26] kho BẮT BUỘC → cửa này bị CHẶN THẬT (trước 15/08 nó đi thẳng xuống RPC, không hỏi luật)',
+        rb.s === 422 && rb.j?.error?.code === 'PUTAWAY_VIOLATION', `HTTP ${rb.s} ${rb.j?.error?.code ?? ''}`)
+
+      rb = await move([p1.id], locNoIn.id, { putaway_override_reason: 'EQUIPMENT' })
+      const tb = await traceOf(p1.code)
+      check('[27] vượt rào → qua VÀ vết ghi theo LẦN CẤT NÀY (không giữ vết của lần nhập đầu tiên)',
+        rb.s === 200 && tb?.putaway_checked === true && tb?.putaway_violation === 'NO_IN'
+          && tb?.putaway_override_reason === 'EQUIPMENT',
+        `HTTP ${rb.s} viol=${tb?.putaway_violation} reason=${tb?.putaway_override_reason}`)
+    }
+
+    if (p1 && p2) {
+      await setRules({ putaway_max_materials: 1, putaway_required: true })
+      let rb = await move([p1.id, p2.id], locBulk.id)
+      check('[28] ô trống giới hạn 1 mã + lô 2 MÃ → CHẶN (chấm từng pallet với sự thật tĩnh sẽ lọt cả 2)',
+        rb.s === 422 && rb.j?.error?.code === 'PUTAWAY_VIOLATION', `HTTP ${rb.s} ${rb.j?.error?.code ?? ''}`)
+
+      rb = await move([p1.id], locBulk.id)
+      check('[29] cũng ô đó, chuyển RIÊNG 1 pallet thì QUA — chứng minh [28] chặn vì TẬP của lô, không chặn bừa',
+        rb.s === 200, `HTTP ${rb.s} ${rb.j?.error?.code ?? ''}`)
+
+      // Đua: 2 lượt chuyển đồng thời, mỗi lượt 1 mã, vào CÙNG ô trống giới hạn 1 mã. Cả hai đều
+      // qua được guard ở backend (lúc đọc, ô còn trống) ⇒ chỉ row-lock trong RPC mới cứu được.
+      const locR2 = await mkLoc('RACE2')
+      await Promise.all([move([p1.id], locR2.id), move([p2.id], locR2.id)])
+      const inR2 = await restAll('InventoryEntry',
+        `select=material_id&location_id=eq.${locR2.id}&stack_layer=eq.1&status=in.(IN_STOCK,PARTIAL)&cartons_remaining=gt.0`)
+      check('[30] ĐUA 2 lượt chuyển đồng thời vào ô giới hạn 1 mã → chỉ 1 mã chiếm chỗ (đếm dưới row-lock)',
+        new Set(inR2.map(x => x.material_id)).size <= 1,
+        `${inR2.length} pallet · ${new Set(inR2.map(x => x.material_id)).size} mã`)
+      await setRules({ putaway_max_materials: null, putaway_required: false })
+    } else check('[28] lô nhiều mã vào ô giới hạn 1 mã', true, 'bỏ qua — không tìm được mã thứ hai cùng loại hàng')
+  }
+
 } catch (e) {
   check('gói chạy trọn', false, e?.message ?? String(e))
 } finally {

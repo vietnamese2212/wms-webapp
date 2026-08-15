@@ -109,6 +109,11 @@ export function putawayNeedsLots(rules: PutawayRules): boolean {
   return rules.date_mix !== 'ANY'
 }
 
+// Cất theo LÔ mới cần TẬP mã của ô (xem `putawayBlockBatch`); cất 1 pallet thì không.
+export function putawayNeedsMats(rules: PutawayRules): boolean {
+  return rules.max_materials != null
+}
+
 // ─── Lý do CHẶN — danh sách cố định, có nhãn để hiện thẳng cho người quét ────
 export const PUTAWAY_BLOCKS = [
   { code: 'NO_IN',         label: 'Vị trí không nhận hàng vào' },
@@ -154,7 +159,8 @@ export interface SlotLot {
 }
 export interface SlotFactsRaw {
   location_id: string; pallets: number; materials: number
-  same_material: boolean; qa_hold: boolean; nccs: string[] | null; lots: SlotLot[] | null
+  same_material: boolean; qa_hold: boolean; nccs: string[] | null
+  mats: string[] | null; lots: SlotLot[] | null
 }
 
 export interface SlotFacts {
@@ -163,11 +169,15 @@ export interface SlotFacts {
   sameMaterial:  boolean
   qaHold:        boolean
   nccs:          string[]
+  // TẬP mã đang có trong ô — RỖNG khi caller không xin (`putawayNeedsMats`). Chỉ đường cất theo LÔ
+  // cần tập này; đường cất 1 pallet dùng `materials` + `sameMaterial` là đủ.
+  mats:          string[]
   keyMin:        number | null   // thứ tự lấy SỚM nhất đang có trong ô (null = không đủ dữ liệu)
   keyMax:        number | null
 }
 export const EMPTY_SLOT: SlotFacts = {
-  pallets: 0, materials: 0, sameMaterial: false, qaHold: false, nccs: [], keyMin: null, keyMax: null,
+  pallets: 0, materials: 0, sameMaterial: false, qaHold: false, nccs: [], mats: [],
+  keyMin: null, keyMax: null,
 }
 
 // Quy `lots` về [keyMin, keyMax] bằng ĐÚNG hàm rotationSortKey — không tự so ngày ở đây.
@@ -199,6 +209,7 @@ export function slotFactsOf(
     sameMaterial: raw.same_material === true,
     qaHold: raw.qa_hold === true,
     nccs: (raw.nccs ?? []).filter(Boolean),
+    mats: (raw.mats ?? []).filter(Boolean),
     keyMin, keyMax,
   }
 }
@@ -254,6 +265,53 @@ export function putawayBlock(
       : rules.date_mix === 'OLDER_ONLY' ? facts.keyMax > k    // có hàng phải lấy SAU pallet mới ⇒ bị chôn
       :                                   facts.keyMin < k    // NEWER_ONLY
     if (bad) return 'DATE_MIX'
+  }
+  return null
+}
+
+// Cất MỘT LÔ pallet vào CÙNG một ô (Chuyển vị trí hàng loạt) — trả lý do chặn đầu tiên.
+//
+// KHÔNG được chấm từng pallet với sự thật TĨNH của ô rồi cộng lại: kho giới hạn 3 mã/ô, ô đang có
+// 2 mã, dồn 5 pallet của 5 mã mới → mỗi pallet đều thấy "mới 2 mã, còn chỗ" và cả 5 cùng lọt.
+// Đúng lớp lỗi đã đo ở màn quét 15/08 (6 lượt quét đồng thời lọt 3 mã vào ô giới hạn 1), chỉ khác
+// là ở đây nó xảy ra TRONG MỘT REQUEST nên row-lock không cứu được — phải gộp lô rồi mới chấm.
+//
+// Luật nào gộp, luật nào không — theo BẢN CHẤT của luật:
+//   • Gộp (ràng buộc trên TẬP, không phụ thuộc thứ tự đặt): số mã tối đa, một NCC.
+//   • KHÔNG gộp (ràng buộc theo THỨ TỰ CHỒNG HÀNG): trộn date — cả lô cất trong cùng một lượt nên
+//     người cất tự xếp được thứ tự trong ô; chỉ so với hàng ĐANG CÓ SẴN là đủ nghĩa "không chôn
+//     hàng phải lấy trước". Gộp cả lô vào đây sẽ chặn oan mọi lô nhiều date, kể cả khi xếp đúng.
+export function putawayBlockBatch(
+  loc: PutawayLoc, facts: SlotFacts, batch: IncomingPallet[], rules: PutawayRules,
+): PutawayBlockCode | null {
+  // Luật không phụ thuộc hàng sắp cất — chấm một lần cho cả lô
+  if (loc.slot_no_in === true) return 'NO_IN'
+  if (rules.block_pick_face && loc.is_pick_face === true) return 'PICK_FACE'
+  if (rules.block_qa_hold && facts.qaHold) return 'QA_HOLD'
+  // FULL cố ý KHÔNG kiểm ở đây: sức chứa đã được RPC `move_pallets_to_location` chốt dưới row-lock
+  // (đúng số pallet của lô, loại pallet đang dời khỏi chính ô đó) — kiểm thêm ở backend chỉ tạo
+  // định nghĩa "đầy" thứ hai, lệch nhau là báo oan.
+
+  if (rules.max_materials != null) {
+    const after = new Set(facts.mats)
+    for (const p of batch) after.add(p.material_id)
+    if (after.size > rules.max_materials) return 'MAX_MATERIALS'
+  }
+  if (rules.single_ncc) {
+    const nccs = new Set(facts.nccs)
+    for (const p of batch) if (p.ncc_id) nccs.add(p.ncc_id)   // null-inclusive: chưa khai thì không kết luận
+    if (nccs.size > 1) return 'NCC_MIX'
+  }
+  if (rules.date_mix !== 'ANY') {
+    for (const p of batch) {
+      // Dùng lại ĐÚNG hàm chấm 1 pallet — luật trộn date chỉ có một bản, ở `putawayBlock`.
+      // Tắt hết luật khác để không có luật nào trả về TRƯỚC date_mix (thứ tự kiểm trong
+      // `putawayBlock` đặt date_mix cuối cùng) — nếu không sẽ bỏ sót vi phạm date thật.
+      if (putawayBlock({ ...loc, slot_no_in: false, is_pick_face: false }, facts, p,
+                       { ...rules, block_full: false, block_pick_face: false, block_qa_hold: false,
+                         max_materials: null, single_ncc: false }) === 'DATE_MIX')
+        return 'DATE_MIX'
+    }
   }
   return null
 }

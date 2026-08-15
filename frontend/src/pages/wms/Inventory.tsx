@@ -29,7 +29,9 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
-import { can } from '@/config/permissions'
+import { can, type ModulePermissions } from '@/config/permissions'
+import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
@@ -316,20 +318,24 @@ function NccPanel({ ids, material, onClose }: {
   )
 }
 
-function LocationPanel({ ids, warehouseId, category, onClose }: {
-  ids: string[]; warehouseId?: string; category?: string; onClose: () => void
+function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
+  ids: string[]; warehouseId?: string; category?: string; materialId?: string; onClose: () => void
 }) {
   const user = useAuthStore(s => s.user)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+  const canOverride = can(perms, 'inbound', 'putaway_override')
   const [search, setSearch]   = useState('')
   const [locId, setLocId]     = useState('')
   const [error, setError]     = useState('')
+  // Bị QUY TẮC CẤT HÀNG chặn (422) — khác lỗi thường: có 2 lối thoát chứ không phải ngõ cụt
+  const [putawayBlock, setPutawayBlock] = useState<string | null>(null)
   const { mutate, isPending }  = useBulkTransferLocation()
   // TÌM TRÊN SERVER (luật danh mục lớn): trước đây nạp TOÀN BỘ vị trí của kho — đo Bàu Bàng
   // 1.517 vị trí = 616KB + hàng chục round-trip (BE còn quét InventoryEntry theo chunk 300 để
   // tính used_slots). Nay 50 dòng đầu, gõ thì server tìm tiếp.
   const searchDeb = useDebouncedValue(search, 250)
   const { data: locRows = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50 } : undefined
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50, material_id: materialId } : undefined
   )
   const filtered = locRows as LocationLite[]
   // nhãn cho vị trí ĐANG CHỌN — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại
@@ -338,16 +344,22 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
     () => filtered.find(l => l.id === locId) ?? pickedLoc.find(l => l.id === locId),
     [filtered, pickedLoc, locId])
 
-  function reset() { setLocId(''); setSearch(''); setError('') }
+  function reset() { setLocId(''); setSearch(''); setError(''); setPutawayBlock(null) }
 
-  function handleSubmit() {
+  // Lý do vượt rào truyền THẲNG vào tham số: state chưa cập nhật trong cùng lượt render (đúng bẫy
+  // đã gặp ở InboundScanSheet — bấm nút lý do mà request vẫn gửi rỗng).
+  function handleSubmit(overrideReason?: string) {
     if (!locId) { setError('Chọn vị trí trước'); return }
-    setError('')
+    setError(''); setPutawayBlock(null)
     mutate(
-      { ids, location_id: locId, employee_id: user?.id },
+      { ids, location_id: locId, employee_id: user?.id, putaway_override_reason: overrideReason },
       {
         onSuccess: () => { reset(); onClose() },
-        onError: (e: any) => setError(e?.response?.data?.error?.message ?? 'Lỗi không xác định'),
+        onError: (e: any) => {
+          const err = e?.response?.data?.error
+          if (err?.code === 'PUTAWAY_VIOLATION') setPutawayBlock(err.message)
+          else setError(err?.message ?? 'Lỗi không xác định')
+        },
       }
     )
   }
@@ -378,25 +390,25 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
             ) : (
-              filtered.map((l: any) => {
-                const isFull = l.max_pallets > 0 && (l.used_slots ?? 0) >= l.max_pallets
+              // Ô nào cất được / vì sao ★ đều do BE chấm (utils/putaway.ts) — FE KHÔNG tự so
+              // sức chứa nữa: bản tự so ở đây từng là bản chép tay thứ 4 của luật, và nó chỉ biết
+              // "đầy", không biết ô bị cấm nhận hàng / ô nhặt lẻ / vượt số mã.
+              filtered.map((l: LocationLite) => {
+                const blocked = putawayBlocked(l as PutawayLocRow)
                 const isSelected = locId === l.id
                 return (
                   <label key={l.id}
                     className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors ${
-                      isSelected ? 'bg-blue-50' : isFull ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'hover:bg-slate-50'
+                      isSelected ? 'bg-blue-50' : blocked ? 'opacity-60 bg-slate-50' : 'hover:bg-slate-50'
                     }`}
-                    onClick={() => { if (!isFull) setLocId(prev => prev === l.id ? '' : l.id) }}
+                    onClick={() => setLocId(prev => prev === l.id ? '' : l.id)}
                   >
                     <div className={`w-3.5 h-3.5 border rounded shrink-0 flex items-center justify-center transition-colors ${
                       isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
                     }`}>
                       {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
                     </div>
-                    <span className="text-xs font-mono font-semibold">{formatLoc(l)}</span>
-                    <span className={`ml-auto text-[10px] ${isFull ? 'text-red-400 font-medium' : 'text-slate-400'}`}>
-                      {l.used_slots ?? 0}/{l.max_pallets}{isFull ? ' (đầy)' : ''}
-                    </span>
+                    <PutawayOption loc={{ ...(l as PutawayLocRow), location_code: formatLoc(l) }} />
                   </label>
                 )
               })
@@ -409,9 +421,35 @@ function LocationPanel({ ids, warehouseId, category, onClose }: {
             </p>
           )}
         </div>
+        {/* Kho bật "bắt buộc cất đúng quy tắc" → 2 lối thoát: đổi vị trí (ai cũng làm được) hoặc
+            chọn lý do (cần quyền duyệt). KHÔNG có lối "cứ Chuyển đại". */}
+        {putawayBlock && (
+          <div className="rounded-lg bg-red-50 border border-red-300 px-3 py-2.5 space-y-2">
+            <p className="text-xs font-medium text-red-800">Không cất được vào vị trí này</p>
+            <p className="text-[11px] text-red-700">{putawayBlock}</p>
+            <button type="button" onClick={() => { setLocId(''); setPutawayBlock(null) }}
+              className="w-full h-9 rounded-md border border-red-300 bg-white text-xs font-medium text-red-700">
+              Chọn vị trí khác
+            </button>
+            {canOverride && (
+              <div className="pt-1 border-t border-red-200">
+                <p className="text-[11px] text-red-700 mb-1">Hoặc duyệt cất khác quy tắc — chọn lý do:</p>
+                <div className="grid grid-cols-2 gap-1">
+                  {PUTAWAY_OVERRIDE_REASONS.map(r => (
+                    <button key={r.code} type="button" disabled={isPending}
+                      onClick={() => handleSubmit(r.code)}
+                      className="h-9 px-2 rounded-md border border-red-300 bg-white text-[11px] text-red-700 text-left disabled:opacity-50">
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex gap-2 pt-1">
           <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button className="flex-1" disabled={!locId || isPending} onClick={handleSubmit}>
+          <Button className="flex-1" disabled={!locId || isPending} onClick={() => handleSubmit()}>
             {isPending ? '…' : 'Chuyển'}
           </Button>
         </div>
@@ -866,6 +904,13 @@ export default function Inventory() {
   )
   const actionWarehouseId = firstCheckedEntry?.location?.warehouse?.id
   const actionCategory    = firstCheckedEntry?.material?.category ?? undefined
+  // Gợi ý ★/chặn trên picker chỉ ĐẦY ĐỦ khi cả lô cùng MỘT mã (luật số mã/NCC/trộn date chấm theo
+  // mã sắp cất). Lô nhiều mã → không truyền, picker vẫn báo được ô cấm/nhặt lẻ/QA giữ, còn phần
+  // phụ thuộc mã thì BE chặn thật lúc bấm Chuyển.
+  const actionMaterialId  = useMemo(() => {
+    const set = new Set(displayEntries.filter(e => checkedIds.has(e.id)).map(e => e.material_id))
+    return set.size === 1 ? ([...set][0] as string | undefined) : undefined
+  }, [displayEntries, checkedIds])
 
   // Keep selected entry in sync when list refreshes
   useEffect(() => {
@@ -1163,7 +1208,7 @@ export default function Inventory() {
         ) : actionModal === 'ncc' ? (
           <NccPanel ids={checkedIdArr} material={ncMaterial} onClose={closeActionModal} />
         ) : actionModal === 'location' ? (
-          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} onClose={closeActionModal} />
+          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} materialId={actionMaterialId} onClose={closeActionModal} />
         ) : actionModal === 'material' ? (
           <MaterialPanel ids={checkedIdArr} category={actionCategory} onClose={closeActionModal} />
         ) : actionModal === 'production-date' ? (

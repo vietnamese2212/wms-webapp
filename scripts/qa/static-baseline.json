@@ -20,6 +20,7 @@
   "mojibake_double_utf8": 0,
   "superadmin_by_name": 0,
   "location_write_without_move_rpc": 1,
+  "putaway_door_unreviewed": 0,
   "qrscanner_keepmounted_without_active": 0,
   "tablehead_relative_kills_sticky": 0,
   "role_by_vietnamese_name": 0,

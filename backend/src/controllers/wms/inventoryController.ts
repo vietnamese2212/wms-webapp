@@ -16,6 +16,13 @@ import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
+import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
+
+// Quyền duyệt cất khác quy tắc — MỘT quyền cho cả app (`inbound.putaway_override`), không đẻ thêm
+// bản riêng cho từng trang: nó là một NĂNG LỰC ("được cất lệch luật"), không phải một cái nút.
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
 
 const ENTRY_SELECT = `
   id, pallet_code, location_id, warehouse_id, material_id, manufacturer_id, nmsx, cycle, machine_code,
@@ -969,10 +976,33 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const updatedBy = (employee_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employee_id))
     ? employee_id : null
 
+  // QUY TẮC CẤT HÀNG — cửa này từng đi thẳng xuống RPC, nên kho bật "bắt buộc" vẫn dồn được pallet
+  // vào ô cấm nhận hàng / ô nhặt lẻ / vượt số mã. Lọc ở picker chỉ là gợi ý; chặn thật nằm ở đây.
+  // fetchAllByIdChunks (chunk 300) chứ KHÔNG cắt danh sách: luật ở đây tính trên TẬP mã/NCC của cả
+  // lô, thiếu vài pallet là chấm ra kết quả khác — đúng lớp lỗi "cắt âm thầm" đã đo nhiều lần.
+  const moving = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
+    .select('material_id, ncc_id, production_date, expiry_date, shelf_life_days').in('id', chunk))
+  const { data: destLoc } = await supabase.from('Location')
+    .select('warehouse_id').eq('id', location_id).maybeSingle()
+  const put = await guardPutawayBatch({
+    warehouseId: (destLoc as { warehouse_id?: string | null } | null)?.warehouse_id ?? null,
+    locationId:  location_id,
+    entries:     moving as unknown as IncomingInput[],
+    overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+    canOverride:    canPutawayOverride(req),
+  })
+  if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+
   // Nguyên tử: RPC khóa dòng Location → đếm sức chứa DƯỚI LOCK → move trong cùng transaction.
   // Chống đua quá-tải vị trí khi nhiều người dồn cùng lúc vào CÙNG vị trí.
   const { data: result, error: rpcErr } = await supabase.rpc('move_pallets_to_location', {
     p_ids: ids, p_location_id: location_id, p_updated_by: updatedBy, p_update_date: vnDate, p_now: now,
+    // Chốt lại số mã dưới row-lock — hai người cùng dồn vào một ô thì cả hai cùng đọc "còn chỗ mã"
+    p_max_materials: (put.rules.required && !put.trace.putaway_override_reason)
+      ? put.rules.max_materials : null,
+    p_putaway_checked:         put.trace.putaway_checked ? true : null,
+    p_putaway_violation:       put.trace.putaway_violation,
+    p_putaway_override_reason: put.trace.putaway_override_reason,
   })
   if (!rpcErr) {
     const parts = String(result ?? '').split('|')
@@ -982,7 +1012,9 @@ export async function bulkTransferLocation(req: Request, res: Response) {
       case 'INACTIVE':  return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
       case 'FULL':      return fail(res, 400, 'LOCATION_FULL',
         `Vị trí ${parts[2] ?? ''} không đủ chỗ (còn ${parts[1] ?? 0} slot, cần ${ids.length})`)
-      default:          return ok(res, { updated: ids.length, location_code: parts[1] ?? '' })
+      case 'MAXMAT':    return fail(res, 422, 'PUTAWAY_VIOLATION',
+        `Vị trí sẽ có ${parts[1] ?? ''} mã, kho giới hạn ${parts[2] ?? ''} mã cho một vị trí.`)
+      default:          return ok(res, { updated: ids.length, location_code: parts[1] ?? '', putaway_warning: put.warning })
     }
   }
   // RPC chưa được apply trên DB (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.

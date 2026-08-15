@@ -19,7 +19,9 @@ import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { PutawayOption } from '@/components/wms/PutawayOption'
-import type { PutawayHint } from '@/utils/putaway'
+import { PUTAWAY_OVERRIDE_REASONS, type PutawayHint } from '@/utils/putaway'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import type { InboundOrder } from '@/types'
 
 // ─── Scan feedback banner ─────────────────────────────────────
@@ -168,6 +170,11 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   const [serverCheckOk,    setServerCheckOk]    = useState(false)
   const [mergeWarning,     setMergeWarning]     = useState<string | null>(null)
   const [outboundCartons,  setOutboundCartons]  = useState<number | null>(null)
+  // Kho bật "bắt buộc cất đúng quy tắc" mà vị trí đang chọn vi phạm (BE trả 422 PUTAWAY_VIOLATION)
+  const [putawayBlock,     setPutawayBlock]     = useState<string | null>(null)
+  const [putawayReason,    setPutawayReason]    = useState('')
+  const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
+  const canPutawayOverride = can(perms, 'inbound', 'putaway_override')
 
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
   const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
@@ -232,14 +239,16 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     )
   }
 
-  function handleSave() {
+  // reason truyền THẲNG (không đọc state): bấm nút lý do rồi lưu ngay trong cùng lượt render,
+  // state chưa kịp cập nhật nên đọc `putawayReason` ở đây sẽ gửi lên giá trị RỖNG.
+  function handleSave(reason?: string) {
     if (!pendingQR || !serverCheckOk || saving) return
     if (!activeLocationId) {
       setShowLocPicker(true)
       return
     }
     scanPallet(
-      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined },
+      { orderId: order.id, qr_code: pendingQR, location_id: activeLocationId, stack_layer: Number(stackLayer), cartons_override: Number(cartons) || undefined, employee_id: employeeId, ncc_id: nccId || undefined, shelf_life_days: shelfDays ?? undefined, putaway_override_reason: reason || putawayReason || undefined },
       {
         onSuccess: (data) => {
           setPendingQR(null)
@@ -248,6 +257,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           setMergeWarning(null)
           setOutboundCartons(null)
           setCartons(defaultCartons)
+          setPutawayBlock(null)
+          setPutawayReason('')
           const successMsg = data.merged
             ? `✓ Đã cộng ${qtyLabel(data.added_cartons, order.material)} · Tồn mới: ${qtyLabel(data.new_remaining, order.material)}`
             : `✓ ${data.entry.pallet_code} · ${qtyLabel(data.entry.cartons_imported, order.material)} · ${data.entry.location?.location_code ?? ''}`
@@ -257,6 +268,17 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           setTimeout(() => { scannerRef.current?.resume(); setFeedback(null) }, warns.length ? 4000 : 1500)
         },
         onError: (err) => {
+          const ax = err as AxiosError<{ error: { code?: string; message: string } }>
+          // Kho BẮT BUỘC cất đúng quy tắc và vị trí này vi phạm → GIỮ NGUYÊN lượt quét để người
+          // quét đổi vị trí hoặc (nếu có quyền) chọn lý do rồi Lưu lại. Không xoá pendingQR, không
+          // xếp hàng đợi offline: đây là từ chối có chủ đích của server, không phải lỗi mạng.
+          // (Cố ý KHÔNG gọi check-scan trước mỗi lượt để đỡ 1 round-trip trên PDA — ô bị chặn đã
+          //  bị gạch sẵn trong picker, nên rơi vào đây là ca hiếm.)
+          if (ax?.response?.data?.error?.code === 'PUTAWAY_VIOLATION') {
+            setPutawayBlock(ax.response!.data.error.message)
+            setFeedback(null)
+            return
+          }
           const qrToQueue = pendingQR
           setPendingQR(null)
           setValidation(null)
@@ -409,7 +431,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                     <button
                       key={l.id}
                       type="button"
-                      onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false) }}
+                      // đổi vị trí = xoá cảnh báo chặn của vị trí cũ (lượt quét vẫn giữ để Lưu lại)
+                      onClick={() => { setActiveLocationId(l.id); setShowLocPicker(false); setPutawayBlock(null); setPutawayReason('') }}
                       className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center ${
                         l.id === activeLocationId ? 'bg-blue-100 font-medium' : 'hover:bg-white'
                       }`}
@@ -515,13 +538,46 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10
                            bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white
                            rounded-full px-6 py-2.5 text-sm font-semibold shadow-xl transition-all"
-                onClick={handleSave}
+                onClick={() => handleSave()}
               >
                 {saving ? '…' : `Lưu ${qtyLabel(Number(cartons) || 0, order.material)}`}
               </button>
             )}
           </div>
           </>
+          )}
+
+          {/* Kho BẮT BUỘC cất đúng quy tắc — vị trí đang chọn vi phạm.
+              Hai lối thoát: đổi vị trí (ai cũng làm được) hoặc chọn lý do (cần quyền duyệt).
+              KHÔNG có lối "cứ Lưu đại" — nếu không thì công tắc bắt buộc thành trang trí. */}
+          {putawayBlock && (
+            <div className="rounded-lg bg-red-50 border border-red-300 px-3 py-2.5 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-red-800">Không cất được vào vị trí này</p>
+                  <p className="text-xs text-red-700 mt-0.5">{putawayBlock}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => { setPutawayBlock(null); setShowLocPicker(true) }}
+                className="w-full h-9 rounded-md border border-red-300 bg-white text-xs font-medium text-red-700">
+                Chọn vị trí khác
+              </button>
+              {canPutawayOverride && (
+                <div className="pt-1 border-t border-red-200">
+                  <p className="text-[11px] text-red-700 mb-1">Hoặc duyệt cất khác quy tắc — chọn lý do:</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {PUTAWAY_OVERRIDE_REASONS.map(r => (
+                      <button key={r.code} type="button"
+                        onClick={() => { setPutawayReason(r.code); handleSave(r.code) }}
+                        className="h-9 px-2 rounded-md border border-red-300 bg-white text-[11px] text-red-700 text-left">
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Merge warning banner */}

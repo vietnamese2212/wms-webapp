@@ -15,6 +15,13 @@ import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { getInboundEditWindowDays } from '../../utils/settings'
+import { guardPutaway } from '../../services/putawayContext'
+
+// Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
+// (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
 
 // BASE UNIT (đợt 2): tem/định mức đếm THÙNG VẬT LÝ → nhân hệ số ra base khi ghi tồn.
 const qtyFactorOf = (m: MatUnits | null | undefined) => (hasEntry(m) ? Number(m!.units_per_carton) : 1)
@@ -635,6 +642,21 @@ export async function createOrder(req: Request, res: Response) {
     const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
     const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
 
+    // Quy tắc cất hàng: phiếu tạo với vị trí sẵn cũng là một lần CHỌN CHỖ CẤT → gác luôn ở đây,
+    // không thì tạo phiếu vào ô cấm rồi mới bị chặn lúc quét (công nhân đã đẩy hàng tới nơi).
+    let putWarn: string | null = null
+    if (resolvedLocationId) {
+      const put = await guardPutaway({
+        warehouseId: warehouse_id ?? null,
+        locationId:  resolvedLocationId,
+        incoming:    { material_id: material_id ?? '', ncc_id: req.body.ncc_id ?? null },
+        overrideReason: req.body.putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putWarn = put.warning
+    }
+
     const todayStr = vnDate()
 
     // Validate imported_by — skip if employee doesn't exist (e.g. mock/dev user IDs)
@@ -724,7 +746,10 @@ export async function createOrder(req: Request, res: Response) {
     applyInboundMode(order as Parameters<typeof applyInboundMode>[0])
 
     emitInboundChanged()
-    ok(res, { order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } } })
+    ok(res, {
+      order: { ...(order as unknown as Record<string, unknown>), _count: { inventory_entries: 0 } },
+      ...(putWarn ? { putaway_warning: putWarn } : {}),   // kho chỉ CẢNH BÁO: vẫn tạo nhưng nói ra
+    })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -865,7 +890,7 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (!location_id) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu location_id')
 
     const { data: order } = await supabase
-      .from('ProductionImport').select('status, warehouse_id, warehouse_type, location_id, location_history').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('status, warehouse_id, warehouse_type, location_id, location_history, material_id, ncc_id').eq('id', req.params.id).maybeSingle()
     if (!order) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập đã đóng, không thể đổi vị trí')
 
@@ -881,6 +906,19 @@ export async function setOrderLocation(req: Request, res: Response) {
     if (locCats?.length && orderCategory && !locCats.includes(orderCategory))
       return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH',
         `Vị trí ${location.location_code} thuộc loại "${locCats.join(', ')}" — không khớp loại hàng "${orderCategory}". Chọn vị trí đúng loại.`)
+    // Quy tắc cất hàng (20260815d/e). Ở đây CHƯA có pallet nên không so được date — luật trộn date
+    // chỉ kết luận lúc quét; các ràng buộc còn lại (cấm nhập / đầy / nhặt lẻ / QA giữ / số mã / NCC)
+    // áp được ngay từ lúc chọn vị trí cho phiếu.
+    const ord = order as { warehouse_id?: string | null; material_id?: string | null; ncc_id?: string | null }
+    const put = await guardPutaway({
+      warehouseId: ord.warehouse_id ?? null,
+      locationId:  location_id,
+      incoming:    { material_id: ord.material_id ?? '', ncc_id: ord.ncc_id ?? null },
+      overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+      canOverride: canPutawayOverride(req),
+    })
+    if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+
     const changed = location_id !== (order as any).location_id
     const patch: Record<string, unknown> = { location_id, updated_by: updated_by ?? null, updated_at: new Date().toISOString() }
     if (changed) patch.location_history = appendLocHistory(order, location.location_code, 'detail', req.user)
@@ -894,7 +932,8 @@ export async function setOrderLocation(req: Request, res: Response) {
 
     const withCount = await attachCount(updated)
     emitInboundChanged()
-    ok(res, withCount)
+    // Kho chưa bật "bắt buộc" → vẫn lưu nhưng NÓI RA (FE hiện banner vàng), không im lặng
+    ok(res, put.warning ? { ...withCount, putaway_warning: put.warning } : withCount)
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -1172,12 +1211,31 @@ export async function checkScanQR(req: Request, res: Response) {
     }
 
     const mat = material as { cartons_per_pallet?: number | null; warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null }
+    // Quy tắc cất hàng — ở PREVIEW chỉ BÁO TRƯỚC, không chặn (điểm chặn thật là scanQR). Preview
+    // chưa resolve NCC theo tem nên dùng NCC của phiếu; sai lệch chỉ làm preview "hiền" hơn thực tế.
+    const putPrev = await guardPutaway({
+      warehouseId: orderWarehouseId,
+      locationId:  location_id,
+      incoming: {
+        material_id:     material.id,
+        ncc_id:          (order as { ncc_id?: string | null }).ncc_id ?? null,
+        production_date: parsed.production_date ?? null,
+        expiry_date:     parsed.expiry_date ?? null,
+      },
+      overrideReason: null, canOverride: false,
+    })
     // BASE UNIT: gợi ý = base (định mức thùng/pallet vật lý × hệ số; outboundCartons đã là base)
     return ok(res, {
       pallet_code:       parsed.pallet_code,
       production_date:   parsed.production_date ?? null,
       suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId) * qtyFactorOf(material as MatUnits),
       outbound_cartons:  outboundCartons,
+      putaway: {
+        violation: putPrev.trace.putaway_violation,
+        message:   putPrev.warning ?? putPrev.error?.message ?? null,
+        // true = kho BẮT BUỘC ⇒ FE phải bắt chọn lý do trước khi cho Lưu
+        required:  !!putPrev.error,
+      },
     })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, QUERY_TIMEOUT_MSG, 400); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -1405,9 +1463,28 @@ export async function scanQR(req: Request, res: Response) {
       resolvedQa = (qa as { id?: string } | null)?.id ?? null
     }
 
+    // QUY TẮC CẤT HÀNG (20260815d/e) — chặn ở CỬA GHI, không phải ở dropdown: lọc trên picker chỉ
+    // là gợi ý, gọi thẳng API vẫn cất được. Đây là điểm DUY NHẤT trong luồng nhập biết đủ NSX/HSD
+    // của pallet nên cũng là nơi duy nhất kết luận được luật trộn date.
+    const put = await guardPutaway({
+      warehouseId: orderWarehouseId,
+      locationId:  location_id,
+      incoming: {
+        material_id:     material.id,
+        ncc_id:          resolvedNcc,
+        production_date: parsed.production_date ?? null,
+        expiry_date:     parsed.expiry_date ?? null,
+        shelf_life_days: resolvedShelf,
+      },
+      overrideReason: req.body.putaway_override_reason,
+      canOverride: canPutawayOverride(req),
+    })
+    if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+
     const entryObj = {
       id:              randomUUID(),
       pallet_code:     parsed.pallet_code,
+      ...put.trace,
       location_id,
       warehouse_id:    orderWarehouseId,   // set để unique (warehouse_id, pallet_code) hoạt động (no-QR cùng mã ở nhiều kho vẫn OK)
       material_id:     material.id,
@@ -1486,6 +1563,8 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     const warnings: string[] = []
+    // Kho chưa bật "bắt buộc cất đúng quy tắc" → vẫn lưu (hành vi cũ) nhưng NÓI RA + đã ghi vết
+    if (put.warning) warnings.push(put.warning)
     if (!manufacturer && parsed.manufacturer_code) {
       // Chỉ cảnh báo khi đoạn 6 KHÔNG khớp cả Nhà sản xuất lẫn mã NMSX kho (Warehouse.nmsx_code) — vd "B" = Kho Ba Vì là hợp lệ
       const isWhNmsx = (((await whNmsxP).data ?? []) as { id: string }[]).length > 0

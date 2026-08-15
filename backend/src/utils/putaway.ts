@@ -117,6 +117,21 @@ export const PUTAWAY_BLOCKS = [
 ] as const
 export type PutawayBlockCode = typeof PUTAWAY_BLOCKS[number]['code']
 
+// Lý do VƯỢT RÀO khi kho bật "bắt buộc" — DANH SÁCH CỐ ĐỊNH, không gõ tự do (cùng lý lẽ với
+// ROTATION_REASONS: biết 70% lượt vượt rào là "khu đúng đã đầy" thì vấn đề là SỨC CHỨA/quy hoạch
+// khu, không phải người cất; gõ tự do thì mãi mãi không gom nhóm được).
+export const PUTAWAY_OVERRIDE_REASONS = [
+  { code: 'NO_SPACE',  label: 'Khu đúng đã hết chỗ' },
+  { code: 'URGENT',    label: 'Hàng gấp — cất tạm để giải phóng xe' },
+  { code: 'EQUIPMENT', label: 'Xe nâng / lối đi không vào được' },
+  { code: 'OTHER',     label: 'Khác (ghi rõ)' },
+] as const
+export type PutawayOverrideCode = typeof PUTAWAY_OVERRIDE_REASONS[number]['code']
+
+export function isPutawayOverrideReason(code: unknown): code is PutawayOverrideCode {
+  return typeof code === 'string' && PUTAWAY_OVERRIDE_REASONS.some(r => r.code === code)
+}
+
 export const PUTAWAY_REASONS = [
   { code: 'SAME_MATERIAL', label: 'Đang để dở cùng mã' },
   { code: 'EMPTY',         label: 'Vị trí còn trống' },
@@ -261,6 +276,24 @@ export function putawayDateMixLabel(mix: PutawayDateMix, principle: RotationPrin
     case 'OLDER_ONLY': return `Chỉ để chung với hàng phải lấy trước (${d} ngắn hơn hoặc bằng)`
     case 'NEWER_ONLY': return `Chỉ để chung với hàng lấy sau (${d} dài hơn hoặc bằng)`
     default:           return 'Không ràng buộc'
+  }
+}
+
+// Thông báo chặn — nói rõ VÌ SAO và cần làm gì, để người cất còn xoay được, thay vì chỉ bị từ chối
+// (cùng tinh thần rotationBlockMessage).
+export function putawayBlockMessage(
+  code: PutawayBlockCode, locationCode: string, facts: SlotFacts, rules: PutawayRules,
+  principle: RotationPrinciple,
+): string {
+  const at = `Vị trí ${locationCode}`
+  switch (code) {
+    case 'NO_IN':         return `${at} được đánh dấu KHÔNG nhận hàng vào (kho tạm / ngoài đường). Chọn vị trí khác.`
+    case 'FULL':          return `${at} đã đầy (${facts.pallets} pallet). Chọn vị trí còn chỗ.`
+    case 'PICK_FACE':     return `${at} là vị trí nhặt lẻ — kho không cho cất pallet nguyên vào đây (chỗ này để lệnh Fill đổ hàng).`
+    case 'QA_HOLD':       return `${at} đang có pallet bị QA giữ — cất đè lên sẽ chôn pallet đó. Chọn vị trí khác.`
+    case 'MAX_MATERIALS': return `${at} đang có ${facts.materials} mã, kho giới hạn ${rules.max_materials} mã cho một vị trí.`
+    case 'NCC_MIX':       return `${at} đang để hàng của NCC khác — kho không cho trộn NCC trong một vị trí.`
+    case 'DATE_MIX':      return `${at} không hợp luật trộn ${ROTATION_DATE_LABEL[principle]} của kho: ${putawayDateMixLabel(rules.date_mix, principle).toLowerCase()}.`
   }
 }
 

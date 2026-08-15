@@ -1138,6 +1138,8 @@ export function useScanPallet() {
       employee_id?: string
       ncc_id?: string
       shelf_life_days?: number
+      // mã lý do vượt rào quy tắc cất hàng (kho bật "bắt buộc") — danh sách cố định ở utils/putaway
+      putaway_override_reason?: string
       // timeout 12s: sóng yếu → fail sớm → InboundScanSheet tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/inbound-orders/${orderId}/scan`, body, { timeout: 12000 }).then((r) => r.data.data),
 

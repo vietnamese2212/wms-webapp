@@ -521,7 +521,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -566,6 +566,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [putNoQaHold,   setPutNoQaHold]   = useState(wh?.putaway_block_qa_hold === true)
   const [putNoFull,     setPutNoFull]     = useState(wh?.putaway_block_full === true)
   const [putSingleNcc,  setPutSingleNcc]  = useState(wh?.putaway_single_ncc === true)
+  const [putRequired,   setPutRequired]   = useState(wh?.putaway_required === true)
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -604,6 +605,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
       putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
       putaway_block_pick_face: putNoPickFace, putaway_block_qa_hold: putNoQaHold,
       putaway_block_full: putNoFull, putaway_single_ncc: putSingleNcc,
+      putaway_required: putRequired,
     }
     if (isEdit) {
       update(
@@ -782,6 +784,13 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 </span>
               </label>
             ))}
+            <label htmlFor="wh-put-required" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50 border-t border-slate-100 pt-2">
+              <input id="wh-put-required" type="checkbox" checked={putRequired} onChange={e => setPutRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
+              <span className="text-xs">
+                <span className="font-medium">Bắt buộc cất đúng quy tắc</span>
+                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> (vẫn cất được, có ghi vết). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt cất khác quy tắc</b> vẫn qua được nhưng phải chọn lý do trong danh sách.</span>
+              </span>
+            </label>
           </div>
           <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">

@@ -36,6 +36,7 @@ export const MODULES = {
       cancel:             'Hủy phiếu',
       complete:           'Hoàn thành phiếu',
       uncomplete:         'Gỡ hoàn thành phiếu',
+      putaway_override:   'Duyệt cất khác quy tắc (kho bật bắt buộc)',
     },
   },
   outbound: {

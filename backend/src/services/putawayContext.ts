@@ -10,6 +10,7 @@ import { asRotationPrinciple, rotationSortKey, type RotationPrinciple } from '..
 import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
   putawayRulesOf, putawayNeedsLots, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
+  putawayBlock, putawayBlockMessage, isPutawayOverrideReason,
   type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet,
 } from '../utils/putaway'
 
@@ -50,6 +51,54 @@ export async function loadSlotFactsRaw(
     out.push(...((data ?? []) as SlotFactsRaw[]))
   }
   return out
+}
+
+// ─── CỬA GHI (đợt B) ─────────────────────────────────────────────────────────
+// Lọc ở picker chỉ là GỢI Ý — gọi thẳng API vẫn cất được, nên điểm chặn thật phải nằm ở đây.
+// Trả về vết để caller ghi kèm bản ghi tồn; `error` khác null = phải dừng.
+export interface PutawayGuardResult {
+  error?:  { code: string; message: string }
+  trace:   { putaway_checked: boolean; putaway_violation: string | null; putaway_override_reason: string | null }
+  warning: string | null     // kho CHƯA bật bắt buộc: cho qua nhưng nói ra
+}
+
+export async function guardPutaway(opts: {
+  warehouseId:    string | null
+  locationId:     string
+  incoming:       IncomingInput
+  overrideReason?: unknown
+  canOverride:    boolean
+}): Promise<PutawayGuardResult> {
+  const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
+  const { data: loc } = await supabase.from('Location')
+    .select('id, location_code, max_pallets, slot_no_in, is_pick_face')
+    .eq('id', opts.locationId).maybeSingle()
+  if (!loc) return { trace: NO_TRACE, warning: null }   // vị trí sai đã có guard riêng ở controller
+
+  const ctx = await loadPutawayContext({
+    warehouseId: opts.warehouseId, locIds: [opts.locationId], incoming: opts.incoming,
+  })
+  const l = loc as { id: string; location_code: string; max_pallets: number | null; slot_no_in: boolean | null; is_pick_face: boolean | null }
+  const facts = ctx.factsOf(l.id)
+  const block = putawayBlock(l, facts, ctx.incoming, ctx.rules)
+  if (!block) return { trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
+
+  const msg = putawayBlockMessage(block, l.location_code, facts, ctx.rules, ctx.principle)
+
+  // Kho chưa bật "bắt buộc" → hành vi CŨ: vẫn cất được, nhưng ghi vết + nói ra.
+  if (!ctx.rules.required)
+    return { trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
+
+  const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''
+  if (!reason)
+    return { error: { code: 'PUTAWAY_VIOLATION', message: `${msg} Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.` },
+             trace: NO_TRACE, warning: null }
+  if (!opts.canOverride)
+    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, trace: NO_TRACE, warning: null }
+  if (!isPutawayOverrideReason(reason))
+    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, trace: NO_TRACE, warning: null }
+
+  return { trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
 export async function loadPutawayContext(opts: {

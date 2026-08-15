@@ -31,7 +31,15 @@ export const PUTAWAY_REASON_LABEL: Record<PutawayReasonCode, string> = {
   EMPTY:         'còn trống',
 }
 
-export const blockLabel = (c: PutawayBlockCode | null | undefined) => (c ? PUTAWAY_BLOCK_LABEL[c] ?? c : '')
+// Mirror BE PUTAWAY_OVERRIDE_REASONS — danh sách cố định, KHÔNG gõ tự do (để báo cáo gom nhóm được)
+export const PUTAWAY_OVERRIDE_REASONS = [
+  { code: 'NO_SPACE',  label: 'Khu đúng đã hết chỗ' },
+  { code: 'URGENT',    label: 'Hàng gấp — cất tạm' },
+  { code: 'EQUIPMENT', label: 'Xe nâng không vào được' },
+  { code: 'OTHER',     label: 'Khác' },
+] as const
+
+export const blockLabel =(c: PutawayBlockCode | null | undefined) => (c ? PUTAWAY_BLOCK_LABEL[c] ?? c : '')
 export const blockShort = (c: PutawayBlockCode | null | undefined) => (c ? PUTAWAY_BLOCK_SHORT[c] ?? c : '')
 
 // Nhãn ô cấu hình (form Kho) — mirror của PUTAWAY_PRIORITIES / PUTAWAY_DATE_MIXES bên BE.

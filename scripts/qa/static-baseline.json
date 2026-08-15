@@ -3,7 +3,7 @@
   "col_defaults_length_mismatch": 0,
   "outbound_movedate_checkbox_ignores_origin": 0,
   "replan_hard_deletes_gdo": 0,
-  "as_any": 234,
+  "as_any": 230,
   "split_comma_controllers": 0,
   "tolocaledatestring_no_tz": 0,
   "band_label_thung_ton": 2,
@@ -27,6 +27,6 @@
   "n_plus_1_supabase_in_map": 3,
   "today_frozen_at_import": 0,
   "component_defined_inside_component": 0,
-  "catalogue_full_load": 4,
+  "catalogue_full_load": 0,
   "upload_without_preflight": 0
 }

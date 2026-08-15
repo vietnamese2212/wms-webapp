@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  useWarehouses, useLocationsReal,
+  useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds,
   useUnflagEntry, useStocktakeEntries, useInventoryEntry, fetchAllStocktakeEntries,
   usePctBands,
   type StocktakeEntryRow,
@@ -8,6 +8,7 @@ import {
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import * as XLSX from 'xlsx'
@@ -260,13 +261,22 @@ export default function StocktakeDashboard() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô lọc Vị trí = TÌM TRÊN SERVER (kéo cả kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s mỗi lần mở màn)
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [], isFetching: locLoading } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId,
   )
+  // Nhãn cho vị trí ĐANG CHỌN (options chỉ có 50 dòng khớp từ khóa hiện tại → chip in uuid thô)
+  const { data: pickedLocs = [] } = useLocationsByIds(locationIds)
 
   const filteredLocations = (locations as any[])
-  // Vị trí "quan trọng" (cần kiểm) của kho đang chọn
-  const importantLocIds = (locations as any[]).filter((l: any) => l.requires_stocktake).map((l: any) => l.id as string)
+  // Vị trí "quan trọng" (cần kiểm) — hỏi thẳng TẬP mang cờ. Màn này TỰ TICK cả tập khi mở nên
+  // cần ĐỦ id, không cắt 50 được; nhưng tập cờ là tập CON có chủ đích nên vẫn nhỏ.
+  const { data: flagLocs = [] } = useLocationsByFlag(
+    'requires_stocktake', { warehouse_id: warehouseId, category: category || undefined }, !!warehouseId)
+  const importantLocIds = flagLocs.map(l => l.id)
   // "Chỉ vị trí cần check" bật (mặc định) → tự chọn hết vị trí quan trọng khi MỞ (1 lần/kho).
   // Bỏ tick sẽ xoá chọn (requiresOnly=false) nên effect không tự điền lại.
   const initedWh = useRef<string | null>(null)
@@ -330,6 +340,8 @@ export default function StocktakeDashboard() {
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
       onChange: ids => { setStocktakeSummary({ locationIds: ids, page: 1 }); setSelectedId(null) },
+      serverSearch: true, onSearchChange: setLocTerm, loading: locLoading,
+      selectedOpts: pickedLocs.map(l => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })),
       options: filteredLocations.map((l: { id: string; location_code: string; requires_stocktake?: boolean }) => ({ value: l.id, label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}` })) },
   ]
 

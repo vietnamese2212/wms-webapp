@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useWarehouses, useLocationsReal, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds, useStocktakeLog, fetchAllStocktakeLog, type StocktakeLogRow } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -66,11 +67,19 @@ export default function StocktakeHistory() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô lọc Vị trí = TÌM TRÊN SERVER (kéo cả kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s mỗi lần mở màn)
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [], isFetching: locLoading } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId,
   )
-  // Vị trí "quan trọng" (cần kiểm) của kho — mở nhanh nhóm này
-  const importantLocIds = (locations as { id: string; requires_stocktake?: boolean }[]).filter(l => l.requires_stocktake).map(l => l.id)
+  // Nhãn cho vị trí ĐANG CHỌN (options chỉ có 50 dòng khớp từ khóa hiện tại → chip in uuid thô)
+  const { data: pickedLocs = [] } = useLocationsByIds(locationIds)
+  // Vị trí "quan trọng" (cần kiểm) của kho — hỏi thẳng TẬP mang cờ, không lọc trên cả kho
+  const { data: flagLocs = [] } = useLocationsByFlag(
+    'requires_stocktake', { warehouse_id: warehouseId, category: category || undefined }, !!warehouseId)
+  const importantLocIds = flagLocs.map(l => l.id)
   const isImportantScope = importantLocIds.length > 0
     && locationIds.length === importantLocIds.length
     && importantLocIds.every(id => locationIds.includes(id))
@@ -109,6 +118,8 @@ export default function StocktakeHistory() {
       options: (categories as string[]).map(c => ({ value: c, label: c })) },
     { key: 'location', label: 'Vị trí', type: 'multi', selected: locationIds,
       onChange: ids => setF({ locationIds: ids, page: 1 }),
+      serverSearch: true, onSearchChange: setLocTerm, loading: locLoading,
+      selectedOpts: pickedLocs.map(l => ({ value: l.id, label: l.location_code })),
       options: (locations as { id: string; location_code: string }[]).map(l => ({ value: l.id, label: l.location_code })) },
   ]
 

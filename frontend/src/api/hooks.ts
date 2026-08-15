@@ -66,6 +66,29 @@ export function useLocationsReal(params?: LocationListParams, enabled = true) {
  * Ô chọn vị trí tìm-trên-server chỉ giữ 50 dòng khớp từ khoá HIỆN TẠI ⇒ value đang chọn phải
  * có đường tra riêng, không thì ô in uuid thô và user tưởng mất dữ liệu (bài học 29/07).
  */
+/**
+ * TẬP vị trí mang một CỜ (cần kiểm kê / kho tạm / hàng kẹt) — BE tự lọc và trả bản gọn.
+ * Dùng thay cho "kéo cả kho về rồi `.filter(l => l.requires_stocktake)`": đo 15/08 kho Bàu Bàng
+ * 1.517 vị trí = 1.030KB / 2,9s mỗi lần mở màn, trong khi tập mang cờ chỉ vài chục dòng.
+ * Cờ là tập CON có chủ đích nên trả đủ là an toàn — đây KHÔNG phải nạp cả danh mục.
+ */
+export function useLocationsByFlag(
+  flag: 'requires_stocktake' | 'slot_no_in' | 'slot_no_out',
+  params: { warehouse_id?: string; category?: string },
+  enabled = true,
+) {
+  const qs = flag === 'requires_stocktake' ? { flag: '1' } : { [flag]: '1' }
+  return useQuery({
+    queryKey: ['locations-real', 'by-flag', flag, params],
+    enabled: enabled && !!params.warehouse_id,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/locations', { params: { ...params, ...qs, view: 'lite' } })
+      return data.data as LocationLite[]
+    },
+  })
+}
+
 export function useLocationsByIds(ids: (string | null | undefined)[], enabled = true) {
   const key = [...new Set(ids.filter((x): x is string => !!x))].sort()
   return useQuery({

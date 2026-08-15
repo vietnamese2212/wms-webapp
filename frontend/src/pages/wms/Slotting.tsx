@@ -20,7 +20,7 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
-  useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useUpdateSlottingLocationConfig,
+  useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useLocationsByFlag, useUpdateSlottingLocationConfig,
   type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
   type SlottingLevel, type SlottingPrinciple, type SlottingWarning, type SlottingImpact,
@@ -644,7 +644,14 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
 // "KHÔNG đưa hàng vào" (kho tạm: không làm đích + hàng ở đó luôn bị kéo đi trước)
 // và "KHÔNG lấy hàng đi" (hàng kẹt không bốc được: loại khỏi nguồn tính toán).
 function LocationConfig({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
-  const { data: locations = [], isLoading } = useLocationsReal({ warehouse_id: warehouseId }, !!warehouseId)
+  // Ô chọn = TÌM TRÊN SERVER; trạng thái hiện tại hỏi thẳng TẬP mang cờ.
+  // (Trước đây kéo CẢ KHO chỉ để `.filter(l => l.slot_no_in)` — đo Bàu Bàng 1.517 vị trí = 1.030KB/2,9s.)
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locations = [], isLoading } = useLocationsReal(
+    { warehouse_id: warehouseId, search: locTermDeb || undefined, limit: 50 }, !!warehouseId)
+  const { data: noInFlagged  = [] } = useLocationsByFlag('slot_no_in',  { warehouse_id: warehouseId }, !!warehouseId)
+  const { data: noOutFlagged = [] } = useLocationsByFlag('slot_no_out', { warehouse_id: warehouseId }, !!warehouseId)
   const { mutate: save, isPending } = useUpdateSlottingLocationConfig()
   const [noIn, setNoIn] = useState<string[]>([])
   const [noOut, setNoOut] = useState<string[]>([])
@@ -652,26 +659,31 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
-  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }
+  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean | null; slot_no_out?: boolean | null }
   const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
 
-  // Nạp trạng thái hiện tại từ TOÀN BỘ vị trí của kho (không theo filter Loại kho) —
-  // nút Lưu là replace-all per kho: nếu chỉ nạp vị trí trong filter sẽ XÓA NHẦM cờ của vị trí đang bị ẩn
+  // Nạp trạng thái hiện tại từ TẬP MANG CỜ của cả kho (không theo filter Loại kho, không theo
+  // từ khóa đang gõ) — nút Lưu là replace-all per kho: chỉ nạp phần đang hiển thị sẽ XÓA NHẦM
+  // cờ của vị trí đang bị ẩn.
   useEffect(() => {
     if (dirty) return
-    setNoIn(locs.filter(l => l.slot_no_in).map(l => l.id))
-    setNoOut(locs.filter(l => l.slot_no_out).map(l => l.id))
+    setNoIn(noInFlagged.map(l => l.id))
+    setNoOut(noOutFlagged.map(l => l.id))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locations, warehouseId])
+  }, [noInFlagged, noOutFlagged, warehouseId])
   useEffect(() => { setDirty(false); setMsg(''); setErr('') }, [warehouseId])
 
-  // Option theo filter Loại kho phía trên (user 18/07): vị trí đúng loại + vị trí CHƯA khai loại;
-  // vị trí ĐÃ chọn luôn hiện (kể cả ngoài filter) để còn bỏ chọn được
-  const optionsFor = (selectedIds: string[]) => {
+  // Option theo filter Loại kho phía trên (user 18/07): vị trí đúng loại + vị trí CHƯA khai loại.
+  // Vị trí ĐÃ CHỌN luôn được GHIM ĐẦU (kể cả ngoài filter / ngoài 50 dòng server trả về theo từ
+  // khóa) — không thì tick xong gõ từ khóa khác là mất dấu lựa chọn, mà nút Lưu lại replace-all.
+  const optionsFor = (selectedIds: string[], flagged: LocRow[]) => {
     const sel = new Set(selectedIds)
-    return locs
-      .filter(l => categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c)) || sel.has(l.id))
-      .map(l => ({ value: l.id, label: l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code }))
+    const label = (l: LocRow) => l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code
+    const picked = flagged.filter(l => sel.has(l.id))
+    const rest = locs.filter(l =>
+      !sel.has(l.id)
+      && (categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c))))
+    return [...picked, ...rest].map(l => ({ value: l.id, label: label(l) }))
   }
 
   function handleSave() {
@@ -689,11 +701,13 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
         <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 shrink-0">Vị trí đặc biệt</span>
         <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi">Không đưa hàng vào:</span>
-        <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn)}
-          selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst />
+        <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn, noInFlagged)}
+          selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst
+          serverSearch onSearchChange={setLocTerm} />
         <span className="text-[10px] text-slate-500 shrink-0" title="Hàng kẹt/không bốc được — loại khỏi nguồn tính toán, vẫn tính chiếm chỗ">Không lấy hàng đi:</span>
-        <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut)}
-          selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} selectedFirst />
+        <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut, noOutFlagged)}
+          selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} selectedFirst
+          serverSearch onSearchChange={setLocTerm} />
         <Button size="sm" className="h-7 text-[11px] !min-h-0" onClick={handleSave} disabled={isPending || !dirty}>
           {isPending ? 'Đang lưu…' : 'Lưu vị trí'}
         </Button>

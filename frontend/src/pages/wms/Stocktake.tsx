@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
-import { useWarehouses, useLocationsReal } from '@/api/hooks'
+import { useWarehouses, useLocationsReal, useLocationsByFlag, useLocationsByIds, type LocationLite } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -87,15 +88,29 @@ export default function Stocktake() {
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: whTypes    = [] } = useScopedWhTypes()
   const categories = whTypes.map(t => t.value)
-  const { data: locations  = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined } : undefined
+  // Ô chọn vị trí = TÌM TRÊN SERVER (kho Bàu Bàng 1.517 vị trí = 1.030KB/2,9s nếu kéo cả kho).
+  // "Chỉ vị trí cần check" thì hỏi thẳng TẬP mang cờ — BE lọc, FE không `.filter()` trên cả kho.
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: locRows = [] } = useLocationsReal(
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
+    !!warehouseId && !requiresOnly,
   )
+  const { data: flagLocs = [] } = useLocationsByFlag(
+    'requires_stocktake',
+    { warehouse_id: warehouseId, category: category || undefined },
+    !!warehouseId && requiresOnly,
+  )
+  // Nhãn cho vị trí ĐANG CHỌN — `locRows` chỉ có 50 dòng khớp từ khóa hiện tại, không thì ô in uuid thô
+  const { data: pickedLocs = [] } = useLocationsByIds([locationId])
 
-  const filteredLocations = requiresOnly
-    ? (locations as any[]).filter((l: any) => l.requires_stocktake)
-    : (locations as any[])
+  // requiresOnly: tập cờ nhỏ và đã về đủ → lọc từ khóa tại chỗ (SingleSelect ở chế độ
+  // serverSearch không tự lọc client). Ngược lại: 50 dòng server trả + dòng đang chọn.
+  const filteredLocations: LocationLite[] = requiresOnly
+    ? flagLocs.filter(l => !locTermDeb || l.location_code.toLowerCase().includes(locTermDeb.toLowerCase()))
+    : [...pickedLocs, ...locRows.filter((l: LocationLite) => !pickedLocs.some(p => p.id === l.id))]
 
-  const selectedLoc = (locations as any[]).find((l: any) => l.id === locationId)
+  const selectedLoc = filteredLocations.find(l => l.id === locationId) ?? pickedLocs[0]
 
   function clearResult() {
     setResultState({ mode: 'none' })
@@ -215,10 +230,13 @@ export default function Stocktake() {
             placeholder="Vị trí…"
             searchPlaceholder="Tìm vị trí…"
             triggerClassName="h-7 w-[130px]"
+            serverSearch
+            onSearchChange={setLocTerm}
+            selectedLabel={locationId ? selectedLoc?.location_code : undefined}
             options={[
               { value: '__none__', label: 'Chọn vị trí…' },
-              ...filteredLocations.map((l: any) => ({
-                value: l.id as string,
+              ...filteredLocations.map(l => ({
+                value: l.id,
                 label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}`,
               })),
             ]}

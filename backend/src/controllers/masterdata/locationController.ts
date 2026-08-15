@@ -184,6 +184,16 @@ export async function listLocations(req: Request, res: Response) {
     // chip/ô in uuid thô và user tưởng mất dữ liệu (bài học nghiệm thu 29/07). Cap 300 = trần URL.
     const ids = parseListParam(req.query.ids, 300)
 
+    // CỜ NGỮ NGHĨA (15/08) — trả TẬP vị trí mang cờ, thay vì để FE kéo CẢ KHO rồi tự `.filter()`.
+    // Đo thật kho Bàu Bàng 1.517 vị trí: **1.030KB / 2,9s MỖI LẦN mở màn** (3 màn Kiểm kho +
+    // tab cấu hình Slotting đều làm vậy) — và phần đắt nhất là `used_slots` (quét InventoryEntry
+    // chunk 300 = 6 lượt round-trip) mà mấy màn đó KHÔNG dùng tới. Cờ nào cũng là tập CON có chủ
+    // đích (vị trí cần kiểm / kho tạm / hàng kẹt), nên trả đủ tập là an toàn — khác hẳn "cả danh mục".
+    const flagStk   = tri(req.query.flag)          // requires_stocktake — "cần kiểm kê"
+    const flagNoIn  = tri(req.query.slot_no_in)    // Slotting: kho tạm, không đưa hàng vào
+    const flagNoOut = tri(req.query.slot_no_out)   // Slotting: hàng kẹt, không lấy hàng đi
+    const byFlag = flagStk !== null || flagNoIn !== null || flagNoOut !== null
+
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
     const scope = scopeWhIds(req)
@@ -202,9 +212,12 @@ export async function listLocations(req: Request, res: Response) {
     const buildQ = () => {
       let query = supabase
         .from('Location')
-        .select(view === 'lite' ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
+        .select(view === 'lite' || byFlag ? LOCATION_LITE_COLS : '*, warehouse:Warehouse(id, code, name), InventoryEntry(count)')
         .order('sub_code').order('row').order('shelf').order('id')
       if (ids) query = query.in('id', ids.slice(0, 300))   // cap 300 = trần id trên URL PostgREST
+      if (flagStk   !== null) query = query.eq('requires_stocktake', flagStk)
+      if (flagNoIn  !== null) query = query.eq('slot_no_in', flagNoIn)
+      if (flagNoOut !== null) query = query.eq('slot_no_out', flagNoOut)
       if (effective) {
         query = effective.length === 1 ? query.eq('warehouse_id', effective[0]) : query.in('warehouse_id', effective)
       } else if (warehouse_id) {
@@ -241,6 +254,10 @@ export async function listLocations(req: Request, res: Response) {
     } else {
       data = await fetchAllRowsParallel(buildQ) as unknown as Record<string, unknown>[]
     }
+
+    // Hỏi theo CỜ = chỉ cần biết "vị trí nào mang cờ" (id + mã) → trả thẳng, KHÔNG quét
+    // InventoryEntry tính used_slots (chunk 300 = phần đắt nhất của endpoint này).
+    if (byFlag) return ok(res, data ?? [])
 
     // used_slots (layer 1 IN_STOCK/PARTIAL): 1 lượt quét gộp thay N+1 count query
     // (trước: mỗi vị trí 1 roundtrip — nghìn vị trí = nghìn query song song, cạn connection)

@@ -12,6 +12,8 @@ export function MultiSelectFilter({
   searchable = true,
   width,
   selectedFirst = false,
+  serverSearch = false,
+  onSearchChange,
 }: {
   label: string
   options: MSOpt[]
@@ -21,9 +23,22 @@ export function MultiSelectFilter({
   width?: string
   /** true: mục ĐANG chọn nổi lên đầu danh sách — thứ tự chốt lúc MỞ panel (tick/bỏ tick không nhảy hàng) */
   selectedFirst?: boolean
+  /**
+   * Danh mục LỚN (vị trí kho…): `options` do SERVER trả theo từ khóa — không lọc lại ở client,
+   * mỗi lần gõ báo lên cha sau 250ms. Cha PHẢI ghim sẵn các dòng ĐANG CHỌN vào `options`
+   * (tra theo id), không thì tick rồi gõ từ khóa khác là mất dấu lựa chọn.
+   */
+  serverSearch?: boolean
+  onSearchChange?: (term: string) => void
 }) {
   const [open,   setOpen]   = useState(false)
   const [search, setSearch] = useState('')
+  // serverSearch: báo từ khóa lên cha sau 250ms (gõ nhanh không bắn mỗi phím 1 request)
+  useEffect(() => {
+    if (!serverSearch || !onSearchChange) return
+    const t = setTimeout(() => onSearchChange(search), 250)
+    return () => clearTimeout(t)
+  }, [search, serverSearch, onSearchChange])
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef   = useRef<HTMLDivElement>(null)
   // Snapshot selected tại thời điểm mở — sort selected-first ổn định trong suốt phiên mở panel
@@ -68,7 +83,9 @@ export function MultiSelectFilter({
   const ordered = selectedFirst
     ? [...options].sort((a, b) => Number(openSelectedRef.current.has(b.value)) - Number(openSelectedRef.current.has(a.value)))
     : options
-  const visible = searchable && search
+  // serverSearch: server đã lọc + cắt rồi → KHÔNG lọc lại ở client (lọc lại sẽ giấu mất
+  // dòng ĐANG CHỌN mà cha ghim vào `options`, và chặn kết quả server trả về theo từ khóa).
+  const visible = searchable && search && !serverSearch
     ? ordered.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
     : ordered
   const allSelected  = visible.length > 0 && visible.every(o => selected.includes(o.value))

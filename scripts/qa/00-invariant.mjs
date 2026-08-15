@@ -191,4 +191,20 @@ for (const [table, label] of [
       : 'RPC rls_gap_tables chưa apply (migration 20260805c)')
 }
 
+// 11. ĐỔI TÊN LOẠI KHO PHẢI PHỦ ĐỦ MỌI CỘT (chốt 15/08).
+//     `rename_warehouse_type` cascade theo bản đồ GHI TAY hồi 27/07 nên cột SINH SAU bị bỏ lại:
+//     quét sống 603 cột text/text[] của production ra `OutboundItem.material_type` (280 dòng,
+//     = snapshot Material.category) và `alert_events.category` (14 dòng, = warehouse_type) —
+//     đổi tên xong 294 dòng trỏ vào loại KHÔNG CÒN TỒN TẠI, không lỗi, không cảnh báo.
+//     RPC `warehouse_type_column_coverage` (migration 20260815b) tự quét lại mỗi lần chạy:
+//     thêm cột mới mang Loại kho mà quên cascade = ĐỎ ngay, không chờ ai nhớ.
+{
+  const gaps = await restRpc('warehouse_type_column_coverage')
+  check('Đổi tên Loại kho phủ ĐỦ mọi cột mang giá trị đó (không cột nào bị bỏ lại)',
+    Array.isArray(gaps) && gaps.length === 0,
+    Array.isArray(gaps)
+      ? (gaps.length ? `SÓT: ${gaps.map(g => `${g.tbl}.${g.col}(${g.n} dòng)`).join(', ')}` : 'quét toàn schema public')
+      : 'RPC warehouse_type_column_coverage chưa apply (migration 20260815b)')
+}
+
 finish('INVARIANT')

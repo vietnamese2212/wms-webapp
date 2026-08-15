@@ -11,6 +11,7 @@ import { ModalOverlay } from '@/components/shared/ModalOverlay'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { useUploadVl06o, useUploadKhvc, UPLOAD_TOO_LARGE_MSG, type UploadPreflight } from '@/api/hooks'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 
 export type VcUploadMode = 'vl06o' | 'khvc'
 
@@ -27,14 +28,17 @@ function downloadVl06oTemplate() {
   XLSX.utils.book_append_sheet(wb, ws, 'Data')
   saveWorkbook(wb, 'mau_vl06o.xlsx')
 }
-function downloadKhvcTemplate() {
+// `sampleCategory` = 1 giá trị Loại kho LẤY TỪ DANH MỤC của chính đơn vị này — KHÔNG viết cứng.
+// Mỗi đơn vị một taxonomy riêng (mã SAP 'FG01…' hay tên tiếng Việt 'Thành phẩm…'), mà cột
+// "Loại kho booking" sai giá trị là TỪ CHỐI CẢ FILE ⇒ ví dụ cứng sẽ dạy người dùng gõ sai.
+function downloadKhvcTemplate(sampleCategory: string) {
   const d = new Date(); d.setDate(d.getDate() + 1)
   const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
   const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
   // "Loại kho booking" = CỬA xe đậu để đặt khung giờ — BẮT BUỘC, và 1 Số xe chỉ được 1 giá trị
-  // (xe chở lẫn FG01+PM01 vẫn chỉ đậu 1 cửa; khai lệch nhau trong cùng Số xe → từ chối cả file).
+  // (xe chở lẫn nhiều loại vẫn chỉ đậu 1 cửa; khai lệch nhau trong cùng Số xe → từ chối cả file).
   const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại kho booking', 'Loại xe', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
-  const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', 'FG01', 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
+  const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', sampleCategory, 'Xe Pallet', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
   const ws = XLSX.utils.aoa_to_sheet([headers, ex])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
@@ -46,6 +50,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
   const { mutate: uploadVl06o, isPending: vlBusy } = useUploadVl06o()
   const { mutate: uploadKhvc,  isPending: khBusy } = useUploadKhvc()
   const busy = isVl ? vlBusy : khBusy
+  const { data: whTypes = [] } = useScopedWhTypes()   // giá trị mẫu cột "Loại kho booking" của mẫu KH điều vận
   const fileRef = useRef<HTMLInputElement>(null)
   const [okMsg, setOkMsg]   = useState<string | null>(null)
   const [errMsg, setErrMsg] = useState<string | null>(null)
@@ -134,7 +139,7 @@ export function VcUploadDialog({ mode, onClose }: { mode: VcUploadMode; onClose:
         </div>
         <div className="p-4 space-y-3 overflow-auto">
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={isVl ? downloadVl06oTemplate : downloadKhvcTemplate} className="h-8 text-xs gap-1">
+            <Button size="sm" variant="outline" onClick={isVl ? downloadVl06oTemplate : () => downloadKhvcTemplate(whTypes[0]?.value ?? '')} className="h-8 text-xs gap-1">
               <Download className="h-3.5 w-3.5" /> Tải mẫu {isVl ? 'VL06O' : 'KHVC'}
             </Button>
             <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">

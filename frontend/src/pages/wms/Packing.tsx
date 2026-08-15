@@ -728,19 +728,21 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
   return (
     <FormSheet open onClose={onDone} title="Ghi sổ đóng gói — pallet vừa quét"
       footer={
-        // flex-wrap: 4 nút không tràn ngang trên màn 360px (PDA/điện thoại xưởng)
-        <div className="flex gap-2 w-full flex-wrap">
-          <Button variant="outline" className="shrink-0" onClick={onDone}>Hủy</Button>
+        // 4 nút: mobile xếp LƯỚI 2×2, desktop 1 hàng. Verify Playwright 360px 15/08: bản `flex
+        // flex-wrap` KHÔNG xuống dòng mà tràn chồng nút (footer FormSheet là flex-col-reverse) —
+        // lỗi do chính nút "Quét lại" thêm vào làm 4 nút.
+        <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-wrap">
+          <Button variant="outline" className="sm:shrink-0" onClick={onDone}>Hủy</Button>
           {/* Quét sai tem → quét lại ngay, không phải đóng form rồi tìm nút quét (camera đang TẮT) */}
-          <Button variant="outline" className="shrink-0 gap-1" onClick={onRescan} title="Bỏ tem này, bật camera quét tem khác">
+          <Button variant="outline" className="gap-1 sm:shrink-0" onClick={onRescan} title="Bỏ tem này, bật camera quét tem khác">
             <ScanLine className="h-3.5 w-3.5" /> Quét lại
           </Button>
-          <Button variant="outline" className="flex-1 min-w-[7.5rem]" disabled={openMut.isPending || busy || !run}
+          <Button variant="outline" className="sm:flex-1 sm:min-w-[7.5rem]" disabled={openMut.isPending || busy || !run}
             title="Pallet chưa xếp xong — lưu trước, đóng sổ sau từ board"
             onClick={() => save(false)}>
             Lưu — đóng sau
           </Button>
-          <Button className="flex-1 min-w-[7.5rem] bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending || busy || !run} onClick={() => save(true)}>
+          <Button className="sm:flex-1 sm:min-w-[7.5rem] bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending || busy || !run} onClick={() => save(true)}>
             {openMut.isPending ? 'Đang lưu…' : busy ? 'Đang đọc ảnh…' : 'Lưu & Đóng sổ'}
           </Button>
         </div>

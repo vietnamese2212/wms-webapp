@@ -150,10 +150,14 @@ let runB = null
   check('Mọi trang của mã đã đóng → quét lại 422 RUN_REQUIRED', r.s === 422 && r.j?.error?.code === 'RUN_REQUIRED', `http=${r.s} code=${r.j?.error?.code}`)
 }
 
-// [11] SỬA TRANG (PATCH): đổi ca/máy OK; end<start → 422; sửa dòng pallet sau đóng → nguồn MANUAL
+// [11] SỬA TRANG (PATCH): trang ĐÃ CÓ pallet chỉ sửa được ghi chú (luật 15/08); end<start → 422;
+// sửa dòng pallet sau đóng → nguồn MANUAL
 {
   const upd = await api(`/wms/packing-runs/${runA?.id}`, 'PATCH', { shift: 'Ca 2', machine_code: 'A2', note: `${TAG} sửa` })
-  check('Sửa trang (ca/máy) → 200', upd.s === 200 && upd.j?.data?.shift === 'Ca 2' && upd.j?.data?.machine_code === 'A2', `http=${upd.s}`)
+  check('Sửa ca/máy trang ĐÃ CÓ pallet → 409 RUN_LOCKED_HAS_PALLETS',
+    upd.s === 409 && upd.j?.error?.code === 'RUN_LOCKED_HAS_PALLETS', `http=${upd.s} code=${upd.j?.error?.code}`)
+  const noteOk = await api(`/wms/packing-runs/${runA?.id}`, 'PATCH', { note: `${TAG} sửa` })
+  check('Sửa RIÊNG ghi chú trang có pallet → 200', noteOk.s === 200 && noteOk.j?.data?.note === `${TAG} sửa`, `http=${noteOk.s}`)
   const bad = await api(`/wms/packing-runs/${runA?.id}`, 'PATCH', { end_at: iso(5, 0) })
   check('Sửa giờ kết thúc < bắt đầu → 422', bad.s === 422 && bad.j?.error?.code === 'TIME_ORDER', `http=${bad.s}`)
   const rows = await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}1_*&status=eq.CLOSED`)
@@ -510,10 +514,15 @@ let runB = null
   const freeMachine = await api('/wms/packing-logs/open', 'POST', { qr_code: `${ddmmyy}_${TAG}C_55_ZZ_008_B`, complete: true, qty_cartons: 3 })
   check('[20] Kho CHƯA khai danh mục máy → tem máy lạ KHÔNG bị chặn oan', freeMachine.s === 200, `http=${freeMachine.s} code=${freeMachine.j?.error?.code}`)
 
-  // khai danh mục máy gồm M9 → tem M9 giờ ĐƯỢC coi là máy thật ⇒ phải khớp trang (trang đang M9 → đổi sang A)
+  // khai danh mục máy gồm M9 → tem M9 giờ ĐƯỢC coi là máy thật ⇒ phải khớp trang.
+  // Trang rc đã có pallet nên KHÔNG đổi máy được nữa (luật khóa 15/08) → đóng trang, mở trang MỚI
+  // máy A cho cùng mã (2 trang OPEN cùng mã sẽ thành RUN_AMBIGUOUS nên phải đóng trang cũ trước).
   const m9 = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'M9' })
   const mA = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'A' })
-  await api(`/wms/packing-runs/${rcId}`, 'PATCH', { machine_code: 'A' })
+  await api(`/wms/packing-runs/${rcId}/close`, 'POST', {})
+  const rcA = await openRun(`${TAG}C`, 'A', { cycle: '55' })
+  const rcAId = rcA.j?.data?.id
+  check('[20] mở trang máy A (danh mục có A) → 200', rcA.s === 200, `http=${rcA.s} code=${rcA.j?.error?.code}`)
   const wrongMachine = await api('/wms/packing-logs/open', 'POST', { qr_code: temCyc('55', `${TAG}C`) })
   check('[20] Tem máy M9 (có trong danh mục) vào trang máy A → 422 RUN_MACHINE_MISMATCH',
     wrongMachine.s === 422 && wrongMachine.j?.error?.code === 'RUN_MACHINE_MISMATCH', `http=${wrongMachine.s} code=${wrongMachine.j?.error?.code}`)
@@ -523,7 +532,7 @@ let runB = null
   check('[20] Máy ghi vào sổ = máy TRANG SỔ (không nhận override từ body)',
     okMachine.j?.data?.machine_code === 'A', `machine=${okMachine.j?.data?.machine_code}`)
 
-  if (rcId) await api(`/wms/packing-runs/${rcId}/cancel`, 'POST')
+  if (rcAId) await api(`/wms/packing-runs/${rcAId}/close`, 'POST', {})   // có pallet → đóng, không hủy được
   for (const id of [m9.j?.data?.id, mA.j?.data?.id]) if (id) await api(`/masterdata/machines/${id}`, 'DELETE')
 }
 
@@ -535,7 +544,7 @@ let runB = null
   const rid = r.j?.data?.id
   const free = await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '56', shift: 'Ca 2' })
   check('[21] Trang CHƯA có pallet → sửa thoải mái', free.s === 200 && free.j?.data?.cycle === '56', `http=${free.s} cycle=${free.j?.data?.cycle}`)
-  await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '55' })
+  await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '55', shift: 'Ca 1' })   // trả về đúng giá trị openRun
 
   const temL = tem(1, `${TAG}L`)
   const scan = await api('/wms/packing-logs/open', 'POST', { qr_code: temL, qty_cartons: 9, complete: true })

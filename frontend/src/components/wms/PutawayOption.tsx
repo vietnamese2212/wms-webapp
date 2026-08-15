@@ -26,14 +26,17 @@ export function PutawayOption({ loc }: { loc: PutawayLocRow }) {
   return (
     <span className="flex-1 min-w-0 flex items-center gap-1 text-[11px]">
       {reason && <span className="text-amber-500 font-bold shrink-0">★</span>}
-      <span className={`font-mono truncate ${
+      {/* MÃ VỊ TRÍ là thứ người ta cần đọc nhất ⇒ `shrink-0`: khi chật thì NHÃN LÝ DO co lại, không
+          phải mã. Trước đó cả hai cùng co và mã (có `truncate`) là bên nhường — trong pane hẹp 288px
+          của Chuyển vị trí hàng loạt nó hiện ra "D_TP1_7…", "D_TP1_A12…", đọc không ra ô nào. */}
+      <span className={`font-mono shrink-0 ${
         blocked ? 'text-slate-400 line-through' : isFull ? 'text-blue-700 font-semibold' : used > 0 ? 'text-amber-600' : 'text-slate-700'
       }`}>{loc.location_code}</span>
       <span className="ml-auto shrink-0 text-[10px] text-slate-400">{used}/{loc.max_pallets}</span>
       {blocked
         ? <span className="shrink-0 text-[10px] px-1 rounded bg-red-50 text-red-600 border border-red-200">{blockShort(blocked)}</span>
         : reason
-        ? <span className="shrink-0 text-[10px] text-amber-600">{PUTAWAY_REASON_LABEL[reason]}</span>
+        ? <span className="min-w-0 truncate text-[10px] text-amber-600">{PUTAWAY_REASON_LABEL[reason]}</span>
         : null}
     </span>
   )

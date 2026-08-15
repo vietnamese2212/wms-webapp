@@ -109,6 +109,15 @@ try {
     hint(locNoIn.id)?.blocked === 'NO_IN', `${locNoIn.location_code}`)
   check('[3] vị trí thường KHÔNG bị chặn khi kho để mặc định (giữ hành vi cũ)',
     hint(locOk.id)?.blocked === null)
+  // Picker Chuyển vị trí hàng loạt chọn được pallet NHIỀU MÃ ⇒ không có material_id. Suy "có
+  // material_id mới là picker cất hàng" làm đúng ca đó picker KHÔNG hiện gì (soi UI 15/08 thấy
+  // thật: ô cấm nhận hàng trông y hệt ô thường, chọn xong bấm Chuyển mới ăn 422).
+  {
+    const noMat = (await api(`/masterdata/locations?warehouse_id=${whId}&view=lite&limit=200&putaway=1`)).j?.data ?? []
+    check('[3b] picker KHÔNG biết mã hàng (lô nhiều mã) vẫn được chấm luật của Ô',
+      noMat.find(r => r.id === locNoIn.id)?.putaway?.blocked === 'NO_IN',
+      `${noMat.length} vị trí · ${JSON.stringify(noMat.find(r => r.id === locNoIn.id)?.putaway ?? null)}`)
+  }
   check('[4] ô bị chặn xuống cuối, ô hợp lệ đứng trên',
     rows.findIndex(r => r.id === locOk.id) < rows.findIndex(r => r.id === locNoIn.id))
 

@@ -264,14 +264,19 @@ export async function listLocations(req: Request, res: Response) {
     const locIdsAll = (data ?? []).map((l: Record<string, unknown>) => l.id as string)
     const matId = material_id ? String(material_id) : null
 
-    // Có mã hàng ⇒ đây là picker CẤT HÀNG: chấm luôn ★ / lý do chặn theo quy tắc của kho.
-    // Không có mã ⇒ chỉ cần used_slots, khỏi nạp cấu hình kho.
+    // Picker CẤT HÀNG ⇒ chấm ★ / lý do chặn theo quy tắc của kho; danh sách thường chỉ cần
+    // used_slots, khỏi nạp cấu hình kho.
+    // `putaway=1` cho picker KHÔNG biết trước mã hàng — Chuyển vị trí hàng loạt chọn được pallet
+    // NHIỀU MÃ, mà suy "có material_id ⇒ là picker cất hàng" thì đúng ca đó picker KHÔNG hiện gì
+    // (không "cấm nhập", không "đã đầy"), người dùng chọn xong bấm Chuyển mới ăn 422. Thiếu mã thì
+    // các luật phụ thuộc mã tự im (NCC/trộn date cần dữ liệu của pallet), còn luật của Ô vẫn chấm.
+    const wantPutaway = !!matId || req.query.putaway === '1'
     const whForRules = effective?.length === 1 ? effective[0] : (warehouse_id ? String(warehouse_id) : null)
-    const ctx = matId && locIdsAll.length > 0
+    const ctx = wantPutaway && locIdsAll.length > 0
       ? await loadPutawayContext({
           warehouseId: whForRules,
           locIds: locIdsAll,
-          incoming: { material_id: matId, ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
+          incoming: { material_id: matId ?? '', ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
         })
       : null
     const rawFacts = ctx ? null : (locIdsAll.length > 0 ? await loadSlotFactsRaw(locIdsAll, null, false) : [])

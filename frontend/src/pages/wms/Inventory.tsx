@@ -335,7 +335,7 @@ function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
   // tính used_slots). Nay 50 dòng đầu, gõ thì server tìm tiếp.
   const searchDeb = useDebouncedValue(search, 250)
   const { data: locRows = [] } = useLocationsReal(
-    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50, material_id: materialId } : undefined
+    warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: searchDeb || undefined, limit: 50, material_id: materialId, putaway: 1 } : undefined
   )
   const filtered = locRows as LocationLite[]
   // nhãn cho vị trí ĐANG CHỌN — kết quả tìm chỉ chứa dòng khớp từ khoá hiện tại

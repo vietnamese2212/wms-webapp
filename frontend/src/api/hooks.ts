@@ -33,7 +33,9 @@ export function useWarehouses(onlyActive = false) {
 }
 
 // ncc_id: chỉ dùng cho picker CẤT HÀNG — để BE chấm được luật "không trộn NCC trong 1 vị trí".
-type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; ncc_id?: string; search?: string; limit?: number }
+// `putaway: 1` = picker CẤT HÀNG chưa biết mã hàng (lô nhiều mã) — bắt BE vẫn chấm luật của Ô
+// (cấm nhận hàng / đã đầy / nhặt lẻ / QA giữ). Có `material_id` thì tự bật, khỏi truyền.
+type LocationListParams = { warehouse_id?: string; sub_code?: string; category?: string; material_id?: string; ncc_id?: string; search?: string; limit?: number; putaway?: 1 }
 
 /** Cột view=lite của Location (LOCATION_LITE_COLS ở BE) + 2 cột tính thêm. */
 export type LocationLite = {

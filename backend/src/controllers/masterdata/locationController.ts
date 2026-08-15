@@ -292,6 +292,7 @@ export async function listLocations(req: Request, res: Response) {
         const f = ctx.factsOf(id)
         const l: PutawayLoc = {
           id,
+          sub_code:     rest.sub_code     as string | null,   // chiến thuật ABC chấm theo KHU
           max_pallets:  rest.max_pallets  as number | null,
           slot_no_in:   rest.slot_no_in   as boolean | null,
           is_pick_face: rest.is_pick_face as boolean | null,
@@ -300,9 +301,9 @@ export async function listLocations(req: Request, res: Response) {
         // FE CHỈ hiển thị khối này, KHÔNG tự tính lại (luật một nguồn — utils/putaway.ts)
         row.putaway = {
           blocked: putawayBlock(l, f, ctx.incoming, ctx.rules),
-          reason:  putawayReason(l, f, ctx.incoming, ctx.rules),
+          reason:  putawayReason(l, f, ctx.incoming, ctx.rules, ctx.abc),
         } satisfies PutawayHint
-        row._score = putawayScore(l, f, ctx.incoming, ctx.rules)
+        row._score = putawayScore(l, f, ctx.incoming, ctx.rules, ctx.abc)
       }
       return row
     })

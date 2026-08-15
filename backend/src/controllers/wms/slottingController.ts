@@ -7,6 +7,8 @@ import { fetchAllRowsParallel } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
 import { parseListParam } from '../../utils/httpQuery'
 import { safeFilterValue } from '../../utils/search'
+import { zoneAccepts, zonesOverlap, eligibleRankedZones, bandOfIndex, type Band } from '../../utils/slottingBands'
+import { invalidatePutawayZones } from '../../services/putawayContext'
 
 // ─── Slotting v2 (Tối ưu vị trí) — user chỉnh rule 17/07 ────────────────────
 // 3 MỨC ĐỘ (filter trên trang, không cài đặt kho): EASY = gom mã về ít vị trí (giải
@@ -72,31 +74,9 @@ async function fetchStats(warehouseId: string, categories: string[] | null, days
   return { stats: data as Stats }
 }
 
-// ─── Luật khớp hàng ↔ khu (STRICT theo Loại kho — user chốt v3; multi-loại 27/07) ────
-// Khu có Loại → CHỈ nhận mã có loại ∈ MẢNG loại của khu (mã chưa khai loại KHÔNG vào được).
-// Khu chưa gắn Loại (di sản null/rỗng) → nhận mọi mã (khu đa dụng).
-function zoneAccepts(zone: StatsZone, mat: { category: string | null }): boolean {
-  if (!zone.categories?.length) return true
-  return mat.category != null && zone.categories.includes(mat.category)
-}
-// 2 khu "cùng nhóm loại" nếu giao nhau ≥1 loại (dùng để xếp band A/B/C trong nhóm khu tương đương)
-function zonesOverlap(a: string[] | null, b: string[] | null): boolean {
-  if (!a?.length || !b?.length) return (!a?.length && !b?.length)
-  return a.some(x => b.includes(x))
-}
-
-// ─── Banding khu theo hạng nhặt (chỉ dùng mức HARD) ─────────────────────────
-type Band = 'A' | 'B' | 'C'
-function eligibleRankedZones(zones: StatsZone[], mat: { category: string | null }): StatsZone[] {
-  return zones
-    .filter(z => z.pick_rank != null && zoneAccepts(z, mat))
-    .sort((a, b) => (a.pick_rank! - b.pick_rank!) || a.code.localeCompare(b.code))
-}
-function bandOfIndex(idx: number, n: number): Band {
-  if (n <= 1) return 'A'
-  const f = idx / n
-  return f < 1 / 3 ? 'A' : f < 2 / 3 ? 'B' : 'C'
-}
+// Luật khớp hàng ↔ khu + xếp band theo hạng nhặt: đã dời sang `utils/slottingBands.ts` (15/08) vì
+// chiến thuật cất hàng "Theo ABC" cũng phải dùng ĐÚNG luật này — để mỗi bên một bản là hai module
+// lại chỉ vào hai khu khác nhau, đúng bệnh cũ.
 
 interface EnrichedMaterial extends StatsMaterial {
   zones_current: { sub_code: string | null; pallets: number; cartons: number }[]
@@ -972,6 +952,9 @@ export async function updateZoneConfig(req: Request, res: Response) {
     const { data, error } = await supabase.from('WarehouseZone').update(patch).eq('id', zone.id)
       .select('id, code, name, categories, pick_rank, flow_type').single()
     if (error) return fail(res, 500, 'DB_ERROR', error.message)
+    // Chiến thuật cất hàng "Theo ABC" đọc hạng nhặt khu qua cache 5 phút → đổi xong phải xoá ngay,
+    // không thì sửa hạng khu mà gợi ý cất hàng vẫn chỉ vào khu cũ.
+    invalidatePutawayZones(String(zone.warehouse_id ?? ''))
     return ok(res, data)
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }

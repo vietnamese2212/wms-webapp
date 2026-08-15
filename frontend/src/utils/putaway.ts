@@ -5,7 +5,7 @@
 
 export type PutawayBlockCode =
   'NO_IN' | 'FULL' | 'PICK_FACE' | 'QA_HOLD' | 'MAX_MATERIALS' | 'NCC_MIX' | 'DATE_MIX'
-export type PutawayReasonCode = 'SAME_MATERIAL' | 'EMPTY'
+export type PutawayReasonCode = 'SAME_MATERIAL' | 'EMPTY' | 'BAND_MATCH'
 
 export interface PutawayHint {
   blocked: PutawayBlockCode | null
@@ -29,6 +29,7 @@ export const PUTAWAY_BLOCK_SHORT: Record<PutawayBlockCode, string> = {
 export const PUTAWAY_REASON_LABEL: Record<PutawayReasonCode, string> = {
   SAME_MATERIAL: 'đang để dở cùng mã',
   EMPTY:         'còn trống',
+  BAND_MATCH:    'đúng khu hạng ABC',
 }
 
 // Mirror BE PUTAWAY_OVERRIDE_REASONS — danh sách cố định, KHÔNG gõ tự do (để báo cáo gom nhóm được)

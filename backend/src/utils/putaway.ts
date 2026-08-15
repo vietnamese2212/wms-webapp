@@ -139,6 +139,7 @@ export function isPutawayOverrideReason(code: unknown): code is PutawayOverrideC
 export const PUTAWAY_REASONS = [
   { code: 'SAME_MATERIAL', label: 'Đang để dở cùng mã' },
   { code: 'EMPTY',         label: 'Vị trí còn trống' },
+  { code: 'BAND_MATCH',    label: 'Đúng khu theo hạng ABC' },
 ] as const
 export type PutawayReasonCode = typeof PUTAWAY_REASONS[number]['code']
 
@@ -205,10 +206,20 @@ export function slotFactsOf(
 // ─── Vị trí ứng viên + pallet sắp cất ────────────────────────────────────────
 export interface PutawayLoc {
   id:           string
+  sub_code?:    string | null   // mã KHU — chiến thuật ABC chấm theo khu, không theo từng ô
   max_pallets?: number | null   // <= 0 = không giới hạn sức chứa (nhiều khu đang khai 0)
   slot_no_in?:  boolean | null
   is_pick_face?: boolean | null
 }
+
+// Chiến thuật ABC (đợt C): khu NÊN cất mã này, do `utils/slottingBands` tính từ hạng nhặt khu +
+// hạng ABC của mã (SQL `material_abc`). RỖNG = kho chưa xếp hạng khu nào hợp loại hàng đó ⇒ xuống
+// thang về Gom (và form Kho nói rõ điều đó, không im lặng).
+export interface PutawayAbc {
+  abc:          'A' | 'B' | 'C' | null
+  targetZones:  string[]
+}
+export const NO_ABC: PutawayAbc = { abc: null, targetZones: [] }
 export interface IncomingPallet {
   material_id: string
   ncc_id:      string | null
@@ -251,18 +262,27 @@ export function putawayBlock(
 // ta tới chỗ không cất được — đúng lỗi mà rotation gặp 14/08 với pallet bị QA giữ).
 export function putawayReason(
   loc: PutawayLoc, facts: SlotFacts, incoming: IncomingPallet, rules: PutawayRules,
+  abc: PutawayAbc = NO_ABC,
 ): PutawayReasonCode | null {
   if (putawayBlock(loc, facts, incoming, rules) != null) return null
+  // ABC: khu đúng band là lý do MẠNH nhất; kho chưa xếp hạng khu (targetZones rỗng) thì rơi xuống Gom
+  if (rules.priority === 'ABC' && abc.targetZones.length > 0)
+    return loc.sub_code && abc.targetZones.includes(loc.sub_code) ? 'BAND_MATCH' : null
   if (rules.priority === 'SPREAD') return facts.pallets === 0 ? 'EMPTY' : null
-  // CONSOLIDATE (và ABC ở đợt C dùng lại làm tie-break)
   return facts.sameMaterial ? 'SAME_MATERIAL' : null
 }
 
 // Điểm sắp xếp — NHỎ HƠN đứng trước. Ô bị chặn luôn xuống cuối.
 export function putawayScore(
   loc: PutawayLoc, facts: SlotFacts, incoming: IncomingPallet, rules: PutawayRules,
+  abc: PutawayAbc = NO_ABC,
 ): number {
   if (putawayBlock(loc, facts, incoming, rules) != null) return 100
+  if (rules.priority === 'ABC' && abc.targetZones.length > 0) {
+    // Đúng band trước; trong cùng band thì vẫn gom cùng mã (đỡ chia lẻ tồn), rồi mới tới phần còn lại.
+    const inBand = !!loc.sub_code && abc.targetZones.includes(loc.sub_code)
+    return inBand ? (facts.sameMaterial ? 0 : 1) : (facts.sameMaterial ? 8 : 10)
+  }
   if (rules.priority === 'SPREAD') {
     const cap = Number(loc.max_pallets ?? 0)
     // Ô không khai sức chứa coi như rộng nhất (0 = không giới hạn), ô trống đứng trước ô đã có hàng.

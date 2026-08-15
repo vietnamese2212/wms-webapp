@@ -752,6 +752,13 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 { value: 'ABC',         label: 'Theo ABC — hàng nhặt nhiều để gần cửa', sub: 'dùng hạng nhặt khu của Tối ưu vị trí' },
               ]}
             />
+            {putPriority === 'ABC' && (
+              <p className="mt-1 text-[10px] text-slate-400">
+                Cần xếp <b>Hạng nhặt</b> cho khu ở trang <b>Tối ưu vị trí → tab Cài đặt</b> (1 = gần cửa xuất nhất).
+                Kho chưa xếp hạng khu nào hợp loại hàng thì gợi ý <b>tạm chạy như Gom</b> — chọn ABC mà quên xếp hạng khu là
+                không có tác dụng gì. Hạng ABC của mã lấy từ lượt nhặt <b>30 ngày</b> gần nhất, cùng nguồn với trang Tối ưu vị trí.
+              </p>
+            )}
             <div>
               <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
               <SingleSelect

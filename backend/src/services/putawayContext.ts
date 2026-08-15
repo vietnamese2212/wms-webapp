@@ -11,8 +11,10 @@ import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
   putawayRulesOf, putawayNeedsLots, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
   putawayBlock, putawayBlockMessage, isPutawayOverrideReason, PUTAWAY_RULES_DEFAULT,
-  type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc,
+  NO_ABC,
+  type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc, type PutawayAbc,
 } from '../utils/putaway'
+import { targetZoneCodes, type Band, type BandZone } from '../utils/slottingBands'
 
 // Dòng Location tối thiểu mà luật cần — caller truyền dòng đã nạp sẵn phải có đủ ngần này
 export type PutawayLocRow = PutawayLoc & { location_code: string }
@@ -23,6 +25,7 @@ export interface PutawayContext {
   facts:      Map<string, SlotFacts>   // theo location_id; vắng mặt = ô rỗng
   incoming:   IncomingPallet
   factsOf:    (locationId: string) => SlotFacts
+  abc:        PutawayAbc               // chỉ có nội dung khi kho chạy chiến thuật ABC
 }
 
 // Pallet sắp cất. Ở picker (đợt A) chưa quét QR nên KHÔNG có ngày → luật trộn date im lặng
@@ -137,6 +140,43 @@ async function whConfig(warehouseId: string): Promise<Record<string, unknown>> {
   return row
 }
 
+// ─── Chiến thuật ABC (đợt C) ─────────────────────────────────────────────────
+// ABC là hạng TƯƠNG ĐỐI trong (kho, cửa sổ ngày) nên phải tính trên CẢ kho — không thể hỏi riêng
+// một mã. Cửa sổ chốt 30 ngày (bằng mặc định trang Tối ưu vị trí) để hai bên nói cùng một hạng.
+// Cache 5 phút: bản đồ nhỏ (đo staging: 132 và 416 mã) mà nếu không cache thì MỖI PHÍM GÕ ở ô chọn
+// vị trí bắt DB chạy lại một câu tổng hợp toàn kho.
+const ABC_DAYS = 30
+const _abcCache  = new Map<string, { at: number; map: Map<string, { abc: Band; category: string | null }> }>()
+const _zoneCache = new Map<string, { at: number; zones: BandZone[] }>()
+
+async function abcMapOf(warehouseId: string): Promise<Map<string, { abc: Band; category: string | null }>> {
+  const hit = _abcCache.get(warehouseId)
+  if (hit && Date.now() - hit.at < 300_000) return hit.map
+  const { data } = await supabase.rpc('material_abc', {
+    p_warehouse_id: warehouseId, p_categories: null, p_days: ABC_DAYS,
+  })
+  const map = new Map<string, { abc: Band; category: string | null }>()
+  for (const r of (data ?? []) as { material_id: string; abc: string; category: string | null }[])
+    map.set(r.material_id, { abc: (r.abc === 'A' || r.abc === 'B' ? r.abc : 'C'), category: r.category })
+  _abcCache.set(warehouseId, { at: Date.now(), map })
+  return map
+}
+
+async function zonesOf(warehouseId: string): Promise<BandZone[]> {
+  const hit = _zoneCache.get(warehouseId)
+  if (hit && Date.now() - hit.at < 300_000) return hit.zones
+  const { data } = await supabase.from('WarehouseZone')
+    .select('code, categories, pick_rank').eq('warehouse_id', warehouseId).eq('is_active', true)
+  const zones = (data ?? []) as BandZone[]
+  _zoneCache.set(warehouseId, { at: Date.now(), zones })
+  return zones
+}
+
+// Cấu hình khu (hạng nhặt) đổi ở trang Tối ưu vị trí → xoá cache để có hiệu lực ngay
+export function invalidatePutawayZones(warehouseId: string): void {
+  _zoneCache.delete(warehouseId)
+}
+
 export async function loadPutawayContext(opts: {
   warehouseId: string | null
   locIds:      string[]
@@ -184,8 +224,17 @@ export async function loadPutawayContext(opts: {
     )
   }
 
+  // Chiến thuật ABC: hạng của mã + khu nên cất. Chỉ nạp khi kho THẬT SỰ chạy ABC.
+  let abc: PutawayAbc = NO_ABC
+  if (rules.priority === 'ABC' && warehouseId && incoming.material_id) {
+    const [map, zones] = await Promise.all([abcMapOf(warehouseId), zonesOf(warehouseId)])
+    const row = map.get(incoming.material_id)
+    // Mã chưa có tồn/lượt nhặt nào trong kho → không có hạng → xuống thang về Gom (targetZones rỗng)
+    if (row) abc = { abc: row.abc, targetZones: targetZoneCodes(zones, { category: row.category }, row.abc) }
+  }
+
   return {
-    rules, principle, facts,
+    rules, principle, facts, abc,
     incoming: { material_id: incoming.material_id, ncc_id: incoming.ncc_id ?? null, key },
     factsOf: (id: string) => facts.get(id) ?? EMPTY_SLOT,
   }

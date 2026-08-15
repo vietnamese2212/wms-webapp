@@ -696,6 +696,32 @@ export async function updateRun(req: Request, res: Response) {
   }
   if (note !== undefined) patch.note = typeof note === 'string' ? note.trim().slice(0, 500) : null
 
+  // KHÓA SỬA KHI ĐÃ CÓ DỮ LIỆU QUÉT (user chốt 15/08): trang đã có pallet ghi vào ⇒ chỉ sửa được
+  // GHI CHÚ; muốn sửa Ca/Chu kỳ/Máy/Giờ/Tổng phải HỦY HẾT pallet đã quét trước. Lý do: mỗi pallet
+  // đã KẾ THỪA máy+kho của trang và đã đối chiếu chu kỳ lúc quét — sửa trang sau đó làm dữ liệu
+  // đã ghi mâu thuẫn với chính trang chứa nó (và không có đường nào sửa ngược lại pallet).
+  // So theo GIÁ TRỊ (không theo sự hiện diện của field) → client gửi nguyên giá trị cũ kèm ghi
+  // chú mới vẫn lưu được, không 409 oan.
+  const LOCKED_LABEL: Record<string, string> = {
+    shift: 'Ca sản xuất', cycle: 'Chu kỳ', machine_code: 'Máy',
+    start_at: 'Giờ bắt đầu', end_at: 'Giờ kết thúc', qty_total: 'Tổng sản lượng',
+  }
+  const changed = Object.keys(LOCKED_LABEL).filter(k => {
+    if (!(k in patch)) return false
+    const a = patch[k], b = (run as Record<string, unknown>)[k]
+    if (k === 'start_at' || k === 'end_at')
+      return (a == null ? null : new Date(String(a)).getTime()) !== (b == null ? null : new Date(String(b)).getTime())
+    if (k === 'qty_total') return Number(a ?? 0) !== Number(b ?? 0)
+    return (a ?? null) !== (b ?? null)
+  })
+  if (changed.length) {
+    const { count } = await supabase.from('packing_logs')
+      .select('id', { count: 'exact', head: true }).eq('run_id', id).neq('status', 'CANCELLED')
+    if ((count ?? 0) > 0)
+      return fail(res, 409, 'RUN_LOCKED_HAS_PALLETS',
+        `Trang sổ đã có ${count} pallet quét vào — chỉ sửa được Ghi chú. Muốn sửa ${changed.map(k => LOCKED_LABEL[k]).join(' · ')} thì phải hủy hết pallet đã quét trước.`)
+  }
+
   const { data, error } = await supabase.from('packing_runs').update(patch).eq('id', id).select('*').single()
   if (error) return fail(res, error.message, 500)
   return ok(res, data)

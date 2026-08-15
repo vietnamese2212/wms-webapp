@@ -1230,7 +1230,19 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
     return opts
   }, [whMachines, run.machine_code])
 
+  // KHÓA SỬA KHI ĐÃ CÓ DỮ LIỆU QUÉT (user chốt 15/08): còn pallet ghi vào thì chỉ sửa GHI CHÚ —
+  // muốn sửa Ca/Chu kỳ/Máy/Giờ/Tổng phải hủy hết pallet trước. BE là điểm chặn thật (409
+  // RUN_LOCKED_HAS_PALLETS); FE khóa ô + gửi mỗi note để người dùng không gõ xong mới bị chặn.
+  const locked = (run.pallet_count ?? 0) > 0
+
   function save() {
+    if (locked) {
+      upd.mutate({ id: run.id, note: note.trim() || null }, {
+        onSuccess: () => onDone(),
+        onError: (e) => onError(apiMsg(e, 'Không lưu được — thử lại')),
+      })
+      return
+    }
     if (!machine.trim()) { onError('Máy không được trống'); return }
     const si = hhmmToIso(sd, st)
     if (!si) { onError('Giờ bắt đầu dạng HH:MM'); return }
@@ -1267,42 +1279,49 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
         </div>
       }>
       <div className="space-y-3">
+        {locked && (
+          <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>Trang sổ đã có <b>{run.pallet_count}</b> pallet quét vào — <b>chỉ sửa được Ghi chú</b>.
+              Pallet đã lấy Máy + Chu kỳ theo trang này, nên muốn sửa các thông tin đó phải <b>hủy hết pallet đã quét</b> trước.</span>
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <p className="text-xs font-medium text-slate-700 mb-1">Ca sản xuất</p>
-            <Input value={shift} onChange={e => setShift(e.target.value)} className="h-9 text-sm" />
+            <Input value={shift} onChange={e => setShift(e.target.value)} disabled={locked} className="h-9 text-sm" />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ *</p>
-            <Input value={cycle} onChange={e => setCycle(e.target.value)} className="h-9 text-sm" />
+            <Input value={cycle} onChange={e => setCycle(e.target.value)} disabled={locked} className="h-9 text-sm" />
           </div>
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Máy *</p>
           {editMachineOpts.length ? (
-            <SingleSelect options={editMachineOpts} value={machine} onChange={setMachine} placeholder="Chọn máy…" triggerClassName="w-full h-9" />
+            <SingleSelect options={editMachineOpts} value={machine} onChange={setMachine} disabled={locked} placeholder="Chọn máy…" triggerClassName="w-full h-9" />
           ) : (
-            <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} className="h-9 w-32 text-sm" />
+            <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} disabled={locked} className="h-9 w-32 text-sm" />
           )}
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Giờ bắt đầu</p>
           <div className="flex items-center gap-2">
-            <Input type="date" value={sd} onChange={e => setSd(e.target.value)} className="h-9 w-36 text-sm" />
-            <Input value={st} onChange={e => setSt(maskHHMM(e.target.value))} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
+            <Input type="date" value={sd} onChange={e => setSd(e.target.value)} disabled={locked} className="h-9 w-36 text-sm" />
+            <Input value={st} onChange={e => setSt(maskHHMM(e.target.value))} disabled={locked} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
           </div>
         </div>
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Giờ kết thúc {run.status === 'OPEN' ? '(để trống nếu chưa xong)' : ''}</p>
           <div className="flex items-center gap-2">
-            <Input type="date" value={ed} onChange={e => setEd(e.target.value)} className="h-9 w-36 text-sm" />
-            <Input value={et} onChange={e => setEt(maskHHMM(e.target.value))} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
+            <Input type="date" value={ed} onChange={e => setEd(e.target.value)} disabled={locked} className="h-9 w-36 text-sm" />
+            <Input value={et} onChange={e => setEt(maskHHMM(e.target.value))} disabled={locked} placeholder="HH:MM" inputMode="numeric" className="h-9 w-24 text-sm tabular-nums text-center" />
           </div>
         </div>
         {run.status === 'CLOSED' && (
           <div>
             <p className="text-xs font-medium text-slate-700 mb-1">Tổng sản lượng (thùng)</p>
-            <Input value={qtyTotal} onChange={e => setQtyTotal(e.target.value)} inputMode="decimal" className="h-9 w-36 text-sm tabular-nums" />
+            <Input value={qtyTotal} onChange={e => setQtyTotal(e.target.value)} disabled={locked} inputMode="decimal" className="h-9 w-36 text-sm tabular-nums" />
             <p className="text-[10px] text-slate-400 mt-0.5">Số máy tính = Σ thùng pallet trong trang — chỉ sửa khi cần chốt khác</p>
           </div>
         )}

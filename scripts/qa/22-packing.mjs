@@ -527,6 +527,47 @@ let runB = null
   for (const id of [m9.j?.data?.id, mA.j?.data?.id]) if (id) await api(`/masterdata/machines/${id}`, 'DELETE')
 }
 
+// [21] KHÓA SỬA TRANG SỔ KHI ĐÃ CÓ PALLET QUÉT (user chốt 15/08): còn dữ liệu quét thì CHỈ sửa
+// được Ghi chú; muốn sửa Ca/Chu kỳ/Máy/Giờ/Tổng phải hủy hết pallet trước. Gửi nguyên giá trị cũ
+// kèm ghi chú mới KHÔNG được 409 oan (so theo GIÁ TRỊ, không theo sự hiện diện của field).
+{
+  const r = await openRun(`${TAG}L`, 'ML', { cycle: '55' })
+  const rid = r.j?.data?.id
+  const free = await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '56', shift: 'Ca 2' })
+  check('[21] Trang CHƯA có pallet → sửa thoải mái', free.s === 200 && free.j?.data?.cycle === '56', `http=${free.s} cycle=${free.j?.data?.cycle}`)
+  await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '55' })
+
+  const temL = tem(1, `${TAG}L`)
+  const scan = await api('/wms/packing-logs/open', 'POST', { qr_code: temL, qty_cartons: 9, complete: true })
+  check('[21] quét 1 pallet vào trang → 200', scan.s === 200, `http=${scan.s} code=${scan.j?.error?.code}`)
+
+  for (const [label, body] of [
+    ['Chu kỳ', { cycle: '77' }], ['Máy', { machine_code: 'MZ' }],
+    ['Ca', { shift: 'Ca 3' }], ['Giờ bắt đầu', { start_at: iso(6, 15) }],
+  ]) {
+    const bad = await api(`/wms/packing-runs/${rid}`, 'PATCH', body)
+    check(`[21] Có pallet → sửa ${label} bị chặn 409 RUN_LOCKED_HAS_PALLETS`,
+      bad.s === 409 && bad.j?.error?.code === 'RUN_LOCKED_HAS_PALLETS', `http=${bad.s} code=${bad.j?.error?.code}`)
+  }
+
+  const noteOnly = await api(`/wms/packing-runs/${rid}`, 'PATCH', { note: `${TAG} chi ghi chu` })
+  check('[21] Có pallet → sửa RIÊNG Ghi chú vẫn được',
+    noteOnly.s === 200 && noteOnly.j?.data?.note === `${TAG} chi ghi chu`, `http=${noteOnly.s} note=${noteOnly.j?.data?.note}`)
+
+  // client gửi ĐỦ field như form cũ nhưng giá trị KHÔNG đổi → phải lưu được ghi chú, không 409 oan
+  const same = await api(`/wms/packing-runs/${rid}`, 'PATCH', {
+    shift: 'Ca 1', cycle: '55', machine_code: 'ML', start_at: iso(7, 0), note: `${TAG} khong doi`,
+  })
+  check('[21] Gửi nguyên giá trị cũ + ghi chú mới → 200 (không 409 oan)',
+    same.s === 200 && same.j?.data?.note === `${TAG} khong doi`, `http=${same.s} code=${same.j?.error?.code}`)
+
+  // gỡ hết dữ liệu quét → mở khóa
+  if (scan.j?.data?.id) await api(`/wms/packing-logs/${scan.j.data.id}/cancel`, 'POST', {})
+  const after = await api(`/wms/packing-runs/${rid}`, 'PATCH', { cycle: '58' })
+  check('[21] Hủy hết pallet → sửa lại được (mở khóa)', after.s === 200 && after.j?.data?.cycle === '58', `http=${after.s} cycle=${after.j?.data?.cycle}`)
+  if (rid) await api(`/wms/packing-runs/${rid}/cancel`, 'POST', {})
+}
+
 console.log('\n🧹 dọn…')
 await cleanup()
 const residueL = (await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}*`)).length

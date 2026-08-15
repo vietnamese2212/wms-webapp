@@ -1231,7 +1231,7 @@ export async function checkScanQR(req: Request, res: Response) {
       suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId) * qtyFactorOf(material as MatUnits),
       outbound_cartons:  outboundCartons,
       putaway: {
-        violation: putPrev.trace.putaway_violation,
+        violation: putPrev.blocked,
         message:   putPrev.warning ?? putPrev.error?.message ?? null,
         // true = kho BẮT BUỘC ⇒ FE phải bắt chọn lý do trước khi cho Lưu
         required:  !!putPrev.error,

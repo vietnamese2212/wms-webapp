@@ -207,4 +207,30 @@ for (const [table, label] of [
       : 'RPC warehouse_type_column_coverage chưa apply (migration 20260815b)')
 }
 
+// 12. RPC scan_insert_pallet PHẢI GHI ĐỦ MỌI KHOÁ mà backend gửi (chốt 15/08).
+//     BUG THẬT: RPC insert bằng DANH SÁCH CỘT GHI TAY, nên khoá mới thêm vào `entryObj` (3 cột vết
+//     quy tắc cất hàng) bị RƠI ÂM THẦM — API trả 200, tsc xanh, build xanh, "quét thành công" cũng
+//     xanh, chỉ có dữ liệu là không tới nơi. Đúng lớp lỗi vô hình: không exception, không cảnh báo.
+//     Ở đây đối chiếu SỐNG khoá của `entryObj` trong source với danh sách cột của RPC trong DB.
+{
+  const src = readFileSync(join(ROOT, 'backend/src/controllers/wms/inboundController.ts'), 'utf8')
+  // `const entryObj = { … }` — cắt tới dòng `}` cùng mức thụt đầu dòng
+  const body = src.split(/const entryObj\s*=\s*\{/)[1]?.split(/\n    \}/)[0] ?? ''
+  const keys = [...body.matchAll(/^\s{6}([a-z_]+):/gm)].map(m => m[1])
+  const spreadsTrace = /\.\.\.put\.trace/.test(body)
+  const def = await restRpc('rpc_source', { p_name: 'scan_insert_pallet' })
+  const cols = typeof def === 'string'
+    ? (def.split(/INSERT INTO "InventoryEntry"\s*\(/)[1] ?? '').split(')')[0]
+    : ''
+  const traceCols = ['putaway_checked', 'putaway_violation', 'putaway_override_reason']
+  const missing = cols
+    ? [...keys, ...(spreadsTrace ? traceCols : [])].filter(k => !new RegExp(`\\b${k}\\b`).test(cols))
+    : null
+  check('RPC scan_insert_pallet ghi ĐỦ mọi khoá backend gửi (không cột nào rơi âm thầm)',
+    Array.isArray(missing) && missing.length === 0,
+    Array.isArray(missing)
+      ? (missing.length ? `RƠI: ${missing.join(', ')} — thêm vào INSERT của RPC` : `${keys.length + (spreadsTrace ? traceCols.length : 0)} khoá khớp`)
+      : 'RPC rpc_source chưa apply (migration 20260815f)')
+}
+
 finish('INVARIANT')

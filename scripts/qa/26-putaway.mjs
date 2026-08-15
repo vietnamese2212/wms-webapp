@@ -46,8 +46,10 @@ async function cleanup() {
   }
   for (const id of created.locs) await restWrite('Location', 'DELETE', `id=eq.${id}`)
   await sweepByTag()
-  // Gói QA KHÔNG được để lại kho đang bật "bắt buộc" — cả app sẽ chặn oan
-  if (whId && whBackup) await restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, whBackup)
+  // Gói QA KHÔNG được để lại kho đang bật "bắt buộc" — cả app sẽ chặn oan.
+  // Trả qua API để backend xoá luôn cache cấu hình (ghi thẳng DB thì instance đang chạy vẫn giữ
+  // bản "bắt buộc" tới 30s sau khi gói kết thúc).
+  if (whId && whBackup) await api(`/masterdata/warehouses/${whId}`, 'PUT', whBackup)
 }
 // Tàn dư lần chạy trước → dọn TRƯỚC khi dựng fixture (gói phải TỰ HỒI PHỤC)
 await sweepByTag()
@@ -63,9 +65,13 @@ try {
   whId = anyEntry.warehouse_id
   const [mat] = await restAll('Material', `select=id,material_code,category&id=eq.${anyEntry.material_id}`)
   const [wh]  = await restAll('Warehouse', `select=id,nmsx_code,${PUT_COLS}&id=eq.${whId}`)
-  whBackup = Object.fromEntries([...PUT_COLS.split(','), 'updated_at'].map(k => [k, k === 'updated_at' ? nowIso() : wh?.[k] ?? null]))
+  // Trả về qua API nên KHÔNG kèm updated_at (backend tự đặt); giữ đúng 8 cờ như trước khi chạy.
+  whBackup = Object.fromEntries(PUT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
 
-  const setRules = (patch) => restWrite('Warehouse', 'PATCH', `id=eq.${whId}`, { ...patch, updated_at: nowIso() })
+  // Đổi cấu hình QUA API như người dùng thật, KHÔNG ghi thẳng DB: backend cache cấu hình kho 30s
+  // cho đường quét (hot-path) và chỉ xoá cache khi lưu qua form. Ghi thẳng PostgREST thì luật vẫn
+  // chạy theo bản cũ tới 30s — chính chỗ này từng làm 6 phép kiểm đỏ oan.
+  const setRules = (patch) => api(`/masterdata/warehouses/${whId}`, 'PUT', patch)
   const mkLoc = async (code, extra = {}) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 20,

@@ -6,6 +6,7 @@ import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { asRotationPrinciple } from '../../utils/rotation'
 import { applyPutawayBody } from '../../utils/putaway'
+import { invalidatePutawayConfig } from '../../services/putawayContext'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -248,6 +249,9 @@ export async function updateWarehouse(req: Request, res: Response) {
       ;({ data, error } = await supabase.from('Warehouse').update(patch).eq('id', req.params.id).select().maybeSingle())
     }
     if (error) throw error
+    // Quy tắc cất hàng đọc cấu hình kho qua cache 30s (đường quét là hot-path) — lưu form xong
+    // phải xoá cache ngay, không thì user tick "bắt buộc" mà lượt quét kế vẫn lọt qua.
+    invalidatePutawayConfig(req.params.id)
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

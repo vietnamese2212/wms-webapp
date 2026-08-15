@@ -113,9 +113,18 @@ export async function guardPutaway(opts: {
   return { blocked: block, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
-// Cấu hình kho đổi rất hiếm (form Cài đặt) nhưng bị đọc MỖI LƯỢT QUÉT → cache 30s như getLabelFormat.
-// Bật/tắt công tắc có hiệu lực chậm nhất 30s, đổi lại đường quét bớt hẳn 1 round-trip mỗi lượt.
+// Cấu hình kho đổi rất hiếm (form Cài đặt) nhưng bị đọc MỖI LƯỢT QUÉT → cache 30s, cùng khuôn với
+// `getLabelFormat` / getter trong utils/settings (mẫu đã dùng khắp app).
+// Lưu form Kho gọi `invalidatePutawayConfig` nên bình thường có hiệu lực NGAY. Serverless nhiều
+// instance thì instance khác vẫn có thể giữ bản cũ tối đa 30s — chấp nhận được cho một công tắc
+// vận hành, nhưng phải BIẾT: vừa bật "bắt buộc" xong mà lượt quét kế lọt qua thì đó là cache,
+// không phải luật hỏng. (Chính điều này làm 6 phép kiểm của gói QA 26 đỏ khi nó ghi thẳng DB —
+// gói đã sửa để đổi cấu hình QUA API như người dùng thật.)
 const _whCache = new Map<string, { at: number; row: Record<string, unknown> }>()
+
+export function invalidatePutawayConfig(warehouseId: string): void {
+  _whCache.delete(warehouseId)
+}
 async function whConfig(warehouseId: string): Promise<Record<string, unknown>> {
   const hit = _whCache.get(warehouseId)
   if (hit && Date.now() - hit.at < 30_000) return hit.row

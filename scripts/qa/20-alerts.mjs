@@ -43,8 +43,17 @@ await restWrite('gate_registrations', 'POST', null, {
 })
 const KEY = `GATE|${gid}`
 
-const r1 = await openList()
-const hit1 = (r1.j?.data?.rows ?? []).find(a => (a.title ?? '').includes(PLATE))
+// `fresh=1` XIN quét ngay, nhưng scanner vẫn chặn spam: đã quét cách đây <20s (FORCE_INTERVAL_MS,
+// đếm RIÊNG từng instance serverless) thì lượt xin này trả về mà KHÔNG quét ⇒ fixture vừa gieo chưa
+// được nhìn thấy. Chạy gói một mình thì hiếm khi dính; chạy trong `run-all` thì gói ngay trước đó
+// vừa sinh traffic nên dính thường xuyên — và một cổng merge "đỏ lúc được lúc không" sẽ bị người ta
+// tập bỏ qua. Thử lại quá cửa sổ 20s thay vì nới lỏng phép kiểm.
+let r1, hit1
+for (let i = 0; i < 3 && !hit1; i++) {
+  if (i > 0) await sleep(21_000)
+  r1 = await openList()
+  hit1 = (r1.j?.data?.rows ?? []).find(a => (a.title ?? '').includes(PLATE))
+}
 check('Xe 2h chưa ra → cảnh báo GATE_DWELL WARNING xuất hiện', r1.s === 200 && !!hit1 && hit1.severity === 'WARNING',
   `http=${r1.s} hit=${hit1 ? hit1.severity : 'KHÔNG THẤY'}`)
 check('Cảnh báo nêu RÕ TÊN KHO (user góp ý 06/08)', hit1?.warehouse_name === FIX.WH_QTY.name,

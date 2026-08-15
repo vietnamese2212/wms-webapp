@@ -5703,6 +5703,11 @@ export interface PackingRun {
   note: string | null
   // board/list đính kèm
   pallet_open?: number
+  // đối chiếu SX↔Kho cấp TRANG (15/08): recv_total = pallet SỐNG (mẫu số symbol — trang CLOSED
+  // giữ pallet_count đã CHỐT nên có thể lệch nếu sau đó hủy pallet)
+  received_count?: number
+  recv_total?: number
+  recv_diff_count?: number
   pallets?: PackingLog[]
 }
 export function usePackingRunBoard(warehouseId = '', enabled = true) {

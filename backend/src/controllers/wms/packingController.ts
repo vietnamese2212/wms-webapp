@@ -464,6 +464,20 @@ async function aggRuns(runIds: string[], full = false): Promise<Map<string, RunA
   return out
 }
 
+// Đối chiếu SX↔Kho ở CẤP TRANG (15/08): mỗi trang đã nhận bao nhiêu / lệch SL bao nhiêu pallet.
+// RPC đếm trong SQL = 1 round-trip; kéo ~5.000 pallet_code về backend rồi tra InventoryEntry theo
+// chunk 300 sẽ là ~17 round-trip mỗi lần mở trang (luật "đừng kéo dòng để tính ra một tập").
+type RunRecv = { recv: number; diff: number }
+async function receivedCountsOf(runIds: string[]): Promise<Map<string, RunRecv>> {
+  const out = new Map<string, RunRecv>()
+  if (!runIds.length) return out
+  const { data, error } = await supabase.rpc('packing_runs_received', { p_run_ids: runIds })
+  if (error) { console.error('[packing] packing_runs_received lỗi:', error.message); return out }
+  for (const r of (data ?? []) as { run_id: string; recv_count: number; diff_count: number }[])
+    out.set(r.run_id, { recv: Number(r.recv_count ?? 0), diff: Number(r.diff_count ?? 0) })
+  return out
+}
+
 // GET /wms/packing-runs/board — trang đang MỞ + pallet của từng trang (packing.view)
 export async function getRunBoard(req: Request, res: Response) {
   let q = supabase.from('packing_runs').select('*').eq('status', 'OPEN')
@@ -475,10 +489,16 @@ export async function getRunBoard(req: Request, res: Response) {
   const { data, error } = await q
   if (error) return fail(res, error.message, 500)
   const runs = data ?? []
-  const agg = await aggRuns(runs.map(r => r.id as string))   // slim — board không cần pallet rows
+  const ids = runs.map(r => r.id as string)
+  const agg = await aggRuns(ids)   // slim — board không cần pallet rows
+  const rc = await receivedCountsOf(ids)
   return ok(res, runs.map(r => {
     const a = agg.get(r.id as string)
-    return { ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0 }
+    const v = rc.get(r.id as string)
+    return {
+      ...r, pallet_count: a?.pallet_count ?? 0, pallet_open: a?.pallet_open ?? 0, qty_total: a?.qty_sum ?? 0,
+      received_count: v?.recv ?? 0, recv_diff_count: v?.diff ?? 0, recv_total: a?.pallet_count ?? 0,
+    }
   }))
 }
 
@@ -549,10 +569,17 @@ export async function listRuns(req: Request, res: Response) {
   // GỘP THEO SỔ (user chốt 11/08 chiều): trả kèm pallet của từng trang trên trang hiện tại
   // (FE render bảng nhóm dòng). Trang MỞ → tổng tính SỐNG; trang ĐÓNG giữ số đã chốt.
   const rows = data ?? []
-  const agg = await aggRuns(rows.map(r => r.id as string))   // slim — list KHÔNG trả pallet rows (payload)
+  const ids = rows.map(r => r.id as string)
+  const agg = await aggRuns(ids)   // slim — list KHÔNG trả pallet rows (payload)
+  const rc = await receivedCountsOf(ids)   // đối chiếu SX↔Kho cấp trang (symbol "kho đã nhập hết chưa")
   for (const r of rows) {
     const a = agg.get(r.id as string)
+    const v = rc.get(r.id as string)
     ;(r as Record<string, unknown>).pallet_open = a?.pallet_open ?? 0
+    ;(r as Record<string, unknown>).received_count = v?.recv ?? 0
+    // mẫu số cho symbol = pallet SỐNG (trang CLOSED giữ pallet_count đã CHỐT, có thể lệch nếu sau đó hủy pallet)
+    ;(r as Record<string, unknown>).recv_total = a?.pallet_count ?? 0
+    ;(r as Record<string, unknown>).recv_diff_count = v?.diff ?? 0
     if (r.status === 'OPEN' && a) { r.qty_total = a.qty_sum; r.pallet_count = a.pallet_count }
     else if (a && r.pallet_count == null) { r.qty_total = r.qty_total ?? a.qty_sum; r.pallet_count = a.pallet_count }
     else if (!a && r.pallet_count == null) r.pallet_count = 0

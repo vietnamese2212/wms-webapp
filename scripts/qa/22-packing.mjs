@@ -577,6 +577,72 @@ let runB = null
   if (rid) await api(`/wms/packing-runs/${rid}/cancel`, 'POST', {})
 }
 
+// [22] SYMBOL "KHO ĐÃ NHẬP HẾT CHƯA" Ở CẤP TRANG SỔ (user 15/08): list/board trả received_count +
+// recv_total + recv_diff_count (RPC packing_runs_received — đếm trong SQL, 1 round-trip). Oracle:
+// tự dựng 3 pallet, cho kho "nhập" 2 (1 trong đó lệch SL) → 2/3 · 1 lệch.
+{
+  const { randomUUID } = await import('crypto')
+  const matPool = (await restAll('Material', `select=id&material_code=eq.${FIX.MAT_POOL}&limit=1`))[0]
+  const r = await openRun(`${TAG}R`, 'MR', { cycle: '55' })
+  const rid = r.j?.data?.id
+  const tems = [41, 42, 43].map(n => tem(n, `${TAG}R`))
+  for (const t of tems) await api('/wms/packing-logs/open', 'POST', { qr_code: t, qty_cartons: 10, complete: true })
+
+  const runOf = async () => {
+    const l = await api(`/wms/packing-runs?warehouse_id=${WH}&search=${TAG}R`, 'GET')
+    return (l.j?.data?.rows ?? []).find(x => x.id === rid)
+  }
+  const r0 = await runOf()
+  check('[22] Chưa kho nào nhập → 0/3 (recv_total = pallet sống)',
+    Number(r0?.received_count) === 0 && Number(r0?.recv_total) === 3, `recv=${r0?.received_count}/${r0?.recv_total}`)
+
+  // kho "nhập" 2 tem: 1 đúng 10 thùng, 1 lệch (7 ≠ 10)
+  const invIds = []
+  for (const [t, qty] of [[tems[0], 10], [tems[1], 7]]) {
+    const iid = randomUUID(); invIds.push(iid)
+    await restWrite('InventoryEntry', 'POST', null, {
+      id: iid, material_id: matPool?.id ?? null, pallet_code: t, warehouse_id: FIX.WH_QR.id, location_id: null,
+      cartons_imported: qty, cartons_remaining: qty, cartons_reserved: 0, status: 'IN_STOCK', stack_layer: 1,
+      import_date: today, notes: `${TAG} runrecv`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    })
+  }
+  const r1 = await runOf()
+  check('[22] Kho nhập 2/3 tem → received_count=2, recv_total=3',
+    Number(r1?.received_count) === 2 && Number(r1?.recv_total) === 3, `recv=${r1?.received_count}/${r1?.recv_total}`)
+  check('[22] 1 tem lệch SL (kho 7 ≠ sổ 10) → recv_diff_count=1',
+    Number(r1?.recv_diff_count) === 1, `diff=${r1?.recv_diff_count}`)
+
+  // board (trang đang MỞ) cũng phải trả đủ 3 số — 2 màn không được nói khác nhau
+  const b = await api('/wms/packing-runs/board', 'GET')
+  const bRun = (b.j?.data ?? []).find(x => x.id === rid)
+  check('[22] Board trang MỞ trả cùng bộ số với list',
+    Number(bRun?.received_count) === 2 && Number(bRun?.recv_total) === 3 && Number(bRun?.recv_diff_count) === 1,
+    `recv=${bRun?.received_count}/${bRun?.recv_total} diff=${bRun?.recv_diff_count}`)
+
+  // nốt tem thứ 3 → đủ, hết lệch? (vẫn còn 1 lệch của tem thứ 2)
+  const iid3 = randomUUID(); invIds.push(iid3)
+  await restWrite('InventoryEntry', 'POST', null, {
+    id: iid3, material_id: matPool?.id ?? null, pallet_code: tems[2], warehouse_id: FIX.WH_QR.id, location_id: null,
+    cartons_imported: 10, cartons_remaining: 10, cartons_reserved: 0, status: 'IN_STOCK', stack_layer: 1,
+    import_date: today, notes: `${TAG} runrecv`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  })
+  const r2 = await runOf()
+  check('[22] Kho nhập ĐỦ 3/3 (vẫn còn 1 lệch SL)',
+    Number(r2?.received_count) === 3 && Number(r2?.recv_total) === 3 && Number(r2?.recv_diff_count) === 1,
+    `recv=${r2?.received_count}/${r2?.recv_total} diff=${r2?.recv_diff_count}`)
+
+  // pallet HỦY không tính vào mẫu số (khớp aggRuns)
+  const rows3 = await restAll('packing_logs', `select=id,pallet_code&pallet_code=like.*${TAG}R*&status=neq.CANCELLED`)
+  const cancelTarget = rows3.find(x => x.pallet_code === tems[2])
+  if (cancelTarget) await api(`/wms/packing-logs/${cancelTarget.id}/cancel`, 'POST', {})
+  const r3 = await runOf()
+  check('[22] Hủy 1 pallet → mẫu số còn 2 (dòng CANCELLED không tính)',
+    Number(r3?.recv_total) === 2 && Number(r3?.received_count) === 2, `recv=${r3?.received_count}/${r3?.recv_total}`)
+
+  for (const iid of invIds) await restWrite('InventoryEntry', 'DELETE', `id=eq.${iid}`)
+  if (rid) await api(`/wms/packing-runs/${rid}/close`, 'POST', {})
+}
+
 console.log('\n🧹 dọn…')
 await cleanup()
 const residueL = (await restAll('packing_logs', `select=id&pallet_code=like.*${TAG}*`)).length

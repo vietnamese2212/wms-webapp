@@ -494,6 +494,7 @@ const RUN_G_COLS = [
   { id: 'cycle',   label: 'Chu kỳ',       w: 60 },
   { id: 'machine', label: 'Máy',          w: 52 },
   { id: 'pallet',  label: 'Pallet',       w: 60 },
+  { id: 'recv',    label: 'Kho nhập',     w: 96 },   // symbol: kho đã nhập HẾT tem của sổ chưa (15/08)
   { id: 'qty',     label: 'Tổng SL (thùng)', w: 100 },
   { id: 'time',    label: 'Giờ BĐ → KT',  w: 165 },
   { id: 'by',      label: 'Người mở',     w: 105 },
@@ -501,6 +502,27 @@ const RUN_G_COLS = [
   { id: 'note',    label: 'Ghi chú',      w: 120 },
 ]
 const RUN_G_DEFAULTS = RUN_G_COLS.map(c => c.w)
+
+// SYMBOL "kho đã nhập hết tem của sổ chưa" (user 15/08) — dùng CHUNG bảng trang sổ + đầu detail
+// để 2 chỗ không bao giờ nói khác nhau. Đủ = ✓ xanh · thiếu = ⏳ vàng · lệch SL = ⚠ đỏ (lệch nặng
+// hơn thiếu: hàng đã về nhưng SỐ không khớp sổ). Trang chưa có pallet nào → không kết luận.
+function RecvSymbol({ recv, total, diff, compact = false }: { recv: number; total: number; diff: number; compact?: boolean }) {
+  if (total === 0) return <span className="text-slate-300">—</span>
+  const missing = Math.max(0, total - recv)
+  const tone = diff > 0 ? 'text-red-600' : missing > 0 ? 'text-amber-600' : 'text-green-700'
+  const Icon = diff > 0 ? AlertTriangle : missing > 0 ? Clock : Check
+  const tip = [
+    missing > 0 ? `${missing}/${total} pallet kho CHƯA quét nhập` : `Kho đã nhập ĐỦ ${total} pallet`,
+    diff > 0 ? `${diff} pallet lệch số thùng sổ ↔ kho` : '',
+  ].filter(Boolean).join(' · ')
+  return (
+    <span className={`no-underline tabular-nums ${tone} ${diff > 0 ? 'font-semibold' : ''}`} title={tip}>
+      <Icon className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+      {recv}/{total}
+      {!compact && diff > 0 && <span className="font-normal"> · {diff} lệch</span>}
+    </span>
+  )
+}
 const RUN_STATUS_LABEL: Record<string, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã hủy' }
 const elapsedOf = (iso: string) => {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
@@ -519,7 +541,7 @@ interface RunTableHandlers {
 function RunGroupedTable({ runs, loading, emptyText, h }: {
   runs: PackingRun[]; loading: boolean; emptyText: string; h: RunTableHandlers
 }) {
-  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v4', RUN_G_DEFAULTS)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('packing_group_col_widths_v5', RUN_G_DEFAULTS)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
   const matName = useMatNames(runs.flatMap(runCodes))
@@ -598,6 +620,10 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums">
                     {palletN.toLocaleString('vi-VN')}
                     {(r.pallet_open ?? 0) > 0 && <span className="text-amber-600"> ({r.pallet_open} mở)</span>}
+                  </TableCell>
+                  {/* Kho đã nhập hết tem của sổ chưa — xác nhận LẦN 2 (kho quét nhập khớp pallet_code) */}
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">
+                    <RecvSymbol recv={Number(r.received_count ?? 0)} total={Number(r.recv_total ?? palletN)} diff={Number(r.recv_diff_count ?? 0)} />
                   </TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">{Number(r.qty_total ?? 0).toLocaleString('vi-VN')}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap tabular-nums font-semibold">
@@ -1424,6 +1450,9 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
         'Giờ bắt đầu': isoToHHMM(r.start_at),
         'Giờ kết thúc': r.end_at ? isoToHHMM(r.end_at) : '',
         'Số pallet': r.pallet_count ?? '',
+        'Kho đã nhập': r.received_count ?? 0,
+        'Kho chưa nhập': Math.max(0, Number(r.recv_total ?? r.pallet_count ?? 0) - Number(r.received_count ?? 0)),
+        'Pallet lệch SL': r.recv_diff_count ?? 0,
         'Tổng sản lượng (thùng)': r.qty_total ?? '',
         'Người mở': r.opened_by_name ?? '',
         'Người đóng': r.closed_by_name ?? '',
@@ -1567,17 +1596,17 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
             } />
             <Info label="Số pallet" value={<span className="tabular-nums">{run.pallet_count ?? 0}{(run.pallet_open ?? 0) > 0 ? ` (${run.pallet_open} đang mở)` : ''}</span>} />
             {/* Kho đã nhận / chưa nhận — xác nhận LẦN 2 (kho quét nhập khớp tem pallet của sổ) */}
-            <Info label="Kho nhận" value={recv.total === 0 ? <span className="text-slate-300">—</span> : (
-              <span className={`tabular-nums ${recv.diff ? 'text-red-600 font-semibold' : recv.pending ? 'text-amber-600' : 'text-green-700'}`}
-                title={recv.pending
-                  ? `${recv.pending} pallet đã ghi sổ nhưng kho CHƯA quét nhập${recv.diff ? ` · ${recv.diff} pallet lệch số thùng sổ↔kho` : ''}`
-                  : `Kho đã quét nhập đủ ${recv.total} pallet${recv.diff ? ` · ${recv.diff} pallet lệch số thùng sổ↔kho` : ''}`}>
-                {recv.diff > 0 && <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />}
-                {recv.received}/{recv.total} đã nhận
-                {recv.pending > 0 && <span className="font-normal"> · {recv.pending} chưa</span>}
-                {recv.diff > 0 && <span className="font-normal"> · {recv.diff} lệch SL</span>}
+            <Info label="Kho nhập" value={
+              <span>
+                <RecvSymbol recv={recv.received} total={recv.total} diff={recv.diff} compact />
+                {recv.total > 0 && (
+                  <span className="ml-1 text-slate-500">
+                    {recv.pending > 0 ? `· ${recv.pending} chưa nhập` : '· đã nhập đủ'}
+                    {recv.diff > 0 && ` · ${recv.diff} lệch SL`}
+                  </span>
+                )}
               </span>
-            )} />
+            } />
             <Info label="Người mở" value={run.opened_by_name ?? '—'} />
             <Info label="Người đóng" value={run.closed_by_name ?? '—'} />
             <Info label="Ghi chú" value={run.note ?? '—'} />
@@ -1650,7 +1679,9 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
                               </span>
                             )
                           ) : l.status !== 'CANCELLED' ? (
-                            <span className="text-amber-600 no-underline" title="SX đã ghi sổ nhưng kho CHƯA quét nhập">chưa nhận</span>
+                            <span className="text-amber-600 no-underline" title="SX đã ghi sổ nhưng kho CHƯA quét nhập">
+                              <Clock className="inline h-3 w-3 mr-0.5 -mt-0.5" />chưa nhập
+                            </span>
                           ) : <span className="text-slate-300">—</span>}
                         </TableCell>
                         {/* Ô giờ TRỐNG = nút "+ thêm giờ" inline (user 12/08 tối) — mở form Sửa điền luôn */}
@@ -1888,7 +1919,9 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
                       </span>
                     )
                   ) : r.status !== 'CANCELLED' ? (
-                    <span className="text-amber-600 no-underline" title="SX đã ghi sổ pallet này nhưng kho CHƯA quét nhập">chưa nhận</span>
+                    <span className="text-amber-600 no-underline" title="SX đã ghi sổ pallet này nhưng kho CHƯA quét nhập">
+                      <Clock className="inline h-3 w-3 mr-0.5 -mt-0.5" />chưa nhập
+                    </span>
                   ) : <span className="text-slate-300">—</span>}
                 </TableCell>
                 <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap truncate" title={r.warehouse_id ? whName.get(r.warehouse_id) ?? '' : ''}>

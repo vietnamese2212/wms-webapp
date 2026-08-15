@@ -90,6 +90,13 @@ function parseProdTime(at: unknown, src: unknown): { at: string | null; src: str
   return { at: new Date(at).toISOString(), src }
 }
 
+// Chu kỳ so trên dạng CHUẨN: tem in số thuần (đo dữ liệu thật: 6…49) nên "05" ≡ "5";
+// còn lại so chuỗi viết HOA. Dùng chung cho gate quét — sửa luật thì sửa 1 chỗ này.
+export function normCycleCode(s: string): string {
+  const t = String(s ?? '').trim().toUpperCase()
+  return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t
+}
+
 type LogRow = {
   id: string; pallet_code: string; material_code: string | null; machine_code: string | null
   warehouse_id: string | null; qty_cartons: number | null; status: string
@@ -184,13 +191,13 @@ export async function listLogs(req: Request, res: Response) {
 // POST /wms/packing-logs/open — GHI SỔ 1 PHIÊN (user chốt 11/08 sau test thật: chữ in phun
 // nằm mặt BÊN thùng nên pallet xếp xong vẫn chụp được cả thùng đáy — quét tem → chụp thùng
 // đầu → chụp thùng cuối → Lưu trong MỘT lần đứng tại pallet).
-// body: { qr_code, machine_code?, warehouse_id?, qty_cartons?,               ← sửa được (tem "AP" = máy A hoặc P)
+// body: { qr_code, warehouse_id?, qty_cartons?,                              ← Máy lấy từ TRANG SỔ
 //         photo_data?, prod_start_at?, prod_start_src?, ocr_raw?,            ← thùng ĐẦU
 //         photo_end_data?, prod_end_at?, prod_end_src?, ocr_end_raw?,        ← thùng CUỐI
 //         complete? }  — true = đóng sổ luôn (CLOSED); false/thiếu = để MỞ, đóng sau từ board
 export async function openLog(req: Request, res: Response) {
   const {
-    qr_code, machine_code, warehouse_id, qty_cartons, photo_data, prod_start_at, prod_start_src, ocr_raw,
+    qr_code, warehouse_id, qty_cartons, photo_data, prod_start_at, prod_start_src, ocr_raw,
     photo_end_data, prod_end_at, prod_end_src, ocr_end_raw, complete,
   } = req.body as Record<string, unknown>
   if (!qr_code || typeof qr_code !== 'string') return fail(res, 'Thiếu mã QR tem pallet', 400)
@@ -217,13 +224,13 @@ export async function openLog(req: Request, res: Response) {
   const matCode = (label?.material_code as string | null) ?? parsed.material_code ?? null
   const runIdBody = typeof (req.body as Record<string, unknown>).run_id === 'string'
     ? String((req.body as Record<string, unknown>).run_id) : null
-  type RunPick = { id: string; warehouse_id: string; material_code: string; material_codes: string[] | null; machine_code: string; status: string }
+  type RunPick = { id: string; warehouse_id: string; material_code: string; material_codes: string[] | null; machine_code: string; cycle: string | null; status: string }
   // 13/08: 1 trang sổ ghi được NHIỀU mã (SX chung chu kỳ+máy) — khớp theo MẢNG material_codes
   const codesOf = (r: RunPick) => (r.material_codes?.length ? r.material_codes : [r.material_code])
   let run: RunPick | null = null
   if (runIdBody) {
     const { data: r } = await supabase.from('packing_runs')
-      .select('id, warehouse_id, material_code, material_codes, machine_code, status').eq('id', runIdBody).maybeSingle()
+      .select('id, warehouse_id, material_code, material_codes, machine_code, cycle, status').eq('id', runIdBody).maybeSingle()
     if (!r) return fail(res, 'Không tìm thấy trang sổ', 404)
     if (r.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', 'Trang sổ này đã đóng/hủy — chọn trang đang mở')
     if (matCode && !codesOf(r).includes(matCode))
@@ -231,7 +238,7 @@ export async function openLog(req: Request, res: Response) {
     run = r
   } else {
     let rq = supabase.from('packing_runs')
-      .select('id, warehouse_id, material_code, material_codes, machine_code, status').eq('status', 'OPEN').limit(10)
+      .select('id, warehouse_id, material_code, material_codes, machine_code, cycle, status').eq('status', 'OPEN').limit(10)
     if (matCode) rq = rq.contains('material_codes', [matCode])
     const scopePre = scopeWhIds(req)
     if (scopePre !== null) rq = rq.in('warehouse_id', scopePre.slice(0, 300))
@@ -241,6 +248,24 @@ export async function openLog(req: Request, res: Response) {
     if (candidates.length > 1)
       return fail(res, 409, 'RUN_AMBIGUOUS', `Mã ${matCode ?? '?'} đang mở ${candidates.length} trang sổ (khác máy/kho) — chọn trang sổ trước khi quét`)
     run = candidates[0]
+  }
+
+  // ── TEM PHẢI KHỚP TRANG SỔ: mã · CHU KỲ · MÁY (user chốt 15/08). Trước đó chỉ kiểm MÃ, nên
+  // quét nhầm trang vẫn ghi được và pallet KẾ THỪA máy của trang ⇒ sổ ghi sai máy ÂM THẦM
+  // (đo staging: 3 dòng thì 2 lệch). Fail-open có chủ đích — chỉ chặn khi ĐỌC ĐƯỢC từ tem:
+  //  · tem V2 (';') không mang chu kỳ ⇒ bỏ kiểm chu kỳ (V1 đoạn 3 = chu kỳ)
+  //  · đoạn máy V1 = Máy với thành phẩm nhưng = MÃ NCC với hàng NCC ⇒ chỉ kiểm khi đoạn đó
+  //    NẰM TRONG danh mục máy của kho; kho chưa khai danh mục = không kết luận (không báo oan)
+  const temCycle = parsed.format === 'v1' ? String(parsed.cycle ?? '').trim() : ''
+  if (temCycle && run.cycle && normCycleCode(temCycle) !== normCycleCode(String(run.cycle)))
+    return fail(res, 422, 'RUN_CYCLE_MISMATCH',
+      `Tem chu kỳ ${temCycle} không khớp trang sổ (chu kỳ ${run.cycle}) — quét đúng trang sổ hoặc kiểm lại tem`)
+  const temMachine = String(parsed.machine_code ?? '').trim().toUpperCase()
+  if (temMachine) {
+    const catalog = await activeMachineCodes(run.warehouse_id)
+    if (catalog.includes(temMachine) && temMachine !== String(run.machine_code).trim().toUpperCase())
+      return fail(res, 422, 'RUN_MACHINE_MISMATCH',
+        `Tem máy ${temMachine} không khớp trang sổ (máy ${run.machine_code}) — quét đúng trang sổ hoặc kiểm lại tem`)
   }
 
   const prodS = parseProdTime(prod_start_at, prod_start_at ? prod_start_src : null)
@@ -254,11 +279,10 @@ export async function openLog(req: Request, res: Response) {
   const photoE = decodePhotoDataUrl(photo_end_data)
   if (typeof photoE === 'string') return fail(res, photoE, 422)
 
-  // Máy + Kho KẾ THỪA từ trang sổ (khai lúc mở trang — tem "AP" hết mơ hồ); vẫn nhận
-  // machine_code override từ body cho ca đặc biệt. Kho của trang phải trong scope người quét.
-  const machine = typeof machine_code === 'string' && machine_code.trim()
-    ? machine_code.trim().toUpperCase().slice(0, 10)
-    : (run?.machine_code ?? (label?.machine as string | null) ?? (parsed.machine_code || null))
+  // Máy + Kho KẾ THỪA từ trang sổ (khai lúc mở trang — tem "AP" hết mơ hồ). Bỏ đường override
+  // machine_code từ body (15/08): tem đã phải khớp máy của trang ở gate trên, cho ghi máy khác
+  // trang là tự mâu thuẫn. Kho của trang phải trong scope người quét.
+  const machine = run.machine_code
   const wh = run?.warehouse_id
     ?? (typeof warehouse_id === 'string' && warehouse_id.trim() ? warehouse_id.trim() : ((label?.warehouse_id as string | null) ?? null))
   const scope = scopeWhIds(req)
@@ -552,6 +576,9 @@ export async function openRun(req: Request, res: Response) {
   const maxMats = await getPackingMaxMaterials()
   if (codes.length > maxMats) return fail(res, `Tối đa ${maxMats} mã / 1 trang sổ`, 422)
   if (!machine_code || typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Nhập Máy', 422)
+  // Chu kỳ BẮT BUỘC (15/08): gate quét đối chiếu chu kỳ tem ↔ trang, trang không khai = không
+  // đối chiếu được. Trang mở trước 15/08 (cycle null) vẫn quét được — gate tự bỏ kiểm chu kỳ.
+  if (typeof cycle !== 'string' || !cycle.trim()) return fail(res, 'Nhập Chu kỳ', 422)
   const scope = scopeWhIds(req)
   if (scope !== null && !scope.includes(warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   // DANH MỤC MÁY THEO KHO (user 13/08): kho có setup máy → máy PHẢI thuộc danh mục; chưa setup → điền tự do
@@ -639,7 +666,10 @@ export async function updateRun(req: Request, res: Response) {
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (shift !== undefined) patch.shift = typeof shift === 'string' && shift.trim() ? shift.trim().slice(0, 40) : null
-  if (cycle !== undefined) patch.cycle = typeof cycle === 'string' && cycle.trim() ? cycle.trim().slice(0, 40) : null
+  if (cycle !== undefined) {
+    if (typeof cycle !== 'string' || !cycle.trim()) return fail(res, 'Chu kỳ không được trống', 422)
+    patch.cycle = cycle.trim().slice(0, 40)
+  }
   if (machine_code !== undefined) {
     if (typeof machine_code !== 'string' || !machine_code.trim()) return fail(res, 'Máy không được trống', 422)
     const mc = machine_code.trim().toUpperCase().slice(0, 10)

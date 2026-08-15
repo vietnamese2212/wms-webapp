@@ -8,7 +8,7 @@ const TAG = 'QAPACK'
 const WH = 'QAPACKWH'   // kho tổng hợp giả có TAG — packing_runs.warehouse_id là text, dọn theo TAG
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const ddmmyy = today.slice(8, 10) + today.slice(5, 7) + today.slice(2, 4)
-const tem = (n, mat = `${TAG}${n}`) => `${ddmmyy}_${mat}_C01_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
+const tem = (n, mat = `${TAG}${n}`) => `${ddmmyy}_${mat}_55_M9_00${n}_B`   // V1 hợp lệ ≥6 đoạn
 const iso = (h, m = 0) => new Date(`${today}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`).toISOString()
 
 async function cleanup() {
@@ -255,7 +255,7 @@ let runB = null
 {
   const temX2 = tem(5, `${TAG}X2`)
   const multi = await api('/wms/packing-runs', 'POST', {
-    warehouse_id: WH, material_codes: [`${TAG}X1`, `${TAG}X2`], machine_code: 'MX', run_date: today, start_at: iso(7, 0),
+    warehouse_id: WH, material_codes: [`${TAG}X1`, `${TAG}X2`], machine_code: 'MX', cycle: '55', run_date: today, start_at: iso(7, 0),
   })
   const mrun = multi.j?.data
   check('[16] Mở trang 2 mã → 200 + material_codes đủ 2 (primary = mã đầu)',
@@ -266,14 +266,14 @@ let runB = null
   check('[16] Quét tem mã THỨ HAI → tự khớp trang nhiều mã + kế thừa máy',
     p2.s === 200 && p2.j?.data?.run_id === mrun?.id && p2.j?.data?.machine_code === 'MX', `http=${p2.s} machine=${p2.j?.data?.machine_code}`)
 
-  const ovl = await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}X2`, `${TAG}X3`], machine_code: 'MX' })
+  const ovl = await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}X2`, `${TAG}X3`], machine_code: 'MX', cycle: '55' })
   check('[16] Mở trang có mã GIAO NHAU cùng kho+máy → 409 RUN_DUP',
     ovl.s === 409 && ovl.j?.error?.code === 'RUN_DUP', `http=${ovl.s} code=${ovl.j?.error?.code}`)
 
   // đua 2 mở giao nhau nhưng KHÁC mã đầu — unique index cũ không bắt được, phải nhờ advisory lock trong RPC
   const rs = await Promise.all([
-    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y1`, `${TAG}Y9`], machine_code: 'MY' }),
-    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y9`], machine_code: 'MY' }),
+    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y1`, `${TAG}Y9`], machine_code: 'MY', cycle: '55' }),
+    api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_codes: [`${TAG}Y9`], machine_code: 'MY', cycle: '55' }),
   ])
   check('[16] Đua 2 mở trang mã giao nhau (khác mã đầu) → 1 thắng + 1 RUN_DUP',
     rs.filter(r => r.s === 200).length === 1 && rs.filter(r => r.s === 409).length === 1, rs.map(r => r.s).join(','))
@@ -483,6 +483,48 @@ let runB = null
   if (free.j?.data?.id) await api(`/wms/packing-runs/${free.j.data.id}/cancel`, 'POST')
   const del = await api(`/masterdata/machines/${mid}`, 'DELETE')
   check('[19] xóa máy → 200', del.s === 200, `http=${del.s}`)
+}
+
+// [20] TEM PHẢI KHỚP TRANG SỔ — CHU KỲ + MÁY (user chốt 15/08). Trước đó chỉ kiểm MÃ nên quét
+// nhầm trang vẫn ghi được và pallet KẾ THỪA máy của trang ⇒ sổ ghi sai máy ÂM THẦM (đo staging
+// 3 dòng thì 2 lệch). Fail-open có chủ đích: chu kỳ chỉ kiểm khi trang CÓ khai; máy chỉ kiểm khi
+// đoạn máy trên tem NẰM TRONG danh mục máy của kho (đoạn đó = MÃ NCC với hàng NCC → không kết luận).
+{
+  const temCyc = (cyc, mat) => `${ddmmyy}_${mat}_${cyc}_M9_007_B`
+  const noCyc = await api('/wms/packing-runs', 'POST', { warehouse_id: WH, material_code: `${TAG}C`, machine_code: 'M9' })
+  check('[20] Mở trang THIẾU Chu kỳ → 422 (không khai thì không đối chiếu được)', noCyc.s === 422, `http=${noCyc.s}`)
+
+  const rc = await openRun(`${TAG}C`, 'M9', { cycle: '55' })
+  const rcId = rc.j?.data?.id
+  check('[20] mở trang chu kỳ 55 → 200', rc.s === 200, `http=${rc.s}`)
+
+  const wrongCyc = await api('/wms/packing-logs/open', 'POST', { qr_code: temCyc('99', `${TAG}C`) })
+  check('[20] Tem chu kỳ 99 vào trang chu kỳ 55 → 422 RUN_CYCLE_MISMATCH',
+    wrongCyc.s === 422 && wrongCyc.j?.error?.code === 'RUN_CYCLE_MISMATCH', `http=${wrongCyc.s} code=${wrongCyc.j?.error?.code}`)
+
+  // "055" ≡ "55" — tem in số có đệm 0 không được chặn oan
+  const padCyc = await api('/wms/packing-logs/open', 'POST', { qr_code: temCyc('055', `${TAG}C`), complete: true, qty_cartons: 3 })
+  check('[20] Tem chu kỳ "055" ≡ trang "55" → cho qua (chuẩn hoá số)', padCyc.s === 200, `http=${padCyc.s} code=${padCyc.j?.error?.code}`)
+
+  // MÁY: tem đoạn 4 = M9. Kho CHƯA khai danh mục ⇒ không kết luận (mã NCC cũng nằm ở đoạn này)
+  const freeMachine = await api('/wms/packing-logs/open', 'POST', { qr_code: `${ddmmyy}_${TAG}C_55_ZZ_008_B`, complete: true, qty_cartons: 3 })
+  check('[20] Kho CHƯA khai danh mục máy → tem máy lạ KHÔNG bị chặn oan', freeMachine.s === 200, `http=${freeMachine.s} code=${freeMachine.j?.error?.code}`)
+
+  // khai danh mục máy gồm M9 → tem M9 giờ ĐƯỢC coi là máy thật ⇒ phải khớp trang (trang đang M9 → đổi sang A)
+  const m9 = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'M9' })
+  const mA = await api('/masterdata/machines', 'POST', { warehouse_id: WH, code: 'A' })
+  await api(`/wms/packing-runs/${rcId}`, 'PATCH', { machine_code: 'A' })
+  const wrongMachine = await api('/wms/packing-logs/open', 'POST', { qr_code: temCyc('55', `${TAG}C`) })
+  check('[20] Tem máy M9 (có trong danh mục) vào trang máy A → 422 RUN_MACHINE_MISMATCH',
+    wrongMachine.s === 422 && wrongMachine.j?.error?.code === 'RUN_MACHINE_MISMATCH', `http=${wrongMachine.s} code=${wrongMachine.j?.error?.code}`)
+
+  const okMachine = await api('/wms/packing-logs/open', 'POST', { qr_code: `${ddmmyy}_${TAG}C_55_A_009_B`, complete: true, qty_cartons: 3 })
+  check('[20] Tem máy A khớp trang máy A → ghi được', okMachine.s === 200, `http=${okMachine.s} code=${okMachine.j?.error?.code}`)
+  check('[20] Máy ghi vào sổ = máy TRANG SỔ (không nhận override từ body)',
+    okMachine.j?.data?.machine_code === 'A', `machine=${okMachine.j?.data?.machine_code}`)
+
+  if (rcId) await api(`/wms/packing-runs/${rcId}/cancel`, 'POST')
+  for (const id of [m9.j?.data?.id, mA.j?.data?.id]) if (id) await api(`/masterdata/machines/${id}`, 'DELETE')
 }
 
 console.log('\n🧹 dọn…')

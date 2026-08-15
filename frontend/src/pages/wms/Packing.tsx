@@ -432,6 +432,15 @@ export default function Packing() {
       {pendingQR && (
         <RecordSheet code={pendingQR} whName={whName}
           onDone={() => setPendingQR(null)}
+          onRescan={() => {
+            // stopOnScan đã TẮT HẲN track lúc bắt được tem → bật lại phiên quét mới (resume()
+            // bump epoch, không hỏi quyền camera lại). Delay 50ms cho overlay hiện trước (chuẩn qr-scan-flow).
+            setPendingQR(null)
+            setBanner('')
+            setHasOpenedScan(true)
+            setShowScan(true)
+            setTimeout(() => scannerRef.current?.resume(), 50)
+          }}
           onError={setBanner} />
       )}
       {closeTarget && (
@@ -613,9 +622,16 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
 // chụp được cả thùng đáy → ghi trọn trong 1 lần đứng tại pallet)
 // 11/08 chiều: pallet phải thuộc 1 TRANG SỔ đang mở khớp MÃ — Máy/Kho kế thừa từ trang
 // (tem in "AP" hết mơ hồ). Nhiều trang cùng mã (khác máy/kho) → chọn trang trước khi Lưu.
-function RecordSheet({ code, whName, onDone, onError }: {
+// Chu kỳ so trên dạng chuẩn (tem in số thuần ⇒ "05" ≡ "5") — CHỈ để TÔ MÀU đối chiếu.
+// Điểm chặn thật là BE (`RUN_CYCLE_MISMATCH`/`RUN_MACHINE_MISMATCH`) — FE không phán quyết.
+const normCycleUI = (s: string) => {
+  const t = String(s ?? '').trim().toUpperCase()
+  return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t
+}
+
+function RecordSheet({ code, whName, onDone, onRescan, onError }: {
   code: string; whName: Map<string, string>
-  onDone: () => void; onError: (m: string) => void
+  onDone: () => void; onRescan: () => void; onError: (m: string) => void
 }) {
   const openMut = useOpenPackingLog()
   const fields = useMemo(() => parseCodeFields(code), [code])
@@ -646,6 +662,12 @@ function RecordSheet({ code, whName, onDone, onError }: {
   const [prodE, setProdE] = useState<ProdTimeValue>({ photoData: null, iso: null, src: null, raw: null, busy: false })
   const busy = prodS.busy || prodE.busy
   const noRun = !allRuns.isLoading && candidates.length === 0
+  // ĐỐI CHIẾU TEM ↔ TRANG SỔ (15/08) — thấy lệch NGAY, khỏi điền ảnh/giờ xong mới bị BE chặn.
+  // Tem V2 (';') không mang chu kỳ ⇒ không đối chiếu chu kỳ.
+  const temCycle = fields.format === 'v1' ? String(fields.cycle ?? '').trim() : ''
+  const temMachine = String(fields.machine ?? '').trim().toUpperCase()
+  const cycleBad = !!(temCycle && run?.cycle && normCycleUI(temCycle) !== normCycleUI(run.cycle))
+  const machineBad = !!(temMachine && run && temMachine !== String(run.machine_code).trim().toUpperCase())
 
   function save(complete: boolean) {
     if (!run) { onError(candidates.length > 1 ? 'Chọn trang sổ trước khi lưu' : 'Chưa có trang sổ đang mở cho mã này'); return }
@@ -680,14 +702,19 @@ function RecordSheet({ code, whName, onDone, onError }: {
   return (
     <FormSheet open onClose={onDone} title="Ghi sổ đóng gói — pallet vừa quét"
       footer={
-        <div className="flex gap-2 w-full">
+        // flex-wrap: 4 nút không tràn ngang trên màn 360px (PDA/điện thoại xưởng)
+        <div className="flex gap-2 w-full flex-wrap">
           <Button variant="outline" className="shrink-0" onClick={onDone}>Hủy</Button>
-          <Button variant="outline" className="flex-1" disabled={openMut.isPending || busy || !run}
+          {/* Quét sai tem → quét lại ngay, không phải đóng form rồi tìm nút quét (camera đang TẮT) */}
+          <Button variant="outline" className="shrink-0 gap-1" onClick={onRescan} title="Bỏ tem này, bật camera quét tem khác">
+            <ScanLine className="h-3.5 w-3.5" /> Quét lại
+          </Button>
+          <Button variant="outline" className="flex-1 min-w-[7.5rem]" disabled={openMut.isPending || busy || !run}
             title="Pallet chưa xếp xong — lưu trước, đóng sổ sau từ board"
             onClick={() => save(false)}>
             Lưu — đóng sau
           </Button>
-          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending || busy || !run} onClick={() => save(true)}>
+          <Button className="flex-1 min-w-[7.5rem] bg-blue-600 hover:bg-blue-700" disabled={openMut.isPending || busy || !run} onClick={() => save(true)}>
             {openMut.isPending ? 'Đang lưu…' : busy ? 'Đang đọc ảnh…' : 'Lưu & Đóng sổ'}
           </Button>
         </div>
@@ -713,9 +740,22 @@ function RecordSheet({ code, whName, onDone, onError }: {
               value={runId} onChange={setRunId} placeholder="Chọn trang sổ…" triggerClassName="w-full h-9" />
           </div>
         ) : run ? (
-          <p className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded px-2 py-1.5">
-            Ghi vào trang sổ: <b>{runLabel(run)}</b>{run.cycle ? ` · CK ${run.cycle}` : ''} · mở lúc {isoToHHMM(run.start_at)}
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded px-2 py-1.5">
+              Ghi vào trang sổ: <b>{runLabel(run)}</b>{run.cycle ? ` · CK ${run.cycle}` : ''} · mở lúc {isoToHHMM(run.start_at)}
+            </p>
+            {(cycleBad || machineBad) && (
+              <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 space-y-1">
+                <p className="flex items-start gap-1 font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>Tem KHÔNG khớp trang sổ — kiểm lại trước khi lưu</span>
+                </p>
+                {cycleBad && <p>Chu kỳ: tem <b>{temCycle}</b> ≠ trang sổ <b>{run.cycle}</b></p>}
+                {machineBad && <p>Máy: tem <b>{temMachine}</b> ≠ trang sổ <b>{run.machine_code}</b></p>}
+                <p className="text-red-600">Quét nhầm trang thì bấm <b>Quét lại</b>; tem in sai thì sửa trang sổ cho khớp.</p>
+              </div>
+            )}
+          </div>
         ) : (
           <p className="text-[11px] text-slate-400">Đang tra trang sổ…</p>
         )}
@@ -1001,10 +1041,11 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
     if (!whId) { onError('Chọn Kho / Nhà máy'); return }
     if (!sel.length) { onError('Chọn Mã sản phẩm'); return }
     if (!machine.trim()) { onError('Nhập Máy'); return }
+    if (!cycle.trim()) { onError('Nhập Chu kỳ'); return }
     const startIso = hhmmToIso(date, startTime)
     if (!startIso) { onError('Giờ bắt đầu dạng HH:MM (VD 07:30)'); return }
     openMut.mutate({
-      warehouse_id: whId, run_date: date, shift: shift || null, cycle: cycle.trim() || null,
+      warehouse_id: whId, run_date: date, shift: shift || null, cycle: cycle.trim(),
       material_codes: sel.map(s => s.code), material_id: sel[0]?.id ?? null, machine_code: machine.trim(),
       start_at: startIso, note: note.trim() || null,
     }, {
@@ -1052,8 +1093,9 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
             )}
           </div>
           <div>
-            <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ</p>
+            <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ *</p>
             <Input value={cycle} onChange={e => setCycle(e.target.value)} className="h-9 text-sm" placeholder="VD: 55" />
+            <p className="text-[10px] text-slate-400 mt-0.5">Đối chiếu với chu kỳ trên tem khi quét</p>
           </div>
         </div>
         <div>
@@ -1201,8 +1243,10 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
     }
     const q = qtyTotal.trim() === '' ? undefined : Number(qtyTotal.replace(',', '.'))
     if (q !== undefined && (!Number.isFinite(q) || q < 0)) { onError('Tổng sản lượng phải là số không âm'); return }
+    if (!cycle.trim()) { onError('Nhập Chu kỳ'); return }
+    if (!machine.trim()) { onError('Nhập Máy'); return }
     upd.mutate({
-      id: run.id, shift: shift.trim() || null, cycle: cycle.trim() || null, machine_code: machine.trim(),
+      id: run.id, shift: shift.trim() || null, cycle: cycle.trim(), machine_code: machine.trim(),
       start_at: si, ...(ei !== undefined ? { end_at: ei } : {}),
       ...(q !== undefined ? { qty_total: q } : {}),
       note: note.trim() || null,
@@ -1229,12 +1273,12 @@ function RunEditSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =>
             <Input value={shift} onChange={e => setShift(e.target.value)} className="h-9 text-sm" />
           </div>
           <div>
-            <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ</p>
+            <p className="text-xs font-medium text-slate-700 mb-1">Chu kỳ *</p>
             <Input value={cycle} onChange={e => setCycle(e.target.value)} className="h-9 text-sm" />
           </div>
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-700 mb-1">Máy</p>
+          <p className="text-xs font-medium text-slate-700 mb-1">Máy *</p>
           {editMachineOpts.length ? (
             <SingleSelect options={editMachineOpts} value={machine} onChange={setMachine} placeholder="Chọn máy…" triggerClassName="w-full h-9" />
           ) : (

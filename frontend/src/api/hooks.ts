@@ -5648,7 +5648,7 @@ export function useOpenPackingLog() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: {
-      qr_code: string; run_id?: string | null; machine_code?: string | null; warehouse_id?: string | null; qty_cartons?: number | null
+      qr_code: string; run_id?: string | null; warehouse_id?: string | null; qty_cartons?: number | null
       photo_data?: string | null; prod_start_at?: string | null; prod_start_src?: string | null; ocr_raw?: string | null
       photo_end_data?: string | null; prod_end_at?: string | null; prod_end_src?: string | null; ocr_end_raw?: string | null
       complete?: boolean

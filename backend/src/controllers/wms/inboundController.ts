@@ -1527,11 +1527,18 @@ export async function scanQR(req: Request, res: Response) {
     let entry: unknown = null
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('scan_insert_pallet', {
       p_entry: entryObj, p_location_id: location_id, p_stack_layer: stackLayerNum,
+      // "Tối đa N mã / vị trí" là ĐẾM trên tài nguyên dùng chung ⇒ phải chốt DƯỚI ROW-LOCK, không
+      // thể tin phép kiểm ở backend (đo 15/08: 6 lượt đồng thời vào ô giới hạn 1 mã → lọt 3 mã).
+      // NULL khi luật tắt HOẶC đã được duyệt vượt rào — backend vẫn là nơi quyết định.
+      p_max_materials: (put.rules.required && !put.trace.putaway_override_reason)
+        ? put.rules.max_materials : null,
     })
     if (!rpcErr) {
       const parts = String(rpcRes ?? '').split('|')
       switch (parts[0]) {
         case 'NOLOC':   return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+        case 'MAXMAT':  return fail(res, 422, 'PUTAWAY_VIOLATION',
+          `Vị trí ${location.location_code} đang có ${parts[1]} mã, kho giới hạn ${parts[2]} mã cho một vị trí. Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.`)
         case 'FULL':    return fail(res, 422, 'LOCATION_FULL',
           `Vị trí ${location.location_code} đã đầy (${parts[1]}/${parts[2]} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
         case 'NO_BASE': return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)

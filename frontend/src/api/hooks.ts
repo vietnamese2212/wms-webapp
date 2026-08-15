@@ -993,6 +993,14 @@ export function useInboundOrder(id?: string) {
   })
 }
 
+// Kho CHƯA bật "bắt buộc cất đúng quy tắc" thì vị trí vi phạm vẫn lưu được — nhưng phải NÓI RA,
+// không thì y hệt hành vi cũ và cấu hình kho thành vô nghĩa. Đặt ở HOOK (khuôn warnKhvcReplan)
+// để mọi màn gọi mutation này đều báo, khỏi phải nhớ nối ở từng trang.
+function warnPutaway(data: unknown) {
+  const msg = (data as { putaway_warning?: string } | null)?.putaway_warning
+  if (msg) toast({ title: 'Đã lưu — nhưng vị trí này lệch quy tắc cất hàng', description: String(msg).slice(0, 300) })
+}
+
 export function useCreateInboundOrder() {
   const qc = useQueryClient()
   return useMutation({
@@ -1011,7 +1019,7 @@ export function useCreateInboundOrder() {
       planned_cartons?: number
       ncc_id?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inbound-orders'] }),
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
   })
 }
 
@@ -1057,6 +1065,7 @@ export function useSetInboundOrderLocation() {
       if (ctx?.prev) qc.setQueryData(['inbound-order', ctx.id], ctx.prev)
     },
     onSuccess: (data: Partial<InboundOrderCache>, v) => {
+      warnPutaway(data)
       // PATCH trả về order đầy đủ (ORDER_SELECT + count) → merge, GIỮ inventory_entries hiện có.
       qc.setQueryData<InboundOrderCache>(['inbound-order', v.id], (old) =>
         old ? { ...old, ...data } : old)

@@ -637,7 +637,8 @@ export function InboundScanSheetById({ importId, employeeId, onClose }: { import
           warehouse_id: order.warehouse_id,
           ...(order.warehouse_type ? { category: order.warehouse_type } : {}),
           ...(order.material_id ? { material_id: order.material_id } : {}),
-          search: locTermDeb || undefined, limit: 50,
+          // 300 (17/08): kho cỡ thường thấy TRỌN danh sách — ★ trên đầu, ô chặn cuối (BE sort)
+          search: locTermDeb || undefined, limit: 300,
         }
       : undefined
   )

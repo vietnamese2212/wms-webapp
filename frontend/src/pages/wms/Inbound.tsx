@@ -351,14 +351,18 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   )
 
   // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho — Bàu Bàng 1.517 vị trí
-  // = 616KB + hàng chục round-trip. BE đã ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng trả về,
-  // nên gợi ý gom pallet KHÔNG mất khi cắt danh sách.
+  // = 616KB + hàng chục round-trip. BE ưu tiên nhóm ★ "đang để dở cùng mã" vào các dòng trả về.
+  // `category` phải đi TRÊN SERVER (user báo 17/08 "chỉ hiện vài vị trí, gõ tay mới ra ô khác"):
+  // lọc Loại kho ở client trên 50 dòng đã cắt = mất gần hết danh sách — đúng lớp lỗi "lọc trên
+  // list cắt cụt". Limit 300: kho cỡ thường thấy TRỌN danh sách (Ba Vì 236 ô), ★ trên đầu, ô bị
+  // chặn xuống cuối (BE sort theo điểm) — kho nghìn ô vẫn cắt + tìm server.
   const [locTerm, setLocTerm] = useState('')
   const locTermDeb = useDebouncedValue(locTerm, 250)
   // ncc_id đi kèm để BE chấm được luật "không trộn NCC" (kho nào bật) — không có thì luật im lặng.
   const { data: locations = [] } = useLocationsReal(warehouseId
-    ? { warehouse_id: warehouseId, material_id: materialId || undefined, ncc_id: nccId || undefined,
-        search: locTermDeb || undefined, limit: 50 }
+    ? { warehouse_id: warehouseId, category: subType || undefined,
+        material_id: materialId || undefined, ncc_id: nccId || undefined,
+        search: locTermDeb || undefined, limit: 300 }
     : undefined)
   const { data: locPicked = [] } = useLocationsByIds([locationId])
   const { data: zones     = [] } = useWarehouseZones(warehouseId || undefined)
@@ -369,8 +373,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const selectedZone = zones.find(z => z.name === subType)
   // ★ và thứ tự do BACKEND chấm theo quy tắc cất hàng của kho (utils/putaway.ts) — FE KHÔNG tự
   // tính lại. Trước 15/08 chỗ này tự đánh ★ + tự sort, lệch với bản của InboundDetail và với BE.
+  // Loại kho đã lọc TRÊN SERVER (17/08) — filter dưới chỉ là lưới an toàn, thêm nhánh null
+  // (vị trí chưa gán loại = dùng chung, khớp ngữ nghĩa server) để không cắt lại dòng server đã cho.
   const filteredLocs = useMemo(() => subType
-    ? allLocs.filter(l => (l.categories ?? []).includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
+    ? allLocs.filter(l => !l.categories?.length || l.categories.includes(subType) || (selectedZone && l.sub_code === selectedZone.code))
     : allLocs,
     [allLocs, subType, selectedZone])
 

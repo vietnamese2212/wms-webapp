@@ -127,6 +127,17 @@ try {
   }
   check('[4] ô bị chặn xuống cuối, ô hợp lệ đứng trên',
     rows.findIndex(r => r.id === locOk.id) < rows.findIndex(r => r.id === locNoIn.id))
+  // Lọc Loại kho phải cắt TRÊN SERVER (bug 17/08: form Nhập kho lọc client trên 50 dòng server
+  // đã cắt → user thấy "chỉ hiện vài vị trí, gõ tay mới ra ô khác" — lớp lỗi lọc-trên-list-cắt-cụt).
+  if (mat.category) {
+    const locWrongCat = await mkLoc('WRONGCAT', { categories: [`${TAG}-khac`] })
+    const locNullCat  = await mkLoc('NULLCAT',  { categories: null })
+    const byCat = (await api(`/masterdata/locations?warehouse_id=${whId}&material_id=${mat.id}&view=lite&limit=300&category=${encodeURIComponent(mat.category)}`)).j?.data ?? []
+    check('[4b] &category= cắt trên SERVER: vị trí loại KHÁC không về, đúng loại có về',
+      !byCat.some(r => r.id === locWrongCat.id) && byCat.some(r => r.id === locOk.id), `${byCat.length} vị trí`)
+    check('[4c] vị trí CHƯA khai loại (dùng chung) vẫn có mặt khi lọc category',
+      byCat.some(r => r.id === locNullCat.id))
+  }
 
   // ── 2. Từng cờ chỉ chặn khi kho BẬT ──────────────────────────────────────────────────
   check('[5] kho CHƯA bật → vị trí nhặt lẻ vẫn cất được', hint(locPick.id)?.blocked === null)

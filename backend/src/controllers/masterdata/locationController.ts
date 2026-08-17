@@ -176,8 +176,11 @@ export async function listLocations(req: Request, res: Response) {
   try {
     const { warehouse_id, sub_code, active, category, material_id, view, search, limit } = req.query
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
-    // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt
-    const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
+    // limit=N (typeahead): chỉ N dòng đầu → không kéo cả nghìn vị trí về trình duyệt.
+    // Trần 300 (17/08, trước là 200): picker cất hàng xin 300 để kho cỡ thường (Ba Vì 236 ô) thấy
+    // TRỌN danh sách một lần — user báo "chỉ hiện vài vị trí, gõ tay mới ra ô khác" vì 50 dòng đầu
+    // theo mã vị trí bị lọc Loại kho cắt gần hết. Kho nghìn ô vẫn cắt ở 300 + tìm server.
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 300)
     // ids=... : tra NHÃN cho vị trí ĐANG CHỌN (khuôn useMaterialsByIds). Ô chọn tìm-trên-server chỉ
     // giữ 50 dòng khớp từ khoá HIỆN TẠI, nên value đang chọn phải có đường tra riêng — không thì
     // chip/ô in uuid thô và user tưởng mất dữ liệu (bài học nghiệm thu 29/07). Cap 300 = trần URL.
@@ -433,7 +436,7 @@ export async function updateLocation(req: Request, res: Response) {
   try {
     if (!(await guardLocScope(req, res, req.params.id))) return
     // Loại của vị trí KHÔNG sửa lẻ ở đây — kế thừa từ Khu (sửa loại = sửa ở Khu vực, tự cascade)
-    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face } = req.body
+    const { sub_name, sub_type, max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sub_name !== undefined)          patch.sub_name          = sub_name ? String(sub_name).trim() : null
     if (sub_type !== undefined)          patch.sub_type          = sub_type
@@ -441,6 +444,10 @@ export async function updateLocation(req: Request, res: Response) {
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)
+    // 2 cờ Vị trí đặc biệt (trước 17/08 chỉ sửa được ở tab Cài đặt trang Tối ưu vị trí — user chê
+    // multi-select replace-all khó config; nay sửa được ngay tại danh mục Vị trí, cùng chỗ nhặt lẻ)
+    if (slot_no_in !== undefined)        patch.slot_no_in         = Boolean(slot_no_in)
+    if (slot_no_out !== undefined)       patch.slot_no_out        = Boolean(slot_no_out)
 
     const { data, error } = await supabase
       .from('Location').update(patch).eq('id', req.params.id).select().maybeSingle()
@@ -450,15 +457,20 @@ export async function updateLocation(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
-// Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" và/hoặc "vị trí nhặt lẻ" (tầng dưới, fill hàng phục vụ
-// nhặt lẻ). Chỉ áp cho vị trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo
-// lỗi cả lô). Chunk 300/lô né URL dài + cap ~1000.
+// Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" / "vị trí nhặt lẻ" / "không đưa hàng vào" / "không lấy
+// hàng đi" (2 cờ sau = Vị trí đặc biệt, dùng chung cột với tab Cài đặt Slotting). Chỉ áp cho vị
+// trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo lỗi cả lô). Chunk 300/lô.
 export async function bulkFlagLocations(req: Request, res: Response) {
   try {
-    const { ids, requires_stocktake, is_pick_face } = req.body as {
-      ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown
+    const { ids, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body as {
+      ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown; slot_no_in?: unknown; slot_no_out?: unknown
     }
-    if (requires_stocktake === undefined && is_pick_face === undefined)
+    const flags: Record<string, boolean> = {}
+    if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
+    if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
+    if (slot_no_in         !== undefined) flags.slot_no_in         = Boolean(slot_no_in)
+    if (slot_no_out        !== undefined) flags.slot_no_out        = Boolean(slot_no_out)
+    if (Object.keys(flags).length === 0)
       return fail(res, 400, 'INVALID_INPUT', 'Thiếu cờ cần gắn')
     let idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     // Danh sách đã PHÂN TRANG → client không còn đủ id của bộ lọc: gửi CỜ bộ lọc, BE tự resolve
@@ -466,7 +478,7 @@ export async function bulkFlagLocations(req: Request, res: Response) {
     const body = req.body as { by_filter?: boolean; filter?: Record<string, unknown> }
     if (!idList.length && body.by_filter) {
       const ctx = getLocListCtx(req, body.filter ?? {})
-      if (ctx.blocked) return ok(res, { updated: 0, requires_stocktake: Boolean(requires_stocktake) })
+      if (ctx.blocked) return ok(res, { updated: 0, ...flags })
       const { data, error } = await supabase.rpc('locations_page', {
         p_offset: 0, p_limit: 1_000_000, ...locRpcParams(ctx), p_incl_inactive: false,
       })
@@ -474,9 +486,6 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       idList = ((data ?? {}) as { ids?: string[] }).ids ?? []
     }
     if (!idList.length) return fail(res, 400, 'INVALID_INPUT', 'Thiếu danh sách vị trí')
-    const flags: Record<string, boolean> = {}
-    if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
-    if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
 
     const scope = scopeWhIds(req)
     const cats  = scopeCategoriesOf(req)

@@ -362,11 +362,13 @@ const RULES = [
     // 2 file luật (utils/putaway.ts BE+FE, services/putawayContext.ts) để chấm ★/chặn.
     // Bắt việc ĐỌC cờ (`x.has_same_material` / `x.slot_no_in`) để tự kết luận — khai báo kiểu,
     // danh sách cột, `useLocationsByFlag('slot_no_in')`, `.eq('slot_no_in', …)` và phép GÁN đều
-    // không tính. Miễn 4 file: 2 file luật, putawayContext (đường nạp chung), slottingController
-    // + locationController (nơi DUY NHẤT dựng PutawayLoc rồi gọi luật). Baseline 0.
+    // không tính. Miễn 5 file: 2 file luật, putawayContext (đường nạp chung), slottingController
+    // + locationController (nơi DUY NHẤT dựng PutawayLoc rồi gọi luật), và trang danh mục
+    // pages/wms/Locations.tsx (17/08 — nơi KHAI/HIỂN THỊ cờ: cột bảng, pane, form sửa, export;
+    // đọc cờ để in ra chứ không đoán "cất vào đâu"). Baseline 0.
     count: (s) => countMatches(['backend/src', 'frontend/src'], ['.ts', '.tsx'],
       (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
-        && !/utils[\\/]putaway\.ts$|services[\\/]putawayContext\.ts$|slottingController\.ts$|locationController\.ts$/.test(file)
+        && !/utils[\\/]putaway\.ts$|services[\\/]putawayContext\.ts$|slottingController\.ts$|locationController\.ts$|pages[\\/]wms[\\/]Locations\.tsx$/.test(file)
         && /\.\s*(has_same_material|slot_no_in)\b(?!\s*=[^=])/.test(line), s),
   },
   {

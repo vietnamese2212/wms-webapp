@@ -791,7 +791,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               <span className="text-xs flex-1 min-w-0">
                 <span className="font-medium">Vị trí đánh dấu “Không đưa hàng vào”</span>
                 <span className="block text-[10px] text-slate-400 font-normal">
-                  Khai ở <b>Tối ưu vị trí → tab Cài đặt → Vị trí đặc biệt</b> (kho tạm, ngoài đường…).
+                  Khai ở trang <b>Vị trí kho</b>: tick chọn vị trí → nút <b>“Không đưa hàng vào”</b>, hoặc form Sửa vị trí (kho tạm, ngoài đường…).
                   LUÔN bị loại khỏi gợi ý và khỏi kế hoạch Slotting — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.
                 </span>
               </span>

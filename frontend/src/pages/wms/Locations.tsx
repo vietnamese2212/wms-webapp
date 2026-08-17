@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -51,6 +51,8 @@ interface RealLocation {
   is_active:          boolean
   requires_stocktake: boolean
   is_pick_face:       boolean   // vị trí NHẶT LẺ (với tay tới được) — nguồn của tính năng Fill hàng
+  slot_no_in:         boolean | null   // KHÔNG đưa hàng vào (kho tạm/ngoài đường) — mất gợi ý cất + Slotting kéo hàng ra
+  slot_no_out:        boolean | null   // KHÔNG lấy hàng đi (hàng kẹt) — Slotting loại khỏi nguồn
   warehouse:          { id: string; code: string; name: string }
   created_at?:        string
   updated_at?:        string
@@ -76,6 +78,7 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'zone',    label: 'Khu vực kho',     w: 150 },
   { id: 'loc',     label: 'Vị trí',          w: 160 },
   { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
+  { id: 'noin',    label: 'Không đưa hàng vào', w: 130 },
   { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
@@ -120,11 +123,14 @@ export default function Locations() {
   const [editIsActive,         setEditIsActive]         = useState(true)
   const [editRequiresStocktake, setEditRequiresStocktake] = useState(false)
   const [editIsPickFace,        setEditIsPickFace]        = useState(false)
+  const [editSlotNoIn,          setEditSlotNoIn]          = useState(false)
+  const [editSlotNoOut,         setEditSlotNoOut]         = useState(false)
   const [formError,     setFormError]     = useState('')
   const [deleteTarget,  setDeleteTarget]  = useState<RealLocation | null>(null)
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
-  // Dialog gắn/bỏ cờ HÀNG LOẠT — 2 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface' (vị trí nhặt lẻ)
-  const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | null>(null)
+  // Dialog gắn/bỏ cờ HÀNG LOẠT — 3 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface'
+  // (vị trí nhặt lẻ) | 'noin' (không đưa hàng vào — kho tạm/ngoài đường, dùng cho quy tắc cất hàng)
+  const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | 'noin' | null>(null)
   // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
   // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
   // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
@@ -172,7 +178,9 @@ export default function Locations() {
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag } : { requires_stocktake: flag }
+      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag }
+        : bulkMode === 'noin' ? { slot_no_in: flag }
+        : { requires_stocktake: flag }
       await bulkFlag.mutateAsync(allFiltered
         // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
         ? { by_filter: true, filter: listParams ?? {}, ...cờ }
@@ -251,6 +259,8 @@ export default function Locations() {
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
     setEditIsPickFace(loc.is_pick_face ?? false)
+    setEditSlotNoIn(loc.slot_no_in ?? false)
+    setEditSlotNoOut(loc.slot_no_out ?? false)
     setFormError('')
     setDialogMode('edit')
   }
@@ -283,6 +293,8 @@ export default function Locations() {
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
           is_pick_face:       editIsPickFace,
+          slot_no_in:         editSlotNoIn,
+          slot_no_out:        editSlotNoOut,
         })
       }
       closeDialog()
@@ -358,7 +370,9 @@ export default function Locations() {
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
       'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
-      'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '', 'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
+      'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '',
+      'Không đưa hàng vào': l.slot_no_in ? 'x' : '', 'Không lấy hàng đi': l.slot_no_out ? 'x' : '',
+      'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
     }))
     const ws = XLSX.utils.json_to_sheet(sanitizeRows(sheet))
     const wb = XLSX.utils.book_new()
@@ -502,6 +516,14 @@ export default function Locations() {
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1">
+                        {loc.slot_no_in
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200"
+                                  title="Không đưa hàng vào (kho tạm / ngoài đường) — không gợi ý khi cất, Slotting luôn kéo hàng ra">
+                              <Ban className="h-2.5 w-2.5" />Cấm
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
                         {loc.requires_stocktake
                           ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700"
                                   title="Vị trí phải kiểm kê hàng ngày">
@@ -580,6 +602,8 @@ export default function Locations() {
               <div><span className="text-slate-400">Đang dùng:</span> <span className="font-semibold">{selectedLoc.used_slots} pallet</span></div>
               <div><span className="text-slate-400">Cần check hàng ngày:</span> <span className="font-medium">{selectedLoc.requires_stocktake ? 'Có' : 'Không'}</span></div>
               <div><span className="text-slate-400">Vị trí nhặt lẻ:</span> <span className="font-medium">{selectedLoc.is_pick_face ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Không đưa hàng vào:</span> <span className={`font-medium ${selectedLoc.slot_no_in ? 'text-red-600' : ''}`}>{selectedLoc.slot_no_in ? 'Có' : 'Không'}</span></div>
+              <div><span className="text-slate-400">Không lấy hàng đi:</span> <span className={`font-medium ${selectedLoc.slot_no_out ? 'text-red-600' : ''}`}>{selectedLoc.slot_no_out ? 'Có' : 'Không'}</span></div>
               <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{selectedLoc.is_active ? 'Hoạt động' : 'Đã xóa'}</span></div>
               <div className="border-t pt-2 mt-2 space-y-1.5">
                 <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Thông tin tạo/sửa</p>
@@ -615,6 +639,10 @@ export default function Locations() {
           <button onClick={() => { setBulkErr(''); setBulkMode('pickface') }}
             className="flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200 transition-colors">
             <Hand className="h-3.5 w-3.5" />Vị trí nhặt lẻ
+          </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('noin') }}
+            className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
+            <Ban className="h-3.5 w-3.5" />Không đưa hàng vào
           </button>
           <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
             className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
@@ -784,6 +812,31 @@ export default function Locations() {
                     Vị trí nhặt lẻ <span className="text-slate-400">(với tay lấy hàng được — dùng cho Fill hàng)</span>
                   </span>
                 </label>
+                {/* 2 cờ Vị trí đặc biệt — cùng cột với tab Cài đặt trang Tối ưu vị trí (17/08:
+                    thêm đường sửa tại đây vì multi-select bên đó khó config từng ô) */}
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editSlotNoIn}
+                    onChange={e => setEditSlotNoIn(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer mt-0.5"
+                  />
+                  <span className="text-xs text-slate-600">
+                    Không đưa hàng vào <span className="text-slate-400">(kho tạm / ngoài đường — không gợi ý khi cất,
+                    xuống cuối danh sách chọn, Slotting luôn kéo hàng ra; kho tick “Bắt buộc” ở Cài đặt WMS mới chặn hẳn)</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editSlotNoOut}
+                    onChange={e => setEditSlotNoOut(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer mt-0.5"
+                  />
+                  <span className="text-xs text-slate-600">
+                    Không lấy hàng đi <span className="text-slate-400">(hàng kẹt / không bốc được — Slotting bỏ qua khi tính nguồn, vẫn tính chiếm chỗ)</span>
+                  </span>
+                </label>
               </div>
             )}
 
@@ -800,6 +853,8 @@ export default function Locations() {
             <DialogTitle className="flex items-center gap-1.5">
               {bulkMode === 'pickface'
                 ? <><Hand className="h-4 w-4 text-sky-600" /> Khai vị trí nhặt lẻ hàng loạt</>
+                : bulkMode === 'noin'
+                ? <><Ban className="h-4 w-4 text-red-500" /> Không đưa hàng vào — hàng loạt</>
                 : <><Flag className="h-4 w-4 text-red-500" /> Cờ cần kiểm kê hàng loạt</>}
             </DialogTitle>
           </DialogHeader>
@@ -808,6 +863,8 @@ export default function Locations() {
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
             {bulkMode === 'pickface'
               ? ' Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.'
+              : bulkMode === 'noin'
+              ? ' Dùng cho kho tạm / ngoài đường: KHÔNG gợi ý khi cất hàng (xuống cuối danh sách chọn) và Slotting luôn lên kế hoạch kéo hàng ra. Mặc định vẫn chọn tay được khi cần — muốn CHẶN hẳn thì tick "Bắt buộc" ở quy tắc cất hàng trong form Kho (Cài đặt WMS).'
               : ' Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.'}
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
@@ -815,11 +872,11 @@ export default function Locations() {
             <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
             <Button variant="outline" size="sm" className="border-slate-300"
               onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? '…' : bulkMode === 'pickface' ? 'Bỏ khai' : 'Bỏ cờ'}
+              {bulkFlag.isPending ? '…' : bulkMode === 'pickface' ? 'Bỏ khai' : bulkMode === 'noin' ? 'Bỏ đánh dấu' : 'Bỏ cờ'}
             </Button>
             <Button size="sm" className={bulkMode === 'pickface' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-red-600 hover:bg-red-700'}
               onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? 'Đang lưu…' : bulkMode === 'pickface' ? 'Khai vị trí nhặt lẻ' : 'Gắn cờ cần check'}
+              {bulkFlag.isPending ? 'Đang lưu…' : bulkMode === 'pickface' ? 'Khai vị trí nhặt lẻ' : bulkMode === 'noin' ? 'Đánh dấu không đưa hàng vào' : 'Gắn cờ cần check'}
             </Button>
           </DialogFooter>
         </DialogContent>

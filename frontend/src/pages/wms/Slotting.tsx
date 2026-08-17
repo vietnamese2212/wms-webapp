@@ -700,7 +700,7 @@ function LocationConfig({ warehouseId, categories }: { warehouseId: string; cate
       <div className="flex items-center gap-2 flex-wrap">
         <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 shrink-0">Vị trí đặc biệt</span>
-        <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi">Không đưa hàng vào:</span>
+        <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi. Khai dễ hơn ở trang Vị trí kho: tick chọn vị trí → nút 'Không đưa hàng vào'">Không đưa hàng vào:</span>
         <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn, noInFlagged)}
           selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst
           serverSearch onSearchChange={setLocTerm} />

@@ -740,7 +740,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -769,10 +769,12 @@ export function useBulkFlagLocations() {
   return useMutation({
     // Danh sách đã phân trang → gửi CỜ bộ lọc (`by_filter`) để BE tự resolve TOÀN BỘ vị trí khớp,
     // thay vì nhồi hàng nghìn id qua mạng. Vẫn nhận `ids` cho chỗ gọi cũ.
-    // 2 cờ: requires_stocktake (cần kiểm kê) · is_pick_face (vị trí nhặt lẻ — nguồn của Fill hàng).
-    // Gửi cờ nào thì BE ghi cờ đó; thiếu cả hai → 400 (không ghi mù).
+    // 4 cờ: requires_stocktake (cần kiểm kê) · is_pick_face (vị trí nhặt lẻ — nguồn của Fill hàng)
+    // · slot_no_in (không đưa hàng vào — kho tạm/ngoài đường) · slot_no_out (không lấy hàng đi).
+    // Gửi cờ nào thì BE ghi cờ đó; thiếu tất cả → 400 (không ghi mù).
     mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>
-                         requires_stocktake?: boolean; is_pick_face?: boolean }) =>
+                         requires_stocktake?: boolean; is_pick_face?: boolean
+                         slot_no_in?: boolean; slot_no_out?: boolean }) =>
       apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })

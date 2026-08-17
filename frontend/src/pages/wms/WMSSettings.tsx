@@ -694,25 +694,34 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
             <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
+              <InfoTip tip={<>Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</>} />
+            </span>
             <SingleSelect options={parentOpts} value={parentId} onChange={setParentId}
               placeholder="— Kho thường (không trực thuộc) —" searchPlaceholder="Tìm kho…" triggerClassName="h-8 w-full text-sm" />
-            <p className="text-[10px] text-slate-400">Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Mã ship-to phụ</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã ship-to phụ</Label>
+              <InfoTip tip={<>Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</>} />
+            </span>
             <Input value={shiptoCodes} onChange={e => setShiptoCodes(e.target.value.toUpperCase())} placeholder="vd: 20000018, 20000019" />
-            <p className="text-[10px] text-slate-400">Ngoài mã kho chính. Nhiều mã cách nhau dấu phẩy. Chuyển kho về các mã này đều tự nhận về kho này.</p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Mã NMSX (kho tổng)</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã NMSX (kho tổng)</Label>
+              <InfoTip tip={<>Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</>} />
+            </span>
             <Input value={nmsxCode} onChange={e => setNmsxCode(e.target.value.toUpperCase())} placeholder="vd: B, D…" maxLength={8} />
-            <p className="text-[10px] text-slate-400">Đoạn thứ 6 của QR pallet + tiền tố mã vị trí. Để trống nếu kho không có NMSX (vị trí sẽ dùng mã kho). Không trùng giữa các kho.</p>
           </div>
           {/* Map SAP → kho: để CHẶN upload VL06O của kho khác (user chốt 26/07). File VL06O mang mã SAP
               Plant/Storage Location, không phải mã kho app → phải khai ở đây mới siết được theo kho. */}
           <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Mã SAP của kho (để chặn upload VL06O của kho khác)</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Mã SAP của kho (để chặn upload VL06O của kho khác)</Label>
+              <InfoTip tip={<>Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</>} />
+            </span>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-[10px] text-slate-500">Plant SAP</Label>
@@ -723,7 +732,6 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 <Input value={sapSlocs} onChange={e => setSapSlocs(e.target.value.toUpperCase())} placeholder="vd: FG01, FG02" className="h-8 text-sm" />
               </div>
             </div>
-            <p className="text-[10px] text-slate-400">Lấy đúng giá trị 2 cột <b>Plant</b> + <b>Storage Location</b> trong file VL06O. Nhiều Storage Location cách nhau dấu phẩy; để trống = mọi Storage Location của Plant đó thuộc kho này. Chưa khai → dòng SAP đó KHÔNG bị chặn (app chỉ cảnh báo sau khi upload).</p>
           </div>
           {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
               rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}

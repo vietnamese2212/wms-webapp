@@ -94,11 +94,11 @@ export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const locFilter = useWmsFilterStore(s => s.locations)
-  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode } = locFilter
+  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
-  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode }
+  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -153,9 +153,9 @@ export default function Locations() {
   const listParams = useMemo(() => warehouseId ? {
     warehouse_id: warehouseId, category: catFilter || undefined, search,
     zones: zoneFilter.length ? zoneFilter : undefined,
-    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode),
+    flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode), slot_no_in: modeVal(noInMode),
     include_inactive: statusFilter.includes('inactive'),
-  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode])
+  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode, noInMode])
   const { data: pageData, isLoading } = useLocationsPaged(
     listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
   const { data: locSummary } = useLocationsSummary(listParams)
@@ -206,7 +206,7 @@ export default function Locations() {
     setSelected(allPageSelected ? new Set() : new Set(locations.map(l => l.id)))
   }
   useEffect(() => { setSelected(new Set()); setAllFiltered(false) },
-    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, statusFilter, locFilter.page])
+    [warehouseId, catFilter, zoneFilter, search, flagMode, pickFaceMode, noInMode, statusFilter, locFilter.page])
 
   // Trang đã được SERVER lọc + sắp xếp — không lọc lại client
   const filtered = locations
@@ -337,6 +337,8 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ flagMode: v as FlagMode }) },
     { key: 'pick_face', label: 'Vị trí nhặt lẻ', type: 'single', options: FLAG_OPTS, value: pickFaceMode,
       onChange: v => setLocationsFilter({ pickFaceMode: v as FlagMode }) },
+    { key: 'slot_no_in', label: 'Không đưa hàng vào', type: 'single', options: FLAG_OPTS, value: noInMode,
+      onChange: v => setLocationsFilter({ noInMode: v as FlagMode }) },
   ]
 
   // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`

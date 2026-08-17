@@ -130,7 +130,7 @@ export function useLocationsFull(params?: LocationListParams, enabled = true) {
 // flag / pick_face = BA trạng thái: undefined (không lọc) · true (có cờ) · false (chưa có cờ)
 export type LocationsListParams = {
   warehouse_id?: string; category?: string; search?: string; zones?: string[]
-  flag?: boolean; pick_face?: boolean; include_inactive?: boolean
+  flag?: boolean; pick_face?: boolean; slot_no_in?: boolean; include_inactive?: boolean
 }
 export type LocationsSummary = { count: number; capacity: number; used: number; full: number }
 
@@ -141,11 +141,14 @@ export type LocationsSummary = { count: number; capacity: number; used: number; 
 // này — tự dựng params bằng tay là tái diễn đúng bug trên ở một đường khác.
 export function locationsQp(p: LocationsListParams): Record<keyof LocationsListParams, string | undefined> {
   const tri = (v?: boolean) => (v === undefined ? undefined : v ? '1' : '0')
+  // Đọc qua destructure có chủ đích: ratchet `putaway_rule_hand_rolled` bắt mẫu `x.slot_no_in`
+  // (FE tự đoán luật cất) — đây chỉ là map query-param lọc, không phải kết luận gì từ cờ.
+  const { slot_no_in: noIn } = p
   return {
     warehouse_id: p.warehouse_id || undefined, category: p.category || undefined,
     search: p.search || undefined,
     zones: p.zones?.length ? p.zones.join(',') : undefined,
-    flag: tri(p.flag), pick_face: tri(p.pick_face),
+    flag: tri(p.flag), pick_face: tri(p.pick_face), slot_no_in: tri(noIn),
     include_inactive: p.include_inactive ? '1' : undefined,
   }
 }

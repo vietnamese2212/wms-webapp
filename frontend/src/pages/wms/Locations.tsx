@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban } from 'lucide-react'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -87,8 +88,22 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
 ]
 const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
 
-// Lựa chọn cho 2 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
+// Lựa chọn cho 3 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
 const FLAG_OPTS = [{ value: 'yes', label: 'Có' }, { value: 'no', label: 'Chưa' }]
+
+// 4 cờ của một vị trí — nhãn ngắn trên form, DIỄN GIẢI đầy đủ trong ⓘ (mỗi cờ nói rõ module nào
+// đổi hành vi, vì đọc nhãn suông không đoán ra được). Khai ở module-level: component khai trong
+// thân component cha làm ô nhập mất focus sau 1 ký tự (ratchet component_defined_inside_component).
+const LOC_FLAG_FIELDS = [
+  { key: 'stocktake', label: 'Cần kiểm kê hàng ngày',
+    tip: <>Vị trí lọt vào chế độ <b>“chỉ vị trí cần kiểm”</b> của trang Kiểm kho và khối <b>“Vị trí quan trọng”</b> ở Tổng hợp kiểm kê. Không ảnh hưởng nhập / xuất / gợi ý cất hàng.</> },
+  { key: 'pickface', label: 'Vị trí nhặt lẻ',
+    tip: <>Chỗ công nhân <b>với tay lấy hàng được</b> (tầng dưới / khu để sàn). Trang <b>Fill hàng</b> dựa vào đây để biết hàng dưới đủ hay thiếu, và chỉ đổ hàng vào ô nhặt lẻ. Nếu form Kho bật luật <b>“Không cất pallet nguyên vào vị trí nhặt lẻ”</b> thì pallet nguyên bị cảnh báo/chặn cất vào đây.</> },
+  { key: 'noin', label: 'Không đưa hàng vào',
+    tip: <>Kho tạm / ngoài đường. Có tác dụng <b>ngay, không cần bật gì thêm</b>: mất gợi ý ★, rơi xuống <b>cuối</b> danh sách chọn vị trí ở cả 4 màn cất hàng, và <b>Slotting không bao giờ lấy làm đích</b> — ngược lại còn <b>ưu tiên kéo hàng ở đây ra</b> kho chuẩn. Mặc định vẫn chọn tay được (có ghi vết); chỉ khi form Kho tick <b>“Bắt buộc”</b> cho luật này mới chặn hẳn. <b>Không</b> chặn lấy hàng ra.</> },
+  { key: 'noout', label: 'Không lấy hàng đi',
+    tip: <>Hàng kẹt / không bốc được. <b>Chỉ Slotting</b> đọc cờ này: hàng ở đây bị loại khỏi <b>nguồn</b> tính toán nên kế hoạch không sinh lệnh dời hàng đi, nhưng ô <b>vẫn tính chiếm chỗ</b>. <b>Không</b> chặn xuất kho / nhặt lẻ / fill — quét lấy hàng bình thường.</> },
+] as const
 
 export default function Locations() {
   const user  = useAuthStore(s => s.user)
@@ -794,51 +809,26 @@ export default function Locations() {
                     {editIsActive ? 'Đang hoạt động — nhấn để vô hiệu hoá' : 'Đã vô hiệu hoá — nhấn để kích hoạt lại'}
                   </button>
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editRequiresStocktake}
-                    onChange={e => setEditRequiresStocktake(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer"
-                  />
-                  <span className="text-xs text-slate-600">Cần kiểm kê hàng ngày</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editIsPickFace}
-                    onChange={e => setEditIsPickFace(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer"
-                  />
-                  <span className="text-xs text-slate-600">
-                    Vị trí nhặt lẻ <span className="text-slate-400">(với tay lấy hàng được — dùng cho Fill hàng)</span>
-                  </span>
-                </label>
-                {/* 2 cờ Vị trí đặc biệt — cùng cột với tab Cài đặt trang Tối ưu vị trí (17/08:
-                    thêm đường sửa tại đây vì multi-select bên đó khó config từng ô) */}
-                <label className="flex items-start gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editSlotNoIn}
-                    onChange={e => setEditSlotNoIn(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer mt-0.5"
-                  />
-                  <span className="text-xs text-slate-600">
-                    Không đưa hàng vào <span className="text-slate-400">(kho tạm / ngoài đường — không gợi ý khi cất,
-                    xuống cuối danh sách chọn, Slotting luôn kéo hàng ra; kho tick “Bắt buộc” ở Cài đặt WMS mới chặn hẳn)</span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editSlotNoOut}
-                    onChange={e => setEditSlotNoOut(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer mt-0.5"
-                  />
-                  <span className="text-xs text-slate-600">
-                    Không lấy hàng đi <span className="text-slate-400">(hàng kẹt / không bốc được — Slotting bỏ qua khi tính nguồn, vẫn tính chiếm chỗ)</span>
-                  </span>
-                </label>
+                {/* Diễn giải nằm trong ⓘ (user chốt 17/08) — chữ xám dài dưới mỗi ô đẩy nút Lưu
+                    khỏi màn hình. ⓘ là ANH EM của <label>, không nằm trong: bấm ⓘ không lật ô tick. */}
+                {LOC_FLAG_FIELDS.map(f => (
+                  <div key={f.key} className="flex items-center gap-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={f.key === 'stocktake' ? editRequiresStocktake
+                          : f.key === 'pickface' ? editIsPickFace
+                          : f.key === 'noin' ? editSlotNoIn : editSlotNoOut}
+                        onChange={e => (f.key === 'stocktake' ? setEditRequiresStocktake
+                          : f.key === 'pickface' ? setEditIsPickFace
+                          : f.key === 'noin' ? setEditSlotNoIn : setEditSlotNoOut)(e.target.checked)}
+                        className="h-3.5 w-3.5 cursor-pointer shrink-0"
+                      />
+                      <span className="text-xs text-slate-600 truncate">{f.label}</span>
+                    </label>
+                    <InfoTip tip={f.tip} />
+                  </div>
+                ))}
               </div>
             )}
 

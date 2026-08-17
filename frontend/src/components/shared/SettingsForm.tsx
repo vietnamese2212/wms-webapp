@@ -10,10 +10,9 @@
 // document.activeElement nhảy về BODY, ký tự thứ 2 rơi mất). Cổng tĩnh 09 gác luật này bằng
 // ratchet `component_defined_inside_component`.
 import type { ReactNode } from 'react'
-import { Info } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { formatDateTime } from '@/utils/formatters'
 
 /** Lưới cụm cấu hình: 1 cột (phone) → 2 (tablet) → 3 (desktop) */
@@ -42,21 +41,13 @@ export function SettingGroup({ title, meta, readOnly, children }: {
   )
 }
 
-/** Nhãn + ⓘ tooltip (diễn giải KHÔNG chiếm chỗ trong form) */
+/** Nhãn + ⓘ tooltip (diễn giải KHÔNG chiếm chỗ trong form) — ⓘ dùng chung `InfoTip` (mở được cả
+ *  bằng chạm trên tablet/phone, xem ghi chú trong chính file đó) */
 export function SettingLabel({ text, tip }: { text: string; tip?: ReactNode }) {
   return (
     <span className="flex items-center gap-1 mb-0.5">
       <span className="text-[10px] font-medium text-slate-700 truncate">{text}</span>
-      {tip && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="shrink-0 cursor-help text-slate-400 hover:text-sky-600" aria-label="Giải thích">
-              <Info className="h-3 w-3" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-[280px] text-[11px] leading-snug">{tip}</TooltipContent>
-        </Tooltip>
-      )}
+      {tip && <InfoTip tip={tip} className="[&>svg]:h-3 [&>svg]:w-3" />}
     </span>
   )
 }

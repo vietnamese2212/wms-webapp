@@ -8,12 +8,12 @@ import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/use-toast'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -729,20 +729,21 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
           <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
             <Label className="text-xs">Rule khi Bắt đầu chuyến xuất</Label>
-            <label htmlFor="wh-requiregate" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</span>
-              </span>
-            </label>
-            <label htmlFor="wh-requireweigh" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</span>
-              </span>
-            </label>
+            {/* Diễn giải trong ⓘ (user chốt 17/08) — ⓘ là ANH EM của <label>, bấm không lật ô tick */}
+            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <label htmlFor="wh-requiregate" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                <span className="text-xs font-medium truncate">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
+              </label>
+              <InfoTip tip={<>Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</>} />
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <label htmlFor="wh-requireweigh" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                <span className="text-xs font-medium truncate">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
+              </label>
+              <InfoTip tip={<>Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</>} />
+            </div>
           </div>
           {/* Nguyên tắc luân chuyển (14/08) — thứ tự lấy hàng của kho + có siết hay không.
               Mặc định FEFO + chỉ cảnh báo = hành vi cũ, không kho nào bị đổi khi lên bản này. */}
@@ -756,20 +757,23 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
               ]}
             />
-            <label htmlFor="wh-rotrequired" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Bắt buộc lấy đúng thứ tự</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</span>
-              </span>
-            </label>
+            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+              <label htmlFor="wh-rotrequired" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                <span className="text-xs font-medium truncate">Bắt buộc lấy đúng thứ tự</span>
+              </label>
+              <InfoTip tip={<>Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</>} />
+            </div>
           </div>
           {/* Quy tắc CẤT hàng (15/08) — nửa còn lại của luân chuyển: lấy hàng ở trên, cất hàng ở đây.
               Mặc định Gom + không ràng buộc = ĐÚNG hành vi trước 15/08, bật từng luật là lựa chọn
               của từng kho. Vị trí gắn cờ "cấm đưa hàng vào" (tab Cài đặt của trang Tối ưu vị trí)
               LUÔN bị loại, không cần bật gì. */}
           <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Quy tắc cất hàng (gợi ý chỗ đặt pallet)</Label>
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Quy tắc cất hàng (gợi ý chỗ đặt pallet)</Label>
+              <InfoTip tip={<>Quyết định thứ tự gợi ý vị trí ở 4 màn cất hàng: form Nhập kho · quét tem (PDA) · đổi vị trí trong phiếu nhập · Chuyển vị trí hàng loạt. Vị trí ★ đứng đầu, vị trí vướng luật xuống cuối.</>} />
+            </span>
             <SingleSelect
               value={putPriority} onChange={setPutPriority}
               options={[
@@ -779,41 +783,32 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               ]}
             />
             {putPriority === 'ABC' && (
-              <p className="mt-1 text-[10px] text-slate-400">
-                Cần xếp <b>Hạng nhặt</b> cho khu ở trang <b>Tối ưu vị trí → tab Cài đặt</b> (1 = gần cửa xuất nhất).
-                Kho chưa xếp hạng khu nào hợp loại hàng thì gợi ý <b>tạm chạy như Gom</b> — chọn ABC mà quên xếp hạng khu là
-                không có tác dụng gì. Hạng ABC của mã lấy từ lượt nhặt <b>30 ngày</b> gần nhất, cùng nguồn với trang Tối ưu vị trí.
+              <p className="mt-1 flex items-start gap-1 text-[10px] text-amber-600">
+                <span>Cần xếp <b>Hạng nhặt</b> cho khu ở <b>Tối ưu vị trí → Cài đặt</b>, chưa xếp thì chạy như Gom.</span>
+                <InfoTip side="top" tip={<>Hạng nhặt: 1 = gần cửa xuất nhất. Kho chưa xếp hạng khu nào hợp loại hàng thì gợi ý <b>tạm chạy như Gom</b> — chọn ABC mà quên xếp hạng khu là không có tác dụng gì. Hạng ABC của mã lấy từ lượt nhặt <b>30 ngày</b> gần nhất, cùng nguồn với trang Tối ưu vị trí.</>} />
               </p>
             )}
             {/* Mức xử lý theo TỪNG luật: nút bên phải mỗi luật đổi qua lại Cảnh báo ↔ Bắt buộc.
                 Chỉ hiện khi luật đó ĐANG BẬT — luật tắt thì không có gì để xử. */}
-            <div className="flex items-start gap-2 rounded-md px-1 py-1.5">
-              <span className="text-xs flex-1 min-w-0">
-                <span className="font-medium">Vị trí đánh dấu “Không đưa hàng vào”</span>
-                <span className="block text-[10px] text-slate-400 font-normal">
-                  Khai ở trang <b>Vị trí kho</b>: tick chọn vị trí → nút <b>“Không đưa hàng vào”</b>, hoặc form Sửa vị trí (kho tạm, ngoài đường…).
-                  LUÔN bị loại khỏi gợi ý và khỏi kế hoạch Slotting — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.
-                </span>
-              </span>
+            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5">
+              <span className="text-xs font-medium flex-1 min-w-0 truncate">Vị trí đánh dấu “Không đưa hàng vào”</span>
+              <InfoTip tip={<>Khai ở trang <b>Vị trí kho</b>: tick chọn vị trí → nút <b>“Không đưa hàng vào”</b>, hoặc form Sửa vị trí (kho tạm, ngoài đường…). Vị trí đó LUÔN bị loại khỏi gợi ý và khỏi kế hoạch Slotting — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.</>} />
               <EnforceToggle id="wh-enf-noin" on={putEnforced.includes('NO_IN')} onToggle={() => toggleEnforced('NO_IN')} />
             </div>
             <div>
-              <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
+              <span className="flex items-center gap-1">
+                <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
+                <InfoTip tip={<>Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>. Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.</>} />
+              </span>
               <SingleSelect
                 value={putDateMix} onChange={setPutDateMix}
                 options={putawayDateMixOpts(rotPrinciple === 'FEFO' ? 'HSD' : 'NSX')}
               />
               {putDateMix !== 'ANY' && (
-                <>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-500">Mức xử lý khi vi phạm luật trộn date</span>
-                    <EnforceToggle id="wh-enf-datemix" on={putEnforced.includes('DATE_MIX')} onToggle={() => toggleEnforced('DATE_MIX')} />
-                  </div>
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>.
-                    Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.
-                  </p>
-                </>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-slate-500">Mức xử lý khi vi phạm luật trộn date</span>
+                  <EnforceToggle id="wh-enf-datemix" on={putEnforced.includes('DATE_MIX')} onToggle={() => toggleEnforced('DATE_MIX')} />
+                </div>
               )}
             </div>
             <div>
@@ -833,40 +828,40 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               ['wh-put-qahold',    'QA_HOLD',       putNoQaHold,   setPutNoQaHold,   'Không cất vào ô đang có pallet bị QA giữ', 'Tránh chôn pallet đang giữ phía sau — lúc QA xả hàng phải dọn pallet đè lên mới lấy ra được.'],
               ['wh-put-ncc',       'NCC_MIX',       putSingleNcc,  setPutSingleNcc,  'Không trộn NCC khác nhau trong một vị trí', 'Cùng mã khác NCC có thể khác hạn dùng. Pallet hoặc hàng trong ô chưa khai NCC thì không chặn.'],
             ] as const).map(([id, code, val, set, title, desc]) => (
-              // 2 <label> ANH EM (không lồng nhau): mỗi ô tick trỏ đúng input của nó
-              <div key={id} className="flex items-start gap-2 rounded-md px-1 py-1.5 hover:bg-slate-50">
-                <label htmlFor={id} className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer">
-                  <input id={id} type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-                  <span className="text-xs min-w-0">
-                    <span className="font-medium">{title}</span>
-                    <span className="block text-[10px] text-slate-400 font-normal">{desc}</span>
-                  </span>
+              // <label> và ⓘ/ô Bắt buộc là ANH EM (không lồng nhau): bấm ⓘ không lật ô tick
+              <div key={id} className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+                <label htmlFor={id} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                  <input id={id} type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                  <span className="text-xs font-medium truncate">{title}</span>
                 </label>
+                <InfoTip tip={desc} />
                 {val && <EnforceToggle id={`${id}-enf`} on={putEnforced.includes(code)} onToggle={() => toggleEnforced(code)} />}
               </div>
             ))}
-            <div className="border-t border-slate-100 pt-2 text-[10px] text-slate-400 space-y-1">
-              <p>
-                Không tick <b>Bắt buộc</b> = chỉ <b className="text-slate-500">cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting,
-                nhưng cất vẫn được và có ghi vết. Tick = <b className="text-red-600">CHẶN</b> — chỉ người có quyền
-                <b> Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
-              </p>
-              <p>
-                Luật tick Bắt buộc sẽ chặn ở <b>mọi thao tác đặt pallet vào vị trí</b>: tạo phiếu nhập ·
-                đổi vị trí trong phiếu nhập · quét tem vào vị trí · <b>Chuyển vị trí hàng loạt</b> (trang Tồn kho).
-                Riêng chỗ đặt <b>phần dư khi quét xuất</b> cố ý KHÔNG chặn — người quét buộc phải khai được chỗ để lại.
-              </p>
-              {putEnforced.length === 0 && <p>Hiện <b>không luật nào chặn</b> — tất cả chỉ cảnh báo.</p>}
+            <div className="border-t border-slate-100 pt-2 flex items-center gap-1 text-[10px] text-slate-400">
+              <span className="flex-1 min-w-0">
+                {putEnforced.length === 0
+                  ? <>Hiện <b>không luật nào chặn</b> — tất cả chỉ cảnh báo.</>
+                  : <><b className="text-red-600">{putEnforced.length} luật</b> đang chặn thật khi cất hàng.</>}
+              </span>
+              <InfoTip side="top" tip={<>
+                Không tick <b>Bắt buộc</b> = chỉ <b>cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting, nhưng cất vẫn được và có ghi vết.
+                Tick = <b>CHẶN</b> — chỉ người có quyền <b>Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
+                <br /><br />
+                Luật tick Bắt buộc chặn ở <b>mọi thao tác đặt pallet vào vị trí</b>: tạo phiếu nhập · đổi vị trí trong phiếu nhập ·
+                quét tem vào vị trí · <b>Chuyển vị trí hàng loạt</b> (trang Tồn kho). Riêng chỗ đặt <b>phần dư khi quét xuất</b> cố ý
+                KHÔNG chặn — người quét buộc phải khai được chỗ để lại.
+              </>} />
             </div>
           </div>
           <div className="space-y-1.5">
-            <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-              <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-xs font-medium text-slate-700">Quét tới THÙNG khi xuất</span>
-                <span className="block text-[11px] text-slate-400 leading-snug">Mặc định TẮT. Bật thì chọn các Loại kho phải quét tem thùng TẠI KHO NÀY (đính kèm truy vết, không tính tồn theo thùng). Mỗi kho chọn độc lập.</span>
-              </span>
-            </label>
+            <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+              <label htmlFor="wh-cartonscan" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                <span className="text-xs font-medium text-slate-700 truncate">Quét tới THÙNG khi xuất</span>
+              </label>
+              <InfoTip tip={<>Mặc định TẮT. Bật thì chọn các Loại kho phải quét tem thùng <b>TẠI KHO NÀY</b> (đính kèm truy vết, <b>không</b> tính tồn theo thùng). Mỗi kho chọn độc lập.</>} />
+            </div>
             {cartonScan && (
               <div className="pl-6 space-y-1">
                 <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>

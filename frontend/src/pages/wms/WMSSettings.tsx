@@ -1087,14 +1087,15 @@ function TypeDialog({ type, open, onClose }: {
     }
   }
 
+  // Diễn giải trong ⓘ (17/08) — ⓘ đứng NGOÀI <label> để bấm nó không lật ô tick
   const flagRow = (id: string, checked: boolean, onChange: (v: boolean) => void, label: string, hint: string) => (
-    <label htmlFor={id} className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-      <input id={id} type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-      <span className="min-w-0">
-        <span className="block text-xs font-medium text-slate-700">{label}</span>
-        <span className="block text-[11px] text-slate-400 leading-snug">{hint}</span>
-      </span>
-    </label>
+    <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+      <label htmlFor={id} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+        <input id={id} type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+        <span className="text-xs font-medium text-slate-700 truncate">{label}</span>
+      </label>
+      <InfoTip tip={hint} />
+    </div>
   )
 
   return (

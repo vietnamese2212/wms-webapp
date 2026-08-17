@@ -10,7 +10,7 @@
 //
 // `preventDefault` ở onClick còn là lưới an toàn: lỡ đặt ⓘ trong <label> thì bấm vào nó cũng
 // KHÔNG lật ô tick của label (bẫy label lồng nhau đã gặp 16/08).
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -20,14 +20,21 @@ export function InfoTip({ tip, side = 'bottom', className }: {
   className?: string
 }) {
   const [open, setOpen] = useState(false)
+  // ⚠️ KHÔNG lật theo `open` trong onClick. Đo thật trên Preview 17/08: chạm lần 2 KHÔNG đóng
+  // được, vì một lượt chạm chạy 2 nhịp — DismissableLayer của TooltipContent nghe pointerdown
+  // ở document, thấy bấm NGOÀI nội dung (nút ⓘ nằm ngoài) nên đã đặt open=false; tới onClick thì
+  // `open` đã là false ⇒ lật lại thành true ⇒ mở mãi. Nhớ trạng thái TẠI LÚC pointerdown rồi
+  // quyết định theo nó thì đúng cả 2 chiều. (preventDefault ở pointerdown chỉ chặn được handler
+  // của CHÍNH nút, không chặn được listener document của DismissableLayer.)
+  const openAtPointerDown = useRef(false)
   return (
     <Tooltip open={open} onOpenChange={setOpen}>
       <TooltipTrigger asChild>
         <button
           type="button"
           aria-label="Giải thích"
-          onPointerDown={e => e.preventDefault()}
-          onClick={e => { e.preventDefault(); e.stopPropagation(); setOpen(o => !o) }}
+          onPointerDown={e => { e.preventDefault(); openAtPointerDown.current = open }}
+          onClick={e => { e.preventDefault(); e.stopPropagation(); setOpen(!openAtPointerDown.current) }}
           className={`shrink-0 cursor-help text-slate-400 hover:text-sky-600 ${className ?? ''}`}
         >
           <Info className="h-3.5 w-3.5" />

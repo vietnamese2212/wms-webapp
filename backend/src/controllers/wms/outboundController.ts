@@ -4469,6 +4469,19 @@ export async function getInventoryByMaterial(req: Request, res: Response) {
 // lọc kho bằng INNER JOIN Location (không nhồi nghìn location_id vào .in()).
 // Trả map material_id → danh sách vị trí ĐÃ SORT (hòa %Date → ít hàng nhất trước → tên) — caller tự slice.
 type FefoSuggestion = { location_code: string | null; pct_date: number | null; available: number; rot_date: string | null }
+// Hạng nhặt của từng khu, khoá `${warehouse_id}|${sub_code}` — 1 câu cho cả danh sách kho.
+// Cùng nguồn với trang Tối ưu vị trí và với chiến thuật cất hàng ABC (WarehouseZone.pick_rank),
+// nên "gần cửa" ở hai luồng nhập/xuất là CÙNG một định nghĩa, không phải hai bản chép tay.
+async function pickRankByZone(warehouseIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (!warehouseIds.length) return map
+  const rows = await fetchAllByIdChunks(warehouseIds, chunk => supabase.from('WarehouseZone')
+    .select('warehouse_id, code, pick_rank').in('warehouse_id', chunk).eq('is_active', true)) as unknown as
+    { warehouse_id: string; code: string; pick_rank: number | null }[]
+  for (const z of rows) if (z.pick_rank != null) map.set(`${z.warehouse_id}|${z.code}`, Number(z.pick_rank))
+  return map
+}
+
 async function rotationSuggestionsByMaterial(
   matIds: string[], warehouseIds: string[], principleByWh: Map<string, RotationPrinciple>,
 ): Promise<Map<string, FefoSuggestion[]>> {
@@ -4479,7 +4492,7 @@ async function rotationSuggestionsByMaterial(
     Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry')
-          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
@@ -4495,11 +4508,17 @@ async function rotationSuggestionsByMaterial(
   )
   const entries = entryChunks.flat() as Array<RotationEntry & {
     material_id: string
-    location: { location_code: string | null; warehouse_id: string | null } | null
+    location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null } | null
     material: MaterialShelfInfo | null
   }>
+  // HẠNG NHẶT của khu = khu đó gần cửa xuất tới đâu (1 = gần nhất). Kho đã xếp hạng ở trang Tối ưu
+  // vị trí và luồng CẤT hàng đã dùng (chiến thuật ABC), nhưng luồng LẤY hàng thì chưa đọc dòng nào:
+  // hoà ngày là xếp theo TÊN vị trí (alphabet) — người nhặt bị đẩy sang khu xa trong khi khu gần
+  // cũng có đúng ngày đó. Chỉ dùng làm TIE-BREAK: nguyên tắc luân chuyển (FEFO/FIFO/LIFO) vẫn
+  // đứng trước, không bao giờ vì gần cửa mà lấy sai thứ tự.
+  const rankByZone = await pickRankByZone([...new Set(entries.map(e => e.location?.warehouse_id).filter((x): x is string => !!x))])
   const nowMs = Date.now()
-  type Agg = FefoSuggestion & { rot_key: number | null }
+  type Agg = FefoSuggestion & { rot_key: number | null; pick_rank: number }
   const byMat = new Map<string, Map<string, Agg>>()
   for (const e of (entries ?? [])) {
     if (!isPickEligible(e)) continue
@@ -4509,22 +4528,26 @@ async function rotationSuggestionsByMaterial(
     const rot_key  = rotationSortKey(e, e.material, principle)
     const rot_date = rotationDateOf(e, e.material, principle)
     const loc = e.location?.location_code ?? '(chưa xác định)'
+    // Khu chưa xếp hạng → đẩy xuống cuối nhóm cùng ngày (không có thông tin thì không ưu ái)
+    const pick_rank = rankByZone.get(`${e.location?.warehouse_id ?? ''}|${e.location?.sub_code ?? ''}`) ?? Number.MAX_SAFE_INTEGER
     const k = `${rot_key ?? 'n'}|${loc}`
     const locMap = byMat.get(e.material_id) ?? new Map<string, Agg>()
-    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key }
+    const cur = locMap.get(k) ?? { location_code: loc, pct_date, available: 0, rot_date, rot_key, pick_rank }
     cur.available += Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
     locMap.set(k, cur)
     byMat.set(e.material_id, locMap)
   }
   for (const [matId, locMap] of byMat) {
-    // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa → ưu tiên vị trí ÍT
-    // hàng nhất (dọn hàng lẻ trước) → tên vị trí.
+    // Thứ tự = ĐÚNG nguyên tắc luân chuyển của kho (không còn cứng %Date). Hòa ngày → KHU GẦN CỬA
+    // XUẤT trước (hạng nhặt, 17/08) → vị trí ÍT hàng nhất (dọn hàng lẻ trước) → tên vị trí.
+    // Hạng nhặt đứng SAU rot_key: đi ít bước là để nhanh, không bao giờ đổi được thứ tự lấy hàng.
     out.set(matId, [...locMap.values()].sort((a, b) => {
       const ka = a.rot_key ?? Infinity, kb = b.rot_key ?? Infinity
       if (ka !== kb) return ka - kb
+      if (a.pick_rank !== b.pick_rank) return a.pick_rank - b.pick_rank
       if (a.available !== b.available) return a.available - b.available
       return (a.location_code ?? '').localeCompare(b.location_code ?? '')
-    }).map(({ rot_key: _k, ...rest }) => rest))
+    }).map(({ rot_key: _k, pick_rank: _r, ...rest }) => rest))
   }
   return out
 }

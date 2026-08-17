@@ -449,6 +449,28 @@ try {
     await setRules({ putaway_date_mix: 'ANY', putaway_enforced: [], putaway_block_pick_face: false })
   }
 
+  // ── 10. "Ô ĐANG CHỨA GÌ" + Slotting KHÔNG giằng hàng với Fill (17/08) ────────────────
+  {
+    // [35][36] endpoint contents: số pallet phải khớp ĐÚNG định nghĩa used_slots của picker,
+    // không thì hai chỗ trên cùng màn nói hai số.
+    const cts = (await api(`/masterdata/locations/${locOk.id}/contents`)).j?.data
+    const pickRow = (await pick()).find(r => r.id === locOk.id)
+    check('[35] "ô đang chứa gì" trả đúng vị trí + có danh sách mã',
+      !!cts && cts.location_code === locOk.location_code && Array.isArray(cts.materials),
+      `${cts?.location_code} · ${cts?.materials?.length ?? '?'} mã`)
+    check('[36] số pallet của "đang chứa" KHỚP used_slots của picker (một định nghĩa)',
+      Number(cts?.pallets ?? -1) === Number(pickRow?.used_slots ?? -2),
+      `contents=${cts?.pallets} picker=${pickRow?.used_slots}`)
+
+    // [37] Slotting: ô vừa NHẶT LẺ vừa CẤM NHẬP thì hàng trong đó KHÔNG bị xếp vào diện kéo đi
+    // (nếu không, Fill hạ hàng xuống rồi Slotting lại đòi bốc lên — giằng nhau vô tận).
+    const stats = await restRpc('slotting_stats', { p_warehouse_id: whId, p_categories: null, p_days: 30 })
+    const locs = stats?.locations ?? []
+    check('[37] slotting_stats trả cờ is_pick_face cho từng vị trí (P1 cần để chừa ô nhặt lẻ)',
+      locs.length === 0 || locs.every(l => Object.prototype.hasOwnProperty.call(l, 'is_pick_face')),
+      `${locs.length} vị trí`)
+  }
+
 } catch (e) {
   check('gói chạy trọn', false, e?.message ?? String(e))
 } finally {

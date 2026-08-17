@@ -41,6 +41,7 @@ import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { PutawayOption } from '@/components/wms/PutawayOption'
+import { LocationContents } from '@/components/wms/LocationContents'
 import type { PutawayHint } from '@/utils/putaway'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
@@ -820,6 +821,9 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                     node: <PutawayOption loc={l} />,
                   }))}
                 />
+                {/* Chọn xong thì thấy NGAY ô đó đang chứa gì (user 17/08) — mã đang nhập được
+                    tô xanh + ghim đầu, tức nhìn ra lý do ★ thay vì phải tin dấu sao. */}
+                <LocationContents locationId={locationId} highlightMaterialId={materialId} />
                 </>)}
               </div>
 

@@ -349,6 +349,83 @@ export async function listLocations(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// GET /masterdata/locations/:id/contents — "Ô này đang chứa GÌ" (user yêu cầu 17/08).
+// Người cất hàng nhìn ★/used-slots vẫn phải đoán: cùng mã hay khác mã? date nào? có pallet QA giữ
+// không? Trả bản GỌN gom theo MÃ (không trả từng pallet — ô nặng nhất staging 69 mã / hàng trăm
+// pallet) và CHỈ cho MỘT vị trí (1 request khi người dùng chọn, không phải mỗi lần gõ phím).
+export async function getLocationContents(req: Request, res: Response) {
+  try {
+    const id = req.params.id
+    if (!(await guardLocScope(req, res, id))) return
+    const { data: locRaw } = await supabase.from('Location')
+      .select('id, location_code, max_pallets, categories, is_pick_face, slot_no_in')
+      .eq('id', id).maybeSingle()
+    const loc = locRaw as { id: string; location_code: string; max_pallets: number | null
+                            categories: string[] | null; is_pick_face: boolean | null; slot_no_in: boolean | null } | null
+    if (!loc) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+
+    // Cùng ĐỊNH NGHĨA "đang chiếm chỗ" với putaway_slot_facts / used_slots (lớp 1, còn tồn) —
+    // lệch định nghĩa là hai màn nói hai số rồi người dùng mất tin.
+    type Ent = {
+      material_id: string; pallet_code: string | null; status: string
+      cartons_remaining: number; production_date: string | null; expiry_date: string | null
+    }
+    const ents = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+      .select('material_id, pallet_code, status, cartons_remaining, production_date, expiry_date')
+      .eq('location_id', id).eq('stack_layer', 1)
+      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
+      .gt('cartons_remaining', 0).order('material_id')) as unknown as Ent[]
+
+    const live = ents.filter(e => e.status !== 'QUARANTINE')
+    type Grp = { material_id: string; pallets: number; qty_base: number
+                 date_min: string | null; date_max: string | null; date_kind: 'HSD' | 'NSX' | null; qa_hold: number }
+    const byMat = new Map<string, Grp>()
+    for (const e of ents) {
+      const g: Grp = byMat.get(e.material_id)
+        ?? { material_id: e.material_id, pallets: 0, qty_base: 0, date_min: null, date_max: null, date_kind: null, qa_hold: 0 }
+      g.pallets += 1
+      g.qty_base += Number(e.cartons_remaining ?? 0)
+      if (e.status === 'QUARANTINE') g.qa_hold += 1
+      // Ngày để người cất so "hàng trong ô cũ hay mới hơn pallet mình cầm" — ưu tiên HSD tường minh
+      // (tem V2), không có thì NSX. Trả kèm date_kind để FE in ĐÚNG CHỮ, khỏi đoán theo nguyên tắc
+      // luân chuyển của kho (đoán sai là dán nhãn HSD lên một cái ngày sản xuất). Chỉ để HIỂN THỊ —
+      // luật trộn date vẫn nằm ở BE lúc quét.
+      const kind: 'HSD' | 'NSX' | null = e.expiry_date ? 'HSD' : e.production_date ? 'NSX' : null
+      const d = e.expiry_date ?? e.production_date
+      if (d) {
+        if (!g.date_min || d < g.date_min) g.date_min = d
+        if (!g.date_max || d > g.date_max) g.date_max = d
+        // Ô trộn cả 2 kiểu (hàng cũ chưa có HSD tường minh) → ghi 'HSD' vì đó là mốc rõ nghĩa hơn
+        g.date_kind = g.date_kind === null ? kind : (g.date_kind === kind ? kind : 'HSD')
+      }
+      byMat.set(e.material_id, g)
+    }
+    type MatLite = { id: string; material_code: string; short_name: string | null
+                     base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
+    const mats = await fetchAllByIdChunks([...byMat.keys()], chunk => supabase.from('Material')
+      .select('id, material_code, short_name, base_unit, entry_unit, units_per_carton').in('id', chunk)) as unknown as MatLite[]
+    const matById = new Map(mats.map(m => [m.id, m]))
+    const rows = [...byMat.values()]
+      .map(g => ({
+        ...g,
+        material_code: matById.get(g.material_id)?.material_code ?? null,
+        short_name:    matById.get(g.material_id)?.short_name ?? null,
+        base_unit:     matById.get(g.material_id)?.base_unit ?? null,
+        units_per_carton: matById.get(g.material_id)?.units_per_carton ?? null,
+        entry_unit:    matById.get(g.material_id)?.entry_unit ?? null,
+      }))
+      .sort((a, b) => b.pallets - a.pallets)
+
+    return ok(res, {
+      location_code: loc.location_code,
+      max_pallets: loc.max_pallets ?? 0,
+      pallets: live.length,                       // = used_slots (không tính pallet QA giữ)
+      qa_hold: ents.length - live.length,
+      materials: rows,
+    })
+  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function listSubGroups(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query

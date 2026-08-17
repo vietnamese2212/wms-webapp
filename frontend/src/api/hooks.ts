@@ -113,6 +113,34 @@ export function useLocationsByIds(ids: (string | null | undefined)[], enabled = 
   })
 }
 
+/**
+ * "Ô này đang CHỨA GÌ" — gom theo MÃ cho MỘT vị trí (user yêu cầu 17/08).
+ * Chỉ gọi khi người dùng đã CHỌN một vị trí ⇒ 1 request, không phải mỗi lần gõ phím tìm.
+ */
+export interface LocationContentRow {
+  material_id: string; material_code: string | null; short_name: string | null
+  pallets: number; qty_base: number; qa_hold: number
+  date_min: string | null; date_max: string | null
+  /** BE nói rõ ngày trên là HSD hay NSX — FE KHÔNG đoán theo nguyên tắc luân chuyển của kho */
+  date_kind: 'HSD' | 'NSX' | null
+  base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+}
+export interface LocationContents {
+  location_code: string; max_pallets: number; pallets: number; qa_hold: number
+  materials: LocationContentRow[]
+}
+export function useLocationContents(locationId?: string | null) {
+  return useQuery({
+    queryKey: ['location-contents', locationId],
+    enabled: !!locationId,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/masterdata/locations/${locationId}/contents`)
+      return data.data as LocationContents
+    },
+  })
+}
+
 /** Bản ĐỦ CỘT (kèm Kho + audit) — trang Vị trí kho. */
 export function useLocationsFull(params?: LocationListParams, enabled = true) {
   return useQuery({

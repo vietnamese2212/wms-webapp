@@ -829,6 +829,15 @@ export default function Locations() {
                     <InfoTip tip={f.tip} />
                   </div>
                 ))}
+                {/* 2 cờ này KHÔNG nên đi cùng nhau — nói ra tại chỗ thay vì để người dùng phát
+                    hiện qua việc kế hoạch Slotting cứ đòi dọn hàng của lệnh Fill (đo 17/08). */}
+                {editIsPickFace && editSlotNoIn && (
+                  <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-snug text-amber-700">
+                    <b>Hai cờ này đá nhau.</b> Vị trí nhặt lẻ là nơi lệnh <b>Fill hàng</b> hạ hàng xuống, còn
+                    “Không đưa hàng vào” nghĩa là kho tạm. Nếu ý là <b>cấm cất pallet nguyên</b> vào đây thì
+                    đã có luật riêng: Cài đặt WMS → form Kho → <b>“Không cất pallet nguyên vào vị trí nhặt lẻ”</b>.
+                  </p>
+                )}
               </div>
             )}
 

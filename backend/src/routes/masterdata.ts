@@ -32,6 +32,7 @@ router.get('/locations/summary',     location.listLocationsSummary)   // 4 ô Su
 router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
 router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), location.uploadExcel)  // phải trước /:id
 router.patch('/locations/bulk-flag', requirePerm('locations', 'edit'), location.bulkFlagLocations)  // gắn/bỏ cờ cần-kiểm hàng loạt (phải trước /:id)
+router.get('/locations/:id/contents', location.getLocationContents)   // "ô này đang chứa gì" (phải trước /:id)
 router.get('/locations/:id',         location.getLocation)
 router.put('/locations/:id',         requirePerm('locations', 'edit'), location.updateLocation)
 router.delete('/locations/:id',      requirePerm('locations', 'delete'), location.deleteLocation)

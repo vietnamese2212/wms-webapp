@@ -19,6 +19,7 @@ import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { PutawayOption } from '@/components/wms/PutawayOption'
+import { LocationContents } from '@/components/wms/LocationContents'
 import { PUTAWAY_OVERRIDE_REASONS, type PutawayHint } from '@/utils/putaway'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -452,6 +453,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                     </button>
                   ))}
               </div>
+              {/* Ô đang chọn CHỨA GÌ (user 17/08) — người đứng cất nhìn ra ngay là cùng mã hay
+                  khác mã, date nào, có pallet QA giữ không; khỏi phải tin mỗi dấu ★ */}
+              <LocationContents locationId={activeLocationId} highlightMaterialId={order.material_id} />
               {activeLocationId && (
                 <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>
                   Huỷ

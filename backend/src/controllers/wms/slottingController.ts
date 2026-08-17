@@ -58,7 +58,8 @@ interface StatsMaterial { material_id: string; code: string; name: string | null
 interface StatsPlacement { material_id: string; sub_code: string | null; pallets: number; cartons: number }
 // slot_no_in = vị trí KHÔNG đưa hàng vào (kho tạm — không làm đích, hàng ở đó luôn kéo đi)
 // slot_no_out = vị trí KHÔNG lấy hàng đi (hàng kẹt — loại khỏi nguồn). Optional: RPC cũ chưa có cột → undefined = false.
-interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number; slot_no_in?: boolean; slot_no_out?: boolean }
+// is_pick_face = vị trí NHẶT LẺ (hàng do lệnh Fill hạ xuống) — P1 phải chừa ra, xem ghi chú ở P1.
+interface StatsLocation { id: string; location_code: string; sub_code: string | null; max_pallets: number; used_slots: number; slot_no_in?: boolean; slot_no_out?: boolean; is_pick_face?: boolean }
 interface Stats { total_picks: number; materials: StatsMaterial[]; placement: StatsPlacement[]; zones: StatsZone[]; locations: StatsLocation[] }
 
 async function fetchStats(warehouseId: string, categories: string[] | null, days: number): Promise<{ stats?: Stats; notReady?: boolean; error?: string }> {
@@ -476,11 +477,18 @@ export async function previewPlan(req: Request, res: Response) {
       }
 
       // ── P1: VỊ TRÍ KHÔNG ĐƯA HÀNG VÀO (kho tạm) — hàng nằm đó LUÔN bị kéo đi
+      // NGOẠI TRỪ vị trí NHẶT LẺ: hàng ở đó do lệnh Fill CHỦ ĐỘNG hạ xuống để công nhân với tay
+      // lấy, không phải hàng "để tạm cần dọn". Không trừ ra thì hai tính năng giằng nhau — Fill
+      // đẩy hàng xuống, Slotting lên kế hoạch bốc chính số hàng đó đi, dọn xong Fill lại báo
+      // thiếu (đo staging 17/08 kho Ba Vì: 3 ô nhặt lẻ bị gắn cấm-nhập = 207 pallet vào diện dọn
+      // mỗi lượt lập kế hoạch). Người dùng gắn cờ lên ô nhặt lẻ là để cấm cất PALLET NGUYÊN vào
+      // đó — ý đó đã có luật riêng "Không cất pallet nguyên vào vị trí nhặt lẻ" phục vụ.
       {
         const tempByMat = new Map<string, EntryRow[]>()
         for (const e of entries) {
           if (movedEntry.has(e.id)) continue
-          if (!locById.get(locOf.get(e.id)!)?.slot_no_in) continue
+          const srcLoc = locById.get(locOf.get(e.id)!)
+          if (!srcLoc?.slot_no_in || srcLoc.is_pick_face) continue
           const arr = tempByMat.get(e.material_id) ?? []
           arr.push(e)
           tempByMat.set(e.material_id, arr)

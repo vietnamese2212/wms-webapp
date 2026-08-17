@@ -9,7 +9,7 @@ import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchT
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
-import { loadPutawayContext, loadSlotFactsRaw } from '../../services/putawayContext'
+import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
 import { putawayBlock, putawayReason, putawayScore, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
@@ -264,17 +264,32 @@ export async function listLocations(req: Request, res: Response) {
       // ⇒ mất gợi ý gom pallet. Nên khi có material_id: lấy nhóm ★ TRƯỚC (theo tập vị trí đang
       // chứa mã đó) rồi bù danh sách thường cho đủ. 2 truy vấn nhỏ, vẫn rẻ hơn nhiều so với kéo
       // cả kho (Bàu Bàng 1.517 vị trí = 616KB + hàng chục round-trip tính used_slots).
-      const recIds = material_id ? await sameMaterialLocIds(String(material_id), warehouse_id ? String(warehouse_id) : null) : []
+      // Cùng lý do đó, KHU ĐÍCH của chiến thuật ABC cũng phải được nạp TRƯỚC khi cắt: khu đích
+      // nằm cuối bảng chữ cái thì bị `limit` cắt gần hết, tức chiến thuật ABC gợi ý vào khu mà
+      // picker không hề hiện (đo 17/08 Ba Vì band C = TP3: limit=200 lọt 6/41 vị trí TP3).
+      const whForZones = effective?.length === 1 ? effective[0] : (warehouse_id ? String(warehouse_id) : null)
+      const [recIds, bandZones] = await Promise.all([
+        material_id ? sameMaterialLocIds(String(material_id), warehouse_id ? String(warehouse_id) : null) : Promise.resolve([]),
+        material_id ? putawayTargetZones(whForZones, String(material_id)) : Promise.resolve([]),
+      ])
       const rec: Record<string, unknown>[] = []
       if (recIds.length) {
         const { data: r, error } = await buildQ().in('id', recIds.slice(0, 300)).limit(cap)
         if (error) throw error
         rec.push(...((r ?? []) as unknown as Record<string, unknown>[]))
       }
+      if (bandZones.length) {
+        const { data: z, error } = await buildQ().in('sub_code', bandZones.slice(0, 100)).limit(cap)
+        if (error) throw error
+        rec.push(...((z ?? []) as unknown as Record<string, unknown>[]))
+      }
       const { data: page, error } = await buildQ().limit(cap)
       if (error) throw error
-      const seen = new Set(rec.map(l => l.id as string))
-      data = [...rec, ...((page ?? []) as unknown as Record<string, unknown>[]).filter(l => !seen.has(l.id as string))]
+      // rec gộp 2 nguồn (★ cùng mã + khu đích ABC) nên tự nó có thể TRÙNG — khử trước, không thì
+      // một vị trí hiện 2 dòng trong ô chọn.
+      const seen = new Set<string>()
+      const recUniq = rec.filter(l => !seen.has(l.id as string) && seen.add(l.id as string))
+      data = [...recUniq, ...((page ?? []) as unknown as Record<string, unknown>[]).filter(l => !seen.has(l.id as string))]
     } else {
       data = await fetchAllRowsParallel(buildQ) as unknown as Record<string, unknown>[]
     }

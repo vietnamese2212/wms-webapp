@@ -251,6 +251,25 @@ export function invalidatePutawayZones(warehouseId: string): void {
   _zoneCache.delete(warehouseId)
 }
 
+/**
+ * KHU ĐÍCH theo chiến thuật ABC của kho cho một mã — trả [] nếu kho không chạy ABC hoặc mã chưa
+ * có hạng. Tách riêng để ô chọn vị trí biết khu đích **TRƯỚC KHI CẮT DANH SÁCH**.
+ *
+ * Vì sao cần: picker lấy `limit` dòng ĐẦU theo mã vị trí rồi mới chấm điểm ⇒ khu đích nằm cuối
+ * bảng chữ cái bị cắt gần hết, đúng cái khu mà ABC muốn người ta cất vào. Đo thật 17/08 (Ba Vì,
+ * 236 vị trí, band C = TP3): limit=200 chỉ lọt 6/41 vị trí TP3 (5 dòng ★), limit=300 mới đủ 41
+ * (38 dòng ★). Kho 1.517 vị trí thì mọi limit hợp lý đều cắt mất khu đích.
+ * Dùng lại 2 cache sẵn có (bản đồ ABC 5 phút + khu 5 phút) nên KHÔNG thêm round-trip.
+ */
+export async function putawayTargetZones(warehouseId: string | null, materialId: string | null): Promise<string[]> {
+  if (!warehouseId || !materialId) return []
+  const rules = putawayRulesOf(await whConfig(warehouseId))
+  if (rules.priority !== 'ABC') return []
+  const [map, zones] = await Promise.all([abcMapOf(warehouseId), zonesOf(warehouseId)])
+  const row = map.get(materialId)
+  return row ? targetZoneCodes(zones, { category: row.category }, row.abc) : []
+}
+
 export async function loadPutawayContext(opts: {
   warehouseId: string | null
   locIds:      string[]

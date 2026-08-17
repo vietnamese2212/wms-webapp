@@ -171,7 +171,7 @@ try {
     r.s === 200 && /không nhận hàng vào/i.test(r.j?.data?.putaway_warning ?? ''),
     `HTTP ${r.s}`)
 
-  await setRules({ putaway_enforced: ['NO_IN'] })
+  await setRules({ putaway_enforced: ['NO_IN'] }); await waitConfigSettled()
   r = await mkOrder(locNoIn.id)
   check('[9] kho BẮT BUỘC → gọi THẲNG API vẫn bị chặn (lọc ở dropdown chỉ là gợi ý)',
     r.s === 422 && r.j?.error?.code === 'PUTAWAY_VIOLATION', `HTTP ${r.s} ${r.j?.error?.code}`)
@@ -252,7 +252,7 @@ try {
     await setRules({ putaway_date_mix: 'ANY', putaway_enforced: [] })
     await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(30, 970), location_id: locD.id, qty_semantics: 'base' })
 
-    await setRules({ putaway_date_mix: 'OLDER_ONLY', putaway_enforced: ['DATE_MIX'] })
+    await setRules({ putaway_date_mix: 'OLDER_ONLY', putaway_enforced: ['DATE_MIX'] }); await waitConfigSettled()
     const rNew = await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(5, 971), location_id: locD.id, qty_semantics: 'base' })
     const rOld = await api(`/wms/inbound-orders/${oD}/scan`, 'POST', { qr_code: qrDate(60, 972), location_id: locD.id, qty_semantics: 'base' })
     check('[19] trộn date OLDER_ONLY: pallet MỚI hơn cho qua, pallet CŨ hơn bị chặn (không chôn hàng phải lấy trước)',
@@ -319,7 +319,7 @@ try {
     const withTarget = (abcRows ?? []).map(r => ({ r, want: target(r) })).find(x => x.want.length > 0)
     if (withTarget && zoneRows.length > 0) {
       const { r: mrow, want } = withTarget
-      await setRules({ putaway_priority: 'ABC' })
+        await setRules({ putaway_priority: 'ABC' }); await waitConfigSettled()
       const url = `/masterdata/locations?warehouse_id=${whId}&material_id=${mrow.material_id}&view=lite&limit=200`
       const rowsAbc = (await api(url)).j?.data ?? []
       const marked = rowsAbc.filter(x => x.putaway?.reason === 'BAND_MATCH')
@@ -329,13 +329,21 @@ try {
       const top = rowsAbc.find(x => !x.putaway?.blocked)
       check('[23] vị trí ĐẦU danh sách nằm trong khu đúng band',
         !!top && want.includes(top.sub_code), `đầu = ${top?.location_code} (khu ${top?.sub_code})`)
+      // Khu đích phải lọt vào danh sách NGAY CẢ KHI kho nhiều vị trí hơn `limit`: picker cắt theo
+      // mã vị trí TRƯỚC khi chấm điểm, nên khu đích nằm cuối bảng chữ cái từng bị cắt gần hết —
+      // ABC gợi ý vào đúng khu mà ô chọn không hiện (đo 17/08: Ba Vì limit=200 lọt 6/41 vị trí TP3).
+      const nLoc = (await restAll('Location', `select=id&warehouse_id=eq.${whId}&is_active=is.true`)).length
+      const tight = (await api(`${url.replace(/limit=\d+/, 'limit=' + Math.max(10, Math.floor(nLoc / 2)))}`)).j?.data ?? []
+      const inBand = tight.filter(x => want.includes(x.sub_code))
+      check('[25b] cắt danh sách KHÔNG làm mất khu đích ABC (nạp khu đích trước khi cắt)',
+        inBand.length > 0, `kho ${nLoc} vị trí · xin ${Math.max(10, Math.floor(nLoc / 2))} · khu đích về ${inBand.length} dòng`)
       await setRules({ putaway_priority: 'CONSOLIDATE' })
       const rowsGom = (await api(url)).j?.data ?? []
       check('[24] đổi về Gom → hết đánh dấu BAND_MATCH (không dính cache chiến thuật cũ)',
         rowsGom.every(x => x.putaway?.reason !== 'BAND_MATCH'))
     } else {
       // Không dựng được ca có khu đích → vẫn phải chứng minh BE KHÔNG đánh dấu bừa
-      await setRules({ putaway_priority: 'ABC' })
+        await setRules({ putaway_priority: 'ABC' }); await waitConfigSettled()
       const rowsAbc = (await api(`/masterdata/locations?warehouse_id=${whId}&material_id=${mat.id}&view=lite&limit=100`)).j?.data ?? []
       check('[22] kho/loại hàng chưa có khu đích → ABC xuống thang, KHÔNG đánh dấu bừa',
         rowsAbc.every(x => x.putaway?.reason !== 'BAND_MATCH'),
@@ -372,7 +380,7 @@ try {
         rb.s === 200 && /không nhận hàng vào/i.test(rb.j?.data?.putaway_warning ?? ''),
         `HTTP ${rb.s} · ${rb.j?.data?.putaway_warning ?? 'không có cảnh báo'}`)
 
-      await setRules({ putaway_enforced: ['NO_IN'] })
+      await setRules({ putaway_enforced: ['NO_IN'] }); await waitConfigSettled()
       rb = await move([p1.id], locNoIn.id)
       check('[26] kho BẮT BUỘC → cửa này bị CHẶN THẬT (trước 15/08 nó đi thẳng xuống RPC, không hỏi luật)',
         rb.s === 422 && rb.j?.error?.code === 'PUTAWAY_VIOLATION', `HTTP ${rb.s} ${rb.j?.error?.code ?? ''}`)
@@ -426,7 +434,7 @@ try {
     await api(`/wms/inbound-orders/${oE}/scan`, 'POST', { qr_code: qrLv(30, 990), location_id: locE.id, qty_semantics: 'base' })
 
     // CÙNG MỘT LƯỢT CẤU HÌNH: trộn date = BẮT BUỘC, còn "cấm đưa hàng vào" + "ô nhặt lẻ" = CẢNH BÁO
-    await setRules({ putaway_block_pick_face: true, putaway_date_mix: 'OLDER_ONLY', putaway_enforced: ['DATE_MIX'] })
+    await setRules({ putaway_block_pick_face: true, putaway_date_mix: 'OLDER_ONLY', putaway_enforced: ['DATE_MIX'] }); await waitConfigSettled()
 
     let r = await mkOrder(locNoIn.id)
     check('[31] "Cấm đưa hàng vào" ở mức CẢNH BÁO → VẪN cất được + nói ra (đúng ý user)',

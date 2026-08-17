@@ -17,6 +17,7 @@ import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
+import { putawayEnforces } from '../../utils/putaway'
 
 // Quyền duyệt cất khác quy tắc — MỘT quyền cho cả app (`inbound.putaway_override`), không đẻ thêm
 // bản riêng cho từng trang: nó là một NĂNG LỰC ("được cất lệch luật"), không phải một cái nút.
@@ -998,7 +999,8 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const { data: result, error: rpcErr } = await supabase.rpc('move_pallets_to_location', {
     p_ids: ids, p_location_id: location_id, p_updated_by: updatedBy, p_update_date: vnDate, p_now: now,
     // Chốt lại số mã dưới row-lock — hai người cùng dồn vào một ô thì cả hai cùng đọc "còn chỗ mã"
-    p_max_materials: (put.rules.required && !put.trace.putaway_override_reason)
+    // Chỉ chốt dưới row-lock khi luật này ở mức BẮT BUỘC (xem inboundController cùng lý lẽ)
+    p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason)
       ? put.rules.max_materials : null,
     p_putaway_checked:         put.trace.putaway_checked ? true : null,
     p_putaway_violation:       put.trace.putaway_violation,

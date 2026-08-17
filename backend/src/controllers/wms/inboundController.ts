@@ -16,6 +16,7 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { getInboundEditWindowDays } from '../../utils/settings'
 import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
+import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
@@ -1530,7 +1531,9 @@ export async function scanQR(req: Request, res: Response) {
       // "Tối đa N mã / vị trí" là ĐẾM trên tài nguyên dùng chung ⇒ phải chốt DƯỚI ROW-LOCK, không
       // thể tin phép kiểm ở backend (đo 15/08: 6 lượt đồng thời vào ô giới hạn 1 mã → lọt 3 mã).
       // NULL khi luật tắt HOẶC đã được duyệt vượt rào — backend vẫn là nơi quyết định.
-      p_max_materials: (put.rules.required && !put.trace.putaway_override_reason)
+      // Chỉ chốt dưới row-lock khi luật này ở mức BẮT BUỘC — mức Cảnh báo thì backend đã nói ra rồi,
+      // RPC mà vẫn chặn là mức "cảnh báo" hoá ra chặn cứng.
+      p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason)
         ? put.rules.max_materials : null,
     })
     if (!rpcErr) {

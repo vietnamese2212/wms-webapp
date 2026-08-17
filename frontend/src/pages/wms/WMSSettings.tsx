@@ -521,7 +521,26 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_required?: boolean | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+// Mã luật cất hàng — mirror PUTAWAY_BLOCKS bên BE (thứ tự hiện trên form)
+const PUTAWAY_RULE_CODES = ['NO_IN', 'FULL', 'PICK_FACE', 'QA_HOLD', 'MAX_MATERIALS', 'NCC_MIX', 'DATE_MIX'] as const
+
+// Mức xử lý của MỘT luật cất hàng. Tách theo từng luật vì một kho có thể vừa muốn "cấm đưa hàng
+// vào" chỉ hết gợi ý (hết chỗ thì vẫn để tạm), vừa muốn luật trộn date chặn thật.
+function EnforceToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={e => { e.preventDefault(); e.stopPropagation(); onToggle() }}
+      title={on ? 'Đang CHẶN — bấm để chuyển về chỉ cảnh báo' : 'Đang chỉ CẢNH BÁO — bấm để chặn thật'}
+      className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+        on ? 'bg-red-50 border-red-300 text-red-700 font-medium' : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'}`}
+    >
+      {on ? 'Bắt buộc' : 'Cảnh báo'}
+    </button>
+  )
+}
+
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_required?: boolean | null; putaway_enforced?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -566,7 +585,12 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [putNoQaHold,   setPutNoQaHold]   = useState(wh?.putaway_block_qa_hold === true)
   const [putNoFull,     setPutNoFull]     = useState(wh?.putaway_block_full === true)
   const [putSingleNcc,  setPutSingleNcc]  = useState(wh?.putaway_single_ncc === true)
-  const [putRequired,   setPutRequired]   = useState(wh?.putaway_required === true)
+  // Mức xử lý theo TỪNG luật (16/08). Kho cũ chỉ có công tắc chung → suy ra: bật = ép hết mọi luật.
+  const [putEnforced,   setPutEnforced]   = useState<string[]>(
+    Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced!
+      : (wh?.putaway_required === true ? PUTAWAY_RULE_CODES.slice() : []))
+  const toggleEnforced = (code: string) =>
+    setPutEnforced(p => p.includes(code) ? p.filter(x => x !== code) : [...p, code])
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -605,7 +629,7 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
       putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
       putaway_block_pick_face: putNoPickFace, putaway_block_qa_hold: putNoQaHold,
       putaway_block_full: putNoFull, putaway_single_ncc: putSingleNcc,
-      putaway_required: putRequired,
+      putaway_enforced: putEnforced,
     }
     if (isEdit) {
       update(
@@ -759,6 +783,18 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 không có tác dụng gì. Hạng ABC của mã lấy từ lượt nhặt <b>30 ngày</b> gần nhất, cùng nguồn với trang Tối ưu vị trí.
               </p>
             )}
+            {/* Mức xử lý theo TỪNG luật: nút bên phải mỗi luật đổi qua lại Cảnh báo ↔ Bắt buộc.
+                Chỉ hiện khi luật đó ĐANG BẬT — luật tắt thì không có gì để xử. */}
+            <label className="flex items-start gap-2 rounded-md px-1 py-1.5">
+              <span className="text-xs flex-1 min-w-0">
+                <span className="font-medium">Vị trí đánh dấu “Cấm đưa hàng vào”</span>
+                <span className="block text-[10px] text-slate-400 font-normal">
+                  Khai ở trang <b>Vị trí kho</b> (kho tạm, ngoài đường…). LUÔN bị loại khỏi gợi ý và khỏi kế hoạch Slotting —
+                  mức dưới đây chỉ quyết định lúc cất thật có chặn hay không.
+                </span>
+              </span>
+              <EnforceToggle on={putEnforced.includes('NO_IN')} onToggle={() => toggleEnforced('NO_IN')} />
+            </label>
             <div>
               <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
               <SingleSelect
@@ -766,38 +802,50 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
                 options={putawayDateMixOpts(rotPrinciple === 'FEFO' ? 'HSD' : 'NSX')}
               />
               {putDateMix !== 'ANY' && (
-                <p className="mt-1 text-[10px] text-slate-400">
-                  Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>.
-                  Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.
-                </p>
+                <>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-slate-500">Mức xử lý khi vi phạm luật trộn date</span>
+                    <EnforceToggle on={putEnforced.includes('DATE_MIX')} onToggle={() => toggleEnforced('DATE_MIX')} />
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>.
+                    Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.
+                  </p>
+                </>
               )}
             </div>
             <div>
               <Label className="text-[11px] text-slate-500">Số mã tối đa trong một vị trí</Label>
               <Input type="number" min={1} max={1000} value={putMaxMat} onChange={e => setPutMaxMat(e.target.value)}
                 placeholder="để trống = không giới hạn" className="h-8 text-xs" />
+              {putMaxMat.trim() !== '' && (
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-slate-500">Mức xử lý khi vượt số mã</span>
+                  <EnforceToggle on={putEnforced.includes('MAX_MATERIALS')} onToggle={() => toggleEnforced('MAX_MATERIALS')} />
+                </div>
+              )}
             </div>
             {([
-              ['wh-put-full',      putNoFull,     setPutNoFull,     'Không cất vào vị trí đã đầy', 'Hiện tại ô đầy vẫn chọn được — tick để loại hẳn khỏi gợi ý.'],
-              ['wh-put-pickface',  putNoPickFace, setPutNoPickFace, 'Không cất pallet nguyên vào vị trí nhặt lẻ', 'Vị trí nhặt lẻ là chỗ lệnh Fill đổ hàng vào; pallet nguyên chiếm chỗ sẽ làm lệnh fill báo đầy.'],
-              ['wh-put-qahold',    putNoQaHold,   setPutNoQaHold,   'Không cất vào ô đang có pallet bị QA giữ', 'Tránh chôn pallet đang giữ phía sau — lúc QA xả hàng phải dọn pallet đè lên mới lấy ra được.'],
-              ['wh-put-ncc',       putSingleNcc,  setPutSingleNcc,  'Không trộn NCC khác nhau trong một vị trí', 'Cùng mã khác NCC có thể khác hạn dùng. Pallet hoặc hàng trong ô chưa khai NCC thì không chặn.'],
-            ] as const).map(([id, val, set, title, desc]) => (
+              ['wh-put-full',      'FULL',          putNoFull,     setPutNoFull,     'Không cất vào vị trí đã đầy', 'Hiện tại ô đầy vẫn chọn được — tick để loại hẳn khỏi gợi ý.'],
+              ['wh-put-pickface',  'PICK_FACE',     putNoPickFace, setPutNoPickFace, 'Không cất pallet nguyên vào vị trí nhặt lẻ', 'Vị trí nhặt lẻ là chỗ lệnh Fill đổ hàng vào; pallet nguyên chiếm chỗ sẽ làm lệnh fill báo đầy.'],
+              ['wh-put-qahold',    'QA_HOLD',       putNoQaHold,   setPutNoQaHold,   'Không cất vào ô đang có pallet bị QA giữ', 'Tránh chôn pallet đang giữ phía sau — lúc QA xả hàng phải dọn pallet đè lên mới lấy ra được.'],
+              ['wh-put-ncc',       'NCC_MIX',       putSingleNcc,  setPutSingleNcc,  'Không trộn NCC khác nhau trong một vị trí', 'Cùng mã khác NCC có thể khác hạn dùng. Pallet hoặc hàng trong ô chưa khai NCC thì không chặn.'],
+            ] as const).map(([id, code, val, set, title, desc]) => (
               <label key={id} htmlFor={id} className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50">
                 <input id={id} type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs">
+                <span className="text-xs flex-1 min-w-0">
                   <span className="font-medium">{title}</span>
                   <span className="block text-[10px] text-slate-400 font-normal">{desc}</span>
                 </span>
+                {val && <EnforceToggle on={putEnforced.includes(code)} onToggle={() => toggleEnforced(code)} />}
               </label>
             ))}
-            <label htmlFor="wh-put-required" className="flex items-start gap-2 cursor-pointer rounded-md px-1 py-1.5 hover:bg-slate-50 border-t border-slate-100 pt-2">
-              <input id="wh-put-required" type="checkbox" checked={putRequired} onChange={e => setPutRequired(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-blue-600 shrink-0" />
-              <span className="text-xs">
-                <span className="font-medium">Bắt buộc cất đúng quy tắc</span>
-                <span className="block text-[10px] text-slate-400 font-normal">Không tick = chỉ <b>cảnh báo</b> (vẫn cất được, có ghi vết). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt cất khác quy tắc</b> vẫn qua được nhưng phải chọn lý do trong danh sách.</span>
-              </span>
-            </label>
+            <p className="border-t border-slate-100 pt-2 text-[10px] text-slate-400">
+              Nút bên phải mỗi luật = mức xử lý. <b className="text-slate-500">Cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting,
+              nhưng cất vẫn được và có ghi vết. <b className="text-red-600">Bắt buộc</b>: CHẶN — chỉ người có quyền
+              <b> Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
+              {putEnforced.length === 0 && <span className="block mt-0.5">Hiện <b>không luật nào chặn cứng</b> — tất cả chỉ cảnh báo.</span>}
+            </p>
           </div>
           <div className="space-y-1.5">
             <label htmlFor="wh-cartonscan" className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">

@@ -11,7 +11,7 @@ import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
   putawayRulesOf, putawayNeedsLots, putawayNeedsMats, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
   putawayBlock, putawayBlockBatch, putawayBlockMessage, isPutawayOverrideReason, PUTAWAY_RULES_DEFAULT,
-  NO_ABC,
+  putawayEnforces, NO_ABC,
   type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc, type PutawayAbc,
 } from '../utils/putaway'
 import { targetZoneCodes, type Band, type BandZone } from '../utils/slottingBands'
@@ -103,8 +103,8 @@ export async function guardPutaway(opts: {
 
   const msg = putawayBlockMessage(block, l.location_code, facts, ctx.rules, ctx.principle)
 
-  // Kho chưa bật "bắt buộc" → hành vi CŨ: vẫn cất được, nhưng ghi vết + nói ra.
-  if (!ctx.rules.required)
+  // Luật này chỉ ở mức CẢNH BÁO → vẫn cất được, nhưng ghi vết + nói ra (không im lặng).
+  if (!putawayEnforces(ctx.rules, block))
     return { blocked: block, rules: ctx.rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
 
   const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''
@@ -177,7 +177,7 @@ export async function guardPutawayBatch(opts: {
   const after = block === 'MAX_MATERIALS'
     ? new Set([...facts.mats, ...batch.map(b => b.material_id)]).size : undefined
   const msg = putawayBlockMessage(block, l.location_code, facts, rules, principle, after)
-  if (!rules.required)
+  if (!putawayEnforces(rules, block))
     return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
 
   const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''

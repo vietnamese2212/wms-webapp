@@ -30,7 +30,10 @@ export type PutawayDateMix = typeof PUTAWAY_DATE_MIXES[number]
 
 export interface PutawayRules {
   priority:        PutawayPriority
-  required:        boolean          // đợt B: bật = vi phạm thì CHẶN, tắt = chỉ cảnh báo
+  // Mã luật bị CHẶN CỨNG. Luật có chấm nhưng không nằm trong đây = chỉ cảnh báo + loại khỏi gợi ý.
+  // Cố ý KHÔNG còn trường `required` chung: một công tắc không diễn đạt được hai ý định trái chiều
+  // của cùng một kho ("cấm ngoài đường" chỉ muốn hết gợi ý · "trộn date" muốn chặn thật).
+  enforced:        PutawayBlockCode[]
   max_materials:   number | null    // null = không giới hạn số mã trong 1 ô
   date_mix:        PutawayDateMix
   block_pick_face: boolean
@@ -40,13 +43,18 @@ export interface PutawayRules {
 }
 
 export const PUTAWAY_RULES_DEFAULT: PutawayRules = {
-  priority: 'CONSOLIDATE', required: false, max_materials: null, date_mix: 'ANY',
+  priority: 'CONSOLIDATE', enforced: [], max_materials: null, date_mix: 'ANY',
   block_pick_face: false, block_qa_hold: false, block_full: false, single_ncc: false,
+}
+
+// Luật này có bị CHẶN CỨNG ở kho đó không (khác với "có chấm hay không")
+export function putawayEnforces(rules: PutawayRules, code: PutawayBlockCode): boolean {
+  return rules.enforced.includes(code)
 }
 
 // Cột cần select ở bảng Warehouse (giữ 1 chỗ để thêm luật mới không phải đi sửa từng controller)
 export const PUTAWAY_WH_COLS =
-  'putaway_priority, putaway_required, putaway_max_materials, putaway_date_mix,' +
+  'putaway_priority, putaway_required, putaway_enforced, putaway_max_materials, putaway_date_mix,' +
   'putaway_block_pick_face, putaway_block_qa_hold, putaway_block_full, putaway_single_ncc'
 
 // Đọc cấu hình từ 1 dòng Warehouse. Giá trị lạ (DB cũ, cột thiếu) → rơi về mặc định = hành vi cũ.
@@ -55,9 +63,16 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
   const pri = w.putaway_priority
   const mix = w.putaway_date_mix
   const maxMat = Number(w.putaway_max_materials)
+  // Cột `putaway_enforced` VẮNG MẶT (DB chưa apply migration 20260816) ⇒ rơi về công tắc chung cũ,
+  // để cửa sổ deploy không biến kho đang "bắt buộc" thành "chỉ cảnh báo" mà không ai biết.
+  // Cột CÓ nhưng RỖNG là ý định thật của người dùng ("không luật nào chặn cứng") — không suy diễn.
+  const enforced: PutawayBlockCode[] = Array.isArray(w.putaway_enforced)
+    ? (w.putaway_enforced as unknown[]).filter((x): x is PutawayBlockCode =>
+        PUTAWAY_BLOCKS.some(b => b.code === x))
+    : (w.putaway_required === true ? PUTAWAY_BLOCKS.map(b => b.code) : [])
   return {
     priority: (PUTAWAY_PRIORITIES as readonly unknown[]).includes(pri) ? pri as PutawayPriority : 'CONSOLIDATE',
-    required: w.putaway_required === true,
+    enforced,
     max_materials: Number.isFinite(maxMat) && maxMat >= 1 ? Math.floor(maxMat) : null,
     date_mix: (PUTAWAY_DATE_MIXES as readonly unknown[]).includes(mix) ? mix as PutawayDateMix : 'ANY',
     block_pick_face: w.putaway_block_pick_face === true,
@@ -96,7 +111,14 @@ export function applyPutawayBody(
       target.putaway_max_materials = Math.floor(n)
     }
   }
-  for (const k of ['putaway_required', 'putaway_block_pick_face', 'putaway_block_qa_hold',
+  if (body.putaway_enforced !== undefined) {
+    const v = body.putaway_enforced
+    if (!Array.isArray(v)) return 'Danh sách luật bắt buộc không hợp lệ'
+    const bad = v.find(x => !PUTAWAY_BLOCKS.some(b => b.code === x))
+    if (bad !== undefined) return `Mã luật không hợp lệ: ${String(bad).slice(0, 30)}`
+    target.putaway_enforced = [...new Set(v as string[])]
+  }
+  for (const k of ['putaway_block_pick_face', 'putaway_block_qa_hold',
                    'putaway_block_full', 'putaway_single_ncc'] as const) {
     if (body[k] !== undefined) target[k] = Boolean(body[k])
   }

@@ -1552,27 +1552,13 @@ export async function scanQR(req: Request, res: Response) {
       const { data: e } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', parts[1]).single()
       entry = e
     } else {
-      // RPC chưa apply (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.
-      const notDeployed = rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? '')
-      if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
-      if (stackLayerNum === 1) {
-        // Đếm pallet CHIẾM CHỖ layer 1 (IN_STOCK/PARTIAL/QUARANTINE + tồn>0 — loại snapshot tồn=0 báo đầy oan)
-        const { count: usedSlots } = await supabase.from('InventoryEntry').select('*', { count: 'exact', head: true })
-          .eq('location_id', location_id).eq('stack_layer', 1).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE']).gt('cartons_remaining', 0)
-        if ((usedSlots ?? 0) >= location.max_pallets)
-          return fail(res, 422, 'LOCATION_FULL',
-            `Vị trí ${location.location_code} đã đầy (${usedSlots}/${location.max_pallets} pallet). Chọn tầng chồng (layer 2/3) hoặc vị trí khác.`)
-      } else {
-        const { data: baseArr } = await supabase.from('InventoryEntry').select('id')
-          .eq('location_id', location_id).eq('stack_layer', stackLayerNum - 1).eq('status', 'IN_STOCK').limit(1)
-        if (!baseArr?.[0]) return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stackLayerNum - 1} tại vị trí này để chồng lên`)
-      }
-      const { data: e, error: entErr } = await supabase.from('InventoryEntry').insert(entryObj).select(ENTRY_SELECT).single()
-      if (entErr) {
-        if (entErr.code === '23505') return fail(res, 409, 'DUPLICATE_PALLET', 'Pallet đã tồn tại trong hệ thống')
-        throw entErr
-      }
-      entry = e
+      // RPC vắng mặt ⇒ BÁO LỖI, KHÔNG tự đi đường vòng. Nhánh dự phòng cũ (check-rồi-insert) không
+      // nguyên tử VÀ không chốt được luật "tối đa N mã/vị trí" dưới row-lock — nó cứu được tính năng
+      // nhưng lại lặng lẽ tắt 2 lớp bảo vệ, đúng kiểu lỗi không ai nhìn thấy. Cùng cách xử như
+      // slottingController.scanMove.
+      if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
+        return fail(res, 503, 'NOT_READY', 'Chưa apply RPC scan_insert_pallet')
+      return fail(res, 500, 'DB_ERROR', rpcErr.message)
     }
 
     // Persist vị trí "hiện tại" của phiếu = vị trí vừa quét + ghi lịch sử khi đổi (quyền scan)

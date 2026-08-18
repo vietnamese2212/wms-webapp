@@ -1019,33 +1019,12 @@ export async function bulkTransferLocation(req: Request, res: Response) {
       default:          return ok(res, { updated: ids.length, location_code: parts[1] ?? '', putaway_warning: put.warning })
     }
   }
-  // RPC chưa được apply trên DB (function not found) → fallback logic cũ (KHÔNG nguyên tử) để không vỡ tính năng.
-  const notDeployed = rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? '')
-  if (!notDeployed) return fail(res, 500, 'DB_ERROR', rpcErr.message)
-
-  const { data: loc } = await supabase.from('Location')
-    .select('id, is_active, location_code, max_pallets, warehouse_id')
-    .eq('id', location_id).maybeSingle()
-  if (!loc)           return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
-  if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí không hoạt động')
-  if (loc.max_pallets > 0) {
-    const { count: usedSlots } = await supabase.from('InventoryEntry')
-      .select('id', { count: 'exact', head: true })
-      .eq('location_id', location_id)
-      .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
-      .gt('cartons_remaining', 0)
-    const available = loc.max_pallets - (usedSlots ?? 0)
-    if (available < ids.length) {
-      return fail(res, 400, 'LOCATION_FULL',
-        `Vị trí ${loc.location_code} không đủ chỗ (còn ${Math.max(0, available)} slot, cần ${ids.length})`)
-    }
-  }
-  // Sync cột lọc theo kho (đổi vị trí = có thể đổi kho thật — filter Tồn kho lọc thẳng cột này)
-  const patch: Record<string, unknown> = { location_id, warehouse_id: (loc as { warehouse_id?: string }).warehouse_id ?? null, updated_at: now, update_date: vnDate }
-  if (updatedBy) patch.updated_by = updatedBy
-  const upErr = await updateEntriesByIds(ids, patch)   // chunk 300 — bulk vài nghìn pallet không vỡ URL
-  if (upErr) return fail(res, 500, 'DB_ERROR', upErr)
-  return ok(res, { updated: ids.length, location_code: loc.location_code })
+  // RPC vắng mặt ⇒ BÁO LỖI, KHÔNG tự đi đường vòng. Nhánh dự phòng cũ (đếm sức chứa rồi update)
+  // không nguyên tử VÀ bỏ qua luật "tối đa N mã/vị trí" — cứu được tính năng nhưng lặng lẽ tắt 2
+  // lớp bảo vệ. Cùng cách xử như slottingController.scanMove.
+  if (rpcErr.code === 'PGRST202' || /Could not find the function|does not exist/i.test(rpcErr.message ?? ''))
+    return fail(res, 503, 'NOT_READY', 'Chưa apply RPC move_pallets_to_location')
+  return fail(res, 500, 'DB_ERROR', rpcErr.message)
 }
 
 export async function bulkTransferMaterial(req: Request, res: Response) {

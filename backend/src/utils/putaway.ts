@@ -54,7 +54,7 @@ export function putawayEnforces(rules: PutawayRules, code: PutawayBlockCode): bo
 
 // Cột cần select ở bảng Warehouse (giữ 1 chỗ để thêm luật mới không phải đi sửa từng controller)
 export const PUTAWAY_WH_COLS =
-  'putaway_priority, putaway_required, putaway_enforced, putaway_max_materials, putaway_date_mix,' +
+  'putaway_priority, putaway_enforced, putaway_max_materials, putaway_date_mix,' +
   'putaway_block_pick_face, putaway_block_qa_hold, putaway_block_full, putaway_single_ncc'
 
 // Đọc cấu hình từ 1 dòng Warehouse. Giá trị lạ (DB cũ, cột thiếu) → rơi về mặc định = hành vi cũ.
@@ -63,13 +63,12 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
   const pri = w.putaway_priority
   const mix = w.putaway_date_mix
   const maxMat = Number(w.putaway_max_materials)
-  // Cột `putaway_enforced` VẮNG MẶT (DB chưa apply migration 20260816) ⇒ rơi về công tắc chung cũ,
-  // để cửa sổ deploy không biến kho đang "bắt buộc" thành "chỉ cảnh báo" mà không ai biết.
-  // Cột CÓ nhưng RỖNG là ý định thật của người dùng ("không luật nào chặn cứng") — không suy diễn.
+  // Mức xử lý theo TỪNG luật. Cột RỖNG là ý định thật của người dùng ("không luật nào chặn cứng")
+  // — không suy diễn thêm. (Công tắc chung `putaway_required` đã bị migration 20260816 thay thế.)
   const enforced: PutawayBlockCode[] = Array.isArray(w.putaway_enforced)
     ? (w.putaway_enforced as unknown[]).filter((x): x is PutawayBlockCode =>
         PUTAWAY_BLOCKS.some(b => b.code === x))
-    : (w.putaway_required === true ? PUTAWAY_BLOCKS.map(b => b.code) : [])
+    : []
   return {
     priority: (PUTAWAY_PRIORITIES as readonly unknown[]).includes(pri) ? pri as PutawayPriority : 'CONSOLIDATE',
     enforced,

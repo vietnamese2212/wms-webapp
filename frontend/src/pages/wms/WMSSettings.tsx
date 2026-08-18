@@ -521,9 +521,6 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-// Mã luật cất hàng — mirror PUTAWAY_BLOCKS bên BE (thứ tự hiện trên form)
-const PUTAWAY_RULE_CODES = ['NO_IN', 'FULL', 'PICK_FACE', 'QA_HOLD', 'MAX_MATERIALS', 'NCC_MIX', 'DATE_MIX'] as const
-
 // Mức xử lý của MỘT luật cất hàng. Tách theo từng luật vì một kho có thể vừa muốn "cấm đưa hàng
 // vào" chỉ hết gợi ý (hết chỗ thì vẫn để tạm), vừa muốn luật trộn date chặn thật.
 // Ô tick riêng, KHÔNG lồng trong <label> của luật: label lồng label thì bấm ô trong lại lật ô ngoài.
@@ -542,7 +539,7 @@ function EnforceToggle({ id, on, onToggle }: { id: string; on: boolean; onToggle
   )
 }
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_required?: boolean | null; putaway_enforced?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -587,10 +584,9 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   const [putNoQaHold,   setPutNoQaHold]   = useState(wh?.putaway_block_qa_hold === true)
   const [putNoFull,     setPutNoFull]     = useState(wh?.putaway_block_full === true)
   const [putSingleNcc,  setPutSingleNcc]  = useState(wh?.putaway_single_ncc === true)
-  // Mức xử lý theo TỪNG luật (16/08). Kho cũ chỉ có công tắc chung → suy ra: bật = ép hết mọi luật.
+  // Mức xử lý theo TỪNG luật (16/08) — rỗng = không luật nào chặn cứng (chỉ cảnh báo).
   const [putEnforced,   setPutEnforced]   = useState<string[]>(
-    Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced!
-      : (wh?.putaway_required === true ? PUTAWAY_RULE_CODES.slice() : []))
+    Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced! : [])
   const toggleEnforced = (code: string) =>
     setPutEnforced(p => p.includes(code) ? p.filter(x => x !== code) : [...p, code])
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')

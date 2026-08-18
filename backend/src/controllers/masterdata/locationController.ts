@@ -95,40 +95,6 @@ const locRpcParams = (c: LocListCtx) => ({
   p_slot_no_in: c.noIn, p_slot_no_out: c.noOut,
 })
 
-// Cửa sổ triển khai: code mới + RPC cũ (chưa có p_slot_no_out của 20260818, hoặc chưa có
-// p_slot_no_in của 20260817) → PGRST202. Bỏ DẦN tham số mới rồi gọi lại — nhưng CHỈ bỏ tham số mà
-// user KHÔNG đang lọc: bỏ tham số đang lọc = trả danh sách CHƯA LỌC mà người dùng vẫn tưởng đã
-// lọc (ca đó caller phải trả 503 NOT_READY, thà báo lỗi còn hơn cắt/không-cắt âm thầm).
-async function rpcLocationsWithFlagFallback(fn: 'locations_page' | 'locations_summary',
-    args: Record<string, unknown>, c: Pick<LocListCtx, 'noIn' | 'noOut'>) {
-  const is202 = (e: unknown) => (e as { code?: string } | null)?.code === 'PGRST202'
-  let r = await supabase.rpc(fn, args)
-  if (is202(r.error) && c.noOut === null) {
-    const { p_slot_no_out: _out, ...prev } = args
-    void _out
-    r = await supabase.rpc(fn, prev)
-    if (is202(r.error) && c.noIn === null) {
-      const { p_slot_no_in: _in, ...prev2 } = prev
-      void _in
-      r = await supabase.rpc(fn, prev2)
-    }
-  }
-  return r
-}
-// Đang lọc bằng cờ mà RPC chưa có tham số ⇒ KHÔNG hạ cấp, báo thẳng
-const flagFilterOn = (c: Pick<LocListCtx, 'noIn' | 'noOut'>) => c.noIn !== null || c.noOut !== null
-const NOIN_NOT_READY = 'Chưa apply migration 20260817/20260818 (lọc "Không đưa hàng vào" / "Không lấy hàng đi")'
-
-// Đếm pallet lớp 1 còn hàng cho ĐÚNG các vị trí đang xem.
-// Dùng CHUNG một định nghĩa với listLocations (RPC putaway_slot_facts) — trước đây là 2 vòng
-// quét chép tay và comment "định nghĩa khớp listLocations" chỉ là lời hứa, không ai gác.
-async function usedSlotsFor(ids: string[]): Promise<Map<string, number>> {
-  const used = new Map<string, number>()
-  if (ids.length === 0) return used
-  for (const f of await loadSlotFactsRaw(ids, null, false)) used.set(f.location_id, Number(f.pallets ?? 0))
-  return used
-}
-
 async function listLocationsPaged(req: Request, res: Response) {
   const q = req.query as Record<string, string | undefined>
   const page = Math.max(1, Number(q.page) || 1)
@@ -136,48 +102,14 @@ async function listLocationsPaged(req: Request, res: Response) {
   const ctx = getLocListCtx(req)
   if (ctx.blocked) return ok(res, { rows: [], total: 0 })
   // RPC trả THẲNG dòng + used_slots (migration 20260729, p_with_rows) ⇒ 1 request thay vì 3.
-  // Cửa sổ triển khai: code mới + RPC CŨ (8 tham số) → PostgREST PGRST202 "no matching function"
-  // vì thêm p_with_rows là ĐỔI CHỮ KÝ — phải gọi lại đúng chữ ký cũ, đừng để trang chết chờ migration.
-  let { data, error } = await rpcLocationsWithFlagFallback('locations_page', {
+  const { data, error } = await supabase.rpc('locations_page', {
     p_offset: (page - 1) * pageSize, p_limit: pageSize,
     ...locRpcParams(ctx), p_incl_inactive: ctx.inclInactive,
     p_with_rows: true,
-  }, ctx)
-  if (error && (error as { code?: string }).code === 'PGRST202' && flagFilterOn(ctx))
-    return fail(res, 503, 'NOT_READY', NOIN_NOT_READY)
-  if (error && (error as { code?: string }).code === 'PGRST202') {
-    // Chỉ hạ cấp khi bộ lọc CŨNG chạy được trên RPC cũ: bỏ tham số ở nhánh dự phòng sẽ trả về
-    // danh sách CHƯA LỌC mà người dùng vẫn tưởng đã lọc — thà báo lỗi còn hơn cắt/không-cắt âm
-    // thầm. RPC cũ: p_flag chỉ 2 trạng thái (false = không lọc), không p_pick_face/p_subs.
-    if (ctx.pickFace !== null || ctx.flag === false || ctx.subs !== null)
-      return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260804 (lọc theo cờ/khu vực)')
-    ;({ data, error } = await supabase.rpc('locations_page', {
-      p_offset: (page - 1) * pageSize, p_limit: pageSize,
-      p_wh_ids: ctx.whIds, p_category: ctx.category, p_scope_cats: ctx.scopeCats,
-      p_tokens: ctx.tokens, p_flag: ctx.flag === true, p_incl_inactive: ctx.inclInactive,
-    }))
-  }
-  if (error) throw error
-  const p = (data ?? {}) as { ids?: string[]; rows?: unknown[]; total?: number }
-  const ids = p.ids ?? []
-  if (!ids.length) return ok(res, { rows: [], total: p.total ?? 0 })
-  if (p.rows) return ok(res, { rows: p.rows, total: p.total ?? 0 })
-  // Nhánh dự phòng (RPC cũ): nạp dòng + used_slots như trước
-  const rows = await fetchAllByIdChunks(ids, chunk => supabase.from('Location')
-    .select('*, warehouse:Warehouse(id, code, name), InventoryEntry(count)').in('id', chunk).order('id'))
-  const used = await usedSlotsFor(ids)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const byId = new Map<string, any>((rows as any[]).map(r => [r.id as string, r]))
-  const ordered = ids.map(id => byId.get(id)).filter(Boolean).map((loc) => {
-    const { InventoryEntry, ...rest } = loc as Record<string, unknown>
-    return {
-      ...rest,
-      _count: { inventory_entries: Array.isArray(InventoryEntry) ? ((InventoryEntry[0] as { count: number })?.count ?? 0) : 0 },
-      used_slots: used.get(rest.id as string) ?? 0,
-      has_same_material: false,
-    }
   })
-  return ok(res, { rows: ordered, total: p.total ?? 0 })
+  if (error) throw error
+  const p = (data ?? {}) as { rows?: unknown[]; total?: number }
+  return ok(res, { rows: p.rows ?? [], total: p.total ?? 0 })
 }
 
 // GET /api/masterdata/locations/summary — 4 ô SummaryBand trên TOÀN BỘ bộ lọc (chỉ vị trí đang dùng)
@@ -185,9 +117,7 @@ export async function listLocationsSummary(req: Request, res: Response) {
   try {
     const ctx = getLocListCtx(req)
     if (ctx.blocked) return ok(res, { count: 0, capacity: 0, used: 0, full: 0 })
-    const { data, error } = await rpcLocationsWithFlagFallback('locations_summary', locRpcParams(ctx), ctx)
-    if (error && (error as { code?: string }).code === 'PGRST202' && flagFilterOn(ctx))
-      return fail(res, 503, 'NOT_READY', NOIN_NOT_READY)
+    const { data, error } = await supabase.rpc('locations_summary', locRpcParams(ctx))
     if (error) throw error
     return ok(res, data ?? {})
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -614,11 +544,9 @@ export async function bulkFlagLocations(req: Request, res: Response) {
     if (!idList.length && body.by_filter) {
       const ctx = getLocListCtx(req, body.filter ?? {})
       if (ctx.blocked) return ok(res, { updated: 0, ...flags })
-      const { data, error } = await rpcLocationsWithFlagFallback('locations_page', {
+      const { data, error } = await supabase.rpc('locations_page', {
         p_offset: 0, p_limit: 1_000_000, ...locRpcParams(ctx), p_incl_inactive: false,
-      }, ctx)
-      if (error && (error as { code?: string }).code === 'PGRST202' && flagFilterOn(ctx))
-        return fail(res, 503, 'NOT_READY', NOIN_NOT_READY)
+      })
       if (error) throw error
       idList = ((data ?? {}) as { ids?: string[] }).ids ?? []
     }

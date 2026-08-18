@@ -490,6 +490,29 @@ try {
     check('[37] slotting_stats trả cờ is_pick_face cho từng vị trí (P1 cần để chừa ô nhặt lẻ)',
       locs.length === 0 || locs.every(l => Object.prototype.hasOwnProperty.call(l, 'is_pick_face')),
       `${locs.length} vị trí`)
+
+    // [39] Pallet ĐANG BỊ QA GIỮ không bao giờ được đưa vào kế hoạch xếp lại. Kho hay gom hàng
+    // KPH/chờ tái kiểm vào đúng những ô đánh dấu "không đưa hàng vào" (đo Ba Vì 17/08: 40/95
+    // pallet QA giữ nằm trong 4 ô như thế) ⇒ bước P1 "kéo hàng khu tạm về kho chuẩn" sẽ dọn
+    // chính số hàng đang bị đóng băng vào rack thường, trong khi Xuất kho vẫn từ chối xuất nó.
+    // Kiểm trên DỮ LIỆU THẬT của kho (không fixture): engine mà quay lại lấy nguồn QA giữ là đỏ.
+    {
+      const qaBad = (await restAll('QAStatus', 'select=id,code&code=neq.OK')).map(q => q.id)
+      if (qaBad.length === 0) {
+        check('[39] kế hoạch Slotting không kéo pallet QA giữ', true, 'BỎ QUA — DB không có QAStatus khác OK')
+      } else {
+        const held = new Set((await restAll('InventoryEntry',
+          `select=id&warehouse_id=eq.${whId}&qa_status_id=in.(${qaBad.join(',')})` +
+          `&status=in.(IN_STOCK,PARTIAL,QUARANTINE)&cartons_remaining=gt.0`)).map(r => r.id))
+        const pv = await api('/wms/slotting/plans/preview', 'POST',
+          { warehouse_id: whId, level: 'NORMAL', principle: 'FEFO', days: 30, max_moves: 300, pull_wrong_zone: true })
+        const lines = pv.j?.data?.lines ?? []
+        const bad = lines.flatMap(l => l.entry_ids ?? []).filter(id => held.has(id))
+        check('[39] kế hoạch Slotting KHÔNG lấy pallet đang bị QA giữ làm nguồn (đóng băng tại chỗ)',
+          pv.s === 200 && bad.length === 0,
+          `HTTP ${pv.s} · ${lines.length} dòng · ${held.size} pallet QA giữ trong kho · ${bad.length} bị kéo`)
+      }
+    }
   }
 
 } catch (e) {

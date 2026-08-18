@@ -10,7 +10,7 @@ import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
-import { putawayBlock, putawayReason, putawayScore, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
+import { putawayBlock, putawayReason, putawayScore, putawayEnforces, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -351,9 +351,11 @@ export async function listLocations(req: Request, res: Response) {
         }
         row.has_same_material = f.sameMaterial
         // FE CHỈ hiển thị khối này, KHÔNG tự tính lại (luật một nguồn — utils/putaway.ts)
+        const blocked = putawayBlock(l, f, ctx.incoming, ctx.rules)
         row.putaway = {
-          blocked: putawayBlock(l, f, ctx.incoming, ctx.rules),
+          blocked,
           reason:  putawayReason(l, f, ctx.incoming, ctx.rules, ctx.abc),
+          enforced: blocked != null && putawayEnforces(ctx.rules, blocked),
         } satisfies PutawayHint
         row._score = putawayScore(l, f, ctx.incoming, ctx.rules, ctx.abc)
       }

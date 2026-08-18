@@ -10,6 +10,9 @@ export type PutawayReasonCode = 'SAME_MATERIAL' | 'EMPTY' | 'BAND_MATCH'
 export interface PutawayHint {
   blocked: PutawayBlockCode | null
   reason:  PutawayReasonCode | null
+  // Kho có CHẶN CỨNG luật đang vi phạm không (BE quyết — FE không suy từ cấu hình kho).
+  // optional vì bundle cũ/response cũ chưa có field này; thiếu ⇒ coi như chỉ cảnh báo.
+  enforced?: boolean
 }
 
 export const PUTAWAY_BLOCK_LABEL: Record<PutawayBlockCode, string> = {

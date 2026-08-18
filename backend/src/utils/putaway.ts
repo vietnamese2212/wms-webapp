@@ -416,4 +416,8 @@ export function putawayBlockMessage(
 export interface PutawayHint {
   blocked: PutawayBlockCode | null
   reason:  PutawayReasonCode | null
+  // Luật đang vi phạm có bị CHẶN CỨNG ở kho này không. FE cần để biết chọn ô đó là "cứ chọn, có
+  // ghi vết" hay "phải có lý do vượt rào mới lưu được" — mà KHÔNG được tự suy từ cấu hình kho
+  // (đó lại là bản luật chép tay thứ N). false khi không vi phạm gì.
+  enforced: boolean
 }

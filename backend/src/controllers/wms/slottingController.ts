@@ -287,6 +287,16 @@ export async function previewPlan(req: Request, res: Response) {
         if (cpp > 0 && upc > 0) fullBaseByMat.set(m.id, cpp * upc)
       }
     }
+    // Pallet ĐANG BỊ QA GIỮ = hàng bị đóng băng chờ phán quyết (KPH / chờ tái kiểm), thường được
+    // gom vào đúng những ô đánh dấu "không đưa hàng vào" (đo Ba Vì 17/08: 40/95 pallet QA giữ nằm
+    // trong 4 ô như thế). Không loại ra thì bước P1 lên kế hoạch KÉO CHÍNH SỐ HÀNG ĐÓ về rack
+    // thường — trộn hàng chưa được phép dùng vào tồn tốt, mà Xuất kho thì vẫn từ chối xuất nó.
+    // Cùng lý lẽ với `cartons_reserved > 0` ngay dưới: vẫn CHIẾM chỗ, nhưng KHÔNG được xáo trộn.
+    const { data: qaRows } = await supabase.from('QAStatus').select('id, code')
+    const qaHoldIds = new Set((qaRows ?? [])
+      .filter((q: { code: string | null }) => (q.code ?? '') !== 'OK')
+      .map((q: { id: string }) => q.id))
+
     const entries: EntryRow[] = []
     // Ảnh chụp "đang chứa gì" per vị trí (trong phạm vi loại đã chọn) — gồm CẢ pallet reserved/kẹt
     // (không được chuyển nhưng vẫn CHIẾM chỗ): dùng cho phân tích kết quả kỳ vọng + cột "Đích đang chứa"
@@ -294,7 +304,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported')
+        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported, qa_status_id')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])
@@ -307,6 +317,7 @@ export async function previewPlan(req: Request, res: Response) {
           rowsAtLoc.set(r.location_id, arr)
         }
         if ((r.cartons_reserved ?? 0) > 0) continue       // đang giữ cho đơn xuất — không xáo trộn
+        if (r.qa_status_id && qaHoldIds.has(r.qa_status_id)) continue   // QA giữ — đóng băng tại chỗ
         if (!r.location_id) continue                       // chưa có vị trí — không gợi ý
         if (locById.get(r.location_id)?.slot_no_out) continue  // vị trí không lấy hàng được — loại khỏi nguồn
         const fullBase = fullBaseByMat.get(r.material_id)

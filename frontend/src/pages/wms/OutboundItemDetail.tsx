@@ -36,6 +36,8 @@ import { isOffline } from '@/offline/useOnline'
 import { OfflineError } from '@/api/client'
 import { normalizeQR } from '@/utils/qr'
 import { LeftoverLocationPicker, KEEP_LOCATION, isLeftoverLocError } from '@/components/wms/LeftoverLocationPicker'
+import { usePutawayGate } from '@/components/wms/PutawayGate'
+import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
@@ -109,12 +111,14 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const [pendingCartons, setPendingCartons] = useState('')
   // Pallet đi không hết → chỗ đặt phần dư: null = CHƯA chọn (khóa nút Lưu)
   const [leftoverLoc,    setLeftoverLoc]    = useState<string | null>(null)
+  const [leftoverHint,   setLeftoverHint]   = useState<PutawayHint | null>(null)   // quy tắc CẤT của ô vừa chọn (BE chấm)
   // Lỗi VỊ TRÍ (thiếu / vị trí vừa đầy): hiện NGAY TRONG panel và GIỮ tem đang chờ — user chọn lại
   // rồi bấm Lưu, KHÔNG phải quét lại pallet (user 30/07: "muốn chọn lại phải quét tiếp, mất thao tác")
   const [locError,       setLocError]       = useState('')
   const { mutate: checkScan, isPending: checking } = useCheckOutboundScan()
   // Luân chuyển: kết quả do BE tính (xem components/wms/RotationGate.tsx)
   const rotGate = useRotationGate(checkResult?.rotation)
+  const putGate = usePutawayGate(leftoverHint)   // ô đặt phần dư lệch luật + kho bắt buộc → khoá Lưu tới khi có lý do
   const { mutate: scanItem,  isPending: saving    } = useScanOutboundItem()
   const { mutate: attachCartons, isPending: attaching } = useAttachCartonScans()
   // Panel multiscan tem THÙNG neo vào pallet vừa quét (chỉ khi Kho/Loại kho bật cờ)
@@ -164,7 +168,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
     playBeep()
     setCheckResult(null)
     setFeedback(null)
-    rotGate.reset()   // tem mới = câu hỏi lý do mới
+    rotGate.reset(); putGate.reset()   // tem mới = câu hỏi lý do mới
     if (isOffline()) {   // trình duyệt biết chắc offline → khỏi bắn check chết
       queueScan(qr_code, undefined, false)
       return
@@ -175,7 +179,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         onSuccess: (data) => {
           setCheckResult(data)
           setPendingCartons(String(data.suggested_cartons > 0 ? data.suggested_cartons : 1))
-          setLeftoverLoc(null); setLocError('')   // pallet mới → phải chọn lại chỗ đặt phần dư
+          setLeftoverLoc(null); setLeftoverHint(null); putGate.reset(); setLocError('')   // pallet mới → chọn lại chỗ đặt phần dư
         },
         onError: (err) => {
           // Wifi dính AP nhưng không có internet: check fail vì MẠNG → vẫn xếp hàng được
@@ -194,13 +198,13 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
   const qtyToTake  = Math.max(1, parseInt(pendingCartons) || 1)
   const leftoverQty = Math.max(0, (checkResult?.pallet_remaining ?? 0) - qtyToTake)
   const needLeftoverLoc = !!checkResult && leftoverQty > 0
-  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok
+  const canSave = !!checkResult && (!needLeftoverLoc || !!leftoverLoc) && rotGate.ok && putGate.ok
 
   function handleSave() {
     if (!checkResult || saving || !canSave) return
     scanItem(
       { gdoId, itemId: item.id, qr_code: checkResult.pallet_code, cartons_override: qtyToTake, employee_id: user?.id ?? undefined,
-        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg },
+        leftover_ui: true, ...(needLeftoverLoc ? { leftover_location_id: leftoverLoc ?? KEEP_LOCATION } : {}), ...rotGate.arg, ...putGate.arg },
       {
         onSuccess: (data) => {
           setCheckResult(null)
@@ -223,8 +227,9 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
           const qr = checkResult.pallet_code
           const cartons = qtyToTake
           // Lỗi VỊ TRÍ → giữ nguyên tem đang chờ + báo trong panel để chọn lại rồi Lưu tiếp
-          const emsg = (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? ''
-          if (isLeftoverLocError(emsg)) { setLocError(emsg); setLeftoverLoc(null); return }
+          const eobj = (err as AxiosError<{ error: { message: string; code?: string } }>)?.response?.data?.error
+          const emsg = eobj?.message ?? ''
+          if (isLeftoverLocError(emsg, eobj?.code)) { setLocError(emsg); setLeftoverLoc(null); setLeftoverHint(null); return }
           setCheckResult(null)
           // Mạng rớt đúng lúc bấm Lưu → xếp hàng với SL user đã xác nhận; lỗi SAU khi
           // gửi (không rõ kết quả) → uncertain, replay gặp "đã quét" sẽ coi là thành công
@@ -393,9 +398,12 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                     mat={item.material}
                     currentLocationCode={checkResult.location_code ?? null}
                     warehouseId={checkResult.warehouse_id ?? null}
+                    materialId={item.material_id ?? undefined}
                     value={leftoverLoc}
                     onChange={v => { setLeftoverLoc(v); setLocError('') }}
+                    onHintChange={h => { setLeftoverHint(h); putGate.reset() }}
                   />
+                  {putGate.box && <div className="mt-1.5">{putGate.box}</div>}
                   {locError && (
                     <p className="mt-1.5 text-xs font-medium text-red-600 flex items-start gap-1">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{locError}

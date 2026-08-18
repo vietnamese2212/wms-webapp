@@ -294,8 +294,9 @@ const RULES = [
     // câu nào — công tắc "bắt buộc" của kho chỉ gác được một nửa số cửa. Không mechanize được
     // "đã liệt kê đủ cửa chưa", nhưng mechanize được "có cửa THỨ 5 xuất hiện":
     //   • inventoryController  — Chuyển vị trí hàng loạt: CÓ gác (guardPutawayBatch)
-    //   • outboundController   — chỗ đặt phần dư khi quét xuất: KHÔNG gác, cố ý (người quét bắt
-    //     buộc phải khai được chỗ đặt; chặn giữa lượt nhặt là dồn họ vào ngõ cụt)
+    //   • outboundController   — chỗ đặt phần dư khi quét xuất: CÓ gác từ 18/08 (guardPutaway).
+    //     Mang phần dư sang ô KHÁC là một lần cất hàng thật. Ngõ cụt tránh bằng cách khác: "Giữ
+    //     chỗ cũ" KHÔNG bị chấm, nên người quét luôn còn một lối lưu được lượt quét.
     //   • slottingController   — quét thực hiện kế hoạch: đích do engine chọn, đã loại slot_no_in
     //   • fillController       — đích BẮT BUỘC là vị trí nhặt lẻ ⇒ luật block_pick_face mà áp vào
     //     đây thì tự chặn chính mình; Fill có validate riêng

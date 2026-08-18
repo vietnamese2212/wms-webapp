@@ -54,7 +54,7 @@ async function cleanup() {
 // Tàn dư lần chạy trước → dọn TRƯỚC khi dựng fixture (gói phải TỰ HỒI PHỤC)
 await sweepByTag()
 
-const PUT_COLS = 'putaway_priority,putaway_required,putaway_enforced,putaway_max_materials,putaway_date_mix,' +
+const PUT_COLS = 'putaway_priority,putaway_enforced,putaway_max_materials,putaway_date_mix,' +
   'putaway_block_pick_face,putaway_block_qa_hold,putaway_block_full,putaway_single_ncc'
 
 try {
@@ -71,7 +71,7 @@ try {
   // buộc + 1 mã/ô"; gói này chụp đúng trạng thái BẨN đó làm bản gốc rồi khôi phục y nguyên, và
   // phép kiểm dọn (so với chính bản gốc) vẫn XANH. ⇒ Nói ra ngay từ đầu để người đọc còn phân
   // biệt "kho thật sự cấu hình vậy" với "tàn dư lần chạy trước".
-  if ((wh?.putaway_enforced ?? []).length || wh?.putaway_required || wh?.putaway_max_materials != null || wh?.putaway_priority !== 'CONSOLIDATE'
+  if ((wh?.putaway_enforced ?? []).length || wh?.putaway_max_materials != null || wh?.putaway_priority !== 'CONSOLIDATE'
       || wh?.putaway_date_mix !== 'ANY' || wh?.putaway_block_pick_face || wh?.putaway_block_qa_hold
       || wh?.putaway_block_full || wh?.putaway_single_ncc) {
     console.log(`  ⚠️  kho test đang có cấu hình cất hàng KHÁC mặc định: ${JSON.stringify(whBackup)}`)

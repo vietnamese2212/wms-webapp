@@ -578,8 +578,9 @@ export async function updateLocation(req: Request, res: Response) {
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)
-    // 2 cờ Vị trí đặc biệt (trước 17/08 chỉ sửa được ở tab Cài đặt trang Tối ưu vị trí — user chê
-    // multi-select replace-all khó config; nay sửa được ngay tại danh mục Vị trí, cùng chỗ nhặt lẻ)
+    // 2 cờ "Vị trí đặc biệt". Trang này là ĐƯỜNG KHAI DUY NHẤT từ 18/08 — khối multi-select
+    // replace-all ở tab Cài đặt trang Tối ưu vị trí đã gỡ (user chê khó config; và một cờ hai chỗ
+    // khai thì thêm cờ mới là quên một bên).
     if (slot_no_in !== undefined)        patch.slot_no_in         = Boolean(slot_no_in)
     if (slot_no_out !== undefined)       patch.slot_no_out        = Boolean(slot_no_out)
 
@@ -592,7 +593,7 @@ export async function updateLocation(req: Request, res: Response) {
 }
 
 // Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" / "vị trí nhặt lẻ" / "không đưa hàng vào" / "không lấy
-// hàng đi" (2 cờ sau = Vị trí đặc biệt, dùng chung cột với tab Cài đặt Slotting). Chỉ áp cho vị
+// hàng đi" (2 cờ sau = Vị trí đặc biệt, chỉ khai ở trang này). Chỉ áp cho vị
 // trí TRONG phạm vi kho + loại của user (bỏ qua id ngoài scope, không báo lỗi cả lô). Chunk 300/lô.
 export async function bulkFlagLocations(req: Request, res: Response) {
   try {

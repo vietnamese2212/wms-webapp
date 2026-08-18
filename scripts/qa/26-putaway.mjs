@@ -504,13 +504,23 @@ try {
         const held = new Set((await restAll('InventoryEntry',
           `select=id&warehouse_id=eq.${whId}&qa_status_id=in.(${qaBad.join(',')})` +
           `&status=in.(IN_STOCK,PARTIAL,QUARANTINE)&cartons_remaining=gt.0`)).map(r => r.id))
-        const pv = await api('/wms/slotting/plans/preview', 'POST',
-          { warehouse_id: whId, level: 'NORMAL', principle: 'FEFO', days: 30, max_moves: 300, pull_wrong_zone: true })
-        const lines = pv.j?.data?.lines ?? []
+        // Engine BẮT BUỘC chọn Loại kho (400 CHOOSE_CATEGORY) — chạy từng loại rồi gộp, để không
+        // bỏ sót loại nào có pallet QA giữ.
+        const cats = [...new Set((await restAll('Location', `select=categories&warehouse_id=eq.${whId}`))
+          .flatMap(l => l.categories ?? []).filter(Boolean))]
+        const lines = []
+        let httpBad = 0
+        for (const c of (cats.length ? cats : [mat.category])) {
+          const pv = await api('/wms/slotting/plans/preview', 'POST',
+            { warehouse_id: whId, level: 'NORMAL', principle: 'FEFO', days: 30, max_moves: 300,
+              pull_wrong_zone: true, categories: [c] })
+          if (pv.s !== 200) { httpBad++; continue }
+          lines.push(...(pv.j?.data?.lines ?? []))
+        }
         const bad = lines.flatMap(l => l.entry_ids ?? []).filter(id => held.has(id))
         check('[39] kế hoạch Slotting KHÔNG lấy pallet đang bị QA giữ làm nguồn (đóng băng tại chỗ)',
-          pv.s === 200 && bad.length === 0,
-          `HTTP ${pv.s} · ${lines.length} dòng · ${held.size} pallet QA giữ trong kho · ${bad.length} bị kéo`)
+          httpBad === 0 && bad.length === 0,
+          `${cats.length} loại · ${lines.length} dòng · ${held.size} pallet QA giữ trong kho · ${bad.length} bị kéo · lỗi HTTP ${httpBad}`)
       }
     }
   }

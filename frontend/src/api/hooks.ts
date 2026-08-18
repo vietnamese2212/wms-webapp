@@ -2379,7 +2379,8 @@ export function useScanLoosePickingItem() {
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, {
       ...body, loose_picking_mode: true,
     }).then(r => r.data.data),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      warnPutaway(data)   // hàng dư đặt sang ô lệch quy tắc cất (kho chưa bật bắt buộc)
       qc.invalidateQueries({ queryKey: ['loosepicking'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
@@ -2972,6 +2973,7 @@ export function useScanOutboundItem() {
       // timeout 12s: sóng yếu → fail sớm → ScanDialog tự xếp vào hàng đợi offline
     }) => apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/scan`, body, { timeout: 12000 }).then(r => r.data.data),
     onSuccess: (data: { scan_entry: { id: string; pallet_code: string; cartons_scanned: number }; item: { cartons_scanned: number; status: string } }, v) => {
+      warnPutaway(data)   // hàng dư đặt sang ô lệch quy tắc cất (kho chưa bật bắt buộc)
       qc.setQueryData(['gdo', v.gdoId], (old: any) => {
         if (!old) return old
         return {

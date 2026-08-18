@@ -13,7 +13,7 @@ export interface PutawayHint {
 }
 
 export const PUTAWAY_BLOCK_LABEL: Record<PutawayBlockCode, string> = {
-  NO_IN:         'Vị trí không nhận hàng vào',
+  NO_IN:         'Vị trí không đưa hàng vào',
   FULL:          'Vị trí đã đầy',
   PICK_FACE:     'Vị trí nhặt lẻ — không cất pallet nguyên',
   QA_HOLD:       'Đang có pallet bị QA giữ',
@@ -21,9 +21,10 @@ export const PUTAWAY_BLOCK_LABEL: Record<PutawayBlockCode, string> = {
   NCC_MIX:       'Khác NCC với hàng đang để',
   DATE_MIX:      'Date không hợp luật trộn của kho',
 }
-// Nhãn NGẮN để nhét vừa 1 dòng option trên PDA
+// Nhãn NGẮN để nhét vừa 1 dòng option trên PDA. NO_IN giữ NGUYÊN VĂN chữ trên ô tick ở trang
+// Vị trí kho — rút gọn thành "cấm nhập" là đẻ ra tên thứ hai cho cùng một cờ.
 export const PUTAWAY_BLOCK_SHORT: Record<PutawayBlockCode, string> = {
-  NO_IN: 'cấm nhập', FULL: 'đã đầy', PICK_FACE: 'nhặt lẻ', QA_HOLD: 'QA giữ',
+  NO_IN: 'không đưa hàng vào', FULL: 'đã đầy', PICK_FACE: 'nhặt lẻ', QA_HOLD: 'QA giữ',
   MAX_MATERIALS: 'quá số mã', NCC_MIX: 'khác NCC', DATE_MIX: 'lệch date',
 }
 export const PUTAWAY_REASON_LABEL: Record<PutawayReasonCode, string> = {

@@ -138,7 +138,9 @@ export function putawayNeedsMats(rules: PutawayRules): boolean {
 
 // ─── Lý do CHẶN — danh sách cố định, có nhãn để hiện thẳng cho người quét ────
 export const PUTAWAY_BLOCKS = [
-  { code: 'NO_IN',         label: 'Vị trí không nhận hàng vào' },
+  // Nhãn phải TRÙNG chữ trên ô tick ở trang Vị trí kho ("Không đưa hàng vào"). Đặt tên khác đi
+  // ("cấm nhập", "không nhận hàng") là buộc người dùng tự đoán hai chữ đó cùng chỉ một cờ.
+  { code: 'NO_IN',         label: 'Vị trí không đưa hàng vào' },
   { code: 'FULL',          label: 'Vị trí đã đầy' },
   { code: 'PICK_FACE',     label: 'Vị trí nhặt lẻ — không cất pallet nguyên' },
   { code: 'QA_HOLD',       label: 'Đang có pallet bị QA giữ' },
@@ -394,7 +396,7 @@ export function putawayBlockMessage(
 ): string {
   const at = `Vị trí ${locationCode}`
   switch (code) {
-    case 'NO_IN':         return `${at} được đánh dấu KHÔNG nhận hàng vào (kho tạm / ngoài đường). Chọn vị trí khác.`
+    case 'NO_IN':         return `${at} được đánh dấu KHÔNG ĐƯA HÀNG VÀO. Chọn vị trí khác.`
     case 'FULL':          return `${at} đã đầy (${facts.pallets} pallet). Chọn vị trí còn chỗ.`
     case 'PICK_FACE':     return `${at} là vị trí nhặt lẻ — kho không cho cất pallet nguyên vào đây (chỗ này để lệnh Fill đổ hàng).`
     case 'QA_HOLD':       return `${at} đang có pallet bị QA giữ — cất đè lên sẽ chôn pallet đó. Chọn vị trí khác.`

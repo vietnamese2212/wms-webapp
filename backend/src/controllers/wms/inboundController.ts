@@ -1238,8 +1238,10 @@ export async function checkScanQR(req: Request, res: Response) {
       suggested_cartons: outboundCartons ?? effCartonsPerPallet(mat, orderWarehouseId) * qtyFactorOf(material as MatUnits),
       outbound_cartons:  outboundCartons,
       putaway: {
-        violation: putPrev.blocked,
-        message:   putPrev.warning ?? putPrev.error?.message ?? null,
+        // CHỈ nói khi CHẶN THẬT (kho bật bắt buộc). Mức cảnh báo → im lặng ở màn quét, cùng lý lẽ
+        // với `warnings` trong scanQR: vị trí đã được duyệt ở bước chọn chỗ cất.
+        violation: putPrev.error ? putPrev.blocked : null,
+        message:   putPrev.error?.message ?? null,
         // true = kho BẮT BUỘC ⇒ FE phải bắt chọn lý do trước khi cho Lưu
         required:  !!putPrev.error,
       },
@@ -1583,8 +1585,11 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     const warnings: string[] = []
-    // Kho chưa bật "bắt buộc cất đúng quy tắc" → vẫn lưu (hành vi cũ) nhưng NÓI RA + đã ghi vết
-    if (put.warning) warnings.push(put.warning)
+    // QUÉT NHẬP KHÔNG CẢNH BÁO QUY TẮC CẤT (user chốt 18/08). Chỗ QUYẾT ĐỊNH nơi cất là lúc CHỌN
+    // VỊ TRÍ (tạo phiếu / đổi vị trí / picker trong màn quét) — cả 3 cửa đó đều đã gác và đều nói
+    // ra khi lệch. Tới lượt quét thì hoặc đã bị chặn (kho bật bắt buộc → 422 ở guardPutaway phía
+    // trên), hoặc vị trí đã được chấp nhận ⇒ nhắc lại mỗi tem chỉ dạy người quét bấm bỏ qua cảnh
+    // báo. Vết `put.trace` VẪN ghi vào InventoryEntry để báo cáo tuân thủ không mất mẫu số.
     if (!manufacturer && parsed.manufacturer_code) {
       // Chỉ cảnh báo khi đoạn 6 KHÔNG khớp cả Nhà sản xuất lẫn mã NMSX kho (Warehouse.nmsx_code) — vd "B" = Kho Ba Vì là hợp lệ
       const isWhNmsx = (((await whNmsxP).data ?? []) as { id: string }[]).length > 0

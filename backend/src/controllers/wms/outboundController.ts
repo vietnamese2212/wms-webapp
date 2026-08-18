@@ -27,6 +27,7 @@ import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells } from '../../utils/excelHeader'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
+import { guardPutaway } from '../../services/putawayContext'
 
 const now = () => new Date().toISOString()
 
@@ -4619,6 +4620,12 @@ const canRotationOverride = (req: Request): boolean =>
   req.user?.is_superadmin === true ||
   (req.user?.module_permissions ?? {})['outbound']?.includes('rotation_override') === true
 
+// Quyền duyệt CẤT khác quy tắc — dùng chung một quyền cho cả app (`inbound.putaway_override`,
+// xem inventoryController): nó là một NĂNG LỰC ("được cất lệch luật"), không phải một cái nút.
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
+
 // Thông báo chặn khi kho bật "bắt buộc" — nói rõ pallet nào nên lấy + lấy ở đâu, để người quét
 // còn đi lấy được, thay vì chỉ bị từ chối.
 function rotationBlockMessage(r: RotationCheck): string {
@@ -5047,6 +5054,31 @@ export async function scanItem(req: Request, res: Response) {
       }
     }
 
+    // ── HÀNG DƯ ĐẶT SANG Ô KHÁC = MỘT LẦN CẤT HÀNG (user chốt 18/08) ────────────────────
+    // Bốc xong còn dư mà mang sang ô mới thì đó đúng nghĩa "đưa hàng vào ô đó" ⇒ phải theo cùng
+    // quy tắc cất của kho: mức CẢNH BÁO thì cho qua + nói ra, mức BẮT BUỘC thì không cho.
+    // "Giữ chỗ cũ" KHÔNG chấm: pallet đã nằm sẵn ở đó, chặn chỉ tạo ngõ cụt (không cho giữ mà cũng
+    // chẳng dời được hàng đi đâu) — luật là "không ĐƯA hàng vào", không phải "không được ở lại".
+    let putLeftoverWarn: string | null = null
+    if (moveLeftoverTo) {
+      const put = await guardPutaway({
+        warehouseId: gdo?.warehouse_id ?? null,
+        locationId:  moveLeftoverTo,
+        incoming: {
+          material_id:     inv.material_id,
+          ncc_id:          inv.ncc_id ?? null,
+          production_date: inv.production_date ?? null,
+          expiry_date:     inv.expiry_date ?? null,
+          shelf_life_days: inv.shelf_life_days ?? null,
+        },
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride:    canPutawayOverride(req),
+        material:       shelfMat as MaterialShelfInfo | null,
+      })
+      if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putLeftoverWarn = put.warning
+    }
+
     // pct_date tại thời điểm quét — khóa cứng, không thay đổi theo thời gian (dùng lại pctRaw đã tính trên)
     const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
 
@@ -5161,6 +5193,9 @@ export async function scanItem(req: Request, res: Response) {
       scan_entry: { id: scanId, pallet_code: qr, cartons_scanned: to_take },
       item: { ...item, cartons_scanned: new_scanned, status: new_item_status },
       leftover: leftoverQty > 0 ? { qty: leftoverQty, moved: !!moveLeftoverTo } : null,
+      // Kho chưa bật "bắt buộc" → đã chuyển rồi nhưng NÓI RA (hook FE bật toast). Khác màn quét
+      // NHẬP (im lặng): ở đây vị trí vừa được chọn ngay lượt này, chưa qua cửa duyệt nào.
+      ...(putLeftoverWarn ? { putaway_warning: putLeftoverWarn } : {}),
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }

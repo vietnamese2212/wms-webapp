@@ -168,7 +168,7 @@ try {
   }
   let r = await mkOrder(locNoIn.id)
   check('[8] kho chỉ CẢNH BÁO → vẫn tạo được vào ô cấm nhưng CÓ cảnh báo trả về',
-    r.s === 200 && /không nhận hàng vào/i.test(r.j?.data?.putaway_warning ?? ''),
+    r.s === 200 && /không đưa hàng vào/i.test(r.j?.data?.putaway_warning ?? ''),
     `HTTP ${r.s}`)
 
   await setRules({ putaway_enforced: ['NO_IN'] }); await waitConfigSettled()
@@ -226,10 +226,13 @@ try {
   r = await api(`/wms/inbound-orders/${orderId}/scan`, 'POST',
     { qr_code: qr3, location_id: locNoIn.id, qty_semantics: 'base' })
   const t3 = await traceOf(qr3)
-  check('[16] kho chỉ cảnh báo: quét qua được NHƯNG vẫn ghi vết + trả cảnh báo',
+  // user chốt 18/08: màn QUÉT không cảnh báo quy tắc cất — nơi quyết định chỗ cất là bước CHỌN VỊ
+  // TRÍ (đã gác + đã nói ra ở [8]/[11]). Nhắc lại mỗi tem chỉ dạy người quét bấm bỏ qua. Nhưng VẾT
+  // thì bắt buộc còn, nếu không % tuân thủ ở [17] mất mẫu số mà không ai biết.
+  check('[16] kho chỉ cảnh báo: quét qua được + VẪN ghi vết, nhưng KHÔNG cảnh báo ở màn quét',
     r.s === 200 && t3?.putaway_violation === 'NO_IN'
-      && (r.j?.data?.warnings ?? []).some(w => /không nhận hàng vào/i.test(w)),
-    `viol=${t3?.putaway_violation}`)
+      && !(r.j?.data?.warnings ?? []).some(w => /đưa hàng vào/i.test(w)),
+    `viol=${t3?.putaway_violation} warnings=${JSON.stringify(r.j?.data?.warnings ?? [])}`)
 
   const mine = await restAll('InventoryEntry',
     `select=putaway_checked,putaway_violation&import_order_id=eq.${orderId}`)
@@ -377,7 +380,7 @@ try {
     if (p1) {
       let rb = await move([p1.id], locNoIn.id)
       check('[25] Chuyển vị trí hàng loạt — kho chỉ CẢNH BÁO: vẫn chuyển được nhưng nói ra là lệch luật',
-        rb.s === 200 && /không nhận hàng vào/i.test(rb.j?.data?.putaway_warning ?? ''),
+        rb.s === 200 && /không đưa hàng vào/i.test(rb.j?.data?.putaway_warning ?? ''),
         `HTTP ${rb.s} · ${rb.j?.data?.putaway_warning ?? 'không có cảnh báo'}`)
 
       await setRules({ putaway_enforced: ['NO_IN'] }); await waitConfigSettled()
@@ -437,8 +440,8 @@ try {
     await setRules({ putaway_block_pick_face: true, putaway_date_mix: 'OLDER_ONLY', putaway_enforced: ['DATE_MIX'] }); await waitConfigSettled()
 
     let r = await mkOrder(locNoIn.id)
-    check('[31] "Cấm đưa hàng vào" ở mức CẢNH BÁO → VẪN cất được + nói ra (đúng ý user)',
-      r.s === 200 && /không nhận hàng vào/i.test(r.j?.data?.putaway_warning ?? ''),
+    check('[31] "Không đưa hàng vào" ở mức CẢNH BÁO → VẪN cất được + nói ra (đúng ý user)',
+      r.s === 200 && /không đưa hàng vào/i.test(r.j?.data?.putaway_warning ?? ''),
       `HTTP ${r.s} · ${r.j?.data?.putaway_warning ?? 'KHÔNG có cảnh báo'}`)
 
     r = await mkOrder(locPick.id)
@@ -482,7 +485,7 @@ try {
       const noIn  = (await api(`/masterdata/locations?warehouse_id=${whId}&slot_no_in=1&view=lite`)).j?.data ?? []
       check('[38] lọc theo cờ CẮT THẬT (không im lặng trả cả kho)',
         pf.length < nAll && pf.every(l => l.is_pick_face === true) && noIn.every(l => l.slot_no_in === true),
-        `cả kho ${nAll} · nhặt lẻ ${pf.length} · cấm nhập ${noIn.length}`)
+        `cả kho ${nAll} · nhặt lẻ ${pf.length} · không đưa hàng vào ${noIn.length}`)
     }
     check('[37] slotting_stats trả cờ is_pick_face cho từng vị trí (P1 cần để chừa ô nhặt lẻ)',
       locs.length === 0 || locs.every(l => Object.prototype.hasOwnProperty.call(l, 'is_pick_face')),

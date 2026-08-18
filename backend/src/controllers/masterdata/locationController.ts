@@ -213,10 +213,16 @@ export async function listLocations(req: Request, res: Response) {
     // tab cấu hình Slotting đều làm vậy) — và phần đắt nhất là `used_slots` (quét InventoryEntry
     // chunk 300 = 6 lượt round-trip) mà mấy màn đó KHÔNG dùng tới. Cờ nào cũng là tập CON có chủ
     // đích (vị trí cần kiểm / kho tạm / hàng kẹt), nên trả đủ tập là an toàn — khác hẳn "cả danh mục".
+    // ⚠️ Thêm cờ lọc mới thì phải khai ở CẢ HAI nhánh (mảng ở đây + `locations_page` bên dưới).
+    // Bắt được 17/08: `pick_face` chỉ có ở nhánh phân trang ⇒ gọi `?pick_face=1` KHÔNG có `page=`
+    // trả về TOÀN BỘ vị trí của kho mà không báo gì — người gọi tưởng đã lọc (đo Ba Vì: xin tập ô
+    // nhặt lẻ, nhận đủ 236 ô). Đúng lớp lỗi "lọc bị bỏ qua âm thầm" đã dính với chính cờ này ở FE
+    // ngày 04/08.
     const flagStk   = tri(req.query.flag)          // requires_stocktake — "cần kiểm kê"
+    const flagPick  = tri(req.query.pick_face)     // is_pick_face — vị trí nhặt lẻ
     const flagNoIn  = tri(req.query.slot_no_in)    // Slotting: kho tạm, không đưa hàng vào
     const flagNoOut = tri(req.query.slot_no_out)   // Slotting: hàng kẹt, không lấy hàng đi
-    const byFlag = flagStk !== null || flagNoIn !== null || flagNoOut !== null
+    const byFlag = flagStk !== null || flagNoIn !== null || flagNoOut !== null || flagPick !== null
 
     // Scope kho: ASSIGNED chỉ thấy vị trí kho được gán — kể cả khi KHÔNG truyền warehouse_id
     // (vd Check vị trí để "tất cả kho" trước đây lộ toàn bộ vị trí mọi kho)
@@ -240,6 +246,7 @@ export async function listLocations(req: Request, res: Response) {
         .order('sub_code').order('row').order('shelf').order('id')
       if (ids) query = query.in('id', ids.slice(0, 300))   // cap 300 = trần id trên URL PostgREST
       if (flagStk   !== null) query = query.eq('requires_stocktake', flagStk)
+      if (flagPick  !== null) query = query.eq('is_pick_face', flagPick)
       if (flagNoIn  !== null) query = query.eq('slot_no_in', flagNoIn)
       if (flagNoOut !== null) query = query.eq('slot_no_out', flagNoOut)
       if (effective) {

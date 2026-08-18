@@ -474,6 +474,16 @@ try {
     // (nếu không, Fill hạ hàng xuống rồi Slotting lại đòi bốc lên — giằng nhau vô tận).
     const stats = await restRpc('slotting_stats', { p_warehouse_id: whId, p_categories: null, p_days: 30 })
     const locs = stats?.locations ?? []
+    // [38] Lọc theo CỜ phải CẮT THẬT ở cả nhánh mảng (không có ?page=). Bắt 17/08: `pick_face`
+    // chỉ khai ở nhánh phân trang nên `?pick_face=1` trả TOÀN BỘ vị trí của kho mà không báo gì.
+    {
+      const nAll  = ((await api(`/masterdata/locations?warehouse_id=${whId}&view=lite`)).j?.data ?? []).length
+      const pf    = (await api(`/masterdata/locations?warehouse_id=${whId}&pick_face=1&view=lite`)).j?.data ?? []
+      const noIn  = (await api(`/masterdata/locations?warehouse_id=${whId}&slot_no_in=1&view=lite`)).j?.data ?? []
+      check('[38] lọc theo cờ CẮT THẬT (không im lặng trả cả kho)',
+        pf.length < nAll && pf.every(l => l.is_pick_face === true) && noIn.every(l => l.slot_no_in === true),
+        `cả kho ${nAll} · nhặt lẻ ${pf.length} · cấm nhập ${noIn.length}`)
+    }
     check('[37] slotting_stats trả cờ is_pick_face cho từng vị trí (P1 cần để chừa ô nhặt lẻ)',
       locs.length === 0 || locs.every(l => Object.prototype.hasOwnProperty.call(l, 'is_pick_face')),
       `${locs.length} vị trí`)

@@ -978,46 +978,6 @@ export async function updateZoneConfig(req: Request, res: Response) {
   } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
 }
 
-// PUT /wms/slotting/location-config { warehouse_id, no_in_ids: string[], no_out_ids: string[] }
-// Cấu hình VỊ TRÍ (tab Cài đặt): replace-all 2 danh sách per kho —
-// no_in = vị trí KHÔNG đưa hàng vào (kho tạm); no_out = vị trí KHÔNG lấy hàng đi.
-export async function updateLocationConfig(req: Request, res: Response) {
-  try {
-    const { warehouse_id, no_in_ids, no_out_ids } = req.body as {
-      warehouse_id?: string; no_in_ids?: string[]; no_out_ids?: string[]
-    }
-    if (!warehouse_id || !Array.isArray(no_in_ids) || !Array.isArray(no_out_ids))
-      return fail(res, 400, 'INVALID_INPUT', 'Thiếu warehouse_id / no_in_ids / no_out_ids')
-    if (!guardWarehouse(req, res, warehouse_id)) return
-
-    // Chỉ nhận id vị trí THUỘC kho này (chống gán chéo kho)
-    const valid = new Set<string>(
-      (await fetchAllRowsParallel(() => supabase.from('Location')
-        .select('id').eq('warehouse_id', warehouse_id).order('id'))).map((l: { id: string }) => l.id))
-    const inIds = [...new Set(no_in_ids)].filter(id => valid.has(id))
-    const outIds = [...new Set(no_out_ids)].filter(id => valid.has(id))
-
-    const now = new Date().toISOString()
-    // Reset cả kho về false rồi bật lại theo danh sách (replace-all, khớp UI multi-select)
-    const { error: resetErr } = await supabase.from('Location')
-      .update({ slot_no_in: false, slot_no_out: false, updated_at: now })
-      .eq('warehouse_id', warehouse_id)
-    if (resetErr) {
-      if (/slot_no_in|slot_no_out/.test(resetErr.message))
-        return fail(res, 503, 'NOT_READY', 'Chưa apply migration 20260718_slotting_locations')
-      return fail(res, 500, 'DB_ERROR', resetErr.message)
-    }
-    for (const ids of chunk(inIds, 300)) {
-      const { error } = await supabase.from('Location').update({ slot_no_in: true, updated_at: now }).in('id', ids)
-      if (error) return fail(res, 500, 'DB_ERROR', error.message)
-    }
-    for (const ids of chunk(outIds, 300)) {
-      const { error } = await supabase.from('Location').update({ slot_no_out: true, updated_at: now }).in('id', ids)
-      if (error) return fail(res, 500, 'DB_ERROR', error.message)
-    }
-    return ok(res, { no_in: inIds.length, no_out: outIds.length })
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', String(e)) }
-}
 
 // POST /wms/slotting/plans/:id/scan-move { qr } — QUÉT THỰC HIỆN lệnh (nút inline tab Kế hoạch,
 // user chốt 19/07): pallet phải ĐANG Ở ĐÚNG vị trí nguồn của lệnh mới nhận; nhận là TỰ chuyển

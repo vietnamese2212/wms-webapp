@@ -111,6 +111,7 @@ interface LocationsFilters {
   flagMode: FlagMode        // requires_stocktake — cần check hàng ngày
   pickFaceMode: FlagMode    // is_pick_face — vị trí nhặt lẻ
   noInMode: FlagMode        // slot_no_in — không đưa hàng vào (kho tạm/ngoài đường)
+  noOutMode: FlagMode       // slot_no_out — không lấy hàng đi (hàng kẹt)
   page: number
   pageSize: number
 }
@@ -452,7 +453,7 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
-    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, page: 1, pageSize: 200 },
+    locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, noOutMode: '' as FlagMode, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',

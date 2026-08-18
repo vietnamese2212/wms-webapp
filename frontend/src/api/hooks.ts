@@ -158,7 +158,7 @@ export function useLocationsFull(params?: LocationListParams, enabled = true) {
 // flag / pick_face = BA trạng thái: undefined (không lọc) · true (có cờ) · false (chưa có cờ)
 export type LocationsListParams = {
   warehouse_id?: string; category?: string; search?: string; zones?: string[]
-  flag?: boolean; pick_face?: boolean; slot_no_in?: boolean; include_inactive?: boolean
+  flag?: boolean; pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean; include_inactive?: boolean
 }
 export type LocationsSummary = { count: number; capacity: number; used: number; full: number }
 
@@ -171,12 +171,12 @@ export function locationsQp(p: LocationsListParams): Record<keyof LocationsListP
   const tri = (v?: boolean) => (v === undefined ? undefined : v ? '1' : '0')
   // Đọc qua destructure có chủ đích: ratchet `putaway_rule_hand_rolled` bắt mẫu `x.slot_no_in`
   // (FE tự đoán luật cất) — đây chỉ là map query-param lọc, không phải kết luận gì từ cờ.
-  const { slot_no_in: noIn } = p
+  const { slot_no_in: noIn, slot_no_out: noOut } = p
   return {
     warehouse_id: p.warehouse_id || undefined, category: p.category || undefined,
     search: p.search || undefined,
     zones: p.zones?.length ? p.zones.join(',') : undefined,
-    flag: tri(p.flag), pick_face: tri(p.pick_face), slot_no_in: tri(noIn),
+    flag: tri(p.flag), pick_face: tri(p.pick_face), slot_no_in: tri(noIn), slot_no_out: tri(noOut),
     include_inactive: p.include_inactive ? '1' : undefined,
   }
 }
@@ -3846,18 +3846,6 @@ export function useDeleteSlottingPlan() {
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/wms/slotting/plans/${id}`).then(r => r.data),
     onSettled: () => qc.invalidateQueries({ queryKey: ['slotting-plans'] }),
-  })
-}
-// Cấu hình slotting của VỊ TRÍ (tab Cài đặt): no_in = không đưa hàng vào (kho tạm); no_out = không lấy hàng đi
-export function useUpdateSlottingLocationConfig() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { warehouse_id: string; no_in_ids: string[]; no_out_ids: string[] }) =>
-      apiClient.put('/wms/slotting/location-config', body).then(r => r.data.data as { no_in: number; no_out: number }),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['locations-real'] })
-      qc.invalidateQueries({ queryKey: ['slotting'] })
-    },
   })
 }
 // Cấu hình slotting của KHU (tab Cài đặt trang Tối ưu vị trí — quyền slotting.configure)

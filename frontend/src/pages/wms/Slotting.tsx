@@ -20,12 +20,11 @@ import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   useSlotting, useSlottingPlans, useSlottingPreview, useCreateSlottingPlan, useDeleteSlottingPlan,
-  useWarehouseZones, useUpdateSlottingZoneConfig, useLocationsReal, useLocationsByFlag, useUpdateSlottingLocationConfig,
+  useWarehouseZones, useUpdateSlottingZoneConfig,
   type WarehouseZone,
   type SlottingMaterial, type SlottingZone, type SlottingPlanRow, type SlottingPlanLineDraft,
   type SlottingLevel, type SlottingPrinciple, type SlottingWarning, type SlottingImpact,
 } from '@/api/hooks'
-import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -195,7 +194,7 @@ export default function Slotting() {
             page={matPage} pageSize={matPageSize} onPage={setMatPage} onPageSize={n => { setMatPageSize(n); setMatPage(1) }} />}
         {tab === 'plans' && <PlansTab warehouseId={effectiveWhId} canPlan={canPlan} canDelete={canDelete} onOpen={id => navigate(`/wms/slotting/plans/${id}`)} />}
         {tab === 'config' && (canConfigure
-          ? <ConfigTab warehouseId={effectiveWhId} categories={categories} />
+          ? <ConfigTab warehouseId={effectiveWhId} />
           : <div className="p-8 text-center text-sm text-slate-400">Không có quyền Cài đặt</div>)}
       </div>
 
@@ -565,7 +564,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
 // ─── Tab Cài đặt (quyền slotting.configure) — cấu hình slotting per KHU ───────
 // Hạng nhặt (1 = gần cửa xuất nhất) + Luồng cửa. Loại kho của khu/mã quản ở chỗ cũ
 // (Cài đặt WMS / Mã hàng) — khu SCA = tạo Loại kho riêng rồi gán khu + mã (user chốt v3).
-function ConfigTab({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
+function ConfigTab({ warehouseId }: { warehouseId: string }) {
   const { data: zones = [], isLoading } = useWarehouseZones(warehouseId || undefined)
   const { mutate: updateCfg, isPending } = useUpdateSlottingZoneConfig()
   const [err, setErr] = useState('')
@@ -592,7 +591,14 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
       {/* Hướng dẫn nén 1 dòng — rê chuột xem đủ (bảng chiếm ~80%, user 18/07) */}
       <div className="px-3 py-1 text-[10px] text-slate-500 border-b bg-slate-50 truncate" title={guide}>{guide}</div>
       {err && <p className="m-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-      <LocationConfig warehouseId={warehouseId} categories={categories} />
+      {/* Cờ "Không đưa hàng vào" / "Không lấy hàng đi" khai ở trang Vị trí kho (18/08): ở đó
+          tick được từng dòng HOẶC áp cho cả bộ lọc, có cột + bộ lọc riêng để soi lại. Khối chọn
+          nhiều ở đây là đường khai THỨ HAI cho cùng 2 cờ — bỏ để chỉ còn một chỗ khai. */}
+      <p className="px-3 py-1.5 border-b text-[10px] text-slate-500">
+        Vị trí đặc biệt (<b>Không đưa hàng vào</b> · <b>Không lấy hàng đi</b>) khai ở trang{' '}
+        <Link to="/wms/locations" className="underline font-medium text-sky-700">Vị trí kho</Link>
+        {' '}— tick vị trí rồi bấm nút tương ứng, hoặc áp cho cả bộ lọc đang xem.
+      </p>
       {isLoading ? (
         <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div>
       ) : (
@@ -640,84 +646,6 @@ function ConfigTab({ warehouseId, categories }: { warehouseId: string; categorie
   )
 }
 
-// Cấu hình VỊ TRÍ (user 18/07): 2 danh sách chọn dropdown per kho —
-// "KHÔNG đưa hàng vào" (kho tạm: không làm đích + hàng ở đó luôn bị kéo đi trước)
-// và "KHÔNG lấy hàng đi" (hàng kẹt không bốc được: loại khỏi nguồn tính toán).
-function LocationConfig({ warehouseId, categories }: { warehouseId: string; categories: string[] }) {
-  // Ô chọn = TÌM TRÊN SERVER; trạng thái hiện tại hỏi thẳng TẬP mang cờ.
-  // (Trước đây kéo CẢ KHO chỉ để `.filter(l => l.slot_no_in)` — đo Bàu Bàng 1.517 vị trí = 1.030KB/2,9s.)
-  const [locTerm, setLocTerm] = useState('')
-  const locTermDeb = useDebouncedValue(locTerm, 250)
-  const { data: locations = [], isLoading } = useLocationsReal(
-    { warehouse_id: warehouseId, search: locTermDeb || undefined, limit: 50 }, !!warehouseId)
-  const { data: noInFlagged  = [] } = useLocationsByFlag('slot_no_in',  { warehouse_id: warehouseId }, !!warehouseId)
-  const { data: noOutFlagged = [] } = useLocationsByFlag('slot_no_out', { warehouse_id: warehouseId }, !!warehouseId)
-  const { mutate: save, isPending } = useUpdateSlottingLocationConfig()
-  const [noIn, setNoIn] = useState<string[]>([])
-  const [noOut, setNoOut] = useState<string[]>([])
-  const [dirty, setDirty] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [err, setErr] = useState('')
-
-  type LocRow = { id: string; location_code: string; categories?: string[] | null; is_active?: boolean; slot_no_in?: boolean | null; slot_no_out?: boolean | null }
-  const locs = (locations as LocRow[]).filter(l => l.is_active !== false)
-
-  // Nạp trạng thái hiện tại từ TẬP MANG CỜ của cả kho (không theo filter Loại kho, không theo
-  // từ khóa đang gõ) — nút Lưu là replace-all per kho: chỉ nạp phần đang hiển thị sẽ XÓA NHẦM
-  // cờ của vị trí đang bị ẩn.
-  useEffect(() => {
-    if (dirty) return
-    setNoIn(noInFlagged.map(l => l.id))
-    setNoOut(noOutFlagged.map(l => l.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noInFlagged, noOutFlagged, warehouseId])
-  useEffect(() => { setDirty(false); setMsg(''); setErr('') }, [warehouseId])
-
-  // Option theo filter Loại kho phía trên (user 18/07): vị trí đúng loại + vị trí CHƯA khai loại.
-  // Vị trí ĐÃ CHỌN luôn được GHIM ĐẦU (kể cả ngoài filter / ngoài 50 dòng server trả về theo từ
-  // khóa) — không thì tick xong gõ từ khóa khác là mất dấu lựa chọn, mà nút Lưu lại replace-all.
-  const optionsFor = (selectedIds: string[], flagged: LocRow[]) => {
-    const sel = new Set(selectedIds)
-    const label = (l: LocRow) => l.categories?.length ? `${l.location_code} · ${l.categories.join(', ')}` : l.location_code
-    const picked = flagged.filter(l => sel.has(l.id))
-    const rest = locs.filter(l =>
-      !sel.has(l.id)
-      && (categories.length === 0 || !l.categories?.length || l.categories.some(c => categories.includes(c))))
-    return [...picked, ...rest].map(l => ({ value: l.id, label: label(l) }))
-  }
-
-  function handleSave() {
-    setMsg(''); setErr('')
-    save({ warehouse_id: warehouseId, no_in_ids: noIn, no_out_ids: noOut }, {
-      onSuccess: r => { setDirty(false); setMsg(`Đã lưu: ${r.no_in} vị trí không đưa hàng vào · ${r.no_out} vị trí không lấy hàng đi`) },
-      onError: e => setErr(apiMsg(e)),
-    })
-  }
-
-  return (
-    // NÉN 1 hàng (bảng khu chiếm ~80% — user 18/07): nhãn + dropdown + Lưu nằm ngang, mô tả trong tooltip
-    <div className="px-3 py-1.5 border-b space-y-1">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 shrink-0">Vị trí đặc biệt</span>
-        <span className="text-[10px] text-slate-500 shrink-0" title="Kho tạm — không làm đích, hàng nằm đó luôn bị kéo đi. Khai dễ hơn ở trang Vị trí kho: tick chọn vị trí → nút 'Không đưa hàng vào'">Không đưa hàng vào:</span>
-        <MultiSelectFilter label={noIn.length > 0 ? `${noIn.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noIn, noInFlagged)}
-          selected={noIn} onChange={v => { setNoIn(v); setDirty(true); setMsg('') }} selectedFirst
-          serverSearch onSearchChange={setLocTerm} />
-        <span className="text-[10px] text-slate-500 shrink-0" title="Hàng kẹt/không bốc được — loại khỏi nguồn tính toán, vẫn tính chiếm chỗ">Không lấy hàng đi:</span>
-        <MultiSelectFilter label={noOut.length > 0 ? `${noOut.length} vị trí` : 'Chọn vị trí…'} options={optionsFor(noOut, noOutFlagged)}
-          selected={noOut} onChange={v => { setNoOut(v); setDirty(true); setMsg('') }} selectedFirst
-          serverSearch onSearchChange={setLocTerm} />
-        <Button size="sm" className="h-7 text-[11px] !min-h-0" onClick={handleSave} disabled={isPending || !dirty}>
-          {isPending ? 'Đang lưu…' : 'Lưu vị trí'}
-        </Button>
-        {isLoading && <span className="text-[10px] text-slate-400">Đang tải…</span>}
-      </div>
-      {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{err}</p>}
-      {msg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{msg}</p>}
-    </div>
-  )
-}
 
 // ─── Tab Kế hoạch ──────────────────────────────────────────────────────────────
 // Nút Quét thực hiện KHÔNG đặt ở tab danh sách (user bỏ 19/07 — "ở ngoài không có tác dụng gì"),

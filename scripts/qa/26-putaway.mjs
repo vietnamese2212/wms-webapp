@@ -101,6 +101,9 @@ try {
   const locOk  = await mkLoc('OK')
   const locNoIn = await mkLoc('NOIN', { slot_no_in: true })
   const locPick = await mkLoc('PICK', { is_pick_face: true })
+  // Chỉ để phép kiểm [38]/[38b] có ÍT NHẤT 1 dòng mang cờ "không lấy hàng đi" — kho thật đang 0
+  // vị trí, mà lọc ra 0 dòng thì không phân biệt được "cắt đúng" với "cắt sạch vì query hỏng".
+  await mkLoc('NOOUT', { slot_no_out: true })
 
   // ── 1. Picker: mặc định = hành vi cũ, ★ do BE chấm ───────────────────────────────────
   await setRules({ putaway_priority: 'CONSOLIDATE', putaway_date_mix: 'ANY', putaway_max_materials: null,
@@ -483,9 +486,23 @@ try {
       const nAll  = ((await api(`/masterdata/locations?warehouse_id=${whId}&view=lite`)).j?.data ?? []).length
       const pf    = (await api(`/masterdata/locations?warehouse_id=${whId}&pick_face=1&view=lite`)).j?.data ?? []
       const noIn  = (await api(`/masterdata/locations?warehouse_id=${whId}&slot_no_in=1&view=lite`)).j?.data ?? []
+      const noOut = (await api(`/masterdata/locations?warehouse_id=${whId}&slot_no_out=1&view=lite`)).j?.data ?? []
       check('[38] lọc theo cờ CẮT THẬT (không im lặng trả cả kho)',
-        pf.length < nAll && pf.every(l => l.is_pick_face === true) && noIn.every(l => l.slot_no_in === true),
-        `cả kho ${nAll} · nhặt lẻ ${pf.length} · không đưa hàng vào ${noIn.length}`)
+        pf.length < nAll && pf.every(l => l.is_pick_face === true) && noIn.every(l => l.slot_no_in === true)
+          && noOut.every(l => l.slot_no_out === true) && noOut.length < nAll,
+        `cả kho ${nAll} · nhặt lẻ ${pf.length} · không đưa hàng vào ${noIn.length} · không lấy hàng đi ${noOut.length}`)
+
+      // [38b] Nhánh PHÂN TRANG (?page=) đi qua RPC, khác nhánh mảng ở trên. Cờ khai thiếu ở một
+      // trong hai nhánh = im lặng trả cả kho — đúng bug `pick_face` 17/08, nay gác cả 2 cờ.
+      const paged = async (qs) => (await api(`/masterdata/locations?warehouse_id=${whId}&page=1&page_size=500${qs}`)).j?.data ?? {}
+      const pIn  = await paged('&slot_no_in=1')
+      const pOut = await paged('&slot_no_out=1')
+      const pAll = await paged('')
+      check('[38b] nhánh PHÂN TRANG cũng cắt theo 2 cờ (RPC có p_slot_no_in + p_slot_no_out)',
+        (pIn.rows ?? []).every(l => l.slot_no_in === true) && pIn.total === noIn.length
+          && (pOut.rows ?? []).every(l => l.slot_no_out === true) && pOut.total === noOut.length
+          && pAll.total > pIn.total,
+        `cả kho ${pAll.total} · cấm nhập ${pIn.total}/${noIn.length} · hàng kẹt ${pOut.total}/${noOut.length}`)
     }
     check('[37] slotting_stats trả cờ is_pick_face cho từng vị trí (P1 cần để chừa ô nhặt lẻ)',
       locs.length === 0 || locs.every(l => Object.prototype.hasOwnProperty.call(l, 'is_pick_face')),

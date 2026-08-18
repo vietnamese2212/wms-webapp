@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock } from 'lucide-react'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -80,6 +80,7 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'loc',     label: 'Vị trí',          w: 160 },
   { id: 'pick',    label: 'Nhặt lẻ',         w: 80 },
   { id: 'noin',    label: 'Không đưa hàng vào', w: 130 },
+  { id: 'noout',   label: 'Không lấy hàng đi', w: 125 },
   { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
@@ -87,6 +88,36 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'actions', label: '',                w: 64 },
 ]
 const LOC_COL_DEFAULTS = LOC_COLS.map(c => c.w)
+
+// Gắn/bỏ cờ HÀNG LOẠT — mỗi chế độ khai MỘT chỗ (trước đây là 5 chuỗi ternary lồng song song,
+// thêm cờ thứ 4 là phải nhớ sửa đủ 5 nơi).
+const BULK_MODES = {
+  stocktake: {
+    title: 'Cờ cần kiểm kê hàng loạt', tone: 'text-red-500', btn: 'bg-red-600 hover:bg-red-700',
+    on: 'Gắn cờ cần check', off: 'Bỏ cờ',
+    field: 'requires_stocktake' as const,
+    desc: 'Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.',
+  },
+  pickface: {
+    title: 'Khai vị trí nhặt lẻ hàng loạt', tone: 'text-sky-600', btn: 'bg-sky-600 hover:bg-sky-700',
+    on: 'Khai vị trí nhặt lẻ', off: 'Bỏ khai',
+    field: 'is_pick_face' as const,
+    desc: 'Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.',
+  },
+  noin: {
+    title: 'Không đưa hàng vào — hàng loạt', tone: 'text-red-500', btn: 'bg-red-600 hover:bg-red-700',
+    on: 'Đánh dấu không đưa hàng vào', off: 'Bỏ đánh dấu',
+    field: 'slot_no_in' as const,
+    desc: 'Dùng cho kho tạm / ngoài đường: KHÔNG gợi ý khi cất hàng (xuống cuối danh sách chọn) và Slotting luôn lên kế hoạch kéo hàng ra. Mặc định vẫn chọn tay được khi cần — muốn CHẶN hẳn thì tick "Bắt buộc" ở quy tắc cất hàng trong form Kho (Cài đặt WMS).',
+  },
+  noout: {
+    title: 'Không lấy hàng đi — hàng loạt', tone: 'text-amber-600', btn: 'bg-amber-600 hover:bg-amber-700',
+    on: 'Đánh dấu không lấy hàng đi', off: 'Bỏ đánh dấu',
+    field: 'slot_no_out' as const,
+    desc: 'Hàng kẹt / không bốc được. CHỈ Slotting đọc cờ này: hàng ở đây bị loại khỏi nguồn tính toán nên kế hoạch không sinh lệnh dời hàng đi, nhưng ô vẫn tính chiếm chỗ. KHÔNG chặn xuất kho / nhặt lẻ / fill.',
+  },
+} as const
+type BulkMode = keyof typeof BULK_MODES
 
 // Lựa chọn cho 3 bộ lọc cờ vị trí (bỏ trống = tất cả, do FilterBar tự thêm dòng "Tất cả")
 const FLAG_OPTS = [{ value: 'yes', label: 'Có' }, { value: 'no', label: 'Chưa' }]
@@ -109,11 +140,11 @@ export default function Locations() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const locFilter = useWmsFilterStore(s => s.locations)
-  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode } = locFilter
+  const { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode } = locFilter
   const setLocations = useWmsFilterStore(s => s.setLocations)
   // Mọi filter đổi phải kèm page: 1 — đang đứng trang sau mà lọc là ra trang trống
   const setLocationsFilter = (f: Partial<typeof locFilter>) => setLocations({ ...f, page: 1 })
-  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode }
+  const viewSnapshot = { search, warehouseId, catFilter, zoneFilter, statusFilter, flagMode, pickFaceMode, noInMode, noOutMode }
   const savedViews = useSavedViewsStore(s => s.views['locations'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
@@ -145,7 +176,7 @@ export default function Locations() {
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
   // Dialog gắn/bỏ cờ HÀNG LOẠT — 3 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface'
   // (vị trí nhặt lẻ) | 'noin' (không đưa hàng vào — kho tạm/ngoài đường, dùng cho quy tắc cất hàng)
-  const [bulkMode,      setBulkMode]      = useState<'stocktake' | 'pickface' | 'noin' | null>(null)
+  const [bulkMode,      setBulkMode]      = useState<BulkMode | null>(null)
   // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
   // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
   // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
@@ -169,8 +200,9 @@ export default function Locations() {
     warehouse_id: warehouseId, category: catFilter || undefined, search,
     zones: zoneFilter.length ? zoneFilter : undefined,
     flag: modeVal(flagMode), pick_face: modeVal(pickFaceMode), slot_no_in: modeVal(noInMode),
+    slot_no_out: modeVal(noOutMode),
     include_inactive: statusFilter.includes('inactive'),
-  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode, noInMode])
+  } : undefined, [warehouseId, catFilter, search, zoneFilter, flagMode, statusFilter, pickFaceMode, noInMode, noOutMode])
   const { data: pageData, isLoading } = useLocationsPaged(
     listParams ? { ...listParams, page: locFilter.page, page_size: locFilter.pageSize } : undefined)
   const { data: locSummary } = useLocationsSummary(listParams)
@@ -193,9 +225,7 @@ export default function Locations() {
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      const cờ = bulkMode === 'pickface' ? { is_pick_face: flag }
-        : bulkMode === 'noin' ? { slot_no_in: flag }
-        : { requires_stocktake: flag }
+      const cờ = { [BULK_MODES[bulkMode ?? 'stocktake'].field]: flag }
       await bulkFlag.mutateAsync(allFiltered
         // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
         ? { by_filter: true, filter: listParams ?? {}, ...cờ }
@@ -354,6 +384,8 @@ export default function Locations() {
       onChange: v => setLocationsFilter({ pickFaceMode: v as FlagMode }) },
     { key: 'slot_no_in', label: 'Không đưa hàng vào', type: 'single', options: FLAG_OPTS, value: noInMode,
       onChange: v => setLocationsFilter({ noInMode: v as FlagMode }) },
+    { key: 'slot_no_out', label: 'Không lấy hàng đi', type: 'single', options: FLAG_OPTS, value: noOutMode,
+      onChange: v => setLocationsFilter({ noOutMode: v as FlagMode }) },
   ]
 
   // Xuất Excel phải lấy TOÀN BỘ kết quả lọc từ server — danh sách đã phân trang, nếu xuất `filtered`
@@ -541,6 +573,14 @@ export default function Locations() {
                           : <span className="text-slate-300">—</span>}
                       </TableCell>
                       <TableCell className="px-2 py-1">
+                        {loc.slot_no_out
+                          ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                                  title="Không lấy hàng đi (hàng kẹt) — Slotting loại khỏi nguồn, ô vẫn tính chiếm chỗ. Không chặn xuất kho">
+                              <Lock className="h-2.5 w-2.5" />Kẹt
+                            </span>
+                          : <span className="text-slate-300">—</span>}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">
                         {loc.requires_stocktake
                           ? <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700"
                                   title="Vị trí phải kiểm kê hàng ngày">
@@ -660,6 +700,10 @@ export default function Locations() {
           <button onClick={() => { setBulkErr(''); setBulkMode('noin') }}
             className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors">
             <Ban className="h-3.5 w-3.5" />Không đưa hàng vào
+          </button>
+          <button onClick={() => { setBulkErr(''); setBulkMode('noout') }}
+            className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
+            <Lock className="h-3.5 w-3.5" />Không lấy hàng đi
           </button>
           <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
             className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
@@ -852,32 +896,28 @@ export default function Locations() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-1.5">
-              {bulkMode === 'pickface'
-                ? <><Hand className="h-4 w-4 text-sky-600" /> Khai vị trí nhặt lẻ hàng loạt</>
-                : bulkMode === 'noin'
-                ? <><Ban className="h-4 w-4 text-red-500" /> Không đưa hàng vào — hàng loạt</>
-                : <><Flag className="h-4 w-4 text-red-500" /> Cờ cần kiểm kê hàng loạt</>}
+              {bulkMode === 'pickface' ? <Hand className="h-4 w-4 text-sky-600" />
+                : bulkMode === 'noin' ? <Ban className="h-4 w-4 text-red-500" />
+                : bulkMode === 'noout' ? <Lock className="h-4 w-4 text-amber-600" />
+                : <Flag className="h-4 w-4 text-red-500" />}
+              {BULK_MODES[bulkMode ?? 'stocktake'].title}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
             Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
-            {bulkMode === 'pickface'
-              ? ' Vị trí nhặt lẻ = chỗ công nhân với tay lấy hàng được (tầng dưới / khu để sàn). Trang Fill hàng dựa vào đây để biết hàng dưới đủ hay thiếu.'
-              : bulkMode === 'noin'
-              ? ' Dùng cho kho tạm / ngoài đường: KHÔNG gợi ý khi cất hàng (xuống cuối danh sách chọn) và Slotting luôn lên kế hoạch kéo hàng ra. Mặc định vẫn chọn tay được khi cần — muốn CHẶN hẳn thì tick "Bắt buộc" ở quy tắc cất hàng trong form Kho (Cài đặt WMS).'
-              : ' Vị trí gắn cờ sẽ xuất hiện trong "Vị trí quan trọng" ở Tổng hợp kiểm kê.'}
+            {' ' + BULK_MODES[bulkMode ?? 'stocktake'].desc}
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
             <Button variant="outline" size="sm" className="border-slate-300"
               onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? '…' : bulkMode === 'pickface' ? 'Bỏ khai' : bulkMode === 'noin' ? 'Bỏ đánh dấu' : 'Bỏ cờ'}
+              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode ?? 'stocktake'].off}
             </Button>
-            <Button size="sm" className={bulkMode === 'pickface' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-red-600 hover:bg-red-700'}
+            <Button size="sm" className={BULK_MODES[bulkMode ?? 'stocktake'].btn}
               onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? 'Đang lưu…' : bulkMode === 'pickface' ? 'Khai vị trí nhặt lẻ' : bulkMode === 'noin' ? 'Đánh dấu không đưa hàng vào' : 'Gắn cờ cần check'}
+              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode ?? 'stocktake'].on}
             </Button>
           </DialogFooter>
         </DialogContent>

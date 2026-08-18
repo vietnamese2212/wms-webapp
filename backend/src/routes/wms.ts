@@ -256,7 +256,6 @@ router.post('/packing-runs',            requirePerm('packing', 'open_run'), pack
 router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
 router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)
 router.post('/packing-runs/:id/cancel', requirePerm('packing', 'open_run'), packing.cancelRun)
-router.put('/slotting/location-config',                       requirePerm('slotting', 'configure'), slotting.updateLocationConfig)
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)

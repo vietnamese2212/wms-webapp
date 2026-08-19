@@ -66,7 +66,8 @@ export function Header() {
     .toUpperCase() ?? 'U'
 
   return (
-    <header className="sticky top-0 z-40 flex h-12 lg:h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-3 lg:px-4 gap-2 lg:gap-4">
+    <div className="sticky top-0 z-40">
+    <header className="flex h-12 lg:h-16 items-center border-b border-white/10 bg-slate-900 text-slate-200 px-3 lg:px-4 gap-2 lg:gap-4">
       {/* Mobile menu */}
       <Sheet>
         <SheetTrigger asChild>
@@ -87,8 +88,7 @@ export function Header() {
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
           <span className="text-xs font-bold">M</span>
         </div>
-        {/* Ẩn chữ trên màn rất hẹp — nhường chỗ cho nút Bối cảnh Kho (≤360px không tràn) */}
-        <span className="font-bold text-sm text-white hidden min-[400px]:inline">MAL SC</span>
+        <span className="font-bold text-sm text-white">MAL SC</span>
       </Link>
 
       {/* Bối cảnh Kho / Loại kho toàn cục (kiểu Infor) — áp cho filter & form toàn app */}
@@ -150,5 +150,8 @@ export function Header() {
         </DropdownMenu>
       </div>
     </header>
+    {/* Mobile: thanh bối cảnh Kho/Loại kho FULL-WIDTH riêng 1 hàng — nhìn ra ngay đang chọn gì */}
+    <GlobalScopePicker variant="bar" />
+    </div>
   )
 }

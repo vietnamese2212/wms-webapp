@@ -10,7 +10,9 @@ import { useGlobalScopeStore, sweepGlobalScope } from '@/stores/globalScopeStore
 
 interface WhRow { id: string; code?: string; name: string }
 
-export function GlobalScopePicker() {
+// variant 'inline' = nút gọn trên app bar (desktop) · 'bar' = thanh FULL-WIDTH riêng 1 hàng
+// dưới app bar (mobile — user 19/08: "trên điện thoại phải nhìn ra ngay đang chọn Kho/Loại nào")
+export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' | 'bar' }) {
   const { data: warehousesRaw = [] } = useScopedWarehouses(true)
   const { data: whTypes = [] } = useScopedWhTypes()
   const warehouses = warehousesRaw as WhRow[]
@@ -80,28 +82,45 @@ export function GlobalScopePicker() {
   }, [warehouses, term])
 
   const active = warehouseId !== '' || whType !== ''
-  const label = (current?.name ?? 'Tất cả kho') + (whType ? ` · ${whType}` : '')
+  const khoLabel = current?.name ?? 'Tất cả kho'
+  const label = khoLabel + (whType ? ` · ${whType}` : '')
 
   return (
     <>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
-        className={`flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium transition-colors min-w-0 max-w-[38vw] lg:max-w-xs ${
-          active ? 'bg-sky-500/20 text-sky-100 ring-1 ring-sky-400/40 hover:bg-sky-500/30'
-                 : 'bg-white/10 text-slate-200 hover:bg-white/15'
-        }`}
-      >
-        <MapPinned className="h-3.5 w-3.5 shrink-0" />
-        {/* Mobile chật (≤360px): chỉ hiện MÃ kho; ≥sm hiện tên đầy đủ + loại */}
-        <span className="truncate hidden sm:inline">{label}</span>
-        <span className="truncate sm:hidden max-w-[72px] font-mono text-[11px]">
-          {current ? (current.code ?? current.name) : 'Tất cả'}{whType ? `·${whType}` : ''}
-        </span>
-        <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-      </button>
+      {variant === 'inline' ? (
+        <button
+          ref={btnRef}
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
+          className={`hidden lg:flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium transition-colors min-w-0 max-w-xs ${
+            active ? 'bg-sky-500/20 text-sky-100 ring-1 ring-sky-400/40 hover:bg-sky-500/30'
+                   : 'bg-white/10 text-slate-200 hover:bg-white/15'
+          }`}
+        >
+          <MapPinned className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{label}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+        </button>
+      ) : (
+        /* Thanh bối cảnh mobile: full-width, luôn nêu RÕ cả Kho lẫn Loại (kể cả "Tất cả") */
+        <button
+          ref={btnRef}
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
+          className={`lg:hidden w-full flex items-center gap-1.5 h-8 px-3 text-xs font-medium border-t border-white/10 transition-colors ${
+            active ? 'bg-sky-500/15 text-sky-100' : 'bg-slate-800 text-slate-200'
+          }`}
+        >
+          <MapPinned className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-sky-300' : 'text-slate-400'}`} />
+          <span className="truncate">
+            {khoLabel}
+            <span className={active && whType ? '' : 'text-slate-400'}> · {whType || 'Tất cả loại'}</span>
+          </span>
+          <ChevronDown className="h-3 w-3 ml-auto shrink-0 opacity-70" />
+        </button>
+      )}
 
       {open && pos && createPortal(
         <div

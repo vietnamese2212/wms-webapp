@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Pencil, ShieldCheck, Building2, User2, KeyRound, Check, Briefcase, Copy, CheckCheck, Trash2, RotateCcw, X, Warehouse, Rows3, AlignJustify } from 'lucide-react'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
@@ -614,6 +614,10 @@ function DepartmentFormDialog({ dept, open, onClose }: { dept: Department | null
 
 // ─── Job title form dialog ────────────────────────────────────────────────────
 
+// Tìm không dấu trong trình phân quyền ("xuat excel" khớp "Xuất Excel")
+const normVn = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+type PermModDef = { page: string; tab?: string; actions: Record<string, string> }
+
 function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: boolean; onClose: () => void }) {
   const isEdit = !!jt
   const me = useAuthStore(s => s.user)
@@ -626,6 +630,27 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
   const [isActive,   setIsActive]   = useState(jt?.is_active     ?? true)
   const [isDriver,   setIsDriver]   = useState(jt?.is_driver     ?? false)
   const [modulePerms, setModulePerms] = useState<ModulePermissions>(jt?.module_permissions ?? {})
+
+  // Ô tìm trang/tab/action trong bảng phân quyền (user 19/08 "đang kéo nhiều quá"):
+  // khớp TÊN TRANG → giữ nguyên cả trang; khớp tab/module → giữ nguyên tab; khớp nhãn
+  // action → chỉ hiện action đó. Không dấu vẫn khớp (normVn).
+  const [permSearch, setPermSearch] = useState('')
+  const permPages = useMemo(() => {
+    const q = normVn(permSearch.trim())
+    const out: { page: string; mods: [ModuleKey, PermModDef][] }[] = []
+    for (const { page, modules } of PERMISSION_PAGES) {
+      const pageHit = !q || normVn(page).includes(q)
+      const mods: [ModuleKey, PermModDef][] = []
+      for (const k of modules) {
+        const d = MODULES[k] as PermModDef
+        if (pageHit || normVn(`${k} ${d.tab ?? ''}`).includes(q)) { mods.push([k, d]); continue }
+        const acts = Object.fromEntries(Object.entries(d.actions).filter(([ak, al]) => normVn(`${ak} ${al}`).includes(q)))
+        if (Object.keys(acts).length > 0) mods.push([k, { ...d, actions: acts }])
+      }
+      if (mods.length > 0) out.push({ page, mods })
+    }
+    return out
+  }, [permSearch])
 
   const { mutate: create, isPending: creating, error: createErr } = useCreateJobTitle()
   const { mutate: update, isPending: updating, error: updateErr } = useUpdateJobTitle()
@@ -714,9 +739,14 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
             <p className="text-xs font-medium text-slate-600 flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5" /> Phân quyền module
             </p>
+            {/* Ô TÌM trang/tab/action (user 19/08 "đang kéo nhiều quá") — không dấu vẫn khớp */}
+            <Input value={permSearch} onChange={e => setPermSearch(e.target.value)}
+              placeholder="Tìm trang / tab / action… (vd: dashboard, thông báo, xuất excel)" className="h-8 text-xs" />
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {PERMISSION_PAGES.map(({ page, modules }) => {
-                const mods = modules.map(k => [k, MODULES[k]] as [ModuleKey, typeof MODULES[ModuleKey]])
+              {permPages.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-4">Không có quyền nào khớp "{permSearch}"</p>
+              )}
+              {permPages.map(({ page, mods }) => {
                 const multi = mods.length > 1                                            // trang nhiều tab
                 const pageHasAny = mods.some(([k]) => (modulePerms[k]?.length ?? 0) > 0)
                 const isAll = mods.every(([k, d]) => Object.keys(d.actions).every(a => (modulePerms[k] ?? []).includes(a)))

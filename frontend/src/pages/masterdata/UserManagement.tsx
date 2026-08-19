@@ -940,7 +940,8 @@ export default function UserManagement() {
   ]
 
   return (
-    <div className="flex flex-col h-full p-2 gap-1.5 max-w-7xl mx-auto w-full">
+    // Full-width như các module chuẩn (bỏ max-w-7xl mx-auto — user 19/08 "fit màn hình")
+    <div className="flex flex-col h-full p-2 sm:p-3 gap-1.5 w-full">
       <Tabs defaultValue="employees" className="flex flex-col flex-1 min-h-0">
         {/* Tiêu đề + tab trên CÙNG 1 hàng để tối ưu chiều cao, dành đất cho bảng */}
         <div className="shrink-0 flex items-center gap-3 mb-1.5">

@@ -609,7 +609,9 @@ export default function LoosePickingDetail() {
   )
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    /* Khung card chuẩn như OutboundDetail (user 19/08 "fit màn hình đồng nhất") */
+    <div className="flex flex-col h-full min-h-0 sm:p-3">
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {showOrderScan && (
         <GdoScanSheet gdo={gdo} mode="loose" pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowOrderScan(false); setPdaScan(null) }} />
@@ -706,6 +708,7 @@ export default function LoosePickingDetail() {
         <ItemsTable doRecords={allDOs} gdoId={id!} expandedItemIds={expandedItemIds} toggleExpand={toggleExpand}
           warehouseId={gdo.warehouse_id} deliveryDate={gdo.delivery_date} />
       </div>
+     </div>
     </div>
   )
 }

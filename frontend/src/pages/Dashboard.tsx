@@ -74,7 +74,7 @@ export default function Dashboard() {
   }, [stats])
 
   return (
-    <div className="space-y-0">
+    <div className="flex flex-col h-full">
       <PageHeader
         title="Tổng quan hệ thống"
         description={today}
@@ -95,7 +95,8 @@ export default function Dashboard() {
         }
       />
 
-      <div className="p-4 sm:p-6 space-y-5">
+      {/* Cuộn BÊN TRONG (fit màn hình như các module chuẩn) — header trang đứng yên */}
+      <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 space-y-5">
         {isError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
             Không tải được số liệu dashboard — thử tải lại trang.

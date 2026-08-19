@@ -249,7 +249,8 @@ export default function PalletOps() {
           /* Ô tổng đếm TRÊN TOÀN BỘ bộ lọc (server) — đếm trên `ops` là chỉ đếm trang đang xem */
           : [{ label: 'Số thao tác', value: hist?.total ?? 0, accent: (hist?.total ?? 0) > 0 }, { label: 'Dồn', value: hist?.merge_n ?? 0 }, { label: 'Tách', value: hist?.split_n ?? 0 }, { label: 'Đã hoàn tác', value: hist?.undone_n ?? 0 }]} />
 
-        <div className="flex-1 min-h-0 overflow-auto flex flex-col">
+        {/* 1 tầng cuộn duy nhất per tab (bỏ overflow-auto ở wrapper — tab Lịch sử có scroller riêng) */}
+        <div className="flex-1 min-h-0 flex flex-col">
          {tab === 'history' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {msg && (
@@ -335,8 +336,9 @@ export default function PalletOps() {
               right={histLoading ? 'đang tải…' : undefined} />
           </div>
          ) : (
-          <div className="p-4">
-          <div className="mx-auto max-w-xl space-y-4">
+          <div className="flex-1 min-h-0 overflow-auto p-4">
+          {/* Căn trái + nới rộng (bỏ mx-auto max-w-xl bó giữa — user 19/08 "fit màn hình") */}
+          <div className="max-w-3xl space-y-4">
             {!scopeReady && <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Chọn <b>Kho</b> và <b>Loại kho</b> trước mới quét/thao tác được.</p>}
             {/* Chọn Kho + Loại kho (scope thao tác) */}
             <div className="rounded-lg border border-slate-200 p-3 grid grid-cols-2 gap-2">

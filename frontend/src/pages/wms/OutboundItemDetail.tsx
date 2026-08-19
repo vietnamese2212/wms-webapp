@@ -905,7 +905,9 @@ export default function OutboundItemDetail() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col h-full min-h-0">
+      {/* Khung card chuẩn như OutboundDetail (user 19/08 "fit màn hình đồng nhất") */}
+      <div className="flex flex-col h-full min-h-0 sm:p-3">
+       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
 
         {/* ── Header: ~30% ── */}
         <div className="border-b bg-white px-3 py-2 shrink-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '30vh' }}>
@@ -1222,6 +1224,7 @@ export default function OutboundItemDetail() {
           </Card>
         </div>
         </div>
+       </div>
       </div>
     </>
   )

@@ -70,10 +70,11 @@ export default function Settings() {
   }
 
   return (
-    <div>
+    <div className="flex flex-col h-full">
       <PageHeader title="Cài đặt" description="Quản lý tài khoản và tuỳ chỉnh hệ thống" />
 
-      <div className="p-6 space-y-6 max-w-2xl">
+      {/* Cuộn BÊN TRONG (fit màn hình như các module chuẩn); max-w-2xl = form hẹp chủ ý */}
+      <div className="flex-1 min-h-0 overflow-auto p-6 space-y-6 max-w-2xl">
         {/* Profile */}
         <Card>
           <CardHeader>

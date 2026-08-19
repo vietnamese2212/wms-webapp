@@ -24,6 +24,7 @@ import {
 } from '@/api/hooks'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -265,6 +266,10 @@ export default function PalletLabels() {
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as WarehouseLite[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
+  // Bối cảnh toàn cục ở Header (nếu đang chọn) ưu tiên hơn snapshot filter đã nhớ của trang
+  const gScope = useGlobalScopeStore.getState()
+  const gWhOk = gScope.warehouseId && (!allowedWhIds || allowedWhIds.has(gScope.warehouseId)) ? gScope.warehouseId : ''
+  const gCats = gScope.whType ? [gScope.whType] : null
   // NMSX = mã nmsx_code của kho tổng (B/D…) theo Cài đặt WMS → Kho. Chỉ kho có nmsx_code mới chọn được;
   // thêm "O — Gia công ngoài" (không thuộc kho nào) cho hàng gia công từ ngoài về.
   const nmsxOptions = (warehouses as WarehouseLite[]).filter(w => w.warehouse_type !== 'NPP' && !!(w.nmsx_code ?? '').trim())
@@ -446,8 +451,8 @@ export default function PalletLabels() {
   }
 
   // ── In lại từ tồn kho — filter Kho/Loại hàng/Tên hàng/Chu kỳ/Máy → multi-select Mã pallet ──
-  const [rpWh, setRpWh]             = useState<string>(SAVED.rpWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [rpCats, setRpCats]         = useState<string[]>(SAVED.rpCats ?? [])
+  const [rpWh, setRpWh]             = useState<string>(gWhOk || SAVED.rpWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [rpCats, setRpCats]         = useState<string[]>(gCats ?? SAVED.rpCats ?? [])
   const [rpMatIds, setRpMatIds]     = useState<string[]>(SAVED.rpMatIds ?? [])
   const [rpCycles, setRpCycles]     = useState<string[]>(SAVED.rpCycles ?? [])
   const [rpMachines, setRpMachines] = useState<string[]>(SAVED.rpMachines ?? [])
@@ -517,8 +522,8 @@ export default function PalletLabels() {
   const rpAlreadyPrinted = pickedCodes.filter(c => (rpPrintCount.get(c) ?? 0) > 0)
 
   // ── Truy cứu — BASE = TỒN KHO (LEFT JOIN số lần in); pallet chưa in vẫn hiện count 0 ──
-  const [auWh, setAuWh]             = useState<string>(SAVED.auWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [auCats, setAuCats]         = useState<string[]>(SAVED.auCats ?? [])
+  const [auWh, setAuWh]             = useState<string>(gWhOk || SAVED.auWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [auCats, setAuCats]         = useState<string[]>(gCats ?? SAVED.auCats ?? [])
   const [auMatIds, setAuMatIds]     = useState<string[]>(SAVED.auMatIds ?? [])
   const [auCycles, setAuCycles]     = useState<string[]>(SAVED.auCycles ?? [])
   const [auMachines, setAuMachines] = useState<string[]>(SAVED.auMachines ?? [])

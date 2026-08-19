@@ -23,6 +23,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { materialCodeOf } from '@/utils/qr'
 import type { Material } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -57,10 +58,13 @@ export default function PalletOps() {
   const categoryOpts = (whTypes as { value: string }[]).map(t => t.value)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length ? new Set(user.warehouse_ids) : null
   const whOptions = (warehouses as any[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))
-  // Lưu/khôi phục lựa chọn Kho + Loại kho (không phải chọn lại)
+  // Lưu/khôi phục lựa chọn Kho + Loại kho (không phải chọn lại) — bối cảnh toàn cục ở Header
+  // (nếu đang chọn) ưu tiên hơn giá trị đã nhớ của trang
   const SCOPE = useMemo<{ opWh?: string; opCat?: string }>(() => { try { return JSON.parse(localStorage.getItem('palletOps_scope') || '{}') } catch { return {} } }, [])
-  const [opWh, setOpWh]   = useState<string>(SCOPE.opWh ?? (allowedWhIds ? [...allowedWhIds][0] : ''))
-  const [opCat, setOpCat] = useState<string>(SCOPE.opCat ?? '')
+  const gScope = useGlobalScopeStore.getState()
+  const gOpWh = gScope.warehouseId && (!allowedWhIds || allowedWhIds.has(gScope.warehouseId)) ? gScope.warehouseId : ''
+  const [opWh, setOpWh]   = useState<string>(gOpWh || SCOPE.opWh || (allowedWhIds ? [...allowedWhIds][0] : ''))
+  const [opCat, setOpCat] = useState<string>(gScope.whType || SCOPE.opCat || '')
   useEffect(() => { try { localStorage.setItem('palletOps_scope', JSON.stringify({ opWh, opCat })) } catch { /* ignore */ } }, [opWh, opCat])
   const scopeReady = !!(opWh && opCat)   // bắt buộc đủ Kho + Loại kho mới cho quét/thao tác
 

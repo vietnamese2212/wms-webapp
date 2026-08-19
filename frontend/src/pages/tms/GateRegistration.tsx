@@ -762,7 +762,8 @@ export default function GateRegistration() {
   // ── Modal helpers
   function openCreate() {
     setEditReg(null)
-    setForm({ ...formDefault(), warehouse_id: fWarehouse })
+    // Kho + Loại kho kế thừa filter trang (filter đã được bối cảnh toàn cục ở Header sweep)
+    setForm({ ...formDefault(), warehouse_id: fWarehouse, warehouse_type: fWarehouseType })
     setOutLeg(LEG_DEFAULT)
     setApiError('')
     setModalOpen(true)

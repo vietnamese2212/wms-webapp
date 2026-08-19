@@ -33,6 +33,7 @@ import {
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { WH_BADGE_COLORS, whTypeBadgeCls, type WhTypeMeta } from '@/utils/cargoCategory'
 import { computedHolidaysOf } from '@/utils/vnHolidays'
@@ -1518,7 +1519,7 @@ export default function WMSSettings() {
   const zoneAccessWh = (admin || user?.warehouse_scope !== 'ASSIGNED')
     ? activeWh
     : activeWh.filter(w => (user?.warehouse_ids ?? []).includes(w.id))
-  const [selectedWhId, setSelectedWhId] = useState('')
+  const [selectedWhId, setSelectedWhId] = useState(() => useGlobalScopeStore.getState().warehouseId)
   const effectiveWhId = selectedWhId || zoneAccessWh[0]?.id || ''
   const { data: zones = [], isLoading: loadingZones } = useWarehouseZones(effectiveWhId || undefined)
   const { mutate: deleteZone, isPending: deletingZone } = useDeleteWarehouseZone()
@@ -2004,7 +2005,7 @@ export default function WMSSettings() {
 // Máy THUỘC Kho — mỗi kho danh mục riêng. Kho có máy → Sổ đóng gói (mở/sửa trang) + Sinh tem
 // (theo NMSX) PHẢI chọn trong danh mục (BE 422 MACHINE_INVALID); kho chưa khai → điền tự do.
 function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses: { id: string; name: string; code?: string }[] }) {
-  const [whId, setWhId] = useState('')
+  const [whId, setWhId] = useState(() => useGlobalScopeStore.getState().warehouseId)
   const [search, setSearch] = useState('')
   const { data: machines = [], isLoading } = useMachines(whId || undefined)
   const { mutate: deleteM, isPending: deleting } = useDeleteMachine()

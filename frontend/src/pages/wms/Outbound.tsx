@@ -28,6 +28,7 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
@@ -1977,7 +1978,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const TODAY_STR = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const [date, setDate]               = useState(TODAY_STR)
   const [warehouseId, setWarehouseId] = useState(defaultWarehouseId)
-  const [warehouseType, setWarehouseType] = useState('')
+  // Loại kho mặc định theo bối cảnh toàn cục ở Header (kho đã theo filter — filter được sweep)
+  const [warehouseType, setWarehouseType] = useState(() => useGlobalScopeStore.getState().whType)
   const [shiptoPartyId, setShiptoPartyId] = useState('')
   const [dvvt, setDvvt]               = useState('')
   const [customerName, setCustomerName] = useState('')

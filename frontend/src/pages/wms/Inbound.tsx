@@ -7,6 +7,7 @@ import { vi } from 'date-fns/locale'
 import { useAuthStore }        from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore }  from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { EmptyState }          from '@/components/shared/EmptyState'
@@ -202,6 +203,10 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
   const dialogAllowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
     ? new Set(user.warehouse_ids) : null
+  // Bối cảnh toàn cục ở Header → mặc định Kho/Loại kho khi tạo phiếu mới
+  const gWh = useGlobalScopeStore(s => s.warehouseId)
+  const gWt = useGlobalScopeStore(s => s.whType)
+  const gWhOk = gWh && (!dialogAllowedWhIds || dialogAllowedWhIds.has(gWh)) ? gWh : ''
 
   const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
   const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
@@ -252,8 +257,8 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
         })))
       } else {
         setSourceType('FACTORY')
-        setWarehouseId(user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
-        setSubType(''); setMaterialId('')
+        setWarehouseId(gWhOk || (user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? ''))
+        setSubType(gWt); setMaterialId('')
         setLocationId(''); setShiftId('')
         setImportDate(format(new Date(), 'yyyy-MM-dd'))
         setNotes(''); setGateRegId('')

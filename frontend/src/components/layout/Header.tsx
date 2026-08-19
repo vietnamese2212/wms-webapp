@@ -13,6 +13,7 @@ import {
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { MobileNav } from './MobileNav'
+import { GlobalScopePicker } from './GlobalScopePicker'
 import { OfflineQueueHeaderButton } from '@/offline/OfflineQueuePanel'
 import { AppUpdateButton } from '@/components/shared/AppUpdateButton'
 
@@ -86,8 +87,12 @@ export function Header() {
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white">
           <span className="text-xs font-bold">M</span>
         </div>
-        <span className="font-bold text-sm text-white">MAL SC</span>
+        {/* Ẩn chữ trên màn rất hẹp — nhường chỗ cho nút Bối cảnh Kho (≤360px không tràn) */}
+        <span className="font-bold text-sm text-white hidden min-[400px]:inline">MAL SC</span>
       </Link>
+
+      {/* Bối cảnh Kho / Loại kho toàn cục (kiểu Infor) — áp cho filter & form toàn app */}
+      <GlobalScopePicker />
 
       {/* Breadcrumb (desktop) */}
       <div className="hidden lg:flex flex-1">

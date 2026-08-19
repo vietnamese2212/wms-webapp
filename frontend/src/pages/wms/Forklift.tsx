@@ -19,6 +19,7 @@ import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import {
@@ -1111,7 +1112,12 @@ function VehicleSheet({ vehicle, whOpts, onClose }: { vehicle: ForkliftVehicle |
   const update = useUpdateForklift()
   const [code, setCode] = useState(vehicle?.code ?? '')
   const [name, setName] = useState(vehicle?.name ?? '')
-  const [whId, setWhId] = useState(vehicle?.warehouse_id ?? (whOpts.length === 1 ? whOpts[0].value : ''))
+  const [whId, setWhId] = useState(() => {
+    if (vehicle?.warehouse_id) return vehicle.warehouse_id
+    const g = useGlobalScopeStore.getState().warehouseId   // bối cảnh toàn cục ở Header
+    if (g && whOpts.some(o => o.value === g)) return g
+    return whOpts.length === 1 ? whOpts[0].value : ''
+  })
   const [active, setActive] = useState(vehicle?.is_active ?? true)
   const [error, setError] = useState('')
   const saving = create.isPending || update.isPending

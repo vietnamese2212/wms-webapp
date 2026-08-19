@@ -27,6 +27,7 @@ import {
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, canAccess, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import type { TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
 
 const DOW_LABEL: Record<number, string> = { 1:'T2', 2:'T3', 3:'T4', 4:'T5', 5:'T6', 6:'T7', 0:'CN' }
@@ -485,7 +486,7 @@ export default function TMSSettings() {
   // Warehouse selector — context cho tab Khung giờ. Scope theo phân quyền Kho + Loại kho
   // của user (rule: chỉ thấy/cài khung giờ trong phạm vi được phân).
   const { data: warehouses = [] } = useScopedWarehouses(true)
-  const [warehouseId, setWarehouseId] = useState('')
+  const [warehouseId, setWarehouseId] = useState(() => useGlobalScopeStore.getState().warehouseId)
 
   // Cargo options từ LookupValue(warehouse_type) — cắt theo allowed_categories
   const { data: whTypes = [] } = useScopedWhTypes()

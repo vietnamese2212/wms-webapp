@@ -6,6 +6,7 @@
 import { useAuthStore } from './authStore'
 import { useWmsFilterStore } from './wmsFilterStore'
 import { useSavedViewsStore } from './savedViewsStore'
+import { useGlobalScopeStore, GLOBAL_SCOPE_BASE, sweepGlobalScope } from './globalScopeStore'
 
 const FILTER_BASE = 'wms-filters-v10'
 const VIEWS_BASE  = 'wms-saved-views'
@@ -30,13 +31,25 @@ function applyScope(uid: string | null) {
   // Filters (sessionStorage, ephemeral): reset default → nạp filter riêng của user nếu có.
   useWmsFilterStore.getState().reset()
   useWmsFilterStore.persist.setOptions({ name: keyFor(FILTER_BASE, uid) })
-  void useWmsFilterStore.persist.rehydrate()
+  const filtersReady = useWmsFilterStore.persist.rehydrate()
 
   // Saved views (localStorage, bền): migrate legacy 1 lần → reset → nạp của user.
   migrateLegacyViews(uid)
   useSavedViewsStore.getState().reset()
   useSavedViewsStore.persist.setOptions({ name: keyFor(VIEWS_BASE, uid) })
   void useSavedViewsStore.persist.rehydrate()
+
+  // Bối cảnh Kho/Loại kho toàn cục (localStorage, bền): reset → nạp của user → sau khi CẢ HAI
+  // store sẵn sàng thì áp lại vào filter các trang (force=false — chỉ áp phần ĐANG CHỌN, không
+  // xoá lựa chọn đã nhớ khi bối cảnh để "Tất cả"). Header luôn phản ánh đúng bối cảnh khi mở app.
+  useGlobalScopeStore.getState().reset()
+  useGlobalScopeStore.persist.setOptions({ name: keyFor(GLOBAL_SCOPE_BASE, uid) })
+  const scopeReady = useGlobalScopeStore.persist.rehydrate()
+  void Promise.all([filtersReady, scopeReady]).then(() => {
+    if (!uid || uid !== currentUid) return
+    const g = useGlobalScopeStore.getState()
+    if (g.warehouseId || g.whType) sweepGlobalScope(g, { force: false })
+  })
 }
 
 // Khởi tạo theo user hiện tại (authStore đã rehydrate đồng bộ từ localStorage 'wms-auth').

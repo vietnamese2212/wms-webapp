@@ -34,6 +34,7 @@ import { normalizeQR } from '@/utils/qr'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 
@@ -1029,14 +1030,19 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const { data: shifts } = useImportShifts()
   const shiftOpts = useMemo(() => ((shifts ?? []) as { id: string; name?: string; code?: string }[])
     .map(s => ({ value: s.name ?? s.code ?? '', label: s.name ?? s.code ?? '' })).filter(o => o.value), [shifts])
-  const [whId, setWhId] = useState(whOpts.length === 1 ? whOpts[0].value : '')
+  // Kho/Loại kho mặc định theo bối cảnh toàn cục ở Header (nếu kho bối cảnh nằm trong whOpts)
+  const gScope = useGlobalScopeStore.getState()
+  const [whId, setWhId] = useState(
+    (gScope.warehouseId && whOpts.some(o => o.value === gScope.warehouseId) ? gScope.warehouseId : '')
+    || (whOpts.length === 1 ? whOpts[0].value : ''),
+  )
   const [date, setDate] = useState(todayVN())
   const [shift, setShift] = useState('')
   const [cycle, setCycle] = useState('')
   // Loại kho để LỌC danh sách mã cho đúng (user 13/08) — hook SCOPED theo quyền loại hàng
   const whTypes = useScopedWhTypes()
   const catOpts = useMemo(() => (whTypes.data ?? []).map(t => ({ value: t.value, label: t.value })), [whTypes.data])
-  const [cat, setCat] = useState('')
+  const [cat, setCat] = useState(gScope.whType)
   const [matSearch, setMatSearch] = useState('')
   const mats = useMaterials({ search: matSearch || undefined, category: cat || undefined, limit: 50 })
   // 13/08 user chốt: 1 số loại hàng có 2-3 mã SX CHUNG 1 chu kỳ + 1 máy → 1 trang sổ ghi NHIỀU mã

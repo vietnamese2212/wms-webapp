@@ -179,49 +179,62 @@ export default function Dashboard() {
                 <span className="text-[10px] font-normal text-slate-400">pallet tồn / pallet tối đa</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            {/* Dạng DÒNG dày đặc kiểu bảng (user 19/08 chê card-per-khu rối + bar dài + trống):
+                kho = header nhóm kèm TỔNG, mỗi khu = 1 dòng mảnh [tên · bar ngắn · số/max · %];
+                "còn N chỗ" chuyển vào tooltip. 2 cột kho song song trên màn rộng. */}
+            <CardContent className="pt-0">
               {isLoading ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+                <div className="space-y-1.5">
+                  {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6 rounded" />)}
                 </div>
-              ) : zonesByWh.map(g => (
-                <div key={g.warehouse_name}>
-                  {zonesByWh.length > 1 && (
-                    <p className="mb-1.5 text-[11px] font-semibold text-slate-600">{g.warehouse_name}</p>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {g.zones.map(z => {
-                      const pct = z.capacity > 0 ? (z.used / z.capacity) * 100 : null
-                      const barColor = pct == null ? 'bg-slate-300'
-                        : pct >= 100 ? 'bg-red-500'
-                        : pct >= 80 ? 'bg-amber-500'
-                        : 'bg-sky-500'
-                      return (
-                        <div key={z.zone_id} className="rounded-lg border border-slate-200 px-3 py-2">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <p className="min-w-0 truncate text-[11px] font-medium text-slate-700" title={`${z.name} (${z.code})${z.category ? ` · ${z.category}` : ''}`}>
-                              {z.name}
-                              <span className="ml-1 text-[9px] font-normal text-slate-400">{z.code}</span>
-                            </p>
-                            <p className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-700">
-                              {nf(z.used)}<span className="font-normal text-slate-400"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
-                            </p>
-                          </div>
-                          <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct == null ? 0 : Math.min(100, pct)}%` }} />
-                          </div>
-                          <p className={`mt-0.5 text-[9px] tabular-nums ${pct != null && pct >= 100 ? 'text-red-600 font-semibold' : pct != null && pct >= 80 ? 'text-amber-600' : 'text-slate-400'}`}>
-                            {pct == null
-                              ? (z.used > 0 ? `${nf(z.used)} pallet — chưa khai pallet tối đa` : 'Chưa khai pallet tối đa')
-                              // chưa đầy thật thì không làm tròn lên "100%" (99.6% → 99%)
-                              : `${pct >= 100 ? Math.round(pct) : pct >= 10 ? Math.min(99, Math.round(pct)) : Math.round(pct * 10) / 10}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-3">
+                  {zonesByWh.map(g => {
+                    const tUsed = g.zones.reduce((s, z) => s + z.used, 0)
+                    const tCap  = g.zones.reduce((s, z) => s + z.capacity, 0)
+                    return (
+                      <div key={g.warehouse_name}>
+                        <div className="flex items-baseline justify-between gap-2 border-b border-slate-200 pb-1">
+                          <p className="text-[11px] font-semibold text-slate-700 truncate">{g.warehouse_name}</p>
+                          <p className="shrink-0 text-[10px] tabular-nums text-slate-400">
+                            {nf(tUsed)} / {tCap > 0 ? nf(tCap) : '—'}
                           </p>
                         </div>
-                      )
-                    })}
-                  </div>
+                        {g.zones.map(z => {
+                          const pct = z.capacity > 0 ? (z.used / z.capacity) * 100 : null
+                          const barColor = pct == null ? 'bg-slate-300'
+                            : pct >= 100 ? 'bg-red-500'
+                            : pct >= 80 ? 'bg-amber-500'
+                            : 'bg-sky-500'
+                          // chưa đầy thật thì không làm tròn lên "100%" (99.6% → 99%)
+                          const pctTxt = pct == null ? null
+                            : pct >= 100 ? Math.round(pct) : pct >= 10 ? Math.min(99, Math.round(pct)) : Math.round(pct * 10) / 10
+                          return (
+                            <div key={z.zone_id} className="flex items-center gap-2 py-[3px] border-b border-slate-100 last:border-0"
+                              title={`${z.name} (${z.code})${z.category ? ` · ${z.category}` : ''} — ${pct == null
+                                ? 'chưa khai pallet tối đa'
+                                : `${pctTxt}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}`}>
+                              <p className="flex-1 min-w-0 truncate text-[11px] text-slate-700">
+                                {z.name}<span className="ml-1 text-[9px] text-slate-400">{z.code}</span>
+                              </p>
+                              <div className="w-20 sm:w-24 shrink-0 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct == null ? 0 : Math.min(100, pct)}%` }} />
+                              </div>
+                              <p className="w-[92px] shrink-0 text-right text-[10px] font-medium tabular-nums text-slate-600">
+                                {nf(z.used)}<span className="font-normal text-slate-400"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
+                              </p>
+                              <p className={`w-10 shrink-0 text-right text-[10px] font-semibold tabular-nums ${pct == null ? 'text-slate-300'
+                                : pct >= 100 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-slate-500'}`}>
+                                {pct == null ? '—' : `${pctTxt}%`}
+                              </p>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
             </CardContent>
           </Card>
         )}

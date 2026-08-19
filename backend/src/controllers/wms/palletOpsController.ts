@@ -171,30 +171,33 @@ export async function splitPallet(req: Request, res: Response) {
     // Phân trang (fetchAllRowsParallel): quét cả bảng theo material_id bị cap ~1000 → maxN sai → SINH MÃ TRÙNG.
     const baseSeq = isV2 ? '' : parts[4]
     const childPrefix = isV2 ? `%${baseMalo}.%` : `${parts.slice(0, 4).join('_')}_${baseSeq}.%`
-    const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-      .select('pallet_code').eq('material_id', source.material_id)
-      .ilike('pallet_code', childPrefix).order('id'))
-    let maxN = 0
-    for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
-      const code = String(r.pallet_code)
-      if (isV2) {
-        // con V2 = mọi đoạn GIỐNG src, chỉ đoạn 3 = "<baseMalo>.N" (N thuần số → loại cháu ".1.2")
-        const cs = code.split(';')
-        if (cs.length === segs.length && cs.every((v, idx) => idx === 2 || v === segs[idx]) && cs[2].startsWith(`${baseMalo}.`)) {
-          const suffix = cs[2].slice(baseMalo.length + 1)
-          if (/^\d+$/.test(suffix)) { const n = parseInt(suffix, 10); if (n > maxN) maxN = n }
-        }
-      } else {
-        const p = code.split('_')
-        if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
-          const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
-          if (!isNaN(n) && n > maxN) maxN = n
+    const scanMaxN = async (): Promise<number> => {
+      const sameMat = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
+        .select('pallet_code').eq('material_id', source.material_id)
+        .ilike('pallet_code', childPrefix).order('id'))
+      let maxN = 0
+      for (const r of (sameMat ?? []) as { pallet_code: string }[]) {
+        const code = String(r.pallet_code)
+        if (isV2) {
+          // con V2 = mọi đoạn GIỐNG src, chỉ đoạn 3 = "<baseMalo>.N" (N thuần số → loại cháu ".1.2")
+          const cs = code.split(';')
+          if (cs.length === segs.length && cs.every((v, idx) => idx === 2 || v === segs[idx]) && cs[2].startsWith(`${baseMalo}.`)) {
+            const suffix = cs[2].slice(baseMalo.length + 1)
+            if (/^\d+$/.test(suffix)) { const n = parseInt(suffix, 10); if (n > maxN) maxN = n }
+          }
+        } else {
+          const p = code.split('_')
+          if (p.length === parts.length && p[0] === parts[0] && p[1] === parts[1] && p[2] === parts[2] && p[3] === parts[3] && p[5] === parts[5] && p[4].startsWith(`${baseSeq}.`)) {
+            const n = parseInt(p[4].slice(baseSeq.length + 1), 10)
+            if (!isNaN(n) && n > maxN) maxN = n
+          }
         }
       }
+      return maxN
     }
 
     const now = new Date().toISOString()
-    const rows = items.map((qty, i) => {
+    const buildRows = (maxN: number) => items.map((qty, i) => {
       const n = maxN + 1 + i
       let childCode: string
       if (isV2) {
@@ -235,8 +238,19 @@ export async function splitPallet(req: Request, res: Response) {
       }
     })
 
-    const { data: created, error: cErr } = await supabase.from('InventoryEntry').insert(rows).select('*')
-    if (cErr) return fail(res, cErr.message, 500)
+    // ĐUA ĐẶT TÊN: 2 người tách cùng pallet đồng thời cùng tính ra ".N" → người sau dính unique
+    // uq_inventory_active_wh_pallet (23505). Không phải lỗi hệ thống: tính lại maxN + jitter rồi
+    // thử lại; hết lượt → 409 sạch (trước 19/08 trả 500 thô — gói QA 27 [8] gác).
+    let rows: ReturnType<typeof buildRows> = []
+    let created: unknown[] | null = null
+    for (let nameTry = 0; nameTry < 4; nameTry++) {
+      rows = buildRows(await scanMaxN())
+      const { data: ins, error: cErr } = await supabase.from('InventoryEntry').insert(rows).select('*')
+      if (!cErr) { created = ins ?? []; break }
+      if ((cErr as { code?: string }).code !== '23505') return fail(res, cErr.message, 500)
+      await new Promise(r => setTimeout(r, 30 + Math.floor(Math.random() * (100 + nameTry * 80))))
+    }
+    if (!created) return fail(res, `Pallet gốc "${src}" đang bận (nhiều người cùng tách) — thử lại`, 409)
 
     // Trừ tồn pallet gốc NGUYÊN TỬ (optimistic-CAS + jitter, GIỮ NGUYÊN cartons_imported để báo cáo nhập bất biến):
     // chống 2 lượt tách cùng pallet đồng thời over-split (cả 2 trừ từ cùng số đọc cũ). Đọc lại mỗi lần;
@@ -348,6 +362,9 @@ export async function listOps(req: Request, res: Response) {
 export async function undoOp(req: Request, res: Response) {
   try {
     const { id } = req.params
+    // id rác (không phải uuid) → 400 rõ ràng, đừng để PostgREST nổ 22P02 thành 500
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))
+      return fail(res, 'Id thao tác không hợp lệ')
     const { data: op, error } = await supabase.from('PalletOperation').select('*').eq('id', id).maybeSingle()
     if (error) return fail(res, error.message, 500)
     if (!op) return fail(res, 'Không tìm thấy thao tác', 404)

@@ -759,8 +759,15 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                       <button
                         type="button"
                         onClick={() => setModulePerms(prev => {
+                          // Khi đang TÌM, d.actions chỉ là phần đang hiện → gán/gỡ đúng phần đó,
+                          // KHÔNG đè nguyên module (đè = gỡ nhầm cả action đang bị ẩn bởi từ khóa)
                           const next = { ...prev }
-                          for (const [k, d] of mods) next[k] = isAll ? undefined : Object.keys(d.actions)
+                          for (const [k, d] of mods) {
+                            const vis = Object.keys(d.actions)
+                            const cur = (prev[k] ?? []) as string[]
+                            const merged = isAll ? cur.filter(a => !vis.includes(a)) : Array.from(new Set([...cur, ...vis]))
+                            next[k] = merged.length ? merged : undefined
+                          }
                           return next
                         })}
                         className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
@@ -807,7 +814,12 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
                               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">{tab}</span>
                               <button
                                 type="button"
-                                onClick={() => setModulePerms(prev => ({ ...prev, [modKey]: tabAll ? undefined : tabActions }))}
+                                onClick={() => setModulePerms(prev => {
+                                  // tabActions = phần ĐANG HIỆN (khi tìm) — merge/trừ thay vì đè module
+                                  const cur = (prev[modKey] ?? []) as string[]
+                                  const merged = tabAll ? cur.filter(a => !tabActions.includes(a)) : Array.from(new Set([...cur, ...tabActions]))
+                                  return { ...prev, [modKey]: merged.length ? merged : undefined }
+                                })}
                                 className={`text-[9px] px-1.5 py-0.5 rounded font-medium transition-colors ${
                                   tabAll ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'
                                 }`}

@@ -78,6 +78,7 @@ try {
 
   const [mat] = await restWrite('Material', 'POST', null, {
     id: randomUUID(), material_code: `${TAG}001`, short_name: `${TAG} hàng test chuyển kho`,
+    material_description: `${TAG} hàng test chuyển kho`,
     base_unit: 'EA', category: FIX.MAT_POOL_CAT, is_active: true, no_qr_tracking: true,
     created_at: nowIso(), updated_at: nowIso(),
   })
@@ -172,10 +173,12 @@ try {
       `book=${b.s} eta=${e.s} rcv=${r.s} imp=${imps[0]?.import_code}/${imps[0]?.planned_cartons} ts=${g?.transfer_status}`)
   }
 
-  // ── [6] Nhận trùng → 409 ───────────────────────────────────────────────────
+  // ── [6] Nhận trùng bị chặn (đang RECEIVING → 400 "phải ở Đang giao"; đua sát nút → 409) ──
   {
     const r = await api(`/tms/orders/${ord.id}/confirm-receipt`, 'POST', {})
-    check('[6] Bấm Nhận hàng lần 2 → 409 (không tạo phiếu đôi)', r.s === 409, `http=${r.s}`)
+    const n = (await restAll('ProductionImport', `select=id&from_gdo_id=eq.${created.gdo}&status=neq.CANCELLED`)).length
+    check('[6] Bấm Nhận hàng lần 2 → bị chặn (400/409), vẫn đúng 1 phiếu — không phiếu đôi',
+      (r.s === 400 || r.s === 409) && n === 1, `http=${r.s} phiếu=${n}`)
   }
 
   // ── [7] Kho nguồn bỏ-hoàn-thành khi kho đích ĐANG NHẬN → 400 INBOUND_OPEN ──

@@ -32,6 +32,8 @@ const steps = [
   ['24-weigh-station.mjs'],       // Nạp phiếu cân NHIỀU trạm: mã trạm bắt buộc + 1 mã ≠ 2 kho + source_id trùng không đè (14/08)
   ['25-rotation.mjs'],            // Luân chuyển FEFO/FIFO/LIFO: gợi ý ⇄ cảnh báo ⇄ chặn nói CÙNG một luật + van xả có vết (14/08)
   ['26-putaway.mjs'],             // Quy tắc CẤT hàng: cờ slot_no_in có tác dụng ở luồng nhập + chặn THẬT ở cửa ghi + vết vượt rào (15/08)
+  ['27-pallet-ops.mjs'],          // Dồn/Tách/Gỡ nhóm: bảo toàn tổng tồn + hoàn tác + reserved chặn tách + đua đặt tên .N → 409 sạch (19/08)
+  ['28-transfer-receive.mjs'],    // Chuyển kho 2 chiều: cờ delivery_confirmation + 4 mảnh tự sinh + booking gate + cascade DONE/DELIVERED + oracle 4 tầng (19/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

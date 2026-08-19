@@ -217,10 +217,11 @@ export default function Dashboard() {
                               <p className="flex-1 min-w-0 truncate text-[11px] text-slate-700">
                                 {z.name}<span className="ml-1 text-[9px] text-slate-400">{z.code}</span>
                               </p>
-                              <div className="w-20 sm:w-24 shrink-0 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              {/* Mobile ẩn bar — nhường chỗ cho TÊN khu (360px tên bị cắt thành "Kho …") */}
+                              <div className="hidden sm:block w-24 shrink-0 h-1.5 overflow-hidden rounded-full bg-slate-100">
                                 <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct == null ? 0 : Math.min(100, pct)}%` }} />
                               </div>
-                              <p className="w-[92px] shrink-0 text-right text-[10px] font-medium tabular-nums text-slate-600">
+                              <p className="w-[84px] sm:w-[92px] shrink-0 text-right text-[10px] font-medium tabular-nums text-slate-600">
                                 {nf(z.used)}<span className="font-normal text-slate-400"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
                               </p>
                               <p className={`w-10 shrink-0 text-right text-[10px] font-semibold tabular-nums ${pct == null ? 'text-slate-300'

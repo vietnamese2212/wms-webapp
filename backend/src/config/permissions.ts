@@ -16,6 +16,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   tms_vehicles:      ['view', 'create', 'edit', 'delete'],
   gate_registration: ['view', 'create', 'edit', 'delete', 'call', 'entry', 'exit'],
   weigh_station: ['view', 'match'],
+  dashboard:         ['view'],          // Trang Tổng quan (19/08 — trước đó mở cho mọi user; migration 20260819b backfill mọi chức danh)
   control_tower:     ['view'],
   alerts:            ['view', 'ack'],   // Trung tâm cảnh báo (06/08): view = xem + nhận push cảnh báo mới theo kho; ack riêng
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)

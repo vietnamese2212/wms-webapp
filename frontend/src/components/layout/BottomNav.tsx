@@ -11,7 +11,7 @@ const ALL_TABS: { to: string; icon: React.ElementType; label: string; end?: bool
   { to: '/wms/loosepicking', icon: Scissors,        label: 'Nhặt lẻ',  module: 'loosepicking' },
   { to: '/tms/bookings',     icon: ClipboardList,   label: 'Kế hoạch',  module: 'tms_plan' },
   { to: '/tms/gate',         icon: ShieldCheck,     label: 'Đăng ký',  module: 'gate_registration' },
-  { to: '/',                 icon: LayoutDashboard, label: 'Dashboard', end: true },
+  { to: '/',                 icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard', end: true },
 ]
 
 export function BottomNav() {

@@ -385,6 +385,17 @@ const RULES = [
     count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
       (line) => /^const\s+\w*(TODAY|Today)\w*\s*(:[^=]+)?=\s*new Date\(\)/.test(line), s),
   },
+  // "Mọi view mới phải có mặt trong phân quyền" (user chốt 19/08): route trang mới trong App.tsx
+  // PHẢI bọc PermissionRoute/ExternalRoute/DashboardRoute. Baseline 3 = 3 route MỞ CHỦ ĐÍCH:
+  // /wms/alerts (tab Cá nhân = feed của mình) · /settings (tài khoản cá nhân) · /wms/multi-scan
+  // (trang test). Thêm route KHÔNG gate mới → tăng số → CI đỏ, buộc khai quyền đủ 5 việc.
+  {
+    key: 'route_without_permission',
+    label: 'route trang trong App.tsx KHÔNG bọc PermissionRoute — view mới phải được phân quyền (3 route mở là chủ đích)',
+    count: (s) => countMatches(['frontend/src/App.tsx'], ['.tsx'],
+      l => /<Route path=/.test(l) && /element=\{/.test(l)
+        && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),
+  },
   {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',

@@ -52,6 +52,16 @@ function PermissionRoute({
   return <>{children}</>
 }
 
+// Dashboard gate bằng dashboard.view (19/08) — bến đáp khi BỊ CHẶN là /wms/alerts (trang mở
+// cho mọi user), KHÔNG đá về "/" như PermissionRoute (chính "/" là trang này → vòng lặp).
+function DashboardRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  const perms = user?.module_permissions as ModulePermissions | null ?? null
+  const allowed = isAdmin(user) || canAccess(perms, 'dashboard')
+  if (!allowed) return <Navigate to="/wms/alerts" replace />
+  return <>{children}</>
+}
+
 // Trang "Dữ liệu bên ngoài" có 3 tab, tab "Cần xử lý" gate bằng outbound.reconcile —
 // route phải nhận CẢ quyền đó (user chỉ có reconcile vẫn vào xử hàng chờ được).
 function ExternalRoute({ children }: { children: React.ReactNode }) {
@@ -76,7 +86,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<DashboardRoute><Dashboard /></DashboardRoute>} />
 
         {/* WMS — inventory */}
         <Route path="/wms/inventory" element={<PermissionRoute module="inventory"><Inventory /></PermissionRoute>} />

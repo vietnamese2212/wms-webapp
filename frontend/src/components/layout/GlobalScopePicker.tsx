@@ -103,17 +103,18 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
           <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
         </button>
       ) : (
-        /* Thanh bối cảnh mobile: full-width, luôn nêu RÕ cả Kho lẫn Loại (kể cả "Tất cả") */
+        /* Thanh bối cảnh mobile: full-width, luôn nêu RÕ cả Kho lẫn Loại (kể cả "Tất cả").
+           Nền ĐẶC slate-800 — bar nằm trên trang trắng, nền bán trong suốt làm chữ tàng hình. */
         <button
           ref={btnRef}
           type="button"
           onClick={() => setOpen(o => !o)}
           title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
-          className={`lg:hidden w-full flex items-center gap-1.5 h-8 px-3 text-xs font-medium border-t border-white/10 transition-colors ${
-            active ? 'bg-sky-500/15 text-sky-100' : 'bg-slate-800 text-slate-200'
+          className={`lg:hidden w-full flex items-center gap-1.5 h-8 px-3 text-xs font-medium border-t border-white/10 bg-slate-800 transition-colors ${
+            active ? 'text-sky-200' : 'text-slate-200'
           }`}
         >
-          <MapPinned className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-sky-300' : 'text-slate-400'}`} />
+          <MapPinned className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-sky-400' : 'text-slate-400'}`} />
           <span className="truncate">
             {khoLabel}
             <span className={active && whType ? '' : 'text-slate-400'}> · {whType || 'Tất cả loại'}</span>

@@ -228,6 +228,12 @@ export const MODULES = {
       match: 'Gắn / gỡ phiếu cân với chuyến xe',
     },
   },
+  dashboard: {
+    page: 'Dashboard (Tổng quan)',
+    actions: {
+      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay)',
+    },
+  },
   control_tower: {
     page: 'Giám sát vận hành (Control Tower)',
     actions: {
@@ -235,10 +241,13 @@ export const MODULES = {
     },
   },
   alerts: {
-    page: 'Cảnh báo vận hành',
+    page: 'Thông báo & Cảnh báo vận hành',
     actions: {
-      view: 'Xem danh sách cảnh báo + nhận thông báo đẩy cảnh báo mới (theo kho được gán)',
-      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu một cảnh báo',
+      // Trang Thông báo 3 tab: "Cá nhân" (feed việc đích danh CỦA MÌNH) mở cho mọi user đăng
+      // nhập — chủ đích 06/08, không gate; "Thông báo chung" = quyền view dưới đây;
+      // "Cài đặt ngưỡng" đi theo wms_settings.manage_system (cross-module, có ghi chú ở đó).
+      view: 'Tab "Thông báo chung" (cảnh báo vận hành) + nhận thông báo đẩy cảnh báo mới theo kho được gán',
+      ack:  'Đánh dấu "đã biết" / bỏ đánh dấu cảnh báo (lẻ + hàng loạt)',
     },
   },
   slotting: {

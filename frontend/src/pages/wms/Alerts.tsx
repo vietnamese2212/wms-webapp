@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal } from 'lucide-react'
+import { BellRing, Check, Undo2, RefreshCw, CheckCheck, User, SlidersHorizontal, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -208,6 +208,14 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
 
+  // Tổng cảnh báo MỞ toàn scope (KHÔNG theo bộ lọc trang) — trùng query key với chuông Header
+  // nên không tốn thêm request. Lệch với số đang hiện = có cảnh báo bị bộ lọc CHE: user 19/08
+  // "ack hàng loạt rồi mà chuông vẫn còn số" — thực ra số đó nằm ngoài bộ lọc đang áp.
+  const allOpen = useAlerts({ status: 'open' })
+  const hiddenOpen = f.status === 'open'
+    ? Math.max(0, (allOpen.data?.total ?? 0) - (data?.total ?? 0))
+    : 0
+
   // Search client-side: list đã cap 1000 dòng server (cảnh báo mở là danh sách VIỆC, không phải kho lưu trữ)
   const rows = useMemo(() => {
     const all = data?.rows ?? []
@@ -284,6 +292,17 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
           { label: 'Đã biết (ack)', value: nAck.toLocaleString('vi-VN') },
           { label: 'Đang hiện / tổng', value: `${rows.length.toLocaleString('vi-VN')} / ${(data?.total ?? rows.length).toLocaleString('vi-VN')}` },
         ]} />
+
+        {hiddenOpen > 0 && (
+          <div className="shrink-0 mx-3 mt-1.5 flex items-center gap-2 flex-wrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>Còn <b>{hiddenOpen.toLocaleString('vi-VN')}</b> cảnh báo đang mở nằm <b>ngoài bộ lọc</b> đang áp (kho / loại / mức độ khác) — chuông Header vẫn đếm số này.</span>
+            <button type="button" onClick={() => setF({ warehouseId: '', rules: [], severity: [], search: '' })}
+              className="ml-auto shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100">
+              Xóa bộ lọc để xem
+            </button>
+          </div>
+        )}
 
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <Table className="table-fixed [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:overflow-hidden [&_th]:overflow-hidden"

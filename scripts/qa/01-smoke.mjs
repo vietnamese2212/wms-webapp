@@ -8,7 +8,9 @@ check('Login admin', true)
 // GET các list chính (đủ 200 + shape data)
 const GETS = [
   ['Outbound list',        `/wms/outbound?date_from=${FIX.DATE}&date_to=${FIX.DATE}`],
-  ['Inbound list',         '/wms/inbound-orders?limit=20'],
+  // Đi MODE PHÂN TRANG (?page=) như FE thật: staging dữ liệu lớn ~900 phiếu/ngày → mode mảng cũ
+  // không kèm đủ lọc bị guard RANGE_TOO_WIDE 400 CHỦ ĐÍCH (chặn-có-hướng-dẫn, không cắt âm thầm).
+  ['Inbound list',         `/wms/inbound-orders?page=1&limit=20&date_from=${new Date(Date.now() - 7 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}&date_to=${FIX.EXEC_DATE}`],
   ['Inventory list',       '/wms/inventory?limit=20'],
   ['Inventory facets',     '/wms/inventory/facets'],
   ['TMS transfer list',    `/tms/orders?source_type=TRANSFER&date_from=${FIX.DATE}`],

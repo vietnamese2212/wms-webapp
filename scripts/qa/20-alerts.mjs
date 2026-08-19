@@ -32,6 +32,15 @@ console.log(`── TRUNG TÂM CẢNH BÁO · ${BASE.replace('https://', '')} �
 
 await login(); await cleanup()
 
+// Chuẩn hóa cờ GIỮ-SAU-KHI-RA về hành vi GỐC cho mục [4][5] (user có thể đang bật cờ này
+// trong tab Cài đặt ngưỡng — cấu hình hợp lệ, không được làm test đỏ oan); TRẢ LẠI cuối gói.
+const th0 = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value ?? null
+if (th0?.GATE_KEEP_AFTER_EXIT === true) {
+  await api('/wms/settings/alert_thresholds', 'PUT', { value: { ...th0, GATE_KEEP_AFTER_EXIT: false } })
+  console.log('  (cờ GATE_KEEP_AFTER_EXIT đang BẬT trên hệ thống — tạm tắt cho phép kiểm, sẽ trả lại)')
+  await sleep(31_000)
+}
+
 // [1] Dựng xe trong cổng 2h chưa ra (đúng hình dạng gate_registrations thật)
 const gid = randomUUID()
 const entry2hAgo = new Date(Date.now() - 2 * 3600_000).toISOString()
@@ -156,6 +165,9 @@ check('3.5h chưa ra → leo thang CRITICAL (≥180p)', hit5?.severity === 'CRIT
   if (thBackup) await api('/wms/settings/alert_thresholds', 'PUT', { value: thBackup })
   else await api('/wms/settings/alert_thresholds', 'PUT', { value: baseTh })
 }
+
+// Trả cờ GIỮ-SAU-KHI-RA về đúng cấu hình user (đã tạm tắt ở đầu gói)
+if (th0?.GATE_KEEP_AFTER_EXIT === true) await api('/wms/settings/alert_thresholds', 'PUT', { value: th0 })
 
 console.log('\n🧹 dọn…')
 await cleanup()

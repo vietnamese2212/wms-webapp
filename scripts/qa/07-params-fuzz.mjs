@@ -179,7 +179,10 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
   } else {
     const seen = new Map(), order = []
     let pages = 0, dup = 0, httpBad = 0
-    for (let page = 1; page <= 40; page++) {
+    // Cap trang ĐỘNG theo total (staging dữ liệu lớn: Ba Vì 1.832 lệnh/60 ngày cần ~184 trang —
+    // cap cứng 40 làm check "mất đơn" đỏ oan dù không trùng/không mất, chỉ chưa đọc hết)
+    const maxPages = Math.min(220, Math.ceil(target.total / 10) + 5)
+    for (let page = 1; page <= maxPages; page++) {
       const r = await api(`/tms/orders?date_from=${from}&date_to=${today}&warehouse_id=${target.w.id}&page=${page}&page_size=10`)
       if (r.s !== 200) { httpBad++; break }
       const rows = r.j?.data?.rows ?? []

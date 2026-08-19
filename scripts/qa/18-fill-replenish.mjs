@@ -136,9 +136,11 @@ try {
   await mkPallet('FILLER', 30, locFull.id, 1)              // lấp đầy vị trí FULL (max = 1)
   const pOnPF = await mkPallet('ONPF', 40, locPF.id, 2)    // ĐANG Ở vị trí nhặt lẻ → là "đang có"
   await mkPallet('BADSTOCK', 5, locBad.id, 3)              // locBad chứa sẵn mã (bẫy cụm 17)
-  const pA = await mkPallet('A', 60, locRsv.id, 90)        // FEFO: cũ nhất
-  const pB = await mkPallet('B', 60, locRsv.id, 60)
-  const pC = await mkPallet('C', 60, locRsv.id, 30)        // mới nhất
+  // NSX fixture phải GIÀ HƠN mọi tồn thật của mã (mã chọn ngẫu nhiên từ kho — staging dữ liệu
+  // lớn có pallet thật NSX ~105 ngày ⇒ 90 ngày thua FEFO, check 2c đỏ oan dù app gợi ý ĐÚNG)
+  const pA = await mkPallet('A', 60, locRsv.id, 500)       // FEFO: cũ nhất
+  const pB = await mkPallet('B', 60, locRsv.id, 470)
+  const pC = await mkPallet('C', 60, locRsv.id, 440)       // mới nhất (trong bộ fixture)
 
   // Nhu cầu: thiếu kỳ vọng = LOOSE − (tồn thật + 40 pOnPF + 5 BADSTOCK) = 100
   const LOOSE = realPF + 45 + 100

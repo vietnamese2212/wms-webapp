@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck, Grid3X3,
@@ -62,16 +62,22 @@ export default function Dashboard() {
 
   const t = stats?.today
 
-  // Sức chứa khu vực: gom theo kho (chỉ hiện header kho khi có nhiều kho)
+  // Sức chứa khu vực: gom theo kho, kèm TỔNG kho + xếp % dùng CAO NHẤT lên đầu
+  // (chọn "Tất cả kho" với hàng trăm kho NPP thì kho căng chỗ phải nổi lên trước).
   const zonesByWh = useMemo(() => {
-    const map = new Map<string, { warehouse_name: string; zones: ZoneCap[] }>()
+    const map = new Map<string, { warehouse_name: string; zones: ZoneCap[]; used: number; cap: number }>()
     for (const z of stats?.zones ?? []) {
       let g = map.get(z.warehouse_id)
-      if (!g) { g = { warehouse_name: z.warehouse_name, zones: [] }; map.set(z.warehouse_id, g) }
-      g.zones.push(z)
+      if (!g) { g = { warehouse_name: z.warehouse_name, zones: [], used: 0, cap: 0 }; map.set(z.warehouse_id, g) }
+      g.zones.push(z); g.used += z.used; g.cap += z.capacity
     }
-    return [...map.values()]
+    const pctOf = (g: { used: number; cap: number }) => (g.cap > 0 ? g.used / g.cap : g.used > 0 ? -1 : -2)
+    return [...map.values()].sort((a, b) => pctOf(b) - pctOf(a))
   }, [stats])
+  // Nhiều kho (trăm kho NPP): mặc định chỉ hiện 12 kho căng nhất, còn lại sau nút "Hiện tất cả"
+  const [showAllWh, setShowAllWh] = useState(false)
+  const WH_SHOW_CAP = 12
+  const visibleWhGroups = showAllWh ? zonesByWh : zonesByWh.slice(0, WH_SHOW_CAP)
 
   return (
     <div className="flex flex-col h-full">
@@ -188,12 +194,13 @@ export default function Dashboard() {
                   {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6 rounded" />)}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-3">
-                  {zonesByWh.map(g => {
-                    const tUsed = g.zones.reduce((s, z) => s + z.used, 0)
-                    const tCap  = g.zones.reduce((s, z) => s + z.capacity, 0)
+                /* Cột auto-fill theo bề rộng THẬT (380-500px/cột) — cột không giãn hết card
+                   tạo khoảng chết giữa tên và bar (user 19/08); trăm kho tự dàn lưới nhiều cột */
+                <div className="grid grid-cols-1 lg:grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-x-8 gap-y-3">
+                  {visibleWhGroups.map(g => {
+                    const tUsed = g.used, tCap = g.cap
                     return (
-                      <div key={g.warehouse_name}>
+                      <div key={g.warehouse_name} className="self-start">
                         <div className="flex items-baseline justify-between gap-2 border-b border-slate-200 pb-1">
                           <p className="text-[11px] font-semibold text-slate-700 truncate">{g.warehouse_name}</p>
                           <p className="shrink-0 text-[10px] tabular-nums text-slate-400">
@@ -235,6 +242,12 @@ export default function Dashboard() {
                     )
                   })}
                 </div>
+              )}
+              {!isLoading && zonesByWh.length > WH_SHOW_CAP && (
+                <button type="button" onClick={() => setShowAllWh(v => !v)}
+                  className="mt-2 w-full rounded-md border border-slate-200 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50">
+                  {showAllWh ? 'Thu gọn' : `Hiện tất cả ${zonesByWh.length} kho (đang hiện ${WH_SHOW_CAP} kho căng chỗ nhất)`}
+                </button>
               )}
             </CardContent>
           </Card>

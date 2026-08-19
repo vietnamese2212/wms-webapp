@@ -29,6 +29,9 @@ export const THRESHOLDS = {
   PACKING_UNRECV_WARN_H: 12,  // pallet SX ghi sổ đóng gói > 12h mà kho CHƯA quét nhận (user duyệt 13/08)
   PACKING_UNRECV_CRIT_H: 24,
   EXPIRY_WINDOW_DAYS: 120, // cửa sổ prefilter RPC (siêu tập — quyết định thật ở computePctDate)
+  // Xe ĐÃ RA khỏi cổng: false = cảnh báo GATE_DWELL tự ẩn (hành vi gốc) · true = GIỮ LẠI cho người
+  // vận hành xem rồi tự bấm "Đã biết" (user chốt 19/08 — có kho muốn truy cứu vì sao xe nằm lâu).
+  GATE_KEEP_AFTER_EXIT: false,
 }
 export type AlertThresholds = typeof THRESHOLDS
 
@@ -60,6 +63,7 @@ export async function getAlertThresholds(): Promise<AlertThresholds> {
       const n = Number(v[k])
       if (Number.isFinite(n) && n > 0) t[k] = n
     }
+    t.GATE_KEEP_AFTER_EXIT = v.GATE_KEEP_AFTER_EXIT === true   // boolean riêng, không đi qua vòng số
   } catch { /* đọc lỗi → dùng mặc định, đừng làm chết lượt quét */ }
   // Cửa sổ prefilter EXPIRY phải PHỦ ngưỡng cảnh báo: item %Date ≤ PCT_WARN còn tối đa
   // PCT_WARN% × shelf-life ngày. 6×PCT_WARN giữ nguyên 120 ngày ở mặc định 20% và tự nới khi tăng.
@@ -379,9 +383,24 @@ export async function runAlertScan(force = false): Promise<void> {
     // Tự đóng: dòng OPEN của các rule ĐÃ QUÉT OK mà không còn trong kết quả
     const liveKeys = new Set(found.map(f => f.dedup_key))
     const { data: openRows } = await supabase.from('alert_events')
-      .select('id, dedup_key').in('rule', okRules).is('resolved_at', null).limit(5000)
-    const closeIds = ((openRows ?? []) as { id: string; dedup_key: string }[])
-      .filter(r => !liveKeys.has(r.dedup_key)).map(r => r.id)
+      .select('id, dedup_key, rule').in('rule', okRules).is('resolved_at', null).limit(5000)
+    let closable = ((openRows ?? []) as { id: string; dedup_key: string; rule: string }[])
+      .filter(r => !liveKeys.has(r.dedup_key))
+    // Chế độ GIỮ LẠI (Cài đặt ngưỡng): xe ĐÃ RA thì cảnh báo KHÔNG tự đóng — người vận hành xem
+    // rồi tự "Đã biết". Chỉ miễn đóng đúng ca "đã ra"; dòng rớt khỏi ứng viên vì lý do khác
+    // (nới ngưỡng, quá cửa sổ quét 48h) vẫn đóng như cũ — giữ lại cả đám đó là rác vĩnh viễn.
+    if (TH.GATE_KEEP_AFTER_EXIT) {
+      const gateIds = closable.filter(r => r.rule === 'GATE_DWELL')
+        .map(r => r.dedup_key.split('|')[1]).filter(Boolean)
+      const exited = new Set<string>()
+      for (let i = 0; i < gateIds.length; i += 300) {
+        const { data: gs } = await supabase.from('gate_registrations')
+          .select('id').in('id', gateIds.slice(i, i + 300)).not('exit_at', 'is', null)
+        for (const g of (gs ?? []) as { id: string }[]) exited.add(g.id)
+      }
+      closable = closable.filter(r => !(r.rule === 'GATE_DWELL' && exited.has(r.dedup_key.split('|')[1] ?? '')))
+    }
+    const closeIds = closable.map(r => r.id)
     for (let i = 0; i < closeIds.length; i += 300) {
       await supabase.from('alert_events')
         .update({ resolved_at: t, updated_at: t }).in('id', closeIds.slice(i, i + 300))

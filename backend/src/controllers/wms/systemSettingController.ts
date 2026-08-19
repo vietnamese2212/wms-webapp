@@ -83,7 +83,9 @@ function isAlertThresholds(v: unknown): boolean {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false
   const o = v as Record<string, unknown>
   const keys = ALERT_TH_CONFIG_KEYS as readonly string[]
-  if (Object.keys(o).some(k => !keys.includes(k))) return false   // chỉ nhận đúng bộ khóa
+  // GATE_KEEP_AFTER_EXIT: cờ boolean tùy chọn (xe đã ra → tự ẩn cảnh báo hay giữ lại — 19/08)
+  if (Object.keys(o).some(k => !keys.includes(k) && k !== 'GATE_KEEP_AFTER_EXIT')) return false   // chỉ nhận đúng bộ khóa
+  if ('GATE_KEEP_AFTER_EXIT' in o && typeof o.GATE_KEEP_AFTER_EXIT !== 'boolean') return false
   if (!keys.every(k => typeof o[k] === 'number' && Number.isFinite(o[k] as number) && (o[k] as number) > 0)) return false
   const t = o as Record<string, number>
   if (!(t.PCT_CRIT <= t.PCT_WARN && t.PCT_WARN <= 90)) return false                                   // %Date: thấp = nguy
@@ -112,7 +114,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
   alert_thresholds: {
     validate: isAlertThresholds,
-    hint: 'đủ 10 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · TRIP_LATE_DAYS 1–180 (ngày) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ)',
+    hint: 'đủ 10 số dương: PCT_CRIT ≤ PCT_WARN ≤ 90 · 15 ≤ GATE_WARN_MIN ≤ GATE_CRIT_MIN ≤ 2880 (phút) · TRIP_STUCK_HOURS 1–72 (giờ) · TRIP_LATE_DAYS 1–180 (ngày) · WEIGH_WARN_PCT ≤ WEIGH_CRIT_PCT ≤ 100 (%) · 1 ≤ PACKING_UNRECV_WARN_H ≤ PACKING_UNRECV_CRIT_H ≤ 168 (giờ) · tùy chọn GATE_KEEP_AFTER_EXIT boolean (xe đã ra: false = tự ẩn cảnh báo, true = giữ lại chờ "Đã biết")',
   },
   retention_days: {
     validate: v => parseRetention(v) !== null,

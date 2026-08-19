@@ -124,6 +124,39 @@ check('3.5h chưa ra → leo thang CRITICAL (≥180p)', hit5?.severity === 'CRIT
     failed.length === 0, failed.length ? failed[0].message?.slice(0, 120) : '0 lỗi rule')
 }
 
+// [8] Chế độ GIỮ LẠI sau khi xe ra (user chốt 19/08 — cờ GATE_KEEP_AFTER_EXIT trong Cài đặt ngưỡng):
+// bật cờ → xe RA nhưng cảnh báo VẪN MỞ (chờ "Đã biết") · tắt cờ → lượt quét sau tự đóng như gốc.
+// Đổi cờ qua API (xoá cache instance nhận request) + chờ 31s cho cache 30s của MỌI instance hết hạn.
+{
+  const thBackup = (await api('/wms/settings', 'GET')).j?.data?.find?.(s => s.key === 'alert_thresholds')?.value ?? null
+  const baseTh = { PCT_WARN: 20, PCT_CRIT: 10, GATE_WARN_MIN: 90, GATE_CRIT_MIN: 180,
+    TRIP_STUCK_HOURS: 6, TRIP_LATE_DAYS: 14, WEIGH_WARN_PCT: 5, WEIGH_CRIT_PCT: 15,
+    PACKING_UNRECV_WARN_H: 12, PACKING_UNRECV_CRIT_H: 24, ...(thBackup ?? {}) }
+  const setKeep = keep => api('/wms/settings/alert_thresholds', 'PUT', { value: { ...baseTh, GATE_KEEP_AFTER_EXIT: keep } })
+
+  const rOn = await setKeep(true)
+  check('[8a] Lưu cờ GATE_KEEP_AFTER_EXIT=true qua API (validator nhận boolean tùy chọn)', rOn.s === 200, `http=${rOn.s}`)
+  // xe đang IN (từ mục [5]) → cho RA trong lúc cờ GIỮ LẠI đang bật
+  await sleep(31_000)
+  await restWrite('gate_registrations', 'PATCH', `id=eq.${gid}`, { exit_at: t(), status: 'COMPLETED', updated_at: t() })
+  await sleep(21_000)
+  await openList()
+  const rowKeep = await dbRow(KEY)
+  check('[8b] Cờ GIỮ LẠI bật → xe đã ra mà cảnh báo KHÔNG tự đóng (chờ "Đã biết")',
+    !!rowKeep && !rowKeep.resolved_at, `resolved_at=${rowKeep?.resolved_at ?? 'null'}`)
+
+  const rOff = await setKeep(false)
+  await sleep(31_000)
+  await openList()
+  const rowOff = await dbRow(KEY)
+  check('[8c] Tắt cờ → lượt quét sau tự đóng lại như hành vi gốc',
+    rOff.s === 200 && !!rowOff?.resolved_at, `http=${rOff.s} resolved_at=${rowOff?.resolved_at ?? 'null'}`)
+
+  // trả cấu hình về đúng trạng thái trước khi chạy gói (không để cờ test dính lại hệ thống)
+  if (thBackup) await api('/wms/settings/alert_thresholds', 'PUT', { value: thBackup })
+  else await api('/wms/settings/alert_thresholds', 'PUT', { value: baseTh })
+}
+
 console.log('\n🧹 dọn…')
 await cleanup()
 const residue = (await restAll('gate_registrations', `select=id&license_plate=eq.${PLATE}`)).length

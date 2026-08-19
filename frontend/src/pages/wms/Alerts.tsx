@@ -400,11 +400,14 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     const v = thRow?.value as Partial<Record<ThKey, number>> | undefined
     return { ...TH_DEFAULT, ...(v ?? {}) }
   }, [thRow])
+  // Cờ boolean tách khỏi map số: xe ĐÃ RA thì cảnh báo tự ẩn (mặc định) hay giữ lại chờ "Đã biết"
+  const savedKeep = (thRow?.value as { GATE_KEEP_AFTER_EXIT?: unknown } | undefined)?.GATE_KEEP_AFTER_EXIT === true
   const [vals, setVals] = useState<Record<ThKey, string>>(() => toStrings(TH_DEFAULT))
+  const [keepExit, setKeepExit] = useState(false)
   const [err, setErr] = useState('')
   const [okMsg, setOkMsg] = useState('')
-  useEffect(() => { setVals(toStrings(saved)) }, [saved])
-  const dirty = JSON.stringify(vals) !== JSON.stringify(toStrings(saved))
+  useEffect(() => { setVals(toStrings(saved)); setKeepExit(savedKeep) }, [saved, savedKeep])
+  const dirty = JSON.stringify(vals) !== JSON.stringify(toStrings(saved)) || keepExit !== savedKeep
   const set = (k: ThKey) => (v: string) => setVals(s => ({ ...s, [k]: v }))
 
   function save() {
@@ -424,7 +427,7 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
     if (t.WEIGH_WARN_PCT > t.WEIGH_CRIT_PCT || t.WEIGH_CRIT_PCT > 100) return setErr('Lệch cân: Cảnh báo ≤ Nghiêm trọng ≤ 100%.')
     if (t.PACKING_UNRECV_WARN_H < 1 || t.PACKING_UNRECV_WARN_H > t.PACKING_UNRECV_CRIT_H || t.PACKING_UNRECV_CRIT_H > 168)
       return setErr('Sổ đóng gói — kho chưa nhận: 1 giờ ≤ Cảnh báo ≤ Nghiêm trọng ≤ 168 giờ.')
-    upd.mutate({ key: 'alert_thresholds', value: t }, {
+    upd.mutate({ key: 'alert_thresholds', value: { ...t, GATE_KEEP_AFTER_EXIT: keepExit } }, {
       onSuccess: () => setOkMsg('Đã lưu — áp dụng từ lượt quét tiếp theo (tự quét ~10 phút/lần, hoặc bấm Quét lại ở tab Thông báo chung).'),
       onError: (e) => setErr((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lưu thất bại — thử lại.'),
     })
@@ -459,6 +462,16 @@ function ThresholdsTab({ tabBar }: { tabBar: ReactNode }) {
               <div className="grid grid-cols-2 gap-1.5">
                 <SettingNum label="Cảnh báo khi ≥" unit="phút" value={vals.GATE_WARN_MIN} onChange={set('GATE_WARN_MIN')} />
                 <SettingNum label="Nghiêm trọng khi ≥" unit="phút" value={vals.GATE_CRIT_MIN} onChange={set('GATE_CRIT_MIN')} />
+              </div>
+              <SettingLabel text="Khi xe đã ra khỏi cổng" tip="Tự ẩn: xe ra là cảnh báo tự đóng ở lượt quét kế (hành vi gốc). Giữ lại: cảnh báo còn nguyên để truy cứu vì sao xe nằm lâu — tự bấm ‘Đã biết’ mới ẩn." />
+              <div className="flex flex-col gap-1">
+                {([[false, 'Tự ẩn cảnh báo (mặc định)'], [true, 'Giữ lại — bấm "Đã biết" mới ẩn']] as const).map(([v, label]) => (
+                  <label key={String(v)} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="radio" name="gate-keep-exit" className="h-3 w-3 accent-sky-600"
+                      checked={keepExit === v} onChange={() => setKeepExit(v)} />
+                    {label}
+                  </label>
+                ))}
               </div>
             </SettingGroup>
 

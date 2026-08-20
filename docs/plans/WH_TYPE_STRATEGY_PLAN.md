@@ -264,14 +264,55 @@ biến cũ. `putawayReason` không đổi (★ vẫn 3 mã lý do). Sort cuối 
   trống → ③ theo tên vị trí. Chặn cứng: ô đầy, ô nhặt lẻ.") — helper thuần FE
   `putawayExplain(rules)` đặt cạnh nhãn trong `frontend/src/utils/putaway.ts` (mirror nhãn, không
   luật).
+  **(User chỉnh 20/08 tối) Câu diễn giải KHÔNG chiếm chỗ trên form — đặt trong ICON ⓘ TOOLTIP**
+  cạnh tiêu đề section, theo đúng khuôn tooltip đang dùng khắp app (mẫu: `QTY_CONVERTED_TIP`,
+  tooltip nút ActionCluster, tooltip form Kết nối ERP). Nội dung tooltip = `putawayExplain(rules)`
+  tính từ giá trị ĐANG CHỌN trên form (đổi dropdown là tooltip đổi theo). Section XUẤT cũng có ⓘ
+  riêng diễn giải nguyên tắc + thang hòa-ngày. **Tiêu đề section phải nêu RÕ TÁC VỤ**: "XUẤT —
+  Lấy hàng" / "NHẬP — Cất hàng" / "NHẬP — Ràng buộc vị trí" (không đặt tên chung chung
+  "Chiến thuật").
 - **"XUẤT — Lấy hàng"**: Nguyên tắc + Bắt buộc (cũ) + dòng diễn giải thang hòa-ngày CỐ ĐỊNH
   ("hòa ngày → khu gần cửa xuất (hạng nhặt Slotting) → ô ít hàng → tên vị trí") để user biết luật
   đang chạy. Knob đảo thứ tự hòa-ngày = **TÙY CHỌN, CHƯA làm** (user chưa chốt — ghi ĐỀ XUẤT cuối
   báo cáo khi giao).
 - **Section per Loại kho** (2.4): mỗi loại render ĐÚNG 2 section trên qua component
   `StrategyFields` dùng chung, mọi field thêm lựa chọn đầu "— Theo kho —".
+  **(User chỉnh 20/08 tối) Ô kế thừa phải NÓI RA đang theo gì**: option mặc định hiển thị KÈM giá
+  trị hiệu lực — "— Theo kho (FEFO) —", "— Theo kho (Gom cùng mã) —"… (label tính từ giá trị cấp
+  kho ĐANG CHỌN trên form, đổi mặc định kho là label đổi theo); mỗi field kế thừa có ⓘ tooltip
+  "Đang kế thừa mặc định toàn kho — đổi ở section phía trên hoặc chọn giá trị riêng cho loại này".
+  Field ĐÃ khai riêng: hiện giá trị riêng + badge nhỏ "riêng" (phân biệt nhanh loại nào đã tách
+  luật). Mỗi loại cũng có ⓘ tooltip diễn giải sống = `putawayExplain(resolve(kho, loại))` — tức
+  câu diễn giải của CHIẾN THUẬT HIỆU LỰC sau kế thừa, không phải của riêng phần override.
 - Ghi chú trong form, cạnh Bước 1 = ABC: "Hạng khu & hạng ABC khai ở Tối ưu vị trí → Cài đặt"
   (Tối ưu là DỮ LIỆU NỀN dùng chung, không lặp setting ở form Kho).
+
+### 2.7 RÀ HẾT SETTING KHO HIỆN CÓ — cái nào đưa thêm được vào Loại kho (user yêu cầu 20/08 tối)
+
+| Setting kho hiện có | Đưa vào Loại kho? | Lý do |
+|---|---|---|
+| Chiến thuật Xuất (rotation) + Nhập (putaway, cả 2 field mới) | ✅ ĐƯA (đã trong plan) | resolve theo `Material.category` đơn trị — xác định duy nhất |
+| **Quét tem thùng** (`carton_scan_override/categories/require_full`) | ⚠️ **ĐÃ per-loại SẴN** — `carton_scan_categories` chính là danh sách loại áp dụng trong kho | KHÔNG di cư cột sang bảng mới đợt này (đổi chỗ chứa dữ liệu đang chạy = rủi ro 0 lợi ích). Việc làm: **UI form Kho dời control này vào cạnh section per-loại + relabel** cho user thấy nó là setting theo loại; hợp nhất kho chứa về `warehouse_type_configs` = ứng viên đợt sau, ghi ĐỀ XUẤT |
+| Rule cổng / cân khi Bắt đầu (`require_gate/weigh_on_start`) | ❌ KHÔNG | rule chấm theo CHUYẾN/XE vật lý — 1 xe chở lẫn FG01+PM01 (chuỗi ghép, luật giao ≥1) thì "per loại" không có nghĩa: xe đó theo rule nào? Đưa vào = tái sinh đúng lớp bug chuỗi ghép 30/07 |
+| Chế độ tồn QR/QTY/NONE (`inventory_mode`) | ❌ KHÔNG | mode chạm MỌI luồng tồn (isQtyLike 2 đầu, pool QTY, quét); nhu cầu "mã này không QR" đã có cờ per-MÃ `no_qr_tracking` (effectiveNoQr = OR) phủ rồi |
+| SAP map (`sap_plant`, `sap_storage_locations`) | ❌ KHÔNG (đợt này) | VL06O siết theo KHO là đủ cho luồng hiện tại; map sloc→loại là mở rộng tương lai nếu SAP yêu cầu |
+| Kho cha / shipto / NMSX / CENTRAL-NPP / is_active | ❌ KHÔNG | định danh + quan hệ của kho, không phải hành vi theo loại hàng |
+
+### 2.8 ẢNH HƯỞNG TỚI RULE CHUNG CỦA APP (user yêu cầu soi — kết luận: KHÔNG phá rule nào, kèm chứng minh)
+
+| Rule chung | Ảnh hưởng & cách giữ |
+|---|---|
+| **Luật MỘT NGUỒN rotation/putaway** (CLAUDE.md 14–15/08) | Resolve 2 tầng nằm TRONG `utils/putaway.ts`, mọi caller đi qua helper — không đẻ bản luật thứ 2. Ratchet `rotation_rule_hand_rolled` giữ nguyên gác FE |
+| **Scope quyền Kho + Loại (`allowed_categories`)** | KHÔNG đổi. Tập gán của kho ⊥ scope user; PUT type-configs còn siết: non-full-scope chỉ đụng loại trong scope mình (mục 2.3). Không nới cũng không cắt thêm dữ liệu ai |
+| **Chuỗi ghép `FG01+PM01` + luật giao ≥1** (GDO/booking_category) | KHÔNG đụng — resolve chiến thuật theo `Material.category` (đơn trị per mã), không bao giờ theo chuỗi ghép của chuyến. Ghi comment tại resolver cấm nhận chuỗi ghép làm input (assert có `+` → coi như null) |
+| **Null-inclusive** (bản ghi không khai loại vẫn hiện) | Giữ: mã không khai category / kho không có dòng gán → mặc định kho, không chặn không ẩn. Đợt 2 chỉ chặn GHI MỚI ở form |
+| **BASE UNIT / %Date / QR parse tập trung** | Không chạm — chiến thuật chỉ đổi THỨ TỰ và CHẶN vị trí/lượt quét, không đổi số lượng, công thức %Date (`computePctDate`), parser |
+| **Cap-1000 / N+1 / pool PostgREST** | typeRows đọc kèm whConfig cache 30s (≤1 câu thêm/30s/kho, mỗi kho ≤~20 dòng); rotationConfigOf thêm 1 câu chunk theo warehouse_id. Không thêm request per-lượt-quét |
+| **Multi-tenant SILO** | Đúng thang "cờ theo khác biệt": bảng cấu hình per-DB, default = hành vi cũ → đơn vị 2 không đổi gì; không `if (tenant)` |
+| **Kho QTY/NONE** | Vô hại: engine rotation/putaway chỉ chạy luồng QR (kho QTY không quét pallet/vị trí) — per-type setting ở kho QTY đơn giản không có chỗ phát tác; form vẫn cho khai (chuẩn bị chuyển mode) |
+| **Phân quyền 4 nơi** | Không action mới (dùng `wms_settings.manage_warehouse`) → không phải sửa MODULES/ALL_PERMISSIONS; route mới vẫn `requirePerm` |
+| **Realtime / TABLE_QUERY_MAP** | Bảng config không cần realtime (cache 30s như putaway hiện hành); FE invalidateQueries sau PUT là đủ |
+| **QA regression** | Gói 25/26 hiện có phải XANH NGUYÊN khi chưa khai override (tiêu chí số 1); gói mới gác override. run-all FULL trước merge như luật |
 
 ---
 ## 3. KẾ HOẠCH THỰC THI (checklist — mỗi bước có phép kiểm)

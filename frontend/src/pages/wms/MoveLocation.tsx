@@ -15,7 +15,9 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, MapPin, Move, QrCode, UserRound } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, Move, QrCode, UserRound } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { SingleSelect } from '@/components/shared/SingleSelect'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -96,8 +98,7 @@ function ScanTab() {
   const [saveErr,     setSaveErr]     = useState('')      // lỗi lúc Chuyển — giữ nguyên tem, chọn lại ô
   const [moved,       setMoved]       = useState<MovedRow[]>([])   // phiên này (bản lưu = tab Lịch sử)
 
-  // Vị trí mới — picker ĐỒNG BỘ màn quét Nhập: nút mở panel, tìm server, ★/nhãn chặn do BE chấm
-  const [showLocPicker, setShowLocPicker] = useState(false)
+  // Vị trí mới — dropdown Y HỆT form Nhập SX: SingleSelect serverSearch, ★/nhãn chặn do BE chấm
   const [newLocId,  setNewLocId]  = useState<string | null>(null)
   const [newLocRow, setNewLocRow] = useState<PutawayLocRow | null>(null)
   const [locHint,   setLocHint]   = useState<PutawayHint | null>(null)
@@ -119,14 +120,13 @@ function ScanTab() {
       limit: 300,
       putaway: 1,
     } : undefined,
-    !!entry && showLocPicker,
+    !!entry,
   )
 
   function clearResult() {
     setResultState({ mode: 'none' })
     setInputVal('')
     setSaveErr('')
-    setShowLocPicker(false)
     setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm('')
     putGate.reset()
     setTimeout(() => inputRef.current?.focus(), 50)
@@ -144,7 +144,6 @@ function ScanTab() {
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
       setResultState({ mode: 'result', entry: data.data.entry as MoveEntryData })
-      setShowLocPicker(true)   // quét xong là chọn ô ngay — bớt 1 chạm
     } catch (e: any) {
       setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
       setTimeout(() => inputRef.current?.focus(), 50)
@@ -158,13 +157,12 @@ function ScanTab() {
     handleSearch(code)
   }
 
-  function pickLoc(l: PutawayLocRow) {
-    setNewLocId(l.id)
+  function pickLoc(l: PutawayLocRow | null, id: string) {
+    setNewLocId(id || null)
     setNewLocRow(l)
-    setLocHint(l.putaway ?? null)
+    setLocHint(l?.putaway ?? null)
     putGate.reset()
     setSaveErr('')
-    setShowLocPicker(false)
   }
 
   async function handleMove() {
@@ -326,72 +324,30 @@ function ScanTab() {
               </div>
             )}
 
-            {/* Vị trí mới — cùng khuôn màn quét Nhập: nút mở picker, chọn xong hiện Ô ĐÓ ĐANG CHỨA GÌ */}
+            {/* Vị trí mới — Y HỆT ô "Vị trí nhập" của form Nhập SX (Inbound.tsx): SingleSelect
+                serverSearch + option render PutawayOption (★/nhãn chặn) + LocationContents bên dưới */}
             <div className="px-3 py-2.5 space-y-2 border-b">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-slate-500 min-w-0">
-                  <span className="font-medium text-slate-700">Vị trí mới</span>
-                  {newLocRow && <span className="font-mono font-semibold text-blue-700"> · {newLocRow.location_code}</span>}
-                  {!newLocId && <span className="text-amber-500"> · Chưa chọn</span>}
-                </p>
-                <button
-                  type="button"
-                  className="shrink-0 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 border border-blue-200 rounded px-2 py-1"
-                  onClick={() => setShowLocPicker(v => !v)}
-                  disabled={saving}
-                >
-                  <MapPin className="h-3 w-3" />
-                  {newLocId ? 'Đổi vị trí' : 'Chọn vị trí'}
-                </button>
-              </div>
-
-              {showLocPicker && (
-                <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
-                  <p className="text-xs font-medium text-slate-600">
-                    Chọn vị trí{newLocId ? ' mới' : ''} — kho của pallet: <span className="font-semibold">{entry.location?.warehouse?.name ?? '—'}</span>
-                  </p>
-                  <input type="text" placeholder="Tìm vị trí…" value={term} onChange={e => setTerm(e.target.value)}
-                    className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
-                  {/* Ưu tiên do BE chấm theo QUY TẮC CẤT của kho (cùng engine màn Nhập/Slotting):
-                      ★ + đứng đầu = ô nên cất (gom cùng mã / ô trống nếu Dàn đều / khu đúng hạng nếu ABC);
-                      ô vi phạm/đầy tụt cuối. Mã chưa có ô nào để dở → không có gì để ★, danh sách theo mã ô. */}
-                  <p className="text-[10px] text-slate-400 leading-snug">
-                    Xếp theo quy tắc cất của kho: <span className="text-amber-500 font-bold">★</span> = nên cất
-                    (gom cùng mã / khu đúng hạng ABC) · ô vi phạm quy tắc xuống cuối
-                  </p>
-                  <div className="max-h-36 overflow-y-auto space-y-1">
-                    {isFetching && <p className="px-2 py-1.5 text-xs text-slate-400">Đang tìm…</p>}
-                    {!isFetching && (locs as PutawayLocRow[]).length === 0 && (
-                      <p className="px-2 py-1.5 text-xs text-slate-400">Không có vị trí khớp</p>
-                    )}
-                    {(locs as PutawayLocRow[]).map(l => {
-                      // Ô đầy vẫn HIỆN nhưng chặn chọn — RPC khóa dòng ở BE mới là trọng tài cuối.
-                      // Ô vi phạm luật cất vẫn chọn được (kho có thể chỉ cảnh báo) — PutawayGate xử tiếp.
-                      const full = (l.max_pallets ?? 0) > 0 && (l.used_slots ?? 0) >= (l.max_pallets ?? 0)
-                      return (
-                        <button
-                          key={l.id}
-                          type="button"
-                          disabled={full || saving}
-                          onClick={() => pickLoc(l)}
-                          className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center ${
-                            full ? 'text-slate-300 cursor-not-allowed'
-                              : l.id === newLocId ? 'bg-blue-100 font-medium' : 'hover:bg-white'}`}
-                        >
-                          <PutawayOption loc={l} />
-                        </button>
-                      )
-                    })}
-                  </div>
-                  {newLocId && (
-                    <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>
-                      Đóng
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Ô ĐÃ CHỌN đang chứa gì — như màn Nhập (cùng mã hay khác mã, date nào, có QA giữ không) */}
+              <Label className="text-xs">Vị trí mới <span className="text-red-500">*</span>
+                <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
+              </Label>
+              <SingleSelect
+                value={newLocId ?? ''}
+                onChange={v => pickLoc((locs as PutawayLocRow[]).find(x => x.id === v) ?? null, v)}
+                disabled={saving}
+                serverSearch
+                onSearchChange={setTerm}
+                loading={isFetching}
+                selectedLabel={newLocRow?.location_code}
+                searchPlaceholder="Tìm vị trí…"
+                placeholder="Chọn vị trí"
+                triggerClassName="h-8"
+                options={(locs as PutawayLocRow[]).map(l => ({
+                  value: l.id,
+                  label: l.location_code,
+                  node: <PutawayOption loc={l} />,
+                }))}
+              />
+              {/* Chọn xong thì thấy NGAY ô đó đang chứa gì — mã trên pallet tô xanh + ghim đầu (như Nhập) */}
               <LocationContents locationId={newLocId} highlightMaterialId={entry.material_id} />
 
               {putGate.box}

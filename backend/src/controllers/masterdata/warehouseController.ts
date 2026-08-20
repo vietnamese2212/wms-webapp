@@ -328,7 +328,11 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
       // cùng tinh thần khung giờ cargo ALL. Dòng ngoài scope được giữ nguyên ở dưới.
       if (!categoryAllowed(req, code))
         return fail(res, 403, 'FORBIDDEN', `Bạn không có quyền với Loại kho "${code}"`)
-      const patch: Record<string, unknown> = {}
+      // Field KHÔNG gửi lên = "không khai riêng" ⇒ phải ghi NULL, không được giữ giá trị cũ.
+      // ⚠️ PostgREST dựng câu INSERT/UPSERT từ HỢP các key có trong payload: cột vắng mặt sẽ không
+      // nằm trong `DO UPDATE SET` nên override cũ SỐNG SÓT — gỡ trên form xong luật vẫn chạy, không
+      // lỗi, không cảnh báo (gói QA 29 mục [4] bắt được đúng ca này). Nên khởi tạo NULL đủ mọi cột.
+      const patch: Record<string, unknown> = Object.fromEntries(WH_TYPE_CFG_COLS.map(k => [k, null]))
       const err = applyWhTypeConfigBody(raw, patch)
       if (err) return fail(res, 422, 'INVALID_INPUT', `${code}: ${err}`)
       rows.push({ type_code: code, ...patch })

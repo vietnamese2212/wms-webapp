@@ -1091,8 +1091,9 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </>}>
+      {/* min-w-0: ô lưới mặc định KHÔNG co dưới min-content → nhãn dài đẩy panel rộng hơn màn 390 */}
       <div className={hasWh ? 'grid gap-4 lg:grid-cols-[minmax(280px,0.8fr)_2fr]' : ''}>
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           {hasWh && (
             <div className="flex items-center gap-1.5 border-b pb-1">
@@ -1152,7 +1153,7 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
 
         {/* Phần RIÊNG của kho đang chọn — chỉ hiện khi tab Loại kho đang lọc một kho */}
         {hasWh && (
-          <div className="space-y-3 lg:border-l lg:pl-4">
+          <div className="space-y-3 min-w-0 lg:border-l lg:pl-4">
             <div className="flex items-center gap-1.5 border-b pb-1">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Riêng tại {whName}</span>
               <InfoTip tip={<>Chỉ áp cho kho này. Ô để <b>“Theo kho”</b> = chạy theo chiến thuật mặc định của kho (khai ở tab <b>Kho</b>).</>} />

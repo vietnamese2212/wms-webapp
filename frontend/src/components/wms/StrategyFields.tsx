@@ -134,7 +134,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
     ? <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span> : null)
 
   return (
-    <div className={wide ? 'grid gap-2.5 lg:grid-cols-3 items-start' : 'space-y-2.5'}>
+    <div className={wide ? 'grid gap-2.5 lg:grid-cols-3 items-start [&>*]:min-w-0' : 'space-y-2.5'}>
       {/* ───────── XUẤT ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
         <span className="flex items-center gap-1">

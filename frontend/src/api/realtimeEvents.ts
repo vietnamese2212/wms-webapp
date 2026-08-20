@@ -9,7 +9,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
   // slotting-plan(s): tiến độ kế hoạch sắp xếp suy từ location_id hiện tại — pallet được chuyển phải nhảy tick ngay
   InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['stocktake-log'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans'], ['fill-demand'], ['fill-tasks']],
-  StocktakeLog:        [['stocktake-log']],
+  StocktakeLog:        [['stocktake-log'], ['move-log']],
   Location:            [['locations-real'], ['sub-groups'], ['dashboard'], ['fill-demand'], ['fill-pick-face-locations']],
   // Fill hàng: màn danh sách lệnh + chi tiết lệnh phải sáng ngay khi người khác quét/gán/hủy
   // (không F5); fill-demand vì dòng treo được trừ vào phần "thiếu" của mã đó.

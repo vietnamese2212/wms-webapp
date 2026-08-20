@@ -1,26 +1,37 @@
 // Chuyển vị trí bằng quét QR (user chốt 20/08) — workflow PALLET-FIRST:
-// quét tem pallet → hiện tồn + vị trí hiện tại → chọn "Vị trí mới" (gợi ý ★ + luật CẤT hàng
-// từ Cài đặt WMS, BE chấm — FE không tự tính) → Chuyển. MỖI LẦN CHUYỂN = 1 LƯỢT KIỂM KÊ
-// của pallet đó (BE ghi StocktakeLog + stocktake_at qua cờ count_as_stocktake).
-// Khác trang Kiểm kê (vị-trí-first: chọn ô rồi quét pallet vào ô) — đây là pallet-first.
+// quét tem pallet → hiện TỒN TRÊN PALLET (thùng + hộp, để đối chiếu) + vị trí hiện tại →
+// "Chọn vị trí" mở picker ĐỒNG BỘ với màn quét Nhập (tìm server + ★/nhãn chặn theo Cài đặt WMS
+// + LocationContents cho biết ô đó ĐANG CHỨA GÌ) → Chuyển. MỖI LẦN CHUYỂN = 1 LƯỢT KIỂM KÊ
+// (BE ghi StocktakeLog + stocktake_at qua cờ count_as_stocktake). Tab Lịch sử = các lượt chuyển
+// (StocktakeLog có location_changed_to — gồm cả kiểm-kê-đổi-vị-trí), đủ kho/loại/người/từ ô→đến ô.
+// KHO của danh sách vị trí = KHO CỦA PALLET vừa quét (không theo bối cảnh Header — pallet là vật lý).
 import { useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
-import { useLocationsReal, useBulkTransferLocation } from '@/api/hooks'
+import { useLocationsReal, useBulkTransferLocation, useMoveLog, useWarehouses, type MoveLogRow } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, MapPin, Move, QrCode, Search, UserRound } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, MapPin, Move, QrCode, UserRound } from 'lucide-react'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { qtyEntryText, qtyUnitLabel } from '@/utils/qtyUnits'
+import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
 import { usePutawayGate } from '@/components/wms/PutawayGate'
+import { LocationContents } from '@/components/wms/LocationContents'
 import type { PutawayHint } from '@/utils/putaway'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { SearchInput } from '@/components/shared/SearchInput'
+import { SummaryBand } from '@/components/shared/SummaryBand'
+import { useColumnResize } from '@/components/shared/useColumnResize'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 
 interface MoveEntryData {
   id:                string
@@ -32,7 +43,7 @@ interface MoveEntryData {
   status:            string
   stocktake_at:      string | null
   location:          { id: string; location_code: string; warehouse?: { id: string; name: string } | null } | null
-  material:          { material_code: string; short_name: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:          { material_code: string; short_name: string | null; category?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   qa_status:         { id: string; code: string; name: string } | null
   stocktake_by_emp:  { id: string; name: string } | null
 }
@@ -46,6 +57,32 @@ type ResultState =
 interface MovedRow { pallet: string; from: string; to: string; at: string }
 
 export default function MoveLocation() {
+  const [tab, setTab] = useState<'scan' | 'history'>('scan')
+  return (
+    <div className="flex flex-col h-full sm:p-3">
+      {/* 2 tab pill — cùng khuôn StocktakeTabs (tab nội bộ, không đổi route) */}
+      <div className="flex gap-1 px-3 pt-2 pb-2 sm:px-0 sm:pt-0 shrink-0">
+        <TabBtn active={tab === 'scan'} onClick={() => setTab('scan')} icon={<Move className="h-3.5 w-3.5" />} label="Chuyển vị trí" />
+        <TabBtn active={tab === 'history'} onClick={() => setTab('history')} icon={<History className="h-3.5 w-3.5" />} label="Lịch sử" />
+      </div>
+      {tab === 'scan' ? <ScanTab /> : <HistoryTab />}
+    </div>
+  )
+}
+
+function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 h-8 sm:h-7 rounded-md text-xs font-medium transition-colors ${
+        active ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+      {icon}{label}
+    </button>
+  )
+}
+
+// ─── Tab QUÉT CHUYỂN ─────────────────────────────────────────────────────────
+
+function ScanTab() {
   const user  = useAuthStore(s => s.user)
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const qc    = useQueryClient()
@@ -57,9 +94,10 @@ export default function MoveLocation() {
   const [inputVal,    setInputVal]    = useState('')
   const [searching,   setSearching]   = useState(false)
   const [saveErr,     setSaveErr]     = useState('')      // lỗi lúc Chuyển — giữ nguyên tem, chọn lại ô
-  const [moved,       setMoved]       = useState<MovedRow[]>([])   // lịch sử PHIÊN này (bản lưu = StocktakeLog)
+  const [moved,       setMoved]       = useState<MovedRow[]>([])   // phiên này (bản lưu = tab Lịch sử)
 
-  // Vị trí mới — tìm trên server, BE trả khối `putaway` từng dòng (★ / nhãn chặn theo Cài đặt WMS)
+  // Vị trí mới — picker ĐỒNG BỘ màn quét Nhập: nút mở panel, tìm server, ★/nhãn chặn do BE chấm
+  const [showLocPicker, setShowLocPicker] = useState(false)
   const [newLocId,  setNewLocId]  = useState<string | null>(null)
   const [newLocRow, setNewLocRow] = useState<PutawayLocRow | null>(null)
   const [locHint,   setLocHint]   = useState<PutawayHint | null>(null)
@@ -70,21 +108,25 @@ export default function MoveLocation() {
   const putGate = usePutawayGate(locHint)
   const move = useBulkTransferLocation()
 
+  // KHO = kho của pallet vừa quét · Loại = loại hàng của mã trên pallet (ô nhận đúng loại/chưa gán)
+  // 300 dòng: kho cỡ thường thấy TRỌN danh sách — ★ trên đầu, ô chặn cuối (BE sort, như màn Nhập)
   const { data: locs = [], isFetching } = useLocationsReal(
     entry ? {
       warehouse_id: entry.warehouse_id ?? undefined,
+      category:     entry.material?.category ?? undefined,
       material_id:  entry.material_id ?? undefined,
       search: search || undefined,
-      limit: 30,
+      limit: 300,
       putaway: 1,
     } : undefined,
-    !!entry,
+    !!entry && showLocPicker,
   )
 
   function clearResult() {
     setResultState({ mode: 'none' })
     setInputVal('')
     setSaveErr('')
+    setShowLocPicker(false)
     setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm('')
     putGate.reset()
     setTimeout(() => inputRef.current?.focus(), 50)
@@ -102,6 +144,7 @@ export default function MoveLocation() {
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
       setResultState({ mode: 'result', entry: data.data.entry as MoveEntryData })
+      setShowLocPicker(true)   // quét xong là chọn ô ngay — bớt 1 chạm
     } catch (e: any) {
       setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
       setTimeout(() => inputRef.current?.focus(), 50)
@@ -121,6 +164,7 @@ export default function MoveLocation() {
     setLocHint(l.putaway ?? null)
     putGate.reset()
     setSaveErr('')
+    setShowLocPicker(false)
   }
 
   async function handleMove() {
@@ -136,6 +180,7 @@ export default function MoveLocation() {
       })
       qc.invalidateQueries({ queryKey: ['stocktake-entries'] })
       qc.invalidateQueries({ queryKey: ['stocktake-log'] })
+      qc.invalidateQueries({ queryKey: ['move-log'] })
       const from = entry.location?.location_code ?? '—'
       const to   = r.location_code || newLocRow?.location_code || ''
       setMoved(m => [{ pallet: entry.pallet_code, from, to, at: new Date().toISOString() }, ...m].slice(0, 30))
@@ -160,7 +205,6 @@ export default function MoveLocation() {
   const saving  = move.isPending
 
   return (
-    <div className="flex flex-col h-full sm:p-3">
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header */}
       <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
@@ -244,18 +288,15 @@ export default function MoveLocation() {
               </p>
             </div>
 
-            {/* Tồn + vị trí hiện tại */}
+            {/* Tồn TRÊN PALLET (thùng + hộp — số đối chiếu khi bốc) + vị trí hiện tại */}
             <div className="px-3 py-2.5 border-b flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] text-slate-400 mb-0.5">Tồn kho</p>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-bold tabular-nums text-slate-800">
-                    {qtyEntryText(entry.cartons_remaining, entry.material)}
-                  </span>
-                  <span className="text-xs text-slate-400">{qtyUnitLabel(entry.material)}</span>
-                </div>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-400 mb-0.5">Tồn trên pallet (đối chiếu)</p>
+                <p className="text-xl font-bold tabular-nums text-slate-800 leading-tight">
+                  {qtyLabel(entry.cartons_remaining, entry.material as MatUnits | null)}
+                </p>
               </div>
-              <div className="text-right min-w-0">
+              <div className="text-right min-w-0 shrink-0">
                 <p className="text-[10px] text-slate-400 mb-0.5">Vị trí hiện tại</p>
                 <p className="font-mono text-lg font-semibold text-slate-800 truncate">
                   {entry.location?.location_code ?? '—'}
@@ -285,48 +326,66 @@ export default function MoveLocation() {
               </div>
             )}
 
-            {/* Chọn vị trí mới */}
+            {/* Vị trí mới — cùng khuôn màn quét Nhập: nút mở picker, chọn xong hiện Ô ĐÓ ĐANG CHỨA GÌ */}
             <div className="px-3 py-2.5 space-y-2 border-b">
-              <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
-                <MapPin className="h-3.5 w-3.5" /> Vị trí mới
-                {newLocRow && (
-                  <span className="ml-1 font-mono text-xs font-semibold text-blue-700">{newLocRow.location_code}</span>
-                )}
-              </p>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <input
-                  value={term}
-                  onChange={e => setTerm(e.target.value)}
-                  placeholder="Tìm mã vị trí… (★ = đang để dở cùng mã)"
-                  className="w-full h-9 pl-7 pr-2 text-sm border border-slate-300 rounded-md"
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-500 min-w-0">
+                  <span className="font-medium text-slate-700">Vị trí mới</span>
+                  {newLocRow && <span className="font-mono font-semibold text-blue-700"> · {newLocRow.location_code}</span>}
+                  {!newLocId && <span className="text-amber-500"> · Chưa chọn</span>}
+                </p>
+                <button
+                  type="button"
+                  className="shrink-0 flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 border border-blue-200 rounded px-2 py-1"
+                  onClick={() => setShowLocPicker(v => !v)}
                   disabled={saving}
-                />
+                >
+                  <MapPin className="h-3 w-3" />
+                  {newLocId ? 'Đổi vị trí' : 'Chọn vị trí'}
+                </button>
               </div>
-              <div className="max-h-44 overflow-auto rounded-md border border-slate-200 divide-y divide-slate-100">
-                {isFetching && <p className="px-2 py-2 text-xs text-slate-400">Đang tìm…</p>}
-                {!isFetching && (locs as PutawayLocRow[]).length === 0 && (
-                  <p className="px-2 py-2 text-xs text-slate-400">Không có vị trí khớp</p>
-                )}
-                {(locs as PutawayLocRow[]).map(l => {
-                  // Ô đầy vẫn HIỆN nhưng chặn chọn — RPC khóa dòng ở BE mới là trọng tài cuối.
-                  // Ô vi phạm luật cất vẫn chọn được (kho có thể chỉ cảnh báo) — PutawayGate xử tiếp.
-                  const full = (l.max_pallets ?? 0) > 0 && (l.used_slots ?? 0) >= (l.max_pallets ?? 0)
-                  return (
-                    <button
-                      key={l.id}
-                      type="button"
-                      disabled={full || saving}
-                      onClick={() => pickLoc(l)}
-                      className={`w-full text-left px-2 py-2 flex items-center gap-2 ${
-                        full ? 'text-slate-300 cursor-not-allowed'
-                          : l.id === newLocId ? 'bg-sky-50' : 'hover:bg-sky-50'}`}
-                    >
-                      <PutawayOption loc={l} />
+
+              {showLocPicker && (
+                <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
+                  <p className="text-xs font-medium text-slate-600">
+                    Chọn vị trí{newLocId ? ' mới' : ''} — kho của pallet: <span className="font-semibold">{entry.location?.warehouse?.name ?? '—'}</span>
+                  </p>
+                  <input type="text" placeholder="Tìm vị trí…" value={term} onChange={e => setTerm(e.target.value)}
+                    className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+                  <div className="max-h-36 overflow-y-auto space-y-1">
+                    {isFetching && <p className="px-2 py-1.5 text-xs text-slate-400">Đang tìm…</p>}
+                    {!isFetching && (locs as PutawayLocRow[]).length === 0 && (
+                      <p className="px-2 py-1.5 text-xs text-slate-400">Không có vị trí khớp</p>
+                    )}
+                    {(locs as PutawayLocRow[]).map(l => {
+                      // Ô đầy vẫn HIỆN nhưng chặn chọn — RPC khóa dòng ở BE mới là trọng tài cuối.
+                      // Ô vi phạm luật cất vẫn chọn được (kho có thể chỉ cảnh báo) — PutawayGate xử tiếp.
+                      const full = (l.max_pallets ?? 0) > 0 && (l.used_slots ?? 0) >= (l.max_pallets ?? 0)
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          disabled={full || saving}
+                          onClick={() => pickLoc(l)}
+                          className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center ${
+                            full ? 'text-slate-300 cursor-not-allowed'
+                              : l.id === newLocId ? 'bg-blue-100 font-medium' : 'hover:bg-white'}`}
+                        >
+                          <PutawayOption loc={l} />
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {newLocId && (
+                    <button type="button" className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setShowLocPicker(false)}>
+                      Đóng
                     </button>
-                  )
-                })}
-              </div>
+                  )}
+                </div>
+              )}
+
+              {/* Ô ĐÃ CHỌN đang chứa gì — như màn Nhập (cùng mã hay khác mã, date nào, có QA giữ không) */}
+              <LocationContents locationId={newLocId} highlightMaterialId={entry.material_id} />
 
               {putGate.box}
               {sameLoc && (
@@ -358,12 +417,12 @@ export default function MoveLocation() {
           </div>
         )}
 
-        {/* Lịch sử phiên này (bản lưu lâu dài nằm ở Kiểm kê → Lịch sử kiểm) */}
+        {/* Phiên này (bản lưu lâu dài = tab Lịch sử) */}
         {moved.length > 0 && (
           <div className="rounded-xl border border-slate-200 overflow-hidden">
             <div className="px-3 py-1.5 bg-slate-50 border-b flex items-center justify-between">
               <p className="text-[11px] font-medium text-slate-500">Đã chuyển trong phiên này ({moved.length})</p>
-              <p className="text-[10px] text-slate-400">Lưu tại Kiểm kê → Lịch sử kiểm</p>
+              <p className="text-[10px] text-slate-400">Bản lưu: tab Lịch sử</p>
             </div>
             <div className="divide-y divide-slate-100">
               {moved.map((m, i) => (
@@ -380,6 +439,147 @@ export default function MoveLocation() {
         )}
       </div>
      </div>
-    </div>
+  )
+}
+
+// ─── Tab LỊCH SỬ ─────────────────────────────────────────────────────────────
+
+const MOVE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
+  { id: 'at',     label: 'Thời gian',   w: 140 },
+  { id: 'pallet', label: 'Mã pallet',   w: 170 },
+  { id: 'from',   label: 'Từ ô',        w: 110 },
+  { id: 'to',     label: 'Đến ô',       w: 110 },
+  { id: 'mat',    label: 'Tên hàng',    w: 170 },
+  { id: 'qty',    label: 'SL trên pallet', w: 130, align: 'right' },
+  { id: 'wh',     label: 'Kho',         w: 120 },
+  { id: 'cat',    label: 'Loại kho',    w: 90 },
+  { id: 'by',     label: 'Người thực hiện', w: 130 },
+]
+const MOVE_COL_DEFAULTS = MOVE_COLS.map(c => c.w)
+const muOf = (r: MoveLogRow): MatUnits => ({ base_unit: r.base_unit, entry_unit: r.entry_unit, units_per_carton: r.units_per_carton })
+
+function HistoryTab() {
+  const user = useAuthStore(s => s.user)
+  const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+
+  const { warehouseId, category, dateFrom, dateTo, search, page, pageSize } = useWmsFilterStore(s => s.moveLog)
+  const setF = useWmsFilterStore(s => s.setMoveLog)
+  const { widths: colW, startResize, totalWidth } = useColumnResize('move_log_col_widths', MOVE_COL_DEFAULTS)
+
+  const { data: warehouses = [] } = useWarehouses(true)
+  const { data: whTypes    = [] } = useScopedWhTypes()
+  const whName = new Map((warehouses as { id: string; name: string }[]).map(w => [w.id, w.name]))
+
+  const { data, isFetching } = useMoveLog({
+    warehouse_id: warehouseId || undefined,
+    category: category || undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    search: search || undefined,
+    page, page_size: pageSize,
+  })
+  const rows  = data?.rows ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  const defs: FilterDef[] = [
+    { key: 'daterange', label: 'Ngày chuyển', type: 'daterange', pinned: true, from: dateFrom, to: dateTo,
+      onChange: (from, to) => setF({ dateFrom: from, dateTo: to, page: 1 }) },
+    { key: 'warehouse', label: 'Kho', type: 'single', value: warehouseId, allLabel: 'Tất cả kho',
+      onChange: v => setF({ warehouseId: v, page: 1 }),
+      options: (warehouses as { id: string; name: string }[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id)).map(w => ({ value: w.id, label: w.name })) },
+    { key: 'category', label: 'Loại kho', type: 'single', value: category, allLabel: 'Tất cả loại',
+      onChange: v => setF({ category: v, page: 1 }),
+      options: whTypes.map(t => ({ value: t.value, label: t.value })) },
+  ]
+
+  return (
+     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* Toolbar */}
+      <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:space-y-1.5 sm:rounded-t-xl">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1 shrink-0">
+            <History className="h-3.5 w-3.5 text-blue-600" />
+            <span className="text-xs font-semibold text-slate-700">Lịch sử chuyển vị trí</span>
+          </div>
+          <SearchInput value={search} onChange={v => setF({ search: v, page: 1 })}
+            placeholder="Tìm pallet / mã hàng / vị trí…" className="flex-1 min-w-[130px]" />
+          <FilterSheetButton defs={defs} className="sm:hidden" />
+          <FilterBar defs={defs} className="hidden sm:flex" />
+        </div>
+      </div>
+
+      <SummaryBand tiles={[{ label: 'Lượt chuyển', value: total }]} />
+
+      {/* Table */}
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        <Table className="table-fixed [&_td]:overflow-hidden [&_th]:overflow-hidden [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100 [&_td]:!py-1.5"
+          style={{ width: totalWidth, minWidth: '100%' }}>
+          <colgroup>{colW.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
+          <TableHeader>
+            <TableRow className="bg-slate-50">
+              {MOVE_COLS.map((c, i) => (
+                <TableHead key={c.id}
+                  className={`px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
+                  {c.label}
+                  {i > 0 && (
+                    <span onPointerDown={e => startResize(i, e)} onClick={e => e.stopPropagation()}
+                      className="absolute top-0 right-0 z-30 h-full w-1.5 cursor-col-resize touch-none hover:bg-sky-400/70" title="Kéo để chỉnh độ rộng cột" />
+                  )}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isFetching && rows.length === 0 ? (
+              <TableRow><TableCell colSpan={MOVE_COLS.length} className="text-center text-xs text-slate-400 py-8 whitespace-nowrap">Đang tải…</TableCell></TableRow>
+            ) : rows.length === 0 ? (
+              <TableRow><TableCell colSpan={MOVE_COLS.length} className="text-center text-xs text-slate-400 py-8 whitespace-nowrap">Chưa có lượt chuyển nào trong khoảng ngày này</TableCell></TableRow>
+            ) : rows.map(r => (
+              <TableRow key={r.id}>
+                <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-white">
+                  <span className="text-[10px] text-slate-500">{formatTimestampDate(r.counted_at, true)} {formatTimestampTime(r.counted_at)}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="font-mono text-[10px] font-semibold block truncate" title={r.pallet_code}>{r.pallet_code}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  {/* Dòng cũ trước 20/08 chưa snapshot ô nguồn → "—" */}
+                  <span className="font-mono text-[10px] block truncate" title={r.location_from_code ?? ''}>
+                    {r.location_from_code ?? <span className="text-slate-300">—</span>}
+                  </span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="font-mono text-[10px] font-semibold block truncate" title={r.location_code ?? ''}>
+                    {r.location_code ?? <span className="text-slate-300">—</span>}
+                  </span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="text-[10px] block truncate" title={r.short_name ?? r.material_code ?? ''}>{r.short_name ?? r.material_code ?? '—'}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap text-right">
+                  <span className="text-[10px] tabular-nums">{qtyLabel(Number(r.app_qty ?? 0), muOf(r))}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="text-[10px] block truncate">{r.warehouse_id ? (whName.get(r.warehouse_id) ?? r.warehouse_id) : <span className="text-slate-300">—</span>}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="text-[10px]">{r.categories?.length ? r.categories.join('+') : <span className="text-slate-300">—</span>}</span>
+                </TableCell>
+                <TableCell className="px-2 py-1 whitespace-nowrap">
+                  <span className="text-[10px] text-slate-500">{r.counted_by_name ?? '—'}</span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <PagerNav page={page} totalPages={totalPages} onPage={p => setF({ page: p })} />
+      </div>
+
+      <ListFooter page={page} pageSize={pageSize} total={total} unit="lượt chuyển"
+        onPageSize={n => setF({ pageSize: n, page: 1 })} />
+     </div>
   )
 }

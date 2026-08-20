@@ -142,6 +142,16 @@ interface StocktakeHistoryFilters {
   page: number
   pageSize: number
 }
+// Tab Lịch sử của màn Chuyển vị trí quét QR (20/08)
+interface MoveLogFilters {
+  warehouseId: string
+  category: string
+  dateFrom: string   // Ngày chuyển (mặc định 7 ngày gần nhất)
+  dateTo: string
+  search: string
+  page: number
+  pageSize: number
+}
 interface GateRegistrationFilters {
   fDate: string
   fDateTo: string
@@ -354,6 +364,7 @@ interface WmsFilterState {
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   stocktakeHistory:  StocktakeHistoryFilters
+  moveLog:           MoveLogFilters
   locations:         LocationsFilters
   gateRegistration:  GateRegistrationFilters
   materials:         MaterialsFilters
@@ -392,6 +403,7 @@ interface WmsFilterState {
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
+  setMoveLog:           (f: Partial<MoveLogFilters>)           => void
   setLocations:         (f: Partial<LocationsFilters>)         => void
   setGateRegistration:  (f: Partial<GateRegistrationFilters>)  => void
   setMaterials:         (f: Partial<MaterialsFilters>)         => void
@@ -453,6 +465,7 @@ function initialFilters() {
     stocktake:        { warehouseId: '', category: '', locationId: '', requiresOnly: false },
     stocktakeSummary: { warehouseId: '', category: '', locationIds: [], requiresOnly: true, view: 'checked' as StocktakeView, page: 1, pageSize: 200 },
     stocktakeHistory: { warehouseId: '', category: '', locationIds: [], requiresOnly: false, dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 200 },
+    moveLog:          { warehouseId: '', category: '', dateFrom: daysAgo(7), dateTo: today(), search: '', page: 1, pageSize: 100 },
     locations:        { search: '', warehouseId: '', catFilter: '', zoneFilter: [], statusFilter: [], flagMode: '' as FlagMode, pickFaceMode: '' as FlagMode, noInMode: '' as FlagMode, noOutMode: '' as FlagMode, page: 1, pageSize: 200 },
     gateRegistration: {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
@@ -500,6 +513,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),
       setStocktakeSummary: (f) => set(s => ({ stocktakeSummary: { ...s.stocktakeSummary, ...f } })),
       setStocktakeHistory: (f) => set(s => ({ stocktakeHistory: { ...s.stocktakeHistory, ...f } })),
+      setMoveLog:          (f) => set(s => ({ moveLog:          { ...s.moveLog,          ...f } })),
       setLocations:        (f) => set(s => ({ locations:        { ...s.locations,        ...f } })),
       setGateRegistration: (f) => set(s => ({ gateRegistration: { ...s.gateRegistration, ...f } })),
       setMaterials:        (f) => set(s => ({ materials:        { ...s.materials,        ...f } })),

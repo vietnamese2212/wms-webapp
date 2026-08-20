@@ -1946,6 +1946,28 @@ export async function fetchAllStocktakeLog(params: StocktakeLogParams): Promise<
   return out
 }
 
+// Lịch sử CHUYỂN VỊ TRÍ (tab Lịch sử màn Chuyển vị trí, 20/08) — dòng StocktakeLog có
+// location_changed_to (gồm cả lượt "kiểm kê đổi vị trí" bên trang Kiểm kê)
+export interface MoveLogRow extends StocktakeLogRow {
+  categories: string[] | null
+  location_from_code: string | null
+}
+export type MoveLogParams = {
+  warehouse_id?: string; category?: string; date_from?: string; date_to?: string
+  search?: string; page?: number; page_size?: number
+}
+export function useMoveLog(params: MoveLogParams, enabled = true) {
+  return useQuery({
+    queryKey: ['move-log', params],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/inventory/move-log', { params })
+      return data.data as { rows: MoveLogRow[]; total: number }
+    },
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
 // WMS (mock — legacy, không dùng nữa)
 export function useInventory() {
   return useQuery({

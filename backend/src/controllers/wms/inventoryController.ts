@@ -990,7 +990,8 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const moving = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
     .select(`id, pallet_code, location_id, cartons_remaining, material_id, ncc_id, production_date,
       expiry_date, shelf_life_days,
-      material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton)`)
+      material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
+      location:Location!location_id(location_code)`)
     .in('id', chunk))
   const { data: destLoc } = await supabase.from('Location')
     .select('warehouse_id, location_code, categories').eq('id', location_id).maybeSingle()
@@ -1036,6 +1037,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
               id: string; pallet_code: string; location_id: string | null; cartons_remaining: number | null
               material_id: string | null
               material?: { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
+              location?: { location_code?: string } | null
             }
             const dest = destLoc as { warehouse_id?: string | null; location_code?: string | null; categories?: string[] | null } | null
             const rows = (moving as unknown as MovingSnap[]).map(en => ({
@@ -1058,6 +1060,8 @@ export async function bulkTransferLocation(req: Request, res: Response) {
               is_flagged: false,
               note: 'Kiểm kê qua chuyển vị trí (quét QR)',
               location_changed_to: en.location_id !== location_id ? location_id : null,
+              location_from_id:   en.location_id,
+              location_from_code: en.location?.location_code ?? null,
               counted_by: updatedBy,
               counted_by_name: req.user?.name ?? null,
               counted_at: now, created_at: now, updated_at: now,
@@ -1203,6 +1207,7 @@ export async function stocktakeEntry(req: Request, res: Response) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let snapLoc = (existing as any).location as { location_code?: string; warehouse_id?: string; categories?: string[] | null } | null
     let snapLocId = existing.location_id as string | null
+    const fromLocCode = snapLoc?.location_code ?? null   // chụp ô NGUỒN trước khi snapLoc bị gán sang ô mới
     if (newLoc) { snapLoc = newLoc; snapLocId = new_location_id ?? snapLocId }
     await supabase.from('StocktakeLog').insert({
       id: randomUUID(),
@@ -1224,6 +1229,9 @@ export async function stocktakeEntry(req: Request, res: Response) {
       is_flagged: patch.stocktake_flagged === true,
       note: (patch.stocktake_flag_note as string | null) ?? null,
       location_changed_to: (new_location_id && new_location_id !== existing.location_id) ? new_location_id : null,
+      // Snapshot ô NGUỒN (20/08) — tab Lịch sử chuyển vị trí cần "từ ô nào → đến ô nào"
+      location_from_id:   existing.location_id ?? null,
+      location_from_code: fromLocCode,
       counted_by: (patch.stocktake_by as string | undefined) ?? null,
       counted_by_name: req.user?.name ?? null,
       counted_at: now,
@@ -1447,6 +1455,55 @@ export async function stocktakeLog(req: Request, res: Response) {
     page: pageNum, page_size: pageSize,
     date_from: dfrom, date_to: dto,
   })
+}
+
+// Lịch sử CHUYỂN VỊ TRÍ (tab Lịch sử màn Chuyển vị trí, 20/08): các dòng StocktakeLog có
+// location_changed_to — gồm cả lượt "kiểm kê đổi vị trí" bên trang Kiểm kê (cùng bản chất).
+// Volume nhỏ hơn kiểm kê nhiều lần ⇒ query thẳng + range-pagination (partial index
+// idx_stocktakelog_moves), không cần RPC như stocktake_log_page. Scope kho + loại như stocktakeLog.
+export async function moveLog(req: Request, res: Response) {
+  const { warehouse_id, category, date_from, date_to, search, page, page_size } = req.query as Record<string, string>
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+  const dfrom  = /^\d{4}-\d{2}-\d{2}$/.test(String(date_from ?? '')) ? String(date_from) : todayVN
+  const dtoRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(date_to   ?? '')) ? String(date_to)   : dfrom
+  const dto    = dtoRaw < dfrom ? dfrom : dtoRaw
+  const rangeStart = new Date(`${dfrom}T00:00:00.000+07:00`).toISOString()
+  const rangeEnd   = new Date(`${dto}T23:59:59.999+07:00`).toISOString()
+
+  const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+  let whFilter: string[] | null = null
+  if (scope !== null) {
+    if (warehouse_id && !scope.includes(warehouse_id)) return ok(res, { rows: [], total: 0, date_from: dfrom, date_to: dto })
+    whFilter = warehouse_id ? [warehouse_id] : scope
+    if (!whFilter.length) return ok(res, { rows: [], total: 0, date_from: dfrom, date_to: dto })
+  } else if (warehouse_id) {
+    whFilter = [warehouse_id]
+  }
+  const stCats = scopeCategoriesOf(req)
+
+  const pageNum  = Math.max(1, parseInt(String(page ?? '1'), 10) || 1)
+  const pageSize = Math.min(500, Math.max(1, parseInt(String(page_size ?? '100'), 10) || 100))
+
+  let q = supabase.from('StocktakeLog')
+    .select('*', { count: 'exact' })
+    .not('location_changed_to', 'is', null)
+    .gte('counted_at', rangeStart).lte('counted_at', rangeEnd)
+  // whFilter = warehouse_ids của user (nhỏ) — slice 300 chỉ là trần an toàn URL (id-list-url-limits)
+  if (whFilter) q = whFilter.length === 1 ? q.eq('warehouse_id', whFilter[0]) : q.in('warehouse_id', whFilter.slice(0, 300))
+  if (category) q = q.or(`categories.cs.{"${safeFilterValue(category)}"},categories.is.null`)
+  if (stCats)   q = q.or(categoriesOrScopeFilter('categories', stCats))
+  if (search) {
+    if (searchLooksLikeInjection(String(search))) return fail(res, 400, 'INVALID_INPUT', SEARCH_INVALID_MSG)
+    const s = safeSearch(String(search))
+    q = q.or(`pallet_code.ilike.%${s}%,material_code.ilike.%${s}%,short_name.ilike.%${s}%,location_code.ilike.%${s}%,location_from_code.ilike.%${s}%`)
+  }
+  const { data, error, count } = await q.order('counted_at', { ascending: false })
+    .range((pageNum - 1) * pageSize, pageNum * pageSize - 1)
+  if (error) {
+    if (isRangeNotSatisfiable(error)) return ok(res, { rows: [], total: count ?? 0, page: pageNum, page_size: pageSize, date_from: dfrom, date_to: dto })
+    return fail(res, 500, 'DB_ERROR', error.message)
+  }
+  return ok(res, { rows: data ?? [], total: count ?? 0, page: pageNum, page_size: pageSize, date_from: dfrom, date_to: dto })
 }
 
 export async function unflagEntry(req: Request, res: Response) {

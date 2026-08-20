@@ -149,6 +149,8 @@ router.get('/inventory/export',                    requirePerm('inventory', 'exp
 router.get('/stocktake/cycle',                     requirePerm('stocktake', 'view'), cycleCount.getCycleCount)
 router.get('/inventory/stocktake-entries',         requirePerm('stocktake', 'view'), inventory.stocktakeEntries)   // phải trước /:id
 router.get('/inventory/stocktake-log',             requirePerm('stocktake', 'view'), inventory.stocktakeLog)       // lịch sử kiểm (phải trước /:id)
+// Lịch sử chuyển vị trí — tab Lịch sử của màn Chuyển vị trí (người chuyển xem được, không đòi quyền kiểm kê)
+router.get('/inventory/move-log',                  requireAnyPerm(['inventory', 'move_location'], ['stocktake', 'view']), inventory.moveLog)
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), inventory.uploadExcel)

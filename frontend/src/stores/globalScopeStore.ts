@@ -70,6 +70,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setStocktake({ warehouseId: wid, locationId: '' })
     s.setStocktakeSummary({ warehouseId: wid, locationIds: [], page: 1 })
     s.setStocktakeHistory({ warehouseId: wid, locationIds: [], page: 1 })
+    s.setMoveLog({ warehouseId: wid, page: 1 })
     s.setInventory({ warehouseIds: one(wid), filterLocations: [], page: 1 })
   }
   if (opts.force || wt !== '') {
@@ -85,6 +86,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setStocktake({ category: wt })
     s.setStocktakeSummary({ category: wt, page: 1 })
     s.setStocktakeHistory({ category: wt, page: 1 })
+    s.setMoveLog({ category: wt, page: 1 })
     s.setLocations({ catFilter: wt, page: 1 })
     s.setGateRegistration({ fWarehouseType: wt })
     s.setMaterials({ catFilter: one(wt), page: 1 })

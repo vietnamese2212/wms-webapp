@@ -352,6 +352,13 @@ function ScanTab() {
                   </p>
                   <input type="text" placeholder="Tìm vị trí…" value={term} onChange={e => setTerm(e.target.value)}
                     className="w-full text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-400" />
+                  {/* Ưu tiên do BE chấm theo QUY TẮC CẤT của kho (cùng engine màn Nhập/Slotting):
+                      ★ + đứng đầu = ô nên cất (gom cùng mã / ô trống nếu Dàn đều / khu đúng hạng nếu ABC);
+                      ô vi phạm/đầy tụt cuối. Mã chưa có ô nào để dở → không có gì để ★, danh sách theo mã ô. */}
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    Xếp theo quy tắc cất của kho: <span className="text-amber-500 font-bold">★</span> = nên cất
+                    (gom cùng mã / khu đúng hạng ABC) · ô vi phạm quy tắc xuống cuối
+                  </p>
                   <div className="max-h-36 overflow-y-auto space-y-1">
                     {isFetching && <p className="px-2 py-1.5 text-xs text-slate-400">Đang tìm…</p>}
                     {!isFetching && (locs as PutawayLocRow[]).length === 0 && (

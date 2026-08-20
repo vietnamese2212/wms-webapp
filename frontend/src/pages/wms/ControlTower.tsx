@@ -126,12 +126,12 @@ function DeptCard({ title, pct, color, big, rows, to }: {
       <div className="flex items-center gap-2.5 px-2.5 py-2 flex-1">
         {big != null
           ? <div className="text-2xl font-semibold tabular-nums text-white shrink-0">{big}</div>
-          : <Donut pct={pct} color={color} />}
+          : <Donut pct={pct} color={color} size={48} />}
         <div className="min-w-0 flex-1 space-y-0.5">
           {rows.map(r => (
-            <div key={r.label} className="flex items-baseline justify-between gap-2 text-[10px]">
-              <span className="text-slate-400 truncate">{r.label}</span>
-              <span className={`tabular-nums font-semibold ${r.cls ?? 'text-slate-100'}`}>{r.value}</span>
+            <div key={r.label} className="flex items-baseline justify-between gap-1.5 text-[9px]">
+              <span className="text-slate-400 truncate" title={r.label}>{r.label}</span>
+              <span className={`tabular-nums font-semibold text-[10px] shrink-0 ${r.cls ?? 'text-slate-100'}`}>{r.value}</span>
             </div>
           ))}
         </div>
@@ -547,7 +547,7 @@ function ConsoleBody({ data, now }: { data: ControlTowerData; now: Date }) {
     <div className="space-y-3">
       {/* Dải KPI chu trình (kiểu Manhattan hh:mm) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
-        <KpiTile label="Xe trong cổng — dwell TB" value={fmtHM(dwellAvg)}
+        <KpiTile label="Dwell xe trong cổng" value={fmtHM(dwellAvg)}
           sub={`giờ:phút · ${nf.format(data.gate.inside)} xe đang trong cổng`}
           accent={dwellAvg == null ? undefined : dwellAvg > dwellTh.crit ? 'crit' : dwellAvg > dwellTh.warn ? 'warn' : 'ok'} />
         <KpiTile label="Đăng ký → vào cổng TB" value={fmtHM(r?.gate_cycle.wait_mins)} sub="giờ:phút · hôm nay" />
@@ -575,8 +575,9 @@ function ConsoleBody({ data, now }: { data: ControlTowerData; now: Date }) {
             <OutboundPanel data={data} />
             <InboundPanel data={data} />
           </div>
-          {/* Hàng DEPARTMENTS — mỗi khâu một card, bấm là mở trang khâu đó */}
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
+          {/* Hàng DEPARTMENTS — mỗi khâu một card, bấm là mở trang khâu đó.
+              5 cột chỉ từ 2xl — ở 1280 (trừ sidebar + rail) 5 cột làm nhãn cắt cụt */}
+          <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-2">
             <DeptCard title="Cổng" to="/tms/gate" color="#38bdf8"
               pct={pctOf(data.gate.completed, gateTotal)}
               rows={[

@@ -339,6 +339,27 @@ còn tồn = kho muốn phase-out một loại sẽ kẹt vĩnh viễn vì tồn
   (b) tạo phiếu nhập mới 422; (c) resolve rơi mặc định kho; (d) thêm lại loại → mọi thứ như cũ
   (chuỗi CÓ→GỠ→CÓ LẠI, học mẫu QA 13 awaiting-sap).
 
+### 2.9b XÓA LOẠI KHO khỏi DANH MỤC TOÀN CỤC khi còn hàng (user hỏi 20/08 tối — phân biệt với 2.9)
+
+**3 kịch bản phải tách bạch, đừng lẫn:**
+| Kịch bản | Hành vi |
+|---|---|
+| **Xóa loại khỏi danh mục toàn cục** (tab Loại kho) khi còn dùng | **ĐÃ BỊ CHẶN 409 từ hôm nay** — `lookupController.deleteLookup` soi 14 chỗ (mã hàng, vị trí, khu, nhân sự, khung giờ, chuyến, phiếu nhập…), lỗi kể rõ "đang dùng ở N bản ghi: mã hàng 12 · vị trí 40…". Tồn kho chặn GIÁN TIẾP qua `Material.category` (tồn luôn gắn mã, mã còn mang loại là không xóa được loại). Plan KHÔNG đổi triết lý này |
+| **Gỡ loại khỏi 1 KHO** khi kho còn tồn loại đó | Cho gỡ = "ngừng vận hành" (mục 2.9): tồn cũ vẫn xuất/xử lý, chỉ chặn tạo mới, confirm đếm sống |
+| **Đổi TÊN loại** | RPC `rename_warehouse_type` cascade toàn bộ cột (thêm cột mới của plan) |
+
+**Việc plan phải làm ở `deleteLookup` (Đợt 1, cùng file):**
+1. Thêm check thứ 15: `warehouse_type_configs.type_code` (eq) — thiếu thì xóa loại xong bảng gán
+   còn dòng MỒ CÔI ÂM THẦM (đúng lớp lỗi 27/07 mà comment trong hàm đã kể).
+2. **PHÁT HIỆN KÈM khi soi (lỗ có sẵn, sửa luôn — 3 dòng):** guard hiện so
+   `GroupDeliveryOrder.warehouse_type` / `TmsOrder.warehouse_type` bằng **eq** ⇒ chuỗi ghép
+   `'FG01+PM01'` KHÔNG khớp `eq 'FG01'` → xóa lọt dù chuyến chở lẫn còn trỏ vào loại (trái luật
+   giao ≥1, memory 30/07). Đổi 2 check này sang khớp tách-đoạn (`.or` ilike `v`, `v+%`, `%+v`,
+   `%+v+%` hoặc đếm qua RPC dùng `wt_cats`). Đồng thời bổ sung 2 cột guard đang THIẾU so với bản
+   đồ coverage: `TmsOrder.booking_category` + `khvc_lines` (cột vết OutboundItem/alert_events/
+   StocktakeLog giữ nguyên không chặn — vết lịch sử, không phải cấu hình sống; StocktakeLog đã có
+   trong guard từ trước thì giữ). QA: thêm phép kiểm "xóa loại đang nằm trong chuỗi ghép → 409".
+
 ### 2.10 QUÉT RỘNG CẢ APP — 18 cột mang giá trị Loại kho (nguồn MÁY: RPC
 `warehouse_type_column_coverage`, migration 20260815b — không kê theo trí nhớ) + các bề mặt đọc
 

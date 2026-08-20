@@ -38,6 +38,31 @@ Loại kho lọc theo kho đã chọn + guard ghi. Đợt 2 có danh sách consu
 Đợt 1 nghiệm thu, tránh 1 commit chạm 20 trang.
 
 ---
+## 0b. BẢNG CHỐT — LÀM XONG THÌ SETTING NÀO NẰM Ở ĐÂU (đặc tả chuẩn, UI phải khớp đúng bảng này)
+
+### Ⓐ Cấp KHO (form Kho, WMSSettings)
+| Nhóm | Setting | Ghi chú |
+|---|---|---|
+| **Loại kho của kho** (MỚI) | Danh sách checkbox loại kho mà kho này VẬN HÀNH | dòng bảng gán; tạo kho mới có "Copy từ kho…" |
+| **XUẤT — mặc định toàn kho** | Nguyên tắc luân chuyển (FEFO/FIFO/LIFO) · Bắt buộc đúng thứ tự (bool) | field cũ, relabel "mặc định toàn kho" |
+| **NHẬP — mặc định toàn kho** | Bước 1 Ưu tiên nhóm ô (Gom cùng mã/Rải trống/Khu ABC) · Bước 2 Trong ô cùng mã ưu tiên date nào (MỚI) · Bước 3 Các ô còn lại xếp theo (MỚI) | + câu diễn giải sống |
+| **NHẬP — Ràng buộc vị trí (mặc định toàn kho)** | 6 luật: cấm ô đầy · cấm ô nhặt lẻ · cấm ô QA giữ · 1 NCC/ô · tối đa N mã/ô · luật trộn date — MỖI luật chọn Cảnh báo/Chặn cứng (enforced[]) | field cũ, gom dưới 1 tiêu đề |
+| **Không thuộc chiến thuật — CHỈ có ở cấp kho, KHÔNG BAO GIỜ per-loại** | mã/tên/địa chỉ · chức năng CENTRAL/NPP · chế độ tồn QR/QTY/NONE · kho cha · shipto/NMSX · SAP plant+sloc · rule cổng/cân khi Bắt đầu · quét tem thùng (carton_scan_*) · is_active | giữ nguyên như hôm nay |
+
+### Ⓑ Cấp LOẠI KHO — phân biệt 2 tầng, ĐỪNG lẫn
+| Tầng | Ở đâu | Setting | Phạm vi |
+|---|---|---|---|
+| **Định nghĩa loại (toàn cục)** | tab "Loại kho" WMSSettings — KHÔNG ĐỔI | mã · tên · meta flags (is_ncc_goods, requires_shelf_life, requires_pallet_per_ea, batch_char, badge_color) · map SAP | chung MỌI kho, mọi tenant-DB |
+| **Loại kho TRONG 1 kho** (MỚI, trong form Kho) | dòng `warehouse_type_configs` | CHỈ đúng bộ chiến thuật Xuất+Nhập y hệt Ⓐ (2 field XUẤT + 3 bước NHẬP + 6 ràng buộc + enforced[]), MỖI field có lựa chọn đầu "— Theo kho —" = kế thừa | riêng (kho, loại); KHÔNG có tên/meta riêng |
+
+### Ⓒ Luật resolve khi chạy (1 câu)
+Mỗi lượt quét/gợi ý xét theo **`Material.category` của mã hàng** → tìm dòng (kho, loại): field nào
+loại có khai → dùng của loại; field nào "— Theo kho —" / không có dòng / mã không khai loại → dùng
+mặc định kho. Ví dụ chuẩn (dùng làm fixture QA): Kho Ba Vì mặc định FEFO+bắt buộc, Gom cùng mã;
+loại RM01 khai riêng FIFO+không bắt buộc → quét mã FG (category FG01) sai FEFO = CHẶN; quét mã RM
+sai FIFO = chỉ CẢNH BÁO; gợi ý vị trí cất mã RM vẫn Gom cùng mã (không khai Bước 1 thì kế thừa kho).
+
+---
 ## 1. HIỆN TRẠNG (đã soi code 20/08 — file:line chính xác)
 
 **Chiến thuật hiện hành đều ở CẤP KHO (cột trên `Warehouse`):**

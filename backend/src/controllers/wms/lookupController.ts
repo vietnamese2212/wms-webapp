@@ -214,16 +214,15 @@ export async function reorderUnit(req: Request, res: Response) {
   res.json({ success: true })
 }
 
-export async function deleteLookup(req: Request, res: Response) {
-  const { id } = req.params
-
-  // Chặn xóa loại kho đang được dùng — phải soi ĐỦ MỌI chỗ một Loại kho có thể nằm.
-  // Trước 27/07 chỉ soi Location/Material/WarehouseZone → xóa được trong khi Nhân sự (phạm vi
-  // loại hàng), Khung giờ, Slot ngày, lệnh TMS… vẫn trỏ vào loại đã mất: dữ liệu mồ côi ÂM THẦM
-  // (vd "Thùng": guard báo 2, thực tế còn 39 nhân sự + 174 khung giờ + 90 slot).
-  const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
-  if (lk?.type === 'warehouse_type' && lk.value) {
-    const v = lk.value as string
+/**
+ * Đếm dữ liệu đang trỏ vào một Loại kho — phải soi ĐỦ MỌI chỗ một Loại kho có thể nằm.
+ * Trước 27/07 chỉ soi Location/Material/WarehouseZone → xóa được trong khi Nhân sự (phạm vi
+ * loại hàng), Khung giờ, Slot ngày, lệnh TMS… vẫn trỏ vào loại đã mất: dữ liệu mồ côi ÂM THẦM
+ * (vd "Thùng": guard báo 2, thực tế còn 39 nhân sự + 174 khung giờ + 90 slot).
+ * `skipWarehouseConfigs` cho ca "gỡ loại khỏi kho CUỐI CÙNG" — lúc đó chính dòng gán đang bị bỏ.
+ */
+export async function warehouseTypeUsage(v: string, opts?: { skipWarehouseConfigs?: boolean }) {
+  {
     const one = (table: string, col: string) =>
       supabase.from(table).select('id', { count: 'exact', head: true }).eq(col, v)
     // Cột MẢNG: dùng contains (cs) thay vì eq
@@ -252,8 +251,8 @@ export async function deleteLookup(req: Request, res: Response) {
       ['dòng kế hoạch xuất',   () => one('khvc_lines', 'booking_category')],
       // Loại kho mà các kho đang VẬN HÀNH (bảng gán 21/08) — xoá loại mà bỏ qua đây thì tập gán
       // + chiến thuật riêng của từng kho mồ côi ÂM THẦM (đúng lớp lỗi mà comment trên đã kể).
-      ['kho đang vận hành loại này', () => supabase.from('warehouse_type_configs')
-        .select('id', { count: 'exact', head: true }).eq('type_code', v)],
+      ...(opts?.skipWarehouseConfigs ? [] : [['kho đang vận hành loại này', () => supabase.from('warehouse_type_configs')
+        .select('id', { count: 'exact', head: true }).eq('type_code', v)]] as [string, () => PromiseLike<{ count: number | null }>][]),
       ['phiếu nhập',           () => one('ProductionImport', 'warehouse_type')],
       ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
       ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],
@@ -264,11 +263,19 @@ export async function deleteLookup(req: Request, res: Response) {
     const used = CHECKS
       .map(([label], i) => ({ label, n: counts[i].count ?? 0 }))
       .filter(x => x.n > 0)
-    if (used.length) {
-      const chi_tiet = used.map(x => `${x.label}: ${x.n}`).join(' · ')
-      const tong = used.reduce((s, x) => s + x.n, 0)
-      return fail(res, `Loại kho "${v}" đang được dùng ở ${tong} bản ghi — không thể xóa. Chi tiết: ${chi_tiet}`, 409)
-    }
+    return { total: used.reduce((s, x) => s + x.n, 0), detail: used.map(x => `${x.label}: ${x.n}`).join(' · ') }
+  }
+}
+
+export async function deleteLookup(req: Request, res: Response) {
+  const { id } = req.params
+
+  const { data: lk } = await supabase.from('LookupValue').select('value, type').eq('id', id).maybeSingle()
+  if (lk?.type === 'warehouse_type' && lk.value) {
+    const v = lk.value as string
+    const { total, detail } = await warehouseTypeUsage(v)
+    if (total > 0)
+      return fail(res, `Loại kho "${v}" đang được dùng ở ${total} bản ghi — không thể xóa. Chi tiết: ${detail}`, 409)
   }
 
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)

@@ -784,6 +784,16 @@ export function useWhTypeConfigs(warehouseId: string | null | undefined) {
   })
 }
 
+/** Kho KHÁC đang vận hành cùng loại này — tên + cờ hành vi dùng chung nên phải cảnh báo trước khi sửa */
+export function useWhTypeUsage(code: string | null | undefined, excludeWarehouseId: string | null | undefined) {
+  return useQuery<{ id: string; name: string; code: string }[]>({
+    queryKey: ['wh-type-usage', code, excludeWarehouseId],
+    queryFn: () => apiClient.get(`/masterdata/warehouse-types/${encodeURIComponent(code ?? '')}/usage`,
+      { params: { exclude: excludeWarehouseId ?? '' } }).then(r => r.data.data),
+    enabled: !!code && !!excludeWarehouseId,
+  })
+}
+
 export function useSaveWhTypeConfigs() {
   const qc = useQueryClient()
   return useMutation({

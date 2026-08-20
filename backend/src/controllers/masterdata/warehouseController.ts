@@ -8,6 +8,7 @@ import { asRotationPrinciple } from '../../utils/rotation'
 import { applyPutawayBody, applyWhTypeConfigBody, WH_TYPE_CFG_COLS } from '../../utils/putaway'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
+import { warehouseTypeUsage } from '../wms/lookupController'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -302,6 +303,25 @@ async function listWhTypeCodes(): Promise<Set<string>> {
   return new Set((rows ?? []).map(r => String((r as { value: string }).value)))
 }
 
+// "Loại kho này còn kho NÀO khác đang vận hành?" — dùng để cảnh báo trước khi đổi tên / cờ hành vi
+// (tên + cờ gắn với chính loại đó nên sửa là áp cho mọi kho đang dùng chung).
+export async function getWarehouseTypeUsage(req: Request, res: Response) {
+  try {
+    const code = String(req.params.code ?? '')
+    const { data, error } = await supabase.from('warehouse_type_configs')
+      .select('warehouse_id, Warehouse!inner(id, name, code)')
+      .eq('type_code', code).neq('warehouse_id', String(req.query.exclude ?? '')).limit(200)
+    if (error) throw error
+    // Embed của PostgREST khai kiểu MẢNG dù quan hệ là 1-1 → gom cả 2 dạng rồi làm phẳng
+    type Wh = { id: string; name: string; code: string }
+    const flat = (data ?? []).flatMap(r => {
+      const w = (r as { Warehouse?: Wh | Wh[] | null }).Warehouse
+      return Array.isArray(w) ? w : w ? [w] : []
+    })
+    ok(res, flat)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function getWarehouseTypeConfigs(req: Request, res: Response) {
   try {
     const { data, error } = await wtcOrdered(req.params.id)
@@ -380,6 +400,21 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
       // Loại ngoài scope của user KHÔNG bị xoá dù client không gửi lên (client đó cũng không thấy nó)
       .filter(([code, _id]) => !keep.has(code) && categoryAllowed(req, code))
       .map(([_code, id]) => id)
+
+    // GỠ loại khỏi KHO CUỐI CÙNG đang vận hành nó ⇒ loại thành mồ côi: không màn cấu hình nào còn
+    // thấy nó nhưng mã hàng / vị trí / chuyến… vẫn trỏ vào. Chặn ở đây (cùng bộ đếm với xoá danh mục).
+    if (toDelete.length) {
+      const goneCodes = [...curById.entries()].filter(([, id]) => toDelete.includes(id)).map(([c]) => c)
+      for (const code of goneCodes) {
+        const { count } = await supabase.from('warehouse_type_configs')
+          .select('id', { count: 'exact', head: true }).eq('type_code', code).neq('warehouse_id', whId)
+        if ((count ?? 0) > 0) continue                       // kho khác còn vận hành → gỡ thoải mái
+        const { total, detail } = await warehouseTypeUsage(code, { skipWarehouseConfigs: true })
+        if (total > 0)
+          return fail(res, 409, 'TYPE_IN_USE',
+            `"${code}" là loại kho CUỐI CÙNG còn kho vận hành, nhưng đang có ${total} bản ghi dùng nó — gỡ khỏi kho này là dữ liệu đó mồ côi. Chi tiết: ${detail}`)
+      }
+    }
 
     if (toInsert.length) {
       const { error } = await supabase.from('warehouse_type_configs').insert(toInsert)

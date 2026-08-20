@@ -24,10 +24,15 @@ router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse')
 router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
-// Loại kho mà kho vận hành + chiến thuật xuất/nhập riêng theo loại — cùng quyền với form Kho
-// (đây là MỘT PHẦN cấu hình kho, không phải capability tách rời nên không đẻ action mới).
+// LOẠI KHO CỦA TỪNG KHO (user chốt 21/08: loại kho thuộc về kho, không có danh mục chung để quản)
+// → nhận CẢ HAI quyền: manage_warehouse (đây là cấu hình của kho) và manage_type (tab Loại kho chỉ
+// mở cho quyền này — gate cứng một bên thì nút chính của tab 403 với bên kia).
 router.get('/warehouses/:id/type-configs', warehouse.getWarehouseTypeConfigs)
-router.put('/warehouses/:id/type-configs', requirePerm('wms_settings', 'manage_warehouse'), warehouse.putWarehouseTypeConfigs)
+router.put('/warehouses/:id/type-configs',
+  requireAnyPerm(['wms_settings', 'manage_warehouse'], ['wms_settings', 'manage_type']),
+  warehouse.putWarehouseTypeConfigs)
+// Kho nào khác đang vận hành loại này (cảnh báo trước khi đổi tên / cờ hành vi)
+router.get('/warehouse-types/:code/usage', warehouse.getWarehouseTypeUsage)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

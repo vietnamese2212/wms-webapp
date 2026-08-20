@@ -12,7 +12,10 @@
 //
 // Mirror FE (CHỈ nhãn + mã, KHÔNG có luật): frontend/src/utils/putaway.ts.
 
-import { rotationSortKey, ROTATION_DATE_LABEL, type RotationPrinciple, type RotationEntry } from './rotation'
+import {
+  rotationSortKey, asRotationPrinciple, ROTATION_DATE_LABEL, ROTATION_PRINCIPLES,
+  type RotationPrinciple, type RotationEntry,
+} from './rotation'
 import type { MaterialShelfInfo } from './shelfLife'
 
 // ─── Cấu hình theo kho ───────────────────────────────────────────────────────
@@ -28,6 +31,18 @@ export type PutawayPriority = typeof PUTAWAY_PRIORITIES[number]
 export const PUTAWAY_DATE_MIXES = ['ANY', 'SAME', 'NEWER_ONLY', 'OLDER_ONLY'] as const
 export type PutawayDateMix = typeof PUTAWAY_DATE_MIXES[number]
 
+// THANG ƯU TIÊN CẤT HÀNG — 3 BƯỚC, khai TƯỜNG MINH thay vì chôn trong code (21/08).
+// Trước đó thang chỉ có 2 bậc và bậc 2 là "theo tên vị trí" (alphabet) — người cấu hình không
+// có cách nào biết, cũng không đổi được. Nay:
+//   Bước 1 = `priority`                  → chia NHÓM ưu tiên (★) và phần còn lại
+//   Bước 2 = `same_mat_date_pref`        → xếp thứ tự TRONG nhóm ★ theo date
+//   Bước 3 = `fallback`                  → xếp thứ tự phần CÒN LẠI
+// Mặc định 'NONE' + 'BY_CODE' = ĐÚNG hành vi trước 21/08 (không đổi gì cho kho chưa chỉnh).
+export const PUTAWAY_DATE_PREFS = ['NONE', 'SAME_DATE', 'OLDER_FIRST', 'NEWER_FIRST'] as const
+export type PutawayDatePref = typeof PUTAWAY_DATE_PREFS[number]
+export const PUTAWAY_FALLBACKS = ['BY_CODE', 'EMPTY_FIRST', 'MOST_FREE', 'LEAST_FILLED'] as const
+export type PutawayFallback = typeof PUTAWAY_FALLBACKS[number]
+
 export interface PutawayRules {
   priority:        PutawayPriority
   // Mã luật bị CHẶN CỨNG. Luật có chấm nhưng không nằm trong đây = chỉ cảnh báo + loại khỏi gợi ý.
@@ -40,11 +55,14 @@ export interface PutawayRules {
   block_qa_hold:   boolean
   block_full:      boolean
   single_ncc:      boolean
+  same_mat_date_pref: PutawayDatePref
+  fallback:           PutawayFallback
 }
 
 export const PUTAWAY_RULES_DEFAULT: PutawayRules = {
   priority: 'CONSOLIDATE', enforced: [], max_materials: null, date_mix: 'ANY',
   block_pick_face: false, block_qa_hold: false, block_full: false, single_ncc: false,
+  same_mat_date_pref: 'NONE', fallback: 'BY_CODE',
 }
 
 // Luật này có bị CHẶN CỨNG ở kho đó không (khác với "có chấm hay không")
@@ -55,7 +73,8 @@ export function putawayEnforces(rules: PutawayRules, code: PutawayBlockCode): bo
 // Cột cần select ở bảng Warehouse (giữ 1 chỗ để thêm luật mới không phải đi sửa từng controller)
 export const PUTAWAY_WH_COLS =
   'putaway_priority, putaway_enforced, putaway_max_materials, putaway_date_mix,' +
-  'putaway_block_pick_face, putaway_block_qa_hold, putaway_block_full, putaway_single_ncc'
+  'putaway_block_pick_face, putaway_block_qa_hold, putaway_block_full, putaway_single_ncc,' +
+  'putaway_same_mat_date_pref, putaway_fallback'
 
 // Đọc cấu hình từ 1 dòng Warehouse. Giá trị lạ (DB cũ, cột thiếu) → rơi về mặc định = hành vi cũ.
 export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): PutawayRules {
@@ -69,6 +88,8 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
     ? (w.putaway_enforced as unknown[]).filter((x): x is PutawayBlockCode =>
         PUTAWAY_BLOCKS.some(b => b.code === x))
     : []
+  const pref = w.putaway_same_mat_date_pref
+  const fb   = w.putaway_fallback
   return {
     priority: (PUTAWAY_PRIORITIES as readonly unknown[]).includes(pri) ? pri as PutawayPriority : 'CONSOLIDATE',
     enforced,
@@ -78,6 +99,9 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
     block_qa_hold:   w.putaway_block_qa_hold === true,
     block_full:      w.putaway_block_full === true,
     single_ncc:      w.putaway_single_ncc === true,
+    // Cột chưa apply migration / giá trị lạ → mặc định = thang cứng cũ (không đổi hành vi)
+    same_mat_date_pref: (PUTAWAY_DATE_PREFS as readonly unknown[]).includes(pref) ? pref as PutawayDatePref : 'NONE',
+    fallback:           (PUTAWAY_FALLBACKS as readonly unknown[]).includes(fb)   ? fb   as PutawayFallback  : 'BY_CODE',
   }
 }
 
@@ -117,6 +141,16 @@ export function applyPutawayBody(
     if (bad !== undefined) return `Mã luật không hợp lệ: ${String(bad).slice(0, 30)}`
     target.putaway_enforced = [...new Set(v as string[])]
   }
+  if (body.putaway_same_mat_date_pref !== undefined) {
+    if (!(PUTAWAY_DATE_PREFS as readonly unknown[]).includes(body.putaway_same_mat_date_pref))
+      return 'Ưu tiên date trong ô cùng mã không hợp lệ'
+    target.putaway_same_mat_date_pref = body.putaway_same_mat_date_pref
+  }
+  if (body.putaway_fallback !== undefined) {
+    if (!(PUTAWAY_FALLBACKS as readonly unknown[]).includes(body.putaway_fallback))
+      return 'Thứ tự các vị trí còn lại không hợp lệ'
+    target.putaway_fallback = body.putaway_fallback
+  }
   for (const k of ['putaway_block_pick_face', 'putaway_block_qa_hold',
                    'putaway_block_full', 'putaway_single_ncc'] as const) {
     if (body[k] !== undefined) target[k] = Boolean(body[k])
@@ -126,8 +160,10 @@ export function applyPutawayBody(
 
 // Kho có bật luật nào cần biết ngày của hàng đang nằm trong ô không (quyết định có xin `lots` của
 // RPC hay không — tắt thì payload bằng 0).
+// Bước 2 (ưu tiên date trong ô cùng mã) cũng so ngày ⇒ bật là phải xin lots, không thì thang im lặng
+// không có tác dụng (đúng họ lỗi "cờ bật mà không ai đọc").
 export function putawayNeedsLots(rules: PutawayRules): boolean {
-  return rules.date_mix !== 'ANY'
+  return rules.date_mix !== 'ANY' || rules.same_mat_date_pref !== 'NONE'
 }
 
 // Cất theo LÔ mới cần TẬP mã của ô (xem `putawayBlockBatch`); cất 1 pallet thì không.
@@ -353,24 +389,68 @@ export function putawayReason(
   return facts.sameMaterial ? 'SAME_MATERIAL' : null
 }
 
-// Điểm sắp xếp — NHỎ HƠN đứng trước. Ô bị chặn luôn xuống cuối.
+// Tỷ lệ chỗ TRỐNG của ô — ô không khai sức chứa (0) coi như rộng nhất.
+function freeRatioOf(loc: PutawayLoc, facts: SlotFacts): number {
+  const cap = Number(loc.max_pallets ?? 0)
+  return cap > 0 ? Math.max(0, (cap - facts.pallets) / cap) : 1
+}
+
+// BƯỚC 2 — trong nhóm ô CÙNG MÃ thì ô nào trước, so theo THỨ TỰ LẤY (khóa rotation), nên phát biểu
+// đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so NSX) mà không cần 3 nhánh.
+// Trả [0, 0.5]: 0 = hợp ý muốn, 0.5 = không (hoặc thiếu dữ liệu → KHÔNG kết luận, đứng sau).
+function step2Frac(facts: SlotFacts, incoming: IncomingPallet, pref: PutawayDatePref): number {
+  if (pref === 'NONE') return 0
+  const k = incoming.key
+  if (k == null || facts.keyMin == null || facts.keyMax == null) return 0.5
+  const hit =
+    pref === 'SAME_DATE'   ? (facts.keyMin === k || facts.keyMax === k)  // chắc chắn có lô trùng date
+    : pref === 'OLDER_FIRST' ? facts.keyMax <= k    // cả ô đều phải lấy TRƯỚC (hoặc cùng lúc) pallet mới
+    :                          facts.keyMin >= k    // NEWER_FIRST — cả ô đều lấy SAU
+  return hit ? 0 : 0.5
+}
+
+// BƯỚC 3 — các ô NGOÀI nhóm ưu tiên xếp theo gì. Trả [0, 0.5].
+// BY_CODE trả 0 cho mọi ô ⇒ giữ NGUYÊN thứ tự tên vị trí nhờ sort ổn định = hành vi trước 21/08.
+function step3Frac(loc: PutawayLoc, facts: SlotFacts, fb: PutawayFallback): number {
+  switch (fb) {
+    case 'EMPTY_FIRST':  return facts.pallets === 0 ? 0 : 0.5
+    case 'MOST_FREE':    return (1 - freeRatioOf(loc, facts)) / 2          // còn nhiều chỗ → nhỏ hơn
+    // "Đầy nốt ô đang dở cho gọn": ô đã có hàng đứng trước (ít pallet nhất trước), ô trống xuống cuối
+    case 'LEAST_FILLED': return facts.pallets === 0 ? 0.5 : 0.4 * (1 - freeRatioOf(loc, facts))
+    default:             return 0                                          // BY_CODE
+  }
+}
+
+// Điểm sắp xếp — NHỎ HƠN đứng trước. Ô bị chặn luôn xuống cuối (100).
+//
+// Cấu trúc điểm = ĐIỂM NHÓM (số nguyên, y hệt trước 21/08) + phần lẻ ≤ 0.5 của Bước 2/Bước 3.
+// Phần lẻ luôn < 1 nên KHÔNG BAO GIỜ đổi được thứ tự giữa các nhóm — nó chỉ xếp lại bên trong một
+// nhóm. Mặc định (NONE + BY_CODE) phần lẻ = 0 ⇒ điểm trùng khít bản cũ.
 export function putawayScore(
   loc: PutawayLoc, facts: SlotFacts, incoming: IncomingPallet, rules: PutawayRules,
   abc: PutawayAbc = NO_ABC,
 ): number {
   if (putawayBlock(loc, facts, incoming, rules) != null) return 100
+  // Ô cùng mã = nhóm ★ của chiến thuật Gom (và của phần trong-band khi chạy ABC) → Bước 2;
+  // còn lại → Bước 3.
+  const refine = (base: number, inStar: boolean) =>
+    base + (inStar ? step2Frac(facts, incoming, rules.same_mat_date_pref)
+                   : step3Frac(loc, facts, rules.fallback))
+
   if (rules.priority === 'ABC' && abc.targetZones.length > 0) {
     // Đúng band trước; trong cùng band thì vẫn gom cùng mã (đỡ chia lẻ tồn), rồi mới tới phần còn lại.
     const inBand = !!loc.sub_code && abc.targetZones.includes(loc.sub_code)
-    return inBand ? (facts.sameMaterial ? 0 : 1) : (facts.sameMaterial ? 8 : 10)
+    return refine(inBand ? (facts.sameMaterial ? 0 : 1) : (facts.sameMaterial ? 8 : 10), facts.sameMaterial)
   }
   if (rules.priority === 'SPREAD') {
-    const cap = Number(loc.max_pallets ?? 0)
-    // Ô không khai sức chứa coi như rộng nhất (0 = không giới hạn), ô trống đứng trước ô đã có hàng.
-    const freeRatio = cap > 0 ? Math.max(0, (cap - facts.pallets) / cap) : 1
-    return 10 - freeRatio            // 9..10 → luôn đứng trước 100, sau nhóm ★
+    // Rải: bản thân chiến thuật ĐÃ xếp theo chỗ trống (điểm liên tục 9..10) ⇒ Bước 3 không áp thêm,
+    // tránh hai luật cùng xếp một thứ mà đá nhau. Bước 2 chỉ được PHÁ THẾ HÒA (nhân epsilon) —
+    // cộng nguyên 0,5 vào đây sẽ lấn qua chênh lệch chỗ trống thật (1/sức chứa), tức Bước 2 lật
+    // ngược chính chiến thuật Bước 1.
+    const base = 10 - freeRatioOf(loc, facts)
+    return facts.sameMaterial ? base + step2Frac(facts, incoming, rules.same_mat_date_pref) * 0.001 : base
   }
-  return facts.sameMaterial ? 0 : 10
+  return refine(facts.sameMaterial ? 0 : 10, facts.sameMaterial)
 }
 
 // Nhãn của luật trộn date phụ thuộc kho chạy FEFO hay FIFO/LIFO ("date" là HSD hay NSX).
@@ -409,6 +489,114 @@ export function putawayBlockMessage(
       return `${at} không hợp luật trộn ${ROTATION_DATE_LABEL[principle]} của kho: ${lb.charAt(0).toLowerCase()}${lb.slice(1)}.`
     }
   }
+}
+
+// ─── CHIẾN THUẬT 2 TẦNG: kho (mặc định) → LOẠI KHO (đặc trưng)  [21/08] ──────
+//
+// Cùng một kho có thể chạy FEFO cho thành phẩm nhưng FIFO cho nguyên liệu. Tầng 2 = bảng
+// `warehouse_type_configs`: MỖI trường NULL nghĩa là "kế thừa mặc định của kho" — KHÔNG có giá trị
+// nào khác mang nghĩa đó, nên `false` của loại vẫn tắt được luật mà kho đang bật.
+//
+// ⚠️ Vào đây bằng `Material.category` (giá trị ĐƠN của MÃ HÀNG), TUYỆT ĐỐI không phải
+// `GroupDeliveryOrder.warehouse_type` (chuỗi ghép 'FG01+PM01' của CHUYẾN chở lẫn — luật giao ≥1,
+// memory 30/07). Chuỗi ghép lọt vào đây sẽ không khớp dòng nào và âm thầm rơi về mặc định kho;
+// `typeRowOf` chặn thẳng để lỗi lộ ra ở chỗ gọi sai chứ không hoá thành "chiến thuật im lặng sai".
+// Các cột chiến thuật của tầng 2 — MỘT danh sách cho cả select DB, merge, validate và KIỂU dữ liệu.
+// Thêm luật mới chỉ cần thêm tên vào đây (+ cột DB) là 4 chỗ kia tự theo.
+export const WH_TYPE_CFG_COLS = [
+  'rotation_principle', 'rotation_required',
+  'putaway_priority', 'putaway_enforced', 'putaway_max_materials', 'putaway_date_mix',
+  'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full', 'putaway_single_ncc',
+  'putaway_same_mat_date_pref', 'putaway_fallback',
+] as const
+export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
+
+// Giá trị để `unknown`: đã có `putawayRulesOf`/`asRotationPrinciple` chốt kiểu ở đúng MỘT chỗ,
+// khai lại kiểu ở đây là mở đường cho hai bản luật lệch nhau.
+export type WhTypeConfigRow = { type_code: string } & Partial<Record<WhTypeCfgCol, unknown>>
+
+export function typeRowOf(
+  typeRows: WhTypeConfigRow[] | null | undefined, category: string | null | undefined,
+): WhTypeConfigRow | null {
+  if (!typeRows?.length || !category) return null
+  // Chuỗi ghép là của CHUYẾN, không phải của mã hàng — gọi tới đây là lỗi lập trình, không phải
+  // dữ liệu xấu; trả null (mặc định kho) và im lặng thì 2 tuần nữa không ai lần ra.
+  if (category.includes('+')) return null
+  return typeRows.find(r => r.type_code === category) ?? null
+}
+
+// Ghép mặc định kho + override của loại: trường nào loại KHAI (khác null/undefined) thì thắng.
+// `putaway_enforced` THAY THẾ nguyên mảng — merge mảng sẽ là bản luật thứ hai, không ai đoán được
+// kết quả cuối là gì.
+function mergedConfig(
+  wh: Record<string, unknown> | null | undefined, row: WhTypeConfigRow | null,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(wh ?? {}) }
+  if (!row) return out
+  for (const k of WH_TYPE_CFG_COLS) {
+    const v = row[k]
+    if (v !== null && v !== undefined) out[k] = v
+  }
+  return out
+}
+
+export interface RotationConfig {
+  principle: RotationPrinciple
+  required:  boolean
+  // Cấu hình đang hiệu lực đến từ tầng nào — để màn quét nói được "(theo Loại kho RM01)" mà KHÔNG
+  // phải tự suy từ cấu hình kho (đó lại là bản luật chép tay).
+  source:    'WAREHOUSE' | 'TYPE'
+}
+
+export function resolveRotation(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): RotationConfig {
+  const row = typeRowOf(typeRows, category)
+  const m = mergedConfig(wh, row)
+  const overridden = !!row && (row.rotation_principle != null || row.rotation_required != null)
+  return {
+    principle: asRotationPrinciple(m.rotation_principle),
+    required:  m.rotation_required === true,
+    source:    overridden ? 'TYPE' : 'WAREHOUSE',
+  }
+}
+
+export function resolvePutawayRules(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): PutawayRules {
+  return putawayRulesOf(mergedConfig(wh, typeRowOf(typeRows, category)))
+}
+
+// Nhận 1 dòng override từ body (form Kho) → patch, dùng lại ĐÚNG validator của cấp kho để hai tầng
+// không bao giờ nhận hai tập giá trị khác nhau. Khác biệt duy nhất: null = "theo kho" (xoá override).
+// Trả mã lỗi hoặc null.
+export function applyWhTypeConfigBody(
+  body: Record<string, unknown>, target: Record<string, unknown>,
+): string | null {
+  if (body.rotation_principle !== undefined) {
+    if (body.rotation_principle === null) target.rotation_principle = null
+    else {
+      if (!(ROTATION_PRINCIPLES as readonly unknown[]).includes(body.rotation_principle))
+        return 'Nguyên tắc luân chuyển không hợp lệ'
+      target.rotation_principle = body.rotation_principle
+    }
+  }
+  if (body.rotation_required !== undefined)
+    target.rotation_required = body.rotation_required === null ? null : Boolean(body.rotation_required)
+
+  // Các cờ putaway: null = theo kho (applyPutawayBody không hiểu null nên xử trước rồi mới giao)
+  const rest: Record<string, unknown> = {}
+  for (const k of WH_TYPE_CFG_COLS) {
+    if (k === 'rotation_principle' || k === 'rotation_required') continue
+    if (body[k] === undefined) continue
+    if (body[k] === null || body[k] === '') { target[k] = null; continue }
+    rest[k] = body[k]
+  }
+  return applyPutawayBody(rest, target)
 }
 
 // Khối BE trả kèm MỖI vị trí — FE chỉ hiển thị, KHÔNG tự tính lại (bài học 4 bản chép tay).

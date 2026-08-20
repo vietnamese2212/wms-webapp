@@ -35,6 +35,9 @@ export function useRotationGate(rot: RotationCheck | null | undefined): Rotation
       <p className={`text-[10px] font-medium mt-0.5 ${blocked ? 'text-red-600' : 'text-orange-600'}`}>
         ⚠ Trong kho còn {rot.date_label} {formatTimestampDate(rot.best_date)}
         {rot.best_location_code ? ` tại ${rot.best_location_code}` : ''} — {ROTATION_SHORT[rot.principle]} phải lấy cái đó trước
+        {/* Kho chạy nguyên tắc khác cho loại hàng này → nói ra, kẻo người quét tưởng app báo nhầm
+            (họ chỉ biết "kho mình chạy FEFO"). Cờ do BE trả, FE không tự suy. */}
+        {rot.source === 'TYPE' ? ' (theo chiến thuật riêng của Loại kho)' : ''}
       </p>
     ) : null,
     reasonBox: blocked ? (

@@ -229,6 +229,12 @@ export async function deleteLookup(req: Request, res: Response) {
     // Cột MẢNG: dùng contains (cs) thay vì eq
     const arr = (table: string, col: string) =>
       supabase.from(table).select('id', { count: 'exact', head: true }).contains(col, [v])
+    // Cột CHUỖI GHÉP ('FG01+PM01' — chuyến chở lẫn, luật giao ≥1 chốt 30/07): `eq` KHÔNG khớp
+    // phần tử bên trong ⇒ trước 21/08 xoá lọt loại vẫn đang được chuyến chở lẫn trỏ tới.
+    // So theo từng ĐOẠN: đúng nó · đầu chuỗi · cuối chuỗi · giữa chuỗi.
+    const joined = (table: string, col: string) =>
+      supabase.from(table).select('id', { count: 'exact', head: true })
+        .or(`${col}.eq.${v},${col}.like.${v}+%,${col}.like.%+${v},${col}.like.%+${v}+%`)
 
     const CHECKS: [string, () => PromiseLike<{ count: number | null }>][] = [
       ['mã hàng',              () => one('Material', 'category')],
@@ -239,8 +245,15 @@ export async function deleteLookup(req: Request, res: Response) {
       ['kho (quét tem thùng)', () => arr('Warehouse', 'carton_scan_categories')],
       ['khung giờ mẫu',        () => one('SlotTemplate', 'cargo_type')],
       ['slot ngày',            () => one('DeliverySlot', 'cargo_type')],
-      ['lệnh vận chuyển',      () => one('TmsOrder', 'warehouse_type')],
-      ['chuyến xuất',          () => one('GroupDeliveryOrder', 'warehouse_type')],
+      ['lệnh vận chuyển',      () => joined('TmsOrder', 'warehouse_type')],
+      ['chuyến xuất',          () => joined('GroupDeliveryOrder', 'warehouse_type')],
+      // Cửa đặt lịch (giá trị ĐƠN, tách khỏi luật giao ≥1) + dòng kế hoạch xuất thô
+      ['cửa đặt lịch (lệnh)',  () => one('TmsOrder', 'booking_category')],
+      ['dòng kế hoạch xuất',   () => one('khvc_lines', 'booking_category')],
+      // Loại kho mà các kho đang VẬN HÀNH (bảng gán 21/08) — xoá loại mà bỏ qua đây thì tập gán
+      // + chiến thuật riêng của từng kho mồ côi ÂM THẦM (đúng lớp lỗi mà comment trên đã kể).
+      ['kho đang vận hành loại này', () => supabase.from('warehouse_type_configs')
+        .select('id', { count: 'exact', head: true }).eq('type_code', v)],
       ['phiếu nhập',           () => one('ProductionImport', 'warehouse_type')],
       ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
       ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],

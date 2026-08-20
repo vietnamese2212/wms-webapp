@@ -63,3 +63,57 @@ export function putawayDateMixOpts(dateLabel: string) {
     { value: 'NEWER_ONLY', label: `Chỉ để chung với hàng lấy sau (${dateLabel} dài hơn hoặc bằng)` },
   ]
 }
+
+// ─── THANG ƯU TIÊN CẤT HÀNG 3 BƯỚC (21/08) — mirror PUTAWAY_DATE_PREFS/FALLBACKS bên BE ──
+// Bước 2: trong các ô CÙNG MÃ thì ô nào trước (so theo THỨ TỰ LẤY nên đúng cả FEFO lẫn FIFO/LIFO).
+export function putawayDatePrefOpts(dateLabel: string) {
+  return [
+    { value: 'NONE',        label: 'Không xét date', sub: 'mặc định — ô cùng mã nào cũng như nhau' },
+    { value: 'SAME_DATE',   label: `Ô trùng ${dateLabel} trước`, sub: 'gom cùng lô cho gọn' },
+    { value: 'OLDER_FIRST', label: `Ô chứa hàng phải lấy trước (${dateLabel} ngắn hơn) trước` },
+    { value: 'NEWER_FIRST', label: `Ô chứa hàng lấy sau (${dateLabel} dài hơn) trước` },
+  ]
+}
+// Bước 3: hết nhóm ưu tiên thì các ô CÒN LẠI xếp theo gì.
+export const PUTAWAY_FALLBACK_OPTS = [
+  { value: 'BY_CODE',      label: 'Theo tên vị trí', sub: 'mặc định — thứ tự bảng chữ cái' },
+  { value: 'EMPTY_FIRST',  label: 'Ô trống trước' },
+  { value: 'MOST_FREE',    label: 'Ô còn nhiều chỗ nhất trước' },
+  { value: 'LEAST_FILLED', label: 'Ô đang dở, ít hàng nhất trước', sub: 'đầy nốt ô dở cho gọn' },
+] as const
+
+const PRIORITY_STEP1: Record<string, string> = {
+  CONSOLIDATE: 'ô đang để dở cùng mã',
+  SPREAD:      'ô còn nhiều chỗ nhất',
+  ABC:         'ô trong khu đúng hạng ABC',
+}
+const DATE_PREF_STEP2: Record<string, string> = {
+  SAME_DATE:   'trùng date trước',
+  OLDER_FIRST: 'date phải-lấy-trước lên trên',
+  NEWER_FIRST: 'date lấy-sau lên trên',
+}
+const FALLBACK_STEP3: Record<string, string> = {
+  BY_CODE:      'theo tên vị trí',
+  EMPTY_FIRST:  'ô trống trước',
+  MOST_FREE:    'ô còn nhiều chỗ nhất',
+  LEAST_FILLED: 'ô đang dở ít hàng nhất',
+}
+
+/**
+ * DIỄN GIẢI SỐNG thang cất hàng — dựng câu từ ĐÚNG giá trị đang chọn trên form (đổi dropdown là
+ * câu đổi theo), để người cấu hình đọc được kết quả mà không phải chạy thử.
+ * Thuần NHÃN: không quyết định gì, thứ tự thật do `putawayScore` bên BE tính.
+ */
+export function putawayExplain(v: {
+  putaway_priority?: string | null
+  putaway_same_mat_date_pref?: string | null
+  putaway_fallback?: string | null
+  putaway_enforced?: string[] | null
+}): string {
+  const step1 = PRIORITY_STEP1[String(v.putaway_priority ?? 'CONSOLIDATE')] ?? PRIORITY_STEP1.CONSOLIDATE
+  const step2 = DATE_PREF_STEP2[String(v.putaway_same_mat_date_pref ?? 'NONE')]
+  const step3 = FALLBACK_STEP3[String(v.putaway_fallback ?? 'BY_CODE')] ?? FALLBACK_STEP3.BY_CODE
+  const enf = (v.putaway_enforced ?? []).map(c => blockShort(c as PutawayBlockCode)).filter(Boolean)
+  return `Kho sẽ gợi ý: ① ${step1}${step2 ? ` (${step2})` : ''} → ② các ô còn lại ${step3}. `
+    + (enf.length ? `Chặn cứng: ${enf.join(', ')}.` : 'Không luật nào chặn cứng — chỉ cảnh báo.')
+}

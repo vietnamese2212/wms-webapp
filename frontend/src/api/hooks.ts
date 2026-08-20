@@ -731,7 +731,7 @@ export function useUpdateQAStatus() {
 export function useCreateWarehouse() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean }) =>
+    mutationFn: (body: { code: string; name: string; address?: string; warehouse_type: string; inventory_mode?: string; shipto_codes?: string; nmsx_code?: string; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean; sap_plant?: string; sap_storage_locations?: string; require_weigh_on_start?: boolean; require_gate_on_start?: boolean; rotation_principle?: string; rotation_required?: boolean; copy_from_warehouse_id?: string | null }) =>
       apiClient.post('/masterdata/warehouses', body).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
   })
@@ -752,6 +752,45 @@ export function useDeleteWarehouse() {
     mutationFn: (id: string) =>
       apiClient.delete(`/masterdata/warehouses/${id}`).then((r) => r.data.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+  })
+}
+
+// ─── Loại kho mỗi kho VẬN HÀNH + chiến thuật riêng theo loại (21/08) ────────
+// Dòng tồn tại = kho có loại đó; cột chiến thuật null = kế thừa mặc định kho.
+export interface WhTypeConfig {
+  id?:                         string
+  type_code:                   string
+  rotation_principle?:         string | null
+  rotation_required?:          boolean | null
+  putaway_priority?:           string | null
+  putaway_date_mix?:           string | null
+  putaway_max_materials?:      number | null
+  putaway_block_pick_face?:    boolean | null
+  putaway_block_qa_hold?:      boolean | null
+  putaway_block_full?:         boolean | null
+  putaway_single_ncc?:         boolean | null
+  putaway_enforced?:           string[] | null
+  putaway_same_mat_date_pref?: string | null
+  putaway_fallback?:           string | null
+}
+
+export function useWhTypeConfigs(warehouseId: string | null | undefined) {
+  return useQuery<WhTypeConfig[]>({
+    queryKey: ['wh-type-configs', warehouseId],
+    queryFn: () => apiClient.get(`/masterdata/warehouses/${warehouseId}/type-configs`).then(r => r.data.data),
+    enabled: !!warehouseId,
+  })
+}
+
+export function useSaveWhTypeConfigs() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, items }: { id: string; items: WhTypeConfig[] }) =>
+      apiClient.put(`/masterdata/warehouses/${id}/type-configs`, { items }).then(r => r.data.data),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['wh-type-configs', v.id] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+    },
   })
 }
 

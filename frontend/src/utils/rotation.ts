@@ -55,6 +55,9 @@ export function scanRotationOf(se: {
 export interface RotationCheck {
   principle:          RotationPrinciple
   required:           boolean
+  // Nguyên tắc đang áp là mặc định của KHO hay chiến thuật riêng của LOẠI KHO (21/08).
+  // Dòng cũ / bundle cũ không có field này → coi như 'WAREHOUSE'.
+  source?:            'WAREHOUSE' | 'TYPE'
   violation:          boolean
   date_label:         string           // 'HSD' | 'NSX'
   scanned_date:       string | null

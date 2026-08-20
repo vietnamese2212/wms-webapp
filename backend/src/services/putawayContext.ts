@@ -6,13 +6,14 @@
 
 import { supabase } from '../lib/supabase'
 import { fetchAllByIdChunks } from '../utils/pagination'
-import { asRotationPrinciple, rotationSortKey, type RotationPrinciple } from '../utils/rotation'
+import { rotationSortKey, type RotationPrinciple } from '../utils/rotation'
 import type { MaterialShelfInfo } from '../utils/shelfLife'
 import {
-  putawayRulesOf, putawayNeedsLots, putawayNeedsMats, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
+  putawayNeedsLots, putawayNeedsMats, slotFactsOf, EMPTY_SLOT, PUTAWAY_WH_COLS,
   putawayBlock, putawayBlockBatch, putawayBlockMessage, isPutawayOverrideReason, PUTAWAY_RULES_DEFAULT,
-  putawayEnforces, NO_ABC,
+  putawayEnforces, NO_ABC, resolvePutawayRules, resolveRotation, WH_TYPE_CFG_COLS,
   type PutawayRules, type SlotFacts, type SlotFactsRaw, type IncomingPallet, type PutawayLoc, type PutawayAbc,
+  type WhTypeConfigRow,
 } from '../utils/putaway'
 import { targetZoneCodes, type Band, type BandZone } from '../utils/slottingBands'
 
@@ -36,9 +37,21 @@ export interface IncomingInput {
   production_date?: string | Date | null
   expiry_date?:     string | Date | null
   shelf_life_days?: number | null
+  // Loại kho CỦA MÃ HÀNG (`Material.category`) — khóa chọn chiến thuật tầng 2 (21/08).
+  // Caller nào đã nạp Material rồi thì truyền vào để khỏi hỏi lại; không truyền thì tự tra.
+  category?:        string | null
 }
 
-const MAT_SHELF_COLS = 'id, shelf_life_days, supplier_shelf_life_overrides'
+// `category` đi kèm shelf-life vì CẢ HAI đều lấy từ cùng một dòng Material — tách ra là thêm
+// round-trip trên đúng đường quét nóng nhất (pool PostgREST ~10 khe).
+const MAT_SHELF_COLS = 'id, category, shelf_life_days, supplier_shelf_life_overrides'
+type MatRow = MaterialShelfInfo & { id?: string; category?: string | null }
+
+// Dòng gán loại có KHAI chiến thuật riêng nào không (dòng chỉ để "kho có vận hành loại này" thì
+// mọi cột NULL). Dùng để KHÔNG tra Material thêm một lượt ở kho chưa khai gì — tức 99% trường hợp.
+function hasOverride(row: WhTypeConfigRow): boolean {
+  return WH_TYPE_CFG_COLS.some(k => row[k] !== null && row[k] !== undefined)
+}
 
 // Sự thật của các ô, gom trong SQL — MỘT dòng/ô thay vì kéo từng pallet về đếm.
 // (Bàu Bàng 1.517 vị trí = 15.009 dòng tồn nếu kéo về; RPC trả tối đa 1.517 dòng.)
@@ -84,7 +97,7 @@ export async function guardPutaway(opts: {
   // app và pool PostgREST chỉ ~10 khe: 3 request thừa mỗi lượt quét làm chậm CẢ APP, không riêng
   // màn quét. `scanQR` đã có sẵn cả 2 dòng này trong Promise.all ngay phía trên.
   loc?:      PutawayLocRow | null
-  material?: MaterialShelfInfo | null
+  material?: MatRow | null
 }): Promise<PutawayGuardResult> {
   const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
   const loc = opts.loc ?? (await supabase.from('Location')
@@ -139,23 +152,60 @@ export async function guardPutawayBatch(opts: {
     return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, trace: NO_TRACE, warning: null }
   const l = loc as PutawayLocRow
 
-  const wh = opts.warehouseId ? await whConfig(opts.warehouseId) : {}
-  const rules = putawayRulesOf(wh)
-  const principle = asRotationPrinciple(wh.rotation_principle)
+  const cfg = opts.warehouseId ? await whConfig(opts.warehouseId) : EMPTY_CFG
 
-  const raws = await loadSlotFactsRaw(
-    [opts.locationId], null, putawayNeedsLots(rules), putawayNeedsMats(rules))
-
-  // Shelf-life của mã trong ô LẪN mã của lô — một lượt hỏi, chunk 300 theo luật id-trên-URL
+  // Shelf-life + LOẠI KHO của mã trong ô LẪN mã của lô — một lượt hỏi, chunk 300 theo luật id-trên-URL
   const matIds = [...new Set([
-    ...raws.flatMap(r => (r.lots ?? []).map(x => x.m)),
     ...opts.entries.map(e => e.material_id),
   ].filter(Boolean))]
-  const matById = new Map<string, MaterialShelfInfo>()
+  const matById = new Map<string, MatRow>()
   if (matIds.length > 0) {
     const rows = await fetchAllByIdChunks(matIds, chunk =>
       supabase.from('Material').select(MAT_SHELF_COLS).in('id', chunk))
-    for (const m of rows as ({ id: string } & MaterialShelfInfo)[]) matById.set(m.id, m)
+    for (const m of rows as ({ id: string } & MatRow)[]) matById.set(m.id, m)
+  }
+  const catOf = (e: IncomingInput) => e.category ?? matById.get(e.material_id)?.category ?? null
+
+  // ⚠️ CA DUY NHẤT hai bộ luật đụng MỘT ô: lô dồn có thể lẫn nhiều LOẠI KHO (vd 3 pallet FG01 +
+  // 2 pallet RM01 vào cùng ô), mà từ 21/08 mỗi loại có thể mang chiến thuật riêng. Xử lý:
+  //   • Ràng buộc trên TẬP (số mã tối đa, một NCC) chấm bằng bộ luật CHẶT NHẤT trong lô — ô là
+  //     tài nguyên chung, chọn bộ lỏng hơn là để loại "dễ tính" mở cửa cho loại "khó tính".
+  //   • Ràng buộc theo TỪNG pallet (trộn date, cấm ô nhặt lẻ…) chấm theo bộ luật CỦA CHÍNH loại đó.
+  const rulesOfCat = new Map<string, PutawayRules>()
+  const rulesFor = (cat: string | null) => {
+    const k = cat ?? ''
+    const hit = rulesOfCat.get(k)
+    if (hit) return hit
+    const r = resolvePutawayRules(cfg.wh, cfg.typeRows, cat)
+    rulesOfCat.set(k, r)
+    return r
+  }
+  const cats = [...new Set(opts.entries.map(catOf))]
+  const allRules = cats.map(rulesFor)
+  // Bộ CHẶT NHẤT cho ràng buộc trên tập + dùng làm bộ "đại diện" cho thông báo/nạp dữ liệu.
+  const rules: PutawayRules = {
+    ...(allRules[0] ?? PUTAWAY_RULES_DEFAULT),
+    max_materials: allRules.reduce<number | null>((m, r) =>
+      r.max_materials == null ? m : m == null ? r.max_materials : Math.min(m, r.max_materials), null),
+    single_ncc:      allRules.some(r => r.single_ncc),
+    block_pick_face: allRules.some(r => r.block_pick_face),
+    block_qa_hold:   allRules.some(r => r.block_qa_hold),
+    block_full:      allRules.some(r => r.block_full),
+    // Hợp mọi luật bị CHẶN CỨNG: loại nào coi luật đó là bắt buộc thì cả lô phải tôn trọng.
+    enforced: [...new Set(allRules.flatMap(r => r.enforced))],
+  }
+  const principle = resolveRotation(cfg.wh, cfg.typeRows, cats[0] ?? null).principle
+
+  const raws = await loadSlotFactsRaw(
+    [opts.locationId], null,
+    allRules.some(putawayNeedsLots), allRules.some(putawayNeedsMats))
+
+  // Mã đang NẰM trong ô cũng cần shelf-life để dựng khoảng ngày của ô
+  const lotIds = [...new Set(raws.flatMap(r => (r.lots ?? []).map(x => x.m)).filter(id => id && !matById.has(id)))]
+  if (lotIds.length > 0) {
+    const rows = await fetchAllByIdChunks(lotIds, chunk =>
+      supabase.from('Material').select(MAT_SHELF_COLS).in('id', chunk))
+    for (const m of rows as ({ id: string } & MatRow)[]) matById.set(m.id, m)
   }
 
   const facts = raws[0] ? slotFactsOf(raws[0], principle, matById) : EMPTY_SLOT
@@ -166,11 +216,18 @@ export async function guardPutawayBatch(opts: {
       ? rotationSortKey(
           { production_date: e.production_date ?? null, expiry_date: e.expiry_date ?? null,
             shelf_life_days: e.shelf_life_days ?? null, ncc_id: e.ncc_id ?? null },
-          matById.get(e.material_id) ?? null, principle)
+          matById.get(e.material_id) ?? null,
+          resolveRotation(cfg.wh, cfg.typeRows, catOf(e)).principle)
       : null,
   }))
 
-  const block = putawayBlockBatch(l, facts, batch, rules)
+  // Chấm tập bằng bộ chặt nhất, rồi chấm lại TỪNG pallet bằng bộ luật của chính loại nó
+  // (lô 1 loại thì hai vòng cho cùng kết quả — không đổi hành vi so với trước).
+  let block = putawayBlockBatch(l, facts, batch, rules)
+  if (!block && cats.length > 1) {
+    for (let i = 0; i < opts.entries.length && !block; i++)
+      block = putawayBlockBatch(l, facts, [batch[i]], rulesFor(catOf(opts.entries[i])))
+  }
   if (!block)
     return { blocked: null, rules, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
 
@@ -199,19 +256,36 @@ export async function guardPutawayBatch(opts: {
 // vận hành, nhưng phải BIẾT: vừa bật "bắt buộc" xong mà lượt quét kế lọt qua thì đó là cache,
 // không phải luật hỏng. (Chính điều này làm 6 phép kiểm của gói QA 26 đỏ khi nó ghi thẳng DB —
 // gói đã sửa để đổi cấu hình QUA API như người dùng thật.)
-const _whCache = new Map<string, { at: number; row: Record<string, unknown> }>()
+// Cấu hình 2 TẦNG của một kho: mặc định (dòng Warehouse) + override theo TỪNG LOẠI KHO.
+// Cache CHUNG một khoá để hai tầng không bao giờ lệch phiên bản nhau (nửa cũ nửa mới còn khó lần
+// ra hơn là cả hai cùng cũ 30s).
+export interface WhConfig { wh: Record<string, unknown>; typeRows: WhTypeConfigRow[] }
+const EMPTY_CFG: WhConfig = { wh: {}, typeRows: [] }
+const _whCache = new Map<string, { at: number; cfg: WhConfig }>()
 
 export function invalidatePutawayConfig(warehouseId: string): void {
   _whCache.delete(warehouseId)
 }
-async function whConfig(warehouseId: string): Promise<Record<string, unknown>> {
+async function whConfig(warehouseId: string): Promise<WhConfig> {
   const hit = _whCache.get(warehouseId)
-  if (hit && Date.now() - hit.at < 30_000) return hit.row
-  const { data } = await supabase.from('Warehouse')
-    .select(`rotation_principle, ${PUTAWAY_WH_COLS}`).eq('id', warehouseId).maybeSingle()
-  const row = (data ?? {}) as Record<string, unknown>
-  _whCache.set(warehouseId, { at: Date.now(), row })
-  return row
+  if (hit && Date.now() - hit.at < 30_000) return hit.cfg
+  const [whRes, typeRes] = await Promise.all([
+    supabase.from('Warehouse')
+      .select(`rotation_principle, rotation_required, ${PUTAWAY_WH_COLS}`).eq('id', warehouseId).maybeSingle(),
+    // 1 kho có tối đa vài chục loại (danh mục hiện 5) — `limit` khai rõ để khỏi ai phải đoán trần.
+    // `*` thay vì liệt kê cột: bảng chỉ 17 cột và `mergedConfig` chỉ đọc đúng WH_TYPE_CFG_COLS,
+    // nên thêm luật mới không phải sửa câu select ở đây (một nguồn = mảng cột trong utils/putaway).
+    supabase.from('warehouse_type_configs')
+      .select('*').eq('warehouse_id', warehouseId)
+      .order('type_code').limit(200),
+  ])
+  const cfg: WhConfig = {
+    wh: (whRes.data ?? {}) as Record<string, unknown>,
+    // Bảng chưa apply migration → coi như không có override = hành vi cũ, KHÔNG chặn luồng quét.
+    typeRows: typeRes.error ? [] : ((typeRes.data ?? []) as WhTypeConfigRow[]),
+  }
+  _whCache.set(warehouseId, { at: Date.now(), cfg })
+  return cfg
 }
 
 // ─── Chiến thuật ABC (đợt C) ─────────────────────────────────────────────────
@@ -263,10 +337,12 @@ export function invalidatePutawayZones(warehouseId: string): void {
  */
 export async function putawayTargetZones(warehouseId: string | null, materialId: string | null): Promise<string[]> {
   if (!warehouseId || !materialId) return []
-  const rules = putawayRulesOf(await whConfig(warehouseId))
-  if (rules.priority !== 'ABC') return []
+  const cfg = await whConfig(warehouseId)
   const [map, zones] = await Promise.all([abcMapOf(warehouseId), zonesOf(warehouseId)])
   const row = map.get(materialId)
+  // Chiến thuật ABC có thể chỉ bật cho MỘT loại kho ⇒ phải hỏi luật theo đúng loại của mã này
+  // (bản đồ ABC đã kèm `category` nên không tốn thêm round-trip).
+  if (resolvePutawayRules(cfg.wh, cfg.typeRows, row?.category ?? null).priority !== 'ABC') return []
   return row ? targetZoneCodes(zones, { category: row.category }, row.abc) : []
 }
 
@@ -274,13 +350,22 @@ export async function loadPutawayContext(opts: {
   warehouseId: string | null
   locIds:      string[]
   incoming:    IncomingInput
-  material?:   MaterialShelfInfo | null   // dòng Material đã nạp sẵn của caller (khỏi hỏi lại)
+  material?:   MatRow | null              // dòng Material đã nạp sẵn của caller (khỏi hỏi lại)
 }): Promise<PutawayContext> {
   const { warehouseId, locIds, incoming } = opts
 
-  const wh = warehouseId ? await whConfig(warehouseId) : {}
-  const rules = putawayRulesOf(wh)
-  const principle = asRotationPrinciple(wh.rotation_principle)
+  const cfg = warehouseId ? await whConfig(warehouseId) : EMPTY_CFG
+  // Loại kho của mã đang cất quyết định lấy chiến thuật của TẦNG NÀO. Ưu tiên giá trị caller
+  // truyền vào → dòng Material caller đã nạp → tự tra (chỉ khi kho THẬT SỰ có override, tránh
+  // thêm 1 round-trip cho 99% kho chưa khai gì).
+  let category = incoming.category ?? opts.material?.category ?? null
+  if (category == null && cfg.typeRows.some(hasOverride) && incoming.material_id) {
+    const { data } = await supabase.from('Material').select('id, category')
+      .eq('id', incoming.material_id).maybeSingle()
+    category = (data as { category?: string | null } | null)?.category ?? null
+  }
+  const rules = resolvePutawayRules(cfg.wh, cfg.typeRows, category)
+  const principle = resolveRotation(cfg.wh, cfg.typeRows, category).principle
 
   const facts = new Map<string, SlotFacts>()
   if (locIds.length > 0) {

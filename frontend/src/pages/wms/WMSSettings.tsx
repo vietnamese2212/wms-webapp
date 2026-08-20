@@ -17,7 +17,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
-import { putawayDateMixOpts } from '@/utils/putaway'
+import { StrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
@@ -29,6 +29,7 @@ import {
   useSystemSettings, useUpdateSystemSetting,
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
+  useWhTypeConfigs, useSaveWhTypeConfigs,
   type WarehouseZone, type UnitRow, type UnitRole,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
@@ -522,25 +523,111 @@ function SystemTab({ canManage }: { canManage: boolean }) {
 
 // ─── Warehouse Dialog ─────────────────────────────────────────────────────────
 
-// Mức xử lý của MỘT luật cất hàng. Tách theo từng luật vì một kho có thể vừa muốn "cấm đưa hàng
-// vào" chỉ hết gợi ý (hết chỗ thì vẫn để tạm), vừa muốn luật trộn date chặn thật.
-// Ô tick riêng, KHÔNG lồng trong <label> của luật: label lồng label thì bấm ô trong lại lật ô ngoài.
-function EnforceToggle({ id, on, onToggle }: { id: string; on: boolean; onToggle: () => void }) {
+interface WhTypeOpt { value: string; label?: string | null }
+
+// LOẠI KHO mà kho VẬN HÀNH (21/08) — tick = kho có loại đó; mở rộng để khai chiến thuật RIÊNG.
+// Ô chưa khai riêng hiện "— Theo kho (…) —" nên người cấu hình luôn biết đang chạy theo gì.
+// Khai NGOÀI component cha: component lồng trong component làm ô nhập mất focus sau 1 ký tự
+// (ratchet component_defined_inside_component).
+function WhTypeStrategySection({ isEdit, whStrat, allTypes, cfgs, setCfgs, openType, setOpenType, copyFrom, setCopyFrom, whList, selfId }: {
+  isEdit: boolean
+  whStrat: StrategyValue
+  allTypes: WhTypeOpt[]
+  cfgs: Record<string, StrategyValue> | null
+  setCfgs: (f: (p: Record<string, StrategyValue> | null) => Record<string, StrategyValue> | null) => void
+  openType: string | null
+  setOpenType: (v: string | null) => void
+  copyFrom: string
+  setCopyFrom: (v: string) => void
+  whList: WhRow[]
+  selfId?: string
+}) {
+  // Kho MỚI chưa có id nên chưa gọi được API gán loại → chỉ chọn kho nguồn để copy; không copy thì
+  // backend gán đủ mọi loại (kho 0 loại sẽ chặn oan mọi form).
+  if (!isEdit) {
+    return (
+      <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+        <span className="flex items-center gap-1">
+          <Label className="text-xs">Loại kho kho này vận hành</Label>
+          <InfoTip tip={<>Kho mới mặc định nhận <b>tất cả</b> Loại kho đang có, chiến thuật theo mặc định toàn kho ở trên. Chọn một kho để <b>copy nguyên</b> tập loại + chiến thuật riêng của kho đó. Tạo xong mở lại form để chỉnh từng loại.</>} />
+        </span>
+        <SingleSelect
+          value={copyFrom} onChange={setCopyFrom} triggerClassName="h-8"
+          options={[
+            { value: '', label: '— Tất cả Loại kho (mặc định) —' },
+            ...whList.filter(w => w.id !== selfId).map(w => ({ value: w.id, label: w.name, sub: w.code })),
+          ]}
+        />
+      </div>
+    )
+  }
+  const list = cfgs ?? {}
+  const toggle = (code: string) => setCfgs(p => {
+    const next = { ...(p ?? {}) }
+    if (next[code]) delete next[code]; else next[code] = { ...STRATEGY_EMPTY }
+    return next
+  })
+  const patch = (code: string, v: Partial<StrategyValue>) => setCfgs(p => ({
+    ...(p ?? {}), [code]: { ...((p ?? {})[code] ?? STRATEGY_EMPTY), ...v },
+  }))
+  const nOwn = (v: StrategyValue) => Object.values(v).filter(x => x !== null && x !== undefined).length
+
   return (
-    <label
-      htmlFor={id}
-      title={on ? 'Đang CHẶN — bỏ tick để chỉ cảnh báo' : 'Đang chỉ CẢNH BÁO — tick để chặn thật'}
-      className={`shrink-0 flex items-center gap-1 cursor-pointer rounded border px-1.5 py-1 text-[10px] transition-colors ${
-        on ? 'bg-red-50 border-red-300 text-red-700 font-medium' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-    >
-      <input id={id} type="checkbox" checked={on} onChange={onToggle}
-        className="h-3 w-3 rounded accent-red-600 shrink-0" />
-      Bắt buộc
-    </label>
+    <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+      <span className="flex items-center gap-1">
+        <Label className="text-xs">Loại kho kho này vận hành + chiến thuật riêng</Label>
+        <InfoTip tip={<>
+          Tick = kho <b>vận hành</b> loại hàng đó. Bỏ tick không xoá dữ liệu cũ: tồn/vị trí/chuyến đang có
+          vẫn xử lý bình thường, chỉ <b>chặn tạo mới</b> loại đó ở kho này.
+          <br /><br />
+          Mở <b>Chiến thuật riêng</b> để cho loại hàng đó chạy khác mặc định kho (vd kho FEFO nhưng
+          nguyên liệu chạy FIFO). Ô để <b>“Theo kho”</b> là kế thừa — mở ra thấy ngay đang theo giá trị nào.
+        </>} />
+      </span>
+      {cfgs === null ? (
+        <p className="text-[11px] text-slate-400">Đang tải…</p>
+      ) : (
+        <div className="space-y-1">
+          {allTypes.map(t => {
+            const code = t.value
+            const on = !!list[code]
+            const own = on ? nOwn(list[code]) : 0
+            return (
+              <div key={code} className="rounded-md border border-slate-100">
+                <div className="flex items-center gap-1.5 px-1.5 py-1.5 hover:bg-slate-50">
+                  <label htmlFor={`wtc-${code}`} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                    <input id={`wtc-${code}`} type="checkbox" checked={on} onChange={() => toggle(code)}
+                      className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+                    <span className="text-xs font-medium truncate">{t.label || code}</span>
+                    <span className="text-[10px] text-slate-400 shrink-0">{code}</span>
+                  </label>
+                  {own > 0 && <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">{own} riêng</span>}
+                  {on && (
+                    <button type="button" onClick={() => setOpenType(openType === code ? null : code)}
+                      className="shrink-0 rounded border border-slate-200 px-1.5 py-1 text-[10px] text-slate-600 hover:bg-white">
+                      {openType === code ? 'Thu gọn' : 'Chiến thuật riêng'}
+                    </button>
+                  )}
+                </div>
+                {on && openType === code && (
+                  <div className="border-t border-slate-100 bg-slate-50/60 px-1.5 py-2">
+                    <StrategyFields mode="type" idPrefix={`wtc-${code}`} value={list[code]}
+                      inherited={whStrat} onPatch={v => patch(code, v)} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {Object.keys(list).length === 0 && (
+            <p className="text-[11px] text-red-600">Chưa tick loại nào — kho phải vận hành ít nhất 1 Loại kho.</p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -573,23 +660,51 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
   // bật rule nào chấp hành rule đó, bật cả 2 phải đủ cả 2. Miễn trừ = quyền outbound.weigh_waive.
   const [requireGate,   setRequireGate]   = useState(wh?.require_gate_on_start === true)
   const [requireWeigh,  setRequireWeigh]  = useState(wh?.require_weigh_on_start === true)
-  // Nguyên tắc luân chuyển (14/08): thứ tự lấy hàng + có BẮT BUỘC hay chỉ cảnh báo.
-  // Mặc định FEFO + không bắt buộc = đúng hành vi trước đây, kho không tick thì không đổi gì.
-  const [rotPrinciple,  setRotPrinciple]  = useState<string>(wh?.rotation_principle ?? 'FEFO')
-  const [rotRequired,   setRotRequired]   = useState(wh?.rotation_required === true)
-  // Quy tắc CẤT hàng (15/08) — nửa còn lại của nguyên tắc luân chuyển. Mặc định = hành vi cũ.
-  const [putPriority,   setPutPriority]   = useState<string>(wh?.putaway_priority ?? 'CONSOLIDATE')
-  const [putDateMix,    setPutDateMix]    = useState<string>(wh?.putaway_date_mix ?? 'ANY')
-  const [putMaxMat,     setPutMaxMat]     = useState<string>(wh?.putaway_max_materials != null ? String(wh.putaway_max_materials) : '')
-  const [putNoPickFace, setPutNoPickFace] = useState(wh?.putaway_block_pick_face === true)
-  const [putNoQaHold,   setPutNoQaHold]   = useState(wh?.putaway_block_qa_hold === true)
-  const [putNoFull,     setPutNoFull]     = useState(wh?.putaway_block_full === true)
-  const [putSingleNcc,  setPutSingleNcc]  = useState(wh?.putaway_single_ncc === true)
-  // Mức xử lý theo TỪNG luật (16/08) — rỗng = không luật nào chặn cứng (chỉ cảnh báo).
-  const [putEnforced,   setPutEnforced]   = useState<string[]>(
-    Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced! : [])
-  const toggleEnforced = (code: string) =>
-    setPutEnforced(p => p.includes(code) ? p.filter(x => x !== code) : [...p, code])
+  // CHIẾN THUẬT MẶC ĐỊNH TOÀN KHO — xuất (14/08) + nhập (15/08) + thang 3 bước (21/08).
+  // Gom vào MỘT object vì đúng bộ field này còn được khai lại ở tầng LOẠI KHO (StrategyFields
+  // dùng chung 2 tầng); tách 12 useState rồi chép sang tầng kia là đẻ bản thứ hai.
+  const [strat, setStrat] = useState<StrategyValue>({
+    rotation_principle:         wh?.rotation_principle ?? 'FEFO',
+    rotation_required:          wh?.rotation_required === true,
+    putaway_priority:           wh?.putaway_priority ?? 'CONSOLIDATE',
+    putaway_date_mix:           wh?.putaway_date_mix ?? 'ANY',
+    putaway_max_materials:      wh?.putaway_max_materials ?? null,
+    putaway_block_pick_face:    wh?.putaway_block_pick_face === true,
+    putaway_block_qa_hold:      wh?.putaway_block_qa_hold === true,
+    putaway_block_full:         wh?.putaway_block_full === true,
+    putaway_single_ncc:         wh?.putaway_single_ncc === true,
+    putaway_enforced:           Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced! : [],
+    putaway_same_mat_date_pref: wh?.putaway_same_mat_date_pref ?? 'NONE',
+    putaway_fallback:           wh?.putaway_fallback ?? 'BY_CODE',
+  })
+  const patchStrat = (p: Partial<StrategyValue>) => setStrat(s => ({ ...s, ...p }))
+  // Tập LOẠI KHO kho vận hành + chiến thuật riêng từng loại (21/08). null = có loại nhưng không
+  // khai gì riêng (kế thừa toàn bộ mặc định kho).
+  const { data: savedTypeCfgs } = useWhTypeConfigs(wh?.id)
+  const [typeCfgs, setTypeCfgs] = useState<Record<string, StrategyValue> | null>(null)
+  const [openType, setOpenType] = useState<string | null>(null)
+  const [copyFrom, setCopyFrom] = useState('')
+  useEffect(() => {
+    if (!savedTypeCfgs) return
+    const m: Record<string, StrategyValue> = {}
+    for (const r of savedTypeCfgs) {
+      m[r.type_code] = {
+        rotation_principle:         r.rotation_principle ?? null,
+        rotation_required:          r.rotation_required ?? null,
+        putaway_priority:           r.putaway_priority ?? null,
+        putaway_date_mix:           r.putaway_date_mix ?? null,
+        putaway_max_materials:      r.putaway_max_materials ?? null,
+        putaway_block_pick_face:    r.putaway_block_pick_face ?? null,
+        putaway_block_qa_hold:      r.putaway_block_qa_hold ?? null,
+        putaway_block_full:         r.putaway_block_full ?? null,
+        putaway_single_ncc:         r.putaway_single_ncc ?? null,
+        putaway_enforced:           r.putaway_enforced ?? null,
+        putaway_same_mat_date_pref: r.putaway_same_mat_date_pref ?? null,
+        putaway_fallback:           r.putaway_fallback ?? null,
+      }
+    }
+    setTypeCfgs(m)
+  }, [savedTypeCfgs])
   const [parentId,      setParentId]      = useState(wh?.parent_warehouse_id ?? '__none__')
   const [isActive,      setIsActive]      = useState(wh?.is_active ?? true)
   // Quét tới thùng khi xuất — setup TẠI KHO: công tắc (mặc định TẮT) + CHỌN các Loại kho phải quét ở kho này
@@ -610,7 +725,8 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
 
   const { mutate: create, isPending: creating } = useCreateWarehouse()
   const { mutate: update, isPending: updating } = useUpdateWarehouse()
-  const isPending = creating || updating
+  const { mutateAsync: saveTypeCfgs, isPending: savingTypes } = useSaveWhTypeConfigs()
+  const isPending = creating || updating || savingTypes
 
   function handleSubmit() {
     setErr('')
@@ -620,24 +736,41 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
-    const maxMat = putMaxMat.trim() === '' ? null : Number(putMaxMat)
+    const maxMat = strat.putaway_max_materials
     if (maxMat !== null && (!Number.isFinite(maxMat) || maxMat < 1 || maxMat > 1000))
       { setErr('Số mã tối đa trong 1 vị trí phải là số nguyên 1–1000 (để trống = không giới hạn)'); return }
+    if (isEdit && typeCfgs && Object.keys(typeCfgs).length === 0)
+      { setErr('Kho phải vận hành ít nhất 1 Loại kho — bỏ hết thì mọi form của kho này không chọn được loại nào'); return }
     const putaway = {
-      putaway_priority: putPriority, putaway_date_mix: putDateMix,
+      putaway_priority: strat.putaway_priority ?? 'CONSOLIDATE',
+      putaway_date_mix: strat.putaway_date_mix ?? 'ANY',
       putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
-      putaway_block_pick_face: putNoPickFace, putaway_block_qa_hold: putNoQaHold,
-      putaway_block_full: putNoFull, putaway_single_ncc: putSingleNcc,
-      putaway_enforced: putEnforced,
+      putaway_block_pick_face: strat.putaway_block_pick_face === true,
+      putaway_block_qa_hold: strat.putaway_block_qa_hold === true,
+      putaway_block_full: strat.putaway_block_full === true,
+      putaway_single_ncc: strat.putaway_single_ncc === true,
+      putaway_enforced: strat.putaway_enforced ?? [],
+      putaway_same_mat_date_pref: strat.putaway_same_mat_date_pref ?? 'NONE',
+      putaway_fallback: strat.putaway_fallback ?? 'BY_CODE',
     }
+    const rot = { rotation_principle: strat.rotation_principle ?? 'FEFO', rotation_required: strat.rotation_required === true }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired, ...putaway },
-        { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, ...rot, ...putaway },
+        {
+          // Tập loại kho lưu SAU khi kho lưu xong (2 request nối tiếp) — lỗi ở bước 2 vẫn báo đỏ
+          // trong form, không đóng, để người dùng biết phần nào chưa lưu.
+          onSuccess: () => {
+            if (!typeCfgs) { onClose(); return }
+            saveTypeCfgs({ id: wh.id, items: Object.entries(typeCfgs).map(([type_code, v]) => ({ type_code, ...v })) })
+              .then(onClose).catch(e => setErr(apiMsg(e)))
+          },
+          onError: e => setErr(apiMsg(e)),
+        }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, rotation_principle: rotPrinciple, rotation_required: rotRequired, ...putaway },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -750,115 +883,15 @@ function WarehouseDialog({ wh, open, onClose }: { wh: WhRow | null; open: boolea
               <InfoTip tip={<>Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</>} />
             </div>
           </div>
-          {/* Nguyên tắc luân chuyển (14/08) — thứ tự lấy hàng của kho + có siết hay không.
-              Mặc định FEFO + chỉ cảnh báo = hành vi cũ, không kho nào bị đổi khi lên bản này. */}
-          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Nguyên tắc luân chuyển (thứ tự lấy hàng)</Label>
-            <SingleSelect
-              value={rotPrinciple} onChange={setRotPrinciple}
-              options={[
-                { value: 'FEFO', label: 'FEFO — hạn dùng ngắn nhất đi trước', sub: 'mặc định, hợp hàng có HSD' },
-                { value: 'FIFO', label: 'FIFO — hàng vào trước đi trước',      sub: 'hợp bao bì/vật tư không HSD' },
-                { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
-              ]}
-            />
-            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <label htmlFor="wh-rotrequired" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                <input id="wh-rotrequired" type="checkbox" checked={rotRequired} onChange={e => setRotRequired(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs font-medium truncate">Bắt buộc lấy đúng thứ tự</span>
-              </label>
-              <InfoTip tip={<>Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự (như hiện nay). Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</>} />
-            </div>
-          </div>
-          {/* Quy tắc CẤT hàng (15/08) — nửa còn lại của luân chuyển: lấy hàng ở trên, cất hàng ở đây.
-              Mặc định Gom + không ràng buộc = ĐÚNG hành vi trước 15/08, bật từng luật là lựa chọn
-              của từng kho. Vị trí gắn cờ "cấm đưa hàng vào" (tab Cài đặt của trang Tối ưu vị trí)
-              LUÔN bị loại, không cần bật gì. */}
-          <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-            <span className="flex items-center gap-1">
-              <Label className="text-xs">Quy tắc cất hàng (gợi ý chỗ đặt pallet)</Label>
-              <InfoTip tip={<>Quyết định thứ tự gợi ý vị trí ở 4 màn cất hàng: form Nhập kho · quét tem (PDA) · đổi vị trí trong phiếu nhập · Chuyển vị trí hàng loạt. Vị trí ★ đứng đầu, vị trí vướng luật xuống cuối.</>} />
-            </span>
-            <SingleSelect
-              value={putPriority} onChange={setPutPriority}
-              options={[
-                { value: 'CONSOLIDATE', label: 'Gom — ưu tiên ô đang để dở cùng mã', sub: 'mặc định, ít lối đi khi nhặt hàng' },
-                { value: 'SPREAD',      label: 'Rải — ưu tiên ô còn nhiều chỗ nhất',  sub: 'dàn đều, tránh ô đầy sớm chặn lối' },
-                { value: 'ABC',         label: 'Theo ABC — hàng nhặt nhiều để gần cửa', sub: 'dùng hạng nhặt khu của Tối ưu vị trí' },
-              ]}
-            />
-            {putPriority === 'ABC' && (
-              <p className="mt-1 flex items-start gap-1 text-[10px] text-amber-600">
-                <span>Cần xếp <b>Hạng nhặt</b> cho khu ở <b>Tối ưu vị trí → Cài đặt</b>, chưa xếp thì chạy như Gom.</span>
-                <InfoTip side="top" tip={<>Hạng nhặt: 1 = gần cửa xuất nhất. Kho chưa xếp hạng khu nào hợp loại hàng thì gợi ý <b>tạm chạy như Gom</b> — chọn ABC mà quên xếp hạng khu là không có tác dụng gì. Hạng ABC của mã lấy từ lượt nhặt <b>30 ngày</b> gần nhất, cùng nguồn với trang Tối ưu vị trí.</>} />
-              </p>
-            )}
-            {/* Mức xử lý theo TỪNG luật: nút bên phải mỗi luật đổi qua lại Cảnh báo ↔ Bắt buộc.
-                Chỉ hiện khi luật đó ĐANG BẬT — luật tắt thì không có gì để xử. */}
-            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5">
-              <span className="text-xs font-medium flex-1 min-w-0 truncate">Vị trí đánh dấu “Không đưa hàng vào”</span>
-              <InfoTip tip={<>Khai ở trang <b>Vị trí kho</b>: tick chọn vị trí → nút <b>“Không đưa hàng vào”</b>, hoặc form Sửa vị trí (kho tạm, ngoài đường…). Vị trí đó LUÔN bị loại khỏi gợi ý và khỏi kế hoạch Slotting — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.</>} />
-              <EnforceToggle id="wh-enf-noin" on={putEnforced.includes('NO_IN')} onToggle={() => toggleEnforced('NO_IN')} />
-            </div>
-            <div>
-              <span className="flex items-center gap-1">
-                <Label className="text-[11px] text-slate-500">Trộn {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} trong một vị trí</Label>
-                <InfoTip tip={<>Luật này cần biết {rotPrinciple === 'FEFO' ? 'HSD' : 'NSX'} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>. Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì — đúng kỷ luật “thiếu dữ liệu thì không kết luận”.</>} />
-              </span>
-              <SingleSelect
-                value={putDateMix} onChange={setPutDateMix}
-                options={putawayDateMixOpts(rotPrinciple === 'FEFO' ? 'HSD' : 'NSX')}
-              />
-              {putDateMix !== 'ANY' && (
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-slate-500">Mức xử lý khi vi phạm luật trộn date</span>
-                  <EnforceToggle id="wh-enf-datemix" on={putEnforced.includes('DATE_MIX')} onToggle={() => toggleEnforced('DATE_MIX')} />
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-[11px] text-slate-500">Số mã tối đa trong một vị trí</Label>
-              <Input type="number" min={1} max={1000} value={putMaxMat} onChange={e => setPutMaxMat(e.target.value)}
-                placeholder="để trống = không giới hạn" className="h-8 text-xs" />
-              {putMaxMat.trim() !== '' && (
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-slate-500">Mức xử lý khi vượt số mã</span>
-                  <EnforceToggle id="wh-enf-maxmat" on={putEnforced.includes('MAX_MATERIALS')} onToggle={() => toggleEnforced('MAX_MATERIALS')} />
-                </div>
-              )}
-            </div>
-            {([
-              ['wh-put-full',      'FULL',          putNoFull,     setPutNoFull,     'Không cất vào vị trí đã đầy', 'Hiện tại ô đầy vẫn chọn được — tick để loại hẳn khỏi gợi ý.'],
-              ['wh-put-pickface',  'PICK_FACE',     putNoPickFace, setPutNoPickFace, 'Không cất pallet nguyên vào vị trí nhặt lẻ', 'Vị trí nhặt lẻ là chỗ lệnh Fill đổ hàng vào; pallet nguyên chiếm chỗ sẽ làm lệnh fill báo đầy.'],
-              ['wh-put-qahold',    'QA_HOLD',       putNoQaHold,   setPutNoQaHold,   'Không cất vào ô đang có pallet bị QA giữ', 'Tránh chôn pallet đang giữ phía sau — lúc QA xả hàng phải dọn pallet đè lên mới lấy ra được.'],
-              ['wh-put-ncc',       'NCC_MIX',       putSingleNcc,  setPutSingleNcc,  'Không trộn NCC khác nhau trong một vị trí', 'Cùng mã khác NCC có thể khác hạn dùng. Pallet hoặc hàng trong ô chưa khai NCC thì không chặn.'],
-            ] as const).map(([id, code, val, set, title, desc]) => (
-              // <label> và ⓘ/ô Bắt buộc là ANH EM (không lồng nhau): bấm ⓘ không lật ô tick
-              <div key={id} className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
-                <label htmlFor={id} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                  <input id={id} type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                  <span className="text-xs font-medium truncate">{title}</span>
-                </label>
-                <InfoTip tip={desc} />
-                {val && <EnforceToggle id={`${id}-enf`} on={putEnforced.includes(code)} onToggle={() => toggleEnforced(code)} />}
-              </div>
-            ))}
-            <div className="border-t border-slate-100 pt-2 flex items-center gap-1 text-[10px] text-slate-400">
-              <span className="flex-1 min-w-0">
-                {putEnforced.length === 0
-                  ? <>Hiện <b>không luật nào chặn</b> — tất cả chỉ cảnh báo.</>
-                  : <><b className="text-red-600">{putEnforced.length} luật</b> đang chặn thật khi cất hàng.</>}
-              </span>
-              <InfoTip side="top" tip={<>
-                Không tick <b>Bắt buộc</b> = chỉ <b>cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting, nhưng cất vẫn được và có ghi vết.
-                Tick = <b>CHẶN</b> — chỉ người có quyền <b>Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
-                <br /><br />
-                Luật tick Bắt buộc chặn ở <b>mọi thao tác đặt pallet vào vị trí</b>: tạo phiếu nhập · đổi vị trí trong phiếu nhập ·
-                quét tem vào vị trí · <b>Chuyển vị trí hàng loạt</b> (trang Tồn kho). Riêng chỗ đặt <b>phần dư khi quét xuất</b> cố ý
-                KHÔNG chặn — người quét buộc phải khai được chỗ để lại.
-              </>} />
-            </div>
-          </div>
+          {/* CHIẾN THUẬT XUẤT/NHẬP MẶC ĐỊNH TOÀN KHO (14–15/08 + thang 3 bước 21/08).
+              Bộ control dùng CHUNG với tầng Loại kho bên dưới — components/wms/StrategyFields.tsx */}
+          <StrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} />
+          {/* Loại kho mà kho VẬN HÀNH + chiến thuật riêng theo từng loại (21/08) */}
+          <WhTypeStrategySection
+            isEdit={isEdit} whStrat={strat} allTypes={whTypesForCarton as WhTypeOpt[]}
+            cfgs={typeCfgs} setCfgs={setTypeCfgs} openType={openType} setOpenType={setOpenType}
+            copyFrom={copyFrom} setCopyFrom={setCopyFrom} whList={allWhForParent as WhRow[]} selfId={wh?.id}
+          />
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
               <label htmlFor="wh-cartonscan" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">

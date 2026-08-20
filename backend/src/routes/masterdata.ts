@@ -24,6 +24,10 @@ router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse')
 router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)
+// Loại kho mà kho vận hành + chiến thuật xuất/nhập riêng theo loại — cùng quyền với form Kho
+// (đây là MỘT PHẦN cấu hình kho, không phải capability tách rời nên không đẻ action mới).
+router.get('/warehouses/:id/type-configs', warehouse.getWarehouseTypeConfigs)
+router.put('/warehouses/:id/type-configs', requirePerm('wms_settings', 'manage_warehouse'), warehouse.putWarehouseTypeConfigs)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

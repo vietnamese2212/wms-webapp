@@ -13,6 +13,7 @@ import {
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationCheck, type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
+import { resolveRotation, type RotationConfig, type WhTypeConfigRow } from '../../utils/putaway'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue, safeSearch } from '../../utils/search'
@@ -4484,7 +4485,7 @@ async function pickRankByZone(warehouseIds: string[]): Promise<Map<string, numbe
 }
 
 async function rotationSuggestionsByMaterial(
-  matIds: string[], warehouseIds: string[], principleByWh: Map<string, RotationPrinciple>,
+  matIds: string[], warehouseIds: string[], rotCfg: RotationResolver,
 ): Promise<Map<string, FefoSuggestion[]>> {
   const out = new Map<string, FefoSuggestion[]>()
   if (!matIds.length) return out
@@ -4493,7 +4494,8 @@ async function rotationSuggestionsByMaterial(
     Array.from({ length: Math.ceil(matIds.length / 200) }, (_, ci) => matIds.slice(ci * 200, ci * 200 + 200)).map(chunk =>
       fetchAllRowsParallel(() => {
         let q = supabase.from('InventoryEntry')
-          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(shelf_life_days, supplier_shelf_life_overrides)`)
+          // `category` = khóa chọn chiến thuật tầng 2 (mỗi loại kho có thể chạy nguyên tắc riêng)
+          .select(`material_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
@@ -4510,7 +4512,7 @@ async function rotationSuggestionsByMaterial(
   const entries = entryChunks.flat() as Array<RotationEntry & {
     material_id: string
     location: { location_code: string | null; warehouse_id: string | null; sub_code: string | null } | null
-    material: MaterialShelfInfo | null
+    material: (MaterialShelfInfo & { category?: string | null }) | null
   }>
   // HẠNG NHẶT của khu = khu đó gần cửa xuất tới đâu (1 = gần nhất). Kho đã xếp hạng ở trang Tối ưu
   // vị trí và luồng CẤT hàng đã dùng (chiến thuật ABC), nhưng luồng LẤY hàng thì chưa đọc dòng nào:
@@ -4523,7 +4525,7 @@ async function rotationSuggestionsByMaterial(
   const byMat = new Map<string, Map<string, Agg>>()
   for (const e of (entries ?? [])) {
     if (!isPickEligible(e)) continue
-    const principle = principleByWh.get(e.location?.warehouse_id ?? '') ?? asRotationPrinciple(null)
+    const principle = rotCfg.of(e.location?.warehouse_id, e.material?.category).principle
     const pctRaw = computePctDate(e, e.material, nowMs)   // ưu tiên HSD tường minh (tem V2)
     const pct_date: number | null = pctRaw == null ? null : Math.round(pctRaw)
     const rot_key  = rotationSortKey(e, e.material, principle)
@@ -4553,20 +4555,41 @@ async function rotationSuggestionsByMaterial(
   return out
 }
 
-// Cấu hình luân chuyển của các kho — 1 câu cho cả danh sách kho.
-async function rotationConfigOf(warehouseIds: string[]): Promise<Map<string, { principle: RotationPrinciple; required: boolean }>> {
-  const map = new Map<string, { principle: RotationPrinciple; required: boolean }>()
-  const ids = [...new Set(warehouseIds.filter(Boolean))]
-  if (!ids.length) return map
-  const data = await fetchAllByIdChunks(ids, chunk => supabase.from('Warehouse')
-    .select('id, rotation_principle, rotation_required').in('id', chunk).order('id'))
-  for (const w of ((data ?? []) as { id: string; rotation_principle: string | null; rotation_required: boolean | null }[])) {
-    map.set(w.id, { principle: asRotationPrinciple(w.rotation_principle), required: w.rotation_required === true })
-  }
-  return map
+// Cấu hình luân chuyển 2 TẦNG của các kho — mặc định kho + override theo LOẠI KHO (21/08).
+// Trả về HÀM tra thay vì Map thô: nguyên tắc bây giờ phụ thuộc (kho, loại kho của MÃ HÀNG), caller
+// mà tự ghép lại từ hai map là đúng đường đẻ ra bản luật chép tay thứ hai.
+// 2 câu cho CẢ danh sách kho (không phải mỗi kho một câu).
+interface RotationResolver {
+  of: (warehouseId: string | null | undefined, category: string | null | undefined) => RotationConfig
 }
-const principleMapOf = (cfg: Map<string, { principle: RotationPrinciple; required: boolean }>) =>
-  new Map([...cfg.entries()].map(([k, v]) => [k, v.principle]))
+async function rotationConfigOf(warehouseIds: string[]): Promise<RotationResolver> {
+  const whById = new Map<string, Record<string, unknown>>()
+  const typesByWh = new Map<string, WhTypeConfigRow[]>()
+  const ids = [...new Set(warehouseIds.filter(Boolean))]
+  const FALLBACK: RotationConfig = { principle: asRotationPrinciple(null), required: false, source: 'WAREHOUSE' }
+  if (!ids.length) return { of: () => FALLBACK }
+
+  const [whs, cfgs] = await Promise.all([
+    fetchAllByIdChunks(ids, chunk => supabase.from('Warehouse')
+      .select('id, rotation_principle, rotation_required').in('id', chunk).order('id')),
+    fetchAllByIdChunks(ids, chunk => supabase.from('warehouse_type_configs')
+      .select('warehouse_id, type_code, rotation_principle, rotation_required')
+      .in('warehouse_id', chunk).order('warehouse_id')),
+  ])
+  for (const w of ((whs ?? []) as ({ id: string } & Record<string, unknown>)[])) whById.set(w.id, w)
+  for (const c of ((cfgs ?? []) as ({ warehouse_id: string } & WhTypeConfigRow)[])) {
+    const arr = typesByWh.get(c.warehouse_id) ?? []
+    arr.push(c)
+    typesByWh.set(c.warehouse_id, arr)
+  }
+  return {
+    of: (warehouseId, category) => {
+      const wh = warehouseId ? whById.get(warehouseId) : null
+      if (!wh) return FALLBACK
+      return resolveRotation(wh, typesByWh.get(warehouseId ?? '') ?? [], category ?? null)
+    },
+  }
+}
 
 // KIỂM LUÂN CHUYỂN của 1 lượt quét — dùng CHUNG cho preview (checkScanItem) và ghi (scanItem),
 // nên hai màn không bao giờ nói hai chuyện khác nhau như trước 14/08.
@@ -4576,10 +4599,12 @@ const principleMapOf = (cfg: Map<string, { principle: RotationPrinciple; require
 async function rotationCheckOf(args: {
   entry: RotationEntry; material: MaterialShelfInfo | null; materialId: string | null
   warehouseId: string | null; principle: RotationPrinciple; required: boolean
+  source?: 'WAREHOUSE' | 'TYPE'
 }): Promise<RotationCheck> {
   const { entry, material, materialId, warehouseId, principle, required } = args
   const base: RotationCheck = {
-    principle, required, violation: false, date_label: ROTATION_DATE_LABEL[principle],
+    principle, required, source: args.source ?? 'WAREHOUSE',
+    violation: false, date_label: ROTATION_DATE_LABEL[principle],
     scanned_date: rotationDateOf(entry, material, principle),
     best_date: null, best_pallet_code: null, best_location_code: null,
   }
@@ -4650,7 +4675,7 @@ export async function getGdoPickSuggestions(req: Request, res: Response) {
       .select('material_id').in('do_id', chunk).order('id')) as Array<{ material_id: string | null }>
     const matIds = [...new Set(items.map(i => i.material_id).filter(Boolean))] as string[]
     const whIds = gdo.warehouse_id ? [gdo.warehouse_id] : []
-    const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, principleMapOf(await rotationConfigOf(whIds)))
+    const sugByMat = await rotationSuggestionsByMaterial(matIds, whIds, await rotationConfigOf(whIds))
     return ok(res, Object.fromEntries([...sugByMat.entries()].map(([k, v]) => [k, v.slice(0, 2)])))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
@@ -4725,7 +4750,7 @@ export async function getPrepareBoard(req: Request, res: Response) {
     // Gợi ý vị trí lấy — helper dùng chung với cột "Vị trí lấy" trang chi tiết đơn, sắp theo
     // nguyên tắc luân chuyển của TỪNG kho (board có thể gom nhiều kho).
     const matIds = [...new Set([...rowMap.values()].map(r => r.material_id).filter(Boolean))] as string[]
-    const sugByMat = await rotationSuggestionsByMaterial(matIds, warehouseIds, principleMapOf(await rotationConfigOf(warehouseIds)))
+    const sugByMat = await rotationSuggestionsByMaterial(matIds, warehouseIds, await rotationConfigOf(warehouseIds))
     for (const r of rowMap.values()) {
       if (!r.material_id) continue
       r.suggestions = (sugByMat.get(r.material_id) ?? []).slice(0, 2)
@@ -4856,7 +4881,7 @@ export async function checkScanItem(req: Request, res: Response) {
     // Shelf-life của mã: cần cho CẢ kiểm %Date lẫn kiểm luân chuyển → nạp MỘT lần.
     const matId = item.material_id ?? inv.material_id
     const { data: mat } = matId
-      ? await supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
+      ? await supabase.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides').eq('id', matId).single()
       : { data: null }
 
     const dateReqPct = Number(item.date_required ?? 0)
@@ -4872,12 +4897,12 @@ export async function checkScanItem(req: Request, res: Response) {
     // Kiểm luân chuyển (FEFO/FIFO/LIFO theo cấu hình kho) — ở đây CHỈ báo cáo, không chặn: đây là
     // bước xem trước để FE hiện cảnh báo / hỏi lý do. Cửa chặn thật nằm ở scanItem (gọi thẳng API
     // vẫn phải qua đó — luật "lọc ở picker chỉ là gợi ý, gác ở BE").
-    const rotCfg = (await rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : [])).get(gdo?.warehouse_id ?? '')
-      ?? { principle: asRotationPrinciple(null), required: false }
+    const rotCfg = (await rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : []))
+      .of(gdo?.warehouse_id, (mat as { category?: string | null } | null)?.category)
     const rotation = await rotationCheckOf({
       entry: inv as RotationEntry, material: mat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
-      principle: rotCfg.principle, required: rotCfg.required,
+      principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
     })
 
     return res.json({
@@ -4951,17 +4976,17 @@ export async function scanItem(req: Request, res: Response) {
 
     // Fetch shelf_life_days + cấu hình luân chuyển của kho song song (cả hai chỉ cần dữ liệu bước trên)
     const matId = item.material_id ?? inv.material_id
-    const [{ data: shelfMat }, rotCfgMap] = await Promise.all([
+    const [{ data: shelfMat }, rotResolver] = await Promise.all([
       matId
-        ? supabase.from('Material').select('shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
+        ? supabase.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides, base_unit, entry_unit, units_per_carton').eq('id', matId).single()
         : Promise.resolve({ data: null }),
       rotationConfigOf(gdo?.warehouse_id ? [gdo.warehouse_id] : []),
     ])
-    const rotCfg = rotCfgMap.get(gdo?.warehouse_id ?? '') ?? { principle: asRotationPrinciple(null), required: false }
+    const rotCfg = rotResolver.of(gdo?.warehouse_id, (shelfMat as { category?: string | null } | null)?.category)
     const rotation = await rotationCheckOf({
       entry: inv as RotationEntry, material: shelfMat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
-      principle: rotCfg.principle, required: rotCfg.required,
+      principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
     })
 
     // ── CHẶN khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────────────────

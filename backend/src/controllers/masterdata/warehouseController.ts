@@ -5,8 +5,9 @@ import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { asRotationPrinciple } from '../../utils/rotation'
-import { applyPutawayBody } from '../../utils/putaway'
+import { applyPutawayBody, applyWhTypeConfigBody, WH_TYPE_CFG_COLS } from '../../utils/putaway'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
+import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
@@ -178,6 +179,34 @@ export async function createWarehouse(req: Request, res: Response) {
       if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã kho đã tồn tại')
       throw error
     }
+
+    // Kho MỚI phải có tập loại kho ngay: 0 loại là mọi form của kho đó bị chặn oan.
+    // Có `copy_from_warehouse_id` → bê nguyên tập loại + chiến thuật riêng của kho mẫu ("Copy
+    // format loại kho"); không thì nhận ĐỦ mọi loại đang có, chiến thuật để trống (theo kho).
+    const newId = (data as { id?: string } | null)?.id
+    if (newId) {
+      const src = req.body?.copy_from_warehouse_id ? String(req.body.copy_from_warehouse_id) : null
+      const nowIso = new Date().toISOString()
+      let seed: Record<string, unknown>[] = []
+      if (src) {
+        const { data: rows } = await supabase.from('warehouse_type_configs')
+          .select('*').eq('warehouse_id', src).limit(200)
+        // Chỉ bê phần CẤU HÌNH — id/warehouse_id/created_at của kho mẫu bê sang là ghi đè nhầm kho
+        seed = (rows ?? []).map(r => {
+          const row = r as Record<string, unknown>
+          const out: Record<string, unknown> = { type_code: row.type_code }
+          for (const k of WH_TYPE_CFG_COLS) if (row[k] != null) out[k] = row[k]
+          return out
+        })
+      }
+      if (!seed.length) seed = [...await listWhTypeCodes()].map(type_code => ({ type_code }))
+      if (seed.length) {
+        const { error: seedErr } = await supabase.from('warehouse_type_configs').insert(
+          seed.map(r => ({ id: randomUUID(), warehouse_id: newId, ...r, updated_at: nowIso, updated_by: actor })))
+        // Bảng chưa apply migration → tạo kho vẫn thành công (không chặn nghiệp vụ vì cấu hình)
+        if (seedErr) console.error('seed warehouse_type_configs:', seedErr.message)
+      }
+    }
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -254,6 +283,99 @@ export async function updateWarehouse(req: Request, res: Response) {
     invalidatePutawayConfig(req.params.id)
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
     ok(res, data)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── LOẠI KHO MỖI KHO VẬN HÀNH + chiến thuật riêng theo loại (21/08) ────────
+// Sự tồn tại của dòng = "kho này vận hành loại này"; cột chiến thuật NULL = kế thừa mặc định kho.
+const WTC_SELECT = `id, type_code, ${WH_TYPE_CFG_COLS.join(', ')}`
+
+async function listWhTypeCodes(): Promise<Set<string>> {
+  const rows = await fetchAllRowsParallel(() =>
+    supabase.from('LookupValue').select('value').eq('type', 'warehouse_type').order('value'))
+  return new Set((rows ?? []).map(r => String((r as { value: string }).value)))
+}
+
+export async function getWarehouseTypeConfigs(req: Request, res: Response) {
+  try {
+    const { data, error } = await supabase.from('warehouse_type_configs')
+      .select(WTC_SELECT).eq('warehouse_id', req.params.id).order('type_code').limit(200)
+    if (error) throw error
+    ok(res, data ?? [])
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+export async function putWarehouseTypeConfigs(req: Request, res: Response) {
+  try {
+    const whId = req.params.id
+    const items = req.body?.items
+    if (!Array.isArray(items)) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu danh sách loại kho (items)')
+
+    const { data: wh } = await supabase.from('Warehouse').select('id').eq('id', whId).maybeSingle()
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
+
+    const known = await listWhTypeCodes()
+    const scope = scopeCategoriesOf(req)     // null = full quyền loại
+    const rows: Record<string, unknown>[] = []
+    const seen = new Set<string>()
+    for (const raw of items as Record<string, unknown>[]) {
+      const code = String(raw?.type_code ?? '').trim()
+      if (!code) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu mã loại kho')
+      if (!known.has(code)) return fail(res, 400, 'VALIDATION_ERROR', `Loại kho "${code.slice(0, 30)}" không có trong danh mục`)
+      if (seen.has(code)) return fail(res, 400, 'VALIDATION_ERROR', `Loại kho "${code}" bị khai trùng`)
+      seen.add(code)
+      // User chỉ có scope một số loại thì không được ĐỘNG tới loại ngoài scope (cả thêm lẫn bớt) —
+      // cùng tinh thần khung giờ cargo ALL. Dòng ngoài scope được giữ nguyên ở dưới.
+      if (!categoryAllowed(req, code))
+        return fail(res, 403, 'FORBIDDEN', `Bạn không có quyền với Loại kho "${code}"`)
+      const patch: Record<string, unknown> = {}
+      const err = applyWhTypeConfigBody(raw, patch)
+      if (err) return fail(res, 422, 'INVALID_INPUT', `${code}: ${err}`)
+      rows.push({ type_code: code, ...patch })
+    }
+
+    const { data: cur } = await supabase.from('warehouse_type_configs')
+      .select('id, type_code').eq('warehouse_id', whId).limit(500)
+    const curById = new Map((cur ?? []).map(r => {
+      const row = r as { id: string; type_code: string }
+      return [row.type_code, row.id]
+    }))
+
+    const now = new Date().toISOString()
+    const actor = req.user?.name || null
+    // Ghi theo LÔ (insert nhiều dòng / delete theo danh sách id) — không vòng lặp per-row.
+    const toInsert = rows.filter(r => !curById.has(String(r.type_code)))
+      .map(r => ({ id: randomUUID(), warehouse_id: whId, ...r, updated_at: now, updated_by: actor }))
+    const toUpdate = rows.filter(r => curById.has(String(r.type_code)))
+    const keep = new Set(rows.map(r => String(r.type_code)))
+    const toDelete = [...curById.entries()]
+      // Loại ngoài scope của user KHÔNG bị xoá dù client không gửi lên (client đó cũng không thấy nó)
+      .filter(([code, _id]) => !keep.has(code) && categoryAllowed(req, code))
+      .map(([_code, id]) => id)
+
+    if (toInsert.length) {
+      const { error } = await supabase.from('warehouse_type_configs').insert(toInsert)
+      if (error) throw error
+    }
+    // Cập nhật: mỗi dòng một giá trị khác nhau → upsert theo khoá chính (lô, không update lẻ)
+    if (toUpdate.length) {
+      const payload = toUpdate.map(r => ({
+        id: curById.get(String(r.type_code)), warehouse_id: whId, ...r, updated_at: now, updated_by: actor,
+      }))
+      const { error } = await supabase.from('warehouse_type_configs').upsert(payload, { onConflict: 'id' })
+      if (error) throw error
+    }
+    if (toDelete.length) {
+      const { error } = await supabase.from('warehouse_type_configs').delete().in('id', toDelete.slice(0, 300))
+      if (error) throw error
+    }
+
+    // Luồng quét đọc cấu hình qua cache 30s → xoá ngay, không thì lưu form xong lượt quét kế vẫn
+    // chạy chiến thuật cũ (cùng lý do với updateWarehouse).
+    invalidatePutawayConfig(whId)
+    const { data } = await supabase.from('warehouse_type_configs')
+      .select(WTC_SELECT).eq('warehouse_id', whId).order('type_code').limit(200)
+    ok(res, data ?? [])
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

@@ -135,6 +135,9 @@ export function isRotationReason(code: unknown): code is RotationReasonCode {
 export interface RotationCheck {
   principle:          RotationPrinciple
   required:           boolean          // kho có bật "bắt buộc" không
+  // Nguyên tắc đang áp đến từ mặc định KHO hay từ chiến thuật riêng của LOẠI KHO (21/08).
+  // FE hiện thêm "(theo Loại kho)" — KHÔNG được tự suy từ cấu hình kho (bản luật chép tay thứ N).
+  source:             'WAREHOUSE' | 'TYPE'
   violation:          boolean
   date_label:         string           // 'HSD' | 'NSX' — để FE khỏi tự đoán
   scanned_date:       string | null

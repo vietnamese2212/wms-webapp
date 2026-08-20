@@ -39,17 +39,29 @@ export async function getControlTower(req: Request, res: Response) {
     // Mã hàng: lọc đích danh (chỉ cắt 2 khối hàng-theo-mã trong RPC)
     const matCodes = parseListParam(req.query.material_codes, 100) ?? []
 
-    const { data, error } = await supabase.rpc('control_tower_stats', {
-      p_warehouse_ids: effective.length > 0 ? effective : null,
-      p_categories: effCats.length > 0 ? effCats : null,
-      p_today: today,
-      p_material_codes: matCodes.length > 0 ? matCodes : null,
-    })
-    if (error) {
-      if (/control_tower_stats/i.test(error.message) || error.code === 'PGRST202')
+    // 2 RPC song song, FE vẫn 1 request: stats (khối chính) + resources (nhân sự/xe nâng/tồn sạch/
+    // chu trình cổng — console kiểu Manhattan 20/08). resources lỗi/chưa apply → null, FE tự ẩn khối.
+    const [main, resources] = await Promise.all([
+      supabase.rpc('control_tower_stats', {
+        p_warehouse_ids: effective.length > 0 ? effective : null,
+        p_categories: effCats.length > 0 ? effCats : null,
+        p_today: today,
+        p_material_codes: matCodes.length > 0 ? matCodes : null,
+      }),
+      supabase.rpc('control_tower_resources', {
+        p_warehouse_ids: effective.length > 0 ? effective : null,
+        p_today: today,
+      }),
+    ])
+    if (main.error) {
+      if (/control_tower_stats/i.test(main.error.message) || main.error.code === 'PGRST202')
         return fail(res, 'Chưa apply migration 20260716_control_tower_stats', 503, 'NOT_READY')
-      return fail(res, error.message, 500, 'DB_ERROR')
+      return fail(res, main.error.message, 500, 'DB_ERROR')
     }
-    return ok(res, { date: today, ...(data as Record<string, unknown>) })
+    return ok(res, {
+      date: today,
+      ...(main.data as Record<string, unknown>),
+      resources: resources.error ? null : resources.data,
+    })
   } catch (e) { return fail(res, String(e)) }
 }

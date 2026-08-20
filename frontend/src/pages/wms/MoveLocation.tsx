@@ -5,7 +5,7 @@
 // (BE ghi StocktakeLog + stocktake_at qua cờ count_as_stocktake). Tab Lịch sử = các lượt chuyển
 // (StocktakeLog có location_changed_to — gồm cả kiểm-kê-đổi-vị-trí), đủ kho/loại/người/từ ô→đến ô.
 // KHO của danh sách vị trí = KHO CỦA PALLET vừa quét (không theo bối cảnh Header — pallet là vật lý).
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { QRScanner } from '@/components/shared/QRScanner'
 import { useLocationsReal, useBulkTransferLocation, useMoveLog, useWarehouses, type MoveLogRow } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -24,6 +24,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
+import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
 import { usePutawayGate } from '@/components/wms/PutawayGate'
 import { LocationContents } from '@/components/wms/LocationContents'
@@ -90,6 +91,22 @@ function ScanTab() {
   const qc    = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // BẮT BUỘC chọn KHO trước khi quét (user chốt 20/08): 1 mã pallet có thể tồn ở NHIỀU kho —
+  // không khoanh kho là tra ra pallet kho khác. Field dùng chung slice moveLog (bối cảnh Header
+  // sweep vào, nhớ theo user); mặc định = kho đầu tiên của user như trang Kiểm kê.
+  const { warehouseId } = useWmsFilterStore(s => s.moveLog)
+  const setMoveF = useWmsFilterStore(s => s.setMoveLog)
+  const { data: warehouses = [] } = useWarehouses(true)
+  const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
+    ? new Set(user.warehouse_ids)
+    : null
+  useEffect(() => {
+    if (!warehouseId) {
+      const def = user?.warehouse_ids?.[0] ?? user?.warehouse_id ?? ''
+      if (def) setMoveF({ warehouseId: def })
+    }
+  }, [warehouseId, user, setMoveF])
+
   const [resultState, setResultState] = useState<ResultState>({ mode: 'none' })
   const [scannerOpen, setScannerOpen] = useState(false)
   const [gunMode,     setGunMode]     = useState(false)   // súng PDA: 1 phát wedge → tắt camera
@@ -134,7 +151,7 @@ function ScanTab() {
 
   async function handleSearch(code: string) {
     const palletCode = code.trim()
-    if (!palletCode) return
+    if (!palletCode || !warehouseId) return
     setSearching(true)
     setScannerOpen(false)
     setSaveErr('')
@@ -142,7 +159,8 @@ function ScanTab() {
     putGate.reset()
     setResultState({ mode: 'none' })
     try {
-      const { data } = await apiClient.post('/wms/inventory/stocktake-check', { qr_code: palletCode })
+      const { data } = await apiClient.post('/wms/inventory/stocktake-check',
+        { qr_code: palletCode, warehouse_id: warehouseId })   // khoanh ĐÚNG kho đã chọn
       setResultState({ mode: 'result', entry: data.data.entry as MoveEntryData })
     } catch (e: any) {
       setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
@@ -190,13 +208,13 @@ function ScanTab() {
     }
   }
 
-  // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay
+  // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay (chỉ khi ĐÃ chọn kho)
   useWedgeScanner(code => {
     if (move.isPending || searching) return
     if (!gunMode) setGunMode(true)
     setScannerOpen(false)
     handleQRScan(code)
-  }, true)
+  }, !!warehouseId)
 
   const sameLoc = !!entry && !!newLocId && newLocId === entry.location_id
   const canMove = can(perms, 'inventory', 'move_location')
@@ -204,8 +222,8 @@ function ScanTab() {
 
   return (
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-      {/* Header */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl">
+      {/* Header — ô Kho BẮT BUỘC (khuôn WarehouseSingleSelect như trang Kiểm kê) */}
+      <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1.5">
         <div className="flex items-center gap-1.5 flex-wrap">
           <Move className="h-4 w-4 text-slate-500 shrink-0" />
           <p className="text-sm font-semibold text-slate-700">Chuyển vị trí</p>
@@ -218,10 +236,27 @@ function ScanTab() {
             <ClipboardCheck className="h-3 w-3" /> Mỗi lần chuyển được ghi 1 lượt kiểm kê của pallet
           </span>
         </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <WarehouseSingleSelect
+            warehouses={(warehouses as { id: string; code?: string; name: string }[]).filter(w => !allowedWhIds || allowedWhIds.has(w.id))}
+            value={warehouseId || ''}
+            onChange={v => { setMoveF({ warehouseId: v, page: 1 }); clearResult() }}
+            placeholder="Chọn kho…"
+            triggerClassName="h-9 sm:h-7 w-[160px]"
+          />
+          <span className="text-[10px] text-slate-400">1 mã pallet có thể tồn ở nhiều kho — chỉ tra trong kho đã chọn</span>
+        </div>
       </div>
 
       {/* Body */}
       <div className="flex-1 overflow-auto pb-20 lg:pb-4 px-3 py-3 space-y-3">
+        {!warehouseId && (
+          <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+            <Move className="h-8 w-8 mb-2 opacity-40" />
+            <p className="text-sm">Chọn kho để bắt đầu chuyển vị trí</p>
+          </div>
+        )}
+        {warehouseId && (<>
         {/* Input + scan */}
         <form onSubmit={e => { e.preventDefault(); handleSearch(inputVal) }}>
           <div className="flex gap-2">
@@ -400,6 +435,7 @@ function ScanTab() {
             </div>
           </div>
         )}
+        </>)}
       </div>
      </div>
   )

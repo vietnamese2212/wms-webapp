@@ -1117,15 +1117,20 @@ export async function bulkTransferMaterial(req: Request, res: Response) {
 // ─── Stocktake (kiểm kê / check vị trí) ──────────────────────
 
 export async function stocktakeCheck(req: Request, res: Response) {
-  const { qr_code } = req.body as { qr_code: string }
+  const { qr_code, warehouse_id } = req.body as { qr_code: string; warehouse_id?: string }
   const palletCode = normalizeQR(qr_code ?? '')   // tem V2 (`;`) đệm space từng đoạn → chuẩn hóa để khớp pallet_code đã lưu
   if (!palletCode) return fail(res, 400, 'INVALID_INPUT', 'Thiếu mã pallet')
 
-  const { data, error } = await supabase.from('InventoryEntry')
+  // warehouse_id (tùy chọn — màn Chuyển vị trí BẮT BUỘC gửi, user chốt 20/08): 1 mã pallet có thể
+  // tồn ở NHIỀU kho (mã trùng 2 kho — đã có gói QA 27 đo), không khoanh kho thì "dòng mới nhất"
+  // có thể là pallet của kho khác → chuyển nhầm hàng của kho người ta.
+  let q = supabase.from('InventoryEntry')
     .select(ENTRY_SELECT)
     .eq('pallet_code', palletCode)
     .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
     .gt('cartons_remaining', 0)   // bỏ pallet đã HẾT TỒN (remaining 0 = đã xuất hết, không kiểm)
+  if (warehouse_id) q = q.eq('warehouse_id', warehouse_id)
+  const { data, error } = await q
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()

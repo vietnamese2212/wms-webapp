@@ -1,13 +1,18 @@
-// Control Tower — Giám sát vận hành trong ngày (A1 roadmap 16/07): xe trong cổng + dwell,
-// tiến độ chuyến xuất, nhịp độ nhập/xuất theo giờ, trạm cân. Realtime + refetch 60s.
-// Chế độ TV: overlay tối full-screen treo màn hình kho (requestFullscreen, thoát = Esc/nút).
+// Control Tower — Giám sát vận hành trong ngày. 20/08: trình bày lại theo phong cách
+// Manhattan "Unified Distribution Control / Facility Console" (user đưa mẫu) — CONSOLE TỐI:
+//   · dải KPI chu trình (dwell xe, đăng ký→vào, vào→ra, tồn sạch %, tiến độ xuất)
+//   · rail RESOURCES trái (nhân sự theo khâu + top người quét + xe nâng + tồn bị giữ)
+//   · 2 panel INBOUND / OUTBOUND (số to + thanh trạng thái xếp chồng)
+//   · hàng DEPARTMENTS: card từng khâu với donut % (Cổng / Xuất / Nhặt lẻ / Nhập / Cân)
+//   · các khối chi tiết giữ nguyên (hàng theo mã, chuyến đang soạn, xe trong cổng, nhịp giờ)
+// Realtime + refetch 60s. Chế độ TV = fullscreen chính console này (đồng hồ to).
+// Dữ liệu: RPC control_tower_stats + control_tower_resources (BE gộp 1 request).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale } from 'lucide-react'
+import { Activity, Tv, X, Truck, PackageMinus, PackagePlus, Scale, Users, Forklift, ShieldAlert } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
-import { SummaryBand } from '@/components/shared/SummaryBand'
-import { useControlTower, useMaterials, useGateDwellThresholds, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip } from '@/api/hooks'
+import { useControlTower, useMaterials, useGateDwellThresholds, type ControlTowerData, type ControlTowerGateRow, type ControlTowerTrip, type ControlTowerResources } from '@/api/hooks'
 import { useScopedWarehouses, useScopedWhTypes } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatDate, formatTimestampTime } from '@/utils/formatters'
@@ -22,32 +27,38 @@ function dwellMinutes(entryAt: string | null, now: Date): number | null {
   if (isNaN(t)) return null
   return Math.max(0, Math.floor((now.getTime() - t) / 60000))
 }
-// Màu thời gian xe nằm trong cổng — dùng CHÍNH ngưỡng đã cấu hình của rule cảnh báo GATE_DWELL
-// (tab Cài đặt ngưỡng). Trước 14/08 màn này tô ĐỎ từ 90 phút trong khi hệ thống mới coi 90 là
-// "cảnh báo" và 180 mới "nghiêm trọng" ⇒ hai nơi nói khác nhau về cùng một con số.
 function dwellClass(mins: number | null, warn: number, crit: number): string {
   if (mins == null) return 'text-slate-400'
-  if (mins > crit) return 'text-red-600 font-semibold'
-  if (mins > warn) return 'text-amber-600 font-semibold'
-  return 'text-slate-500'
+  if (mins > crit) return 'text-red-500 font-semibold'
+  if (mins > warn) return 'text-amber-500 font-semibold'
+  return 'text-slate-400'
 }
 function fmtDwell(mins: number | null): string {
   if (mins == null) return '—'
   if (mins < 60) return `${mins}p`
   return `${Math.floor(mins / 60)}g${String(mins % 60).padStart(2, '0')}`
 }
+// KPI chu trình kiểu Manhattan: "hh:mm" + chú thích "giờ:phút"
+function fmtHM(mins: number | null | undefined): string {
+  if (mins == null) return '—'
+  return `${Math.floor(mins / 60)}:${String(Math.round(mins) % 60).padStart(2, '0')}`
+}
+const pctOf = (num: number, den: number): number | null =>
+  den > 0 ? Math.min(100, Math.round((num / den) * 100)) : null
 
-// ─── khối dùng chung (sáng / TV tối) ──────────────────────────────────────────
-function Block({ title, icon: Icon, count, dark, extra, children }: {
-  title: string; icon: typeof Truck; count?: number; dark?: boolean; extra?: React.ReactNode; children: React.ReactNode
+// ─── khối kiểu console (nền tối) ──────────────────────────────────────────────
+function Block({ title, icon: Icon, count, extra, children }: {
+  title: string; icon: typeof Truck; count?: number; extra?: React.ReactNode; children: React.ReactNode
 }) {
+  const dark = true
+  void dark
   return (
-    <div className={`rounded-lg border flex flex-col min-h-0 ${dark ? 'border-slate-700 bg-slate-800/60' : 'border-slate-200 bg-white'}`}>
-      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 border-b shrink-0 ${dark ? 'border-slate-700' : 'bg-slate-100 border-slate-200'}`}>
+    <div className="rounded-lg border flex flex-col min-h-0 border-slate-700 bg-slate-800/60">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b shrink-0 border-slate-700">
         <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
-        <Icon className={`h-3.5 w-3.5 ${dark ? 'text-slate-300' : 'text-slate-500'}`} />
-        <span className={`text-[10px] font-semibold uppercase tracking-wide ${dark ? 'text-slate-200' : 'text-slate-600'}`}>{title}</span>
-        {count != null && <span className={`text-[10px] font-semibold ${dark ? 'text-sky-300' : 'text-sky-600'}`}>({nf.format(count)})</span>}
+        <Icon className="h-3.5 w-3.5 text-slate-300" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-200">{title}</span>
+        {count != null && <span className="text-[10px] font-semibold text-sky-300">({nf.format(count)})</span>}
         {extra}
       </div>
       <div className="flex-1 min-h-0 overflow-auto">{children}</div>
@@ -55,43 +66,237 @@ function Block({ title, icon: Icon, count, dark, extra, children }: {
   )
 }
 
-// Dải tiến độ xuất hôm nay: KH / đã xuất / còn lại / % (user chốt 16/07)
-function OutProgressStrip({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+// Donut % kiểu Manhattan (conic-gradient, không thư viện)
+function Donut({ pct, color = '#22c55e', size = 56 }: { pct: number | null; color?: string; size?: number }) {
+  const p = pct ?? 0
+  return (
+    <div className="rounded-full grid place-items-center shrink-0"
+      style={{ width: size, height: size, background: `conic-gradient(${color} ${p * 3.6}deg, #334155 0deg)` }}>
+      <div className="rounded-full bg-slate-800 grid place-items-center"
+        style={{ width: size - 12, height: size - 12 }}>
+        <span className="text-[13px] font-semibold tabular-nums text-white">{pct == null ? '—' : `${p}%`}</span>
+      </div>
+    </div>
+  )
+}
+
+// Ô KPI chu trình (dải trên cùng)
+function KpiTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: 'ok' | 'warn' | 'crit' }) {
+  const vCls = accent === 'crit' ? 'text-red-400' : accent === 'warn' ? 'text-amber-400' : accent === 'ok' ? 'text-green-400' : 'text-white'
+  return (
+    <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2 min-w-0">
+      <div className="text-[9px] uppercase tracking-wide text-slate-400 truncate" title={label}>{label}</div>
+      <div className={`text-2xl font-semibold tabular-nums leading-tight ${vCls}`}>{value}</div>
+      {sub && <div className="text-[9px] text-slate-500 truncate" title={sub}>{sub}</div>}
+    </div>
+  )
+}
+
+// Thanh trạng thái xếp chồng (INBOUND/OUTBOUND panel)
+function StackBar({ segs }: { segs: { v: number; cls: string; label: string }[] }) {
+  const total = segs.reduce((s, x) => s + x.v, 0)
+  return (
+    <div className="h-3 rounded bg-slate-700 flex overflow-hidden">
+      {total > 0 && segs.filter(s => s.v > 0).map((s, i) => (
+        <div key={i} className={`${s.cls} h-3`} style={{ width: `${(s.v / total) * 100}%` }}
+          title={`${s.label}: ${nf.format(s.v)}`} />
+      ))}
+    </div>
+  )
+}
+function LegendNum({ dot, label, value, to }: { dot: string; label: string; value: number | string; to?: string }) {
+  const inner = (
+    <span className="flex items-center gap-1.5 min-w-0">
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+      <span className="text-[10px] text-slate-400 truncate">{label}</span>
+      <span className="text-base italic font-semibold tabular-nums text-slate-100">{typeof value === 'number' ? nf.format(value) : value}</span>
+    </span>
+  )
+  return to ? <Link to={to} className="hover:opacity-80">{inner}</Link> : inner
+}
+
+// Card từng KHÂU (hàng DEPARTMENTS) — donut % + vài dòng số + link mở trang
+function DeptCard({ title, pct, color, big, rows, to }: {
+  title: string; pct: number | null; color?: string; big?: string
+  rows: { label: string; value: string; cls?: string }[]; to: string
+}) {
+  return (
+    <Link to={to} className="rounded-lg border border-slate-700 bg-slate-800/60 hover:border-slate-500 transition-colors flex flex-col min-w-0">
+      <div className="px-2.5 py-1.5 border-b border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-300 text-center">{title}</div>
+      <div className="flex items-center gap-2.5 px-2.5 py-2 flex-1">
+        {big != null
+          ? <div className="text-2xl font-semibold tabular-nums text-white shrink-0">{big}</div>
+          : <Donut pct={pct} color={color} />}
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {rows.map(r => (
+            <div key={r.label} className="flex items-baseline justify-between gap-2 text-[10px]">
+              <span className="text-slate-400 truncate">{r.label}</span>
+              <span className={`tabular-nums font-semibold ${r.cls ?? 'text-slate-100'}`}>{r.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+// ─── rail RESOURCES (trái) — nhân sự + xe nâng + tồn bị giữ ───────────────────
+function ResourceRail({ r }: { r: ControlTowerResources }) {
+  const maxScans = Math.max(1, ...r.top_out.map(t => t.scans))
+  const row = (label: string, n: number, sub: string) => (
+    <div className="flex items-baseline justify-between gap-2 px-2.5 py-1 text-[10px]">
+      <span className="text-slate-400">{label}</span>
+      <span className="tabular-nums text-slate-100"><b className="text-sm">{nf.format(n)}</b> người · {sub}</span>
+    </div>
+  )
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/60 flex flex-col min-h-0">
+      <div className="px-2.5 py-1.5 border-b border-slate-700 flex items-center gap-1.5">
+        <Users className="h-3.5 w-3.5 text-slate-300" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-200">Nguồn lực hôm nay</span>
+      </div>
+
+      <div className="py-1 border-b border-slate-700/60">
+        <div className="px-2.5 pt-1 text-[9px] uppercase text-slate-500">Nhân sự theo khâu</div>
+        {row('Quét xuất', r.staff_out.n, `${nf.format(r.staff_out.scans)} lượt`)}
+        {row('Nhập kho', r.staff_in.n, `${nf.format(r.staff_in.pallets)} pallet`)}
+        {row('Kiểm / chuyển vị trí', r.stocktake.n, `${nf.format(r.stocktake.checks)} lượt`)}
+        {r.stocktake.moves > 0 && (
+          <div className="px-2.5 pb-1 text-[9px] text-slate-500">trong đó {nf.format(r.stocktake.moves)} lượt chuyển vị trí</div>
+        )}
+      </div>
+
+      {r.top_out.length > 0 && (
+        <div className="py-1 border-b border-slate-700/60">
+          <div className="px-2.5 pt-1 pb-0.5 text-[9px] uppercase text-slate-500">Top người quét xuất</div>
+          {r.top_out.map(t => (
+            <div key={t.name} className="px-2.5 py-0.5">
+              <div className="flex items-baseline justify-between gap-2 text-[10px]">
+                <span className="text-slate-300 truncate" title={t.name}>{t.name}</span>
+                <span className="tabular-nums text-slate-100 font-semibold">{nf.format(t.scans)}</span>
+              </div>
+              <div className="h-1 rounded bg-slate-700 mt-0.5">
+                <div className="h-1 rounded bg-sky-500" style={{ width: `${(t.scans / maxScans) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="py-1 border-b border-slate-700/60">
+        <div className="px-2.5 pt-1 pb-0.5 text-[9px] uppercase text-slate-500 flex items-center gap-1">
+          <Forklift className="h-3 w-3" /> Xe nâng (check list ngày)
+        </div>
+        <div className="px-2.5 pb-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+          <span className="text-slate-400">Hoạt động</span>
+          <span className="text-right tabular-nums font-semibold text-green-400">{nf.format(r.forklift.active)}</span>
+          <span className="text-slate-400">Xe nghỉ</span>
+          <span className="text-right tabular-nums font-semibold text-slate-200">{nf.format(r.forklift.idle)}</span>
+          <span className="text-slate-400">Chưa check</span>
+          <span className={`text-right tabular-nums font-semibold ${r.forklift.unchecked > 0 ? 'text-amber-400' : 'text-slate-200'}`}>{nf.format(r.forklift.unchecked)}</span>
+          <span className="text-slate-400">Hạng mục lỗi</span>
+          <span className={`text-right tabular-nums font-semibold ${r.forklift.issues > 0 ? 'text-red-400' : 'text-slate-200'}`}>{nf.format(r.forklift.issues)}</span>
+        </div>
+        <Link to="/wms/forklift" className="block px-2.5 pb-1 text-[9px] text-sky-400 hover:underline">Mở trang Xe nâng →</Link>
+      </div>
+
+      <div className="py-1.5 px-2.5">
+        <div className="text-[9px] uppercase text-slate-500 flex items-center gap-1"><ShieldAlert className="h-3 w-3" /> Tồn bị giữ (QA / cách ly)</div>
+        <div className="mt-0.5 text-[10px] text-slate-400">
+          <b className={`text-sm tabular-nums ${r.inventory.locked > 0 ? 'text-amber-400' : 'text-green-400'}`}>{nf.format(r.inventory.locked)}</b>
+          {' '}/ {nf.format(r.inventory.total)} pallet đang tồn
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── dải tiến độ xuất (giữ từ bản cũ — user chốt 16/07) ───────────────────────
+function OutProgressStrip({ data }: { data: ControlTowerData }) {
   const o = data.outbound
   const remaining = Math.max(0, o.planned - o.scanned)
-  const pct = o.planned > 0 ? Math.min(100, Math.round((o.scanned / o.planned) * 100)) : 0
+  const pct = pctOf(o.scanned, o.planned) ?? 0
   const full = o.planned > 0 && o.scanned >= o.planned
-  const lbl = `text-[9px] uppercase ${dark ? 'text-slate-400' : 'text-slate-500'}`
-  const num = `font-semibold tabular-nums ${dark ? 'text-white' : 'text-slate-800'}`
   return (
-    <div className={`px-3 py-2 border-b ${dark ? 'border-slate-700 bg-slate-800/60 rounded-lg border' : 'bg-white border-slate-200'}`}>
+    <div className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60">
       <div className="flex items-center gap-4 flex-wrap">
-        <span className={`text-[10px] font-semibold uppercase tracking-wide ${dark ? 'text-slate-200' : 'text-slate-600'}`}>Tiến độ xuất hôm nay</span>
-        <span className={lbl}>Kế hoạch <span className={`${num} text-sm`}>{nf.format(o.planned)}</span></span>
-        <span className={lbl}>Đã xuất <span className={`${num} text-sm ${full ? '!text-green-500' : '!text-sky-500'}`}>{nf.format(o.scanned)}</span></span>
-        <span className={lbl}>Còn lại <span className={`${num} text-sm ${remaining > 0 ? '!text-amber-500' : ''}`}>{nf.format(remaining)}</span></span>
-        <span className={`ml-auto text-lg font-semibold tabular-nums ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>{pct}%</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-200">Tiến độ xuất hôm nay</span>
+        <span className="text-[9px] uppercase text-slate-400">Kế hoạch <span className="font-semibold tabular-nums text-white text-sm">{nf.format(o.planned)}</span></span>
+        <span className="text-[9px] uppercase text-slate-400">Đã xuất <span className={`font-semibold tabular-nums text-sm ${full ? 'text-green-400' : 'text-sky-400'}`}>{nf.format(o.scanned)}</span></span>
+        <span className="text-[9px] uppercase text-slate-400">Còn lại <span className={`font-semibold tabular-nums text-sm ${remaining > 0 ? 'text-amber-400' : 'text-white'}`}>{nf.format(remaining)}</span></span>
+        <span className={`ml-auto text-lg font-semibold tabular-nums ${full ? 'text-green-400' : 'text-sky-300'}`}>{pct}%</span>
       </div>
-      <div className={`mt-1.5 h-2.5 rounded ${dark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+      <div className="mt-1.5 h-2.5 rounded bg-slate-700">
         <div className={`h-2.5 rounded ${full ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   )
 }
 
-// Hàng XUẤT hôm nay theo mã — KIỂU ĐIỀU HÀNH cho ngày cả trăm/nghìn mã (user 17/07):
-// server sort mã CÒN THIẾU nhiều nhất lên đầu (top 30), mã đã đủ gộp thành số đếm ở header.
-function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+// ─── 2 panel INBOUND / OUTBOUND (legend số to + thanh xếp chồng) ──────────────
+function OutboundPanel({ data }: { data: ControlTowerData }) {
+  const o = data.outbound
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/60">
+      <div className="px-2.5 py-1.5 border-b border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-300 text-center">Outbound — chuyến xuất</div>
+      <div className="px-3 py-2 space-y-1.5">
+        <div className="flex items-center gap-4 flex-wrap">
+          <LegendNum dot="bg-slate-400" label="Chờ soạn" value={o.pending} to="/wms/outbound" />
+          <LegendNum dot="bg-sky-500" label="Đang soạn" value={o.in_progress} to="/wms/outbound" />
+          {o.paused > 0 && <LegendNum dot="bg-red-500" label="Tạm dừng" value={o.paused} to="/wms/outbound" />}
+          <LegendNum dot="bg-green-500" label="Hoàn thành" value={o.completed} to="/wms/outbound" />
+          <span className="ml-auto text-[10px] text-slate-500">{nf.format(o.total)} chuyến</span>
+        </div>
+        <StackBar segs={[
+          { v: o.pending, cls: 'bg-slate-400', label: 'Chờ soạn' },
+          { v: o.in_progress, cls: 'bg-sky-500', label: 'Đang soạn' },
+          { v: o.paused, cls: 'bg-red-500', label: 'Tạm dừng' },
+          { v: o.completed, cls: 'bg-green-500', label: 'Hoàn thành' },
+        ]} />
+      </div>
+    </div>
+  )
+}
+function InboundPanel({ data }: { data: ControlTowerData }) {
+  const i = data.inbound
+  const hours = data.hourly ?? []
+  const maxIn = Math.max(1, ...hours.map(h => h.in_pallets))
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/60">
+      <div className="px-2.5 py-1.5 border-b border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-300 text-center">Inbound — nhận hàng</div>
+      <div className="px-3 py-2 space-y-1.5">
+        <div className="flex items-center gap-4 flex-wrap">
+          <LegendNum dot="bg-violet-500" label="Phiếu nhập" value={i.orders} to="/wms/inbound" />
+          <LegendNum dot="bg-green-500" label="Pallet đã nhận" value={i.pallets} to="/wms/inbound" />
+          <span className="text-[10px] text-slate-400" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}
+            <span className="ml-1 text-base italic font-semibold tabular-nums text-slate-100">{nf.format(i.cartons)}</span>
+          </span>
+        </div>
+        {/* nhịp pallet nhận theo giờ — thu nhỏ trong panel */}
+        <div className="flex items-end gap-px h-6">
+          {hours.map(h => (
+            <div key={h.h} className="flex-1 rounded-t bg-green-500/80"
+              style={{ height: `${Math.round((h.in_pallets / maxIn) * 100)}%`, minHeight: h.in_pallets ? 2 : 0 }}
+              title={`${h.h}h — ${nf.format(h.in_pallets)} pallet`} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── các khối chi tiết (giữ từ bản cũ, cố định nền tối) ───────────────────────
+function OutMatBlock({ data }: { data: ControlTowerData }) {
   const list = data.out_by_material?.list ?? []
   const total = data.out_by_material?.n_materials ?? 0
   const nDone = data.out_by_material?.n_done ?? 0
   const nShort = data.out_by_material?.n_short ?? 0
   return (
-    <Block title="Hàng xuất hôm nay theo mã" icon={PackageMinus} count={total} dark={dark}
+    <Block title="Hàng xuất hôm nay theo mã" icon={PackageMinus} count={total}
       extra={total > 0 ? (
         <span className="ml-auto flex items-center gap-1.5 text-[9px] font-medium">
-          <span className={`px-1.5 py-0.5 rounded-full ${dark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'}`}>{nf.format(nDone)} đủ</span>
-          <span className={`px-1.5 py-0.5 rounded-full ${nShort > 0 ? (dark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700') : (dark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>{nf.format(nShort)} còn thiếu</span>
+          <span className="px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">{nf.format(nDone)} đủ</span>
+          <span className={`px-1.5 py-0.5 rounded-full ${nShort > 0 ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-400'}`}>{nf.format(nShort)} còn thiếu</span>
         </span>
       ) : undefined}>
       {list.length === 0 ? (
@@ -99,7 +304,7 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
       ) : (
         <table className="w-full">
           <thead>
-            <tr className={`text-[8px] uppercase ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+            <tr className="text-[8px] uppercase text-slate-500">
               <th className="px-2.5 py-1 text-left font-medium">Mã hàng</th>
               <th className="px-1 py-1 text-right font-medium">KH</th>
               <th className="px-1 py-1 text-right font-medium">Đã xuất</th>
@@ -110,23 +315,23 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
           <tbody>
             {list.map(m => {
               const remaining = Math.max(0, m.ordered - m.scanned)
-              const pct = m.ordered > 0 ? Math.min(100, Math.round((m.scanned / m.ordered) * 100)) : 0
+              const pct = pctOf(m.scanned, m.ordered) ?? 0
               const full = m.ordered > 0 && m.scanned >= m.ordered
               return (
-                <tr key={m.code} className={`border-b last:border-0 ${dark ? 'border-slate-700/60' : 'border-slate-100'}`}>
+                <tr key={m.code} className="border-b last:border-0 border-slate-700/60">
                   <td className="px-2.5 py-1 whitespace-nowrap">
-                    <div className={`text-[10px] font-medium truncate max-w-[180px] ${dark ? 'text-white' : 'text-slate-700'}`} title={`${m.code} — ${m.name}`}>{m.name}</div>
-                    <div className={`text-[8px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{m.code} · {m.category}{m.loose > 0 ? ` · lẻ ${nf.format(m.loose)}` : ''}</div>
+                    <div className="text-[10px] font-medium truncate max-w-[180px] text-white" title={`${m.code} — ${m.name}`}>{m.name}</div>
+                    <div className="text-[8px] text-slate-500">{m.code} · {m.category}{m.loose > 0 ? ` · lẻ ${nf.format(m.loose)}` : ''}</div>
                   </td>
-                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${dark ? 'text-slate-300' : 'text-slate-600'}`}>{nf.format(m.ordered)}</td>
-                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>{nf.format(m.scanned)}</td>
-                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${remaining > 0 ? 'text-amber-600' : dark ? 'text-slate-500' : 'text-slate-400'}`}>{nf.format(remaining)}</td>
+                  <td className="px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-300">{nf.format(m.ordered)}</td>
+                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap ${full ? 'text-green-500' : 'text-sky-300'}`}>{nf.format(m.scanned)}</td>
+                  <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${remaining > 0 ? 'text-amber-500' : 'text-slate-500'}`}>{nf.format(remaining)}</td>
                   <td className="px-2.5 py-1 w-24">
                     <div className="flex items-center gap-1">
-                      <div className={`flex-1 h-1.5 rounded ${dark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                      <div className="flex-1 h-1.5 rounded bg-slate-700">
                         <div className={`h-1.5 rounded ${full ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pct}%` }} />
                       </div>
-                      <span className={`text-[9px] tabular-nums w-7 text-right ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{pct}%</span>
+                      <span className="text-[9px] tabular-nums w-7 text-right text-slate-400">{pct}%</span>
                     </div>
                   </td>
                 </tr>
@@ -136,7 +341,7 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
         </table>
       )}
       {total > list.length && (
-        <p className={`px-2.5 py-1 text-[9px] border-t ${dark ? 'text-slate-500 border-slate-700/60' : 'text-slate-400 border-slate-100'}`}>
+        <p className="px-2.5 py-1 text-[9px] border-t text-slate-500 border-slate-700/60">
           Hiện 30 mã cần chú ý nhất (còn thiếu nhiều nhất) trong {nf.format(total)} mã — lọc Kho / Loại kho / Mã hàng để soi phần còn lại.
         </p>
       )}
@@ -144,19 +349,14 @@ function OutMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
   )
 }
 
-// Hàng NHẬP hôm nay theo mã
-function InMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+function InMatBlock({ data }: { data: ControlTowerData }) {
   const list = data.in_by_material?.list ?? []
   const total = data.in_by_material?.n_materials ?? 0
   const orders = data.inbound.orders
   return (
-    <Block title="Hàng nhập hôm nay theo mã" icon={PackagePlus} count={total} dark={dark}
-      // Số PHIẾU nhập đi kèm: pallet có thể sinh từ upload Tồn kho (không qua phiếu) — 0 phiếu mà
-      // hàng nghìn pallet là dấu hiệu số liệu đến từ upload, không phải nhận hàng thật.
+    <Block title="Hàng nhập hôm nay theo mã" icon={PackagePlus} count={total}
       extra={
-        <span className={`ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded-full ${orders > 0
-          ? (dark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700')
-          : (dark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}
+        <span className={`ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded-full ${orders > 0 ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'}`}
           title="Số phiếu nhập (lệnh nhập) trong ngày. Pallet không đi kèm phiếu = tạo từ upload Tồn kho.">
           {nf.format(orders)} phiếu nhập
         </span>
@@ -166,24 +366,23 @@ function InMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
       ) : (
         <table className="w-full">
           <thead>
-            <tr className={`text-[8px] uppercase ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+            <tr className="text-[8px] uppercase text-slate-500">
               <th className="px-2.5 py-1 text-left font-medium">Mã hàng</th>
               <th className="px-1 py-1 text-right font-medium">Pallet</th>
-              {/* Cột này KHÔNG mang đơn vị cố định: mã không có quy cách trả base thô (EA/KG) — ĐVT in theo từng dòng */}
               <th className="px-2.5 py-1 text-right font-medium" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}</th>
             </tr>
           </thead>
           <tbody>
             {list.map(m => (
-              <tr key={m.code} className={`border-b last:border-0 ${dark ? 'border-slate-700/60' : 'border-slate-100'}`}>
+              <tr key={m.code} className="border-b last:border-0 border-slate-700/60">
                 <td className="px-2.5 py-1 whitespace-nowrap">
-                  <div className={`text-[10px] font-medium truncate max-w-[200px] ${dark ? 'text-white' : 'text-slate-700'}`} title={`${m.code} — ${m.name}`}>{m.name}</div>
-                  <div className={`text-[8px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{m.code} · {m.category}</div>
+                  <div className="text-[10px] font-medium truncate max-w-[200px] text-white" title={`${m.code} — ${m.name}`}>{m.name}</div>
+                  <div className="text-[8px] text-slate-500">{m.code} · {m.category}</div>
                 </td>
-                <td className={`px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap ${dark ? 'text-slate-300' : 'text-slate-600'}`}>{nf.format(m.pallets)}</td>
-                <td className={`px-2.5 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap ${dark ? 'text-green-400' : 'text-green-600'}`}>
+                <td className="px-1 py-1 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-300">{nf.format(m.pallets)}</td>
+                <td className="px-2.5 py-1 text-right text-[10px] tabular-nums font-semibold whitespace-nowrap text-green-400">
                   {nf.format(m.cartons)}
-                  {m.unit && <span className={`ml-1 font-normal ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{m.unit}</span>}
+                  {m.unit && <span className="ml-1 font-normal text-slate-500">{m.unit}</span>}
                 </td>
               </tr>
             ))}
@@ -194,34 +393,34 @@ function InMatBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
   )
 }
 
-function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dark?: boolean }) {
+function GateBlock({ data, now }: { data: ControlTowerData; now: Date }) {
   const dwellTh = useGateDwellThresholds()   // cùng ngưỡng với cảnh báo GATE_DWELL
   const list = data.gate.inside_list ?? []
   return (
-    <Block title="Xe trong cổng" icon={Truck} count={data.gate.inside} dark={dark}>
+    <Block title="Xe trong cổng" icon={Truck} count={data.gate.inside}>
       {list.length === 0 ? (
-        <p className={`px-3 py-4 text-[11px] ${dark ? 'text-slate-400' : 'text-slate-400'}`}>Không có xe nào trong cổng.</p>
+        <p className="px-3 py-4 text-[11px] text-slate-400">Không có xe nào trong cổng.</p>
       ) : (
         <table className="w-full">
           <tbody>
             {list.map((g: ControlTowerGateRow, i) => {
               const mins = dwellMinutes(g.entry_at, now)
               return (
-                <tr key={i} className={`border-b last:border-0 ${dark ? 'border-slate-700/60' : 'border-slate-100'}`}>
-                  <td className={`px-2.5 py-1 text-[11px] font-mono font-semibold whitespace-nowrap ${dark ? 'text-white' : ''}`}>{g.plate ?? '—'}</td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-300' : 'text-slate-600'}`}>
+                <tr key={i} className="border-b last:border-0 border-slate-700/60">
+                  <td className="px-2.5 py-1 text-[11px] font-mono font-semibold whitespace-nowrap text-white">{g.plate ?? '—'}</td>
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-300">
                     <span className={`px-1 rounded border text-[9px] font-medium mr-1 ${g.direction === 'INBOUND' ? 'text-green-500 border-green-400/60' : 'text-sky-500 border-sky-400/60'}`}>
                       {g.direction === 'INBOUND' ? 'Nhập' : 'Xuất'}
                     </span>
                     <span className="truncate">{g.company ?? '—'}</span>
                   </td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_name ?? '—'}</td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.warehouse_type ?? <span className="text-slate-300">—</span>}</td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.vehicle_type ?? <span className="text-slate-300">—</span>}</td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {g.content ? <span className="block truncate max-w-[140px]" title={g.content}>{g.content}</span> : <span className="text-slate-300">—</span>}
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">{g.warehouse_name ?? '—'}</td>
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">{g.warehouse_type ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">{g.vehicle_type ?? <span className="text-slate-600">—</span>}</td>
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">
+                    {g.content ? <span className="block truncate max-w-[140px]" title={g.content}>{g.content}</span> : <span className="text-slate-600">—</span>}
                   </td>
-                  <td className={`px-2 py-1 text-[10px] whitespace-nowrap ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{g.entry_at ? formatTimestampTime(g.entry_at).slice(0, 5) : '—'}</td>
+                  <td className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-400">{g.entry_at ? formatTimestampTime(g.entry_at).slice(0, 5) : '—'}</td>
                   <td className={`px-2.5 py-1 text-[10px] text-right whitespace-nowrap tabular-nums ${dwellClass(mins, dwellTh.warn, dwellTh.crit)}`}>{fmtDwell(mins)}</td>
                 </tr>
               )
@@ -233,33 +432,33 @@ function GateBlock({ data, now, dark }: { data: ControlTowerData; now: Date; dar
   )
 }
 
-function TripsBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+function TripsBlock({ data }: { data: ControlTowerData }) {
   const list = data.outbound.active ?? []
   return (
-    <Block title="Chuyến đang soạn hàng" icon={PackageMinus} count={list.length} dark={dark}>
+    <Block title="Chuyến đang soạn hàng" icon={PackageMinus} count={list.length}>
       {list.length === 0 ? (
         <p className="px-3 py-4 text-[11px] text-slate-400">Chưa có chuyến nào đang chạy.</p>
       ) : (
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-700/60">
           {list.map((t: ControlTowerTrip) => {
-            const pct = t.planned > 0 ? Math.min(100, Math.round((t.scanned / t.planned) * 100)) : 0
+            const pct = pctOf(t.scanned, t.planned) ?? 0
             const full = t.planned > 0 && t.scanned >= t.planned
             return (
-              <div key={t.id} className={`px-2.5 py-1.5 ${dark ? 'border-slate-700/60' : ''}`}>
+              <div key={t.id} className="px-2.5 py-1.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[11px] font-mono font-semibold ${dark ? 'text-white' : ''}`}>{t.group_code}</span>
-                  <span className={`text-[9px] px-1 rounded border font-medium ${dark ? 'text-sky-400 border-sky-500/60' : 'text-sky-500 border-sky-400/60'}`}>Xuất</span>
-                  {t.status === 'PAUSED' && <span className="text-[9px] px-1.5 rounded-full bg-red-100 text-red-600 font-medium">Tạm dừng</span>}
-                  {t.npp && <span className={`text-[10px] font-medium truncate max-w-[160px] ${dark ? 'text-slate-200' : 'text-slate-600'}`} title={t.npp}>{t.npp}</span>}
-                  <span className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{t.plate ?? ''}</span>
-                  {t.warehouse_type && <span className={`text-[9px] px-1 rounded border ${dark ? 'text-sky-300 border-sky-500/50' : 'text-sky-600 border-sky-300'}`}>{t.warehouse_type}</span>}
-                  {t.export_type && <span className={`text-[9px] ${dark ? 'text-slate-500' : 'text-slate-400'}`} title="Loại xe">{t.export_type}</span>}
-                  {t.n_materials > 0 && <span className={`text-[9px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{t.n_materials} mã</span>}
-                  <span className={`ml-auto text-[10px] tabular-nums font-semibold ${full ? 'text-green-500' : dark ? 'text-sky-300' : 'text-sky-600'}`}>
+                  <span className="text-[11px] font-mono font-semibold text-white">{t.group_code}</span>
+                  <span className="text-[9px] px-1 rounded border font-medium text-sky-400 border-sky-500/60">Xuất</span>
+                  {t.status === 'PAUSED' && <span className="text-[9px] px-1.5 rounded-full bg-red-500/20 text-red-400 font-medium">Tạm dừng</span>}
+                  {t.npp && <span className="text-[10px] font-medium truncate max-w-[160px] text-slate-200" title={t.npp}>{t.npp}</span>}
+                  <span className="text-[10px] text-slate-400">{t.plate ?? ''}</span>
+                  {t.warehouse_type && <span className="text-[9px] px-1 rounded border text-sky-300 border-sky-500/50">{t.warehouse_type}</span>}
+                  {t.export_type && <span className="text-[9px] text-slate-500" title="Loại xe">{t.export_type}</span>}
+                  {t.n_materials > 0 && <span className="text-[9px] text-slate-500">{t.n_materials} mã</span>}
+                  <span className={`ml-auto text-[10px] tabular-nums font-semibold ${full ? 'text-green-500' : 'text-sky-300'}`}>
                     {nf.format(t.scanned)}/{nf.format(t.planned)} · {pct}%
                   </span>
                 </div>
-                <div className={`mt-1 h-1.5 rounded ${dark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                <div className="mt-1 h-1.5 rounded bg-slate-700">
                   <div className={`h-1.5 rounded ${full ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${pct}%` }} />
                 </div>
               </div>
@@ -271,7 +470,7 @@ function TripsBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) 
   )
 }
 
-function HourlyBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+function HourlyBlock({ data }: { data: ControlTowerData }) {
   const rows = data.hourly ?? []
   const byH = new Map(rows.map(r => [r.h, r]))
   const dataHours = rows.map(r => r.h)
@@ -280,7 +479,7 @@ function HourlyBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
   const hours = Array.from({ length: to - from + 1 }, (_, i) => from + i)
   const maxV = Math.max(1, ...rows.map(r => Math.max(r.out_cartons, r.in_pallets)))
   return (
-    <Block title="Nhịp độ theo giờ (SL xuất quy đổi / pallet nhập)" icon={Activity} dark={dark}>
+    <Block title="Nhịp độ theo giờ (SL xuất quy đổi / pallet nhập)" icon={Activity}>
       <div className="px-2.5 py-2">
         <div className="flex items-end gap-1 h-28">
           {hours.map(h => {
@@ -298,10 +497,10 @@ function HourlyBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
         </div>
         <div className="flex gap-1 mt-0.5">
           {hours.map(h => (
-            <div key={h} className={`flex-1 text-center text-[8px] ${dark ? 'text-slate-500' : 'text-slate-400'}`}>{h}</div>
+            <div key={h} className="flex-1 text-center text-[8px] text-slate-500">{h}</div>
           ))}
         </div>
-        <div className={`flex items-center gap-3 mt-1.5 text-[9px] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>
+        <div className="flex items-center gap-3 mt-1.5 text-[9px] text-slate-400">
           <span className="flex items-center gap-1" title={QTY_CONVERTED_TIP}><span className="w-2 h-2 rounded-sm bg-sky-500 inline-block" /> SL xuất (quy đổi)</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500 inline-block" /> Pallet nhập</span>
         </div>
@@ -310,24 +509,121 @@ function HourlyBlock({ data, dark }: { data: ControlTowerData; dark?: boolean })
   )
 }
 
-function WeighBlock({ data, dark }: { data: ControlTowerData; dark?: boolean }) {
+function WeighBlock({ data }: { data: ControlTowerData }) {
   const w = data.weigh
-  const cell = `flex-1 rounded-md px-3 py-2 ${dark ? 'bg-slate-700/50' : 'bg-slate-50'}`
-  const label = `text-[9px] uppercase ${dark ? 'text-slate-400' : 'text-slate-500'}`
-  const num = `text-xl font-semibold tabular-nums ${dark ? 'text-white' : 'text-slate-800'}`
+  const cell = 'flex-1 rounded-md px-3 py-2 bg-slate-700/50'
+  const label = 'text-[9px] uppercase text-slate-400'
+  const num = 'text-xl font-semibold tabular-nums text-white'
   return (
-    <Block title="Trạm cân hôm nay" icon={Scale} dark={dark}>
+    <Block title="Trạm cân hôm nay" icon={Scale}>
       <div className="p-2.5 flex gap-2">
         <div className={cell}><div className={label}>Lượt cân</div><div className={num}>{nf.format(w.tickets)}</div></div>
-        <div className={cell}><div className={label}>Chờ cân lần 2</div><div className={`${num} ${w.pending2 > 0 ? '!text-amber-500' : ''}`}>{nf.format(w.pending2)}</div></div>
+        <div className={cell}><div className={label}>Chờ cân lần 2</div><div className={`${num} ${w.pending2 > 0 ? '!text-amber-400' : ''}`}>{nf.format(w.pending2)}</div></div>
         <div className={cell}><div className={label}>KL hàng (tấn)</div><div className={num}>{nf.format(Math.round(w.net_kg / 100) / 10)}</div></div>
       </div>
-      {!dark && (
-        <p className="px-2.5 pb-2 text-[10px]">
-          <Link to="/wms/weigh-tickets" className="text-sky-600 hover:underline">Mở trang Phiếu cân →</Link>
-        </p>
-      )}
+      <p className="px-2.5 pb-2 text-[10px]">
+        <Link to="/wms/weigh-tickets" className="text-sky-400 hover:underline">Mở trang Phiếu cân →</Link>
+      </p>
     </Block>
+  )
+}
+
+// ─── thân console (dùng chung màn thường + TV) ────────────────────────────────
+function ConsoleBody({ data, now }: { data: ControlTowerData; now: Date }) {
+  const dwellTh = useGateDwellThresholds()
+  const r = data.resources ?? null
+
+  // KPI chu trình — dwell TB xe ĐANG trong cổng tính sống từ danh sách
+  const insideMins = (data.gate.inside_list ?? [])
+    .map(g => dwellMinutes(g.entry_at, now)).filter((m): m is number => m != null)
+  const dwellAvg = insideMins.length ? Math.round(insideMins.reduce((s, m) => s + m, 0) / insideMins.length) : null
+  const cleanPct = r && r.inventory.total > 0 ? Math.round(((r.inventory.total - r.inventory.locked) / r.inventory.total) * 100) : null
+  const outPct = pctOf(data.outbound.scanned, data.outbound.planned)
+  const loosePct = pctOf(data.outbound.loose_scanned ?? 0, data.outbound.loose_planned ?? 0)
+  const gateTotal = data.gate.registered + data.gate.called + data.gate.inside + data.gate.completed
+  const weighDonePct = pctOf(data.weigh.tickets - data.weigh.pending2, data.weigh.tickets)
+
+  return (
+    <div className="space-y-3">
+      {/* Dải KPI chu trình (kiểu Manhattan hh:mm) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
+        <KpiTile label="Xe trong cổng — dwell TB" value={fmtHM(dwellAvg)}
+          sub={`giờ:phút · ${nf.format(data.gate.inside)} xe đang trong cổng`}
+          accent={dwellAvg == null ? undefined : dwellAvg > dwellTh.crit ? 'crit' : dwellAvg > dwellTh.warn ? 'warn' : 'ok'} />
+        <KpiTile label="Đăng ký → vào cổng TB" value={fmtHM(r?.gate_cycle.wait_mins)} sub="giờ:phút · hôm nay" />
+        <KpiTile label="Vào → ra cổng TB" value={fmtHM(r?.gate_cycle.inout_mins)}
+          sub={`giờ:phút · ${nf.format(r?.gate_cycle.done_n ?? 0)} xe đã ra`} />
+        <KpiTile label="Tồn sạch / QA giữ" value={cleanPct == null ? '—' : `${cleanPct}%`}
+          sub={r ? `${nf.format(r.inventory.locked)} pallet đang bị giữ` : ''}
+          accent={cleanPct == null ? undefined : cleanPct >= 97 ? 'ok' : cleanPct >= 90 ? 'warn' : 'crit'} />
+        <KpiTile label="Tiến độ xuất hôm nay" value={outPct == null ? '—' : `${outPct}%`}
+          sub={`${nf.format(data.outbound.scanned)} / ${nf.format(data.outbound.planned)} (quy đổi)`}
+          accent={outPct != null && outPct >= 100 ? 'ok' : undefined} />
+        <KpiTile label="Xe nâng hoạt động" value={r ? `${r.forklift.active}/${r.forklift.total}` : '—'}
+          sub={r && r.forklift.unchecked > 0 ? `${r.forklift.unchecked} xe chưa check` : 'đã check đủ'}
+          accent={r && r.forklift.unchecked > 0 ? 'warn' : undefined} />
+      </div>
+
+      {/* Rail RESOURCES + panel chính */}
+      <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-3">
+        {r
+          ? <ResourceRail r={r} />
+          : <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-3 text-[11px] text-slate-500">Khối nguồn lực chưa sẵn sàng (chưa apply RPC control_tower_resources).</div>}
+        <div className="space-y-3 min-w-0">
+          <OutProgressStrip data={data} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <OutboundPanel data={data} />
+            <InboundPanel data={data} />
+          </div>
+          {/* Hàng DEPARTMENTS — mỗi khâu một card, bấm là mở trang khâu đó */}
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
+            <DeptCard title="Cổng" to="/tms/gate" color="#38bdf8"
+              pct={pctOf(data.gate.completed, gateTotal)}
+              rows={[
+                { label: 'Trong cổng', value: nf.format(data.gate.inside), cls: data.gate.inside > 0 ? 'text-amber-400' : undefined },
+                { label: 'Chờ gọi', value: nf.format(data.gate.registered + data.gate.called) },
+                { label: 'Đã xong', value: `${nf.format(data.gate.completed)}/${nf.format(gateTotal)}` },
+              ]} />
+            <DeptCard title="Xuất kho" to="/wms/outbound" color="#38bdf8"
+              pct={outPct}
+              rows={[
+                { label: 'Đang soạn', value: nf.format(data.outbound.in_progress), cls: 'text-sky-300' },
+                { label: 'Tạm dừng', value: nf.format(data.outbound.paused), cls: data.outbound.paused > 0 ? 'text-red-400' : undefined },
+                { label: 'Chuyến xong', value: `${nf.format(data.outbound.completed)}/${nf.format(data.outbound.total)}` },
+              ]} />
+            <DeptCard title="Nhặt lẻ" to="/wms/loosepicking" color="#a78bfa"
+              pct={loosePct}
+              rows={[
+                { label: 'KH lẻ (quy đổi)', value: nf.format(data.outbound.loose_planned ?? 0) },
+                { label: 'Đã nhặt', value: nf.format(data.outbound.loose_scanned ?? 0), cls: 'text-violet-300' },
+              ]} />
+            <DeptCard title="Nhập kho" to="/wms/inbound"
+              pct={null} big={nf.format(data.inbound.pallets)}
+              rows={[
+                { label: 'Pallet đã nhận', value: nf.format(data.inbound.pallets), cls: 'text-green-400' },
+                { label: 'Phiếu nhập', value: nf.format(data.inbound.orders) },
+              ]} />
+            <DeptCard title="Trạm cân" to="/wms/weigh-tickets" color="#22c55e"
+              pct={weighDonePct}
+              rows={[
+                { label: 'Lượt cân', value: nf.format(data.weigh.tickets) },
+                { label: 'Chờ lần 2', value: nf.format(data.weigh.pending2), cls: data.weigh.pending2 > 0 ? 'text-amber-400' : undefined },
+                { label: 'KL (tấn)', value: nf.format(Math.round(data.weigh.net_kg / 100) / 10) },
+              ]} />
+          </div>
+        </div>
+      </div>
+
+      {/* Khối chi tiết */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <OutMatBlock data={data} />
+        <TripsBlock data={data} />
+        <InMatBlock data={data} />
+        <GateBlock data={data} now={now} />
+        <WeighBlock data={data} />
+        <HourlyBlock data={data} />
+      </div>
+    </div>
   )
 }
 
@@ -338,7 +634,6 @@ export default function ControlTower() {
   const { data: warehouses = [] } = useScopedWarehouses(true)
   const { data: whTypes = [] } = useScopedWhTypes()
   // Filter Mã hàng: TÌM TRÊN SERVER (50 dòng/lượt) — trước đây mở dashboard là kéo cả danh mục
-  // mã hàng (~2,5MB) chỉ để dựng options; màn TV bật cả ngày thì tải lại mỗi 5 phút.
   const [matTerm, setMatTerm] = useState('')
   const { data: allMaterials = [], isFetching: matFetching } =
     useMaterials({ search: matTerm || undefined, limit: 50 }, !!matTerm)
@@ -392,75 +687,47 @@ export default function ControlTower() {
   if (filters.material_codes.length > 0) tvFilterChips.push(`Mã hàng: ${filters.material_codes.length} mã`)
   // LUÔN hiện phạm vi đang xem (user chốt) — không lọc gì thì ghi rõ là toàn bộ
   if (tvFilterChips.length === 0) tvFilterChips.push('Đang xem: Toàn bộ kho')
-  const loosePlanned = data?.outbound.loose_planned ?? 0
-  const loosePct = data && data.outbound.planned > 0
-    ? Math.round((loosePlanned / data.outbound.planned) * 100) : 0
-  const tiles = data ? [
-    { label: 'Xe trong cổng', value: data.gate.inside, accent: data.gate.inside > 0 },
-    { label: 'Xe chờ gọi', value: data.gate.registered + data.gate.called },
-    { label: 'Chuyến hôm nay', value: data.outbound.total },
-    { label: 'Đang soạn', value: data.outbound.in_progress, accent: data.outbound.in_progress > 0 },
-    { label: 'Chuyến xong', value: data.outbound.completed },
-    { label: 'Mã hàng xuất', value: data.out_by_material?.n_materials ?? 0 },
-    { label: 'Nhặt lẻ (quy đổi)', value: nf.format(loosePlanned) },
-    { label: 'Tỷ lệ nhặt lẻ', value: `${loosePct}%` },
-    { label: 'Pallet nhập', value: nf.format(data.inbound.pallets) },
-    { label: 'Lượt cân', value: data.weigh.tickets },
-  ] : []
 
   return (
-    <div className="flex flex-col h-full sm:p-3">
-     <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-      <div className="border-b bg-white px-3 py-2 shrink-0 space-y-2 sm:rounded-t-xl">
+    <div className="flex flex-col h-full bg-slate-900">
+      {/* Header console */}
+      <div className="border-b border-slate-700 bg-slate-900 px-3 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 shrink-0">
-            <Activity className="h-4 w-4 text-sky-600" /> Giám sát vận hành
+          <span className="text-sm font-semibold text-white flex items-center gap-1.5 shrink-0 uppercase tracking-wide">
+            <Activity className="h-4 w-4 text-sky-400" /> Giám sát vận hành
           </span>
-          <span className="text-[11px] text-slate-500">{data ? formatDate(data.date) : ''}</span>
-          <span className="text-[11px] font-mono text-slate-600 tabular-nums">{clock}</span>
+          <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-slate-500 border-l border-slate-700 pl-2">Facility Console</span>
+          <span className="text-[11px] text-slate-400">{data ? formatDate(data.date) : ''}</span>
+          <span className="text-[11px] font-mono text-sky-300 tabular-nums">{clock}</span>
           <span className="flex-1" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <button onClick={enterTv}
-            className="h-7 px-2.5 rounded-md border border-slate-300 text-[11px] font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1.5">
+            className="h-7 px-2.5 rounded-md border border-slate-600 text-[11px] font-medium text-slate-300 hover:bg-white/10 flex items-center gap-1.5">
             <Tv className="h-3.5 w-3.5" /> Chế độ TV
           </button>
         </div>
-        <FilterBar defs={filterDefs} />
+        <FilterBar defs={filterDefs} className="hidden sm:flex" />
       </div>
 
-      <SummaryBand tiles={tiles} />
-
-      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4 p-3">
         {isLoading ? (
           <p className="p-6 text-center text-sm text-slate-400">Đang tải số liệu…</p>
         ) : isError ? (
-          <div className="p-6 text-center text-sm text-red-500">
+          <div className="p-6 text-center text-sm text-red-400">
             {(error as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi tải số liệu giám sát.'}
           </div>
         ) : data ? (
-          <>
-            <OutProgressStrip data={data} />
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
-              <OutMatBlock data={data} />
-              <TripsBlock data={data} />
-              <InMatBlock data={data} />
-              <GateBlock data={data} now={now} />
-              <WeighBlock data={data} />
-              <HourlyBlock data={data} />
-            </div>
-          </>
+          <ConsoleBody data={data} now={now} />
         ) : null}
       </div>
-     </div>
 
       {tv && data && (
         // z-[45]: TRÊN app chrome (header z-40) nhưng DƯỚI Dialog z-50 — để sheet bộ lọc mở đè lên TV được
         <div className="fixed inset-0 z-[45] bg-slate-900 text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
           <div className="flex items-center gap-3 shrink-0 flex-wrap">
             <Activity className="h-6 w-6 text-sky-400" />
-            <span className="text-xl font-semibold">Giám sát vận hành</span>
+            <span className="text-xl font-semibold uppercase tracking-wide">Giám sát vận hành</span>
             <span className="text-sm text-slate-400">{formatDate(data.date)}</span>
-            {/* Filter trên TV (user chốt): chips đang-lọc-gì + nút mở sheet chỉnh lọc */}
             {tvFilterChips.map(c => (
               <span key={c} className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 max-w-[300px] truncate" title={c}>{c}</span>
             ))}
@@ -470,21 +737,7 @@ export default function ControlTower() {
               <X className="h-5 w-5" />
             </button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 shrink-0">
-            {tiles.map(t => (
-              <div key={t.label} className={`rounded-lg px-3 py-2 ${t.accent ? 'bg-sky-600' : 'bg-slate-800'}`}>
-                <div className="text-[10px] uppercase text-slate-300">{t.label}</div>
-                <div className="text-2xl lg:text-3xl font-semibold tabular-nums">{t.value}</div>
-              </div>
-            ))}
-          </div>
-          <OutProgressStrip data={data} dark />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-0">
-            <OutMatBlock data={data} dark />
-            <TripsBlock data={data} dark />
-            <InMatBlock data={data} dark />
-            <GateBlock data={data} now={now} dark />
-          </div>
+          <ConsoleBody data={data} now={now} />
         </div>
       )}
     </div>

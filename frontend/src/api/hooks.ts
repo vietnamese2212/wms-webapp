@@ -3684,8 +3684,19 @@ export interface ControlTowerMatIn {
   // optional — RPC cũ (trước 20260729c) không trả field này.
   unit?: string | null
 }
+// Khối RESOURCES + cycle-time (console Manhattan 20/08) — RPC control_tower_resources, null nếu chưa apply
+export interface ControlTowerResources {
+  staff_out:  { n: number; scans: number }
+  top_out:    { name: string; scans: number }[]
+  staff_in:   { n: number; pallets: number }
+  stocktake:  { n: number; checks: number; moves: number }
+  forklift:   { total: number; active: number; idle: number; unchecked: number; issues: number }
+  inventory:  { total: number; locked: number }
+  gate_cycle: { done_n: number; inout_mins: number | null; wait_mins: number | null }
+}
 export interface ControlTowerData {
   date: string
+  resources?: ControlTowerResources | null
   gate: { registered: number; called: number; inside: number; completed: number; inside_list: ControlTowerGateRow[] }
   outbound: { pending: number; in_progress: number; paused: number; completed: number; total: number
               planned: number; scanned: number; loose_planned?: number; loose_scanned?: number

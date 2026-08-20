@@ -1139,7 +1139,7 @@ export async function checkScanQR(req: Request, res: Response) {
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
       // shelf_life_days + supplier_shelf_life_overrides: quy tắc cất hàng cần để suy HSD hiệu lực
       // (thiếu 2 cột này thì luật trộn date ở PREVIEW im lặng trong khi lúc GHI lại chặn)
-      supabase.from('Material').select('id, material_code, cartons_per_pallet, warehouse_pallet_overrides, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', parsed.material_code).maybeSingle(),
+      supabase.from('Material').select('id, material_code, category, cartons_per_pallet, warehouse_pallet_overrides, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
       // slot_no_in + is_pick_face: 2 cờ quy tắc cất hàng — thiếu thì preview KHÔNG thấy ô bị cấm
       // trong khi lúc quét thật lại chặn (người quét đi tới nơi mới biết)

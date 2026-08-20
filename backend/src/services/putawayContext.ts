@@ -154,17 +154,21 @@ export async function guardPutawayBatch(opts: {
 
   const cfg = opts.warehouseId ? await whConfig(opts.warehouseId) : EMPTY_CFG
 
-  // Shelf-life + LOẠI KHO của mã trong ô LẪN mã của lô — một lượt hỏi, chunk 300 theo luật id-trên-URL
-  const matIds = [...new Set([
-    ...opts.entries.map(e => e.material_id),
-  ].filter(Boolean))]
   const matById = new Map<string, MatRow>()
-  if (matIds.length > 0) {
-    const rows = await fetchAllByIdChunks(matIds, chunk =>
+  const loadMats = async (ids: string[]) => {
+    const want = [...new Set(ids.filter(id => id && !matById.has(id)))]
+    if (!want.length) return
+    const rows = await fetchAllByIdChunks(want, chunk =>
       supabase.from('Material').select(MAT_SHELF_COLS).in('id', chunk))
     for (const m of rows as ({ id: string } & MatRow)[]) matById.set(m.id, m)
   }
-  const catOf = (e: IncomingInput) => e.category ?? matById.get(e.material_id)?.category ?? null
+  // Kho CHƯA khai chiến thuật riêng cho loại nào ⇒ loại kho không ảnh hưởng gì ⇒ giữ NGUYÊN đường
+  // cũ: một lượt hỏi Material cho cả mã của lô lẫn mã đang nằm trong ô (đo sau khi biết cần `lots`).
+  // Chỉ kho có override mới phải hỏi trước để biết loại — không bắt 99% kho trả phí cho tính năng
+  // họ không dùng.
+  const needCat = cfg.typeRows.some(hasOverride)
+  if (needCat) await loadMats(opts.entries.map(e => e.material_id))
+  const catOf = (e: IncomingInput) => (needCat ? e.category ?? matById.get(e.material_id)?.category ?? null : null)
 
   // ⚠️ CA DUY NHẤT hai bộ luật đụng MỘT ô: lô dồn có thể lẫn nhiều LOẠI KHO (vd 3 pallet FG01 +
   // 2 pallet RM01 vào cùng ô), mà từ 21/08 mỗi loại có thể mang chiến thuật riêng. Xử lý:
@@ -200,13 +204,9 @@ export async function guardPutawayBatch(opts: {
     [opts.locationId], null,
     allRules.some(putawayNeedsLots), allRules.some(putawayNeedsMats))
 
-  // Mã đang NẰM trong ô cũng cần shelf-life để dựng khoảng ngày của ô
-  const lotIds = [...new Set(raws.flatMap(r => (r.lots ?? []).map(x => x.m)).filter(id => id && !matById.has(id)))]
-  if (lotIds.length > 0) {
-    const rows = await fetchAllByIdChunks(lotIds, chunk =>
-      supabase.from('Material').select(MAT_SHELF_COLS).in('id', chunk))
-    for (const m of rows as ({ id: string } & MatRow)[]) matById.set(m.id, m)
-  }
+  // Mã đang NẰM trong ô cũng cần shelf-life để dựng khoảng ngày của ô (gộp chung lượt với mã của lô
+  // khi kho chưa có override — `loadMats` tự bỏ mã đã nạp).
+  await loadMats([...raws.flatMap(r => (r.lots ?? []).map(x => x.m)), ...opts.entries.map(e => e.material_id)])
 
   const facts = raws[0] ? slotFactsOf(raws[0], principle, matById) : EMPTY_SLOT
   const batch: IncomingPallet[] = opts.entries.map(e => ({

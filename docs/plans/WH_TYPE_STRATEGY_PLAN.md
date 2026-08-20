@@ -314,6 +314,54 @@ biến cũ. `putawayReason` không đổi (★ vẫn 3 mã lý do). Sort cuối 
 | **Realtime / TABLE_QUERY_MAP** | Bảng config không cần realtime (cache 30s như putaway hiện hành); FE invalidateQueries sau PUT là đủ |
 | **QA regression** | Gói 25/26 hiện có phải XANH NGUYÊN khi chưa khai override (tiêu chí số 1); gói mới gác override. run-all FULL trước merge như luật |
 
+### 2.9 VÒNG ĐỜI GÁN LOẠI — "kho A KHÔNG có FG01 thì sao?" (user hỏi 20/08 tối, chốt ngữ nghĩa)
+
+**Nguyên tắc 1 — tập gán là KHAI BÁO VẬN HÀNH, không tự đổi theo tồn.** Tồn FG01 của kho A về 0
+KHÔNG tự gỡ loại (giữa 2 đợt hàng tồn 0 là chuyện thường); backfill migration chỉ là suy đoán MỘT
+LẦN lúc chuyển đổi. Thêm/gỡ loại = thao tác tay trong form Kho (quyền manage_warehouse).
+
+**Nguyên tắc 2 — gỡ loại khi CÒN dữ liệu = "NGỪNG VẬN HÀNH", không phải xóa:** cho gỡ (cấm gỡ khi
+còn tồn = kho muốn phase-out một loại sẽ kẹt vĩnh viễn vì tồn lắt nhắt), và:
+- **Dữ liệu CŨ giữ nguyên + xử lý được hết**: tồn FG01 trong kho A vẫn HIỂN THỊ, vẫn XUẤT / điều
+  chỉnh / kiểm kê / chuyển vị trí / dồn-tách được. Luật = "chặn TẠO MỚI, không chặn xử lý tồn cũ"
+  (cùng tinh thần FUTURE_DATE: thao tác giảm/hoàn luôn được). Null-inclusive mở rộng: mọi cửa ĐỌC
+  và cửa GHI-GIẢM bỏ qua tập gán.
+- **Chặn TẠO MỚI (các guard Đợt 2, mục 2.5)**: phiếu nhập mới loại đó vào kho A · khai khu/vị trí
+  MỚI mang loại đó · upload tồn dòng loại đó vào kho A · KH xuất `booking_category`=FG01 cho kho A
+  → 422/lỗi dòng preflight, message chuẩn: *"Kho A không vận hành loại FG01 — thêm loại vào form
+  Kho (Cài đặt WMS) trước."* (nêu rõ đường xử, không chặn cụt).
+- **Gỡ dòng config = mất chiến thuật riêng** → tồn cũ còn lại resolve rơi về MẶC ĐỊNH KHO (an
+  toàn, không mất luật, không lỗi).
+- **UI xác nhận khi gỡ = ĐẾM SỐNG**: dialog confirm hiện "Kho còn N pallet FG01 · M vị trí/khu
+  đang khai FG01 · K chuyến đang chạy có FG01. Gỡ = chặn nhập mới; tồn cũ vẫn xuất được, vị trí
+  giữ nguyên khai báo." (1 RPC đếm gọn, không kéo dòng).
+- **QA bắt buộc (thêm vào gói mới bước 7)**: gỡ loại còn tồn → (a) tồn cũ vẫn scan xuất 200;
+  (b) tạo phiếu nhập mới 422; (c) resolve rơi mặc định kho; (d) thêm lại loại → mọi thứ như cũ
+  (chuỗi CÓ→GỠ→CÓ LẠI, học mẫu QA 13 awaiting-sap).
+
+### 2.10 QUÉT RỘNG CẢ APP — 18 cột mang giá trị Loại kho (nguồn MÁY: RPC
+`warehouse_type_column_coverage`, migration 20260815b — không kê theo trí nhớ) + các bề mặt đọc
+
+Ứng xử khi (kho A, FG01) KHÔNG có trong tập gán — phân loại: **KĐ** = không đổi gì · **Đ1/Đ2** =
+đổi ở đợt nào:
+
+| Cột / bề mặt | Ứng xử | Đợt |
+|---|---|---|
+| `Material.category` | Mã hàng là danh mục TOÀN CỤC, không theo kho — mã FG01 vẫn tồn tại bình thường, chỉ GIAO DỊCH với kho A mới bị guard | KĐ |
+| `Location.categories` + `WarehouseZone.categories` (kho A) | Khu/vị trí CŨ khai FG01 giữ nguyên (hiển thị, không bắt sửa, sức chứa/kiểm kê chạy như cũ); form + upload tạo MỚI lọc option + guard 422 | Đ2 |
+| `Employee.allowed_categories` (scope user) | ĐỘC LẬP tập gán — không nới không cắt gì | KĐ |
+| `Warehouse.carton_scan_categories` | Cùng form Kho: không cho tick loại ngoài tập gán; giá trị cũ ngoài tập vô hại (policy giao ≥1 không khớp thì đơn giản không áp) | Đ1 |
+| `SlotTemplate` / `DeliverySlot` (khung giờ cargo) | Khung giờ FG01 cũ của kho A giữ nguyên hiệu lực (chuyến cũ còn đặt); tạo khung giờ MỚI lọc option + guard | Đ2 |
+| `khvc_lines.booking_category` → `TmsOrder.booking_category` | Upload KH xuất: thêm 1 phép kiểm pha PREFLIGHT — booking_category ngoài tập gán của kho ⇒ lỗi từ chối cả file (đúng khuôn kiểm cửa hiện có) | Đ2 |
+| `TmsOrder.warehouse_type` / `GroupDeliveryOrder.warehouse_type` (chuỗi ghép) | Chuyến sinh từ upload: đã chặn từ nguồn khvc. Chuyến tạo TAY (EXCEL/MANUAL): guard createGDO/updateGDO. Chuyến CŨ đang chạy: KHÔNG đụng — quét/hoàn thành vẫn theo luật giao ≥1 + scope user như cũ | Đ2 |
+| `OutboundItem` · `ProductionImport` · `StocktakeLog` · `gate_registrations` · `inbound_plan_lines` · `PalletLabelPrint` · `alert_events.category` | Cột SNAPSHOT/vết đi theo bản ghi cha — KHÔNG guard riêng; tự đúng khi cửa tạo bản ghi cha bị guard. Riêng inbound `createOrder` + gate create là cửa tạo cha → guard | cha=Đ2, vết=KĐ |
+| In tem (`logPrints` kèm kho từng tem) | Thêm kiểm tập gán bên cạnh guard scope loại hiện có (1 dòng trong `categoryScope` path) | Đ2 |
+| Filter/GlobalScopePicker/facets/list page (28 file `useScopedWhTypes`) | GIỮ NGUYÊN theo scope user — phải xem được dữ liệu CŨ đa kho; đã chốt ở 2.5 mục 6, Opus không sweep | KĐ |
+| Chiến thuật (mục đích chính của plan) | Tồn FG01 cũ trong kho A: resolve không thấy dòng → mặc định kho — không lỗi, không mất gợi ý | KĐ |
+| Fill / Slotting / Kiểm kho / Alerts / Control Tower / báo cáo | Làm việc trên tồn + vị trí HIỆN HỮU, null-inclusive — kế hoạch Slotting dọn nốt tồn FG01 ở kho A vẫn hợp lệ (đang phase-out là đúng nhu cầu) | KĐ |
+| Sổ đóng gói (packing_runs theo kho+mã) | KHÔNG chặn theo tập gán — sổ ghi tại xưởng SX, cửa chặn thật là lúc NHẬP KHO; chặn ở sổ = tái sinh lớp báo-oan đã gỡ 13/08 | KĐ, ghi chú |
+| RPC `rename_warehouse_type` + RPC coverage | Bảng mới `warehouse_type_configs.type_code` phải vào CẢ HAI (cột thứ 19 của coverage) — đã ghi ở 2.1 | Đ1 |
+
 ---
 ## 3. KẾ HOẠCH THỰC THI (checklist — mỗi bước có phép kiểm)
 
@@ -348,7 +396,8 @@ biến cũ. `putawayReason` không đổi (★ vẫn 3 mã lý do). Sort cuối 
    FIFO = 200 (chứng minh override ăn); (c) mã RM sai FIFO = cảnh báo không chặn (required=false
    per loại); (d) putaway date_mix override per loại chặn đúng nhánh; (e) PUT type-configs
    round-trip + xóa dòng → resolve rơi về mặc định kho. Fixture backup/restore cấu hình kho qua
-   API (bài học QA 26: đổi cấu hình QUA API vì cache 30s per-instance).
+   API (bài học QA 26: đổi cấu hình QUA API vì cache 30s per-instance). **+ chuỗi vòng đời 2.9:**
+   gỡ loại còn tồn → tồn cũ xuất 200 · nhập mới 422 · resolve mặc định · thêm lại → như cũ.
 8. **Chạy `node scripts/qa/run-all.mjs` FULL XANH** → push dev → verify Preview sống (khuôn
    verify_move/verify_ct trong scratchpad) → báo user nghiệm thu.
 9. **Đợt 2** (mục 2.5) — sau khi user duyệt Đợt 1, commit riêng từng cụm consumer + guard BE,

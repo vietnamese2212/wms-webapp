@@ -1,12 +1,12 @@
+// Dashboard Tổng quan — 20/08: đổi da theo CONSOLE TỐI kiểu Manhattan Facility Console
+// (đồng bộ trang Giám sát vận hành — user yêu cầu "dashboard theo phong cách đó").
+// LOGIC SỐ LIỆU GIỮ NGUYÊN 100% (RPC dashboard_stats, gộp kho×loại, sức chứa xếp % cao nhất
+// lên đầu, cap 12 kho, co cỡ chữ số dài) — chỉ thay lớp trình bày.
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck, Grid3X3,
+  Package, PackagePlus, PackageMinus, Boxes, Layers, Warehouse, Clock, Truck, Grid3X3, LayoutDashboard,
 } from 'lucide-react'
-import { PageHeader } from '@/components/shared/PageHeader'
-import { StatsCard } from '@/components/shared/StatsCard'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
@@ -21,10 +21,27 @@ const nf = (n: number) => Number(n ?? 0).toLocaleString('vi-VN')
 const nf0 = (n: number) => Math.round(Number(n ?? 0)).toLocaleString('vi-VN')
 
 const MODE_BADGE: Record<string, string> = {
-  QR:       'bg-green-100 text-green-700',
-  QTY:      'bg-blue-100 text-blue-700',
-  QTY_DATE: 'bg-indigo-100 text-indigo-700',
-  NONE:     'bg-slate-100 text-slate-500',
+  QR:       'bg-green-500/20 text-green-400',
+  QTY:      'bg-blue-500/20 text-blue-400',
+  QTY_DATE: 'bg-indigo-500/20 text-indigo-400',
+  NONE:     'bg-slate-700 text-slate-400',
+}
+
+// Khối card console (khớp Block bên Giám sát vận hành)
+function Panel({ title, icon: Icon, extra, children, className = '' }: {
+  title: string; icon: typeof Package; extra?: React.ReactNode; children: React.ReactNode; className?: string
+}) {
+  return (
+    <div className={`rounded-lg border border-slate-700 bg-slate-800/60 flex flex-col min-h-0 ${className}`}>
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-700 shrink-0">
+        <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
+        <Icon className="h-3.5 w-3.5 text-slate-300" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-200">{title}</span>
+        {extra}
+      </div>
+      <div className="flex-1 min-h-0">{children}</div>
+    </div>
+  )
 }
 
 export default function Dashboard() {
@@ -63,7 +80,6 @@ export default function Dashboard() {
   const t = stats?.today
 
   // Sức chứa khu vực: gom theo kho, kèm TỔNG kho + xếp % dùng CAO NHẤT lên đầu
-  // (chọn "Tất cả kho" với hàng trăm kho NPP thì kho căng chỗ phải nổi lên trước).
   const zonesByWh = useMemo(() => {
     const map = new Map<string, { warehouse_name: string; zones: ZoneCap[]; used: number; cap: number }>()
     for (const z of stats?.zones ?? []) {
@@ -79,137 +95,143 @@ export default function Dashboard() {
   const WH_SHOW_CAP = 12
   const visibleWhGroups = showAllWh ? zonesByWh : zonesByWh.slice(0, WH_SHOW_CAP)
 
-  return (
-    <div className="flex flex-col h-full">
-      <PageHeader
-        title="Tổng quan hệ thống"
-        description={today}
-        actions={
-          <div className="flex items-center gap-2.5">
-            <WarehouseSingleSelect
-              warehouses={scopedWhs as { id: string; code?: string; name: string }[]}
-              value={effWhId}
-              onChange={id => setDashboard({ warehouseId: id })}
-              allLabel="Tất cả kho"
-              triggerClassName="w-40 sm:w-48"
-            />
-            <div className="hidden sm:flex items-center gap-1.5">
-              <div className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-xs text-muted-foreground">Dữ liệu thời gian thực</span>
-            </div>
-          </div>
-        }
-      />
+  const sk = 'bg-slate-700/50'
+  const outPct = t && t.outbound_planned > 0 ? Math.min(100, Math.round((t.outbound_scanned / t.outbound_planned) * 100)) : null
 
-      {/* Cuộn BÊN TRONG (fit màn hình như các module chuẩn) — header trang đứng yên */}
-      <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 space-y-5">
+  return (
+    <div className="flex flex-col h-full bg-slate-900">
+      {/* Header console */}
+      <div className="border-b border-slate-700 bg-slate-900 px-3 py-2 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-white flex items-center gap-1.5 shrink-0 uppercase tracking-wide">
+            <LayoutDashboard className="h-4 w-4 text-sky-400" /> Tổng quan hệ thống
+          </span>
+          <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-slate-500 border-l border-slate-700 pl-2">Facility Overview</span>
+          <span className="text-[11px] text-slate-400">{today}</span>
+          <span className="flex-1" />
+          <WarehouseSingleSelect
+            warehouses={scopedWhs as { id: string; code?: string; name: string }[]}
+            value={effWhId}
+            onChange={id => setDashboard({ warehouseId: id })}
+            allLabel="Tất cả kho"
+            triggerClassName="w-40 sm:w-48 h-8"
+          />
+          <div className="hidden sm:flex items-center gap-1.5">
+            <div className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-xs text-slate-400">Dữ liệu thời gian thực</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto p-3 pb-20 lg:pb-4 space-y-3">
         {isError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-400">
             Không tải được số liệu dashboard — thử tải lại trang.
           </div>
         )}
 
-        {/* KPI tồn kho (data thật) — 1 cột trên phone hẹp để số dài không bị cắt */}
-        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* KPI tồn kho (data thật) — tile console */}
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2">
           {isLoading ? (
-            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-xl" />)
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className={`h-[84px] rounded-lg ${sk}`} />)
           ) : (
             <>
-              {/* PALLET = số CHỦ ĐẠO (user chốt 30/07): đơn vị vật lý duy nhất so được giữa mọi
-                  loại hàng (thùng TP / cái POSM / kg NVL). Số theo đơn vị riêng nằm ở card bên. */}
-              <StatsCard title="Pallet tồn" value={nf0(totals.pallets)} icon={Layers} iconColor="text-indigo-600" />
-              {/* Tồn TÁCH THEO ĐƠN VỊ — thay ô "Tồn (quy đổi)" trộn 6 đơn vị làm một (133tr mà
-                  131tr là CÁI). RPC cũ chưa có by_unit → fallback ô quy đổi như trước. */}
+              {/* PALLET = số CHỦ ĐẠO (user chốt 30/07): đơn vị vật lý duy nhất so được giữa mọi loại hàng */}
+              <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-slate-400 flex items-center gap-1"><Layers className="h-3 w-3 text-indigo-400" /> Pallet tồn</div>
+                <div className="text-2xl font-semibold tabular-nums text-white leading-tight">{nf0(totals.pallets)}</div>
+                <div className="text-[9px] text-slate-500">{totals.warehouses} kho có tồn</div>
+              </div>
+              {/* Tồn TÁCH THEO ĐƠN VỊ — RPC cũ chưa có by_unit → fallback ô quy đổi */}
               {(stats?.by_unit?.length ?? 0) > 0 ? (
-                <Card>
-                  <CardContent className="p-4 sm:p-5">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
-                      <Boxes className="h-3.5 w-3.5 text-sky-600" />Tồn theo đơn vị
-                    </p>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                      {stats!.by_unit!.map(u => (
-                        <div key={u.unit} className="flex items-baseline justify-between gap-1.5 min-w-0" title={`${nf(u.qty)} ${unitLabel(u.unit)} · ${nf(u.pallets)} pallet · ${nf(u.materials)} mã`}>
-                          <span className="text-[10px] text-muted-foreground truncate">{unitLabel(u.unit)}</span>
-                          <span className="text-[11px] font-bold tabular-nums">{nf0(u.qty)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2">
+                  <div className="text-[9px] uppercase tracking-wide text-slate-400 flex items-center gap-1 mb-1"><Boxes className="h-3 w-3 text-sky-400" /> Tồn theo đơn vị</div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                    {stats!.by_unit!.map(u => (
+                      <div key={u.unit} className="flex items-baseline justify-between gap-1.5 min-w-0" title={`${nf(u.qty)} ${unitLabel(u.unit)} · ${nf(u.pallets)} pallet · ${nf(u.materials)} mã`}>
+                        <span className="text-[10px] text-slate-400 truncate">{unitLabel(u.unit)}</span>
+                        <span className="text-[11px] font-bold tabular-nums text-slate-100">{nf0(u.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ) : (
-                <StatsCard title="Tồn (quy đổi)" value={nf0(totals.cartons)} icon={Boxes} iconColor="text-sky-600" />
+                <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2">
+                  <div className="text-[9px] uppercase tracking-wide text-slate-400 flex items-center gap-1"><Boxes className="h-3 w-3 text-sky-400" /> Tồn (quy đổi)</div>
+                  <div className="text-2xl font-semibold tabular-nums text-white leading-tight">{nf0(totals.cartons)}</div>
+                </div>
               )}
-              <StatsCard title="Kho có tồn" value={totals.warehouses} icon={Warehouse} iconColor="text-amber-600" />
-              <StatsCard title="Xuất hôm nay" value={nf0(t?.outbound_scanned ?? 0)} unit={t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'SL quy đổi'} icon={PackageMinus} iconColor="text-blue-600" />
+              <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-slate-400 flex items-center gap-1"><Warehouse className="h-3 w-3 text-amber-400" /> Kho có tồn</div>
+                <div className="text-2xl font-semibold tabular-nums text-white leading-tight">{totals.warehouses}</div>
+              </div>
+              <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-3 py-2">
+                <div className="text-[9px] uppercase tracking-wide text-slate-400 flex items-center gap-1"><PackageMinus className="h-3 w-3 text-sky-400" /> Xuất hôm nay</div>
+                <div className={`text-2xl font-semibold tabular-nums leading-tight ${outPct != null && outPct >= 100 ? 'text-green-400' : 'text-white'}`}>
+                  {nf0(t?.outbound_scanned ?? 0)}
+                  <span className="text-xs font-normal text-slate-500"> {t?.outbound_planned ? `/ ${nf0(t.outbound_planned)} KH` : 'SL quy đổi'}</span>
+                </div>
+                {outPct != null && (
+                  <div className="mt-1 h-1.5 rounded bg-slate-700">
+                    <div className={`h-1.5 rounded ${outPct >= 100 ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${outPct}%` }} />
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
 
         {/* Hoạt động hôm nay */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {[
-            { icon: PackagePlus, color: 'text-green-600 bg-green-100', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay' },
-            { icon: Package, color: 'text-emerald-600 bg-emerald-100', value: t?.inbound_cartons, label: 'SL nhập (quy đổi)' },
-            { icon: Truck, color: 'text-blue-600 bg-blue-100', value: t?.outbound_gdos, label: 'Chuyến xuất hôm nay' },
-            { icon: PackageMinus, color: 'text-sky-600 bg-sky-100', value: t?.outbound_planned, label: 'SL KH xuất (quy đổi)' },
-          ].map(({ icon: Icon, color, value, label }) => (
-            <Card key={label}>
-              <CardContent className="p-4 sm:p-5">
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${color.split(' ')[1]}`}>
-                    <Icon className={`h-5 w-5 ${color.split(' ')[0]}`} />
-                  </div>
-                  <div className="min-w-0">
-                    {/* Số 8+ chữ số (vd 15.385.846 sau bê tồn) bị truncate thành "15.385.8…" → đọc SAI
-                        cấp nghìn/triệu. Co cỡ chữ theo độ dài thay vì cắt cụt; tooltip = số đầy đủ. */}
-                    {isLoading
-                      ? <Skeleton className="h-7 w-16 mb-1" />
-                      : (() => { const s = nf(Number(value ?? 0)); return (
-                          <p className={`${s.length >= 10 ? 'text-base' : s.length >= 8 ? 'text-xl' : 'text-2xl'} font-bold tabular-nums`} title={s}>{s}</p>
-                        ) })()}
-                    <p className="text-xs text-muted-foreground">{label}</p>
-                  </div>
+            { icon: PackagePlus, ic: 'text-green-400 bg-green-500/15', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay' },
+            { icon: Package, ic: 'text-emerald-400 bg-emerald-500/15', value: t?.inbound_cartons, label: 'SL nhập (quy đổi)' },
+            { icon: Truck, ic: 'text-blue-400 bg-blue-500/15', value: t?.outbound_gdos, label: 'Chuyến xuất hôm nay' },
+            { icon: PackageMinus, ic: 'text-sky-400 bg-sky-500/15', value: t?.outbound_planned, label: 'SL KH xuất (quy đổi)' },
+          ].map(({ icon: Icon, ic, value, label }) => (
+            <div key={label} className="rounded-lg bg-slate-800/60 border border-slate-700 px-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${ic.split(' ')[1]}`}>
+                  <Icon className={`h-4.5 w-4.5 ${ic.split(' ')[0]}`} />
                 </div>
-              </CardContent>
-            </Card>
+                <div className="min-w-0">
+                  {/* Số 8+ chữ số bị truncate đọc SAI cấp nghìn/triệu → co cỡ chữ, tooltip số đầy đủ */}
+                  {isLoading
+                    ? <Skeleton className={`h-7 w-16 mb-1 ${sk}`} />
+                    : (() => { const s = nf(Number(value ?? 0)); return (
+                        <p className={`${s.length >= 10 ? 'text-base' : s.length >= 8 ? 'text-xl' : 'text-2xl'} font-bold tabular-nums text-white leading-tight`} title={s}>{s}</p>
+                      ) })()}
+                  <p className="text-[10px] text-slate-400">{label}</p>
+                </div>
+              </div>
+            </div>
           ))}
         </div>
 
         {/* Sức chứa khu vực kho: pallet đang chiếm chỗ / pallet tối đa (Σ max_pallets vị trí) */}
         {(isLoading || zonesByWh.length > 0) && (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <Grid3X3 className="h-4 w-4 text-muted-foreground" />
-                Sức chứa khu vực kho
-                <span className="text-[10px] font-normal text-slate-400">pallet tồn / pallet tối đa</span>
-              </CardTitle>
-            </CardHeader>
-            {/* Dạng DÒNG dày đặc kiểu bảng (user 19/08 chê card-per-khu rối + bar dài + trống):
-                kho = header nhóm kèm TỔNG, mỗi khu = 1 dòng mảnh [tên · bar ngắn · số/max · %];
-                "còn N chỗ" chuyển vào tooltip. 2 cột kho song song trên màn rộng. */}
-            <CardContent className="pt-0">
+          <Panel title="Sức chứa khu vực kho" icon={Grid3X3}
+            extra={<span className="text-[9px] font-normal text-slate-500">pallet tồn / pallet tối đa</span>}>
+            <div className="p-3">
               {isLoading ? (
                 <div className="space-y-1.5">
-                  {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-6 rounded" />)}
+                  {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={`h-6 rounded ${sk}`} />)}
                 </div>
               ) : (
-                /* Cột auto-fill theo bề rộng THẬT (380-500px/cột) — cột không giãn hết card
-                   tạo khoảng chết giữa tên và bar (user 19/08); trăm kho tự dàn lưới nhiều cột */
                 <div className="grid grid-cols-1 lg:grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-x-8 gap-y-3">
                   {visibleWhGroups.map(g => {
                     const tUsed = g.used, tCap = g.cap
                     return (
                       <div key={g.warehouse_name} className="self-start">
-                        <div className="flex items-baseline justify-between gap-2 border-b border-slate-200 pb-1">
-                          <p className="text-[11px] font-semibold text-slate-700 truncate">{g.warehouse_name}</p>
-                          <p className="shrink-0 text-[10px] tabular-nums text-slate-400">
+                        <div className="flex items-baseline justify-between gap-2 border-b border-slate-600 pb-1">
+                          <p className="text-[11px] font-semibold text-slate-200 truncate">{g.warehouse_name}</p>
+                          <p className="shrink-0 text-[10px] tabular-nums text-slate-500">
                             {nf(tUsed)} / {tCap > 0 ? nf(tCap) : '—'}
                           </p>
                         </div>
                         {g.zones.map(z => {
                           const pct = z.capacity > 0 ? (z.used / z.capacity) * 100 : null
-                          const barColor = pct == null ? 'bg-slate-300'
+                          const barColor = pct == null ? 'bg-slate-600'
                             : pct >= 100 ? 'bg-red-500'
                             : pct >= 80 ? 'bg-amber-500'
                             : 'bg-sky-500'
@@ -217,22 +239,22 @@ export default function Dashboard() {
                           const pctTxt = pct == null ? null
                             : pct >= 100 ? Math.round(pct) : pct >= 10 ? Math.min(99, Math.round(pct)) : Math.round(pct * 10) / 10
                           return (
-                            <div key={z.zone_id} className="flex items-center gap-2 py-[3px] border-b border-slate-100 last:border-0"
+                            <div key={z.zone_id} className="flex items-center gap-2 py-[3px] border-b border-slate-700/60 last:border-0"
                               title={`${z.name} (${z.code})${z.category ? ` · ${z.category}` : ''} — ${pct == null
                                 ? 'chưa khai pallet tối đa'
                                 : `${pctTxt}% đã dùng · còn ${nf(Math.max(0, z.capacity - z.used))} chỗ`}`}>
-                              <p className="flex-1 min-w-0 truncate text-[11px] text-slate-700">
-                                {z.name}<span className="ml-1 text-[9px] text-slate-400">{z.code}</span>
+                              <p className="flex-1 min-w-0 truncate text-[11px] text-slate-300">
+                                {z.name}<span className="ml-1 text-[9px] text-slate-500">{z.code}</span>
                               </p>
-                              {/* Mobile ẩn bar — nhường chỗ cho TÊN khu (360px tên bị cắt thành "Kho …") */}
-                              <div className="hidden sm:block w-24 shrink-0 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              {/* Mobile ẩn bar — nhường chỗ cho TÊN khu (360px tên bị cắt) */}
+                              <div className="hidden sm:block w-24 shrink-0 h-1.5 overflow-hidden rounded-full bg-slate-700">
                                 <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct == null ? 0 : Math.min(100, pct)}%` }} />
                               </div>
-                              <p className="w-[84px] sm:w-[92px] shrink-0 text-right text-[10px] font-medium tabular-nums text-slate-600">
-                                {nf(z.used)}<span className="font-normal text-slate-400"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
+                              <p className="w-[84px] sm:w-[92px] shrink-0 text-right text-[10px] font-medium tabular-nums text-slate-300">
+                                {nf(z.used)}<span className="font-normal text-slate-500"> / {z.capacity > 0 ? nf(z.capacity) : '—'}</span>
                               </p>
-                              <p className={`w-10 shrink-0 text-right text-[10px] font-semibold tabular-nums ${pct == null ? 'text-slate-300'
-                                : pct >= 100 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-slate-500'}`}>
+                              <p className={`w-10 shrink-0 text-right text-[10px] font-semibold tabular-nums ${pct == null ? 'text-slate-600'
+                                : pct >= 100 ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-slate-400'}`}>
                                 {pct == null ? '—' : `${pctTxt}%`}
                               </p>
                             </div>
@@ -245,117 +267,89 @@ export default function Dashboard() {
               )}
               {!isLoading && zonesByWh.length > WH_SHOW_CAP && (
                 <button type="button" onClick={() => setShowAllWh(v => !v)}
-                  className="mt-2 w-full rounded-md border border-slate-200 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50">
+                  className="mt-2 w-full rounded-md border border-slate-600 py-1 text-[11px] font-medium text-slate-400 hover:bg-white/5">
                   {showAllWh ? 'Thu gọn' : `Hiện tất cả ${zonesByWh.length} kho (đang hiện ${WH_SHOW_CAP} kho căng chỗ nhất)`}
                 </button>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </Panel>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           {/* Bảng tồn theo kho */}
           <div className="lg:col-span-2">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-3">
-                <CardTitle className="flex items-center gap-2">
-                  <Warehouse className="h-4 w-4 text-muted-foreground" />
-                  Tồn kho theo kho
-                </CardTitle>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link to="/wms/inventory" className="text-xs">Xem chi tiết →</Link>
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                {isLoading ? (
-                  <div className="p-4 space-y-2">
-                    {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
-                  </div>
-                ) : byWarehouse.length === 0 ? (
-                  <p className="px-4 pb-4 text-sm text-slate-400">Chưa có tồn kho trong phạm vi của bạn</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[520px]">
-                      <thead>
-                        <tr className="border-y bg-slate-50">
-                          <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Kho</th>
-                          <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Loại hàng</th>
-                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Pallet</th>
-                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}</th>
-                          <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Mã hàng</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {byWarehouse.map(w => (
-                          w.cats.map((c, ci) => (
-                            <tr key={`${w.warehouse_id}-${c.category}`} className={`border-b border-slate-100 hover:bg-slate-50 ${ci === 0 ? '[&_td]:border-t [&_td]:border-t-slate-200' : ''}`}>
-                              <td className="px-3 py-1.5 whitespace-nowrap">
-                                {ci === 0 && (
-                                  <span className="flex items-center gap-1.5">
-                                    <span className="text-[11px] font-semibold text-slate-700">{w.warehouse_name}</span>
-                                    {w.inventory_mode && (
-                                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${MODE_BADGE[w.inventory_mode] ?? 'bg-slate-100 text-slate-500'}`}>{w.inventory_mode}</span>
-                                    )}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-1.5 text-[10px] text-slate-600 whitespace-nowrap">{c.category}</td>
-                              <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{nf(c.pallets)}</td>
-                              <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{nf(c.cartons)}</td>
-                              <td className="px-3 py-1.5 text-[10px] text-right tabular-nums text-slate-500 whitespace-nowrap">{nf(c.materials)}</td>
-                            </tr>
-                          ))
-                        ))}
-                        <tr className="bg-slate-50 font-semibold">
-                          <td className="px-3 py-2 text-[11px] text-slate-700" colSpan={2}>Tổng ({totals.warehouses} kho)</td>
-                          <td className="px-3 py-2 text-[11px] text-right tabular-nums">{nf(totals.pallets)}</td>
-                          <td className="px-3 py-2 text-[11px] text-right tabular-nums">{nf(totals.cartons)}</td>
-                          <td className="px-3 py-2" />
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <Panel title="Tồn kho theo kho" icon={Warehouse}
+              extra={<Link to="/wms/inventory" className="ml-auto text-[10px] text-sky-400 hover:underline">Xem chi tiết →</Link>}>
+              {isLoading ? (
+                <div className="p-4 space-y-2">
+                  {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className={`h-9 ${sk}`} />)}
+                </div>
+              ) : byWarehouse.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-slate-500">Chưa có tồn kho trong phạm vi của bạn</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px]">
+                    <thead>
+                      <tr className="border-b border-slate-700">
+                        <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Kho</th>
+                        <th className="px-3 py-1.5 text-left text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Loại hàng</th>
+                        <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Pallet</th>
+                        <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}</th>
+                        <th className="px-3 py-1.5 text-right text-[9px] font-medium text-slate-500 uppercase whitespace-nowrap">Mã hàng</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {byWarehouse.map(w => (
+                        w.cats.map((c, ci) => (
+                          <tr key={`${w.warehouse_id}-${c.category}`} className={`border-b border-slate-700/60 hover:bg-white/5 ${ci === 0 ? '[&_td]:border-t [&_td]:border-t-slate-600' : ''}`}>
+                            <td className="px-3 py-1.5 whitespace-nowrap">
+                              {ci === 0 && (
+                                <span className="flex items-center gap-1.5">
+                                  <span className="text-[11px] font-semibold text-slate-100">{w.warehouse_name}</span>
+                                  {w.inventory_mode && (
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${MODE_BADGE[w.inventory_mode] ?? 'bg-slate-700 text-slate-400'}`}>{w.inventory_mode}</span>
+                                  )}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 text-[10px] text-slate-400 whitespace-nowrap">{c.category}</td>
+                            <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap text-slate-100">{nf(c.pallets)}</td>
+                            <td className="px-3 py-1.5 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap text-slate-100">{nf(c.cartons)}</td>
+                            <td className="px-3 py-1.5 text-[10px] text-right tabular-nums text-slate-500 whitespace-nowrap">{nf(c.materials)}</td>
+                          </tr>
+                        ))
+                      ))}
+                      <tr className="bg-slate-700/30 font-semibold">
+                        <td className="px-3 py-2 text-[11px] text-slate-200" colSpan={2}>Tổng ({totals.warehouses} kho)</td>
+                        <td className="px-3 py-2 text-[11px] text-right tabular-nums text-white">{nf(totals.pallets)}</td>
+                        <td className="px-3 py-2 text-[11px] text-right tabular-nums text-white">{nf(totals.cartons)}</td>
+                        <td className="px-3 py-2" />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
           </div>
 
           {/* Thao tác nhanh */}
-          <div className="space-y-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  Thao tác nhanh
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
-                  <Link to="/wms/inbound">
-                    <PackagePlus className="h-4 w-4 text-green-600" />
-                    Nhập kho
+          <div className="space-y-3">
+            <Panel title="Thao tác nhanh" icon={Clock}>
+              <div className="p-3 space-y-2">
+                {[
+                  { to: '/wms/inbound', icon: PackagePlus, cls: 'text-green-400', label: 'Nhập kho' },
+                  { to: '/wms/outbound', icon: PackageMinus, cls: 'text-blue-400', label: 'Xuất kho' },
+                  { to: '/wms/inventory', icon: Package, cls: 'text-slate-300', label: 'Xem tồn kho' },
+                  { to: '/tms/bookings', icon: Truck, cls: 'text-amber-400', label: 'Kế hoạch vận chuyển' },
+                ].map(({ to, icon: Icon, cls, label }) => (
+                  <Link key={to} to={to}
+                    className="flex items-center gap-2 w-full h-9 px-3 rounded-md border border-slate-600 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors">
+                    <Icon className={`h-4 w-4 ${cls}`} />
+                    {label}
                   </Link>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
-                  <Link to="/wms/outbound">
-                    <PackageMinus className="h-4 w-4 text-blue-600" />
-                    Xuất kho
-                  </Link>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
-                  <Link to="/wms/inventory">
-                    <Package className="h-4 w-4 text-slate-600" />
-                    Xem tồn kho
-                  </Link>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-2 h-9" asChild>
-                  <Link to="/tms/bookings">
-                    <Truck className="h-4 w-4 text-amber-600" />
-                    Kế hoạch vận chuyển
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
+                ))}
+              </div>
+            </Panel>
           </div>
         </div>
       </div>

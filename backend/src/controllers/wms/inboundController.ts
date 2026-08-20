@@ -1434,7 +1434,7 @@ export async function scanQR(req: Request, res: Response) {
     //   (pallet đổi tên A→B không kế thừa được → operator chọn ở sheet.)
     // - shelflife lưu thẳng trên pallet vì 1 mã+1 NCC có thể nhiều shelflife (không suy được từ NCC).
     // Hàng nhập NCC (cờ is_ncc_goods của Loại kho): đoạn 4 QR = MÃ NCC (không phải Máy) → lưu vào ncc_id.
-    const isNccGoods = await isNccGoodsCategory(((order as any).material?.category ?? '') as string)
+    const isNccGoods = await isNccGoodsCategory(((order as any).material?.category ?? '') as string, (order as { warehouse_id?: string | null }).warehouse_id ?? null)
 
     let resolvedNcc: string | null = ncc_override ?? (order as { ncc_id?: string | null }).ncc_id ?? null
     let resolvedShelf: number | null = (shelf_override != null && Number(shelf_override) > 0) ? Number(shelf_override) : null
@@ -1459,7 +1459,7 @@ export async function scanQR(req: Request, res: Response) {
     // Cờ requires_ncc của Loại kho (user chốt 10/07): pallet tồn MỚI phải có NCC — chặn cứng.
     // Chuyển kho KHÔNG chặn (kế thừa từ pallet gốc ở trên, gốc không có thì thôi).
     const matCategory = ((order as any).material?.category ?? '') as string
-    if (!isTransfer && !resolvedNcc && await categoryRequiresNcc(matCategory)) {
+    if (!isTransfer && !resolvedNcc && await categoryRequiresNcc(matCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
       return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${matCategory}" bắt buộc chọn NCC — chọn NCC ở panel quét rồi lưu lại`)
     }
 
@@ -1634,7 +1634,7 @@ export async function scanManual(req: Request, res: Response) {
     // Cờ requires_ncc của Loại kho: lưu thủ công (no-QR — entry pool không mang NCC riêng)
     // → NCC phải có ở cấp PHIẾU (ProductionImport.ncc_id). Thiếu → chặn cứng (user chốt 10/07).
     const manualCategory = ((order as any).material?.category ?? '') as string
-    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory)) {
+    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
       return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${manualCategory}" bắt buộc có NCC — sửa phiếu nhập, chọn NCC rồi lưu lại`)
     }
 
@@ -1650,7 +1650,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
-    const warehouseId = (order as any).warehouse_id as string | null
+    const warehouseId = (order as { warehouse_id?: string | null }).warehouse_id ?? null
 
     // Kho QTY_DATE: pool tách theo NSX. Ưu tiên body production_date (người nhận SỬA được NSX khi tem
     // thực tế lệch dữ liệu quét) → fallback NSX của PHIẾU (transfer_production_date — kế thừa từ tem

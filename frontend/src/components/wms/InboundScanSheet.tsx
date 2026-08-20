@@ -17,7 +17,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { normalizeQR, isValidDMY } from '@/utils/qr'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { requiresNcc, isNccCategory } from '@/utils/cargoCategory'
-import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { useWhTypeMetaMapFor } from '@/hooks/useWhTypeMeta'
 import { PutawayOption } from '@/components/wms/PutawayOption'
 import { LocationContents } from '@/components/wms/LocationContents'
 import { PUTAWAY_OVERRIDE_REASONS, type PutawayHint } from '@/utils/putaway'
@@ -152,7 +152,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     baseOpts.push({ key: `${order.ncc_id}|`, ncc_id: order.ncc_id, shelf: null, label: nccName(order.ncc_id) })
   }
   // Cờ requires_ncc của Loại kho: pallet mới phải có NCC (chuyển kho kế thừa — không chặn)
-  const whTypeMeta = useWhTypeMetaMap()
+  // Cờ hiệu lực TẠI KHO của phiếu (kho khai riêng được — 21/08)
+  const whTypeMeta = useWhTypeMetaMapFor(order.warehouse_id)
   const matCategory = (order.material as { category?: string | null } | undefined)?.category ?? ''
   const nccRequired = !isTransfer && requiresNcc(matCategory, whTypeMeta)
   const nccRelevant = isTransfer || !!order.ncc_id || variants.length > 0 || nccRequired

@@ -6,6 +6,7 @@ import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { asRotationPrinciple } from '../../utils/rotation'
 import { applyPutawayBody, applyWhTypeConfigBody, WH_TYPE_CFG_COLS } from '../../utils/putaway'
+import { WH_TYPE_META_COLS } from '../../utils/warehouseTypeMeta'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { warehouseTypeUsage } from '../wms/lookupController'
@@ -181,27 +182,26 @@ export async function createWarehouse(req: Request, res: Response) {
       throw error
     }
 
-    // Kho MỚI phải có tập loại kho ngay: 0 loại là mọi form của kho đó bị chặn oan.
-    // Có `copy_from_warehouse_id` → bê nguyên tập loại + chiến thuật riêng của kho mẫu ("Copy
-    // format loại kho"); không thì nhận ĐỦ mọi loại đang có, chiến thuật để trống (theo kho).
+    // Kho MỚI nhận ĐỦ MỌI loại kho (danh mục dùng chung — user chốt 21/08), setting để trống =
+    // theo mặc định của kho. `copy_from_warehouse_id` chỉ COPY SETTING của kho mẫu, không đổi tập loại.
     const newId = (data as { id?: string } | null)?.id
     if (newId) {
       const src = req.body?.copy_from_warehouse_id ? String(req.body.copy_from_warehouse_id) : null
       const nowIso = new Date().toISOString()
-      let seed: Record<string, unknown>[] = []
+      const srcCfg = new Map<string, Record<string, unknown>>()
       if (src) {
         const { data: rows } = await supabase.from('warehouse_type_configs')
           .select('*').eq('warehouse_id', src).limit(200)
         // Chỉ bê phần CẤU HÌNH — id/warehouse_id/created_at của kho mẫu bê sang là ghi đè nhầm kho
-        seed = (rows ?? []).map(r => {
+        for (const r of rows ?? []) {
           const row = r as Record<string, unknown>
-          const out: Record<string, unknown> = { type_code: row.type_code }
+          const out: Record<string, unknown> = {}
           if (row.sort_order != null) out.sort_order = row.sort_order   // copy cả thứ tự đã sắp riêng
-          for (const k of WH_TYPE_CFG_COLS) if (row[k] != null) out[k] = row[k]
-          return out
-        })
+          for (const k of [...WH_TYPE_CFG_COLS, ...WH_TYPE_META_COLS]) if (row[k] != null) out[k] = row[k]
+          srcCfg.set(String(row.type_code), out)
+        }
       }
-      if (!seed.length) seed = [...await listWhTypeCodes()].map(type_code => ({ type_code }))
+      const seed = [...await listWhTypeCodes()].map(type_code => ({ type_code, ...(srcCfg.get(type_code) ?? {}) }))
       if (seed.length) {
         const { error: seedErr } = await supabase.from('warehouse_type_configs').insert(
           seed.map(r => ({ id: randomUUID(), warehouse_id: newId, ...r, updated_at: nowIso, updated_by: actor })))
@@ -290,7 +290,7 @@ export async function updateWarehouse(req: Request, res: Response) {
 
 // ─── LOẠI KHO MỖI KHO VẬN HÀNH + chiến thuật riêng theo loại (21/08) ────────
 // Sự tồn tại của dòng = "kho này vận hành loại này"; cột chiến thuật NULL = kế thừa mặc định kho.
-const WTC_SELECT = `id, type_code, sort_order, ${WH_TYPE_CFG_COLS.join(', ')}`
+const WTC_SELECT = `id, type_code, sort_order, is_ncc_goods, requires_ncc, batch_char, ${WH_TYPE_CFG_COLS.join(', ')}`
 
 // Thứ tự RIÊNG của kho (kéo-thả ở tab Loại kho). NULL = chưa sắp riêng → xuống cuối, xếp theo mã.
 const wtcOrdered = (whId: string) => supabase.from('warehouse_type_configs')
@@ -301,25 +301,6 @@ async function listWhTypeCodes(): Promise<Set<string>> {
   const rows = await fetchAllRowsParallel(() =>
     supabase.from('LookupValue').select('value').eq('type', 'warehouse_type').order('value'))
   return new Set((rows ?? []).map(r => String((r as { value: string }).value)))
-}
-
-// "Loại kho này còn kho NÀO khác đang vận hành?" — dùng để cảnh báo trước khi đổi tên / cờ hành vi
-// (tên + cờ gắn với chính loại đó nên sửa là áp cho mọi kho đang dùng chung).
-export async function getWarehouseTypeUsage(req: Request, res: Response) {
-  try {
-    const code = String(req.params.code ?? '')
-    const { data, error } = await supabase.from('warehouse_type_configs')
-      .select('warehouse_id, Warehouse!inner(id, name, code)')
-      .eq('type_code', code).neq('warehouse_id', String(req.query.exclude ?? '')).limit(200)
-    if (error) throw error
-    // Embed của PostgREST khai kiểu MẢNG dù quan hệ là 1-1 → gom cả 2 dạng rồi làm phẳng
-    type Wh = { id: string; name: string; code: string }
-    const flat = (data ?? []).flatMap(r => {
-      const w = (r as { Warehouse?: Wh | Wh[] | null }).Warehouse
-      return Array.isArray(w) ? w : w ? [w] : []
-    })
-    ok(res, flat)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
 export async function getWarehouseTypeConfigs(req: Request, res: Response) {
@@ -366,9 +347,21 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
       // ⚠️ PostgREST dựng câu INSERT/UPSERT từ HỢP các key có trong payload: cột vắng mặt sẽ không
       // nằm trong `DO UPDATE SET` nên override cũ SỐNG SÓT — gỡ trên form xong luật vẫn chạy, không
       // lỗi, không cảnh báo (gói QA 29 mục [4] bắt được đúng ca này). Nên khởi tạo NULL đủ mọi cột.
-      const patch: Record<string, unknown> = Object.fromEntries(WH_TYPE_CFG_COLS.map(k => [k, null]))
+      const patch: Record<string, unknown> = Object.fromEntries(
+        [...WH_TYPE_CFG_COLS, ...WH_TYPE_META_COLS].map(k => [k, null]))
       const err = applyWhTypeConfigBody(raw, patch)
       if (err) return fail(res, 422, 'INVALID_INPUT', `${code}: ${err}`)
+      // 3 cờ VẬN HÀNH khai riêng theo kho (21/08) — null/'' = theo danh mục chung
+      for (const k of ['is_ncc_goods', 'requires_ncc'] as const) {
+        if (raw[k] === undefined || raw[k] === null || raw[k] === '') continue
+        patch[k] = Boolean(raw[k])
+      }
+      if (raw.batch_char !== undefined && raw.batch_char !== null && raw.batch_char !== '') {
+        const bc = String(raw.batch_char).trim().toUpperCase()
+        if (!/^[A-Z0-9]$/.test(bc))
+          return fail(res, 422, 'INVALID_INPUT', `${code}: Ký tự mã lô phải là 1 chữ cái hoặc số`)
+        patch.batch_char = bc
+      }
       let ord = prevOrder.get(code) ?? null
       if (raw.sort_order !== undefined) {
         if (raw.sort_order === null || raw.sort_order === '') ord = null
@@ -395,26 +388,9 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
     const toInsert = rows.filter(r => !curById.has(String(r.type_code)))
       .map(r => ({ id: randomUUID(), warehouse_id: whId, ...r, updated_at: now, updated_by: actor }))
     const toUpdate = rows.filter(r => curById.has(String(r.type_code)))
-    const keep = new Set(rows.map(r => String(r.type_code)))
-    const toDelete = [...curById.entries()]
-      // Loại ngoài scope của user KHÔNG bị xoá dù client không gửi lên (client đó cũng không thấy nó)
-      .filter(([code, _id]) => !keep.has(code) && categoryAllowed(req, code))
-      .map(([_code, id]) => id)
-
-    // GỠ loại khỏi KHO CUỐI CÙNG đang vận hành nó ⇒ loại thành mồ côi: không màn cấu hình nào còn
-    // thấy nó nhưng mã hàng / vị trí / chuyến… vẫn trỏ vào. Chặn ở đây (cùng bộ đếm với xoá danh mục).
-    if (toDelete.length) {
-      const goneCodes = [...curById.entries()].filter(([, id]) => toDelete.includes(id)).map(([c]) => c)
-      for (const code of goneCodes) {
-        const { count } = await supabase.from('warehouse_type_configs')
-          .select('id', { count: 'exact', head: true }).eq('type_code', code).neq('warehouse_id', whId)
-        if ((count ?? 0) > 0) continue                       // kho khác còn vận hành → gỡ thoải mái
-        const { total, detail } = await warehouseTypeUsage(code, { skipWarehouseConfigs: true })
-        if (total > 0)
-          return fail(res, 409, 'TYPE_IN_USE',
-            `"${code}" là loại kho CUỐI CÙNG còn kho vận hành, nhưng đang có ${total} bản ghi dùng nó — gỡ khỏi kho này là dữ liệu đó mồ côi. Chi tiết: ${detail}`)
-      }
-    }
+    // KHÔNG xoá dòng nào: từ 21/08 mọi kho đều có mọi loại kho, không còn thao tác "gỡ loại khỏi
+    // kho". Client gửi thiếu loại (bản cũ / lưu một phần) thì giữ nguyên phần còn lại, không dọn.
+    // Bỏ loại kho khỏi hệ thống = xoá ở DANH MỤC (deleteLookup dọn cascade cả bảng này).
 
     if (toInsert.length) {
       const { error } = await supabase.from('warehouse_type_configs').insert(toInsert)
@@ -426,10 +402,6 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
         id: curById.get(String(r.type_code)), warehouse_id: whId, ...r, updated_at: now, updated_by: actor,
       }))
       const { error } = await supabase.from('warehouse_type_configs').upsert(payload, { onConflict: 'id' })
-      if (error) throw error
-    }
-    if (toDelete.length) {
-      const { error } = await supabase.from('warehouse_type_configs').delete().in('id', toDelete.slice(0, 300))
       if (error) throw error
     }
 

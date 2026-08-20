@@ -243,32 +243,35 @@ try {
     await setCfg(allTypes())
   }
 
-  // ── [8] VÒNG ĐỜI: gỡ loại khỏi kho khi CÒN TỒN = "ngừng vận hành" ─────────
+  // ── [8] MỌI KHO ĐỀU CÓ MỌI LOẠI (user chốt 21/08 vòng cuối) ───────────────
+  // Loại kho là DANH MỤC CHUNG: không còn thao tác "gỡ loại khỏi kho". Client gửi thiếu loại
+  // (bản cũ / lưu một phần) thì backend GIỮ NGUYÊN phần còn lại — mất loại là mọi form của kho
+  // đó không chọn được nó nữa, sai âm thầm.
   {
     const without = cfgBackup.filter(r => r.type_code !== catB).map(r => ({ type_code: r.type_code }))
     const del = await setCfg(without)
-    check('[8a] Gỡ loại khỏi kho dù còn tồn: CHO PHÉP (kho phase-out một loại không được kẹt)',
-      del.s === 200 && !(del.j?.data ?? []).some(r => r.type_code === catB), `http=${del.s}`)
+    check('[8a] Gửi thiếu một loại ⇒ KHÔNG bị gỡ khỏi kho (mọi kho đều có mọi loại)',
+      del.s === 200 && (del.j?.data ?? []).some(r => r.type_code === catB),
+      `http=${del.s} còn=${(del.j?.data ?? []).length}`)
     const b = (await checkScan(itemB, `${TAG}-B-SHORT`)).j?.data?.rotation
-    check('[8b] Tồn CŨ của loại đã gỡ vẫn quét xuất được (chặn tạo mới, không chặn xử lý tồn cũ)',
-      b?.principle === 'FEFO' && b?.source === 'WAREHOUSE', JSON.stringify(b))
+    check('[8b] Tồn của loại đó vẫn quét xuất bình thường', b?.principle === 'FEFO', JSON.stringify(b))
     const rB = await scan(itemB, { qr_code: `${TAG}-B-SHORT`, cartons_override: 5, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
-    check('[8c] Ghi nhận xuất tồn cũ vẫn 200 (không ngõ cụt)', rB.s === 200 || rB.s === 201, `http=${rB.s}`)
+    check('[8c] Ghi nhận xuất vẫn 200', rB.s === 200 || rB.s === 201, `http=${rB.s}`)
     await setCfg(allTypes())
     const back = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
-    check('[8d] Thêm lại loại ⇒ trở lại như cũ (chuỗi CÓ→GỠ→CÓ LẠI)',
-      back.some(r => r.type_code === catB) && back.length === cfgBackup.length, `n=${back.length}/${cfgBackup.length}`)
+    check('[8d] Kho vẫn đủ tập loại như ban đầu', back.length === cfgBackup.length, `n=${back.length}/${cfgBackup.length}`)
   }
 
   // ── [9] Xoá Loại kho khỏi DANH MỤC khi còn dùng → 409 ─────────────────────
   {
     const [lk] = await restAll('LookupValue', `select=id,value&type=eq.warehouse_type&value=eq.${catB}`)
     const r = await api(`/wms/lookup/${lk.id}`, 'DELETE')
-    check('[9a] Xoá loại đang được kho vận hành / chuyến chở lẫn dùng → 409, KHÔNG xoá',
+    check('[9a] Xoá loại đang có dữ liệu (mã hàng / vị trí / chuyến chở lẫn) → 409, KHÔNG xoá',
       r.s === 409, `http=${r.s} msg=${String(r.j?.error?.message ?? '').slice(0, 120)}`)
-    // Phải kể ĐÍCH DANH bảng gán mới: thiếu = xoá loại xong tập gán + chiến thuật riêng mồ côi âm thầm
-    check('[9b] 409 đếm CẢ "kho đang vận hành loại này" (bảng gán 21/08 vào guard xoá)',
-      String(r.j?.error?.message ?? '').includes('kho đang vận hành loại này'),
+    // Dòng gán của kho KHÔNG được tính là "đang dùng": mọi kho đều có mọi loại nên tính vào là
+    // KHÔNG BAO GIỜ xoá được loại nào (bẫy gặp ngay khi đổi sang danh mục chung).
+    check('[9b] 409 KHÔNG đếm dòng gán của kho (nếu không sẽ khoá cứng mọi thao tác xoá)',
+      !String(r.j?.error?.message ?? '').includes('kho đang vận hành loại này'),
       String(r.j?.error?.message ?? '').slice(0, 220))
     const [still] = await restAll('LookupValue', `select=id&id=eq.${lk.id}`)
     check('[9c] Loại vẫn còn nguyên trong danh mục', !!still)
@@ -323,50 +326,42 @@ try {
     }
   }
 
-  // ── [11] LOẠI KHO THUỘC VỀ KHO: gỡ khỏi kho cuối cùng không được bỏ rơi dữ liệu ──────
-  // Loại kho chỉ "sống" khi có kho vận hành. Gỡ khỏi kho CUỐI CÙNG mà mã hàng/vị trí… vẫn trỏ vào
-  // ⇒ dữ liệu mồ côi ÂM THẦM (không màn cấu hình nào còn thấy loại đó nữa).
+  // ── [11] LOẠI KHO = DANH MỤC CHUNG: tạo 1 lần, MỌI KHO đều có (user chốt 21/08 vòng cuối) ──
   {
     const tmpCode = `${TAG}-T1`
+    const nWh = (await restAll('Warehouse', 'select=id')).length
     const mk = await api('/wms/lookup', 'POST', { type: 'warehouse_type', value: tmpCode, meta: {} })
     const tmpId = mk.j?.data?.id
     check('[11a] Tạo loại kho mới', mk.s === 200 || mk.s === 201, `http=${mk.s}`)
-    const cfgNow = await api(`/masterdata/warehouses/${whId}/type-configs`)
-    const base = (cfgNow.j?.data ?? []).map(r => ({ ...r }))
-    // Gán loại mới vào ĐÚNG MỘT kho + dựng 1 vị trí mang loại đó
-    const withTmp = [...base, { type_code: tmpCode }]
-    const r1 = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: withTmp })
-    check('[11b] Gán loại mới cho kho', r1.s === 200 && (r1.j?.data ?? []).some(r => r.type_code === tmpCode), `http=${r1.s}`)
-    const [locT] = await restWrite('Location', 'POST', null, {
-      id: randomUUID(), location_code: `${TAG}-TLOC`, warehouse_id: whId, max_pallets: 5,
-      is_active: true, row: 'QA', shelf: '9', sub_code: `${TAG}-TLOC`,
-      categories: [tmpCode], created_at: nowIso(), updated_at: nowIso(),
-    })
-    created.locs.push(locT.id)
-    const r2 = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: base })
-    check('[11c] Gỡ loại khỏi KHO CUỐI CÙNG khi còn vị trí mang loại đó → 409 (không bỏ rơi dữ liệu)',
-      r2.s === 409 && r2.j?.error?.code === 'TYPE_IN_USE',
-      `http=${r2.s} code=${r2.j?.error?.code} msg=${String(r2.j?.error?.message ?? '').slice(0, 140)}`)
-    const still = await api(`/masterdata/warehouses/${whId}/type-configs`)
-    check('[11d] Bị chặn thì tập loại của kho GIỮ NGUYÊN (không ghi dở dang)',
-      (still.j?.data ?? []).some(r => r.type_code === tmpCode), `n=${(still.j?.data ?? []).length}`)
-    // Kho khác cũng vận hành loại đó ⇒ gỡ khỏi kho này thoải mái (vẫn còn kho giữ loại)
-    const other = FIX.WH_QTY.id
-    const oc = await api(`/masterdata/warehouses/${other}/type-configs`)
-    const oBase = (oc.j?.data ?? []).map(r => ({ ...r }))
-    await api(`/masterdata/warehouses/${other}/type-configs`, 'PUT', { items: [...oBase, { type_code: tmpCode }] })
-    const use = await api(`/masterdata/warehouse-types/${encodeURIComponent(tmpCode)}/usage?exclude=${whId}`)
-    check('[11e] Tra "kho nào khác đang vận hành loại này" → thấy đúng kho kia',
-      use.s === 200 && (use.j?.data ?? []).some(w => w.id === other), `http=${use.s} n=${use.j?.data?.length}`)
-    const r3 = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: base })
-    check('[11f] Kho khác còn vận hành ⇒ gỡ khỏi kho này CHO PHÉP (dù còn vị trí mang loại)',
-      r3.s === 200, `http=${r3.s}`)
-    // dọn
-    await restWrite('Location', 'DELETE', `id=eq.${locT.id}`)
-    await api(`/masterdata/warehouses/${other}/type-configs`, 'PUT', { items: oBase })
-    if (tmpId) await api(`/wms/lookup/${tmpId}`, 'DELETE')
-    const [gone] = await restAll('LookupValue', `select=id&id=eq.${tmpId}`)
-    check('[11g] Dọn loại tạm sạch', !gone)
+    // Tạo xong là MỌI kho đều có — thiếu bước này thì từng kho phải tự khai lại, và Đợt 2 (lọc
+    // option theo kho) sẽ chặn oan đúng loại vừa tạo.
+    const seeded = await restAll('warehouse_type_configs', `select=warehouse_id&type_code=eq.${tmpCode}`)
+    check('[11b] Loại mới có mặt ở TẤT CẢ kho', seeded.length === nWh, `${seeded.length}/${nWh} kho`)
+    const cfgA = await api(`/masterdata/warehouses/${whId}/type-configs`)
+    check('[11c] Kho fixture thấy loại mới ngay', (cfgA.j?.data ?? []).some(r => r.type_code === tmpCode))
+
+    // 3 cờ VẬN HÀNH khai riêng theo kho (null = theo danh mục chung)
+    const items = (cfgA.j?.data ?? []).map(r => r.type_code === tmpCode
+      ? { ...r, is_ncc_goods: true, requires_ncc: true, batch_char: 'K' } : { ...r })
+    const rw = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+    const got = (rw.j?.data ?? []).find(r => r.type_code === tmpCode)
+    check('[11d] Khai riêng 3 cờ vận hành cho kho này → lưu + đọc lại đúng',
+      rw.s === 200 && got?.is_ncc_goods === true && got?.requires_ncc === true && got?.batch_char === 'K',
+      `http=${rw.s} got=${JSON.stringify(got && { n: got.is_ncc_goods, r: got.requires_ncc, b: got.batch_char })}`)
+    const cfgB = await api(`/masterdata/warehouses/${FIX.WH_QTY.id}/type-configs`)
+    const otherRow = (cfgB.j?.data ?? []).find(r => r.type_code === tmpCode)
+    check('[11e] Kho KHÁC không bị lây 3 cờ đó (vẫn theo danh mục chung)',
+      !!otherRow && otherRow.is_ncc_goods == null && otherRow.requires_ncc == null && !otherRow.batch_char,
+      JSON.stringify(otherRow && { n: otherRow.is_ncc_goods, r: otherRow.requires_ncc, b: otherRow.batch_char }))
+    const bad = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+      { items: items.map(r => r.type_code === tmpCode ? { ...r, batch_char: 'AB' } : r) })
+    check('[11f] Ký tự mã lô >1 ký tự → 422', bad.s === 422, `http=${bad.s}`)
+
+    // Xoá loại khỏi danh mục = mọi kho mất theo + dọn sạch dòng gán (không để mồ côi)
+    const rmv = await api(`/wms/lookup/${tmpId}`, 'DELETE')
+    check('[11g] Xoá loại chưa có dữ liệu dùng → cho xoá', rmv.s === 200, `http=${rmv.s} msg=${String(rmv.j?.error?.message ?? '').slice(0, 100)}`)
+    const left = await restAll('warehouse_type_configs', `select=id&type_code=eq.${tmpCode}`)
+    check('[11h] Xoá loại dọn luôn setting riêng của MỌI kho (0 dòng mồ côi)', left.length === 0, `còn ${left.length} dòng`)
   }
 } catch (e) {
   check('gói chạy trọn', false, String(e?.message ?? e))

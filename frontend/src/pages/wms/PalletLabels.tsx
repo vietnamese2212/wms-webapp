@@ -13,7 +13,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
-import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { useWhTypeMetaMap, useWhTypeMetaMapFor } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
@@ -298,7 +298,10 @@ export default function PalletLabels() {
 
   // Danh mục NCC (đoạn 4 cho hàng nhập NCC)
   const { data: companies = [] } = useTransportCompanies(true)
-  const whTypeMeta = useWhTypeMetaMap()   // cờ hành vi per-Loại kho (is_ncc_goods + batch_char)
+  // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
+  const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
+  // Cờ hiệu lực TẠI KHO NMSX đang chọn — kho khai riêng được (21/08)
+  const whTypeMeta = useWhTypeMetaMapFor(nmsxWarehouseId)
   const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
   const nccNameByCode = useMemo(() => new Map(nccList.map(c => [c.code, c.name])), [nccList])
@@ -313,8 +316,6 @@ export default function PalletLabels() {
   const seg4 = genIsNcc ? nccCode : machine                                   // giá trị vào QR (đoạn 4)
   const seg4Name = genIsNcc ? (nccList.find(c => c.code === nccCode)?.name ?? '') : ''
 
-  // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
-  const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
   // DANH MỤC MÁY theo kho NMSX (user 13/08): kho có khai máy → ô Máy thành dropdown PHẢI chọn;
   // chưa khai (hoặc NMSX 'O'/trống) → điền tự do như cũ. Chỉ áp form V1 hàng thành phẩm (không NCC).
   const { data: nmsxMachines } = useMachines(nmsxWarehouseId ?? undefined)

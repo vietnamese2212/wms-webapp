@@ -31,8 +31,6 @@ router.get('/warehouses/:id/type-configs', warehouse.getWarehouseTypeConfigs)
 router.put('/warehouses/:id/type-configs',
   requireAnyPerm(['wms_settings', 'manage_warehouse'], ['wms_settings', 'manage_type']),
   warehouse.putWarehouseTypeConfigs)
-// Kho nào khác đang vận hành loại này (cảnh báo trước khi đổi tên / cờ hành vi)
-router.get('/warehouse-types/:code/usage', warehouse.getWarehouseTypeUsage)
 
 // Location
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx

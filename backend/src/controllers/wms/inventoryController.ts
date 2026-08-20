@@ -1664,6 +1664,16 @@ export async function uploadExcel(req: Request, res: Response) {
     const matCatMap = new Map(mats.map(m => [m.id, m.category ?? '']))
     const matUnitsById = new Map<string, MatUnits>(mats.map(m => [m.id, m]))
     const whTypeMeta = await getWhTypeMetaMap()   // cờ requires_ncc per Loại kho (kiểm dòng thiếu NCC)
+    // Cờ này khai RIÊNG được theo kho (21/08). File có thể trải nhiều kho ⇒ nạp MỘT lượt các dòng
+    // khai riêng (bảng tối đa số_kho × số_loại, hôm nay 765 dòng) thay vì tra theo từng dòng Excel.
+    const { data: nccOvr } = await supabase.from('warehouse_type_configs')
+      .select('warehouse_id, type_code, requires_ncc').not('requires_ncc', 'is', null).limit(5000)
+    const nccOvrMap = new Map((nccOvr ?? []).map(r => {
+      const row = r as { warehouse_id: string; type_code: string; requires_ncc: boolean | null }
+      return [`${row.warehouse_id}|${row.type_code}`, row.requires_ncc === true]
+    }))
+    const requiresNccAt = (whId: string, cat: string) =>
+      nccOvrMap.get(`${whId}|${cat}`) ?? (whTypeMeta.get(cat)?.requires_ncc === true)
     const nmsxAlias = (await getOrgProfile()).nmsx_alias   // gộp mã nhà máy cũ→mới theo cấu hình đơn vị
     const whByCode = new Map(whs.map(w => [String(w.code).trim().toLowerCase(), w]))
     const whByName = new Map(whs.map(w => [String(w.name).trim().toLowerCase(), w]))
@@ -1805,7 +1815,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const rowCat = matCatMap.get(matId) ?? ''
       // Scope Loại hàng: chặn ghi mã thuộc loại ngoài phạm vi user (mã chưa gán loại vẫn cho)
       if (!categoryAllowed(req, rowCat)) { errors.push(`${at} — Loại hàng "${rowCat}" ngoài phạm vi của bạn`); continue }
-      if (!nccId && whTypeMeta.get(rowCat)?.requires_ncc === true) {
+      if (!nccId && requiresNccAt(wh.id, rowCat)) {
         errors.push(`${at} — Loại kho "${rowCat}" bắt buộc có NCC (cột NCC đang trống)`); continue
       }
       // QA: trống hoặc "OK" = pallet tốt → NULL. Chỉ gán khi là cờ GIỮ thật; giá trị lạ → lỗi.

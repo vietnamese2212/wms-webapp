@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { maskServerMessage } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRowsParallel } from '../../utils/pagination'
 import { invalidateWhTypeMetaCache, type WhTypeMeta } from '../../utils/warehouseTypeMeta'
 
 function fail(res: Response, message: string, status = 400) {
@@ -65,7 +66,20 @@ export async function addLookup(req: Request, res: Response) {
     if (error.code === '23505') return fail(res, `"${value.trim()}" đã tồn tại`)
     return fail(res, error.message, 500)
   }
-  if (type === 'warehouse_type') invalidateWhTypeMetaCache()
+  if (type === 'warehouse_type') {
+    invalidateWhTypeMetaCache()
+    // LOẠI KHO LÀ DANH MỤC CHUNG (user chốt 21/08): tạo xong thì MỌI kho đều có loại này, setting
+    // để trống = theo mặc định của từng kho. Thiếu bước này thì kho nào cũng phải tự khai lại.
+    const whs = await fetchAllRowsParallel(() => supabase.from('Warehouse').select('id').order('id'))
+    const rows = ((whs ?? []) as { id: string }[]).map(w => ({
+      id: randomUUID(), warehouse_id: w.id, type_code: value.trim(),
+      sort_order: nextSort, updated_at: t, updated_by: actor,
+    }))
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error: seedErr } = await supabase.from('warehouse_type_configs').insert(rows.slice(i, i + 500))
+      if (seedErr) console.error('seed warehouse_type_configs:', seedErr.message)
+    }
+  }
   res.json({ success: true, data })
 }
 
@@ -251,8 +265,9 @@ export async function warehouseTypeUsage(v: string, opts?: { skipWarehouseConfig
       ['dòng kế hoạch xuất',   () => one('khvc_lines', 'booking_category')],
       // Loại kho mà các kho đang VẬN HÀNH (bảng gán 21/08) — xoá loại mà bỏ qua đây thì tập gán
       // + chiến thuật riêng của từng kho mồ côi ÂM THẦM (đúng lớp lỗi mà comment trên đã kể).
-      ...(opts?.skipWarehouseConfigs ? [] : [['kho đang vận hành loại này', () => supabase.from('warehouse_type_configs')
-        .select('id', { count: 'exact', head: true }).eq('type_code', v)]] as [string, () => PromiseLike<{ count: number | null }>][]),
+      // KHÔNG đếm `warehouse_type_configs`: từ 21/08 mọi kho đều có mọi loại nên dòng gán là MẶC
+      // ĐỊNH, không phải bằng chứng "đang dùng" — đếm vào là không bao giờ xoá được loại nào.
+      // Xoá loại sẽ dọn luôn các dòng gán (cascade thủ công trong deleteLookup).
       ['phiếu nhập',           () => one('ProductionImport', 'warehouse_type')],
       ['đăng ký cổng',         () => one('gate_registrations', 'warehouse_type')],
       ['dòng kế hoạch nhập',   () => one('inbound_plan_lines', 'warehouse_type')],
@@ -276,6 +291,9 @@ export async function deleteLookup(req: Request, res: Response) {
     const { total, detail } = await warehouseTypeUsage(v)
     if (total > 0)
       return fail(res, `Loại kho "${v}" đang được dùng ở ${total} bản ghi — không thể xóa. Chi tiết: ${detail}`, 409)
+    // Dọn dòng gán của MỌI kho (không dữ liệu nào dùng loại này nữa) — để lại là mồ côi
+    const { error: cErr } = await supabase.from('warehouse_type_configs').delete().eq('type_code', v)
+    if (cErr) return fail(res, cErr.message, 500)
   }
 
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)

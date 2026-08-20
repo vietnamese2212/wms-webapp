@@ -61,7 +61,7 @@ try {
   whBackup = Object.fromEntries(STRAT_COLS.split(',').map(k => [k, wh?.[k] ?? null]))
   const cfg0 = await api(`/masterdata/warehouses/${whId}/type-configs`)
   cfgBackup = (cfg0.j?.data ?? []).map(r => {
-    const o = { type_code: r.type_code }
+    const o = { type_code: r.type_code, sort_order: r.sort_order ?? null }
     for (const k of STRAT_COLS.split(',')) o[k] = r[k] ?? null
     return o
   })
@@ -272,6 +272,49 @@ try {
       String(r.j?.error?.message ?? '').slice(0, 220))
     const [still] = await restAll('LookupValue', `select=id&id=eq.${lk.id}`)
     check('[9c] Loại vẫn còn nguyên trong danh mục', !!still)
+  }
+
+  // ── [10] THỨ TỰ LOẠI KHO LÀ CỦA TỪNG KHO (user chốt 21/08 chiều) ──────────
+  // Trước đây thứ tự chỉ nằm ở danh mục dùng chung ⇒ kéo ở kho A thì kho B cũng đổi theo.
+  {
+    const otherWh = FIX.WH_QTY.id
+    const codesOf = j => (j?.data ?? []).map(r => r.type_code)
+    const before = await api(`/masterdata/warehouses/${whId}/type-configs`)
+    const otherBefore = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
+    const list = before.j?.data ?? []
+    if (list.length < 2) {
+      check('[10] bỏ qua — kho fixture chỉ vận hành 1 loại', true, `n=${list.length}`)
+    } else {
+      // Đảo 2 loại đầu, đánh lại thứ tự 1..n
+      const swapped = [list[1], list[0], ...list.slice(2)]
+      const items = swapped.map((r, i) => ({ ...r, sort_order: i + 1 }))
+      const rw = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+      const after = await api(`/masterdata/warehouses/${whId}/type-configs`)
+      check('[10a] Đổi thứ tự loại kho của MỘT kho: lưu + đọc lại đúng thứ tự mới',
+        rw.s === 200 && codesOf(after.j).join(',') === swapped.map(r => r.type_code).join(','),
+        `http=${rw.s} sau=${codesOf(after.j).join(',')} mong=${swapped.map(r => r.type_code).join(',')}`)
+      const otherAfter = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
+      check('[10b] Kho KHÁC không bị đổi theo (thứ tự là của TỪNG kho, không phải danh mục chung)',
+        codesOf(otherAfter.j).join(',') === codesOf(otherBefore.j).join(','),
+        `truoc=${codesOf(otherBefore.j).join(',')} sau=${codesOf(otherAfter.j).join(',')}`)
+      // Client cũ (lưu chiến thuật, không gửi sort_order) KHÔNG được xoá trắng công sắp xếp
+      const bare = swapped.map(r => {
+        const o = { type_code: r.type_code }
+        for (const k of STRAT_COLS.split(',')) o[k] = r[k] ?? null
+        return o
+      })
+      await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items: bare })
+      const kept = await api(`/masterdata/warehouses/${whId}/type-configs`)
+      check('[10c] Lưu chiến thuật mà không gửi sort_order ⇒ GIỮ NGUYÊN thứ tự đã sắp',
+        codesOf(kept.j).join(',') === swapped.map(r => r.type_code).join(','),
+        `sau=${codesOf(kept.j).join(',')}`)
+      const bad = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: swapped.map((r, i) => ({ type_code: r.type_code, sort_order: i === 0 ? 'một' : i + 1 })) })
+      check('[10d] sort_order không phải số nguyên → 422 (không ghi rác)', bad.s === 422, `http=${bad.s}`)
+      const neg = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: swapped.map((r, i) => ({ type_code: r.type_code, sort_order: i === 0 ? -3 : i + 1 })) })
+      check('[10e] sort_order âm → 422', neg.s === 422, `http=${neg.s}`)
+    }
   }
 } catch (e) {
   check('gói chạy trọn', false, String(e?.message ?? e))

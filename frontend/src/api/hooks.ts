@@ -760,6 +760,8 @@ export function useDeleteWarehouse() {
 export interface WhTypeConfig {
   id?:                         string
   type_code:                   string
+  /** Thứ tự RIÊNG của kho này (kéo-thả tab Loại kho); null = theo danh mục dùng chung */
+  sort_order?:                 number | null
   rotation_principle?:         string | null
   rotation_required?:          boolean | null
   putaway_priority?:           string | null

@@ -195,6 +195,7 @@ export async function createWarehouse(req: Request, res: Response) {
         seed = (rows ?? []).map(r => {
           const row = r as Record<string, unknown>
           const out: Record<string, unknown> = { type_code: row.type_code }
+          if (row.sort_order != null) out.sort_order = row.sort_order   // copy cả thứ tự đã sắp riêng
           for (const k of WH_TYPE_CFG_COLS) if (row[k] != null) out[k] = row[k]
           return out
         })
@@ -288,7 +289,12 @@ export async function updateWarehouse(req: Request, res: Response) {
 
 // ─── LOẠI KHO MỖI KHO VẬN HÀNH + chiến thuật riêng theo loại (21/08) ────────
 // Sự tồn tại của dòng = "kho này vận hành loại này"; cột chiến thuật NULL = kế thừa mặc định kho.
-const WTC_SELECT = `id, type_code, ${WH_TYPE_CFG_COLS.join(', ')}`
+const WTC_SELECT = `id, type_code, sort_order, ${WH_TYPE_CFG_COLS.join(', ')}`
+
+// Thứ tự RIÊNG của kho (kéo-thả ở tab Loại kho). NULL = chưa sắp riêng → xuống cuối, xếp theo mã.
+const wtcOrdered = (whId: string) => supabase.from('warehouse_type_configs')
+  .select(WTC_SELECT).eq('warehouse_id', whId)
+  .order('sort_order', { ascending: true, nullsFirst: false }).order('type_code').limit(200)
 
 async function listWhTypeCodes(): Promise<Set<string>> {
   const rows = await fetchAllRowsParallel(() =>
@@ -298,8 +304,7 @@ async function listWhTypeCodes(): Promise<Set<string>> {
 
 export async function getWarehouseTypeConfigs(req: Request, res: Response) {
   try {
-    const { data, error } = await supabase.from('warehouse_type_configs')
-      .select(WTC_SELECT).eq('warehouse_id', req.params.id).order('type_code').limit(200)
+    const { data, error } = await wtcOrdered(req.params.id)
     if (error) throw error
     ok(res, data ?? [])
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -316,6 +321,15 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
 
     const known = await listWhTypeCodes()
     const scope = scopeCategoriesOf(req)     // null = full quyền loại
+    // Thứ tự riêng hiện có — client KHÔNG gửi `sort_order` thì GIỮ NGUYÊN (khác các cột chiến thuật:
+    // ở đó "vắng mặt = bỏ khai riêng"). Thứ tự chỉ là cách bày, không phải luật chạy, nên đừng để
+    // một lượt lưu chiến thuật của client cũ xoá trắng công sắp xếp.
+    const { data: prev } = await supabase.from('warehouse_type_configs')
+      .select('type_code, sort_order').eq('warehouse_id', whId).limit(500)
+    const prevOrder = new Map((prev ?? []).map(r => {
+      const row = r as { type_code: string; sort_order: number | null }
+      return [row.type_code, row.sort_order]
+    }))
     const rows: Record<string, unknown>[] = []
     const seen = new Set<string>()
     for (const raw of items as Record<string, unknown>[]) {
@@ -335,7 +349,17 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
       const patch: Record<string, unknown> = Object.fromEntries(WH_TYPE_CFG_COLS.map(k => [k, null]))
       const err = applyWhTypeConfigBody(raw, patch)
       if (err) return fail(res, 422, 'INVALID_INPUT', `${code}: ${err}`)
-      rows.push({ type_code: code, ...patch })
+      let ord = prevOrder.get(code) ?? null
+      if (raw.sort_order !== undefined) {
+        if (raw.sort_order === null || raw.sort_order === '') ord = null
+        else {
+          const n = Number(raw.sort_order)
+          if (!Number.isInteger(n) || n < 0 || n > 9999)
+            return fail(res, 422, 'INVALID_INPUT', `${code}: Thứ tự phải là số nguyên 0–9999`)
+          ord = n
+        }
+      }
+      rows.push({ type_code: code, sort_order: ord, ...patch })
     }
 
     const { data: cur } = await supabase.from('warehouse_type_configs')
@@ -377,8 +401,7 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
     // Luồng quét đọc cấu hình qua cache 30s → xoá ngay, không thì lưu form xong lượt quét kế vẫn
     // chạy chiến thuật cũ (cùng lý do với updateWarehouse).
     invalidatePutawayConfig(whId)
-    const { data } = await supabase.from('warehouse_type_configs')
-      .select(WTC_SELECT).eq('warehouse_id', whId).order('type_code').limit(200)
+    const { data } = await wtcOrdered(whId)
     ok(res, data ?? [])
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }

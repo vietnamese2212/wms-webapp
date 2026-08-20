@@ -98,13 +98,15 @@ function TriBool({ value, onChange, label, inherited, tip }: {
   )
 }
 
-export function StrategyFields({ mode, value, inherited, onPatch, idPrefix }: {
+export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide }: {
   mode: 'warehouse' | 'type'
   value: StrategyValue
   /** Giá trị HIỆU LỰC của tầng kho — tầng loại dùng để in nhãn "— Theo kho (FEFO) —" */
   inherited: StrategyValue
   onPatch: (patch: Partial<StrategyValue>) => void
   idPrefix: string
+  /** Panel rộng (form 80% màn hình) → xếp 3 khối thành cột cho đỡ phải cuộn dài */
+  wide?: boolean
 }) {
   const isType = mode === 'type'
   // Câu diễn giải luôn nói về CHIẾN THUẬT HIỆU LỰC (sau kế thừa), không phải riêng phần khai thêm
@@ -128,7 +130,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix }: {
     ? <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span> : null)
 
   return (
-    <div className="space-y-2.5">
+    <div className={wide ? 'grid gap-2.5 lg:grid-cols-3 items-start' : 'space-y-2.5'}>
       {/* ───────── XUẤT ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
         <span className="flex items-center gap-1">

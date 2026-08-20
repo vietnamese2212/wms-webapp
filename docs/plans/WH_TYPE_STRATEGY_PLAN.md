@@ -95,6 +95,10 @@ CREATE TABLE warehouse_type_configs (
   putaway_block_qa_hold    boolean  NULL,
   putaway_block_full       boolean  NULL,
   putaway_single_ncc       boolean  NULL,
+  -- 2 field MỚI của thang ưu tiên tường minh (mục 2.6) — cũng thêm cột tương ứng (NOT NULL kèm
+  -- DEFAULT 'NONE'/'BY_CODE') vào bảng "Warehouse" trong CÙNG migration này:
+  putaway_same_mat_date_pref text   NULL CHECK (putaway_same_mat_date_pref IN ('NONE','SAME_DATE','OLDER_FIRST','NEWER_FIRST')),
+  putaway_fallback         text     NULL CHECK (putaway_fallback IN ('BY_CODE','EMPTY_FIRST','MOST_FREE','LEAST_FILLED')),
   created_at               timestamptz NOT NULL DEFAULT now(),
   updated_at               timestamptz NOT NULL,
   updated_by               text NULL,
@@ -203,6 +207,47 @@ category ∉ tập gán của kho — null-inclusive: bản ghi cũ loại lạ 
    kho — lọc theo 1 kho sẽ làm mất chip hợp lệ; chỉ form GHI mới lọc theo kho). Ghi rõ để Opus
    không sweep nhầm 28 file.
 
+### 2.6 SETTING TRÌNH BÀY THEO TÁC VỤ + thang ưu tiên TƯỜNG MINH (user yêu cầu 20/08 chiều)
+
+> User: "các tác vụ Xuất, Nhập, Tối ưu… cần rõ ràng hơn trong setting — vd Nhập: chọn ưu tiên ghép
+> cùng loại thì cùng loại date ngắn hay dài hơn, sau đó tới vị trí nào, và vị trí nào?"
+> Hiện trạng: thang ưu tiên đang CỨNG trong `putawayScore` — Gom cùng mã: ① ô ★ cùng mã → ② mọi ô
+> còn lại theo TÊN vị trí; date KHÔNG tham gia xếp hạng (chỉ ở tầng ràng buộc trộn date).
+
+**2 FIELD MỚI cho tác vụ NHẬP** (trên `Warehouse` + nullable trên `warehouse_type_configs` —
+default = đúng hành vi hôm nay, kho chưa chỉnh không đổi gì):
+- `putaway_same_mat_date_pref` text CHECK IN ('NONE','SAME_DATE','OLDER_FIRST','NEWER_FIRST'),
+  default 'NONE'. = **Bước 2**: trong các ô CÙNG MÃ, ưu tiên ô trùng date / ô chứa hàng phải-lấy-
+  trước (date "cũ" hơn theo thứ tự lấy) / ô chứa hàng lấy-sau. Phát biểu theo THỨ TỰ LẤY (dùng
+  `rotationSortKey`/`keyMin/keyMax` của SlotFacts so với `incoming.key`) — đúng cho cả FEFO lẫn
+  FIFO/LIFO, không viết 3 nhánh (cùng kỷ luật với PUTAWAY_DATE_MIXES). Bật ≠ NONE thì
+  `putawayNeedsLots` phải trả true (cần lots để so — sửa hàm này kèm).
+- `putaway_fallback` text CHECK IN ('BY_CODE','EMPTY_FIRST','MOST_FREE','LEAST_FILLED'),
+  default 'BY_CODE'. = **Bước 3**: hết nhóm ưu tiên thì các ô còn lại xếp theo tên vị trí (cũ) /
+  ô trống trước / ô còn nhiều chỗ nhất (free ratio) / ô dở ít hàng nhất.
+
+**Engine:** `putawayScore` trả điểm PHÂN SỐ (điểm nhóm hiện tại + phần thập phân từ Bước 2/Bước 3)
+— ô bị chặn vẫn 100, nhóm ★ vẫn thắng tuyệt đối, chỉ tinh chỉnh THỨ TỰ TRONG nhóm ⇒ không phá bất
+biến cũ. `putawayReason` không đổi (★ vẫn 3 mã lý do). Sort cuối ở listLocations giữ (score, tên).
+
+**Form Kho (thay spec UI ở 2.4) — chia SECTION THEO TÁC VỤ, mỗi field là "bước" có số:**
+- **"NHẬP — Cất hàng"**: Bước 1 = Ưu tiên nhóm ô (priority cũ, relabel) · Bước 2 = dropdown
+  same_mat_date_pref (chỉ enable khi Bước 1 = Gom cùng mã; ABC cũng dùng được vì trong band vẫn gom
+  cùng mã — enable luôn, ghi chú) · Bước 3 = dropdown fallback · dưới cùng khối **"Ràng buộc vị
+  trí"** = 6 luật + Cảnh báo/Chặn cứng (field cũ, gom lại). Cuối section: **CÂU DIỄN GIẢI SỐNG**
+  tự sinh từ giá trị đang chọn (vd "Kho sẽ gợi ý: ① ô đang chứa cùng mã (trùng date trước) → ② ô
+  trống → ③ theo tên vị trí. Chặn cứng: ô đầy, ô nhặt lẻ.") — helper thuần FE
+  `putawayExplain(rules)` đặt cạnh nhãn trong `frontend/src/utils/putaway.ts` (mirror nhãn, không
+  luật).
+- **"XUẤT — Lấy hàng"**: Nguyên tắc + Bắt buộc (cũ) + dòng diễn giải thang hòa-ngày CỐ ĐỊNH
+  ("hòa ngày → khu gần cửa xuất (hạng nhặt Slotting) → ô ít hàng → tên vị trí") để user biết luật
+  đang chạy. Knob đảo thứ tự hòa-ngày = **TÙY CHỌN, CHƯA làm** (user chưa chốt — ghi ĐỀ XUẤT cuối
+  báo cáo khi giao).
+- **Section per Loại kho** (2.4): mỗi loại render ĐÚNG 2 section trên qua component
+  `StrategyFields` dùng chung, mọi field thêm lựa chọn đầu "— Theo kho —".
+- Ghi chú trong form, cạnh Bước 1 = ABC: "Hạng khu & hạng ABC khai ở Tối ưu vị trí → Cài đặt"
+  (Tối ưu là DỮ LIỆU NỀN dùng chung, không lặp setting ở form Kho).
+
 ---
 ## 3. KẾ HOẠCH THỰC THI (checklist — mỗi bước có phép kiểm)
 
@@ -213,6 +258,11 @@ category ∉ tập gán của kho — null-inclusive: bản ghi cũ loại lạ 
 2. **BE `utils/putaway.ts`**: `WhTypeConfigRow` + `resolveRotation` + `resolvePutawayRules` (+ unit
    logic thuần) → *kiểm:* `npx tsc --noEmit`; property-test nhanh trong scratchpad: mọi input có
    override NULL toàn bộ ⇒ output === cấu hình cấp kho (bất biến "không đổi hành vi cũ").
+2b. **Thang ưu tiên tường minh (mục 2.6)**: mở rộng `PutawayRules` + `putawayRulesOf` +
+   `applyPutawayBody` với 2 field mới; `putawayScore` điểm phân số Bước 2/Bước 3;
+   `putawayNeedsLots` true khi same_mat_date_pref ≠ NONE → *kiểm:* property-test —
+   (a) NONE+BY_CODE ⇒ thứ tự y hệt cũ; (b) SAME_DATE: ô cùng mã trùng date luôn đứng trước ô cùng
+   mã khác date; (c) ô bị chặn vẫn cuối bảng bất kể Bước 2/3.
 3. **`putawayContext.ts`**: whConfig trả kèm typeRows (cache 30s chung, invalidate như cũ);
    `MAT_SHELF_COLS` + `IncomingInput.category`; resolve trong loadPutawayContext / guardPutaway /
    guardPutawayBatch (tách lô theo loại) / putawayTargetZones → *kiểm:* gói QA 26-putaway hiện có
@@ -264,3 +314,5 @@ category ∉ tập gán của kho — null-inclusive: bản ghi cũ loại lạ 
 - Không đổi scope quyền `allowed_categories` (vẫn theo user, độc lập tập gán của kho).
 - Filter/list page KHÔNG lọc option theo kho (chỉ form ghi, Đợt 2).
 - Không per-type cho các cờ ngoài chiến thuật (carton_scan_categories, require_gate/weigh… giữ cấp kho).
+- Knob đảo thứ tự hòa-ngày của XUẤT (khu gần cửa ↔ ô ít hàng): CHƯA làm, chỉ hiển thị diễn giải
+  thang cố định trong form (mục 2.6) — nêu thành ĐỀ XUẤT cho user chốt sau.

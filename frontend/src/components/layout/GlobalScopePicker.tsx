@@ -2,6 +2,9 @@
 // Option kho/loại lấy từ 2 hook scoped (tự validate theo phân quyền), luôn có "Tất cả".
 // Chọn xong quét ngay vào filter toàn app (sweepGlobalScope) — form tạo mới cũng ăn theo.
 // Panel tự render list (KHÔNG lồng dropdown-portal trong popover — né bẫy outside-click).
+// 20/08 (user chốt): 2 danh sách dạng CHECKBOX, mục ĐANG TÍCH ghim lên đầu (snapshot lúc MỞ
+// panel — tick/bỏ tick không nhảy hàng) để mở ra là thấy ngay bối cảnh hiện tại. Vẫn chọn-1
+// (tick mục khác thay thế, tick lại = bỏ) vì ~23 slice filter + form chỉ nhận 1 kho.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, MapPinned, X } from 'lucide-react'
@@ -26,6 +29,8 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // Ghim mục đang tích lên đầu — chốt thứ tự lúc MỞ panel để tick/bỏ tick không nhảy hàng
+  const openSelRef = useRef<{ wh: string; wt: string }>({ wh: '', wt: '' })
 
   const current = warehouses.find(w => w.id === warehouseId)
 
@@ -75,11 +80,30 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
     sweepGlobalScope(next, { force: true })
   }
 
+  const toggleOpen = () => {
+    setOpen(o => {
+      if (!o) openSelRef.current = { wh: warehouseId, wt: whType }
+      return !o
+    })
+  }
+
+  // Kho đang tích (snapshot lúc mở) LUÔN hiện trên đầu — kể cả khi không khớp từ khóa tìm
+  const pinnedWh = warehouses.find(w => w.id === openSelRef.current.wh)
   const filteredWhs = useMemo(() => {
     const q = term.trim().toLowerCase()
-    if (!q) return warehouses
-    return warehouses.filter(w => w.name.toLowerCase().includes(q) || (w.code ?? '').toLowerCase().includes(q))
-  }, [warehouses, term])
+    const pin = openSelRef.current.wh
+    const rest = warehouses.filter(w => w.id !== pin)
+    if (!q) return rest
+    return rest.filter(w => w.name.toLowerCase().includes(q) || (w.code ?? '').toLowerCase().includes(q))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouses, term, open])
+
+  const orderedWts = useMemo(() => {
+    const pin = openSelRef.current.wt
+    if (!pin) return whTypes
+    return [...whTypes.filter(t => t.value === pin), ...whTypes.filter(t => t.value !== pin)]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whTypes, open])
 
   const active = warehouseId !== '' || whType !== ''
   const khoLabel = current?.name ?? 'Tất cả kho'
@@ -91,7 +115,7 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
         <button
           ref={btnRef}
           type="button"
-          onClick={() => setOpen(o => !o)}
+          onClick={toggleOpen}
           title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
           className={`hidden lg:flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium transition-colors min-w-0 max-w-xs ${
             active ? 'bg-sky-500/20 text-sky-100 ring-1 ring-sky-400/40 hover:bg-sky-500/30'
@@ -108,7 +132,7 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
         <button
           ref={btnRef}
           type="button"
-          onClick={() => setOpen(o => !o)}
+          onClick={toggleOpen}
           title="Bối cảnh Kho / Loại kho — áp cho bộ lọc & form toàn app"
           className={`lg:hidden w-full flex items-center gap-1.5 h-8 px-3 text-xs font-medium border-t border-white/10 bg-slate-800 transition-colors ${
             active ? 'text-sky-200' : 'text-slate-200'
@@ -147,56 +171,57 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
               />
             )}
             <div className="max-h-52 overflow-auto -mx-1">
+              {/* Kho đang tích ghim đầu danh sách (mở panel là thấy ngay bối cảnh hiện tại) */}
+              {pinnedWh && <WhCheckRow w={pinnedWh} on={pinnedWh.id === warehouseId} onClick={() => apply(pinnedWh.id === warehouseId ? '' : pinnedWh.id, whType)} />}
               <button
                 type="button"
                 onClick={() => apply('', whType)}
-                className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${warehouseId === '' ? 'font-semibold text-sky-700' : ''}`}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${warehouseId === '' ? 'font-semibold text-sky-700' : ''}`}
               >
-                <span>Tất cả kho</span>
-                {warehouseId === '' && <Check className="h-3.5 w-3.5 text-sky-600" />}
+                <ScopeCheckbox on={warehouseId === ''} />
+                <span className="flex-1 text-left">Tất cả kho</span>
               </button>
               {filteredWhs.map(w => (
-                <button
-                  key={w.id}
-                  type="button"
-                  onClick={() => apply(w.id, whType)}
-                  className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${w.id === warehouseId ? 'font-semibold text-sky-700' : ''}`}
-                >
-                  <span className="truncate">{w.name}</span>
-                  <span className="flex items-center gap-1.5 shrink-0">
-                    {w.code && <span className="font-mono text-[10px] text-slate-400">{w.code}</span>}
-                    {w.id === warehouseId && <Check className="h-3.5 w-3.5 text-sky-600" />}
-                  </span>
-                </button>
+                <WhCheckRow key={w.id} w={w} on={w.id === warehouseId} onClick={() => apply(w.id === warehouseId ? '' : w.id, whType)} />
               ))}
-              {filteredWhs.length === 0 && (
+              {!pinnedWh && filteredWhs.length === 0 && (
                 <div className="px-2 py-2 text-xs text-slate-400">Không có kho khớp</div>
               )}
             </div>
           </div>
 
           <div className="px-3 pt-2 pb-2.5 border-t border-slate-100 mt-1.5">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-1.5">Loại kho</div>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => apply(warehouseId, '')}
-                className={`px-2 py-1 rounded-full text-[11px] border transition-colors ${
-                  whType === '' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                Tất cả
-              </button>
-              {whTypes.map(t => (
+            <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 mb-1">Loại kho</div>
+            <div className="max-h-40 overflow-auto -mx-1">
+              {/* Loại đang tích ghim đầu (orderedWts đã sort theo snapshot lúc mở) */}
+              {orderedWts.filter(t => t.value === openSelRef.current.wt).map(t => (
                 <button
                   key={t.value}
                   type="button"
-                  onClick={() => apply(warehouseId, t.value)}
-                  className={`px-2 py-1 rounded-full text-[11px] border transition-colors ${
-                    whType === t.value ? 'bg-sky-600 border-sky-600 text-white' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                  }`}
+                  onClick={() => apply(warehouseId, whType === t.value ? '' : t.value)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${whType === t.value ? 'font-semibold text-sky-700' : ''}`}
                 >
-                  {t.value}
+                  <ScopeCheckbox on={whType === t.value} />
+                  <span className="flex-1 text-left truncate">{t.value}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => apply(warehouseId, '')}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${whType === '' ? 'font-semibold text-sky-700' : ''}`}
+              >
+                <ScopeCheckbox on={whType === ''} />
+                <span className="flex-1 text-left">Tất cả loại</span>
+              </button>
+              {orderedWts.filter(t => t.value !== openSelRef.current.wt).map(t => (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => apply(warehouseId, whType === t.value ? '' : t.value)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${whType === t.value ? 'font-semibold text-sky-700' : ''}`}
+                >
+                  <ScopeCheckbox on={whType === t.value} />
+                  <span className="flex-1 text-left truncate">{t.value}</span>
                 </button>
               ))}
             </div>
@@ -208,5 +233,32 @@ export function GlobalScopePicker({ variant = 'inline' }: { variant?: 'inline' |
         document.body,
       )}
     </>
+  )
+}
+
+// Ô checkbox vuông (style khớp MSCheckbox của MultiSelectFilter)
+function ScopeCheckbox({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center transition-colors ${
+        on ? 'bg-sky-600 border-sky-600' : 'bg-white border-slate-300'
+      }`}
+    >
+      {on && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+    </span>
+  )
+}
+
+function WhCheckRow({ w, on, onClick }: { w: WhRow; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-50 ${on ? 'font-semibold text-sky-700' : ''}`}
+    >
+      <ScopeCheckbox on={on} />
+      <span className="truncate flex-1 text-left">{w.name}</span>
+      {w.code && <span className="font-mono text-[10px] text-slate-400 shrink-0">{w.code}</span>}
+    </button>
   )
 }

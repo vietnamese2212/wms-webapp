@@ -50,6 +50,7 @@ const loosePickingDetail     = () => import('@/pages/wms/LoosePickingDetail')
 const loosePickingItemDetail = () => import('@/pages/wms/LoosePickingItemDetail')
 const locations          = () => import('@/pages/wms/Locations')
 const stocktake          = () => import('@/pages/wms/Stocktake')
+const moveLocation       = () => import('@/pages/wms/MoveLocation')
 const stocktakeDashboard = () => import('@/pages/wms/StocktakeDashboard')
 const stocktakeHistory   = () => import('@/pages/wms/StocktakeHistory')
 const palletLabels       = () => import('@/pages/wms/PalletLabels')
@@ -95,6 +96,7 @@ export const Pages = {
   LoosePickingItemDetail: lazyRetry(loosePickingItemDetail),
   Locations: lazyRetry(locations),
   Stocktake: lazyRetry(stocktake),
+  MoveLocation: lazyRetry(moveLocation),
   StocktakeDashboard: lazyRetry(stocktakeDashboard),
   StocktakeHistory: lazyRetry(stocktakeHistory),
   PalletLabels: lazyRetry(palletLabels),
@@ -131,6 +133,7 @@ const prefetchMap: Record<string, () => Promise<unknown>> = {
   '/wms/loosepicking': loosePicking,
   '/wms/locations': locations,
   '/wms/stocktake': stocktake,
+  '/wms/move-location': moveLocation,
   '/wms/slotting': slotting,
   '/wms/fill': fillPicking,
   '/wms/forklift': forklift,

@@ -966,6 +966,10 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   const { ids, location_id, employee_id } = req.body as {
     ids: string[]; location_id: string; employee_id?: string
   }
+  // Màn "Chuyển vị trí quét QR" (20/08): 1 lần chuyển = 1 lượt kiểm kê của pallet đó —
+  // ghi StocktakeLog (chỉ đánh dấu đã kiểm, không đếm SL) + stocktake_at. Cờ opt-in để
+  // panel Chuyển vị trí hàng loạt ở Tồn kho giữ nguyên hành vi cũ.
+  const countAsStocktake = (req.body as { count_as_stocktake?: unknown }).count_as_stocktake === true
   if (!Array.isArray(ids) || ids.length === 0)
     return fail(res, 400, 'INVALID_INPUT', 'Cần ít nhất 1 pallet')
   if (!location_id)
@@ -981,10 +985,15 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   // vào ô cấm nhận hàng / ô nhặt lẻ / vượt số mã. Lọc ở picker chỉ là gợi ý; chặn thật nằm ở đây.
   // fetchAllByIdChunks (chunk 300) chứ KHÔNG cắt danh sách: luật ở đây tính trên TẬP mã/NCC của cả
   // lô, thiếu vài pallet là chấm ra kết quả khác — đúng lớp lỗi "cắt âm thầm" đã đo nhiều lần.
+  // Select đủ trường snapshot cho StocktakeLog (nhánh count_as_stocktake) — chụp TRƯỚC khi move
+  // để còn biết vị trí CŨ; nhánh thường chỉ dùng 5 cột đầu, thừa vài cột không đáng kể.
   const moving = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
-    .select('material_id, ncc_id, production_date, expiry_date, shelf_life_days').in('id', chunk))
+    .select(`id, pallet_code, location_id, cartons_remaining, material_id, ncc_id, production_date,
+      expiry_date, shelf_life_days,
+      material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton)`)
+    .in('id', chunk))
   const { data: destLoc } = await supabase.from('Location')
-    .select('warehouse_id').eq('id', location_id).maybeSingle()
+    .select('warehouse_id, location_code, categories').eq('id', location_id).maybeSingle()
   const put = await guardPutawayBatch({
     warehouseId: (destLoc as { warehouse_id?: string | null } | null)?.warehouse_id ?? null,
     locationId:  location_id,
@@ -1016,7 +1025,56 @@ export async function bulkTransferLocation(req: Request, res: Response) {
         `Vị trí ${parts[2] ?? ''} không đủ chỗ (còn ${parts[1] ?? 0} slot, cần ${ids.length})`)
       case 'MAXMAT':    return fail(res, 422, 'PUTAWAY_VIOLATION',
         `Vị trí sẽ có ${parts[1] ?? ''} mã, kho giới hạn ${parts[2] ?? ''} mã cho một vị trí.`)
-      default:          return ok(res, { updated: ids.length, location_code: parts[1] ?? '', putaway_warning: put.warning })
+      default: {
+        // 1 lần chuyển vị trí = 1 lượt kiểm kê của pallet (màn Chuyển vị trí quét QR): ghi
+        // StocktakeLog append-only (chỉ xác nhận pallet có mặt — physical_qty null, không đếm SL)
+        // + stocktake_at để tab Tổng hợp KK/Luân phiên ABC tính "đã kiểm". Ghi SAU khi move đã
+        // commit; lỗi ghi log KHÔNG làm hỏng lượt chuyển (cùng cách stocktakeEntry).
+        if (countAsStocktake) {
+          try {
+            type MovingSnap = {
+              id: string; pallet_code: string; location_id: string | null; cartons_remaining: number | null
+              material_id: string | null
+              material?: { material_code?: string; short_name?: string; base_unit?: string; entry_unit?: string; units_per_carton?: number } | null
+            }
+            const dest = destLoc as { warehouse_id?: string | null; location_code?: string | null; categories?: string[] | null } | null
+            const rows = (moving as unknown as MovingSnap[]).map(en => ({
+              id: randomUUID(),
+              entry_id: en.id,
+              pallet_code: en.pallet_code,
+              location_id,                              // vị trí ĐÍCH — nơi pallet thực đứng lúc kiểm
+              location_code: dest?.location_code ?? null,
+              warehouse_id: dest?.warehouse_id ?? null,
+              categories: dest?.categories ?? null,
+              material_id: en.material_id,
+              material_code: en.material?.material_code ?? null,
+              short_name: en.material?.short_name ?? null,
+              base_unit: en.material?.base_unit ?? null,
+              entry_unit: en.material?.entry_unit ?? null,
+              units_per_carton: en.material?.units_per_carton ?? null,
+              app_qty: Number(en.cartons_remaining ?? 0),
+              physical_qty: null,
+              diff: null,
+              is_flagged: false,
+              note: 'Kiểm kê qua chuyển vị trí (quét QR)',
+              location_changed_to: en.location_id !== location_id ? location_id : null,
+              counted_by: updatedBy,
+              counted_by_name: req.user?.name ?? null,
+              counted_at: now, created_at: now, updated_at: now,
+            }))
+            if (rows.length > 0) {
+              const { error: logErr } = await supabase.from('StocktakeLog').insert(rows)
+              if (logErr) throw new Error(logErr.message)
+              const stPatch: Record<string, unknown> = { stocktake_at: now, updated_at: now }
+              if (updatedBy) stPatch.stocktake_by = updatedBy
+              await updateEntriesByIds(ids, stPatch)
+            }
+          } catch (e) {
+            console.error('StocktakeLog (move) insert failed:', (e as Error).message)
+          }
+        }
+        return ok(res, { updated: ids.length, location_code: parts[1] ?? '', putaway_warning: put.warning, stocktake_logged: countAsStocktake })
+      }
     }
   }
   // RPC vắng mặt ⇒ BÁO LỖI, KHÔNG tự đi đường vòng. Nhánh dự phòng cũ (đếm sức chứa rồi update)

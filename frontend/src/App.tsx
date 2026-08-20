@@ -13,7 +13,7 @@ const {
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
   Slotting, SlottingPlanDetail, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
-  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, PalletLabels, PalletOps, MultiScanTest,
+  Locations, Stocktake, StocktakeDashboard, StocktakeHistory, StocktakeCycle, MoveLocation, PalletLabels, PalletOps, MultiScanTest,
   WMSSettings, TMSSettings, TMSBookings, TMSReport, GateRegistration,
   LeaveManagement, Assignments, Attendance, OrgChart,
   UserManagement, IntegrationKeys, Materials, ExternalData, Settings,
@@ -121,6 +121,9 @@ export default function App() {
         <Route path="/wms/stocktake/summary" element={<PermissionRoute module="stocktake"><StocktakeDashboard /></PermissionRoute>} />
         <Route path="/wms/stocktake/history" element={<PermissionRoute module="stocktake"><StocktakeHistory /></PermissionRoute>} />
         <Route path="/wms/stocktake/cycle" element={<PermissionRoute module="stocktake"><StocktakeCycle /></PermissionRoute>} />
+
+        {/* WMS — chuyển vị trí bằng quét QR (pallet-first; mỗi lần chuyển = 1 lượt kiểm kê) */}
+        <Route path="/wms/move-location" element={<PermissionRoute module="inventory" action="move_location"><MoveLocation /></PermissionRoute>} />
 
         {/* WMS — slotting (tối ưu vị trí) */}
         <Route path="/wms/slotting"           element={<PermissionRoute module="slotting"><Slotting /></PermissionRoute>} />

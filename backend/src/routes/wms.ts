@@ -152,7 +152,9 @@ router.get('/inventory/stocktake-log',             requirePerm('stocktake', 'vie
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), inventory.uploadExcel)
-router.post('/inventory/stocktake-check',          requirePerm('stocktake', 'scan'), inventory.stocktakeCheck)
+// Tra pallet theo QR — dùng chung 2 màn: Kiểm kê (stocktake.scan) + Chuyển vị trí quét QR
+// (inventory.move_location — người chuyển vị trí không bắt buộc có quyền kiểm kê)
+router.post('/inventory/stocktake-check',          requireAnyPerm(['stocktake', 'scan'], ['inventory', 'move_location']), inventory.stocktakeCheck)
 router.patch('/inventory/bulk-qa',                requirePerm('inventory', 'qa_update'), inventory.bulkUpdateQA)
 router.patch('/inventory/bulk-ncc',               requirePerm('inventory', 'update_ncc'), inventory.bulkUpdateNcc)
 router.patch('/inventory/bulk-location',          requirePerm('inventory', 'move_location'), inventory.bulkTransferLocation)

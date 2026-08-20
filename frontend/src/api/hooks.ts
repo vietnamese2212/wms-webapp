@@ -1755,11 +1755,12 @@ export function useBulkUpdateInventoryNcc() {
 export function useBulkTransferLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ ids, location_id, employee_id, putaway_override_reason }: {
+    mutationFn: async ({ ids, location_id, employee_id, putaway_override_reason, count_as_stocktake }: {
       ids: string[]; location_id: string; employee_id?: string; putaway_override_reason?: string
+      count_as_stocktake?: boolean   // màn Chuyển vị trí quét QR: 1 lần chuyển = 1 lượt kiểm kê
     }) => {
       const { data } = await apiClient.patch('/wms/inventory/bulk-location',
-        { ids, location_id, employee_id, putaway_override_reason })
+        { ids, location_id, employee_id, putaway_override_reason, count_as_stocktake })
       return data.data as { updated: number; location_code: string; putaway_warning?: string }
     },
     // Kho CHƯA bật "bắt buộc": vẫn chuyển được nhưng phải nói ra là lệch quy tắc (không im lặng)

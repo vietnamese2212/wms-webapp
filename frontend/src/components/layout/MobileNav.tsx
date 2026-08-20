@@ -33,6 +33,8 @@ export function MobileNav() {
           const visibleItems = group.items.filter(item => {
             if (item.adminOnly) return admin
             if (item.anyActions?.some(([m, a]) => can(modulePerms, m, a))) return true
+            // Item CHỈ khai anyActions: không khớp quyền thì ẨN (đừng rơi xuống "!module = hiện cho mọi người")
+            if (item.anyActions && !item.modules && !item.module) return admin
             if (item.modules) return admin || canAccessAny(modulePerms, ...item.modules)
             if (!item.module) return true
             return admin || canAccess(modulePerms, item.module)

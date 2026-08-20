@@ -80,14 +80,18 @@ function TriBool({ value, onChange, label, inherited, tip }: {
   value: boolean | null; onChange: (v: boolean | null) => void
   label: string; inherited: boolean; tip?: React.ReactNode
 }) {
+  // Nhãn NẰM TRÊN ô chọn (không kẹp cùng hàng): cột hẹp thì nhãn dài bị cắt cụt thành
+  // "Không cất vào …" — đọc không ra luật gì. Xếp dọc cũng khớp các ô khác trong cùng khối.
   return (
-    <div className="flex items-center gap-1.5 rounded-md px-1 py-1">
-      <span className="text-[11px] flex-1 min-w-0 truncate">{label}</span>
-      {tip ? <InfoTip tip={tip} /> : null}
+    <div className="rounded-md px-1 py-1">
+      <span className="flex items-center gap-1">
+        <span className="text-[11px] text-slate-500">{label}</span>
+        {tip ? <InfoTip tip={tip} /> : null}
+      </span>
       <SingleSelect
         value={value === null ? INHERIT : value ? '1' : '0'}
         onChange={v => onChange(v === INHERIT ? null : v === '1')}
-        triggerClassName="h-7 w-[168px] text-[11px]"
+        triggerClassName="h-7 text-[11px]"
         options={[
           { value: INHERIT, label: `— Theo kho (${inherited ? 'Có' : 'Không'}) —` },
           { value: '1', label: 'Có' },
@@ -227,7 +231,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
           </>} />
         </span>
         <div className="flex items-center gap-1.5 rounded-md px-1 py-1">
-          <span className="text-[11px] flex-1 min-w-0 truncate">Vị trí đánh dấu “Không đưa hàng vào”</span>
+          <span className="text-[11px] flex-1 min-w-0">Vị trí đánh dấu “Không đưa hàng vào”</span>
           <InfoTip tip={<>Khai ở trang <b>Vị trí kho</b>. Vị trí đó LUÔN bị loại khỏi gợi ý — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.</>} />
           <EnforceChip id={`${idPrefix}-enf-noin`} on={enforced.includes('NO_IN')} onToggle={() => toggleEnf('NO_IN')} />
         </div>

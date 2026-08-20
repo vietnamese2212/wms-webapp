@@ -1091,7 +1091,7 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </>}>
-      <div className={hasWh ? 'grid gap-4 lg:grid-cols-[minmax(300px,1fr)_1.6fr]' : ''}>
+      <div className={hasWh ? 'grid gap-4 lg:grid-cols-[minmax(280px,0.8fr)_2fr]' : ''}>
         <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
           {hasWh && (

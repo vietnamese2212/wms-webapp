@@ -277,10 +277,15 @@ try {
   // ── [10] THỨ TỰ LOẠI KHO LÀ CỦA TỪNG KHO (user chốt 21/08 chiều) ──────────
   // Trước đây thứ tự chỉ nằm ở danh mục dùng chung ⇒ kéo ở kho A thì kho B cũng đổi theo.
   {
-    const otherWh = FIX.WH_QTY.id
     const codesOf = j => (j?.data ?? []).map(r => r.type_code)
+    // Kho ĐỐI CHỨNG phải có ≥2 loại — kho 1 loại thì đảo thứ tự nào cũng "giống nhau", kiểm vô nghĩa
+    let otherWh = null, otherBefore = null
+    for (const w of await restAll('Warehouse', 'select=id&is_active=is.true&order=code&limit=30')) {
+      if (w.id === whId) continue
+      const r = await api(`/masterdata/warehouses/${w.id}/type-configs`)
+      if ((r.j?.data ?? []).length >= 2) { otherWh = w.id; otherBefore = r; break }
+    }
     const before = await api(`/masterdata/warehouses/${whId}/type-configs`)
-    const otherBefore = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
     const list = before.j?.data ?? []
     if (list.length < 2) {
       check('[10] bỏ qua — kho fixture chỉ vận hành 1 loại', true, `n=${list.length}`)
@@ -293,10 +298,11 @@ try {
       check('[10a] Đổi thứ tự loại kho của MỘT kho: lưu + đọc lại đúng thứ tự mới',
         rw.s === 200 && codesOf(after.j).join(',') === swapped.map(r => r.type_code).join(','),
         `http=${rw.s} sau=${codesOf(after.j).join(',')} mong=${swapped.map(r => r.type_code).join(',')}`)
-      const otherAfter = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
+      const otherAfter = otherWh ? await api(`/masterdata/warehouses/${otherWh}/type-configs`) : null
       check('[10b] Kho KHÁC không bị đổi theo (thứ tự là của TỪNG kho, không phải danh mục chung)',
-        codesOf(otherAfter.j).join(',') === codesOf(otherBefore.j).join(','),
-        `truoc=${codesOf(otherBefore.j).join(',')} sau=${codesOf(otherAfter.j).join(',')}`)
+        !!otherWh && codesOf(otherAfter.j).join(',') === codesOf(otherBefore.j).join(','),
+        otherWh ? `kho=${otherWh.slice(0, 8)} truoc=${codesOf(otherBefore.j).join(',')} sau=${codesOf(otherAfter?.j).join(',')}`
+          : 'KHÔNG tìm được kho đối chứng ≥2 loại')
       // Client cũ (lưu chiến thuật, không gửi sort_order) KHÔNG được xoá trắng công sắp xếp
       const bare = swapped.map(r => {
         const o = { type_code: r.type_code }

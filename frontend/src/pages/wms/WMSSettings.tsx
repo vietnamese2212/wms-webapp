@@ -17,7 +17,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
-import { StrategyFields, STRATEGY_EMPTY, STRATEGY_WAREHOUSE_DEFAULT, type StrategyValue } from '@/components/wms/StrategyFields'
+import { StrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
 import { MultiSelectFilter } from '@/components/shared/MultiSelectFilter'
 import { WarehouseMultiSelect } from '@/components/shared/WarehouseMultiSelect'
 import {
@@ -986,19 +986,11 @@ const RENAMED_LABELS: Record<string, string> = {
   inbound_plan_lines: 'KH nhập', ProductionImport: 'Phiếu nhập',
 }
 
-// Sửa loại kho = MỘT cửa duy nhất (user chốt 21/08 chiều): cột trái là phần DÙNG CHUNG mọi kho
-// (tên, cờ hành vi, màu), cột phải là phần RIÊNG của kho đang chọn ở bộ lọc (kho có vận hành loại
-// này không + chiến thuật xuất/nhập riêng). Bảng chỉ HIỂN THỊ trạng thái, không sửa inline.
-function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManageWh, savingCfg, onSaveCfg }: {
+// DANH MỤC dùng chung: tên loại + cờ hành vi + màu (áp cho MỌI kho). Chỉ mở được ở chế độ
+// "— Danh mục dùng chung —" — chọn một kho thì cả màn chỉ còn cấu hình CỦA KHO ĐÓ (user chốt 21/08:
+// "chỉ có Chung của kho và Riêng của loại kho, không có phần chung giữa các kho nằm chen vào").
+function TypeDialog({ type, open, onClose }: {
   type: { id: string; value: string; meta?: WhTypeMeta | null } | null; open: boolean; onClose: () => void
-  /** Kho đang chọn ở bộ lọc tab Loại kho — có thì hiện thêm phần chiến thuật riêng */
-  whId?: string | null; whName?: string
-  whStrat?: StrategyValue                 // mặc định của kho (để in "— Theo kho (FEFO) —")
-  cfg?: StrategyValue | null              // null = kho KHÔNG vận hành loại này
-  canManageWh?: boolean
-  savingCfg?: boolean
-  /** Lưu phần riêng của kho; renamedFrom = tên cũ khi vừa đổi tên loại (cascade đã đổi type_code) */
-  onSaveCfg?: (code: string, next: StrategyValue | null, renamedFrom: string | null, onDone: () => void) => void
 }) {
   const isEdit = !!type
   const m = type?.meta ?? {}
@@ -1013,26 +1005,9 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
   const [badge,      setBadge]      = useState(m.badge_color ?? '')
   const [err, setErr] = useState('')
 
-  // Phần RIÊNG của kho đang chọn. Loại MỚI mặc định tick (đang đứng trong bối cảnh kho đó).
-  const hasWh = !!whId && !!onSaveCfg
-  const [inWh,   setInWh]   = useState(isEdit ? !!cfg : true)
-  const [strat,  setStrat]  = useState<StrategyValue>(cfg ?? STRATEGY_EMPTY)
-  // Dep = NỘI DUNG, không phải ref: `cfg` được dựng mới mỗi lần cha render (Object.fromEntries) nên
-  // dep theo ref sẽ reset ô đang sửa mỗi lần cha render lại (hover/refetch/isPending…).
-  const cfgKey = cfg ? JSON.stringify(cfg) : ''
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setInWh(isEdit ? !!cfg : true); setStrat(cfg ?? STRATEGY_EMPTY) }, [cfgKey, isEdit, open, whId])
-  const ownStrat = nOwnStrat(strat)
-
   const { mutate: add,    isPending: adding    } = useAddWarehouseType()
   const { mutate: update, isPending: updating  } = useUpdateWarehouseType()
-  const isPending = adding || updating || !!savingCfg
-
-  // Lưu xong phần danh mục → mới lưu phần riêng của kho (đổi tên đã cascade sang type_code)
-  function afterTypeSaved(name: string) {
-    if (hasWh && canManageWh) onSaveCfg!(name, inWh ? strat : null, isEdit && name !== type!.value ? type!.value : null, onClose)
-    else onClose()
-  }
+  const isPending = adding || updating
 
   function handleSubmit() {
     setErr('')
@@ -1059,13 +1034,13 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
           } else {
             toast({ title: `Đã lưu loại kho "${name}"` })
           }
-          afterTypeSaved(name)
+          onClose()
         },
         onError: e => setErr(apiMsg(e)),
       })
     } else {
       add({ value: name, meta }, {
-        onSuccess: () => { toast({ title: `Đã tạo loại kho "${name}"` }); afterTypeSaved(name) },
+        onSuccess: () => { toast({ title: `Đã tạo loại kho "${name}"` }); onClose() },
         onError: e => setErr(apiMsg(e)),
       })
     }
@@ -1084,23 +1059,16 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
 
   return (
     <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa loại kho' : 'Thêm loại kho'}
-      description={hasWh ? <>Bên trái dùng chung mọi kho · bên phải riêng của <b>{whName}</b></> : undefined}
-      widthClass={hasWh ? 'sm:max-w-[80vw]' : 'sm:max-w-lg'} footer={<>
+      description="Danh mục dùng chung mọi kho — chiến thuật riêng của từng kho khai ở ô chọn Kho"
+      widthClass="sm:max-w-lg" footer={<>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
           <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
             {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </>}>
-      {/* min-w-0: ô lưới mặc định KHÔNG co dưới min-content → nhãn dài đẩy panel rộng hơn màn 390 */}
-      <div className={hasWh ? 'grid gap-4 lg:grid-cols-[minmax(280px,0.8fr)_2fr]' : ''}>
+      <div>
         <div className="space-y-3 min-w-0">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          {hasWh && (
-            <div className="flex items-center gap-1.5 border-b pb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Dùng chung mọi kho</span>
-              <InfoTip tip="Tên, cờ hành vi và màu của loại kho là DANH MỤC CHUNG — sửa ở đây là đổi cho mọi kho." />
-            </div>
-          )}
           <div className="space-y-1">
             <Label className="text-xs">Tên loại kho *</Label>
             <Input value={value} onChange={e => setValue(e.target.value)}
@@ -1150,33 +1118,56 @@ function TypeDialog({ type, open, onClose, whId, whName, whStrat, cfg, canManage
             </div>
           </div>
         </div>
+      </div>
+    </FormSheet>
+  )
+}
 
-        {/* Phần RIÊNG của kho đang chọn — chỉ hiện khi tab Loại kho đang lọc một kho */}
-        {hasWh && (
-          <div className="space-y-3 min-w-0 lg:border-l lg:pl-4">
-            <div className="flex items-center gap-1.5 border-b pb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Riêng tại {whName}</span>
-              <InfoTip tip={<>Chỉ áp cho kho này. Ô để <b>“Theo kho”</b> = chạy theo chiến thuật mặc định của kho (khai ở tab <b>Kho</b>).</>} />
-            </div>
-            <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-              <label htmlFor="wt-inwh" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                <input id="wt-inwh" type="checkbox" checked={inWh} disabled={!canManageWh}
-                  onChange={e => setInWh(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs font-medium truncate">Kho này vận hành loại <b>{value.trim() || type?.value || 'này'}</b></span>
-              </label>
-              {inWh && ownStrat > 0 && <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">{ownStrat} khai riêng</span>}
-              <InfoTip tip={<>Bỏ tick không xoá dữ liệu cũ: tồn / vị trí / chuyến đang có của loại này vẫn xử lý bình thường, chỉ <b>chặn tạo mới</b> loại đó ở kho này.</>} />
-            </div>
-            {!canManageWh ? (
-              <p className="text-[11px] text-amber-600">Cần quyền <b>Quản lý Kho</b> mới sửa được phần riêng của kho.</p>
-            ) : inWh ? (
-              <StrategyFields mode="type" idPrefix="wt-strat" value={strat}
-                inherited={whStrat ?? STRATEGY_WAREHOUSE_DEFAULT}
-                onPatch={v => setStrat(s => ({ ...s, ...v }))} wide />
-            ) : (
-              <p className="text-[11px] text-slate-400">Kho không vận hành loại này — không có chiến thuật để khai.</p>
-            )}
-          </div>
+// CẤU HÌNH LOẠI KHO TẠI MỘT KHO — mở bằng nút bút chì khi tab Loại kho đang chọn một kho.
+// Trong này KHÔNG có gì dùng chung giữa các kho (user chốt 21/08: "chỉ có Chung của kho, riêng của
+// loại kho"): tên/cờ hành vi/màu là danh mục, sửa ở chế độ "— Danh mục dùng chung —".
+function TypeStrategyDialog({ open, onClose, whName, typeCode, whStrat, cfg, saving, onSaved }: {
+  open: boolean; onClose: () => void
+  whName: string; typeCode: string
+  whStrat: StrategyValue              // mặc định của kho — để in "— Theo kho (FEFO) —"
+  cfg: StrategyValue | null           // null = kho KHÔNG vận hành loại này
+  saving: boolean
+  onSaved: (next: StrategyValue | null) => void
+}) {
+  const [on, setOn]   = useState(!!cfg)
+  const [val, setVal] = useState<StrategyValue>(cfg ?? STRATEGY_EMPTY)
+  // Dep = NỘI DUNG, không phải ref: `cfg` dựng mới mỗi lần cha render (Object.fromEntries) nên dep
+  // theo ref sẽ reset ô đang sửa mỗi lần cha render lại (hover / refetch / isPending…).
+  const cfgKey = cfg ? JSON.stringify(cfg) : ''
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setOn(!!cfg); setVal(cfg ?? STRATEGY_EMPTY) }, [cfgKey, typeCode, open])
+  const own = nOwnStrat(val)
+  return (
+    <FormSheet open={open} onClose={onClose}
+      title={<>Loại kho <span className="font-mono">{typeCode}</span> tại {whName}</>}
+      description="Toàn bộ cấu hình dưới đây chỉ áp cho kho này — ô để “Theo kho” là chạy theo mặc định chung của kho"
+      widthClass="sm:max-w-[80vw]"
+      footer={<>
+        <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Huỷ</Button>
+        <Button size="sm" disabled={saving} onClick={() => onSaved(on ? val : null)}>
+          {saving ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </>}>
+      <div className="space-y-3">
+        <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+          <label htmlFor="tsd-on" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+            <input id="tsd-on" type="checkbox" checked={on} onChange={e => setOn(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-600 shrink-0" />
+            <span className="text-xs font-medium truncate">Kho này vận hành loại <b>{typeCode}</b></span>
+          </label>
+          {on && own > 0 && <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">{own} khai riêng</span>}
+          <InfoTip tip={<>Bỏ tick không xoá dữ liệu cũ: tồn / vị trí / chuyến đang có của loại này vẫn xử lý bình thường, chỉ <b>chặn tạo mới</b> loại đó ở kho này.</>} />
+        </div>
+        {on ? (
+          <StrategyFields mode="type" idPrefix={`tsd-${typeCode}`} value={val} inherited={whStrat}
+            onPatch={v => setVal(s => ({ ...s, ...v }))} wide />
+        ) : (
+          <p className="text-[11px] text-slate-400">Kho không vận hành loại này — không có chiến thuật để khai.</p>
         )}
       </div>
     </FormSheet>
@@ -1493,6 +1484,7 @@ export default function WMSSettings() {
 
   // Tab Loại kho: chọn kho để khai "kho vận hành loại nào" + chiến thuật riêng theo loại (21/08)
   const [typeWhFilter, setTypeWhFilter] = useState('')
+  const [stratType,    setStratType]    = useState<string | null>(null)   // loại đang mở cấu hình tại kho
   const { data: whTypeCfgs = [] } = useWhTypeConfigs(typeWhFilter || null)
   const { mutate: saveWhTypeCfgs, isPending: savingWhTypeCfgs } = useSaveWhTypeConfigs()
   const cfgRowMap = new Map((whTypeCfgs as WhTypeConfig[]).map(r => [r.type_code, r]))
@@ -1557,13 +1549,8 @@ export default function WMSSettings() {
   // API type-configs THAY NGUYÊN TẬP loại của kho ⇒ mọi lần lưu đều phải dựng lại CẢ BỘ từ bản đang
   // có; thứ tự đánh lại 1..n theo đúng danh sách đang hiện. `patch` = thay đổi của một loại (chiến
   // thuật mới / bỏ khỏi kho / vừa đổi tên).
-  function buildWhTypeItems(order: TypeRow[], patch?: { code: string; next: StrategyValue | null; renamedFrom?: string | null }): WhTypeConfig[] {
+  function buildWhTypeItems(order: TypeRow[], patch?: { code: string; next: StrategyValue | null }): WhTypeConfig[] {
     const by = new Map(cfgRowMap)
-    if (patch?.renamedFrom && patch.renamedFrom !== patch.code) {
-      const old = by.get(patch.renamedFrom)
-      by.delete(patch.renamedFrom)
-      if (old) by.set(patch.code, { ...old, type_code: patch.code })
-    }
     if (patch) {
       if (patch.next) by.set(patch.code, { ...(by.get(patch.code) ?? {}), type_code: patch.code, ...patch.next })
       else by.delete(patch.code)
@@ -1571,10 +1558,8 @@ export default function WMSSettings() {
     const items: WhTypeConfig[] = []
     let k = 0
     for (const t of order) {
-      // Danh mục chưa refetch sau khi đổi tên → dòng vẫn mang tên cũ, quy về tên mới cho khỏi rớt chỗ
-      const code = patch?.renamedFrom && t.value === patch.renamedFrom ? patch.code : t.value
-      const r = by.get(code)
-      if (r) { items.push({ ...r, sort_order: ++k }); by.delete(code) }
+      const r = by.get(t.value)
+      if (r) { items.push({ ...r, sort_order: ++k }); by.delete(t.value) }
     }
     for (const r of by.values()) items.push(r)     // loại không nằm trong danh sách hiện — giữ nguyên
     return items
@@ -1673,17 +1658,17 @@ export default function WMSSettings() {
     putaway_block_full:         stratWh?.putaway_block_full === true,
     putaway_single_ncc:         stratWh?.putaway_single_ncc === true,
   }
-  // Lưu phần RIÊNG của kho cho một loại (gọi từ dialog Sửa loại kho, sau khi phần danh mục đã lưu)
-  function saveTypeStrategy(code: string, next: StrategyValue | null, renamedFrom: string | null, onDone: () => void) {
-    if (!typeWhFilter) { onDone(); return }
-    const items = buildWhTypeItems(orderedTypes, { code, next, renamedFrom })
+  // Lưu phần RIÊNG của kho cho một loại (dialog mở từ nút bút chì khi đang chọn kho)
+  function saveTypeStrategy(code: string, next: StrategyValue | null) {
+    if (!typeWhFilter) return
+    const items = buildWhTypeItems(orderedTypes, { code, next })
     if (items.length === 0) {
       toast({ variant: 'destructive', title: 'Kho phải vận hành ít nhất 1 Loại kho',
         description: 'Bỏ hết thì mọi form của kho này không chọn được loại nào.' })
       return
     }
     saveWhTypeCfgs({ id: typeWhFilter, items }, {
-      onSuccess: onDone,
+      onSuccess: () => setStratType(null),
       onError: e => toast({ variant: 'destructive', title: 'Không lưu được chiến thuật riêng', description: apiMsg(e) }),
     })
   }
@@ -1847,21 +1832,27 @@ export default function WMSSettings() {
                 options={[{ value: '', label: '— Danh mục dùng chung —' },
                   ...(allWh as WhRow[]).map(w => ({ value: w.id, label: w.name, sub: w.code }))]} />
             </div>
-            <InfoTip tip={<>Chọn một kho để khai <b>kho đó vận hành loại nào</b>, <b>thứ tự riêng</b> và <b>chiến thuật xuất/nhập riêng</b> của từng loại (vd thành phẩm FEFO, nguyên liệu FIFO). Tên/cờ hành vi của loại là <b>dùng chung mọi kho</b>. Tất cả sửa ở nút bút chì.</>} />
+            <InfoTip tip={<>Chọn một kho ⇒ cả màn chỉ còn cấu hình <b>của kho đó</b>: vận hành loại nào, thứ tự riêng, chiến thuật xuất/nhập riêng của từng loại (vd thành phẩm FEFO, nguyên liệu FIFO). Tên / cờ hành vi / màu của loại là <b>danh mục dùng chung</b> — sửa ở chế độ “Danh mục dùng chung”.</>} />
           </div>
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">
               {typeWhFilter
-                ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự <b>riêng của {stratWh?.name ?? 'kho này'}</b> · bút chì để sửa loại kho + chiến thuật riêng</>
+                ? <>Cấu hình <b>riêng của {stratWh?.name ?? 'kho này'}</b> — kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> đổi thứ tự, bút chì mở cấu hình từng loại</>
                 : canManageType ? <>Kéo <GripVertical className="inline h-3 w-3 -mt-0.5" /> để đổi thứ tự <b>danh mục dùng chung</b> (áp cho cây Đăng ký cổng)</> : 'Danh mục loại kho'}
             </p>
-            {canManageType && (
+            {canManageType && (typeWhFilter ? (
+              // Thêm / xoá loại là việc của DANH MỤC (đổi cho mọi kho) — không để lẫn trong màn của 1 kho
+              <ActionCluster className="shrink-0" items={[{
+                key: 'catalog', icon: Tag, label: 'Danh mục dùng chung', tip: 'Về chế độ danh mục để thêm/sửa/xoá loại kho (áp cho mọi kho)',
+                onClick: () => setTypeWhFilter(''),
+              } satisfies ActionItem]} />
+            ) : (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add', icon: Plus, label: 'Thêm loại kho', tip: 'Thêm loại kho mới',
                 primary: true, variant: 'default',
                 onClick: () => { setEditingType(null); setShowTypeDlg(true) },
               } satisfies ActionItem]} />
-            )}
+            ))}
           </div>
 
           <div className="flex-1 min-h-0 flex">
@@ -1935,11 +1926,19 @@ export default function WMSSettings() {
                             {canManageType && (
                               <TableCell className="px-2 py-1 whitespace-nowrap">
                                 <div className="flex items-center gap-0.5">
-                                  <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors"
-                                    onClick={e => { e.stopPropagation(); setEditingType({ id: t.id, value: t.value, meta: t.meta }); setShowTypeDlg(true) }}>
+                                  {/* Đang chọn kho → bút chì mở CẤU HÌNH TẠI KHO ĐÓ; chế độ danh mục → sửa tên/cờ/màu */}
+                                  <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors disabled:opacity-40"
+                                    disabled={!!typeWhFilter && !canManageWarehouse}
+                                    title={typeWhFilter ? `Cấu hình loại ${t.value} tại ${stratWh?.name ?? 'kho này'}` : 'Sửa loại kho trong danh mục'}
+                                    onClick={e => {
+                                      e.stopPropagation()
+                                      if (typeWhFilter) { setStratType(t.value); return }
+                                      setEditingType({ id: t.id, value: t.value, meta: t.meta }); setShowTypeDlg(true)
+                                    }}>
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
-                                  <button className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+                                  {/* Xoá = xoá khỏi DANH MỤC (mọi kho) → ẩn khi đang đứng trong một kho */}
+                                  <button className={`text-slate-400 hover:text-red-500 p-1 transition-colors ${typeWhFilter ? 'hidden' : ''}`}
                                     disabled={deletingType}
                                     onClick={e => { e.stopPropagation(); if (confirm(`Xóa loại kho "${t.value}"?`)) deleteType(t.id, { onSuccess: () => setDetailType(prev => prev?.id === t.id ? null : prev), onError: e2 => toast({ variant: 'destructive', title: 'Không xóa được loại kho', description: apiMsg(e2) }) }) }}>
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -1962,7 +1961,7 @@ export default function WMSSettings() {
                   <button onClick={() => setDetailType(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div className="border-t pt-2 space-y-1.5">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hành vi</p>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Hành vi (danh mục — mọi kho)</p>
                   <div><span className="text-slate-400">Hàng NCC:</span> <span className="font-medium">{detailType.meta?.is_ncc_goods ? 'Có (QR đoạn 4 = mã NCC)' : 'Không (đoạn 4 = Máy)'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc HSD:</span> <span className="font-medium">{detailType.meta?.requires_shelf_life ? 'Có' : 'Không'}</span></div>
                   <div><span className="text-slate-400">Bắt buộc Pallet/EA:</span> <span className="font-medium">{detailType.meta?.requires_pallet_per_ea ? 'Có' : 'Không'}</span></div>
@@ -2127,10 +2126,13 @@ export default function WMSSettings() {
           onGotoTypes={id => { setShowWhDlg(false); setTypeWhFilter(id); setTab('types') }} />
       )}
       {showTypeDlg && (
-        <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)}
-          whId={stratWh?.id ?? null} whName={stratWh?.name} whStrat={stratWhValue}
-          cfg={editingType ? (whTypeCfgMap[editingType.value] ?? null) : null}
-          canManageWh={canManageWarehouse} savingCfg={savingWhTypeCfgs} onSaveCfg={saveTypeStrategy} />
+        <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)} />
+      )}
+      {stratType && stratWh && (
+        <TypeStrategyDialog open={!!stratType} onClose={() => setStratType(null)}
+          whName={stratWh.name} typeCode={stratType} saving={savingWhTypeCfgs}
+          whStrat={stratWhValue} cfg={whTypeCfgMap[stratType] ?? null}
+          onSaved={next => saveTypeStrategy(stratType, next)} />
       )}
       {showZoneDlg && (
         <ZoneDialog zone={editingZone} warehouseId={effectiveWhId} warehouses={zoneAccessWh} warehouseTypes={scopedWhTypes} open={showZoneDlg} onClose={() => setShowZoneDlg(false)} />

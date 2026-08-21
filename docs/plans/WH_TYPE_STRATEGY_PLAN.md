@@ -1,5 +1,23 @@
 # KẾ HOẠCH: Loại kho theo TỪNG KHO + chiến thuật xuất/nhập 2 TẦNG (kho → loại kho)
 
+> ## ⚠️ ĐỌC TRƯỚC — MÔ HÌNH ĐÃ ĐỔI SAU 4 VÒNG TRAO ĐỔI VỚI USER (21/08 tối)
+> Bản dưới đây (viết 20/08) giả định **mỗi kho có TẬP LOẠI RIÊNG** ("kho vận hành loại nào"). User
+> đã **chốt lại khác**: *"Không để kho Ba Vì không có DDD1 mà An Sơn có DDD1 — tạo tên Loại kho
+> xong TẤT CẢ kho đều có loại này."* Trạng thái đúng của hệ thống hiện nay:
+>
+> | Khai 1 lần, áp MỌI kho (`LookupValue`) | Riêng TỪNG kho (`warehouse_type_configs`) |
+> |---|---|
+> | Tên loại · Màu | Thứ tự loại kho trong kho đó |
+> | Bắt buộc HSD · Bắt buộc Pallet/EA | 12 cột chiến thuật xuất/nhập |
+> | | `is_ncc_goods` · `requires_ncc` · `batch_char` |
+>
+> ⇒ **Mục 2.5 (Đợt 2 — lọc option Loại kho theo kho) KHÔNG CÒN VIỆC**: mọi kho đều có mọi loại nên
+> lọc theo kho không cắt gì, guard 422 không bao giờ nổ. Đã bỏ, không code.
+> ⇒ Mục 2.9 / 2.9b (vòng đời gán / gỡ loại khỏi kho) cũng không còn: không có thao tác "gỡ loại
+> khỏi kho"; bỏ loại = **xoá khỏi danh mục** (mọi kho mất theo, 409 nếu còn dữ liệu dùng).
+> Phần còn lại của plan (schema, resolve 2 tầng, thang cất 3 bước, quét 18+ cột, bẫy) vẫn đúng.
+> Trạng thái + bài học thực thi: memory `wh-type-strategy-2tier`.
+
 > Lập 20/08/2026 (Fable — chỉ plan). Người thực thi: Opus, phiên sau. Làm trên branch `dev`.
 > Yêu cầu gốc của user:
 > 1. Mỗi kho có danh sách Loại kho RIÊNG thay vì mặc định dùng cả danh mục FG01/FG02… Kho hiện hành

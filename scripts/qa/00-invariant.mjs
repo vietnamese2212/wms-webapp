@@ -207,6 +207,19 @@ for (const [table, label] of [
       : 'RPC warehouse_type_column_coverage chưa apply (migration 20260815b)')
 }
 
+// 11b. MỌI KHO PHẢI CÓ MỌI LOẠI KHO (user chốt 21/08: loại kho là DANH MỤC CHUNG — tạo một lần thì
+//      tất cả kho đều có; mỗi kho chỉ khác nhau ở SETTING). Thiếu cặp (kho, loại) = kho đó không có
+//      dòng cấu hình ⇒ setting riêng không khai được và (Đợt 2) form ghi sẽ chặn oan đúng loại đó.
+//      Lệch phát sinh khi có đường tạo kho / tạo loại MỚI quên seed, hoặc ai đó INSERT thẳng DB.
+{
+  const nWh = (await restAll('Warehouse', 'select=id')).length
+  const types = await restAll('LookupValue', 'select=value&type=eq.warehouse_type')
+  const cfgs = await restAll('warehouse_type_configs', 'select=warehouse_id,type_code')
+  const expect = nWh * types.length
+  check('Mọi kho đều có đủ mọi Loại kho (danh mục chung, không kho nào bị thiếu dòng cấu hình)',
+    cfgs.length === expect, `${cfgs.length}/${expect} cặp (${nWh} kho × ${types.length} loại)`)
+}
+
 // 12. RPC scan_insert_pallet PHẢI GHI ĐỦ MỌI KHOÁ mà backend gửi (chốt 15/08).
 //     BUG THẬT: RPC insert bằng DANH SÁCH CỘT GHI TAY, nên khoá mới thêm vào `entryObj` (3 cột vết
 //     quy tắc cất hàng) bị RƠI ÂM THẦM — API trả 200, tsc xanh, build xanh, "quét thành công" cũng

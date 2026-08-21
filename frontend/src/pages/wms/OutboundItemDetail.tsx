@@ -41,6 +41,7 @@ import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 // ─── Status badge ──────────────────────────────────────────────
 
@@ -92,13 +93,15 @@ type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | nul
 interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
+  warehouseId: string | null       // kho CỦA CHUYẾN → quyết loại mã camera giải (QR / mã vạch / cả hai)
   cartonScanEnabled?: boolean
   onClose: () => void
   pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, warehouseId, cartonScanEnabled, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+  const codeTypes = useScanCodeTypes(warehouseId)
   const scannerRef = useRef<QRScannerHandle>(null)
   // Súng quét: bắn 1 phát = chuyển hẳn chế độ súng (tắt camera cả phiên) → sau khi Lưu KHÔNG bật lại camera.
   const [gunMode, setGunMode] = useState(pdaMode)
@@ -323,7 +326,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -445,6 +448,7 @@ function ScanDialog({ item, gdoId, cartonScanEnabled, onClose, pdaMode = false, 
         <CartonScanSheet
           open
           palletCode={cartonFor.palletCode}
+          codeTypes={codeTypes}
           expectedMaterialCode={expectedMaterialCode}
           saving={attaching}
           onSave={saveCarton}
@@ -497,6 +501,7 @@ export default function OutboundItemDetail() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const pctBands = usePctBands()
   const { data: gdo, isLoading } = useGDO(gdoId)
+  const pageCodeTypes = useScanCodeTypes(gdo?.warehouse_id)   // quét lại tem thùng của pallet đã lưu
   const { mutate: manualComplete,      isPending: completing    } = useManualCompleteItem()
   const { mutate: deleteScanEntry,     isPending: deleting      } = useDeleteOutboundScanEntry()
   const { mutate: confirmLoose,        isPending: confirming    } = useConfirmLoosePickingItem()
@@ -748,7 +753,7 @@ export default function OutboundItemDetail() {
         </DialogContent>
       </Dialog>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} cartonScanEnabled={!!gdo.carton_scan_enabled}
+        <ScanDialog item={item} gdoId={gdoId!} warehouseId={gdo.warehouse_id} cartonScanEnabled={!!gdo.carton_scan_enabled}
           pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
@@ -757,6 +762,7 @@ export default function OutboundItemDetail() {
         <CartonScanSheet
           open
           palletCode={cartonRow.pallet_code}
+          codeTypes={pageCodeTypes}
           expectedMaterialCode={item.material?.material_code ?? materialCodeOf(item.material_code_raw) ?? ''}
           initial={(cartonRow.carton_scans ?? []).map(c => ({ code: c.code, match: c.match, at: c.at ? new Date(c.at).getTime() : Date.now() }))}
           saving={attachingRow}

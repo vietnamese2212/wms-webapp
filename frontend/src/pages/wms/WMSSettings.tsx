@@ -13,6 +13,7 @@ import { toast } from '@/components/ui/use-toast'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
+import type { ScanCodeTypes } from '@/utils/scanEngine'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -564,7 +565,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -582,6 +583,15 @@ const INV_MODE_META: Record<InvMode, { label: string; desc: string; badge: strin
 }
 const invModeMeta = (m: string) => INV_MODE_META[(m as InvMode)] ?? INV_MODE_META.QR
 
+// Loại mã camera giải, theo TỪNG KHO (Warehouse.scan_code_types — migration 20260821e; user chốt
+// 21/08: "kho nào chỉ bắt QR, kho nào chỉ bắt barcode, kho nào bắt cả 2"). Tập format thật nằm ở
+// utils/scanEngine (một nguồn) — đây chỉ là nhãn hiển thị.
+const SCAN_CODE_META: Record<ScanCodeTypes, { label: string; desc: string; badge: string }> = {
+  QR:      { label: "Chỉ tem QR",    desc: "Camera bỏ qua mã vạch — không giải thì không thể đọc sai (kho chỉ dùng tem pallet)", badge: "border-green-400 text-green-700 bg-green-50" },
+  BARCODE: { label: "Chỉ mã vạch",   desc: "Chỉ giải mã vạch 1D — KHÔNG quét được tem pallet QR nữa", badge: "border-amber-400 text-amber-700 bg-amber-50" },
+  BOTH:    { label: "Cả hai",        desc: "Giải cả tem QR và mã vạch 1D (mặc định)", badge: "border-sky-400 text-sky-700 bg-sky-50" },
+}
+
 function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   wh: WhRow | null; open: boolean; onClose: () => void
   /** Mở tab Loại kho, lọc sẵn kho này (chiến thuật riêng theo loại khai ở đó) */
@@ -593,6 +603,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [address,       setAddress]       = useState(wh?.address ?? '')
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
+  const [scanCodes,     setScanCodes]     = useState<ScanCodeTypes>((wh?.scan_code_types as ScanCodeTypes) ?? 'BOTH')
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
@@ -669,12 +680,12 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     const rot = { rotation_principle: strat.rotation_principle ?? 'FEFO', rotation_required: strat.rotation_required === true }
     if (isEdit) {
       update(
-        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, ...rot, ...putaway },
+        { id: wh.id, name: name.trim(), address: address.trim() || undefined, is_active: isActive, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, ...rot, ...putaway },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     } else {
       create(
-        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
+        { code: code.trim(), name: name.trim(), address: address.trim() || undefined, warehouse_type: warehouseType, inventory_mode: invMode, shipto_codes: shiptoCodes, nmsx_code: nmsxCode, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant: sapPlant, sap_storage_locations: sapSlocs, require_weigh_on_start: requireWeigh, require_gate_on_start: requireGate, scan_code_types: scanCodes, ...rot, ...putaway, copy_from_warehouse_id: copyFrom || null },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) }
       )
     }
@@ -732,6 +743,21 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               </SelectContent>
             </Select>
             <p className="text-[10px] text-slate-400">{INV_MODE_META[invMode].desc}</p>
+          </div>
+          <div className="space-y-1">
+            <span className="flex items-center gap-1">
+              <Label className="text-xs">Camera quét loại mã *</Label>
+              <InfoTip tip={<>Mã vạch 1D (EAN/Code128…) <b>không có mã sửa lỗi</b> như QR, nên vạch mờ có thể đọc ra số không có thật. Kho chỉ dùng tem QR nên chọn <b>Chỉ tem QR</b> — camera không giải mã vạch nữa thì không thể đọc sai, lại đỡ pin. Kho có hàng NCC dán mã vạch trên thùng thì chọn <b>Cả hai</b>.</>} />
+            </span>
+            <Select value={scanCodes} onValueChange={v => setScanCodes(v as ScanCodeTypes)}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(Object.keys(SCAN_CODE_META) as ScanCodeTypes[]).map(m => (
+                  <SelectItem key={m} value={m}>{SCAN_CODE_META[m].label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-slate-400">{SCAN_CODE_META[scanCodes].desc}</p>
           </div>
           <div className="space-y-1">
             <span className="flex items-center gap-1">

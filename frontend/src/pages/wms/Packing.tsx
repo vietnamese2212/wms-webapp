@@ -37,6 +37,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
@@ -327,6 +328,7 @@ export default function Packing() {
   const [hasOpenedScan, setHasOpenedScan] = useState(false)
   const [showScan, setShowScan] = useState(false)
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(f.warehouseId)   // súng bắn ở bất kỳ đâu → lấy kho đang lọc/bối cảnh
   const [pendingQR, setPendingQR] = useState<string | null>(null)   // tem vừa quét → mở RecordSheet
   const [closeTarget, setCloseTarget] = useState<PackingLog | null>(null)
   const [editTarget, setEditTarget] = useState<PackingLog | null>(null)
@@ -425,7 +427,7 @@ export default function Packing() {
             <button type="button" onClick={() => setShowScan(false)} className="p-2"><X className="h-5 w-5" /></button>
           </div>
           <div className="flex-1 min-h-0">
-            <QRScanner ref={scannerRef} fill active={showScan} stopOnScan onScan={handleScan} onClose={() => setShowScan(false)} />
+            <QRScanner ref={scannerRef} fill active={showScan} stopOnScan onScan={handleScan} onClose={() => setShowScan(false)} codeTypes={codeTypes} />
           </div>
         </div>
       )}

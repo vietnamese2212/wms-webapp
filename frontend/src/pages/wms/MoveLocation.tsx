@@ -35,6 +35,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 interface MoveEntryData {
   id:                string
@@ -95,6 +96,7 @@ function ScanTab() {
   // không khoanh kho là tra ra pallet kho khác. Field dùng chung slice moveLog (bối cảnh Header
   // sweep vào, nhớ theo user); mặc định = kho đầu tiên của user như trang Kiểm kê.
   const { warehouseId } = useWmsFilterStore(s => s.moveLog)
+  const codeTypes = useScanCodeTypes(warehouseId)   // kho đang chọn ở màn Chuyển vị trí
   const setMoveF = useWmsFilterStore(s => s.setMoveLog)
   const { data: warehouses = [] } = useWarehouses(true)
   const allowedWhIds = user?.warehouse_scope !== 'NATIONAL' && user?.warehouse_ids?.length
@@ -283,7 +285,7 @@ function ScanTab() {
         </form>
 
         {scannerOpen && (
-          <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} />
+          <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} codeTypes={codeTypes} />
         )}
 
         {/* Success */}

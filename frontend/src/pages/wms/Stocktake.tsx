@@ -20,6 +20,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 interface StocktakeEntryData {
   id:                string
@@ -61,6 +62,7 @@ export default function Stocktake() {
     : null
 
   const { warehouseId, category, locationId, requiresOnly } = useWmsFilterStore(s => s.stocktake)
+  const codeTypes = useScanCodeTypes(warehouseId)
   const setStocktake = useWmsFilterStore(s => s.setStocktake)
 
   const [resultState,  setResultState]  = useState<ResultState>({ mode: 'none' })
@@ -293,6 +295,7 @@ export default function Stocktake() {
               <QRScanner
                 onScan={handleQRScan}
                 onClose={() => setScannerOpen(false)}
+                codeTypes={codeTypes}
               />
             )}
 

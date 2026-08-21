@@ -30,6 +30,7 @@ import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
 import type { OutboundItem, OutboundStatus } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 // ─── Status badge ──────────────────────────────────────────────
 
@@ -103,12 +104,14 @@ type FeedbackState = { type: 'success' | 'error'; msg: string } | null
 interface ScanDialogProps {
   item:    OutboundItem
   gdoId:   string
+  warehouseId: string | null       // kho CỦA CHUYẾN → quyết loại mã camera giải
   onClose: () => void
   pdaMode?: boolean          // mở bằng cò súng → KHÔNG bật camera
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn
 }
 
-function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+function ScanDialog({ item, gdoId, warehouseId, onClose, pdaMode = false, initialScan }: ScanDialogProps) {
+  const codeTypes = useScanCodeTypes(warehouseId)
   const scannerRef = useRef<QRScannerHandle>(null)
   const [feedback,       setFeedback]       = useState<FeedbackState>(null)
   const [checkResult,    setCheckResult]    = useState<CheckOutboundScanResult | null>(null)
@@ -253,7 +256,7 @@ function ScanDialog({ item, gdoId, onClose, pdaMode = false, initialScan }: Scan
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -609,7 +612,7 @@ export default function LoosePickingItemDetail() {
         </DialogContent>
       </Dialog>
       {showScan && (
-        <ScanDialog item={item} gdoId={gdoId!} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
+        <ScanDialog item={item} gdoId={gdoId!} warehouseId={gdo.warehouse_id} pdaMode={!!pdaScan} initialScan={pdaScan ?? undefined}
           onClose={() => { setShowScan(false); setPdaScan(null) }} />
       )}
 

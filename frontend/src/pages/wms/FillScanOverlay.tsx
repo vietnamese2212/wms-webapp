@@ -25,6 +25,7 @@ import { normalizeQR } from '@/utils/qr'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 import { RequiredDateBadge } from './fillShared'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 type ApiErr = AxiosError<{ error: { code?: string; message: string } }>
 const errOf = (e: unknown) => (e as ApiErr)?.response?.data?.error
@@ -46,6 +47,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
 }) {
   const qc = useQueryClient()
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(warehouseId)
   const busyRef = useRef(false)
   // Bắn 1 phát súng = chuyển hẳn chế độ súng cả lượt mở (camera unmount; listener súng độc lập)
   const [gunMode, setGunMode] = useState(false)
@@ -181,7 +183,7 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
             <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Xác nhận hạ</p>
           </div>
         ) : (
-          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} stopOnScan />
+          <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} stopOnScan codeTypes={codeTypes} />
         )}
       </div>
       <div className="shrink-0 p-3 space-y-2">

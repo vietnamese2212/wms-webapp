@@ -24,6 +24,7 @@ import { PUTAWAY_OVERRIDE_REASONS, type PutawayHint } from '@/utils/putaway'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { InboundOrder } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 // ─── Scan feedback banner ─────────────────────────────────────
 
@@ -129,6 +130,7 @@ interface InboundScanSheetProps {
 
 export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(order.warehouse_id)   // loại mã camera giải = theo KHO CỦA PHIẾU
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
   const { mutate: checkScan,   isPending: serverChecking } = useCheckInboundScan()
 
@@ -522,7 +524,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {/* "Quét tiếp": hiện ở MỌI lỗi — cả lỗi validate client lẫn lỗi API khi Lưu

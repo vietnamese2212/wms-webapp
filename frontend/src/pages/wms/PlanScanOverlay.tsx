@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { apiClient } from '@/api/client'
 import { playBeep } from '@/utils/audio'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
@@ -25,10 +26,11 @@ interface ScanMoveResult {
 }
 
 export function PlanScanOverlay({ plan, open, onClose }: {
-  plan: { id: string; name: string }; open: boolean; onClose: () => void
+  plan: { id: string; name: string; warehouse_id: string }; open: boolean; onClose: () => void
 }) {
   const qc = useQueryClient()
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(plan.warehouse_id)
   const busyRef = useRef(false)
   const [err, setErr] = useState('')
   const [last, setLast] = useState<ScanMoveResult | null>(null)
@@ -70,7 +72,7 @@ export function PlanScanOverlay({ plan, open, onClose }: {
         </button>
       </div>
       <div className="flex-1 min-h-0">
-        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} />
+        <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill active={open} codeTypes={codeTypes} />
       </div>
       <div className="shrink-0 p-3 space-y-2">
         {err && (

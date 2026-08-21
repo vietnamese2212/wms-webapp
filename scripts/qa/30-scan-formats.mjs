@@ -244,5 +244,38 @@ for (const fmt of ZXING_FORMATS) {
   check('[24] Mã 1D phải thấy ≥3 lần mới được hiện', mod.MIN_HITS_1D >= 3, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
 }
 
+// ── LOẠI MÃ THEO TỪNG KHO (`Warehouse.scan_code_types`, 21/08) ────────────────────────────────
+// Kiểm bằng ĐỌC THẬT: mỗi chế độ phải giải được đúng loại mã của nó và TRƯỢT loại bị tắt. Nếu chỉ
+// so mảng format thì một hôm ai đó nối sai nhánh (vd 'QR' vẫn truyền cả tập) sẽ vẫn xanh.
+{
+  const mod = await loadTs(['src/utils/scanEngine.ts'], ['nativeFormatsFor', 'zxingFormatsFor'])
+  const qrImg = (await writeBarcode('080826_510000187_1_122_98266_B', { format: 'QRCode', scale: 6 })).image
+  const bcImg = (await writeBarcode('510000187', { format: 'Code128', scale: 6 })).image
+  const read = async (img, t) => img
+    ? (await readBarcodes(img, { formats: mod.zxingFormatsFor(t), tryHarder: true, tryRotate: true, maxNumberOfSymbols: 8 })).length
+    : -1
+
+  check('[25] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
+    (await read(qrImg, 'QR')) === 1 && (await read(bcImg, 'QR')) === 0)
+  check('[26] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
+    (await read(bcImg, 'BARCODE')) === 1 && (await read(qrImg, 'BARCODE')) === 0)
+  check('[27] Kho "Cả hai": đọc được cả hai',
+    (await read(qrImg, 'BOTH')) === 1 && (await read(bcImg, 'BOTH')) === 1)
+  // Tra cấu hình trượt (kho lạ / chưa nạp danh mục) phải NỚI về cả hai — siết thì người quét đứng
+  // trước camera "không ăn" mà không có gì để hiểu vì sao.
+  check('[28] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
+    mod.zxingFormatsFor().length === mod.zxingFormatsFor('BOTH').length
+    && mod.nativeFormatsFor().length === mod.nativeFormatsFor('BOTH').length)
+
+  // Mọi màn quét PHẢI khai codeTypes — ràng buộc KIỂU (prop bắt buộc) là thứ chặn màn mới lọt,
+  // ratchet tĩnh chỉ soi thêm cho chắc.
+  const scanner = readFileSync(join(FE, 'src', 'components', 'shared', 'QRScanner.tsx'), 'utf8')
+  check('[29] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
+    /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(scanner) && !/codeTypes\?:/.test(scanner))
+  const carton = readFileSync(join(FE, 'src', 'components', 'wms', 'CartonScanSheet.tsx'), 'utf8')
+  check('[30] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
+    /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(carton) && !/codeTypes\?:/.test(carton))
+}
+
 console.log(`\n[SCAN-FORMATS] ${pass}/${pass + fail} PASS`)
 process.exit(fail ? 1 : 0)

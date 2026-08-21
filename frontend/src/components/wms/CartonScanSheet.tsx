@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Flashlight, FlashlightOff, ZoomIn, ZoomOut, Trash2, Check, ScanBarcode } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { createScanEngine, drawBoxes, type ScanEngine, type Box, type ExtCapabilities } from '@/utils/scanEngine'
+import { createScanEngine, drawBoxes, type ScanEngine, type Box, type ExtCapabilities, type ScanCodeTypes } from '@/utils/scanEngine'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { isValidTem, materialCodeOf } from '@/utils/qr'
 
@@ -21,12 +21,14 @@ interface Props {
   saving?: boolean
   onSave: (cartons: CartonScan[]) => void
   onSkip: () => void               // đóng, KHÔNG lưu (bỏ qua quét thùng)
+  // Loại mã camera giải, theo cấu hình KHO (như QRScanner) — BẮT BUỘC khai để màn mới không lọt
+  codeTypes: ScanCodeTypes
 }
 
 interface Entry { code: string; valid: boolean; match: boolean; at: number; hits: number }
 const INVALID_MIN_HITS = 2
 
-export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initial, saving, onSave, onSkip }: Props) {
+export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initial, saving, onSave, onSkip, codeTypes }: Props) {
   const videoRef   = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const wrapRef    = useRef<HTMLDivElement>(null)
@@ -58,7 +60,7 @@ export function CartonScanSheet({ open, palletCode, expectedMaterialCode, initia
     setError(null)
     unlockAudio()
     try {
-      engineRef.current = await createScanEngine()
+      engineRef.current = await createScanEngine(codeTypes)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
       })

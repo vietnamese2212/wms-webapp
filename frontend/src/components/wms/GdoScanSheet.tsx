@@ -34,6 +34,7 @@ import { OfflineError } from '@/api/client'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { useAuthStore } from '@/stores/authStore'
 import type { GDO, OutboundItem } from '@/types'
+import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
 type FeedbackState = { type: 'success' | 'error' | 'queued'; msg: string } | null
 type ItemWithDO = OutboundItem & { distributor_name?: string | null; delivery_code?: string | null }
@@ -60,6 +61,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
   initialScan?: string       // tem đã bắn ngay trước khi mở — xử lý luôn khi mount
 }) {
   const scannerRef = useRef<QRScannerHandle>(null)
+  const codeTypes = useScanCodeTypes(gdo.warehouse_id)   // loại mã camera giải = theo KHO CỦA CHUYẾN
   // Súng quét: hễ có 1 phát bắn = chuyển hẳn sang chế độ súng (tắt camera) cả phiên.
   // → sau khi Lưu KHÔNG bật lại camera nữa (QRScanner gỡ, resume() thành no-op). Súng listener độc lập camera nên vẫn bắn tiếp.
   const [gunMode, setGunMode] = useState(pdaMode)
@@ -356,7 +358,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 )}
               </div>
             ) : (
-              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill />
+              <QRScanner ref={scannerRef} onScan={handleScan} onClose={onClose} fill codeTypes={codeTypes} />
             )}
 
             {checking && (
@@ -480,6 +482,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
         <CartonScanSheet
           open
           palletCode={cartonFor.palletCode}
+          codeTypes={codeTypes}
           expectedMaterialCode={activeItem.material?.material_code ?? materialCodeOf(activeItem.material_code_raw) ?? ''}
           saving={attaching}
           onSave={saveCarton}

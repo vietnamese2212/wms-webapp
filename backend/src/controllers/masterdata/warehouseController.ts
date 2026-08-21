@@ -13,6 +13,15 @@ import { warehouseTypeUsage } from '../wms/lookupController'
 
 const INVENTORY_MODES = ['QR', 'QTY', 'QTY_DATE', 'NONE'] as const
 
+// Loại mã camera được phép giải ở kho (20260821e). Kho chỉ dùng tem QR đặt 'QR' thì camera KHÔNG
+// giải mã vạch 1D nữa — chặn tận gốc lớp "đọc sai ra số không có thật" của 1D (không có mã sửa lỗi).
+// DB có CHECK cùng danh sách; giá trị lạ → về 'BOTH' (mặc định = hành vi đang chạy, không đổi ngầm).
+const SCAN_CODE_TYPES = ['QR', 'BARCODE', 'BOTH'] as const
+function asScanCodeTypes(v: unknown): string {
+  const s = String(v ?? '').toUpperCase().trim()
+  return (SCAN_CODE_TYPES as readonly string[]).includes(s) ? s : 'BOTH'
+}
+
 function extractCount(arr: unknown): number {
   if (Array.isArray(arr) && arr.length > 0) return (arr[0] as { count: number }).count ?? 0
   return 0
@@ -140,7 +149,7 @@ export async function getWarehouse(req: Request, res: Response) {
 
 export async function createWarehouse(req: Request, res: Response) {
   try {
-    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required } = req.body
+    const { code, name, address, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required, scan_code_types } = req.body
     if (!code || !name) return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu code hoặc name')
     if (!warehouse_type || !['CENTRAL', 'NPP'].includes(warehouse_type))
       return fail(res, 400, 'VALIDATION_ERROR', 'Chức năng kho không hợp lệ (CENTRAL hoặc NPP)')
@@ -169,6 +178,7 @@ export async function createWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  row.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (rotation_principle !== undefined)     row.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      row.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
+    if (scan_code_types !== undefined)        row.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
     const putErr = applyPutawayBody(req.body, row)                                                                   // quy tắc CẤT hàng (20260815d)
     if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
     let { data, error } = await supabase.from('Warehouse').insert(row).select().single()
@@ -215,7 +225,7 @@ export async function createWarehouse(req: Request, res: Response) {
 
 export async function updateWarehouse(req: Request, res: Response) {
   try {
-    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required } = req.body
+    const { name, address, is_active, warehouse_type, inventory_mode, shipto_codes, nmsx_code, parent_warehouse_id, carton_scan_override, carton_scan_categories, carton_scan_require_full, sap_plant, sap_storage_locations, require_weigh_on_start, require_gate_on_start, rotation_principle, rotation_required, scan_code_types } = req.body
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: req.user?.name || null }
     if (sap_plant !== undefined)             patch.sap_plant = normSapPlant(sap_plant)
     if (sap_storage_locations !== undefined) patch.sap_storage_locations = normSapSlocs(sap_storage_locations)
@@ -223,6 +233,7 @@ export async function updateWarehouse(req: Request, res: Response) {
     if (require_gate_on_start !== undefined)  patch.require_gate_on_start  = Boolean(require_gate_on_start)    // rule 1: đăng ký cổng khi Bắt đầu xuất (20260801c)
     if (rotation_principle !== undefined)     patch.rotation_principle     = asRotationPrinciple(rotation_principle)   // FEFO/FIFO/LIFO (20260814c)
     if (rotation_required !== undefined)      patch.rotation_required      = Boolean(rotation_required)                // true = CHẶN quét sai thứ tự
+    if (scan_code_types !== undefined)        patch.scan_code_types        = asScanCodeTypes(scan_code_types)          // QR | BARCODE | BOTH (20260821e)
     const putErr = applyPutawayBody(req.body, patch)                                                                   // quy tắc CẤT hàng (20260815d)
     if (putErr) return fail(res, 422, 'INVALID_INPUT', putErr)
     if (carton_scan_override !== undefined) patch.carton_scan_override = carton_scan_override === null ? null : Boolean(carton_scan_override)

@@ -166,7 +166,7 @@ export default function SlottingPlanDetail() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       {scanEverOpened && (
-        <PlanScanOverlay plan={{ id: plan.id, name: plan.name }} open={scanOpen} onClose={() => setScanOpen(false)} />
+        <PlanScanOverlay plan={{ id: plan.id, name: plan.name, warehouse_id: plan.warehouse_id }} open={scanOpen} onClose={() => setScanOpen(false)} />
       )}
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Header */}

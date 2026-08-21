@@ -130,5 +130,33 @@ for (const fmt of ZXING_FORMATS) {
     !!ww && Number(ww[1]) <= 2560, `mặc định = ${ww?.[1] ?? '?'}px`)
 }
 
+// ── Chống MÃ RÁC và chống ĐẾM HAI LẦN (user 21/08: quét 15 mã vạch mà app hiện 20) ──────────
+// (a) 1D không có mã sửa lỗi ⇒ vạch mờ đọc ra số KHÔNG CÓ THẬT. Đo trên khung mờ 1,6px: mặc định
+//     zxing (minLineCount 2) sinh rác `0944707820120`; đặt 3 thì rác về 0, không mất mã thật nào.
+// (b) CÙNG một tem UPC-A có khung trả 12 số, khung khác trả 13 số có '0' dẫn đầu ⇒ đếm theo chuỗi
+//     thô là 1 tem ra 2 dòng. Khoá dedupe phải chuẩn hoá về GTIN-13 (`scanKey`).
+{
+  const eng = readFileSync(ENGINE_SRC, 'utf8')
+  const mlc = /ZXING_MIN_LINE_COUNT = (\d+)/.exec(eng)
+  check('[12] Ngưỡng đồng thuận dòng ≥ 3 (chặn mã vạch rác từ vạch mờ)', !!mlc && Number(mlc[1]) >= 3,
+    `ZXING_MIN_LINE_COUNT = ${mlc?.[1] ?? 'không khai'}`)
+  const users = ['src/utils/scanEngine.ts', 'src/pages/wms/MultiScanTest.tsx']
+    .filter(f => readFileSync(join(FE, f), 'utf8').includes('minLineCount'))
+  check('[13] Cả 2 đường quét (luồng thật + quét loạt) đều áp ngưỡng đó', users.length === 2, users.join(', '))
+
+  // scanKey: nạp từ chính utils/qr.ts (một nguồn) rồi thử các ca thật
+  const qrSrc = readFileSync(join(FE, 'src', 'utils', 'qr.ts'), 'utf8')
+    .replace(/export /g, '')
+    .replace(/: string \| null \| undefined/g, '').replace(/: string/g, '').replace(/: boolean/g, '')
+  const m = new Function(`${qrSrc}; return { scanKey }`)()
+  const upcaSame = m.scanKey('036000291452') === m.scanKey('0036000291452')
+  check('[14] UPC-A 12 số và EAN-13 13 số của CÙNG tem ra CÙNG khoá', upcaSame,
+    `${m.scanKey('036000291452')} vs ${m.scanKey('0036000291452')}`)
+  const keep = ['96385074', 'SKU-100294', '080826_510000187_1_122_98266_B', '50033;1;TA260705A018;05/07/2026;05/03/2027']
+  const changed = keep.filter(s => m.scanKey(s) !== s)
+  check('[15] Mã 8 số, mã chữ và tem pallet GIỮ NGUYÊN (không gộp oan)', changed.length === 0,
+    changed.length ? `bị đổi: ${changed.join(' | ')}` : '4 mẫu giữ nguyên')
+}
+
 console.log(`\n[SCAN-FORMATS] ${pass}/${pass + fail} PASS`)
 process.exit(fail ? 1 : 0)

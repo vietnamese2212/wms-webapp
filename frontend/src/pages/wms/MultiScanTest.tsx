@@ -7,10 +7,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
-import { isValidTem } from '@/utils/qr'
+import { isValidTem, scanKey } from '@/utils/qr'
 // Tập mã đọc được khai MỘT CHỖ ở scanEngine (QR + 1D) — trang này có engine riêng để tinh chỉnh
 // độ phân giải/tryHarder, nhưng ĐỪNG khai lại danh sách format kẻo lệch với luồng thật.
-import { NATIVE_FORMATS, ZXING_FORMATS } from '@/utils/scanEngine'
+import { NATIVE_FORMATS, ZXING_FORMATS, ZXING_MIN_LINE_COUNT } from '@/utils/scanEngine'
 
 // ── BarcodeDetector chưa có trong lib.dom của TS — khai báo tối thiểu ──────────
 interface DetectedBarcode {
@@ -168,7 +168,10 @@ export default function MultiScanTest() {
     if (!ctx) return []
     ctx.drawImage(video, 0, 0, cw, ch)
     const img = ctx.getImageData(0, 0, cw, ch)
-    const results = await read(img, { formats: [...ZXING_FORMATS], maxNumberOfSymbols: 64, tryHarder: tryHarderRef.current, tryRotate: true })
+    const results = await read(img, {
+      formats: [...ZXING_FORMATS], maxNumberOfSymbols: 64,
+      tryHarder: tryHarderRef.current, tryRotate: true, minLineCount: ZXING_MIN_LINE_COUNT,
+    })
     // Đưa tọa độ về hệ pixel của video gốc
     const inv = 1 / scale
     return results.map(r => ({
@@ -182,10 +185,13 @@ export default function MultiScanTest() {
     const boxes: FrameBox[] = []
     let anyNew = false, anyInvalid = false
     for (const f of found) {
-      let entry = codesRef.current.get(f.text)
+      // Đếm theo KHÓA chuẩn hoá, KHÔNG theo chuỗi thô: cùng một tem UPC-A có khung trả 12 số, khung
+      // khác trả 13 số có '0' dẫn đầu ⇒ đếm thô là 1 tem ra 2 dòng (đo 21/08).
+      const key = scanKey(f.text)
+      let entry = codesRef.current.get(key)
       if (!entry) {
         entry = { text: f.text, valid: isValidTem(f.text), at: Date.now(), hits: 0 }
-        codesRef.current.set(f.text, entry)
+        codesRef.current.set(key, entry)
       }
       entry.hits++
       const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · sai định dạng: cần 2 lần

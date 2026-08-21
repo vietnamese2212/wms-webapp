@@ -47,6 +47,12 @@ export const ZXING_FORMATS = [
   'QRCode', 'Code128', 'Code39', 'EAN13', 'EAN8', 'UPCA', 'ITF',
 ] as const
 
+// Số DÒNG QUÉT phải cho ra CÙNG một kết quả mới nhận (zxing mặc định 2).
+// Mã vạch 1D không có mã sửa lỗi như QR nên vạch mờ/nghiêng ĐỌC RA SỐ KHÔNG CÓ THẬT — đo 21/08 trên
+// khung mờ 1,6px: mặc định sinh mã rác `0944707820120`, đặt 3 thì rác về 0 mà KHÔNG mất mã thật nào
+// (11/15 cả hai bên), và gần như không tốn thêm thời gian (35ms → 35ms ở 1600px, 58→61ms ở 2560px).
+export const ZXING_MIN_LINE_COUNT = 3
+
 async function createNative(): Promise<ScanEngine | null> {
   if (!window.BarcodeDetector) return null
   try {
@@ -84,7 +90,10 @@ async function createWasm(): Promise<ScanEngine> {
       if (!ctx) return []
       ctx.drawImage(video, 0, 0, cw, ch)
       const img = ctx.getImageData(0, 0, cw, ch)
-      const results = await readBarcodes(img, { formats: [...ZXING_FORMATS], maxNumberOfSymbols: 8, tryHarder: true, tryRotate: true })
+      const results = await readBarcodes(img, {
+        formats: [...ZXING_FORMATS], maxNumberOfSymbols: 8,
+        tryHarder: true, tryRotate: true, minLineCount: ZXING_MIN_LINE_COUNT,
+      })
       const inv = 1 / scale   // tọa độ về hệ pixel video gốc
       return results.map(r => ({
         text: r.text,

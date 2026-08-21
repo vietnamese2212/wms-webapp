@@ -57,6 +57,19 @@ export function isValidTem(raw: string): boolean {
   return validDdmmyy(p[0])
 }
 
+/**
+ * KHÓA nhận dạng của một mã đã quét — dùng để DEDUPE, không dùng để hiển thị.
+ * Vì sao cần: cùng MỘT tem mã vạch có thể được trả về 2 chuỗi khác nhau tùy khung ảnh —
+ * UPC-A trả 12 số (`036000291452`) còn EAN-13 trả 13 số có `0` dẫn đầu (`0036000291452`).
+ * Đếm theo chuỗi thô ⇒ 1 tem thành 2 dòng (user 21/08: quét 15 mã vạch mà ra 20).
+ * Chuẩn về GTIN-13 (thêm `0`) — đúng chuẩn ngành: UPC-A là EAN-13 với tiền tố 0.
+ * Tem pallet (có `_` hoặc `;`) và mọi chuỗi khác GIỮ NGUYÊN.
+ */
+export function scanKey(raw: string | null | undefined): string {
+  const s = (raw ?? '').trim()
+  return /^\d{12}$/.test(s) ? '0' + s : s
+}
+
 /** Kiểm tra dd/mm/yyyy hợp lệ theo lịch thật (chống 30/02 roll-over). */
 export function isValidDMY(s: string): boolean {
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)

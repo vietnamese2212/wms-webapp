@@ -212,14 +212,16 @@ function ScanTab() {
   }
 
   // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay (chỉ khi ĐÃ chọn kho).
-  // NHƯỜNG cò khi đã tra được pallet mà chưa chọn ô đích: lúc đó phát bắn kế tiếp là TEM VỊ TRÍ
-  // (LocationScanButton armWedge) — 2 phát bắn xong 1 pallet, không chạm màn hình.
+  // ⚠️ GIỮ NGUYÊN điều kiện cũ (user chốt 21/08: "chỉ bổ sung scanner thôi"). Đã thử cho phát bắn
+  // kế tiếp tự chuyển sang TEM VỊ TRÍ khi đang chờ ô đích — nhanh hơn nhưng LẤY MẤT một việc đang
+  // có: bắn tem pallet KHÁC để tra lại. Quét tem ô ở đây đi qua nút quét (một chạm), và chỉ trong
+  // lúc màn quét đó mở thì cò súng mới nhường.
   useWedgeScanner(code => {
     if (move.isPending || searching) return
     if (!gunMode) setGunMode(true)
     setScannerOpen(false)
     handleQRScan(code)
-  }, !!warehouseId && !(!!entry && !newLocId))
+  }, !!warehouseId)
 
   const sameLoc = !!entry && !!newLocId && newLocId === entry.location_id
   const canMove = can(perms, 'inventory', 'move_location')
@@ -390,14 +392,12 @@ function ScanTab() {
                     }))}
                   />
                 </div>
-                {/* Quét tem ô đích. armWedge: đã tra được pallet mà chưa chọn ô ⇒ phát súng kế tiếp
-                    CHẮC CHẮN là tem vị trí (cò súng tra pallet đã tự nhường — xem useWedgeScanner
-                    ở trên). Nhờ vậy PDA làm trọn 1 pallet bằng 2 phát bắn, không chạm màn hình. */}
+                {/* Quét tem ô đích — THÊM cạnh ô chọn tay, ô chọn giữ nguyên. KHÔNG armWedge: màn
+                    này cò súng vẫn đang dành cho tem PALLET (xem useWedgeScanner ở trên). */}
                 <LocationScanButton
                   warehouseId={entry.warehouse_id ?? warehouseId}
                   materialId={entry.material_id}
                   disabled={saving}
-                  armWedge={!newLocId}
                   onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
                 />
               </div>

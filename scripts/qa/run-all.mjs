@@ -36,6 +36,7 @@ const steps = [
   ['28-transfer-receive.mjs'],    // Chuyển kho 2 chiều: cờ delivery_confirmation + 4 mảnh tự sinh + booking gate + cascade DONE/DELIVERED + oracle 4 tầng (19/08)
   ['29-wh-type-strategy.mjs'],    // Loại kho theo TỪNG kho + chiến thuật 2 tầng: override ăn đúng loại, không lây · gỡ loại còn tồn vẫn xuất được · xoá loại đang dùng 409 (21/08)
   ['30-scan-formats.mjs'],        // camera đọc CẢ QR lẫn mã vạch 1D: khai đủ + TÊN format đúng (đọc thật, không cần server) (21/08)
+  ['31-location-scan.mjs'],       // quét TEM VỊ TRÍ: khớp TRỌN mã (không nhận _5_T10 khi quét _5_T1), mơ hồ thì 409, mọi màn có nút quét (21/08)
   ['08-perm-coverage.mjs'],       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   ['00-invariant.mjs'],           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [['03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])], ['00-invariant.mjs']] : []),

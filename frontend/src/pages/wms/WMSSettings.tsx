@@ -586,6 +586,15 @@ const invModeMeta = (m: string) => INV_MODE_META[(m as InvMode)] ?? INV_MODE_MET
 // Loại mã camera giải, theo TỪNG KHO (Warehouse.scan_code_types — migration 20260821e; user chốt
 // 21/08: "kho nào chỉ bắt QR, kho nào chỉ bắt barcode, kho nào bắt cả 2"). Tập format thật nằm ở
 // utils/scanEngine (một nguồn) — đây chỉ là nhãn hiển thị.
+const SCAN_CODE_OPTS = [{ value: 'QR', label: 'Tem QR' }, { value: 'BARCODE', label: 'Mã vạch (1D)' }]
+// Tick độc lập 2 loại ↔ giá trị lưu DB: cả 2 = BOTH, một cái = chính nó. Suy MỘT CHIỀU từ list nên
+// không bao giờ có 2 state lệch nhau.
+const scanListOf = (v: string | null | undefined): string[] => {
+  const s = String(v ?? 'BOTH').toUpperCase()
+  return s === 'QR' ? ['QR'] : s === 'BARCODE' ? ['BARCODE'] : ['QR', 'BARCODE']
+}
+const scanValueOf = (list: string[]): ScanCodeTypes =>
+  list.length >= 2 ? 'BOTH' : list[0] === 'BARCODE' ? 'BARCODE' : 'QR'
 const SCAN_CODE_META: Record<ScanCodeTypes, { label: string; desc: string; badge: string }> = {
   QR:      { label: "Chỉ tem QR",    desc: "Camera bỏ qua mã vạch — không giải thì không thể đọc sai (kho chỉ dùng tem pallet)", badge: "border-green-400 text-green-700 bg-green-50" },
   BARCODE: { label: "Chỉ mã vạch",   desc: "Chỉ giải mã vạch 1D — KHÔNG quét được tem pallet QR nữa", badge: "border-amber-400 text-amber-700 bg-amber-50" },
@@ -603,7 +612,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
   const [address,       setAddress]       = useState(wh?.address ?? '')
   const [warehouseType, setWarehouseType] = useState<'CENTRAL' | 'NPP'>((wh?.warehouse_type as 'CENTRAL' | 'NPP') ?? 'CENTRAL')
   const [invMode,       setInvMode]       = useState<InvMode>((wh?.inventory_mode as InvMode) ?? 'QR')
-  const [scanCodes,     setScanCodes]     = useState<ScanCodeTypes>((wh?.scan_code_types as ScanCodeTypes) ?? 'BOTH')
+  const [scanCodeList,  setScanCodeList]  = useState<string[]>(() => scanListOf(wh?.scan_code_types))
   const [shiptoCodes,   setShiptoCodes]   = useState((wh?.shipto_codes ?? []).join(', '))
   const [nmsxCode,      setNmsxCode]      = useState(wh?.nmsx_code ?? '')
   const [sapPlant,      setSapPlant]      = useState(wh?.sap_plant ?? '')
@@ -629,6 +638,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     putaway_same_mat_date_pref: wh?.putaway_same_mat_date_pref ?? 'NONE',
     putaway_fallback:           wh?.putaway_fallback ?? 'BY_CODE',
   })
+  const scanCodes = scanValueOf(scanCodeList)
   const patchStrat = (p: Partial<StrategyValue>) => setStrat(s => ({ ...s, ...p }))
   // Kho mới: copy nguyên tập loại + chiến thuật riêng từ kho khác (sửa từng loại ở TAB LOẠI KHO)
   const [copyFrom, setCopyFrom] = useState('')
@@ -659,6 +669,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     if (!code.trim() || !name.trim()) { setErr('Mã và tên kho là bắt buộc'); return }
     const parent_warehouse_id = parentId === '__none__' ? null : parentId
     if (cartonScan && cartonCats.length === 0) { setErr('Bật quét tới thùng thì chọn ít nhất 1 Loại kho phải quét'); return }
+    if (scanCodeList.length === 0) { setErr('Camera quét loại mã: phải chọn ít nhất 1 loại (bỏ hết thì camera không đọc được gì)'); return }
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
@@ -749,14 +760,10 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
               <Label className="text-xs">Camera quét loại mã *</Label>
               <InfoTip tip={<>Mã vạch 1D (EAN/Code128…) <b>không có mã sửa lỗi</b> như QR, nên vạch mờ có thể đọc ra số không có thật. Kho chỉ dùng tem QR nên chọn <b>Chỉ tem QR</b> — camera không giải mã vạch nữa thì không thể đọc sai, lại đỡ pin. Kho có hàng NCC dán mã vạch trên thùng thì chọn <b>Cả hai</b>.</>} />
             </span>
-            <Select value={scanCodes} onValueChange={v => setScanCodes(v as ScanCodeTypes)}>
-              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {(Object.keys(SCAN_CODE_META) as ScanCodeTypes[]).map(m => (
-                  <SelectItem key={m} value={m}>{SCAN_CODE_META[m].label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Checkbox dropdown: 2 loại mã tick ĐỘC LẬP (đúng bản chất "camera đọc những gì"),
+                searchable=false vì chỉ 2 dòng + ô search autoFocus bị focus-trap của Dialog giật. */}
+            <MultiSelectFilter label="Loại mã" searchable={false} options={SCAN_CODE_OPTS}
+              selected={scanCodeList} onChange={setScanCodeList} width="w-full" />
             <p className="text-[10px] text-slate-400">{SCAN_CODE_META[scanCodes].desc}</p>
           </div>
           <div className="space-y-1">

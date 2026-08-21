@@ -158,109 +158,71 @@ for (const fmt of ZXING_FORMATS) {
     changed.length ? `bị đổi: ${changed.join(' | ')}` : '4 mẫu giữ nguyên')
 }
 
-// ── BẢN ĐỌC SAI cùng ô phải bị gỡ khỏi danh sách (ca THẬT của user 21/08) ─────────────────────
-// Quét lưới 15 mã vạch, app hiện 18 dòng: 3 dòng dư đều là bản đọc sai của chính mã thật, ở ĐÚNG ô
-// đó, và đều thoả checksum nên checksum không loại được:
-//   96385074 (46×) → 06384074 (5×) · 4006381333931 (26×) → 0086301333931 (3×)
-//   0012345678905 (42×) → 0012344672904 (2×)
-// Kiểm bằng chuỗi khung mô phỏng đúng tỉ lệ đó (logic thuần ở utils/scanDedupe).
+// ── GOM MÃ TRONG PHIÊN QUÉT: chỉ ĐẾM, KHÔNG tự xoá dòng nào ───────────────────────────────────
+// Bối cảnh (21/08): mã vạch 1D không có mã sửa lỗi nên khung mờ ra BẢN ĐỌC SAI của chính tem đang
+// nhìn mà vẫn thoả checksum (user: quét 15 ra 18). Đã thử ĐOÁN bản đọc sai theo VỊ TRÍ qua 2 vòng
+// vá, cả 2 lần đều LÀM MẤT MÃ THẬT — vòng 2: quét lần lượt 3 tem giữa màn chỉ ra 2, tem thứ hai bị
+// xoá lại mỗi khung. "Trùng vị trí" KHÔNG phân biệt được bản-đọc-sai với tem-khác-đưa-vào-cùng-chỗ,
+// vì trong dữ liệu hai việc đó y như nhau. Mất mã thật tệ hơn hiện thêm dòng rác (rác thì người
+// quét thấy và xoá được; mã thiếu thì không ai biết mà tìm).
+// ⇒ Luật CHỐT: gom + đếm, dòng ít lần thấy thì GẮN CỜ "chưa chắc" cho người quét soi. Các phép
+//   kiểm dưới đây gác chiều NGƯỢC — không được để ai thêm lại việc tự xoá.
 {
-  // Nạp CHÍNH nguồn TS của app (một nguồn sự thật) — transpile bằng esbuild của frontend thay vì
-  // bóc type bằng regex (regex vỡ mỗi lần code đổi, và vỡ kiểu SyntaxError khó lần).
   const mod = await loadTs(['src/utils/qr.ts', 'src/utils/scanDedupe.ts'],
-    ['registerHit', 'sweepMisreads', 'scanKey', 'MIN_HITS_1D'])
-  // Trang quét gọi sweepMisreads sau MỖI khung → mô phỏng đúng vậy
-  const frame = (map, text, points, now) => { mod.registerHit(map, { text, points, now }); mod.sweepMisreads(map, now) }
-
-  // 2 ô cách nhau; mỗi ô: mã thật thấy nhiều lần, bản đọc sai thấy vài lần ở CÙNG vùng
+    ['registerHit', 'scanKey', 'MIN_HITS_1D'])
   const boxA = [{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 300, y: 160 }, { x: 100, y: 160 }]
   const boxB = [{ x: 700, y: 100 }, { x: 900, y: 100 }, { x: 900, y: 160 }, { x: 700, y: 160 }]
-  const map = new Map()
   let t = 1_000_000
-  const feed = (text, points, times) => { for (let i = 0; i < times; i++) frame(map, text, points, (t += 60)) }
-
-  feed('96385074', boxA, 20)            // mã thật ô A
-  feed('SKU-100294', boxB, 12)          // mã thật ô B
-  feed('06384074', boxA, 5)             // bản đọc sai của ô A
-  feed('96385074', boxA, 26)            // tiếp tục thấy mã thật
-  const keys = [...map.keys()]
-  check('[16] Bản đọc sai cùng ô bị gỡ khỏi danh sách', !keys.includes('06384074'), `còn: ${keys.join(', ')}`)
-  check('[17] Mã thật của cả 2 ô vẫn còn (không dọn oan)',
-    keys.includes('96385074') && keys.includes('SKU-100294'), keys.join(', '))
-
-  // Bản đọc sai xuất hiện TRƯỚC mã thật ⇒ vẫn phải giữ được mã thật (không được chặn theo vị trí)
-  const map2 = new Map()
-  t = 2_000_000
-  const feed2 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map2, text, points, (t += 60)) }
-  feed2('06384074', boxA, 5)
-  feed2('96385074', boxA, 30)
-  const k2 = [...map2.keys()]
-  check('[18] Bản đọc sai đến TRƯỚC vẫn không khoá được mã thật', k2.includes('96385074'), k2.join(', '))
-  check('[19] …và chính nó bị gỡ khi mã thật vượt hẳn', !k2.includes('06384074'), k2.join(', '))
-
-  // Hai tem THẬT ở hai ô khác nhau, số lần thấy lệch nhiều → KHÔNG được dọn nhau
-  const map3 = new Map()
-  t = 3_000_000
-  const feed3 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map3, text, points, (t += 60)) }
-  feed3('8934567890120', boxA, 40)
-  feed3('5901234123457', boxB, 4)
-  const k3 = [...map3.keys()]
-  check('[20] Hai tem ở HAI ô khác nhau không dọn nhau dù lệch 10×', k3.length === 2, k3.join(', '))
-
-  // Cùng tem UPC-A trả 2 dạng chuỗi ⇒ chỉ 1 dòng
-  const map4 = new Map()
-  t = 4_000_000
-  mod.registerHit(map4, { text: '036000291452', points: boxA, now: t + 60 })
-  mod.registerHit(map4, { text: '0036000291452', points: boxA, now: t + 120 })
-  check('[21] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', map4.size === 1, `${map4.size} dòng`)
-
-  // ⭐ CA LỖI USER BÁO 21/08 vòng 2 ("quét 14 ra 17"): bản đọc sai sinh ra ở KHUNG CUỐI, đúng lúc
-  // tem sắp rời khung ⇒ SAU ĐÓ KHÔNG CÒN lượt nào của mã thật. Dọn-lúc-ghi-nhận cần lượt đó để
-  // kích hoạt nên dòng rác sống tới hết phiên. Phải dọn được mà không cần mã thật thấy thêm.
-  const map5 = new Map()
-  t = 5_000_000
-  const feed5 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map5, text, points, (t += 60)) }
-  feed5('4006381333931', boxA, 26)      // mã thật, còn trong khung
-  feed5('0086301333931', boxA, 3)       // bản đọc sai ở khung cuối… rồi tem rời khung, hết lượt
-  const k5 = [...map5.keys()]
-  check('[22] Bản đọc sai ở KHUNG CUỐI vẫn bị dọn (mã thật không cần thấy thêm)',
-    k5.length === 1 && k5[0] === '4006381333931', k5.join(', '))
-
-  // Dọn KHÔNG phụ thuộc thứ tự: cùng dữ liệu, đảo mã nào tới trước → kết quả phải như nhau
-  const twoWay = (firstKey, firstHits, secondKey, secondHits) => {
-    const m = new Map()
-    t = 6_000_000
-    for (let i = 0; i < firstHits; i++) frame(m, firstKey, boxA, (t += 60))
-    for (let i = 0; i < secondHits; i++) frame(m, secondKey, boxA, (t += 60))
-    return [...m.keys()]
+  const feed = (map, text, box, times) => {
+    for (let i = 0; i < times; i++) { mod.registerHit(map, { text, points: box, now: t }); t += 120 }
   }
-  const fwd = twoWay('96385074', 30, '06384074', 4)
-  const rev = twoWay('06384074', 4, '96385074', 30)
-  check('[23] Kết quả dọn giống nhau dù mã nào tới trước', fwd.length === 1 && rev.length === 1
-    && fwd[0] === '96385074' && rev[0] === '96385074', `xuôi=[${fwd}] ngược=[${rev}]`)
+  const dump = m => [...m.entries()].map(([k, e]) => `${k}=${e.hits}×`).join(' , ')
 
-  // Ngưỡng HIỆN của mã 1D: 1D không có mã sửa lỗi nên 1 khung nhiễu cũng ra số thoả checksum ⇒
-  // phải cần ≥3 lần thấy mới hiện. Hạ về 1–2 là mở lại đúng cửa cho dòng rác đếm sai số lượng.
-  check('[24] Mã 1D phải thấy ≥3 lần mới được hiện', mod.MIN_HITS_1D >= 3, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
-
-  // ⭐⭐ CA HỒI QUY NGHIÊM TRỌNG (user báo 21/08 "mã vạch bắt được cực kỳ kém"): người quét đưa
-  // TỪNG tem vào GIỮA MÀN, nên tem thứ hai nằm ĐÚNG vùng của tem thứ nhất. Bản dọn theo "tâm nằm
-  // trong vùng kia" coi mã thật thứ hai là bản đọc sai của mã thứ nhất → xoá lại MỖI KHUNG nên nó
-  // KHÔNG BAO GIỜ hiện (đo: 3 mã quét lần lượt chỉ ra 2, mã giữa mất sạch).
-  // Chốt luật: chỉ dọn khi vùng TRÙNG KHÍT (IoU) **và** (đồng thời ≤2 khung, hoặc mã yếu đã TẮT
-  // trong khi mã mạnh vẫn đang thấy). Mã đang lên thì không được xoá.
+  // ⭐ CA HỒI QUY user báo: quét LẦN LƯỢT từng tem, tem nào cũng đặt GIỮA MÀN (cùng vùng ảnh).
   const seq = new Map()
-  t = 7_000_000
-  const seqFrame = (text, box) => { mod.registerHit(seq, { text, points: box, now: t }); mod.sweepMisreads(seq, t); t += 120 }
-  for (let i = 0; i < 20; i++) seqFrame('8934567890120', boxA)   // tem 1 giữ trước camera ~2,4s
-  t += 300                                                       // đổi tem, vẫn đặt GIỮA MÀN
-  for (let i = 0; i < 12; i++) seqFrame('5901234123457', boxA)
+  feed(seq, '8934567890120', boxA, 20)
   t += 300
-  for (let i = 0; i < 12; i++) seqFrame('4006381333931', boxA)
-  check('[25] Quét LẦN LƯỢT 3 tem ở cùng chỗ giữa màn → hiện đủ 3 (không xoá mã thật)',
-    seq.size === 3, `${seq.size} mã: ${[...seq.entries()].map(([k, e]) => `${k}=${e.hits}×`).join(' , ')}`)
-}
+  feed(seq, '5901234123457', boxA, 12)
+  t += 300
+  feed(seq, '4006381333931', boxA, 12)
+  check('[16] Quét LẦN LƯỢT 3 tem ở CÙNG chỗ giữa màn → hiện đủ 3 (không xoá mã thật)',
+    seq.size === 3, dump(seq))
 
+  // Ngay cả chuỗi yếu hẳn (bản đọc sai thật) cũng KHÔNG được tự xoá — chỉ đếm, để màn gắn cờ.
+  // Đây là chốt CẤM TÁI SINH việc đoán-rồi-xoá.
+  const mis = new Map()
+  t = 2_000_000
+  feed(mis, '96385074', boxA, 40)
+  feed(mis, '06384074', boxA, 3)     // bản đọc sai cùng ô, kém 13 lần
+  check('[17] Chuỗi yếu KHÔNG bị tự xoá (chỉ đếm — màn hình gắn cờ "chưa chắc")',
+    mis.size === 2 && mis.get('06384074')?.hits === 3, dump(mis))
+  check('[18] Số lần thấy phân biệt được rác với mã thật (đủ căn cứ để gắn cờ)',
+    mis.get('96385074').hits >= mis.get('06384074').hits * 6)
+
+  // Hai tem ở hai vùng khác nhau: hiển nhiên giữ cả hai
+  const two = new Map()
+  t = 3_000_000
+  feed(two, '8934567890120', boxA, 30)
+  feed(two, '5901234123457', boxB, 3)
+  check('[19] Hai tem ở HAI vùng khác nhau đều còn', two.size === 2, dump(two))
+
+  // Cùng tem UPC-A trả 2 dạng chuỗi ⇒ 1 dòng (lớp gom DUY NHẤT còn lại — an toàn vì không xoá gì)
+  const up = new Map()
+  t = 4_000_000
+  feed(up, '036000291452', boxA, 1)
+  feed(up, '0036000291452', boxA, 1)
+  check('[20] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', up.size === 1, `${up.size} dòng`)
+
+  // Ngưỡng hiện mã 1D: chặn "bóng ma" giải rác 1 khung, nhưng không cao tới mức mã thật lên chậm
+  check('[21] Ngưỡng hiện mã 1D = 2 (chặn bóng ma 1 khung, không làm mã thật lên chậm)',
+    mod.MIN_HITS_1D === 2, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
+
+  // Chốt cứng: đường gom mã KHÔNG được có lệnh xoá khỏi danh sách
+  const dedupeSrc = readFileSync(join(FE, 'src', 'utils', 'scanDedupe.ts'), 'utf8')
+  check('[22] utils/scanDedupe không có lệnh xoá mã nào (map.delete)', !/\.delete\(/.test(dedupeSrc))
+  const msSrc = readFileSync(join(FE, 'src', 'pages', 'wms', 'MultiScanTest.tsx'), 'utf8')
+  check('[23] Trang quét loạt không gọi hàm dọn-đoán nào', !/sweepMisreads/.test(msSrc))
+}
 // ── LOẠI MÃ THEO TỪNG KHO (`Warehouse.scan_code_types`, 21/08) ────────────────────────────────
 // Kiểm bằng ĐỌC THẬT: mỗi chế độ phải giải được đúng loại mã của nó và TRƯỢT loại bị tắt. Nếu chỉ
 // so mảng format thì một hôm ai đó nối sai nhánh (vd 'QR' vẫn truyền cả tập) sẽ vẫn xanh.
@@ -272,25 +234,25 @@ for (const fmt of ZXING_FORMATS) {
     ? (await readBarcodes(img, { formats: mod.zxingFormatsFor(t), tryHarder: true, tryRotate: true, maxNumberOfSymbols: 8 })).length
     : -1
 
-  check('[26] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
+  check('[24] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
     (await read(qrImg, 'QR')) === 1 && (await read(bcImg, 'QR')) === 0)
-  check('[27] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
+  check('[25] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
     (await read(bcImg, 'BARCODE')) === 1 && (await read(qrImg, 'BARCODE')) === 0)
-  check('[28] Kho "Cả hai": đọc được cả hai',
+  check('[26] Kho "Cả hai": đọc được cả hai',
     (await read(qrImg, 'BOTH')) === 1 && (await read(bcImg, 'BOTH')) === 1)
   // Tra cấu hình trượt (kho lạ / chưa nạp danh mục) phải NỚI về cả hai — siết thì người quét đứng
   // trước camera "không ăn" mà không có gì để hiểu vì sao.
-  check('[29] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
+  check('[27] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
     mod.zxingFormatsFor().length === mod.zxingFormatsFor('BOTH').length
     && mod.nativeFormatsFor().length === mod.nativeFormatsFor('BOTH').length)
 
   // Mọi màn quét PHẢI khai codeTypes — ràng buộc KIỂU (prop bắt buộc) là thứ chặn màn mới lọt,
   // ratchet tĩnh chỉ soi thêm cho chắc.
   const scanner = readFileSync(join(FE, 'src', 'components', 'shared', 'QRScanner.tsx'), 'utf8')
-  check('[30] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
+  check('[28] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(scanner) && !/codeTypes\?:/.test(scanner))
   const carton = readFileSync(join(FE, 'src', 'components', 'wms', 'CartonScanSheet.tsx'), 'utf8')
-  check('[31] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
+  check('[29] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(carton) && !/codeTypes\?:/.test(carton))
 }
 

@@ -51,7 +51,28 @@ try {
   const anyEntry = (await restAll('InventoryEntry', 'select=warehouse_id,material_id&limit=1&cartons_remaining=gt.0'))[0]
   if (!anyEntry) { check('có dữ liệu tồn để dựng fixture', false, 'kho rỗng'); finish('ROTATION'); process.exit() }
   whId = anyEntry.warehouse_id
-  const [mat] = await restAll('Material', `select=id,material_code,category,shelf_life_days&id=eq.${anyEntry.material_id}`)
+
+  // MÃ dùng cho fixture phải KHÔNG CÓ tồn sống nào khác trong kho này.
+  // VÌ SAO (bug của chính gói này, đo 21/08): trước đây gói lấy luôn `anyEntry.material_id`, tức MỘT
+  // MÃ TUỲ Ý đang có tồn — rồi dựng 3 pallet với ngày CỐ ĐỊNH và khẳng định pallet SHORT là "HSD
+  // ngắn nhất". Khẳng định đó chỉ đúng khi mã đó không có lô nào cũ hơn. Nó xanh nhiều tháng vì
+  // `limit=1` KHÔNG có ORDER BY nên vô tình luôn bốc đúng một mã "sạch" — cho tới khi
+  // `ALTER COLUMN TYPE` (migration 20260821h) GHI LẠI TOÀN BẢNG làm đổi thứ tự dòng vật lý ⇒ bốc
+  // phải mã có lô NSX 14/07 (HSD suy ra 28/08, sớm hơn 01/12 của fixture) ⇒ 4 phép kiểm FEFO đỏ
+  // dù engine trả lời HOÀN TOÀN ĐÚNG.
+  // Nay chọn mã TRỐNG tồn ⇒ fixture là TOÀN BỘ tập ứng viên ⇒ kết quả tất định, không phụ thuộc
+  // dữ liệu nền (staging giữ ~150k dòng seed vĩnh viễn nên "dữ liệu nền" chỉ ngày càng dày).
+  const liveMatIds = new Set((await restAll('InventoryEntry',
+    `select=material_id&warehouse_id=eq.${whId}&cartons_remaining=gt.0`)).map(r => r.material_id))
+  const cands = await restAll('Material',
+    'select=id,material_code,category,shelf_life_days&is_active=is.true&is_non_stock=not.is.true'
+    + '&category=not.is.null&order=material_code&limit=1000')
+  const mat = cands.find(m => !liveMatIds.has(m.id))
+  if (!mat) {
+    check('tìm được mã TRỐNG tồn để dựng fixture tất định', false,
+      `${cands.length} mã ứng viên đều đang có tồn ở kho ${whId}`)
+    finish('ROTATION'); process.exit()
+  }
   const [wh] = await restAll('Warehouse',
     `select=id,rotation_principle,rotation_required,putaway_enforced&id=eq.${whId}`)
   whBackup = { rotation_principle: wh?.rotation_principle ?? 'FEFO', rotation_required: wh?.rotation_required === true, updated_at: nowIso() }

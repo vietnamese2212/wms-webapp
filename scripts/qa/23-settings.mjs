@@ -83,6 +83,9 @@ const CASES = [
     { A: 7, B: 30, C: 90, window_days: 30 }],
   ['inbound_edit_window_days', 5, [0, 91, 2.5, 'hai', { d: 2 }], 2],
   ['packing_max_materials_per_run', 15, [0, 51, 10.5, [10]], 10],
+  // dashboard_cache_seconds (21/08) — TUỔI tối đa của số liệu trang chủ. Khác các cờ số khác:
+  // **0 là giá trị HỢP LỆ** (tắt cache, tính sống mỗi lần) nên KHÔNG được đưa 0 vào danh sách phải-400.
+  ['dashboard_cache_seconds', 120, [-1, 3601, 60.5, '300', [300], null], 300],
   // standard_work_hours (14/08 vòng 2) — giờ công chuẩn 1 ngày công; nhận nửa giờ, chặn số lẻ vụn
   ['standard_work_hours', 7.5, [0.5, 25, 7.37, '8', [8], null], 8],
   ['pct_date_bands', { good: 65, low: 25 },

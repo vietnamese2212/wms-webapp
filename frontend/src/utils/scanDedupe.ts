@@ -40,40 +40,67 @@ export function sameSpot(a: Rect, b: Rect): boolean {
   return inside(a, b) || inside(b, a)
 }
 
-/** Chỉ so vùng với mã còn "tươi" — camera lia sang chỗ khác thì vùng cũ không còn nói gì. */
+/** Hai mã phải được thấy CÁCH NHAU trong khoảng này mới đem so vùng — camera lia sang chỗ khác
+ *  thì vùng của lần thấy cũ không còn nói gì về chỗ hiện tại. So THEO CẶP (không so với "bây giờ")
+ *  để việc dọn không phụ thuộc mã nào xuất hiện trước. */
 export const MISREAD_WINDOW_MS = 2500
 /** Mã mạnh phải hơn mã yếu ÍT NHẤT 3× số lần thấy mới được gỡ (đo thật: 46× vs 5×, 26× vs 3×). */
 const MISREAD_RATIO = 3
 /** Chỉ bắt đầu dọn khi mã mạnh đã được thấy đủ nhiều (khỏi dọn theo một khung may mắn). */
 const MISREAD_MIN_HITS = 4
+/** Mã yếu ĐANG CÒN THẤY ở khung này thì có thể là mã THẬT vừa vào khung và đang lên — chỉ được gỡ
+ *  khi mã mạnh đã vững chắc hẳn (ngưỡng cao hơn nhiều). Không tách 2 mức này thì bản đọc sai TỚI
+ *  TRƯỚC (5 lần) sẽ xoá mã thật lúc nó mới có 1 lần — mất mã thật, đúng điều nguy hiểm nhất. */
+const MISREAD_LIVE_MIN_HITS = 12
+const MISREAD_LIVE_RATIO = 6
+/** Mã KHÔNG phải tem pallet (mã vạch 1D) chỉ được HIỆN khi thấy đủ số lần này — 1D không có mã
+ *  sửa lỗi nên một khung nhiễu cũng ra được số thoả checksum. Đo trên bộ khung mờ: mã thật đạt
+ *  3–24 lần, còn bản đọc sai của user chỉ 2–5 lần ⇒ 3 là mốc cắt được rác 1 khung mà không mất
+ *  mã thật (nâng lên 4 là bắt đầu mất mã thật). */
+export const MIN_HITS_1D = 3
 
 /**
- * Ghi nhận 1 lần thấy mã. Trả về entry (đã tăng hits) + danh sách khoá bị gỡ vì là bản đọc sai.
+ * Ghi nhận 1 lần thấy mã (chỉ TÍCH LŨY, không dọn — dọn nằm ở `sweepMisreads`).
  * `map` bị thay đổi tại chỗ.
  */
 export function registerHit(
   map: Map<string, ScanEntry>,
   hit: { text: string; points: Point[]; now: number },
-): { key: string; entry: ScanEntry; removed: string[] } {
+): { key: string; entry: ScanEntry } {
   const key = scanKey(hit.text)
-  const box = rectOf(hit.points)
   let entry = map.get(key)
   if (!entry) {
     entry = { text: hit.text, valid: isValidTem(hit.text), at: hit.now, hits: 0 }
     map.set(key, entry)
   }
   entry.hits++
-  entry.box = box
+  entry.box = rectOf(hit.points)
   entry.seenAt = hit.now
+  return { key, entry }
+}
 
+/**
+ * Dọn bản đọc sai: xét MỌI cặp mã 1D còn trong map — cùng vùng ảnh + thấy gần nhau về thời gian
+ * ⇒ chỉ một là thật, giữ mã thấy nhiều hơn hẳn. Trả danh sách khoá đã gỡ.
+ *
+ * Vì sao phải QUÉT LẠI chứ không dọn ngay lúc ghi nhận (bug user báo 21/08 — "quét 14 ra 17"):
+ * bản đọc sai sinh ra đúng lúc tem SẮP RA KHỎI KHUNG (mờ dần / lệch góc). Dọn-lúc-ghi cần mã thật
+ * được thấy THÊM một lần nữa để kích hoạt, nhưng tem đã rời khung nên lượt đó không bao giờ tới
+ * ⇒ dòng rác sống tới cuối phiên. Quét lại sau mỗi khung + trước khi lưu thì không phụ thuộc
+ * thứ tự xuất hiện nữa.
+ */
+export function sweepMisreads(map: Map<string, ScanEntry>, now = 0): string[] {
+  const cands = [...map].filter(([, e]) => !e.valid && e.box)
   const removed: string[] = []
-  if (!entry.valid && entry.hits >= MISREAD_MIN_HITS) {
-    for (const [k, other] of [...map]) {
-      if (k === key || other.valid || !other.box) continue
-      if (hit.now - (other.seenAt ?? 0) > MISREAD_WINDOW_MS) continue
-      if (other.hits * MISREAD_RATIO > entry.hits) continue      // chưa vượt hẳn → giữ cả hai
-      if (sameSpot(box, other.box)) { map.delete(k); removed.push(k) }
+  for (const [ks, strong] of cands) {
+    for (const [kw, weak] of cands) {
+      if (kw === ks || !map.has(kw) || !map.has(ks)) continue
+      const live = weak.seenAt === now      // mã yếu vẫn đang thấy ⇒ có thể là mã thật đang lên
+      if (strong.hits < (live ? MISREAD_LIVE_MIN_HITS : MISREAD_MIN_HITS)) continue
+      if (weak.hits * (live ? MISREAD_LIVE_RATIO : MISREAD_RATIO) > strong.hits) continue
+      if (Math.abs((strong.seenAt ?? 0) - (weak.seenAt ?? 0)) > MISREAD_WINDOW_MS) continue
+      if (sameSpot(strong.box!, weak.box!)) { map.delete(kw); removed.push(kw) }
     }
   }
-  return { key, entry, removed }
+  return removed
 }

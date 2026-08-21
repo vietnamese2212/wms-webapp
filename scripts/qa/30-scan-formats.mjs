@@ -167,14 +167,17 @@ for (const fmt of ZXING_FORMATS) {
 {
   // Nạp CHÍNH nguồn TS của app (một nguồn sự thật) — transpile bằng esbuild của frontend thay vì
   // bóc type bằng regex (regex vỡ mỗi lần code đổi, và vỡ kiểu SyntaxError khó lần).
-  const mod = await loadTs(['src/utils/qr.ts', 'src/utils/scanDedupe.ts'], ['registerHit', 'scanKey'])
+  const mod = await loadTs(['src/utils/qr.ts', 'src/utils/scanDedupe.ts'],
+    ['registerHit', 'sweepMisreads', 'scanKey', 'MIN_HITS_1D'])
+  // Trang quét gọi sweepMisreads sau MỖI khung → mô phỏng đúng vậy
+  const frame = (map, text, points, now) => { mod.registerHit(map, { text, points, now }); mod.sweepMisreads(map, now) }
 
   // 2 ô cách nhau; mỗi ô: mã thật thấy nhiều lần, bản đọc sai thấy vài lần ở CÙNG vùng
   const boxA = [{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 300, y: 160 }, { x: 100, y: 160 }]
   const boxB = [{ x: 700, y: 100 }, { x: 900, y: 100 }, { x: 900, y: 160 }, { x: 700, y: 160 }]
   const map = new Map()
   let t = 1_000_000
-  const feed = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map, { text, points, now: (t += 60) }) }
+  const feed = (text, points, times) => { for (let i = 0; i < times; i++) frame(map, text, points, (t += 60)) }
 
   feed('96385074', boxA, 20)            // mã thật ô A
   feed('SKU-100294', boxB, 12)          // mã thật ô B
@@ -188,7 +191,7 @@ for (const fmt of ZXING_FORMATS) {
   // Bản đọc sai xuất hiện TRƯỚC mã thật ⇒ vẫn phải giữ được mã thật (không được chặn theo vị trí)
   const map2 = new Map()
   t = 2_000_000
-  const feed2 = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map2, { text, points, now: (t += 60) }) }
+  const feed2 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map2, text, points, (t += 60)) }
   feed2('06384074', boxA, 5)
   feed2('96385074', boxA, 30)
   const k2 = [...map2.keys()]
@@ -198,7 +201,7 @@ for (const fmt of ZXING_FORMATS) {
   // Hai tem THẬT ở hai ô khác nhau, số lần thấy lệch nhiều → KHÔNG được dọn nhau
   const map3 = new Map()
   t = 3_000_000
-  const feed3 = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map3, { text, points, now: (t += 60) }) }
+  const feed3 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map3, text, points, (t += 60)) }
   feed3('8934567890120', boxA, 40)
   feed3('5901234123457', boxB, 4)
   const k3 = [...map3.keys()]
@@ -210,6 +213,35 @@ for (const fmt of ZXING_FORMATS) {
   mod.registerHit(map4, { text: '036000291452', points: boxA, now: t + 60 })
   mod.registerHit(map4, { text: '0036000291452', points: boxA, now: t + 120 })
   check('[21] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', map4.size === 1, `${map4.size} dòng`)
+
+  // ⭐ CA LỖI USER BÁO 21/08 vòng 2 ("quét 14 ra 17"): bản đọc sai sinh ra ở KHUNG CUỐI, đúng lúc
+  // tem sắp rời khung ⇒ SAU ĐÓ KHÔNG CÒN lượt nào của mã thật. Dọn-lúc-ghi-nhận cần lượt đó để
+  // kích hoạt nên dòng rác sống tới hết phiên. Phải dọn được mà không cần mã thật thấy thêm.
+  const map5 = new Map()
+  t = 5_000_000
+  const feed5 = (text, points, times) => { for (let i = 0; i < times; i++) frame(map5, text, points, (t += 60)) }
+  feed5('4006381333931', boxA, 26)      // mã thật, còn trong khung
+  feed5('0086301333931', boxA, 3)       // bản đọc sai ở khung cuối… rồi tem rời khung, hết lượt
+  const k5 = [...map5.keys()]
+  check('[22] Bản đọc sai ở KHUNG CUỐI vẫn bị dọn (mã thật không cần thấy thêm)',
+    k5.length === 1 && k5[0] === '4006381333931', k5.join(', '))
+
+  // Dọn KHÔNG phụ thuộc thứ tự: cùng dữ liệu, đảo mã nào tới trước → kết quả phải như nhau
+  const twoWay = (firstKey, firstHits, secondKey, secondHits) => {
+    const m = new Map()
+    t = 6_000_000
+    for (let i = 0; i < firstHits; i++) frame(m, firstKey, boxA, (t += 60))
+    for (let i = 0; i < secondHits; i++) frame(m, secondKey, boxA, (t += 60))
+    return [...m.keys()]
+  }
+  const fwd = twoWay('96385074', 30, '06384074', 4)
+  const rev = twoWay('06384074', 4, '96385074', 30)
+  check('[23] Kết quả dọn giống nhau dù mã nào tới trước', fwd.length === 1 && rev.length === 1
+    && fwd[0] === '96385074' && rev[0] === '96385074', `xuôi=[${fwd}] ngược=[${rev}]`)
+
+  // Ngưỡng HIỆN của mã 1D: 1D không có mã sửa lỗi nên 1 khung nhiễu cũng ra số thoả checksum ⇒
+  // phải cần ≥3 lần thấy mới hiện. Hạ về 1–2 là mở lại đúng cửa cho dòng rác đếm sai số lượng.
+  check('[24] Mã 1D phải thấy ≥3 lần mới được hiện', mod.MIN_HITS_1D >= 3, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
 }
 
 console.log(`\n[SCAN-FORMATS] ${pass}/${pass + fail} PASS`)

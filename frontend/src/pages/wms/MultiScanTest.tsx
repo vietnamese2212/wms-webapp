@@ -8,7 +8,7 @@ import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOu
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { isValidTem } from '@/utils/qr'
-import { registerHit, type ScanEntry } from '@/utils/scanDedupe'
+import { registerHit, sweepMisreads, MIN_HITS_1D, type ScanEntry } from '@/utils/scanDedupe'
 // Tập mã đọc được khai MỘT CHỖ ở scanEngine (QR + 1D) — trang này có engine riêng để tinh chỉnh
 // độ phân giải/tryHarder, nhưng ĐỪNG khai lại danh sách format kẻo lệch với luồng thật.
 import { NATIVE_FORMATS, ZXING_FORMATS, ZXING_MIN_LINE_COUNT } from '@/utils/scanEngine'
@@ -50,16 +50,13 @@ interface FrameBox {
 type EngineKind = 'native' | 'wasm'
 const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
 // Mã ĐÚNG định dạng: nhận NGAY lần đầu (không làm chậm) — QR có mã sửa lỗi nên gần như
-// không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã SAI định dạng phải thấy đủ N lần
-// mới hiện → diệt "bóng ma" (giải rác 1 frame lúc lia/mờ, vd 524959, 4910).
-const INVALID_MIN_HITS = 2
-// Mã 1D KHÔNG có mã sửa lỗi như QR nên khung mờ/moiré cho ra BẢN ĐỌC SAI của chính tem đang nhìn —
-// vẫn thoả checksum nên không loại được bằng checksum (đo thật 21/08 từ lưới của user: `96385074`
-// → `06384074`, `4006381333931` → `0086301333931`, `0012345678905` → `0012344672904`; đều 2–5 lần
-// so với 10–86 lần của mã thật, và đều nằm ĐÚNG ô của mã thật).
-// ⇒ Mã MỚI mà tâm nằm trong vùng của một mã ĐÃ XÁC NHẬN (còn tươi) thì đó là bản đọc sai → BỎ.
-// Chỉ áp cho mã 1D: QR gần như không thể decode nhầm, mà QR to nên vùng dễ trùng nhau hơn.
-const MISREAD_WINDOW_MS = 2500
+// không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã 1D thì ngược lại (không có mã sửa lỗi,
+// bản đọc sai vẫn thoả checksum) nên phải thấy đủ MIN_HITS_1D lần mới hiện — ngưỡng + luật dọn
+// bản-đọc-sai nằm ở utils/scanDedupe (một nguồn, gói QA 30 kiểm).
+const INVALID_MIN_HITS = MIN_HITS_1D
+// Dưới mốc này thì dòng 1D vẫn có thể là bản đọc sai chưa bị dọn (mã thật trong đo thật đạt 10–86
+// lần) → gắn nhãn "chưa chắc" NGAY LÚC QUÉT, để người quét biết dòng nào cần soi lại trước khi lưu.
+const WEAK_HITS = 6
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
 interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
@@ -190,12 +187,14 @@ export default function MultiScanTest() {
     const boxes: FrameBox[] = []
     let anyNew = false, anyInvalid = false
     const now = Date.now()
-    for (const f of found) {
-      // Gom mã: khoá chuẩn hoá (1 tem không thành 2 dòng) + gỡ bản ĐỌC SAI cùng ô.
-      // Logic thuần nằm ở utils/scanDedupe (gói QA 30 kiểm bằng chuỗi khung mô phỏng).
-      const { entry, removed } = registerHit(codesRef.current, { text: f.text, points: f.points, now })
-      if (removed.length) setVersion(v => v + 1)   // danh sách vừa bị gỡ dòng → vẽ lại
-      const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · sai định dạng: cần 2 lần
+    // Gom mã: khoá chuẩn hoá (1 tem không thành 2 dòng). Ghi nhận HẾT mã của khung này TRƯỚC,
+    // rồi mới quét dọn bản ĐỌC SAI — dọn theo cặp nên không phụ thuộc mã nào tới trước.
+    // Logic thuần nằm ở utils/scanDedupe (gói QA 30 kiểm bằng chuỗi khung mô phỏng).
+    const entries = found.map(f => registerHit(codesRef.current, { text: f.text, points: f.points, now }).entry)
+    if (sweepMisreads(codesRef.current, now).length) setVersion(v => v + 1)   // vừa gỡ dòng → vẽ lại
+    for (const [i, f] of found.entries()) {
+      const entry = entries[i]
+      const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · 1D: cần MIN_HITS_1D lần
       const confirmed = entry.hits >= need
       const justConfirmed = entry.hits === need           // frame vừa chốt
       if (justConfirmed) {
@@ -386,6 +385,7 @@ export default function MultiScanTest() {
 
   // Chốt phiên: lưu vào lịch sử nếu có ít nhất 1 mã (gọi khi Dừng camera / rời trang)
   function endSession() {
+    sweepMisreads(codesRef.current)      // chốt lần cuối (khung cuối có thể vừa sinh bản đọc sai)
     const codes = Array.from(codesRef.current.values()).filter(c => c.valid || c.hits >= INVALID_MIN_HITS)
     if (!sessionStartRef.current || codes.length === 0) { sessionStartRef.current = 0; return }
     const s: SavedSession = {
@@ -646,7 +646,12 @@ export default function MultiScanTest() {
                         {c.valid ? '✓' : '✗'}
                       </span>
                       <span className="font-mono text-[10px] font-semibold text-slate-700 truncate">{c.text}</span>
-                      <span className="ml-auto shrink-0 text-[9px] text-slate-400 tabular-nums">
+                      {/* Dòng 1D còn ÍT lần thấy = chưa chắc (có thể là bản đọc sai chưa bị dọn) →
+                          hiện vàng để soi ngay lúc quét, khỏi phải chờ tới lúc lưu mới biết. */}
+                      {!c.valid && c.hits < WEAK_HITS && (
+                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">chưa chắc</span>
+                      )}
+                      <span className={`ml-auto shrink-0 text-[9px] tabular-nums ${!c.valid && c.hits < WEAK_HITS ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}>
                         {new Date(c.at).toLocaleTimeString('vi-VN')} · {c.hits}×
                       </span>
                       <button onClick={() => removeCode(c.text)} className="shrink-0 text-slate-400 hover:text-red-600 p-0.5">

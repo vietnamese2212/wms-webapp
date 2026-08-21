@@ -87,6 +87,8 @@ const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30 }
 const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
 const INB_WINDOW_DEFAULT = 2
 const PACK_MAX_DEFAULT = 10
+// mirror DASHBOARD_CACHE_SECONDS_DEFAULT của BE (utils/settings.ts)
+const DASH_CACHE_DEFAULT = 300
 function numRec<T extends Record<string, number>>(v: unknown, def: T): T {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...def }
   const o = v as Record<string, unknown>
@@ -279,6 +281,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycRow   = settings.find(s => s.key === 'cycle_count')
   const inbRow   = settings.find(s => s.key === 'inbound_edit_window_days')
   const packRow  = settings.find(s => s.key === 'packing_max_materials_per_run')
+  const dashRow  = settings.find(s => s.key === 'dashboard_cache_seconds')
   const orgRow   = settings.find(s => s.key === 'org_profile')
   const holRow   = settings.find(s => s.key === 'vn_holidays')
   const stdRow   = settings.find(s => s.key === 'standard_work_hours')
@@ -289,6 +292,9 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvCyc   = numRec(cycRow?.value, CYC_DEFAULT)
   const srvInb   = Number(inbRow?.value) > 0 ? Number(inbRow?.value) : INB_WINDOW_DEFAULT
   const srvPack  = Number(packRow?.value) > 0 ? Number(packRow?.value) : PACK_MAX_DEFAULT
+  // 0 là giá trị HỢP LỆ (tắt cache) nên phải kiểm kiểu, không dùng `> 0` như các cờ khác
+  const srvDash  = typeof dashRow?.value === 'number' && dashRow.value >= 0 && dashRow.value <= 3600
+    ? dashRow.value : DASH_CACHE_DEFAULT
   const srvOrg   = parseOrg(orgRow?.value)
   const srvHol   = parseHolidays(holRow?.value)
   // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
@@ -302,6 +308,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftCyc,   setDraftCyc]   = useState<Record<string, string>>(recToStr(srvCyc))
   const [draftInb,   setDraftInb]   = useState(String(srvInb))
   const [draftPack,  setDraftPack]  = useState(String(srvPack))
+  const [draftDash,  setDraftDash]  = useState(String(srvDash))
   const orgToDraft = (o: OrgProfileValue): OrgProfileDraft => ({
     contact_email: o.contact_email, nmsx_alias: aliasToStr(o.nmsx_alias),
     l: String(o.assumed_carton_mm.l), w: String(o.assumed_carton_mm.w), h: String(o.assumed_carton_mm.h),
@@ -309,13 +316,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const [draftStd, setDraftStd] = useState(String(srvStd))
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd])
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
-    setDraftStd(String(srvStd))
+    setDraftStd(String(srvStd)); setDraftDash(String(srvDash))
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -329,10 +336,11 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const cycDirty   = JSON.stringify(draftCyc) !== JSON.stringify(recToStr(srvCyc))
   const inbDirty   = draftInb !== String(srvInb)
   const packDirty  = draftPack !== String(srvPack)
+  const dashDirty  = draftDash !== String(srvDash)
   const orgDirty   = JSON.stringify(draftOrg) !== JSON.stringify(orgToDraft(srvOrg))
   const holDirty   = JSON.stringify(holidaysNormalize(draftHol)) !== JSON.stringify(holidaysNormalize(srvHol))
   const stdDirty   = draftStd !== String(srvStd)
-  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || orgDirty || holDirty || stdDirty
+  const dirty      = labelDirty || dcDirty || decDirty || retDirty || cycDirty || inbDirty || packDirty || dashDirty || orgDirty || holDirty || stdDirty
 
   async function applyChanges() {
     setErr('')
@@ -358,6 +366,13 @@ function SystemTab({ canManage }: { canManage: boolean }) {
     if (packDirty) {
       pack = intIn(draftPack, 1, 50)
       if (!pack) return setErr('Sổ đóng gói: tối đa mã / trang sổ trong khoảng 1–50 (số nguyên).')
+    }
+    let dash: number | null = null
+    if (dashDirty) {
+      // intIn không nhận 0; 0 = TẮT cache là lựa chọn hợp lệ nên kiểm tay
+      const n = Number(draftDash)
+      if (!Number.isInteger(n) || n < 0 || n > 3600) return setErr('Dashboard: tuổi số liệu 0–3600 giây (0 = tắt cache).')
+      dash = n
     }
     let org: OrgProfileValue | null = null
     if (orgDirty) {
@@ -391,6 +406,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (cyc)        await save({ key: 'cycle_count', value: cyc })
       if (inb)        await save({ key: 'inbound_edit_window_days', value: inb })
       if (pack)       await save({ key: 'packing_max_materials_per_run', value: pack })
+      if (dash !== null) await save({ key: 'dashboard_cache_seconds', value: dash })
       if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
@@ -476,6 +492,15 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             <SettingField label="Giờ công chuẩn / ngày"
               tip="Bảng công quy ngày công ra giờ: tổng giờ = số ngày công × giờ chuẩn + tăng ca − về sớm. Nhận số lẻ 0,5 (vd 7.5). Đổi ở đây là đổi CẢ số trên màn lẫn số trong báo cáo (backend đọc cùng cờ).">
               <div className="w-20"><SettingNum unit="giờ" value={draftStd} onChange={setDraftStd} step={0.5} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Dashboard là trang AI CŨNG mở đầu tiên và số liệu của nó là tổng hợp TOÀN CÔNG TY —
+              đo 21/08 dưới tải ghi đồng thời: p50 28,3s, có lượt 500. Dùng lại kết quả trong n giây. */}
+          <SettingGroup readOnly={!canManage} title="Dashboard" meta={dashRow}>
+            <SettingField label="Tuổi số liệu tối đa"
+              tip="Số liệu trang chủ là tổng hợp toàn công ty (quét cả tồn kho + chuyến xuất) nên rất nặng khi nhiều người cùng mở. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần. Đặt 0 = luôn tính sống (chậm khi đông người dùng).">
+              <div className="w-24"><SettingNum unit="giây" value={draftDash} onChange={setDraftDash} /></div>
             </SettingField>
           </SettingGroup>
 

@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
-import { SummaryBand } from '@/components/shared/SummaryBand'
+import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -812,6 +812,26 @@ export default function Inventory() {
   const loading           = aggregate ? summaryLoading : isLoading
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
+  // TÁCH ĐƠN VỊ (21/08): ô tổng cộng gộp thùng + EA + KG + SET/M2/BAG nên con số to bất thường
+  // (đo Bàu Bàng: 132.762.662 mà 131,2 triệu là EA). Công thức tổng KHÔNG đổi — chỉ hiện thêm nó
+  // gồm những gì, để người đọc không phải tra tooltip mới hiểu con số. RPC cũ chưa trả → [] → ẩn.
+  const bandByUnit = (aggregate ? summaryData?.by_unit : data?.by_unit) ?? []
+  const unitBreakdown = bandByUnit.length > 1
+    ? bandByUnit.map(u => `${Number(u.qty).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} ${unitLabel(u.unit)}`)
+    : []
+  const qtyTile = (v: number): BandTile => ({
+    label: QTY_CONVERTED_LABEL,
+    tip: unitBreakdown.length ? `${QTY_CONVERTED_TIP}
+Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
+    value: unitBreakdown.length ? (
+      <span className="inline-block">
+        {v.toLocaleString('vi-VN')}
+        <span className="block text-[9px] font-normal leading-tight text-sky-200/90 truncate max-w-[190px]">
+          {unitBreakdown.join(' · ')}
+        </span>
+      </span>
+    ) : v.toLocaleString('vi-VN'),
+  })
   const totalPages        = Math.max(1, Math.ceil(total / limit))
   const checkedCount      = checkedIds.size
   const checkedIdArr      = useMemo(() => [...checkedIds], [checkedIds])
@@ -1124,12 +1144,12 @@ export default function Inventory() {
       {/* Summary band (Manhattan) */}
       <SummaryBand tiles={aggregate ? [
         { label: 'Nhóm (mã×kho×ngày)', value: total.toLocaleString('vi-VN') },
-        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
+        qtyTile(totalCartons),
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ] : [
         // Chỉ đếm pallet CÒN TỒN (>0) — list vẫn hiện cả pallet 0 (fallback total khi BE cũ chưa deploy)
         { label: 'Pallet', value: (data?.total_pallets_in_stock ?? total).toLocaleString('vi-VN') },
-        { label: QTY_CONVERTED_LABEL, value: totalCartons.toLocaleString('vi-VN'), tip: QTY_CONVERTED_TIP },
+        qtyTile(totalCartons),
         { label: 'Đang chọn', value: checkedCount, accent: checkedCount > 0 },
         { label: 'Trang', value: `${f.page}/${totalPages}` },
       ]} />

@@ -2,7 +2,7 @@
 // 3 tab — Cá nhân (feed việc đích danh: được giao lệnh fill…) · Chung (cảnh báo vận hành, nêu
 // rõ KHO — cần quyền alerts.view) · Cài đặt (trường hợp nào mới ĐỔ CHUÔNG per user; tắt chỉ tắt
 // chuông, danh sách vẫn đủ). Badge = chưa đọc cá nhân + cảnh báo chung đang mở.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell, Settings2, CheckCheck, ExternalLink } from 'lucide-react'
 // Panel = DropdownMenu Radix (tự portal, không thêm dep Popover); phần thân là div thường
@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
-  useNotifyFeed, useMarkFeedRead, useNotifyPrefs, useUpdateNotifyPrefs, useAlerts,
+  useNotifyFeed, useMarkFeedRead, useNotifyPrefs, useUpdateNotifyPrefs, useAlerts, useScanAlerts,
 } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -48,6 +48,22 @@ export function NotificationBell() {
   const prefsQ = useNotifyPrefs(open)
   const updPrefs = useUpdateNotifyPrefs()
   const push = usePushNotifications()
+
+  // Chuông luôn mount trong Shell ⇒ đây là chỗ hợp lý nhất để KÍCH HOẠT lượt quét cảnh báo mà
+  // không ai phải chờ (21/08 — trước đây GET /wms/alerts tự quét, người mở trang chịu ~1,9s).
+  // Throttle thật nằm ở BE (10'/instance) nên gọi định kỳ 10' là vô hại; ở đây chỉ cần đảm bảo
+  // "có người bấm cò" đều đặn. useRef chặn gọi 2 lần do StrictMode double-mount lúc dev.
+  const scan = useScanAlerts()
+  const scanRef = useRef(scan)
+  scanRef.current = scan
+  useEffect(() => {
+    if (!canAlerts) return
+    let armed = true
+    const fire = () => { if (armed) scanRef.current.mutate(undefined) }
+    fire()
+    const t = setInterval(fire, 10 * 60_000)
+    return () => { armed = false; clearInterval(t) }
+  }, [canAlerts])
 
   const unread = feed.data?.unread ?? 0
   const badge = unread + (canAlerts ? alertRows.length : 0)

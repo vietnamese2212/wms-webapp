@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
 import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
+import { getDashboardCacheSeconds } from '../../utils/settings'
 
 // Dashboard tổng quan tồn kho — GET hở đọc có chủ đích (auth-only như /inventory),
 // dữ liệu vẫn CẮT theo scope kho + loại hàng của user trong controller.
@@ -69,6 +70,18 @@ export async function getDashboard(req: Request, res: Response) {
     // MỘT lời gọi cho CẢ dashboard: stats + zones (migration 20260729, `dashboard_all`).
     // Trước đây 2 request song song (dashboard_stats + zone_capacity_rows) — trang ai cũng mở
     // đầu tiên, dưới tải mỗi request là 1 lượt xếp hàng ở pool ~10 khe của PostgREST.
+    //
+    // CACHE (21/08, user chốt 5 phút): số liệu Dashboard là TỔNG HỢP TOÀN CÔNG TY. Đo dưới tải ghi
+    // đồng thời: p50 28,3s · max 36,0s · 500 — và đã loại trừ query là nguyên nhân (ấm 64ms, thử
+    // index không nhanh hơn) ⇒ nút thắt là XẾP HÀNG pool, nên phải BỎ tổng hợp nặng khỏi mọi request.
+    // Tuổi tối đa cấu hình ở Cài đặt WMS › Hệ thống (`dashboard_cache_seconds`, 0 = tắt cache).
+    const ttl = await getDashboardCacheSeconds()
+    const { data: cached, error: cachedErr } = await supabase.rpc('dashboard_all_cached', {
+      p_warehouse_ids: whIds, p_categories: cats, p_today: today, p_ttl_seconds: ttl,
+    })
+    if (!cachedErr && cached) return ok(res, { ...(cached as object), source: 'rpc' })
+
+    // Nhánh dự phòng cửa sổ triển khai (20260821f chưa apply) — đường cũ KHÔNG cache, nguyên vẹn.
     const { data: allData, error: allErr } = await supabase.rpc('dashboard_all', {
       p_warehouse_ids: whIds, p_categories: cats, p_today: today,
     })

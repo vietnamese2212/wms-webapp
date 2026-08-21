@@ -20,9 +20,13 @@ const RULES: readonly string[] = ALERT_RULES
 // GET /wms/alerts?status=open|acked|resolved|all&rule=&severity=&warehouse_id=&fresh=1
 export async function listAlerts(req: Request, res: Response) {
   try {
-    // Quét lười ngay tại cửa người xem (throttle trong scanner) — mở trang là số liệu tươi
-    await runAlertScan(req.query.fresh === '1')
-
+    // KHÔNG quét ở đây nữa (21/08). Trước đây `await runAlertScan()` nằm ngay đầu hàm ⇒ người mở
+    // trang phải CHỜ hết lượt quét 6 rule: đo thật 309ms (bị throttle) → **1.940ms** (lượt quét
+    // thật), và `alerts_expiry_candidates` là câu tốn TỔNG thời gian DB lớn nhất app (1.182 lượt ×
+    // 798ms = 944s), đã từng chạm statement_timeout rồi ghi ALERT_RULE_FAILED.
+    // Nay quét đi ĐƯỜNG RIÊNG: `POST /wms/alerts/scan` (FE gọi sau khi trang đã hiện + định kỳ).
+    // Cố ý KHÔNG dùng `void runAlertScan()` fire-and-forget: trên serverless, sau khi response đã
+    // trả thì lambda có thể bị đóng băng giữa lượt quét ⇒ đồng bộ vòng đời cảnh báo dở dang.
     const status = String(req.query.status || 'open')
     const rules = (parseListParam(req.query.rule) ?? []).filter(r => RULES.includes(r))
     const sevs = (parseListParam(req.query.severity) ?? []).filter(s => ['CRITICAL', 'WARNING'].includes(s))
@@ -60,6 +64,18 @@ export async function listAlerts(req: Request, res: Response) {
 }
 
 // POST /wms/alerts/:id/ack — "tôi biết rồi" (ẩn khỏi list mặc định; điều kiện hết sẽ tự đóng)
+// POST /wms/alerts/scan?fresh=1 — CHẠY lượt quét (tách khỏi GET để không ai phải chờ).
+// FE gọi sau khi trang đã hiện, và định kỳ; nút "Quét lại" gọi kèm fresh=1.
+// Throttle vẫn nằm trong scanner (10' thường / 20s cho fresh) nên gọi nhiều lần là vô hại.
+export async function scanAlerts(req: Request, res: Response) {
+  try {
+    await runAlertScan(req.query.fresh === '1')
+    return ok(res, { scanned: true })
+  } catch (e) {
+    return fail(res, 500, 'SCAN_FAILED', e instanceof Error ? e.message : String(e))
+  }
+}
+
 export async function ackAlert(req: Request, res: Response) {
   try {
     const { data, error } = await supabase.from('alert_events')

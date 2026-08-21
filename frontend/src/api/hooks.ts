@@ -1616,7 +1616,7 @@ export function useInventoryEntries(params?: {
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number; total_pallets_in_stock?: number }
+      return data.data as { entries: InventoryEntry[]; total: number; page: number; limit: number; total_cartons_remaining: number; total_pallets_in_stock?: number; by_unit?: { unit: string; qty: number }[] }
     },
   })
 }
@@ -1664,7 +1664,7 @@ export function useInventorySummary(params?: Parameters<typeof useInventoryEntri
           ...(date_pct_ranges?.length     ? { date_pct_ranges:    date_pct_ranges.join(',')     } : {}),
         },
       })
-      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number; page: number; limit: number }
+      return data.data as { groups: InventorySummaryGroup[]; total: number; total_cartons_remaining: number; page: number; limit: number; by_unit?: { unit: string; qty: number }[] }
     },
   })
 }
@@ -5721,6 +5721,17 @@ export function useAlerts(params: { status: string; rule?: string; severity?: st
       const { data } = await apiClient.get('/wms/alerts', { params })
       return data.data as { rows: AlertRow[]; total: number }
     },
+  })
+}
+// Kích hoạt lượt quét cảnh báo — ĐƯỜNG RIÊNG, không nằm trong GET danh sách (21/08).
+// Trước đây GET /wms/alerts tự quét nên người mở trang chờ ~1,9s; nay trang hiện ngay, quét chạy
+// song song rồi invalidate để cảnh báo mới trồi lên. Throttle nằm ở BE (10' / 20s khi fresh).
+export function useScanAlerts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fresh?: boolean) =>
+      apiClient.post('/wms/alerts/scan', null, { params: fresh ? { fresh: 1 } : undefined }).then(r => r.data.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
   })
 }
 export function useAckAlert() {

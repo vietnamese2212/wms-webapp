@@ -14,7 +14,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
-import { useAlerts, useAckAlert, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
+import { useAlerts, useAckAlert, useScanAlerts, useNotifyFeed, useMarkFeedRead, useSystemSettings, useUpdateSystemSetting, type AlertRow } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -205,6 +205,7 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
     warehouse_id: f.warehouseId || undefined,
   })
   const ackMut = useAckAlert()
+  const scanMut = useScanAlerts()
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
 
@@ -276,11 +277,14 @@ function GeneralTab({ tabBar }: { tabBar: ReactNode }) {
                 <Check className="h-3.5 w-3.5 mr-1" /> {busy ? 'Đang lưu…' : `Đã biết (${pickedOpen.length})`}
               </Button>
             )}
+            {/* Quét THẬT (fresh=1 bỏ throttle 10'), rồi nạp lại danh sách. Trước 21/08 nút này chỉ
+                refetch — lượt quét đi kèm GET nên bấm xong CHƯA CHẮC có quét, chỉ là đọc lại bảng. */}
             <button type="button" title="Quét lại ngay (bình thường tự quét ~10 phút/lần)"
-              onClick={() => refetch()}
-              className="h-9 sm:h-7 px-2 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 inline-flex items-center gap-1 text-[11px] shrink-0">
-              <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Quét lại</span>
+              disabled={scanMut.isPending}
+              onClick={() => scanMut.mutate(true, { onSettled: () => { void refetch() } })}
+              className="h-9 sm:h-7 px-2 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 inline-flex items-center gap-1 text-[11px] shrink-0">
+              <RefreshCw className={`h-3.5 w-3.5 ${scanMut.isPending || isFetching ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{scanMut.isPending ? 'Đang quét…' : 'Quét lại'}</span>
             </button>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={filterDefs} /></div>

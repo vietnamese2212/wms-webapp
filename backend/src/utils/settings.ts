@@ -71,6 +71,18 @@ export const parseInboundEditWindow = (raw: unknown) => int(raw, 1, 90)
 export const getInboundEditWindowDays = () =>
   readSetting('inbound_edit_window_days', INBOUND_EDIT_WINDOW_DEFAULT, parseInboundEditWindow)
 
+// ── dashboard_cache_seconds — TUỔI TỐI ĐA của số liệu Dashboard (21/08) ────────
+// Trang chủ là trang AI CŨNG mở đầu tiên, và số liệu của nó là TỔNG HỢP TOÀN CÔNG TY (quét
+// InventoryEntry + join chuyến xuất). Đo 21/08 dưới tải ghi đồng thời: p50 28,3s · max 36,0s · 500.
+// Đã loại trừ query là nguyên nhân (chạy ẤM chỉ 64ms; thử index giả định không nhanh hơn) — chậm là
+// do XẾP HÀNG ở pool ~10 khe của PostgREST. Cách duy nhất có tác dụng: đừng chạy tổng hợp nặng
+// trong MỌI request, mà dùng lại kết quả trong `n` giây.
+// Mặc định 300 (5 phút — user chốt 21/08). Đặt 0 = TẮT cache, tính sống mỗi lần như trước.
+export const DASHBOARD_CACHE_SECONDS_DEFAULT = 300
+export const parseDashboardCacheSeconds = (raw: unknown) => int(raw, 0, 3600)
+export const getDashboardCacheSeconds = () =>
+  readSetting('dashboard_cache_seconds', DASHBOARD_CACHE_SECONDS_DEFAULT, parseDashboardCacheSeconds)
+
 // ── packing_max_materials_per_run — số mã tối đa trên 1 trang sổ đóng gói ──────
 export const PACKING_MAX_MATERIALS_DEFAULT = 10
 export const parsePackingMaxMaterials = (raw: unknown) => int(raw, 1, 50)

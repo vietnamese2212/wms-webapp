@@ -6,6 +6,7 @@ import { syncVapidSubject } from '../../services/pushService'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
   parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
+  parseDashboardCacheSeconds,
   parseStandardWorkHours,
 } from '../../utils/settings'
 
@@ -131,6 +132,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   packing_max_materials_per_run: {
     validate: v => parsePackingMaxMaterials(v) !== null,
     hint: 'số nguyên 1–50 (mã / trang sổ)',
+  },
+  dashboard_cache_seconds: {
+    validate: v => parseDashboardCacheSeconds(v) !== null,
+    hint: 'số giây 0–3600 (0 = tắt cache, tính sống mỗi lần mở trang chủ)',
   },
   standard_work_hours: {
     validate: v => parseStandardWorkHours(v) !== null,

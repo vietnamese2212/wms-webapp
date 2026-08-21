@@ -125,7 +125,6 @@ router.get('/inbound-orders',                           inbound.listOrders)
 // Hở đọc như listOrders (CLAUDE.md) — scope kho + loại vẫn cắt trong controller theo JWT.
 router.get('/inbound-orders/summary',                   inbound.listOrdersSummary)
 router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
-router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
@@ -208,6 +207,8 @@ router.patch('/slotting/zone-config/:id',                     requirePerm('slott
 // đổi vị trí pallet BẤT KỲ ngoài lệnh vẫn phải `inventory.move_location`.
 // Trung tâm cảnh báo (Đợt 2 roadmap 06/08) — mỗi nút 1 quyền: view=xem, ack=đánh dấu đã biết
 router.get('/alerts',                                         requirePerm('alerts', 'view'),  alerts.listAlerts)
+// Quét TÁCH khỏi GET /alerts (21/08) — người mở trang không phải chờ lượt quét 6 rule (~1,9s).
+router.post('/alerts/scan',                                   requirePerm('alerts', 'view'),  alerts.scanAlerts)
 router.post('/alerts/:id/ack',                                requirePerm('alerts', 'ack'),   alerts.ackAlert)
 router.delete('/alerts/:id/ack',                              requirePerm('alerts', 'ack'),   alerts.unackAlert)
 

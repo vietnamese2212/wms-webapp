@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { useWarehouseTypes, useWhTypeConfigs } from '@/api/hooks'
-import type { WhTypeMeta, WhTypeMetaMap } from '@/utils/cargoCategory'
+import { useWarehouseTypes, useWhTypeConfigs, useWhTypeFlagOverrides } from '@/api/hooks'
+import { isNccCategory, type WhTypeMeta, type WhTypeMetaMap } from '@/utils/cargoCategory'
 
 /** Map tên Loại kho → cờ hành vi (LookupValue.meta). Truyền vào các helper trong utils/cargoCategory. */
 export function useWhTypeMetaMap(): WhTypeMetaMap {
@@ -32,4 +32,27 @@ export function useWhTypeMetaMapFor(warehouseId: string | null | undefined): WhT
     }
     return map
   }, [base, cfgs, warehouseId])
+}
+
+/**
+ * "Loại này là HÀNG NCC tại kho nào?" — tra theo kho của TỪNG DÒNG.
+ * Dùng khi một màn hiển thị dữ liệu của NHIỀU kho cùng lúc nên không có "kho đang chọn" duy nhất
+ * (In tem: một lệnh in gộp tem của nhiều kho ⇒ đoạn 4 trên tem là NCC hay Máy phải theo kho của
+ * chính tem đó). Kho một-tại-một-lúc thì dùng `useWhTypeMetaMapFor` cho gọn.
+ * Không có khai riêng (mặc định hôm nay) → rơi về danh mục chung, kết quả y như trước.
+ */
+export function useIsNccAt(): (warehouseId: string | null | undefined, category: string | null | undefined) => boolean {
+  const base = useWhTypeMetaMap()
+  const { data: ovr } = useWhTypeFlagOverrides()
+  return useMemo(() => {
+    const map = new Map<string, boolean>()
+    for (const o of ovr ?? []) {
+      if (typeof o.is_ncc_goods === 'boolean') map.set(`${o.warehouse_id}|${o.type_code}`, o.is_ncc_goods)
+    }
+    return (warehouseId, category) => {
+      if (!category) return false
+      const own = warehouseId ? map.get(`${warehouseId}|${category}`) : undefined
+      return own ?? isNccCategory(category, base)
+    }
+  }, [base, ovr])
 }

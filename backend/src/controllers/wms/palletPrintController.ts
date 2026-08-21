@@ -139,7 +139,7 @@ export async function listPrintsPaged(req: Request, res: Response) {
     const parts: unknown[][] = []
     for (let i = 0; i < pd.ids.length; i += 300) {
       const { data: part, error: e2 } = await supabase.from('PalletLabelPrint')
-        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at, warehouse_id')
         .in('id', pd.ids.slice(i, i + 300))
       if (e2) return fail(res, e2.message, 500)
       parts.push((part ?? []) as unknown[])
@@ -183,7 +183,7 @@ export async function listPrints(req: Request, res: Response) {
     const applyFilters = (codeChunk: string[] | null) => {
       let q = supabase
         .from('PalletLabelPrint')
-        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at')
+        .select('id, batch_id, qr_code, material_code, category, cycle, machine, seq, nmsx, qty, mode, printed_by_name, created_at, warehouse_id')
         .order('created_at', { ascending: false })
       if (scopeWh) q = q.or(`warehouse_id.is.null,warehouse_id.in.(${scopeWh.join(',')})`)
       if (scopeCats) q = q.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)

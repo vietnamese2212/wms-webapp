@@ -21,6 +21,10 @@ const upload = multer({
 // Warehouse
 router.get('/warehouses',        warehouse.listWarehouses)
 router.post('/warehouses',       requirePerm('wms_settings', 'manage_warehouse'), warehouse.createWarehouse)
+// Cờ khai riêng 3 cờ vận hành của MỌI kho (màn In tem: 1 lệnh in gồm tem của nhiều kho nên không
+// hỏi được theo từng kho). Hở đọc như /machines, /wms/settings — metadata nhãn tem, người in tem
+// không có quyền wms_settings. PHẢI đứng TRƯỚC '/warehouses/:id' kẻo bị hiểu là id.
+router.get('/warehouses/type-flag-overrides', warehouse.listWhTypeFlagOverrides)
 router.get('/warehouses/:id',    warehouse.getWarehouse)
 router.put('/warehouses/:id',    requirePerm('wms_settings', 'manage_warehouse'), warehouse.updateWarehouse)
 router.delete('/warehouses/:id', requirePerm('wms_settings', 'manage_warehouse'), warehouse.deleteWarehouse)

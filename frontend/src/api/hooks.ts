@@ -213,6 +213,9 @@ export type PalletPrintRow = {
   id: string; batch_id: string | null; qr_code: string; material_code: string | null; category: string | null
   cycle: string | null; machine: string | null; seq: string | null; nmsx: string | null
   qty: number | null; mode: string; printed_by_name: string | null; created_at: string
+  // Kho của TỪNG TEM — cần để tra cờ is_ncc_goods đúng kho khi in lại (cờ khai riêng theo kho từ
+  // 21/08, mà 1 lệnh in có thể gồm tem của nhiều kho). Optional: BE cũ trong cửa sổ deploy.
+  warehouse_id?: string | null
 }
 export function useLogPalletPrints() {
   const qc = useQueryClient()
@@ -785,6 +788,20 @@ export function useWhTypeConfigs(warehouseId: string | null | undefined) {
     queryKey: ['wh-type-configs', warehouseId],
     queryFn: () => apiClient.get(`/masterdata/warehouses/${warehouseId}/type-configs`).then(r => r.data.data),
     enabled: !!warehouseId,
+  })
+}
+
+// Cờ khai riêng của MỌI kho — cho màn cần tra theo kho của TỪNG DÒNG (In tem: 1 lệnh in gồm tem
+// của nhiều kho). Chỉ trả dòng CÓ khai riêng nên payload theo số khai riêng, không theo số kho.
+export type WhTypeFlagOverride = {
+  warehouse_id: string; type_code: string
+  is_ncc_goods: boolean | null; requires_ncc: boolean | null; batch_char: string | null
+}
+export function useWhTypeFlagOverrides() {
+  return useQuery<WhTypeFlagOverride[]>({
+    queryKey: ['wh-type-flag-overrides'],
+    queryFn: () => apiClient.get('/masterdata/warehouses/type-flag-overrides').then(r => r.data.data),
+    staleTime: 5 * 60_000,
   })
 }
 

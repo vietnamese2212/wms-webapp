@@ -13,7 +13,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
-import { useWhTypeMetaMap, useWhTypeMetaMapFor } from '@/hooks/useWhTypeMeta'
+import { useWhTypeMetaMapFor, useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
@@ -50,6 +50,16 @@ type LabelData = {
   seq: string           // "001"
   batch?: string          // tem V2 (`;`): mã lô (khớp kế toán); rỗng với V1
   expiryDisplay?: string  // tem V2: HSD dd/MM/yyyy; rỗng với V1
+  /**
+   * Kho ĐANG GIỮ pallet của tem (In lại) — dùng để tra cờ theo kho + ghi vết log in.
+   * Tem SINH MỚI để trống CHỦ ĐÍCH: pallet chưa nhập kho nào, NMSX chỉ là nơi sản xuất (và người
+   * in được phép chọn NMSX ngoài kho mình được gán — gửi lên sẽ bị guard scope 403 oan).
+   */
+  warehouseId?: string | null
+  // Đoạn 4 in ra là ô "NCC" hay ô "Máy" — CHỐT TẠI ĐÂY, không để component tem tự tra.
+  // Cờ is_ncc_goods khai riêng được theo KHO (21/08) mà một lệnh in gộp tem của nhiều kho, nên
+  // component tem không biết hỏi cờ của kho nào; chỗ dựng dữ liệu thì biết kho của từng tem.
+  isNcc: boolean
 }
 
 type WarehouseLite = { id: string; code: string; name: string; warehouse_type?: string | null; nmsx_code?: string | null }
@@ -106,7 +116,6 @@ function QRImg({ value, px = 320 }: { value: string; px?: number }) {
 
 // ─── 1 tem (1/4 A4 = 105mm × 148.5mm) ─────────────────────────
 function PalletLabel({ d }: { d: LabelData }) {
-  const whTypeMeta = useWhTypeMetaMap()   // cờ is_ncc_goods per-Loại kho (ô NCC vs Máy trên tem V1)
   return (
     <div className="pl-label flex flex-col border border-dashed border-slate-300 p-[3.5mm] overflow-hidden">
       {/* QR — chiếm phần lớn (hút khoảng trống thừa), căn giữa */}
@@ -162,7 +171,7 @@ function PalletLabel({ d }: { d: LabelData }) {
           <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
           <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
-        {isNccCategory(d.category, whTypeMeta) ? (
+        {d.isNcc ? (
           <div className="border-r border-black flex flex-col">
             <div className="text-[8pt] font-semibold leading-tight">NCC</div>
             <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
@@ -300,14 +309,20 @@ export default function PalletLabels() {
   const { data: companies = [] } = useTransportCompanies(true)
   // NMSX (nmsx_code kho tổng) → id kho để áp ngoại lệ Thùng/Pallet theo kho ('O' không có kho → null)
   const nmsxWarehouseId = nmsxOptions.find(w => (w.nmsx_code ?? '').trim() === nmsx)?.id ?? null
-  // Cờ hiệu lực TẠI KHO NMSX đang chọn — kho khai riêng được (21/08)
+  // Cờ hiệu lực TẠI KHO NMSX đang chọn — kho khai riêng được (21/08). Dùng cho form Sinh tem
+  // (một lần sinh = một kho NMSX duy nhất).
   const whTypeMeta = useWhTypeMetaMapFor(nmsxWarehouseId)
+  // Còn In lại / Lịch sử in / Truy cứu hiển thị dữ liệu của NHIỀU kho cùng lúc ⇒ tra cờ theo kho
+  // của TỪNG DÒNG, không theo "kho đang chọn".
+  const isNccAt = useIsNccAt()
   const nccList = (companies as { id: string; code: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccOptions = nccList.map(c => ({ value: c.code, label: c.name, sub: c.code }))
   const nccNameByCode = useMemo(() => new Map(nccList.map(c => [c.code, c.name])), [nccList])
-  // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ
-  const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined) =>
-    isNccCategory(category, whTypeMeta) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
+  // Đoạn 4 hiển thị: hàng NCC → TÊN NCC (tra theo mã); thành phẩm → Máy như cũ.
+  // `whId` = kho của DÒNG đang hiển thị (cờ khai riêng theo kho); bỏ trống = theo danh mục chung
+  // (nhãn ô chọn/facet không thuộc kho nào).
+  const seg4Display = (category: string | null | undefined, seg4Val: string | null | undefined, whId?: string | null) =>
+    isNccAt(whId ?? null, category) ? (nccNameByCode.get(seg4Val ?? '') ?? seg4Val ?? '—') : (seg4Val || '—')
   // Loại hàng đang chọn quyết định đoạn 4 (cờ is_ncc_goods): không NCC → Máy; NCC → mã NCC
   const genCategory = mat?.category ?? genCat
   const genIsNcc = isNccCategory(genCategory, whTypeMeta)
@@ -382,6 +397,7 @@ export default function PalletLabels() {
           seq: String(seq).padStart(3, '0'),
           batch,
           expiryDisplay: hsdDisp,
+          isNcc: genIsNcc,
         })
       }
       return out
@@ -407,10 +423,11 @@ export default function PalletLabels() {
         machine: clean(seg4),
         nccName: seg4Name,
         seq,
+        isNcc: genIsNcc,
       })
     }
     return out
-  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar, entryDateV2])
+  }, [tab, mat, prodDate, cycle, seg4, seg4Name, nmsx, seqStart, count, qty, isV2Format, genReadyV2, hsdV2, qaOkV2, hourV2, minSecV2, machine, batchPrefix, v2FixedChar, entryDateV2, genIsNcc])
 
   // F1 — cảnh báo trùng: QR sắp sinh đã có pallet trong tồn kho? (tránh in QR trùng pallet đang tồn)
   const genPrefix = isV2Format
@@ -448,6 +465,9 @@ export default function PalletLabels() {
       seq: f.seq,
       batch: batch || undefined,
       expiryDisplay: expiryDisplay || undefined,
+      warehouseId: e.warehouse_id ?? null,
+      // Cờ theo KHO CỦA CHÍNH PALLET (không phải kho đang lọc) — in lại có thể gộp nhiều kho
+      isNcc: isNccAt(e.warehouse_id ?? null, e.material?.category ?? null),
     }
   }
 
@@ -577,6 +597,7 @@ export default function PalletLabels() {
     const events = (auEventMap.get(e.pallet_code) ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
     return {
       qr: e.pallet_code as string,
+      warehouse_id: (e.warehouse_id ?? null) as string | null,   // tra cờ NCC theo kho của pallet
       material_code: e.material?.material_code ?? f.materialCode ?? null,
       short_name: (e.material?.short_name ?? null) as string | null,
       category: (e.material?.category ?? null) as string | null,
@@ -652,6 +673,11 @@ export default function PalletLabels() {
         qr_code: normalizeQR(l.qr), material_code: l.materialCode, material_id: l.materialId ?? null,
         category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx,
         qty: l.qty === '' ? null : l.qty,
+        // Kho của tem (In lại: kho đang giữ pallet; Sinh mới: null — xem LabelData.warehouseId).
+        // Trước 21/08 FE không gửi field này ⇒ cột luôn NULL, kéo theo (a) không tra được cờ
+        // is_ncc_goods theo kho khi in lại, (b) guard scope kho ở BE `if (l.warehouse_id && …)`
+        // không bao giờ nổ.
+        warehouse_id: l.warehouseId ?? null,
       })),
     })
     setPrintLabels(items)
@@ -742,6 +768,8 @@ export default function PalletLabels() {
   function logRowToLabel(r: PalletPrintRow): LabelData {
     const f = parseCodeFields(r.qr_code)   // đúng cả 2 format (V1 `_` / V2 `;`)
     const mat = r.material_code ? matByCode.get(r.material_code) : undefined
+    // Kho của TỪNG TEM (một lệnh in có thể gộp tem nhiều kho) — cờ is_ncc_goods khai riêng theo kho
+    const rIsNcc = isNccAt(r.warehouse_id ?? null, r.category ?? mat?.category)
     return {
       key: r.qr_code, qr: r.qr_code,
       dateDisplay: f.dateDisplay || '—',
@@ -754,10 +782,12 @@ export default function PalletLabels() {
       qty: r.qty ?? '',
       cycle: r.cycle ?? f.cycle,
       machine: r.machine ?? f.machine,
-      nccName: isNccCategory(r.category ?? mat?.category, whTypeMeta) ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
+      nccName: rIsNcc ? (nccNameByCode.get(r.machine ?? f.machine) ?? '') : '',
       seq: r.seq ?? f.seq,
       batch: f.batch || undefined,
       expiryDisplay: f.expiryDisplay || undefined,
+      warehouseId: r.warehouse_id ?? null,
+      isNcc: rIsNcc,
     }
   }
   // Chọn in lại: 1 LỆNH GOM (single) HOẶC nhiều TEM — loại trừ lẫn nhau
@@ -1270,7 +1300,7 @@ export default function PalletLabels() {
                       <td className="px-2 py-1 whitespace-nowrap">{g.category ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.nmsx ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{g.cycle ?? '—'}</td>
-                      {(() => { const s = isNccCategory(g.category, whTypeMeta) ? (g.ncc_name || seg4Display(g.category, g.machine)) : (g.machine ?? '—'); return (
+                      {(() => { const s = isNccAt(g.warehouse_id, g.category) ? (g.ncc_name || seg4Display(g.category, g.machine, g.warehouse_id)) : (g.machine ?? '—'); return (
                       <td className="px-2 py-1 whitespace-nowrap" title={s}>{s}</td>
                       ) })()}
                       <td className="px-2 py-1 whitespace-nowrap">{g.import_date ? formatTimestampDate(g.import_date, true) : '—'}</td>
@@ -1393,7 +1423,7 @@ export default function PalletLabels() {
                   const mats  = [...new Set(b.rows.map(r => r.material_code).filter(Boolean))]
                   const names = [...new Set(b.rows.map(r => matByCode.get(r.material_code ?? '')?.short_name).filter(Boolean))]
                   const cycs  = [...new Set(b.rows.map(r => r.cycle).filter(Boolean))]
-                  const macs  = [...new Set(b.rows.map(r => seg4Display(r.category, r.machine)).filter(v => v && v !== '—'))]
+                  const macs  = [...new Set(b.rows.map(r => seg4Display(r.category, r.machine, r.warehouse_id)).filter(v => v && v !== '—'))]
                   const open  = histOpen.has(b.key)
                   const pinBg = histSelBatch === b.key ? 'bg-sky-50' : 'bg-white'
                   return (

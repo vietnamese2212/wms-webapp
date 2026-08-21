@@ -51,6 +51,8 @@ async function sweep() {
     await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`)
   }
   for (const l of await restAll('Location', `select=id&location_code=like.${TAG}-*`)) await restWrite('Location', 'DELETE', `id=eq.${l.id}`)
+  // Log in tem của mục [13]
+  for (const p of await restAll('PalletLabelPrint', `select=id&qr_code=like.${TAG}-*`)) await restWrite('PalletLabelPrint', 'DELETE', `id=eq.${p.id}`)
 }
 async function cleanup() {
   await sweep()
@@ -431,6 +433,51 @@ try {
     check('[12d] Bỏ khai riêng ⇒ chạy lại đúng mặc định chung của loại',
       sharedNcc ? (s3.s === 422 && s3.j?.error?.code === 'NCC_REQUIRED') : (s3.s === 200 || s3.s === 201),
       `chung=${sharedNcc} http=${s3.s} code=${s3.j?.error?.code ?? ''}`)
+  }
+  // ── [13] NHÃN TEM IN phải tra cờ theo KHO CỦA TỪNG TEM ───────────────────────
+  // Lớp lỗi: một LỆNH IN gộp tem của nhiều kho, nên component tem không có "kho đang chọn" để hỏi.
+  // Trước 21/08 nó đọc danh mục CHUNG ⇒ kho khai riêng "hàng NCC" vẫn in ra ô "Máy" (sai nhãn, im
+  // lặng). Hai điều kiện để đúng: (a) tra được cờ khai riêng của MỌI kho trong 1 lời gọi;
+  // (b) mỗi tem trong log in phải MANG kho của nó — cột này trước đây luôn NULL vì FE không gửi,
+  // kéo theo cả guard scope kho ở logPrints không bao giờ nổ.
+  {
+    const setOv = async patch => {
+      const cur = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+      return api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT',
+        { items: cur.map(r => r.type_code === catA ? { ...r, ...patch } : { ...r }) })
+    }
+    await setOv({ is_ncc_goods: true })
+    const ov1 = await api('/masterdata/warehouses/type-flag-overrides')
+    const mine = (ov1.j?.data ?? []).filter(r => r.warehouse_id === whId && r.type_code === catA)
+    check('[13a] Đọc được cờ khai riêng của MỌI kho trong 1 lời gọi',
+      ov1.s === 200 && mine.length === 1 && mine[0].is_ncc_goods === true,
+      `http=${ov1.s} n=${mine.length} v=${mine[0]?.is_ncc_goods}`)
+    check('[13b] Chỉ trả dòng CÓ khai riêng (kho khác cùng loại không lọt vào)',
+      !(ov1.j?.data ?? []).some(r => r.warehouse_id === FIX.WH_QTY.id && r.type_code === catA),
+      `tổng ${(ov1.j?.data ?? []).length} dòng khai riêng`)
+
+    // Ghi log in kèm kho của tem → đọc lại phải thấy đúng kho (cả 2 đường: theo mã và phân trang)
+    const qr = `${TAG}-PRINT-${Date.now()}`
+    const lg = await api('/wms/pallet-prints', 'POST', {
+      mode: 'REPRINT',
+      labels: [{ qr_code: qr, material_code: matA.code, category: catA, machine: 'M9', seq: '901', warehouse_id: whId }],
+    })
+    check('[13c] Ghi log in tem kèm kho của tem', lg.s === 200 || lg.s === 201, `http=${lg.s}`)
+    const byCode = await api(`/wms/pallet-prints?qr_codes=${encodeURIComponent(qr)}`)
+    const row = (byCode.j?.data ?? []).find(r => r.qr_code === qr)
+    check('[13d] Đường "theo mã tem" trả kho của tem (In lại tra được cờ đúng kho)',
+      row?.warehouse_id === whId, `wh=${row?.warehouse_id ?? 'null'}`)
+    const paged = await api(`/wms/pallet-prints?page=1&page_size=20&search=${encodeURIComponent(qr)}`)
+    const prow = (paged.j?.data?.rows ?? []).find(r => r.qr_code === qr)
+    check('[13e] Đường "Lịch sử in" (RPC phân trang) cũng trả kho của TỪNG tem',
+      prow?.warehouse_id === whId, `wh=${prow?.warehouse_id ?? 'null'}`)
+    for (const r of await restAll('PalletLabelPrint', `select=id&qr_code=eq.${qr}`)) {
+      await restWrite('PalletLabelPrint', 'DELETE', `id=eq.${r.id}`)
+    }
+    await setOv({ is_ncc_goods: null })
+    const ov2 = await api('/masterdata/warehouses/type-flag-overrides')
+    check('[13f] Bỏ khai riêng ⇒ dòng rời khỏi danh sách (tem về nhãn theo danh mục chung)',
+      !(ov2.j?.data ?? []).some(r => r.warehouse_id === whId && r.type_code === catA))
   }
 } catch (e) {
   check('gói chạy trọn', false, String(e?.message ?? e))

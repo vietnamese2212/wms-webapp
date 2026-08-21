@@ -311,6 +311,21 @@ export async function getWarehouseTypeConfigs(req: Request, res: Response) {
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
+// Các dòng CÓ khai riêng 3 cờ vận hành — của MỌI kho, một lời gọi.
+// Vì sao cần đường này khi đã có `/warehouses/:id/type-configs`: màn In tem in theo LỆNH IN, một
+// lệnh gồm tem của NHIỀU kho (Lịch sử in không có filter kho) ⇒ không hỏi được "cờ của kho đang
+// chọn". Quy mô bị chặn bởi SỐ KHAI RIÊNG (cấu hình — hôm nay 0), không tăng theo dữ liệu nghiệp vụ.
+export async function listWhTypeFlagOverrides(_req: Request, res: Response) {
+  try {
+    const { data, error } = await supabase.from('warehouse_type_configs')
+      .select('warehouse_id, type_code, is_ncc_goods, requires_ncc, batch_char')
+      .or('is_ncc_goods.not.is.null,requires_ncc.not.is.null,batch_char.not.is.null')
+      .order('warehouse_id').order('type_code').limit(5000)
+    if (error) throw error
+    ok(res, data ?? [])
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
 export async function putWarehouseTypeConfigs(req: Request, res: Response) {
   try {
     const whId = req.params.id

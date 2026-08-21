@@ -116,5 +116,19 @@ for (const fmt of ZXING_FORMATS) {
   check('[9] Tem pallet thật vẫn hợp lệ (không siết oan)', missed.length === 0, missed.length ? `loại oan: ${missed.join(' | ')}` : '2 format tem đều nhận')
 }
 
+// ── Quét NHIỀU mã cùng lúc: "quét kỹ" (tryHarder) phải BẬT mặc định ──────────
+// Đo thật 21/08 trên lưới 15 mã (12 barcode 1D + 3 QR) trong CÙNG một khung: tryHarder tắt bắt
+// 6–8/15, bật bắt 15/15 — QR đủ ở cả hai chế độ. Nên nếu ai lật mặc định về false thì mã vạch lại
+// "bắt kém hơn QR" y như cũ, mà không có lỗi nào để lần ra.
+{
+  const ms = readFileSync(join(FE, 'src', 'pages', 'wms', 'MultiScanTest.tsx'), 'utf8')
+  const th = /loadSettings\(\)\.tryHarder \?\? (true|false)/.exec(ms)
+  check('[10] Trang quét loạt mặc định BẬT "quét kỹ" (1D cần, QR thì không)', th?.[1] === 'true',
+    `mặc định = ${th?.[1] ?? 'không tìm thấy'}`)
+  const ww = /loadSettings\(\)\.wasmWidth \?\? (\d+)/.exec(ms)
+  check('[11] Độ phân giải giải mã mặc định ≤ 2560 (3840 không bắt thêm mã mà tốn ~2,4×)',
+    !!ww && Number(ww[1]) <= 2560, `mặc định = ${ww?.[1] ?? '?'}px`)
+}
+
 console.log(`\n[SCAN-FORMATS] ${pass}/${pass + fail} PASS`)
 process.exit(fail ? 1 : 0)

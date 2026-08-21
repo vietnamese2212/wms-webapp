@@ -121,8 +121,15 @@ export default function MultiScanTest() {
   const [error, setError]       = useState<string | null>(null)
   const [nativeAvail, setNativeAvail] = useState(false)
   const [engine, setEngine]     = useState<EngineKind>('wasm')
-  const [wasmWidth, setWasmWidth] = useState(() => loadSettings().wasmWidth ?? 3840)   // mặc định giải ở độ phân giải GỐC (xa nhất)
-  const [tryHarder, setTryHarder] = useState(() => loadSettings().tryHarder ?? false)
+  // 2560 = mặc định (khớp WASM_WIDTH của luồng quét thật). Đo 21/08 trên lưới 15 mã: 3840 KHÔNG bắt
+  // thêm mã nào so với 1600/2560 mà tốn gấp ~2,4× (85ms vs 36ms) ⇒ đừng lấy 3840 làm mặc định; nút
+  // 3840 vẫn còn cho ca tem NHỎ Ở XA (nơi độ phân giải mới thực sự quyết định).
+  const [wasmWidth, setWasmWidth] = useState(() => loadSettings().wasmWidth ?? 2560)
+  // MẶC ĐỊNH BẬT (21/08) — mã vạch 1D gần như PHẢI có "quét kỹ", QR thì không. Đo thật trên lưới
+  // 15 mã (12 barcode + 3 QR) trong CÙNG một khung: tắt → 6–8/15 mã, bật → 15/15; QR bắt đủ ở cả
+  // hai chế độ. Đó là lý do user thấy "barcode bắt kém hơn QR" — không phải chậm CPU mà là TRƯỢT.
+  // Giá: 1600px 16→36ms · 2560px 30→56ms · 3840px 55→85ms (vẫn 12–28 khung/s).
+  const [tryHarder, setTryHarder] = useState(() => loadSettings().tryHarder ?? true)
   const [torchOn, setTorchOn]   = useState(false)
   const [torchAvail, setTorchAvail] = useState(false)
   const [zoomCap, setZoomCap]   = useState<{ min: number; max: number; step: number } | null>(null)
@@ -588,7 +595,7 @@ export default function MultiScanTest() {
                     {engine === 'wasm' && (
                       <button onClick={() => { const v = !tryHarder; setTryHarder(v); saveSettings({ tryHarder: v }); decodeEmaRef.current = 0 }}
                         className={`rounded px-1.5 py-0.5 border ${tryHarder ? 'border-amber-500 bg-amber-50 text-amber-700 font-semibold' : 'border-slate-300 hover:bg-slate-50'}`}>
-                        Quét kỹ (xa hơn){tryHarder ? ' ✓' : ''}
+                        Quét kỹ (cần cho mã vạch){tryHarder ? ' ✓' : ''}
                       </button>
                     )}
                   </>

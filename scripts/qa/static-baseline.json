@@ -27,6 +27,7 @@
   "rotation_rule_hand_rolled": 1,
   "putaway_rule_hand_rolled": 0,
   "n_plus_1_supabase_in_map": 3,
+  "axios_post_null_body": 0,
   "today_frozen_at_import": 0,
   "route_without_permission": 3,
   "scan_formats_declared_outside_engine": 0,

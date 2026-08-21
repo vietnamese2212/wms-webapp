@@ -5730,7 +5730,12 @@ export function useScanAlerts() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (fresh?: boolean) =>
-      apiClient.post('/wms/alerts/scan', null, { params: fresh ? { fresh: 1 } : undefined }).then(r => r.data.data),
+      // Body `{}` chứ KHÔNG phải `null`: axios gửi `null` thành chuỗi JSON "null" kèm
+      // Content-Type: application/json, mà `express.json()` mặc định strict ⇒ **400** entity.parse.
+      // Triệu chứng đúng kiểu "chết câm": mutation vẫn onSettled → danh sách vẫn refetch, nên nhìn
+      // như chạy bình thường, chỉ có LƯỢT QUÉT là không bao giờ chạy. Bắt được nhờ soi console thật
+      // trên Preview (gọi bằng fetch tay thì 200 — fetch không body khác axios body null).
+      apiClient.post('/wms/alerts/scan', {}, { params: fresh ? { fresh: 1 } : undefined }).then(r => r.data.data),
     onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
   })
 }

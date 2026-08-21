@@ -53,6 +53,25 @@ export async function api(path, method = 'GET', body) {
   return { s: r.status, j, bytes: text.length }
 }
 
+/**
+ * Gọi API THÔ: chỉ gắn Authorization, KHÔNG tự đắp body.
+ *
+ * VÌ SAO CẦN (bug thật 21/08): `api()` luôn thêm `{ qty_semantics: 'base', … }` vào body mọi lời
+ * gọi có body — tiện cho test nghiệp vụ, nhưng nó CHE mất lớp lỗi "FE gửi body dạng khác".
+ * Ca cụ thể: FE dùng axios `post(url, null)` → gửi chuỗi JSON `"null"` → `express.json()` strict
+ * trả 400, trong khi `api()` cùng endpoint trả 200 vì nó đã đắp body hộ. Muốn soi ĐÚNG cái FE gửi
+ * thì phải đi cửa này.
+ */
+export async function rawFetch(path, init = {}) {
+  const r = await fetch(`${BASE}/api${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+  })
+  let text = ''
+  try { text = await r.text() } catch { /* body rỗng */ }
+  return { s: r.status, text }
+}
+
 // ── PostgREST staging (read-only cho invariant) — key service role từ backend/.env ──
 function readBackendEnv() {
   const out = {}

@@ -4,7 +4,7 @@
 // TÁI MỞ như đợt mới (first_seen mới) · Ack ẩn khỏi list mặc định + hiện ở status=acked · unack.
 // Scanner throttle force = 20s → giữa các pha có sleep 21s (đường throttle là hành vi thật).
 import { randomUUID } from 'crypto'
-import { login, api, restAll, restWrite, restRpc, check, finish, FIX, BASE } from './lib.mjs'
+import { login, api, rawFetch, restAll, restWrite, restRpc, check, finish, FIX, BASE } from './lib.mjs'
 
 const t = () => new Date().toISOString()
 const TAG = 'SIMALERT'
@@ -18,7 +18,11 @@ async function cleanup() {
     await restWrite('gate_registrations', 'DELETE', `id=eq.${g.id}`).catch(() => {})
   }
 }
-const openList = async (status = 'open') => (await api(`/wms/alerts?fresh=1&status=${status}`, 'GET'))
+// Từ 21/08 lượt quét TÁCH khỏi GET (người mở trang không phải chờ ~1,9s) ⇒ muốn đọc số liệu TƯƠI
+// thì phải bắn cửa quét TRƯỚC. Trước đó test dựa vào việc GET tự quét — đúng cái ràng buộc mà thay
+// đổi 21/08 gỡ bỏ, nên nếu không sửa ở đây thì cả gói đổ theo (đã thấy: 5 phép kiểm đỏ liên hoàn).
+const scanNow = async () => api('/wms/alerts/scan?fresh=1', 'POST')
+const openList = async (status = 'open') => { await scanNow(); return api(`/wms/alerts?status=${status}`, 'GET') }
 const dbRow = async key => (await restAll('alert_events',
   `select=id,dedup_key,severity,first_seen,last_seen,ack_at,resolved_at&dedup_key=eq.${encodeURIComponent(key)}`))[0]
 
@@ -127,7 +131,7 @@ check('3.5h chưa ra → leo thang CRITICAL (≥180p)', hit5?.severity === 'CRIT
   check('RPC nền của rule "tồn cận date" chạy được (không chết câm)', !rpcErr, rpcErr ?? 'ok')
 
   const since = new Date(Date.now() - 5 * 60_000).toISOString()
-  await api('/wms/alerts?fresh=1&status=open', 'GET')   // ép 1 lượt quét
+  await scanNow()   // ép 1 lượt quét (cửa riêng — GET không còn tự quét từ 21/08)
   const failed = await restAll('error_logs', `select=message&code=eq.ALERT_RULE_FAILED&created_at=gte.${since}`)
   check('Không rule nào lỗi trong lượt quét vừa rồi (scanner tự tố nếu có)',
     failed.length === 0, failed.length ? failed[0].message?.slice(0, 120) : '0 lỗi rule')
@@ -168,6 +172,26 @@ check('3.5h chưa ra → leo thang CRITICAL (≥180p)', hit5?.severity === 'CRIT
 
 // Trả cờ GIỮ-SAU-KHI-RA về đúng cấu hình user (đã tạm tắt ở đầu gói)
 if (th0?.GATE_KEEP_AFTER_EXIT === true) await api('/wms/settings/alert_thresholds', 'PUT', { value: th0 })
+
+// ── [12] Cửa quét RIÊNG phải nhận ĐÚNG NHƯ FE GỬI (21/08) ────────────────────────────────────
+// Từ 21/08 lượt quét tách khỏi GET /wms/alerts sang POST /wms/alerts/scan (người mở trang không
+// phải chờ ~1,9s). Bug thật ngay lượt đầu: FE dùng axios `post(url, null)` → gửi chuỗi JSON "null"
+// kèm Content-Type: application/json → `express.json()` strict trả **400**; mà mutation vẫn
+// onSettled nên danh sách VẪN refetch ⇒ nhìn như chạy bình thường, chỉ LƯỢT QUÉT không bao giờ chạy.
+// Dùng rawFetch: helper api() luôn tự đắp body nên nó CHE đúng cái cần soi.
+{
+  for (const [tag, body] of [['không body', undefined], ['body {}', '{}']]) {
+    const r = await rawFetch('/wms/alerts/scan', { method: 'POST', ...(body === undefined ? {} : { body }) })
+    check(`[12] POST /wms/alerts/scan — ${tag} → 2xx`, r.s >= 200 && r.s < 300, `HTTP ${r.s} ${r.text.slice(0, 70)}`)
+  }
+  // Body `null` là 400 CÓ CHỦ Ý (express.json strict) — ghi rõ ở đây để không ai "sửa" thành 2xx
+  // bằng cách nới strict:false: nới là các controller destructure req.body sẽ nổ 500 chỗ khác.
+  // Chặn FE gửi null nằm ở CỔNG TĨNH (ratchet axios_post_null_body), không phải ở server.
+  {
+    const r = await rawFetch('/wms/alerts/scan', { method: 'POST', body: 'null' })
+    check('[12b] body null → 400 rõ ràng (không phải 2xx im lặng)', r.s === 400, `HTTP ${r.s}`)
+  }
+}
 
 console.log('\n🧹 dọn…')
 await cleanup()

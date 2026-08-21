@@ -411,6 +411,19 @@ const RULES = [
     count: (s) => countNPlus1SupabaseInMap(s),
   },
   {
+    // axios `post(url, null)` gửi CHUỖI JSON "null" kèm Content-Type: application/json, mà
+    // `express.json()` mặc định strict TỪ CHỐI null ở cấp cao nhất ⇒ **400**. Nguy ở chỗ triệu
+    // chứng CÂM: mutation vẫn onSettled nên list vẫn refetch, nhìn như chạy bình thường — chỉ có
+    // việc thật (vd lượt quét cảnh báo) là KHÔNG BAO GIỜ chạy. Bug thật 21/08 ở
+    // `POST /wms/alerts/scan`, phát hiện nhờ soi console trên Preview chứ không phải qua test
+    // (helper QA `api()` tự đắp body nên nó CHE mất). Không có body thì truyền `{}`.
+    // Nới `strict:false` ở server KHÔNG phải cách sửa: controller nào destructure req.body sẽ nổ 500.
+    key: 'axios_post_null_body',
+    label: 'axios .post(url, null) — express.json strict trả 400 mà FE thường nuốt im (dùng {} thay null)',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line) => /\.(post|put|patch)\(\s*[^,)]+,\s*null\s*[,)]/.test(line), s),
+  },
+  {
     key: 'today_frozen_at_import',
     label: 'NGÀY HÔM NAY chốt bằng hằng module (tính 1 lần lúc mở app) — PDA/màn kho mở qua đêm sẽ dùng ngày HÔM QUA (min= chặn oan, filter "Hôm nay" sai). Khai dạng HÀM: const TODAY = () => …',
     // CHỈ bắt khai báo CẤP MODULE (không thụt lề) — khai trong thân component thì mỗi lần render

@@ -141,6 +141,18 @@ for (const fmt of ZXING_FORMATS) {
     eng?.[1] === 'wasm', `mặc định = ${eng?.[1] ?? 'không tìm thấy'}`)
   check('[13] Lựa chọn engine được NHỚ giữa các lần mở trang (khỏi âm thầm về native)',
     /saveSettings\(\{ engine: next \}\)/.test(ms))
+
+  // ⭐ Bài học 21/08 (clip user): đổi mặc định `tryHarder` thành true nhưng máy user đã LƯU false
+  // ⇒ `?? true` không bao giờ chạy, quét 9 mã chỉ ra 5 mà không có dấu hiệu gì. Hai lớp gác:
+  //   (a) khóa localStorage phải được BUMP khi đổi mặc định (v2+);
+  //   (b) trạng thái TẮT phải hiện cảnh báo trên màn (không im lặng).
+  const key = /const SETTINGS_KEY = 'multi_scan_settings_v(\d+)'/.exec(ms)
+  check('[14] Khóa lưu thiết lập đã bump ≥ v2 (mặc định mới mới có tác dụng trên máy đã dùng)',
+    !!key && Number(key[1]) >= 2, `khóa = v${key?.[1] ?? '?'}`)
+  check('[15] Tắt "quét kỹ" phải hiện CẢNH BÁO trên màn (không im lặng)',
+    /!tryHarder && \(/.test(ms) && /TẮT quét kỹ/.test(ms))
+  check('[16] Có nút đưa về bộ thiết lập tốt nhất (thoát tổ hợp knob xấu)',
+    /function resetToBest/.test(ms) && /Đặt lại tốt nhất/.test(ms))
 }
 
 // ── Chống MÃ RÁC và chống ĐẾM HAI LẦN (user 21/08: quét 15 mã vạch mà app hiện 20) ──────────
@@ -151,20 +163,20 @@ for (const fmt of ZXING_FORMATS) {
 {
   const eng = readFileSync(ENGINE_SRC, 'utf8')
   const mlc = /ZXING_MIN_LINE_COUNT = (\d+)/.exec(eng)
-  check('[14] Ngưỡng đồng thuận dòng ≥ 3 (chặn mã vạch rác từ vạch mờ)', !!mlc && Number(mlc[1]) >= 3,
+  check('[17] Ngưỡng đồng thuận dòng ≥ 3 (chặn mã vạch rác từ vạch mờ)', !!mlc && Number(mlc[1]) >= 3,
     `ZXING_MIN_LINE_COUNT = ${mlc?.[1] ?? 'không khai'}`)
   const users = ['src/utils/scanEngine.ts', 'src/pages/wms/MultiScanTest.tsx']
     .filter(f => readFileSync(join(FE, f), 'utf8').includes('minLineCount'))
-  check('[15] Cả 2 đường quét (luồng thật + quét loạt) đều áp ngưỡng đó', users.length === 2, users.join(', '))
+  check('[18] Cả 2 đường quét (luồng thật + quét loạt) đều áp ngưỡng đó', users.length === 2, users.join(', '))
 
   // scanKey: nạp từ chính utils/qr.ts (một nguồn) rồi thử các ca thật
   const m = await loadTs(['src/utils/qr.ts'], ['scanKey'])
   const upcaSame = m.scanKey('036000291452') === m.scanKey('0036000291452')
-  check('[16] UPC-A 12 số và EAN-13 13 số của CÙNG tem ra CÙNG khoá', upcaSame,
+  check('[19] UPC-A 12 số và EAN-13 13 số của CÙNG tem ra CÙNG khoá', upcaSame,
     `${m.scanKey('036000291452')} vs ${m.scanKey('0036000291452')}`)
   const keep = ['96385074', 'SKU-100294', '080826_510000187_1_122_98266_B', '50033;1;TA260705A018;05/07/2026;05/03/2027']
   const changed = keep.filter(s => m.scanKey(s) !== s)
-  check('[17] Mã 8 số, mã chữ và tem pallet GIỮ NGUYÊN (không gộp oan)', changed.length === 0,
+  check('[20] Mã 8 số, mã chữ và tem pallet GIỮ NGUYÊN (không gộp oan)', changed.length === 0,
     changed.length ? `bị đổi: ${changed.join(' | ')}` : '4 mẫu giữ nguyên')
 }
 
@@ -195,7 +207,7 @@ for (const fmt of ZXING_FORMATS) {
   feed(seq, '5901234123457', boxA, 12)
   t += 300
   feed(seq, '4006381333931', boxA, 12)
-  check('[18] Quét LẦN LƯỢT 3 tem ở CÙNG chỗ giữa màn → hiện đủ 3 (không xoá mã thật)',
+  check('[21] Quét LẦN LƯỢT 3 tem ở CÙNG chỗ giữa màn → hiện đủ 3 (không xoá mã thật)',
     seq.size === 3, dump(seq))
 
   // Ngay cả chuỗi yếu hẳn (bản đọc sai thật) cũng KHÔNG được tự xoá — chỉ đếm, để màn gắn cờ.
@@ -204,9 +216,9 @@ for (const fmt of ZXING_FORMATS) {
   t = 2_000_000
   feed(mis, '96385074', boxA, 40)
   feed(mis, '06384074', boxA, 3)     // bản đọc sai cùng ô, kém 13 lần
-  check('[19] Chuỗi yếu KHÔNG bị tự xoá (chỉ đếm — màn hình gắn cờ "chưa chắc")',
+  check('[22] Chuỗi yếu KHÔNG bị tự xoá (chỉ đếm — màn hình gắn cờ "chưa chắc")',
     mis.size === 2 && mis.get('06384074')?.hits === 3, dump(mis))
-  check('[20] Số lần thấy phân biệt được rác với mã thật (đủ căn cứ để gắn cờ)',
+  check('[23] Số lần thấy phân biệt được rác với mã thật (đủ căn cứ để gắn cờ)',
     mis.get('96385074').hits >= mis.get('06384074').hits * 6)
 
   // Hai tem ở hai vùng khác nhau: hiển nhiên giữ cả hai
@@ -214,24 +226,24 @@ for (const fmt of ZXING_FORMATS) {
   t = 3_000_000
   feed(two, '8934567890120', boxA, 30)
   feed(two, '5901234123457', boxB, 3)
-  check('[21] Hai tem ở HAI vùng khác nhau đều còn', two.size === 2, dump(two))
+  check('[24] Hai tem ở HAI vùng khác nhau đều còn', two.size === 2, dump(two))
 
   // Cùng tem UPC-A trả 2 dạng chuỗi ⇒ 1 dòng (lớp gom DUY NHẤT còn lại — an toàn vì không xoá gì)
   const up = new Map()
   t = 4_000_000
   feed(up, '036000291452', boxA, 1)
   feed(up, '0036000291452', boxA, 1)
-  check('[22] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', up.size === 1, `${up.size} dòng`)
+  check('[25] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', up.size === 1, `${up.size} dòng`)
 
   // Ngưỡng hiện mã 1D: chặn "bóng ma" giải rác 1 khung, nhưng không cao tới mức mã thật lên chậm
-  check('[23] Ngưỡng hiện mã 1D = 2 (chặn bóng ma 1 khung, không làm mã thật lên chậm)',
+  check('[26] Ngưỡng hiện mã 1D = 2 (chặn bóng ma 1 khung, không làm mã thật lên chậm)',
     mod.MIN_HITS_1D === 2, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
 
   // Chốt cứng: đường gom mã KHÔNG được có lệnh xoá khỏi danh sách
   const dedupeSrc = readFileSync(join(FE, 'src', 'utils', 'scanDedupe.ts'), 'utf8')
-  check('[24] utils/scanDedupe không có lệnh xoá mã nào (map.delete)', !/\.delete\(/.test(dedupeSrc))
+  check('[27] utils/scanDedupe không có lệnh xoá mã nào (map.delete)', !/\.delete\(/.test(dedupeSrc))
   const msSrc = readFileSync(join(FE, 'src', 'pages', 'wms', 'MultiScanTest.tsx'), 'utf8')
-  check('[25] Trang quét loạt không gọi hàm dọn-đoán nào', !/sweepMisreads/.test(msSrc))
+  check('[28] Trang quét loạt không gọi hàm dọn-đoán nào', !/sweepMisreads/.test(msSrc))
 }
 // ── LOẠI MÃ THEO TỪNG KHO (`Warehouse.scan_code_types`, 21/08) ────────────────────────────────
 // Kiểm bằng ĐỌC THẬT: mỗi chế độ phải giải được đúng loại mã của nó và TRƯỢT loại bị tắt. Nếu chỉ
@@ -244,25 +256,25 @@ for (const fmt of ZXING_FORMATS) {
     ? (await readBarcodes(img, { formats: mod.zxingFormatsFor(t), tryHarder: true, tryRotate: true, maxNumberOfSymbols: 8 })).length
     : -1
 
-  check('[26] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
+  check('[29] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
     (await read(qrImg, 'QR')) === 1 && (await read(bcImg, 'QR')) === 0)
-  check('[27] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
+  check('[30] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
     (await read(bcImg, 'BARCODE')) === 1 && (await read(qrImg, 'BARCODE')) === 0)
-  check('[28] Kho "Cả hai": đọc được cả hai',
+  check('[31] Kho "Cả hai": đọc được cả hai',
     (await read(qrImg, 'BOTH')) === 1 && (await read(bcImg, 'BOTH')) === 1)
   // Tra cấu hình trượt (kho lạ / chưa nạp danh mục) phải NỚI về cả hai — siết thì người quét đứng
   // trước camera "không ăn" mà không có gì để hiểu vì sao.
-  check('[29] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
+  check('[32] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
     mod.zxingFormatsFor().length === mod.zxingFormatsFor('BOTH').length
     && mod.nativeFormatsFor().length === mod.nativeFormatsFor('BOTH').length)
 
   // Mọi màn quét PHẢI khai codeTypes — ràng buộc KIỂU (prop bắt buộc) là thứ chặn màn mới lọt,
   // ratchet tĩnh chỉ soi thêm cho chắc.
   const scanner = readFileSync(join(FE, 'src', 'components', 'shared', 'QRScanner.tsx'), 'utf8')
-  check('[30] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
+  check('[33] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(scanner) && !/codeTypes\?:/.test(scanner))
   const carton = readFileSync(join(FE, 'src', 'components', 'wms', 'CartonScanSheet.tsx'), 'utf8')
-  check('[31] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
+  check('[34] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(carton) && !/codeTypes\?:/.test(carton))
 }
 

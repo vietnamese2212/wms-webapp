@@ -61,7 +61,10 @@ const WEAK_HITS = 6
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
 interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean; engine?: EngineKind }
-const SETTINGS_KEY = 'multi_scan_settings_v1'
+// ⚠️ ĐỔI MẶC ĐỊNH thì PHẢI bump số phiên bản khóa này. Bài học 21/08: đổi mặc định tryHarder
+// thành true nhưng máy user đã lưu 'false' từ lần bấm thử ⇒ '?? true' KHÔNG bao giờ chạy, user
+// quét 9 mã chỉ ra 5 mà không có dấu hiệu gì (clip user gửi: nút Quét kỹ tắt, 5 mã đứng yên 10s).
+const SETTINGS_KEY = 'multi_scan_settings_v2'
 function loadSettings(): ScanSettings {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') || {} } catch { return {} }
 }
@@ -442,6 +445,15 @@ export default function MultiScanTest() {
     streamRef.current?.getTracks().forEach(t => t.stop())
   }, [])
 
+  // Một nút về đúng bộ thiết lập ĐÃ ĐO là bắt mã vạch tốt nhất — thoát cảnh loay hoay trong tổ hợp
+  // knob xấu mà không biết knob nào đang hại (chính ca 21/08: quét kỹ tắt từ lần bấm thử trước).
+  async function resetToBest() {
+    await loadWasm().catch(() => {})
+    setEngine('wasm'); setWasmWidth(2560); setTryHarder(true)
+    saveSettings({ engine: 'wasm', wasmWidth: 2560, tryHarder: true })
+    decodeEmaRef.current = 0
+  }
+
   async function switchEngine(next: EngineKind) {
     if (next === 'wasm') await loadWasm()
     decodeEmaRef.current = 0
@@ -626,6 +638,18 @@ export default function MultiScanTest() {
                         Quét kỹ (cần cho mã vạch){tryHarder ? ' ✓' : ''}
                       </button>
                     )}
+                    {/* TẮT quét kỹ = mã vạch chỉ bắt được ~một nửa (đo: 6–8/15 so với 15/15) mà màn
+                        hình không có dấu hiệu gì → user tưởng app hỏng. Nói thẳng trạng thái ra. */}
+                    {engine === 'wasm' && !tryHarder && (
+                      <span className="rounded bg-red-100 text-red-700 px-1.5 py-0.5 font-semibold">
+                        Đang TẮT quét kỹ — mã vạch bắt được ~một nửa
+                      </span>
+                    )}
+                    <button onClick={resetToBest}
+                      title="Về đúng bộ thiết lập bắt mã vạch tốt nhất đã đo: WASM + 2560p + Quét kỹ"
+                      className="rounded border border-sky-300 text-sky-700 px-1.5 py-0.5 hover:bg-sky-50">
+                      Đặt lại tốt nhất
+                    </button>
                   </>
                 )}
               </div>

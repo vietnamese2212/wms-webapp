@@ -31,28 +31,34 @@ export function rectOf(points: Point[]): Rect {
   }
 }
 
-/** Tâm của a nằm trong b (hoặc ngược lại) = hai mã đang chỉ vào CÙNG một tem. */
+/**
+ * Hai vùng TRÙNG KHÍT (IoU ≥ 0.5) = hai chuỗi đang chỉ vào CÙNG một tem trong cùng khoảnh khắc.
+ *
+ * ⚠️ Đừng nới thành "tâm nằm trong vùng kia": người quét đưa từng tem vào GIỮA MÀN, nên tem thứ hai
+ * có tâm nằm đúng trong vùng của tem thứ nhất ⇒ mã thật thứ hai bị coi là bản đọc sai của mã thứ
+ * nhất và bị xoá (bug 21/08 do chính chỗ này: quét lần lượt 3 mã thì mã 2 KHÔNG BAO GIỜ hiện).
+ * Tem khác thì bề rộng/tỉ lệ khác nên IoU tụt nhanh, còn bản đọc sai của cùng tem thì gần như khít.
+ */
 export function sameSpot(a: Rect, b: Rect): boolean {
-  const inside = (r: Rect, o: Rect) => {
-    const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2
-    return cx >= o.x0 && cx <= o.x1 && cy >= o.y0 && cy <= o.y1
-  }
-  return inside(a, b) || inside(b, a)
+  const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0))
+  const iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0))
+  const inter = ix * iy
+  if (inter <= 0) return false
+  const area = (r: Rect) => Math.max(1, (r.x1 - r.x0) * (r.y1 - r.y0))
+  return inter / (area(a) + area(b) - inter) >= 0.5
 }
 
-/** Hai mã phải được thấy CÁCH NHAU trong khoảng này mới đem so vùng — camera lia sang chỗ khác
- *  thì vùng của lần thấy cũ không còn nói gì về chỗ hiện tại. So THEO CẶP (không so với "bây giờ")
- *  để việc dọn không phụ thuộc mã nào xuất hiện trước. */
-export const MISREAD_WINDOW_MS = 2500
+/** ĐỒNG THỜI = hai chuỗi được thấy cách nhau ≤ 2 khung. Cùng tem đang trong khung thì bản đọc sai
+ *  và mã thật nằm ở các khung liền kề; còn đưa tem KHÁC vào cùng chỗ thì mất ít nhất vài trăm ms. */
+const SIMULTANEOUS_MS = 250
 /** Mã mạnh phải hơn mã yếu ÍT NHẤT 3× số lần thấy mới được gỡ (đo thật: 46× vs 5×, 26× vs 3×). */
 const MISREAD_RATIO = 3
 /** Chỉ bắt đầu dọn khi mã mạnh đã được thấy đủ nhiều (khỏi dọn theo một khung may mắn). */
 const MISREAD_MIN_HITS = 4
-/** Mã yếu ĐANG CÒN THẤY ở khung này thì có thể là mã THẬT vừa vào khung và đang lên — chỉ được gỡ
- *  khi mã mạnh đã vững chắc hẳn (ngưỡng cao hơn nhiều). Không tách 2 mức này thì bản đọc sai TỚI
- *  TRƯỚC (5 lần) sẽ xoá mã thật lúc nó mới có 1 lần — mất mã thật, đúng điều nguy hiểm nhất. */
-const MISREAD_LIVE_MIN_HITS = 12
+/** Gỡ mã ĐANG CÒN THẤY là việc nguy hiểm (có thể là mã thật vừa vào khung) → đòi bằng chứng nặng hơn. */
 const MISREAD_LIVE_RATIO = 6
+/** Dọn muộn: mã yếu phải NGỪNG xuất hiện ít nhất khoảng này mới coi là đã tắt. */
+const STALE_MS = 600
 /** Mã KHÔNG phải tem pallet (mã vạch 1D) chỉ được HIỆN khi thấy đủ số lần này — 1D không có mã
  *  sửa lỗi nên một khung nhiễu cũng ra được số thoả checksum. Đo trên bộ khung mờ: mã thật đạt
  *  3–24 lần, còn bản đọc sai của user chỉ 2–5 lần ⇒ 3 là mốc cắt được rác 1 khung mà không mất
@@ -93,13 +99,24 @@ export function sweepMisreads(map: Map<string, ScanEntry>, now = 0): string[] {
   const cands = [...map].filter(([, e]) => !e.valid && e.box)
   const removed: string[] = []
   for (const [ks, strong] of cands) {
+    if (strong.hits < MISREAD_MIN_HITS) continue
     for (const [kw, weak] of cands) {
       if (kw === ks || !map.has(kw) || !map.has(ks)) continue
-      const live = weak.seenAt === now      // mã yếu vẫn đang thấy ⇒ có thể là mã thật đang lên
-      if (strong.hits < (live ? MISREAD_LIVE_MIN_HITS : MISREAD_MIN_HITS)) continue
-      if (weak.hits * (live ? MISREAD_LIVE_RATIO : MISREAD_RATIO) > strong.hits) continue
-      if (Math.abs((strong.seenAt ?? 0) - (weak.seenAt ?? 0)) > MISREAD_WINDOW_MS) continue
-      if (sameSpot(strong.box!, weak.box!)) { map.delete(kw); removed.push(kw) }
+      if (!sameSpot(strong.box!, weak.box!)) continue
+      const gap = Math.abs((strong.seenAt ?? 0) - (weak.seenAt ?? 0))
+      // (A) ĐỒNG THỜI — hai chuỗi cùng một tem đang trong khung: gỡ chuỗi yếu, kể cả nó đang còn
+      //     thấy (đây là ca bản đọc sai sinh ra lúc tem sắp rời khung — mã thật sẽ KHÔNG có lượt
+      //     nào nữa nên không dọn ở đây thì dòng rác sống tới hết phiên).
+      if (gap <= SIMULTANEOUS_MS && weak.hits * MISREAD_LIVE_RATIO <= strong.hits) {
+        map.delete(kw); removed.push(kw); continue
+      }
+      // (B) DỌN MUỘN — mã yếu đã NGỪNG xuất hiện, mã mạnh thì vẫn đang thấy: bản đọc sai tắt còn
+      //     mã thật thì tiếp tục. Bắt buộc mã yếu đã tắt, nếu không thì mã THẬT thứ hai (người quét
+      //     đưa tem tiếp theo vào GIỮA MÀN, đúng vùng của tem trước) sẽ bị xoá lại mỗi khung.
+      const weakStale = weak.seenAt !== now && now - (weak.seenAt ?? 0) >= STALE_MS
+      if (weakStale && strong.seenAt === now && weak.hits * MISREAD_RATIO <= strong.hits) {
+        map.delete(kw); removed.push(kw)
+      }
     }
   }
   return removed

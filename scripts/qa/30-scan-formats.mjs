@@ -242,6 +242,23 @@ for (const fmt of ZXING_FORMATS) {
   // Ngưỡng HIỆN của mã 1D: 1D không có mã sửa lỗi nên 1 khung nhiễu cũng ra số thoả checksum ⇒
   // phải cần ≥3 lần thấy mới hiện. Hạ về 1–2 là mở lại đúng cửa cho dòng rác đếm sai số lượng.
   check('[24] Mã 1D phải thấy ≥3 lần mới được hiện', mod.MIN_HITS_1D >= 3, `MIN_HITS_1D=${mod.MIN_HITS_1D}`)
+
+  // ⭐⭐ CA HỒI QUY NGHIÊM TRỌNG (user báo 21/08 "mã vạch bắt được cực kỳ kém"): người quét đưa
+  // TỪNG tem vào GIỮA MÀN, nên tem thứ hai nằm ĐÚNG vùng của tem thứ nhất. Bản dọn theo "tâm nằm
+  // trong vùng kia" coi mã thật thứ hai là bản đọc sai của mã thứ nhất → xoá lại MỖI KHUNG nên nó
+  // KHÔNG BAO GIỜ hiện (đo: 3 mã quét lần lượt chỉ ra 2, mã giữa mất sạch).
+  // Chốt luật: chỉ dọn khi vùng TRÙNG KHÍT (IoU) **và** (đồng thời ≤2 khung, hoặc mã yếu đã TẮT
+  // trong khi mã mạnh vẫn đang thấy). Mã đang lên thì không được xoá.
+  const seq = new Map()
+  t = 7_000_000
+  const seqFrame = (text, box) => { mod.registerHit(seq, { text, points: box, now: t }); mod.sweepMisreads(seq, t); t += 120 }
+  for (let i = 0; i < 20; i++) seqFrame('8934567890120', boxA)   // tem 1 giữ trước camera ~2,4s
+  t += 300                                                       // đổi tem, vẫn đặt GIỮA MÀN
+  for (let i = 0; i < 12; i++) seqFrame('5901234123457', boxA)
+  t += 300
+  for (let i = 0; i < 12; i++) seqFrame('4006381333931', boxA)
+  check('[25] Quét LẦN LƯỢT 3 tem ở cùng chỗ giữa màn → hiện đủ 3 (không xoá mã thật)',
+    seq.size === 3, `${seq.size} mã: ${[...seq.entries()].map(([k, e]) => `${k}=${e.hits}×`).join(' , ')}`)
 }
 
 // ── LOẠI MÃ THEO TỪNG KHO (`Warehouse.scan_code_types`, 21/08) ────────────────────────────────
@@ -255,25 +272,25 @@ for (const fmt of ZXING_FORMATS) {
     ? (await readBarcodes(img, { formats: mod.zxingFormatsFor(t), tryHarder: true, tryRotate: true, maxNumberOfSymbols: 8 })).length
     : -1
 
-  check('[25] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
+  check('[26] Kho "Chỉ tem QR": đọc được QR, KHÔNG đọc mã vạch',
     (await read(qrImg, 'QR')) === 1 && (await read(bcImg, 'QR')) === 0)
-  check('[26] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
+  check('[27] Kho "Chỉ mã vạch": đọc được mã vạch, KHÔNG đọc QR',
     (await read(bcImg, 'BARCODE')) === 1 && (await read(qrImg, 'BARCODE')) === 0)
-  check('[27] Kho "Cả hai": đọc được cả hai',
+  check('[28] Kho "Cả hai": đọc được cả hai',
     (await read(qrImg, 'BOTH')) === 1 && (await read(bcImg, 'BOTH')) === 1)
   // Tra cấu hình trượt (kho lạ / chưa nạp danh mục) phải NỚI về cả hai — siết thì người quét đứng
   // trước camera "không ăn" mà không có gì để hiểu vì sao.
-  check('[28] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
+  check('[29] Không truyền cấu hình ⇒ mặc định đọc CẢ HAI (nới, không siết)',
     mod.zxingFormatsFor().length === mod.zxingFormatsFor('BOTH').length
     && mod.nativeFormatsFor().length === mod.nativeFormatsFor('BOTH').length)
 
   // Mọi màn quét PHẢI khai codeTypes — ràng buộc KIỂU (prop bắt buộc) là thứ chặn màn mới lọt,
   // ratchet tĩnh chỉ soi thêm cho chắc.
   const scanner = readFileSync(join(FE, 'src', 'components', 'shared', 'QRScanner.tsx'), 'utf8')
-  check('[29] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
+  check('[30] QRScanner bắt buộc khai codeTypes (thiếu = lỗi biên dịch, không im lặng)',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(scanner) && !/codeTypes\?:/.test(scanner))
   const carton = readFileSync(join(FE, 'src', 'components', 'wms', 'CartonScanSheet.tsx'), 'utf8')
-  check('[30] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
+  check('[31] Màn quét tem THÙNG cũng bắt buộc khai codeTypes',
     /\n\s*codeTypes: ScanCodeTypes\s*\n/.test(carton) && !/codeTypes\?:/.test(carton))
 }
 

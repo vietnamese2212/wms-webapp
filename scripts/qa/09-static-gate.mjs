@@ -396,6 +396,14 @@ const RULES = [
       l => /<Route path=/.test(l) && /element=\{/.test(l)
         && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),
   },
+  // Tập mã camera đọc được khai MỘT CHỖ (utils/scanEngine). Khai literal ở màn quét mới = màn đó
+  // lệch với luồng thật (21/08: cả app từng chỉ khai QR nên mã vạch 1D bị bỏ qua ÂM THẦM).
+  {
+    key: 'scan_formats_declared_outside_engine',
+    label: 'khai formats quét bằng literal ngoài utils/scanEngine.ts — dùng NATIVE_FORMATS/ZXING_FORMATS thay vì chép danh sách',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (line, file) => /formats:\s*\[\s*'/.test(line) && !file.endsWith('scanEngine.ts'), s),
+  },
   // Tablist cuộn ngang + justify-center = TAB ĐẦU KHÔNG BẤM ĐƯỢC trên phone (đo 21/08: Cài đặt WMS
   // 390px, scrollLeft đã 0 mà tab "Kho"/"Loại kho" vẫn ở x âm ⇒ không cuộn tới). Lỗi chỉ hiện khi
   // số tab đủ nhiều nên rất dễ tái sinh lúc thêm tab.

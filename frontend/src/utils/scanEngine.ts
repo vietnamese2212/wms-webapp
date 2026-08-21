@@ -29,12 +29,33 @@ export interface ScanEngine {
 
 const WASM_WIDTH = 2560   // giải ở ~2560px — cân bằng tốc độ/độ xa cho tem nhỏ trên iPhone/desktop
 
+// ─── TẬP MÃ ĐỌC ĐƯỢC — khai MỘT CHỖ cho cả 2 engine + trang quét loạt (user 21/08: "có thời điểm
+// tôi quét barcode, có thời điểm quét QR code"). Trước đó chỉ khai QR nên mã vạch 1D bị BỎ QUA
+// hoàn toàn (không lỗi, không báo gì — camera cứ như không thấy).
+// QR vẫn là mã CHÍNH (tem pallet); 1D là các họ in trên thùng/chứng từ. Không mở DataMatrix/PDF417
+// vì chưa có nhu cầu mà mỗi format thêm đều tốn CPU mỗi khung.
+// Tên format khác nhau giữa 2 engine: BarcodeDetector dùng snake_case, zxing-wasm dùng tên riêng.
+// KHÔNG mở UPC-E: máy đọc trả về bản MỞ RỘNG (`01234565` → `0012345000065`) nên chuỗi quét ra khác
+// hẳn số in trên thùng ⇒ tra cứu không khớp mà người quét không hiểu vì sao. UPC-A thì giữ, chỉ lưu ý
+// nó được trả dưới dạng EAN-13 (thêm một số 0 ở đầu) — đó là chuẩn, không phải lỗi.
+export const NATIVE_FORMATS = [
+  'qr_code', 'code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'itf',
+] as const
+// ⚠️ Tên zxing-wasm là ĐỊNH DANH KHÔNG DẤU GẠCH (`EAN13`, không phải `EAN-13` — chuỗi có gạch là
+// nhãn hiển thị "EAN-13"). Khai sai tên thì format đó âm thầm không được bật.
+export const ZXING_FORMATS = [
+  'QRCode', 'Code128', 'Code39', 'EAN13', 'EAN8', 'UPCA', 'ITF',
+] as const
+
 async function createNative(): Promise<ScanEngine | null> {
   if (!window.BarcodeDetector) return null
   try {
-    const formats = await window.BarcodeDetector.getSupportedFormats()
-    if (!formats.includes('qr_code')) return null
-    const det = new window.BarcodeDetector({ formats: ['qr_code'] })
+    const supported = await window.BarcodeDetector.getSupportedFormats()
+    if (!supported.includes('qr_code')) return null
+    // Chỉ khai những format MÁY NÀY hỗ trợ — khai format lạ thì constructor NÉM, mất luôn engine
+    // native (rơi hết về wasm, chậm và tốn pin) chỉ vì một họ mã vạch không quan trọng.
+    const formats = NATIVE_FORMATS.filter(f => supported.includes(f))
+    const det = new window.BarcodeDetector({ formats: [...formats] })
     return {
       kind: 'native',
       detect: async v => (await det.detect(v)).map(b => ({ text: b.rawValue, points: b.cornerPoints })),
@@ -63,7 +84,7 @@ async function createWasm(): Promise<ScanEngine> {
       if (!ctx) return []
       ctx.drawImage(video, 0, 0, cw, ch)
       const img = ctx.getImageData(0, 0, cw, ch)
-      const results = await readBarcodes(img, { formats: ['QRCode'], maxNumberOfSymbols: 8, tryHarder: true, tryRotate: true })
+      const results = await readBarcodes(img, { formats: [...ZXING_FORMATS], maxNumberOfSymbols: 8, tryHarder: true, tryRotate: true })
       const inv = 1 / scale   // tọa độ về hệ pixel video gốc
       return results.map(r => ({
         text: r.text,

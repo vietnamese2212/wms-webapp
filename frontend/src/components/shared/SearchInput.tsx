@@ -44,7 +44,7 @@ export function SearchInput({ value, onChange, placeholder = 'Tìm…', classNam
           type="button"
           onClick={() => setScanOpen(true)}
           className="shrink-0 h-9 w-9 sm:h-7 sm:w-7 flex items-center justify-center rounded-md border border-slate-200 text-slate-400 hover:text-blue-500 hover:border-blue-300 transition-colors"
-          title="Quét mã QR"
+          title="Quét mã QR / mã vạch"
         >
           <QrCode className="h-4 w-4" />
         </button>

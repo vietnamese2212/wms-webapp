@@ -13,7 +13,9 @@ interface QRScanDialogProps {
 // Khung camera CAO ~62% màn hình (gần bằng sheet quét đơn, thay hộp 4:3 bé max-w-sm cũ khó canh tem)
 // + nút X 36px dễ bấm (X mặc định của DialogContent quá nhỏ → ẩn bằng [&>button]:hidden, X đó là
 // button con trực tiếp duy nhất của DialogContent — các nút khác đều nằm trong div nên không bị ẩn).
-export function QRScanDialog({ open, onClose, onScan, title = 'Quét mã QR' }: QRScanDialogProps) {
+// Nhãn mặc định nói CẢ HAI loại mã (từ 21/08 camera đọc luôn mã vạch 1D) — người quét cần biết là
+// đưa barcode vào cũng được; chỗ nào chỉ nhận tem pallet thì truyền `title` riêng.
+export function QRScanDialog({ open, onClose, onScan, title = 'Quét mã QR / mã vạch' }: QRScanDialogProps) {
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose() }}>
       <DialogContent className="w-[calc(100vw-0.75rem)] max-w-md p-2 gap-2 [&>button]:hidden">

@@ -8,6 +8,9 @@ import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOu
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
 import { isValidTem } from '@/utils/qr'
+// Tập mã đọc được khai MỘT CHỖ ở scanEngine (QR + 1D) — trang này có engine riêng để tinh chỉnh
+// độ phân giải/tryHarder, nhưng ĐỪNG khai lại danh sách format kẻo lệch với luồng thật.
+import { NATIVE_FORMATS, ZXING_FORMATS } from '@/utils/scanEngine'
 
 // ── BarcodeDetector chưa có trong lib.dom của TS — khai báo tối thiểu ──────────
 interface DetectedBarcode {
@@ -158,7 +161,7 @@ export default function MultiScanTest() {
     if (!ctx) return []
     ctx.drawImage(video, 0, 0, cw, ch)
     const img = ctx.getImageData(0, 0, cw, ch)
-    const results = await read(img, { formats: ['QRCode'], maxNumberOfSymbols: 64, tryHarder: tryHarderRef.current, tryRotate: true })
+    const results = await read(img, { formats: [...ZXING_FORMATS], maxNumberOfSymbols: 64, tryHarder: tryHarderRef.current, tryRotate: true })
     // Đưa tọa độ về hệ pixel của video gốc
     const inv = 1 / scale
     return results.map(r => ({
@@ -268,9 +271,10 @@ export default function MultiScanTest() {
       let native = false
       if (window.BarcodeDetector) {
         try {
-          const formats = await window.BarcodeDetector.getSupportedFormats()
-          if (formats.includes('qr_code')) {
-            detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] })
+          const supported = await window.BarcodeDetector.getSupportedFormats()
+          if (supported.includes('qr_code')) {
+            const formats = NATIVE_FORMATS.filter(f => supported.includes(f))
+            detectorRef.current = new window.BarcodeDetector({ formats: [...formats] })
             native = true
           }
         } catch {}

@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { getRetentionDays } from '../../utils/settings'
+import { isUuid } from '../../utils/ids'
 
 // ─── Module XE NÂNG — check list an toàn hàng ngày + đồng hồ giờ vận hành ─────
 // Bảng: forklift_vehicles (danh mục xe) · forklift_checklist_items (hạng mục check
@@ -497,6 +498,10 @@ export async function listLogs(req: Request, res: Response) {
 // GET /wms/forklift-logs/:id — chi tiết 1 bản ghi (dialog xem hạng mục đạt/lỗi)
 export async function getLog(req: Request, res: Response) {
   const { id } = req.params
+  // `forklift_daily_logs.id` là cột UUID → id rác lọt xuống Postgres = 22P02 → **500** (đo 21/08:
+  // chính 3 dòng `invalid input syntax for type uuid: "undefined"` trong error_logs ra từ đây).
+  // Id sai là lỗi ĐẦU VÀO ⇒ 400, đừng để tai mắt production kêu như app sập.
+  if (!isUuid(id)) return fail(res, 'Mã bản ghi không hợp lệ', 400)
   const { data, error } = await supabase.from('forklift_daily_logs')
     .select('id, forklift_id, log_date, status, hour_meter, checklist, issue_count, note, checked_by, photo_path, created_at, updated_at, forklift:forklift_vehicles(id, code, name, warehouse_id)')
     .eq('id', id).maybeSingle()

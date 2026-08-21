@@ -26,7 +26,7 @@ function ok(res: Response, data: unknown) {
 }
 function fail(res: Response, status: number, code: string, message: string) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
 }
 function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = []

@@ -13,6 +13,7 @@ import notifyRouter from './routes/notify'
 import { verifyToken } from './middlewares/auth'
 import { supabase } from './lib/supabase'
 import { recordServerError } from './utils/response'
+import { searchLooksLikeInjection } from './utils/search'
 
 dotenv.config()
 
@@ -84,6 +85,28 @@ app.get('/api/health', async (_req, res) => {
   } catch {
     res.json({ status: 'ok' })
   }
+})
+
+// ── Giá trị tham số trông như SQL-injection → 400 NGAY, đừng để thành 500 ──
+// VÌ SAO (đo 21/08 trên dữ liệu lớn): WAF đứng trước Supabase chặn các chuỗi này Ở TẦNG HẠ TẦNG và
+// trả HTML (không phải JSON) → supabase-js coi là lỗi lạ → controller nuốt thành 500 "Lỗi hệ thống".
+// Bắn `?warehouse_id=' or 1=1--` sinh 500 ở 7 endpoint (Xuất kho, Nhập kho, Vị trí, Sổ đóng gói,
+// Chấm công, TMS, Thông báo). KHÔNG phải lỗ bảo mật (WAF đã chặn, message đã che, PostgREST tham số
+// hoá) nhưng nó (a) báo sai cho user, (b) đổ rác vào `error_logs` làm rule cảnh báo "lỗi BE 24h"
+// kêu oan — tức làm HỎNG chính cái tai mắt.
+// `search` đã có hàng rào riêng trong từng controller; đây là lưới CHUNG cho MỌI tham số ở MỌI
+// endpoint — hiện có lẫn viết sau — thay vì rải guard từng chỗ rồi lại sót.
+app.use('/api', (req, res, next) => {
+  for (const [key, raw] of Object.entries(req.query)) {
+    for (const v of (Array.isArray(raw) ? raw : [raw])) {
+      if (typeof v === 'string' && searchLooksLikeInjection(v)) {
+        const safeKey = key.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40)   // không dội lại ký tự lạ của client
+        return res.status(400).json({ success: false, error: { code: 'BAD_PARAM',
+          message: `Giá trị của tham số "${safeKey}" chứa mẫu ký tự bị hệ thống bảo mật chặn.` } })
+      }
+    }
+  }
+  next()
 })
 
 app.use('/api/auth',       authRouter)

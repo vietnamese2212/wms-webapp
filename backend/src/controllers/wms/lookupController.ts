@@ -7,7 +7,7 @@ import { invalidateWhTypeMetaCache, type WhTypeMeta } from '../../utils/warehous
 
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
 
 // meta = cờ hành vi per-giá-trị (hiện dùng cho warehouse_type — xem utils/warehouseTypeMeta).

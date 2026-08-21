@@ -6,6 +6,7 @@
 //   2. Tham số tra-cứu RỖNG (`?ids=`/`?codes=`) → 0 dòng, KHÔNG dump cả danh mục.
 //   3. Payload < 4MB (trần Vercel 4,5MB — chừa lề an toàn).
 // usage: node scripts/qa/07-params-fuzz.mjs
+import { readFileSync, readdirSync } from 'fs'
 import { BASE, login, api, HAS_DB, restAll } from './lib.mjs'
 
 const MAX_BYTES = 4 * 1024 * 1024
@@ -220,6 +221,58 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
     chk(mono, 'lưới KH VC: STT xe tăng dần theo chiều đọc',
       stts.length ? `${stts[0]} → ${stts[stts.length - 1]} (${stts.length} xe)` : 'không có STT')
   }
+}
+
+// ── 6) ID RÁC trên MỌI route có :param → 4xx sạch, KHÔNG 5xx (bug thật 21/08) ──
+// Gốc: `forklift_daily_logs.id` / `TmsOrder.id` là cột UUID; FE ghép `/${id}` khi state chưa có →
+// gửi nguyên chuỗi "undefined" → Postgres 22P02 → controller nuốt thành **500** (đúng 3 dòng
+// `invalid input syntax for type uuid: "undefined"` nằm trong error_logs). Id sai là lỗi ĐẦU VÀO.
+// Quét TỰ ĐỘNG từ file routes để route :param THÊM SAU cũng bị soi — không chép tay danh sách.
+{
+  const PREFIX = { wms: '/wms', masterdata: '/masterdata', tms: '/tms', hr: '/hr', external: '/external', notify: '/notify' }
+  const RD = new URL('../../backend/src/routes/', import.meta.url)
+  const found = []
+  for (const f of readdirSync(RD)) {
+    const pre = PREFIX[f.replace('.ts', '')]
+    if (!pre || !f.endsWith('.ts')) continue
+    const src = readFileSync(new URL(f, RD), 'utf8')
+    for (const m of src.matchAll(/router\.get\(\s*'([^']*:[A-Za-z_]+[^']*)'/g)) found.push(pre + m[1])
+  }
+  const routes = [...new Set(found)]
+  const offenders = []
+  for (const r of routes) {
+    for (const b of ['undefined', 'null', 'NaN', 'abc-not-uuid']) {
+      const res = await api(r.replace(/:[A-Za-z_]+/g, b))
+      if (res.s >= 500) { offenders.push(`${r} (${b})`); break }
+    }
+  }
+  chk(offenders.length === 0, `id rác trên ${routes.length} route :param → không 5xx`,
+    offenders.length ? offenders.slice(0, 4).join(' | ') : 'tất cả 4xx sạch')
+}
+
+// ── 7) Giá trị tham số kiểu SQL-injection → 400, KHÔNG 5xx (bug thật 21/08) ──
+// Gốc: WAF đứng trước Supabase chặn Ở TẦNG HẠ TẦNG và trả HTML → supabase-js lỗi lạ → 500 "Lỗi hệ
+// thống" ở 7 endpoint. Không phải lỗ bảo mật, nhưng đổ rác vào error_logs làm rule cảnh báo
+// "lỗi BE 24h" kêu OAN — tức tự làm hỏng tai mắt. Lưới chặn = middleware /api trong app.ts.
+{
+  const HOST = [
+    '/wms/outbound', '/wms/inbound-orders', '/wms/inventory', '/wms/alerts', '/wms/packing-runs',
+    '/masterdata/locations', '/masterdata/materials', '/hr/attendance',
+    '/tms/orders?date_from=2026-08-18&date_to=2026-08-18',
+  ]
+  const PAYLOAD = ["' or 1=1--", '1 UNION ALL SELECT 1', "x'; DROP TABLE a", 'a/*c*/b']
+  const bad5xx = [], notBlocked = []
+  for (const h of HOST) {
+    for (const p of PAYLOAD) {
+      const r = await api(`${h}${h.includes('?') ? '&' : '?'}warehouse_id=${encodeURIComponent(p)}`)
+      if (r.s >= 500) bad5xx.push(`${h} <= ${p}`)
+      else if (r.s !== 400) notBlocked.push(`${h} <= ${p} = ${r.s}`)
+    }
+  }
+  chk(bad5xx.length === 0, `giá trị tham số kiểu injection → không 5xx (${HOST.length}x${PAYLOAD.length} lượt)`,
+    bad5xx.length ? bad5xx.slice(0, 3).join(' | ') : 'sạch')
+  chk(notBlocked.length === 0, 'giá trị tham số kiểu injection → chặn bằng 400 BAD_PARAM',
+    notBlocked.length ? notBlocked.slice(0, 3).join(' | ') : `${HOST.length * PAYLOAD.length} lượt đều 400`)
 }
 
 console.log(`\n[PARAMS-FUZZ] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}`)

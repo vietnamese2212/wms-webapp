@@ -11,7 +11,7 @@ import { requireBaseQty } from '../../utils/qtySemantics'
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
-  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status) } })
+  return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
 
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })

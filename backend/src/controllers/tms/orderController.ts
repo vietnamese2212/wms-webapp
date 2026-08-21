@@ -5,7 +5,7 @@ import { ok, fail } from '../../utils/response'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyEntryDecimal, unitCodeOf, type MatUnits } from '../../utils/qtyUnits'
-import { uuidList } from '../../utils/ids'
+import { uuidList, isUuid } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
@@ -783,6 +783,11 @@ export async function bulkUpdateOrderDate(req: Request, res: Response) {
 export async function getPlanVsActual(req: Request, res: Response) {
   try {
     const { orderId } = req.params
+    // TmsOrder.id là cột UUID → id rác (`undefined` do FE ghép chuỗi khi state chưa có, `null`,
+    // `NaN`) lọt xuống Postgres thành 22P02 rồi controller nuốt ra **500**. Chặn ở rìa: 400 sạch.
+    // (Đo 21/08: đúng dạng lỗi `invalid input syntax for type uuid: "undefined"` đã nằm trong
+    // error_logs — client gửi id rỗng thì đó là lỗi ĐẦU VÀO, không phải app sập.)
+    if (!isUuid(orderId)) return fail(res, 400, 'BAD_ID', 'Mã lệnh vận chuyển không hợp lệ')
     if (!(await guardOrderScope(req, res, orderId))) return   // chống IDOR: chỉ đọc lệnh dính kho trong phạm vi
 
     // Plan lines (kế hoạch)

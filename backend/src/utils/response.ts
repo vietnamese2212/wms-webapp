@@ -6,11 +6,38 @@ export const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data })
 
 /**
+ * ĐƯỜNG DẪN của request đang lỗi, để `error_logs` nói được LỖI Ở ĐÂU.
+ *
+ * VÌ SAO CÓ HÀM NÀY (đo 21/08 trên dữ liệu lớn): tai mắt ghi 40 dòng
+ * `canceling statement due to statement timeout` với `url = NULL` — biết app hỏng mà KHÔNG biết
+ * hỏng ở endpoint nào, tức digest dựng được cờ đỏ nhưng không ai lần ra chỗ sửa. Lấy từ `res.req`
+ * (Express gắn sẵn) nên KHÔNG phải đổi signature ở 200+ chỗ gọi `fail`.
+ *
+ * Ghi TEMPLATE route (`GET /api/wms/forklift-logs/:id`) chứ không phải path có id thật: gom nhóm
+ * được theo endpoint, và không lôi giá trị người dùng vào bảng log. Lỗi xảy ra TRƯỚC khi khớp
+ * route (middleware) thì `req.route` rỗng → rơi về path thật (đã bỏ query string).
+ */
+function routeOf(res: Response | undefined): string {
+  const req = res?.req as undefined | {
+    method?: string; baseUrl?: string; originalUrl?: string; route?: { path?: string }
+  }
+  if (!req) return '(no-req)'
+  const tail = req.route?.path ? `${req.baseUrl ?? ''}${req.route.path}` : (req.originalUrl ?? '').split('?')[0]
+  if (!tail) return '(no-route)'
+  return `${req.method ?? '?'} ${tail}`.slice(0, 200)
+}
+
+/**
  * TAI MẮT PRODUCTION (29/07): mọi 5xx đi qua fail/maskServerMessage được ghi vào bảng
  * `error_logs` (fire-and-forget — KHÔNG await, KHÔNG bao giờ làm hỏng response đang trả).
  * Workflow keepalive đọc GET /api/telemetry/digest hằng ngày: đếm BE 24h > 0 → job đỏ → email.
  * Trước đây lỗi chỉ được thấy KHI CÓ NGƯỜI NGỒI KIỂM — giờ app tự khai trong vòng 1 ngày.
  */
+// LUẬT (21/08) — lỗi BE ghi vào `error_logs` BẮT BUỘC kèm CHỖ XẢY RA. Ràng buộc bằng KIỂU (overload
+// dưới) để quên là **lỗi biên dịch**, không phải nhắc nhau bằng văn xuôi: bằng chứng thật là 40 dòng
+// `statement timeout` với `url = NULL` — cờ đỏ dựng lên mà không ai lần ra endpoint nào phải sửa.
+export function recordServerError(source: 'be', message: string, status: number | undefined, code: string | undefined, url: string): void
+export function recordServerError(source: 'fe', message: string, status?: number, code?: string, url?: string, ua?: string): void
 export function recordServerError(source: 'be' | 'fe', message: string, status?: number, code?: string, url?: string, ua?: string) {
   try {
     void supabase.from('error_logs')
@@ -48,10 +75,10 @@ const GENERIC_5XX = 'Lỗi hệ thống, vui lòng thử lại'
  * Postgres. Message của PostgREST hay chứa tên bảng/cột/constraint ⇒ lộ schema nội bộ.
  * Sửa ở helper cục bộ (1 dòng/file) thay vì đổi signature — 200+ chỗ gọi không phải chạm.
  */
-export function maskServerMessage(message: string, status: number): string {
+export function maskServerMessage(message: string, status: number, res?: Response): string {
   if (status < 500) return message
   console.error('[fail]', message)
-  recordServerError('be', message, status)
+  recordServerError('be', message, status, undefined, routeOf(res))
   return GENERIC_5XX
 }
 
@@ -59,7 +86,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
   if (typeof arg2 === 'number') {
     if (arg2 >= 500) {
       if (arg4) console.error('[fail]', arg3 ?? 'ERROR', arg4)
-      recordServerError('be', arg4 ?? String(arg3 ?? 'ERROR'), arg2, typeof arg3 === 'string' ? arg3 : undefined)
+      recordServerError('be', arg4 ?? String(arg3 ?? 'ERROR'), arg2, typeof arg3 === 'string' ? arg3 : undefined, routeOf(res))
       return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: GENERIC_5XX } })
     }
     return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: arg4 ?? '' } })
@@ -67,7 +94,7 @@ export function fail(res: Response, arg2: string | number, arg3?: string | numbe
   const status = typeof arg3 === 'number' ? arg3 : 500
   if (status >= 500) {
     console.error('[fail]', arg2)   // log chi tiết server-side
-    recordServerError('be', arg2, status)
+    recordServerError('be', arg2, status, undefined, routeOf(res))
     return res.status(status).json({ success: false, error: { message: GENERIC_5XX } })
   }
   return res.status(status).json({ success: false, error: { message: arg2 } })

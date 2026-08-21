@@ -316,7 +316,7 @@ export async function runAlertScan(force = false): Promise<void> {
         // BE_ERRORS sẽ nổi cảnh báo ngay vòng quét này.
         console.error(`[alerts] rule ${rule} lỗi (bỏ qua vòng này):`, e)
         recordServerError('be', `[alerts] rule ${rule} lỗi: ${String((e as Error)?.message ?? e)}`,
-          500, 'ALERT_RULE_FAILED')
+          500, 'ALERT_RULE_FAILED', `alertScanner/${rule}`)
       }
     }
     if (!okRules.length) return

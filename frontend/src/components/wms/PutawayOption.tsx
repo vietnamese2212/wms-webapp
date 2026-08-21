@@ -16,6 +16,15 @@ export function putawayBlocked(l: PutawayLocRow): boolean {
   return !!l.putaway?.blocked
 }
 
+/**
+ * "Ô đã ĐẦY chân sàn" — luật MỘT chỗ (trước 21/08 có 2 bản chép tay: picker hàng dư và chính
+ * component này). Đầy ≠ bị chặn: ô đầy thì picker KHÔNG cho chọn, còn ô vi phạm quy tắc cất vẫn
+ * chọn được (kho có thể chỉ cảnh báo). Trọng tài cuối vẫn là RPC khoá dòng ở BE.
+ */
+export function putawayFull(l: Pick<PutawayLocRow, 'max_pallets' | 'used_slots'>): boolean {
+  return (l.max_pallets ?? 0) > 0 && (l.used_slots ?? 0) >= (l.max_pallets ?? 0)
+}
+
 export function PutawayOption({ loc }: { loc: PutawayLocRow }) {
   const used = loc.used_slots ?? 0
   const hint = loc.putaway ?? null

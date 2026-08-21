@@ -114,6 +114,28 @@ export function useLocationsByIds(ids: (string | null | undefined)[], enabled = 
 }
 
 /**
+ * QUÉT TEM VỊ TRÍ → tra ĐÚNG 1 vị trí theo mã (BE `GET /masterdata/locations/resolve`).
+ * KHÔNG dùng `?search=` để tra tem: search là khớp-chứa trên cả tên khu nên một phát quét có thể
+ * ra nhiều dòng, và lấy "dòng đầu" thì tem `..._5_T1` nhận về `..._5_T10` — pallet đi sai ô mà
+ * không ai biết. BE khớp TRỌN mã, nhiều dòng thì báo mơ hồ chứ không đoán.
+ * Không phải hook: người quét bắn từng phát rời rạc, cache theo mã không có ích.
+ */
+export async function resolveLocationByCode(params: {
+  code: string; warehouse_id?: string | null; material_id?: string | null; ncc_id?: string | null; putaway?: 1
+}): Promise<LocationLite> {
+  const { data } = await apiClient.get('/masterdata/locations/resolve', {
+    params: {
+      code: params.code,
+      warehouse_id: params.warehouse_id || undefined,
+      material_id: params.material_id || undefined,
+      ncc_id: params.ncc_id || undefined,
+      putaway: params.putaway,
+    },
+  })
+  return data.data as LocationLite
+}
+
+/**
  * "Ô này đang CHỨA GÌ" — gom theo MÃ cho MỘT vị trí (user yêu cầu 17/08).
  * Chỉ gọi khi người dùng đã CHỌN một vị trí ⇒ 1 request, không phải mỗi lần gõ phím tìm.
  */

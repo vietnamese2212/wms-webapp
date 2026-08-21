@@ -15,6 +15,7 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -422,6 +423,17 @@ export default function StocktakeDashboard() {
             } satisfies ActionItem] : []),
           ]} />
           <FilterSheetButton defs={defs} className="sm:hidden" />
+          {/* Quét tem ô để chọn vị trí cần tổng hợp (cộng dồn — kiểm vài kệ liền nhau) */}
+          <LocationScanButton
+            warehouseId={warehouseId || null}
+            onPicked={loc => {
+              setStocktakeSummary({
+                locationIds: locationIds.includes(loc.id) ? locationIds : [...locationIds, loc.id],
+                page: 1,
+              })
+              setSelectedId(null)
+            }}
+          />
           </div>
           <FilterBar defs={defs} className="hidden sm:flex" />
         </div>

@@ -3,11 +3,12 @@ import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
-import { scopeCategoriesOf, categoriesAllAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { scopeCategoriesOf, categoriesAllAllowed, categoriesAnyAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
+import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
 import { putawayBlock, putawayReason, putawayScore, putawayEnforces, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
@@ -311,6 +312,111 @@ export async function listLocations(req: Request, res: Response) {
     }
 
     ok(res, withUsage)
+  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ─── QUÉT TEM VỊ TRÍ ────────────────────────────────────────────────────────────────────────────
+// GET /masterdata/locations/resolve?code=&warehouse_id=&material_id=&putaway=1
+// Tra ĐÚNG MỘT vị trí theo mã quét từ tem (user chốt 21/08: mọi chỗ chọn vị trí đều quét được).
+//
+// Vì sao KHÔNG dùng lại `?search=` của listLocations: search là `ilike %…%` trên `search_norm`
+// (gồm cả mã khu + TÊN khu) nên một phát quét có thể ra nhiều dòng, và "dòng đầu tiên" thì phụ
+// thuộc thứ tự sắp xếp — quét tem ô `B_TP1_5_T1` mà nhận về `B_TP1_5_T10` là pallet đi sai ô mà
+// không ai biết. Ở đây bắt buộc khớp TRỌN mã: 1 dòng thì nhận, nhiều dòng thì báo mơ hồ.
+//
+// Trả về CÙNG HÌNH DẠNG với một dòng của listLocations (`used_slots` + khối `putaway`) để màn quét
+// hiện y nguyên nhãn "đã đầy / không đưa hàng vào / ★ đang để dở cùng mã" như khi bấm chọn tay —
+// luật một nguồn, FE không tự chấm lại.
+export async function resolveLocation(req: Request, res: Response) {
+  try {
+    const code = normalizeLocScan(req.query.code)
+    if (!code) return fail(res, 400, 'MISSING_CODE', 'Chưa có mã vị trí để tra')
+    if (searchLooksLikeInjection(code)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
+
+    const warehouseId = req.query.warehouse_id ? String(req.query.warehouse_id) : null
+    const scope = scopeWhIds(req)
+    let effective: string[] | null = null
+    if (scope !== null) {
+      effective = warehouseId ? scope.filter(id => id === warehouseId) : scope
+      if (effective.length === 0) {
+        return fail(res, 404, 'LOCATION_NOT_FOUND', `Không tìm thấy vị trí "${code}" trong phạm vi kho của bạn`)
+      }
+    }
+    type LocRow = {
+      id: string; location_code: string; warehouse_id: string | null
+      sub_code: string | null; max_pallets: number | null; categories: string[] | null
+      slot_no_in: boolean | null; is_pick_face: boolean | null; is_active: boolean | null
+    }
+
+    // Khoanh SQL bằng đúng MỘT kho (nếu người gọi khai) rồi CẮT SCOPE TRONG JS trên vài dòng khớp
+    // mã. Cố ý không nhồi cả danh sách kho/loại vào URL: một phát quét chỉ có thể khớp vài dòng,
+    // nên lọc trong JS vừa đúng vừa khỏi dính 2 trần đã biết (id-list-url-limits + cap 1000).
+    const inScope = (rows: LocRow[]) => rows.filter(l =>
+      (!effective || (l.warehouse_id != null && effective.includes(l.warehouse_id)))
+      && categoriesAnyAllowed(req, l.categories))
+    const buildQ = () => {
+      const q = supabase.from('Location').select(LOCATION_LITE_COLS)
+      return warehouseId ? q.eq('warehouse_id', warehouseId) : q
+    }
+    // Vòng 1 — khớp CHÍNH XÁC (ilike không wildcard = bỏ qua hoa/thường, giữ nguyên dấu).
+    // limit 50 (không phải 5): cắt scope làm ở JS nên phải chắc dòng THUỘC scope không bị `limit`
+    // gạt ra trước khi lọc — mã vị trí gần như duy nhất nên 50 là dư sức.
+    const { data: exact, error: e1 } = await buildQ().ilike('location_code', safeSearch(code)).limit(50)
+    if (e1) throw e1
+    let rows = inScope((exact ?? []) as unknown as LocRow[])
+
+    // Vòng 2 — tem in KHÔNG DẤU (máy in nhãn thiếu font tiếng Việt là chuyện thường). So trên cột
+    // chuẩn-hoá bỏ dấu rồi lọc lại trong JS để chỉ nhận đúng MÃ: `search_norm` còn chứa tên khu,
+    // không lọc lại thì quét "TP1" ra cả trăm ô.
+    if (rows.length === 0) {
+      const norm = normalizeSearchTerm(code)
+      const { data: fuzzy, error: e2 } = await buildQ().ilike('search_norm', `%${safeSearch(norm)}%`).limit(200)
+      if (e2) throw e2
+      rows = inScope((fuzzy ?? []) as unknown as LocRow[]).filter(l => normalizeSearchTerm(l.location_code) === norm)
+    }
+
+    if (rows.length === 0) {
+      return fail(res, 404, 'LOCATION_NOT_FOUND',
+        `Không tìm thấy vị trí "${code}"${warehouseId ? ' trong kho này' : ''}`)
+    }
+    // Cùng một mã ở 2 kho (chưa chọn kho) → KHÔNG tự đoán, bắt chọn kho. Đoán sai = pallet nhảy kho.
+    if (rows.length > 1) {
+      return fail(res, 409, 'LOCATION_AMBIGUOUS',
+        `Mã "${code}" đang có ở ${rows.length} kho — chọn kho trước khi quét`)
+    }
+
+    const loc = rows[0]
+    // Ô ngưng sử dụng VẪN trả về (kèm `is_active:false`) để màn quét nói đúng "ô này đã ngưng sử
+    // dụng" thay vì "không tìm thấy" — người quét đứng trước tem thật, báo không-tìm-thấy là bắt họ
+    // quét lại vô ích. Chặn chọn là việc của FE + của các cửa ghi.
+    const matId = req.query.material_id ? String(req.query.material_id) : null
+    const wantPutaway = !!matId || req.query.putaway === '1'
+    const row: Record<string, unknown> = { ...loc, has_same_material: false }
+
+    if (wantPutaway) {
+      const ctx = await loadPutawayContext({
+        warehouseId: loc.warehouse_id,
+        locIds: [loc.id],
+        incoming: { material_id: matId ?? '', ncc_id: req.query.ncc_id ? String(req.query.ncc_id) : null },
+      })
+      const f = ctx.factsOf(loc.id)
+      const l: PutawayLoc = {
+        id: loc.id, sub_code: loc.sub_code, max_pallets: loc.max_pallets,
+        slot_no_in: loc.slot_no_in, is_pick_face: loc.is_pick_face,
+      }
+      const blocked = putawayBlock(l, f, ctx.incoming, ctx.rules)
+      row.used_slots = f.pallets
+      row.has_same_material = f.sameMaterial
+      row.putaway = {
+        blocked,
+        reason: putawayReason(l, f, ctx.incoming, ctx.rules, ctx.abc),
+        enforced: blocked != null && putawayEnforces(ctx.rules, blocked),
+      } satisfies PutawayHint
+    } else {
+      const facts = await loadSlotFactsRaw([loc.id], null, false)
+      row.used_slots = Number(facts?.[0]?.pallets ?? 0)
+    }
+    ok(res, row)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

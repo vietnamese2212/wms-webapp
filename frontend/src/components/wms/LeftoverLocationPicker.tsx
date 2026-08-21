@@ -3,7 +3,8 @@ import { MapPin, Search, Check } from 'lucide-react'
 import { useLocationsReal } from '@/api/hooks'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
-import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { PutawayOption, putawayFull, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import type { PutawayHint } from '@/utils/putaway'
 
 /** Sentinel "giữ chỗ cũ" — BE phân biệt với BỎ TRỐNG (bỏ trống = chưa chọn → 422). */
@@ -64,7 +65,11 @@ export function LeftoverLocationPicker({
     picking && !!warehouseId,
   )
   const pick = (id: string, hint: PutawayHint | null) => { onChange(id); onHintChange?.(hint); setPicking(false) }
+  // Ô quét được KHÔNG nằm trong `locs` (danh sách chỉ 30 dòng khớp từ khoá) ⇒ phải giữ nhãn riêng,
+  // không thì nút hiện "đã chọn" và người quét không biết mình vừa chỉ vào ô nào.
+  const [scanned, setScanned] = useState<{ id: string; location_code: string } | null>(null)
   const chosen = (locs as { id: string; location_code: string }[]).find(l => l.id === value)
+    ?? (scanned && scanned.id === value ? scanned : undefined)
 
   return (
     <div className={`rounded-lg border px-3 py-2.5 ${value ? 'bg-slate-50 border-slate-200' : 'bg-amber-50 border-amber-300'}`}>
@@ -73,6 +78,18 @@ export function LeftoverLocationPicker({
         <MapPin className="h-4 w-4 shrink-0 translate-y-0.5" />
         <span>Còn <strong className="whitespace-nowrap">{qtyLabel(leftoverQty, mat)}</strong> — để ở đâu?</span>
       </p>
+
+      {/* Quét tem ô đặt hàng dư. KHÔNG armWedge: màn quét xuất luôn chờ tem PALLET kế tiếp (người
+          bốc có thể bỏ pallet này đi quét pallet khác) — giành cò súng ở đây là chặn việc chính. */}
+      <div className="mt-2 flex items-center gap-2">
+        <LocationScanButton
+          variant="pill"
+          warehouseId={warehouseId}
+          materialId={materialId}
+          onPicked={loc => { setScanned({ id: loc.id, location_code: loc.location_code }); pick(loc.id, (loc.putaway ?? null) as PutawayHint | null) }}
+        />
+        <span className="text-[10px] text-slate-400">quét tem ô để chọn nhanh</span>
+      </div>
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         {/* Giữ chỗ cũ = không cất đi đâu ⇒ KHÔNG chấm luật cất (chặn ở đây là ngõ cụt) */}
@@ -126,7 +143,7 @@ export function LeftoverLocationPicker({
               // Vị trí đã đầy vẫn HIỆN nhưng chặn chọn — BE (RPC khóa dòng) mới là trọng tài cuối.
               // Ô vi phạm luật cất KHÁC "đầy": vẫn chọn được (kho có thể chỉ cảnh báo), chỉ gắn
               // nhãn — dùng chung `PutawayOption` với 3 picker cất hàng bên Nhập, không vẽ lại.
-              const full = (l.max_pallets ?? 0) > 0 && (l.used_slots ?? 0) >= (l.max_pallets ?? 0)
+              const full = putawayFull(l)
               return (
                 <button
                   key={l.id}

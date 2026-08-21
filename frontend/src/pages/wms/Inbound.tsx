@@ -41,6 +41,7 @@ import { Badge } from '@/components/ui/badge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PutawayOption } from '@/components/wms/PutawayOption'
 import { LocationContents } from '@/components/wms/LocationContents'
 import type { PutawayHint } from '@/utils/putaway'
@@ -808,24 +809,38 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                 <Label className="text-xs">Vị trí nhập <span className="text-red-500">*</span>
                   <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
                 </Label>
-                <SingleSelect
-                  value={locationId}
-                  onChange={setLocationId}
-                  disabled={!subType || !materialId}
-                  searchPlaceholder="Tìm vị trí…"
-                  triggerClassName="h-8 mt-0.5"
-                  serverSearch
-                  onSearchChange={setLocTerm}
-                  selectedLabel={locationId
-                    ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
-                    : undefined}
-                  placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
-                  options={filteredLocs.map(l => ({
-                    value: l.id,
-                    label: l.location_code,
-                    node: <PutawayOption loc={l} />,
-                  }))}
-                />
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <SingleSelect
+                      value={locationId}
+                      onChange={setLocationId}
+                      disabled={!subType || !materialId}
+                      searchPlaceholder="Tìm vị trí…"
+                      triggerClassName="h-8"
+                      serverSearch
+                      onSearchChange={setLocTerm}
+                      selectedLabel={locationId
+                        ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
+                        : undefined}
+                      placeholder={!warehouseId ? 'Chọn kho trước' : !subType ? 'Chọn loại kho trước' : !materialId ? 'Chọn Mã hàng trước' : 'Chọn vị trí'}
+                      options={filteredLocs.map(l => ({
+                        value: l.id,
+                        label: l.location_code,
+                        node: <PutawayOption loc={l} />,
+                      }))}
+                    />
+                  </div>
+                  {/* Quét tem ô thay vì gõ mã (mã vị trí dài: D_TP1_A81_T4). armWedge=false: form
+                      này còn nhiều ô nhập, cò súng chỉ mở khi người dùng bấm nút quét. */}
+                  <LocationScanButton
+                    warehouseId={warehouseId || null}
+                    materialId={materialId || null}
+                    nccId={nccId || null}
+                    disabled={!subType || !materialId}
+                    onPicked={loc => setLocationId(loc.id)}
+                    className="h-8 w-8 sm:h-8 sm:w-8"
+                  />
+                </div>
                 {/* Chọn xong thì thấy NGAY ô đó đang chứa gì (user 17/08) — mã đang nhập được
                     tô xanh + ghim đầu, tức nhìn ra lý do ★ thay vì phải tin dấu sao. */}
                 <LocationContents locationId={locationId} highlightMaterialId={materialId} />

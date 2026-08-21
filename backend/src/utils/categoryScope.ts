@@ -57,6 +57,18 @@ export function categoriesAllAllowed(req: Request, cats: string[] | null | undef
   return cats.every(c => scope.includes(c))
 }
 
+/**
+ * Bản JS của `categoriesOrScopeFilter` — dùng khi đã có DÒNG trong tay và cần cắt ĐỌC theo cùng
+ * luật với list (giao ≥1, null-inclusive). Khác `categoriesAllAllowed` (guard WRITE, đòi ĐỦ mọi
+ * loại): đọc thì thấy như list thấy, không thì cùng một ô lúc bấm chọn thì hiện, lúc quét lại "không
+ * tìm thấy".
+ */
+export function categoriesAnyAllowed(req: Request, cats: string[] | null | undefined): boolean {
+  const scope = scopeCategoriesOf(req)
+  if (scope === null || !cats || cats.length === 0) return true
+  return cats.some(c => scope.includes(c))
+}
+
 /** Điều kiện .or() PostgREST cắt LIST theo scope trên cột MẢNG (null-inclusive, giao ≥1 loại là thấy). */
 export function categoriesOrScopeFilter(col: string, scope: string[]): string {
   return `${col}.is.null,${col}.ov.{${scope.map(c => `"${c}"`).join(',')}}`

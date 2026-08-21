@@ -40,6 +40,7 @@ router.put('/warehouses/:id/type-configs',
 router.get('/locations/sub-groups',  location.listSubGroups)   // ?warehouse_id=xxx
 router.get('/locations',             location.listLocations)    // ?warehouse_id=&sub_code= (thêm ?page= = 1 trang)
 router.get('/locations/summary',     location.listLocationsSummary)   // 4 ô SummaryBand (phải trước /:id)
+router.get('/locations/resolve',     location.resolveLocation)  // quét tem vị trí → 1 dòng (phải trước /:id)
 router.post('/locations',            requirePerm('locations', 'create'), location.createLocation)
 router.post('/locations/upload',     requirePerm('locations', 'import'), upload.single('file'), location.uploadExcel)  // phải trước /:id
 router.patch('/locations/bulk-flag', requirePerm('locations', 'edit'), location.bulkFlagLocations)  // gắn/bỏ cờ cần-kiểm hàng loạt (phải trước /:id)

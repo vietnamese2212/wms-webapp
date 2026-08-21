@@ -14,6 +14,7 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -171,6 +172,14 @@ export default function StocktakeHistory() {
           )}
           <SearchInput value={search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm mã pallet…" className="flex-1 min-w-[130px]" />
           <FilterSheetButton defs={defs} className="sm:hidden" />
+          {/* Quét tem ô để lọc lịch sử kiểm của đúng ô đó (cộng dồn, xem Tồn kho) */}
+          <LocationScanButton
+            warehouseId={warehouseId || null}
+            onPicked={loc => setF({
+              locationIds: locationIds.includes(loc.id) ? locationIds : [...locationIds, loc.id],
+              page: 1,
+            })}
+          />
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
             <SavedViews module="stocktake_history" currentFilters={viewSnapshot} activeId={activeViewId}
               onApply={(fl) => setF(fl as Partial<typeof viewSnapshot>)} />

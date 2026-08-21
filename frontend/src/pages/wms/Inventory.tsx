@@ -31,6 +31,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -382,8 +383,18 @@ function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
         )}
         <div className="space-y-1.5">
           <Label className="text-xs">Vị trí mới</Label>
-          <Input placeholder="Tìm vị trí…" value={search} autoFocus
-            onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+          <div className="flex items-center gap-1.5">
+            <Input placeholder="Tìm vị trí…" value={search} autoFocus
+              onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
+            {/* Quét tem ô đích. Pane này chọn NHIỀU pallet (có thể nhiều mã) nên không truyền
+                materialId — BE vẫn chấm luật của Ô nhờ putaway=1 trong cửa tra. */}
+            <LocationScanButton
+              warehouseId={warehouseId}
+              disabled={isPending}
+              onPicked={loc => { setLocId(loc.id); setPutawayBlock(null); setError('') }}
+              className="h-8 w-8 sm:h-8 sm:w-8"
+            />
+          </div>
           {filtered.length >= 50 && (
             <p className="text-[10px] text-slate-400">Đang hiện 50 vị trí đầu — gõ để tìm tiếp</p>
           )}
@@ -1053,6 +1064,19 @@ export default function Inventory() {
             className="flex-1 min-w-[140px]"
           />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Quét tem ô để LỌC theo vị trí (đứng trước kệ, bắn tem, xem ô đó đang có gì).
+              Cộng dồn vào bộ lọc chứ không thay thế — người ta kiểm 2-3 kệ liền nhau là chuyện
+              thường, còn bỏ chọn thì 1 nhấp. Kho: chỉ khoanh khi bộ lọc đang đúng MỘT kho, còn
+              lại để BE tự tìm trong phạm vi (trùng mã ở 2 kho thì nó báo mơ hồ, không đoán). */}
+          <LocationScanButton
+            warehouseId={f.warehouseIds.length === 1 ? f.warehouseIds[0] : null}
+            onPicked={loc => setInventory({
+              filterLocations: f.filterLocations.includes(loc.location_code)
+                ? f.filterLocations
+                : [...f.filterLocations, loc.location_code],
+              page: 1,
+            })}
+          />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews

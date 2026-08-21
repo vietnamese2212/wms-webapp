@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer } from 'lucide-react'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { LocationPrintArea, LOC_PRINT_CSS, buildLocationLabels, type LocLabelData } from '@/components/wms/locationLabel'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -412,6 +414,31 @@ export default function Locations() {
     try { await doExportExcel(await fetchAllFiltered()) } finally { setExporting(false) }
   }
 
+  // ─── In tem vị trí (điều kiện để quét vị trí dùng được) ────────────────────────────────────────
+  // In theo BỘ LỌC đang áp (không nhồi id vào URL — luật id-list-url-limits). Ảnh QR sinh xong
+  // TRƯỚC khi in nên không có cuộc đua "in ra ô trống".
+  const [labels, setLabels] = useState<LocLabelData[]>([])
+  const [printing, setPrinting] = useState(false)
+  const [printErr, setPrintErr] = useState('')
+  const PRINT_CAP = 500
+  async function printLabels() {
+    setPrinting(true); setPrintErr('')
+    try {
+      const rows = (await fetchAllFiltered()).filter(l => l.is_active !== false)
+      if (!rows.length) { setPrintErr('Không có vị trí nào trong bộ lọc hiện tại'); return }
+      // Cap có BÁO, không cắt âm thầm: 1.500 tem = 188 trang A4 và 1.500 ảnh QR trong DOM.
+      if (rows.length > PRINT_CAP) {
+        setPrintErr(`Bộ lọc đang có ${rows.length} vị trí — in tối đa ${PRINT_CAP} tem/lượt. Hãy lọc theo Khu để in từng khu.`)
+        return
+      }
+      setLabels(await buildLocationLabels(rows))
+      // 1 nhịp cho React commit vùng in rồi mới gọi hộp thoại in
+      setTimeout(() => window.print(), 50)
+    } catch {
+      setPrintErr('Không tải được danh sách vị trí để in')
+    } finally { setPrinting(false) }
+  }
+
   function doExportExcel(rowsToExport: RealLocation[]) {
     // 4 cột Khu/Dãy/Tầng/Kiểu để file xuất ra UPLOAD LẠI được (round-trip, chuẩn upload-download mục E)
     const sheet = rowsToExport.map(l => ({
@@ -451,6 +478,13 @@ export default function Locations() {
           </span>
           <SearchInput value={search} onChange={v => setLocationsFilter({ search: v })} placeholder="Tìm vị trí, kho, loại, hàng/kệ…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+          {/* Quét tem ô → nhảy thẳng tới đúng dòng đó trong danh mục (xem/sửa cấu hình ô, đặt cờ
+              nhặt lẻ/cần kiểm). Đổ vào ô TÌM chứ không mở form: trang này là danh mục, thao tác
+              tiếp theo do người dùng chọn. */}
+          <LocationScanButton
+            warehouseId={locFilter.warehouseId || null}
+            onPicked={loc => setLocationsFilter({ search: loc.location_code })}
+          />
           {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
           <SavedViews module="locations" currentFilters={viewSnapshot} activeId={activeViewId}
@@ -468,6 +502,14 @@ export default function Locations() {
               mobileHidden: true, // export Excel không dùng trên điện thoại (giữ hành vi cũ hidden sm:inline-flex)
               disabled: !totalRows || exporting, busy: exporting,
               onClick: exportExcel,
+            } satisfies ActionItem] : []),
+            // In tem vị trí = quyền RIÊNG (không đi ké export/edit): sinh vật phẩm dán lên kệ,
+            // in sai/thiếu là công nhân quét ra ô khác.
+            ...(can(perms, 'locations', 'print_label') ? [{
+              key: 'print', icon: Printer, label: 'In tem',
+              tip: `In tem QR vị trí theo bộ lọc đang áp (8 tem/A4, tối đa ${PRINT_CAP} tem mỗi lượt)`,
+              disabled: !totalRows || printing, busy: printing,
+              onClick: printLabels,
             } satisfies ActionItem] : []),
             ...(can(perms, 'locations', 'import') ? [{
               key: 'upload', icon: Upload, label: 'Upload', tip: 'Upload Excel tạo vị trí hàng loạt (dựng kho mới)',
@@ -956,6 +998,17 @@ export default function Locations() {
           onUpload={(file, preflight) => uploadLocations.mutateAsync({ file, preflight })}
         />
       )}
+
+      {/* In tem vị trí: lỗi/cảnh báo hiện NGAY trên màn (banner đỏ inline, không chỉ console) */}
+      {printErr && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[120] max-w-[92vw] rounded-lg border border-red-300 bg-red-50 px-3 py-2 shadow-lg">
+          <p className="text-xs text-red-700">{printErr}
+            <button type="button" className="ml-2 text-red-400 hover:text-red-700" onClick={() => setPrintErr('')}>✕</button>
+          </p>
+        </div>
+      )}
+      <style>{LOC_PRINT_CSS}</style>
+      <LocationPrintArea labels={labels} />
     </div>
   )
 }

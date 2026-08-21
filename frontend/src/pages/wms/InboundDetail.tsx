@@ -36,6 +36,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { inboundOrderStatusLabel, formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio }             from '@/utils/audio'
 import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
+import { LocationScanButton }      from '@/components/wms/LocationScanButton'
 import { useDebouncedValue }        from '@/hooks/useDebouncedValue'
 import { PdaGunHint }               from '@/components/shared/PdaGunHint'
 import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
@@ -206,8 +207,10 @@ export default function InboundDetail() {
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
   const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
   const [locError, setLocError] = useState<string | null>(null)
-  const changeLoc = (v: string) => setOrderLocation(
-    { id: order!.id, location_id: v, location_code: (allLocations as LocOpt[]).find(l => l.id === v)?.location_code },
+  // code: truyền vào khi mã vị trí KHÔNG có trong `allLocations` — vd quét tem ô đang ở ngoài 300
+  // dòng server trả về. Thiếu tham số này thì nhãn vị trí sau khi quét bị trống.
+  const changeLoc = (v: string, code?: string) => setOrderLocation(
+    { id: order!.id, location_id: v, location_code: code ?? (allLocations as LocOpt[]).find(l => l.id === v)?.location_code },
     { onSuccess: () => setLocError(null),
       onError: (e) => setLocError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không đổi được vị trí') },
   )
@@ -733,13 +736,21 @@ export default function InboundDetail() {
                     <span className="font-mono font-medium" title={headerLocTitle}>{headerLocText}</span>
                     {headerLocMismatch && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                     {isOpen && canSetLocation && (
-                      <LocPickerPill
-                        trigger={<><Pencil className="h-3 w-3" /> Đổi vị trí</>}
-                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
-                        options={locPickOptions}
-                        onPick={changeLoc}
-                        onSearch={setLocTerm}
-                      />
+                      <>
+                        <LocPickerPill
+                          trigger={<><Pencil className="h-3 w-3" /> Đổi vị trí</>}
+                          triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-sky-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-sky-700"
+                          options={locPickOptions}
+                          onPick={changeLoc}
+                          onSearch={setLocTerm}
+                        />
+                        <LocationScanButton
+                          variant="pill"
+                          warehouseId={order.warehouse_id}
+                          materialId={order.material_id}
+                          onPicked={loc => changeLoc(loc.id, loc.location_code)}
+                        />
+                      </>
                     )}
                     {locHistory.length > 0 && (
                       <button type="button" onClick={() => setShowLocHistory(true)}
@@ -753,13 +764,21 @@ export default function InboundDetail() {
                     <AlertTriangle className="h-3 w-3" />
                     Chưa chọn vị trí
                     {canSetLocation && (
-                      <LocPickerPill
-                        trigger={<><MapPin className="h-3 w-3" /> Chọn vị trí</>}
-                        triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
-                        options={locPickOptions}
-                        onPick={changeLoc}
-                        onSearch={setLocTerm}
-                      />
+                      <>
+                        <LocPickerPill
+                          trigger={<><MapPin className="h-3 w-3" /> Chọn vị trí</>}
+                          triggerClass="h-6 inline-flex items-center gap-1 rounded-md border-0 bg-blue-600 px-2 text-[10px] font-semibold text-white shadow-sm hover:bg-blue-700 ml-1"
+                          options={locPickOptions}
+                          onPick={changeLoc}
+                          onSearch={setLocTerm}
+                        />
+                        <LocationScanButton
+                          variant="pill"
+                          warehouseId={order.warehouse_id}
+                          materialId={order.material_id}
+                          onPicked={loc => changeLoc(loc.id, loc.location_code)}
+                        />
+                      </>
                     )}
                   </span>
                 ) : (

@@ -44,6 +44,21 @@ function countMatches(roots, exts, test, sampleOut) {
 // kho (Bàu Bàng 1.517 = 616KB/lần + BE quét InventoryEntry chunk 300 để tính used_slots).
 // Hợp lệ khi có `limit` (typeahead) hoặc `ids` (tra nhãn giá trị đang chọn).
 // Bỏ qua chính file định nghĩa hook; đọc cả khối tham số nhiều dòng (ngoặc cân bằng).
+// Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
+// Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
+function countLocPickerWithoutScan(sampleOut) {
+  const HOOKS = /\b(useLocationsReal|usePickFaceLocations|useLocationsByFlag|useLocationsFull|useLocationsPaged)\s*\(/
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    if (!HOOKS.test(src)) continue
+    if (src.includes('LocationScanButton')) continue
+    n++
+    if (sampleOut && sampleOut.length < 5) sampleOut.push(f.slice(ROOT.length + 1))
+  }
+  return n
+}
+
 function countCatalogueFullLoad(sampleOut) {
   const HOOKS = ['useLocationsReal', 'useMaterials']
   let n = 0
@@ -424,6 +439,13 @@ const RULES = [
            'đo 15/08: 1 kho 1.517 vị trí = 616KB + hàng chục round-trip MỖI LẦN mở màn; phải `search` + `limit: 50` ' +
            '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
     count: (s) => countCatalogueFullLoad(s),
+  },
+  {
+    key: 'location_picker_without_scan',
+    label: 'màn có ô chọn/lọc VỊ TRÍ mà KHÔNG có nút quét tem vị trí (thiếu `LocationScanButton`) — ' +
+           'user chốt 21/08 "tất cả chức năng liên quan tới chọn vị trí" phải quét được; mã vị trí dài ' +
+           '(D_TP1_A81_T4) nên gõ tay là nguồn sai chỗ. Màn mới dùng hook vị trí thì gắn nút quét luôn',
+    count: (s) => countLocPickerWithoutScan(s),
   },
   {
     key: 'upload_without_preflight',

@@ -23,6 +23,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
@@ -210,13 +211,15 @@ function ScanTab() {
     }
   }
 
-  // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay (chỉ khi ĐÃ chọn kho)
+  // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay (chỉ khi ĐÃ chọn kho).
+  // NHƯỜNG cò khi đã tra được pallet mà chưa chọn ô đích: lúc đó phát bắn kế tiếp là TEM VỊ TRÍ
+  // (LocationScanButton armWedge) — 2 phát bắn xong 1 pallet, không chạm màn hình.
   useWedgeScanner(code => {
     if (move.isPending || searching) return
     if (!gunMode) setGunMode(true)
     setScannerOpen(false)
     handleQRScan(code)
-  }, !!warehouseId)
+  }, !!warehouseId && !(!!entry && !newLocId))
 
   const sameLoc = !!entry && !!newLocId && newLocId === entry.location_id
   const canMove = can(perms, 'inventory', 'move_location')
@@ -367,23 +370,37 @@ function ScanTab() {
               <Label className="text-xs">Vị trí mới <span className="text-red-500">*</span>
                 <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
               </Label>
-              <SingleSelect
-                value={newLocId ?? ''}
-                onChange={v => pickLoc((locs as PutawayLocRow[]).find(x => x.id === v) ?? null, v)}
-                disabled={saving}
-                serverSearch
-                onSearchChange={setTerm}
-                loading={isFetching}
-                selectedLabel={newLocRow?.location_code}
-                searchPlaceholder="Tìm vị trí…"
-                placeholder="Chọn vị trí"
-                triggerClassName="h-8"
-                options={(locs as PutawayLocRow[]).map(l => ({
-                  value: l.id,
-                  label: l.location_code,
-                  node: <PutawayOption loc={l} />,
-                }))}
-              />
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 min-w-0">
+                  <SingleSelect
+                    value={newLocId ?? ''}
+                    onChange={v => pickLoc((locs as PutawayLocRow[]).find(x => x.id === v) ?? null, v)}
+                    disabled={saving}
+                    serverSearch
+                    onSearchChange={setTerm}
+                    loading={isFetching}
+                    selectedLabel={newLocRow?.location_code}
+                    searchPlaceholder="Tìm vị trí…"
+                    placeholder="Chọn vị trí"
+                    triggerClassName="h-8"
+                    options={(locs as PutawayLocRow[]).map(l => ({
+                      value: l.id,
+                      label: l.location_code,
+                      node: <PutawayOption loc={l} />,
+                    }))}
+                  />
+                </div>
+                {/* Quét tem ô đích. armWedge: đã tra được pallet mà chưa chọn ô ⇒ phát súng kế tiếp
+                    CHẮC CHẮN là tem vị trí (cò súng tra pallet đã tự nhường — xem useWedgeScanner
+                    ở trên). Nhờ vậy PDA làm trọn 1 pallet bằng 2 phát bắn, không chạm màn hình. */}
+                <LocationScanButton
+                  warehouseId={entry.warehouse_id ?? warehouseId}
+                  materialId={entry.material_id}
+                  disabled={saving}
+                  armWedge={!newLocId}
+                  onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
+                />
+              </div>
               {/* Chọn xong thì thấy NGAY ô đó đang chứa gì — mã trên pallet tô xanh + ghim đầu (như Nhập) */}
               <LocationContents locationId={newLocId} highlightMaterialId={entry.material_id} />
 

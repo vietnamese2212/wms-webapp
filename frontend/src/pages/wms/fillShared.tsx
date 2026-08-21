@@ -1,6 +1,7 @@
 // Mảnh dùng chung của module Fill hàng (trang danh sách + trang chi tiết lệnh + màn quét):
 // ô chọn người nhận, ô chọn vị trí nhặt lẻ đích, nhãn/màu trạng thái, ô "Date yêu cầu (%Date)".
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { useFillEmployees, usePickFaceLocations, type FillTaskRow } from '@/api/hooks'
 import { computePctDate } from '@/utils/shelfLife'
 import { formatTimestampDate } from '@/utils/formatters'
@@ -49,12 +50,24 @@ export function DestPicker({ warehouseId, materialId, value, onChange, label = '
   return (
     <div>
       <label className="text-[11px] text-slate-500">{label}</label>
-      <SingleSelect
-        value={value}
-        onChange={onChange}
-        options={locs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
-        placeholder="Chọn vị trí nhặt lẻ…"
-      />
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 min-w-0">
+          <SingleSelect
+            value={value}
+            onChange={onChange}
+            options={locs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
+            placeholder="Chọn vị trí nhặt lẻ…"
+          />
+        </div>
+        {/* Đích của Fill BUỘC là ô nhặt lẻ → chặn ngay tại màn quét kèm lý do (BE cũng chặn, nhưng
+            lúc đó người quét đã đi tới ô đó rồi). */}
+        <LocationScanButton
+          warehouseId={warehouseId}
+          materialId={materialId ?? null}
+          validate={loc => loc.is_pick_face ? null : `Ô ${loc.location_code} không phải vị trí nhặt lẻ`}
+          onPicked={loc => onChange(loc.id)}
+        />
+      </div>
     </div>
   )
 }

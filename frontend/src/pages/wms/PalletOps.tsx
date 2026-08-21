@@ -10,6 +10,7 @@ import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
@@ -491,7 +492,16 @@ export default function PalletOps() {
 
                 {/* Vị trí pallet con — lọc theo Loại kho, mặc định = vị trí pallet gốc */}
                 <div className="rounded-lg border border-slate-200 p-3 space-y-2">
-                  <Label className="text-xs font-semibold">Vị trí pallet con</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs font-semibold">Vị trí pallet con</Label>
+                    <LocationScanButton
+                      variant="pill"
+                      className="ml-auto"
+                      warehouseId={opWh || null}
+                      materialId={srcEntry?.material_id ?? null}
+                      onPicked={loc => setSplitLoc(loc.id)}
+                    />
+                  </div>
                   <SingleSelect
                     value={splitLoc || '__src__'}
                     onChange={v => setSplitLoc(v === '__src__' ? (srcEntry?.location_id ?? '') : v)}

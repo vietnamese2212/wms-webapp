@@ -19,6 +19,7 @@ import { qtyEntryText, qtyUnitLabel, qtyLabel } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
@@ -242,6 +243,20 @@ export default function Stocktake() {
                 label: `${l.location_code}${l.requires_stocktake ? ' 🚩' : ''}`,
               })),
             ]}
+          />
+          {/* Quét tem ô để chọn vị trí kiểm. armWedge khi CHƯA chọn vị trí: đúng lúc đó cò súng tra
+              tem pallet còn tắt (enabled = !!locationId) nên phát bắn không bị hai bên cùng ăn —
+              người kiểm đứng trước kệ bắn tem ô là vào việc ngay. */}
+          <LocationScanButton
+            warehouseId={warehouseId}
+            disabled={!warehouseId}
+            armWedge={!locationId}
+            onPicked={loc => {
+              setStocktake({ locationId: loc.id })
+              setResultState({ mode: 'none' })
+              setInputVal('')
+              setScannerOpen(false)
+            }}
           />
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={requiresOnly} onChange={e => {

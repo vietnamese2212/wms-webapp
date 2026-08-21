@@ -16,6 +16,7 @@ import { QrCode, X, MapPin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { apiClient } from '@/api/client'
 import { usePickFaceLocations, type FillTaskRow } from '@/api/hooks'
@@ -233,12 +234,25 @@ export function FillScanOverlay({ warehouseId, orderId, open, onClose, canAssign
                 <label className="text-[10px] text-slate-500 flex items-center gap-1">
                   <MapPin className="h-3 w-3" /> Vị trí đến (đổi được)
                 </label>
-                <SingleSelect
-                  value={destSel}
-                  onChange={setDestSel}
-                  options={destLocs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
-                  placeholder={prev.dest.code ?? 'Chọn vị trí…'}
-                />
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <SingleSelect
+                      value={destSel}
+                      onChange={setDestSel}
+                      options={destLocs.map(l => ({ value: l.id, label: `${l.location_code} (${l.max_pallets} pl)` }))}
+                      placeholder={prev.dest.code ?? 'Chọn vị trí…'}
+                    />
+                  </div>
+                  {/* Fill chỉ hạ vào ô NHẶT LẺ → chặn ngay tại màn quét, đừng để người quét đẩy xe
+                      tới ô đó rồi mới ăn từ chối ở bước Xác nhận hạ. */}
+                  <LocationScanButton
+                    warehouseId={warehouseId}
+                    materialId={prev.task.material_id}
+                    disabled={saving}
+                    validate={loc => loc.is_pick_face ? null : `Ô ${loc.location_code} không phải vị trí nhặt lẻ`}
+                    onPicked={loc => setDestSel(loc.id)}
+                  />
+                </div>
               </div>
               <Button size="sm" variant="outline" className="h-9 text-[11px] shrink-0" onClick={skip} disabled={saving}>
                 Bỏ qua

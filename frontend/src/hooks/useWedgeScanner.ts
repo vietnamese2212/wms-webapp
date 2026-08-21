@@ -29,9 +29,28 @@ function restoreInput(el: HTMLInputElement | HTMLTextAreaElement, value: string)
   if (setter) { setter.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })) }
 }
 
-export function useWedgeScanner(onScan: (code: string) => void, enabled: boolean) {
+// ĐỘC QUYỀN PHÁT BẮN — mỗi lần gọi hook là MỘT listener trên window, nên 2 hook cùng bật thì cùng
+// một phát súng chạy CẢ HAI việc (21/08: màn quét tem VỊ TRÍ sống cạnh cò súng tra tem PALLET —
+// nếu cả hai ăn thì pallet vừa nhảy ô vừa bị tra lại, không ai thấy sai ở đâu).
+// Instance khai `exclusive` (overlay quét tem vị trí đang mở) giành quyền: khi còn ≥1 instance như
+// vậy, các instance thường NUỐT lượt bắn. Khoá nằm ở ĐÂY, không bắt từng màn tự nhớ nhường —
+// luật văn xuôi thì màn thứ 14 sẽ quên.
+let exclusiveCount = 0
+
+export function useWedgeScanner(
+  onScan: (code: string) => void,
+  enabled: boolean,
+  opts?: { exclusive?: boolean },
+) {
   const cb = useRef(onScan)
   cb.current = onScan
+  const exclusive = !!opts?.exclusive
+
+  useEffect(() => {
+    if (!enabled || !exclusive) return
+    exclusiveCount++
+    return () => { exclusiveCount-- }
+  }, [enabled, exclusive])
 
   useEffect(() => {
     if (!enabled) return
@@ -55,8 +74,11 @@ export function useWedgeScanner(onScan: (code: string) => void, enabled: boolean
       const snap = inputSnap
       reset()
       if (code.length < MIN_LEN) return
-      // Nếu chuỗi tem đã lọt vào ô nhập → trả ô về giá trị cũ (kể cả khi chốt qua idle, target = null)
+      // Nếu chuỗi tem đã lọt vào ô nhập → trả ô về giá trị cũ (kể cả khi chốt qua idle, target = null).
+      // Phải làm TRƯỚC cả bước nhường độc quyền: nhường việc xử lý thì vẫn phải dọn ô nhập, không
+      // thì màn nhường lại là màn bị chuỗi tem nằm lại trong ô Số thùng.
       if (snap && (!target || snap.el === target)) restoreInput(snap.el, snap.value)
+      if (!exclusive && exclusiveCount > 0) return         // đang có màn giữ độc quyền → nhường
       const now = Date.now()
       if (code === lastCode && now - lastCodeAt < DEDUPE_MS) return   // double-read → nuốt
       lastCode = code

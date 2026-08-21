@@ -5,6 +5,7 @@ import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
+import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { Button }              from '@/components/ui/button'
 import { Label }               from '@/components/ui/label'
@@ -432,7 +433,23 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           {/* Location picker dialog */}
           {showLocPicker && (
             <div className="border rounded-lg bg-slate-50 p-3 space-y-2">
-              <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-medium text-slate-600">Chọn vị trí{activeLocationId ? ' mới' : ''}:</p>
+                {/* armWedge khi chưa có vị trí: đúng lúc đó cò súng quét TEM PALLET còn tắt
+                    (enabled = !!activeLocationId) nên phát bắn đầu tiên dành cho tem ô — người
+                    cất hàng bắn tem kệ rồi bắn tem pallet, không chạm màn hình lần nào. */}
+                <LocationScanButton
+                  variant="pill"
+                  className="ml-auto"
+                  warehouseId={order.warehouse_id}
+                  materialId={order.material_id}
+                  armWedge={!activeLocationId}
+                  onPicked={loc => {
+                    setActiveLocationId(loc.id); setShowLocPicker(false)
+                    setPutawayBlock(null); setPutawayReason('')
+                  }}
+                />
+              </div>
               {/* Tìm TRÊN SERVER: danh sách chỉ 50 vị trí đầu (trước đây nạp cả kho — Bàu Bàng
                   1.517 vị trí = 616KB mỗi lần mở màn quét, nặng nhất trên PDA/wifi xưởng) */}
               {onLocSearch && (

@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { unlockAudio, playBeep } from '@/utils/audio'
-import { isValidTem, scanKey } from '@/utils/qr'
+import { isValidTem } from '@/utils/qr'
+import { registerHit, type ScanEntry } from '@/utils/scanDedupe'
 // Tập mã đọc được khai MỘT CHỖ ở scanEngine (QR + 1D) — trang này có engine riêng để tinh chỉnh
 // độ phân giải/tryHarder, nhưng ĐỪNG khai lại danh sách format kẻo lệch với luồng thật.
 import { NATIVE_FORMATS, ZXING_FORMATS, ZXING_MIN_LINE_COUNT } from '@/utils/scanEngine'
@@ -37,12 +38,9 @@ type ExtConstraintSet = MediaTrackConstraintSet & { zoom?: number; torch?: boole
 
 // Validate định dạng tem (V1 `_` pallet / V2 `;` thùng) dùng CHUNG với scanner đơn: utils/qr.ts isValidTem.
 
-interface ScannedCode {
-  text: string
-  valid: boolean
-  at: number      // Date.now() lúc bắt được lần đầu
-  hits: number    // số lần nhìn thấy (đếm cả frame trùng)
-}
+// Bản ghi 1 mã trong phiên quét = ScanEntry của utils/scanDedupe (dùng chung để logic gom mã có
+// thể kiểm bằng test thuần, không cần camera).
+type ScannedCode = ScanEntry
 
 interface FrameBox {
   points: { x: number; y: number }[]
@@ -55,6 +53,13 @@ const WASM_WIDTHS = [1280, 1920, 2560, 3840] as const
 // không thể decode nhầm ra đúng cấu trúc 40 ký tự. Mã SAI định dạng phải thấy đủ N lần
 // mới hiện → diệt "bóng ma" (giải rác 1 frame lúc lia/mờ, vd 524959, 4910).
 const INVALID_MIN_HITS = 2
+// Mã 1D KHÔNG có mã sửa lỗi như QR nên khung mờ/moiré cho ra BẢN ĐỌC SAI của chính tem đang nhìn —
+// vẫn thoả checksum nên không loại được bằng checksum (đo thật 21/08 từ lưới của user: `96385074`
+// → `06384074`, `4006381333931` → `0086301333931`, `0012345678905` → `0012344672904`; đều 2–5 lần
+// so với 10–86 lần của mã thật, và đều nằm ĐÚNG ô của mã thật).
+// ⇒ Mã MỚI mà tâm nằm trong vùng của một mã ĐÃ XÁC NHẬN (còn tươi) thì đó là bản đọc sai → BỎ.
+// Chỉ áp cho mã 1D: QR gần như không thể decode nhầm, mà QR to nên vùng dễ trùng nhau hơn.
+const MISREAD_WINDOW_MS = 2500
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
 interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
@@ -184,16 +189,12 @@ export default function MultiScanTest() {
   function processResults(found: { text: string; points: { x: number; y: number }[] }[]): FrameBox[] {
     const boxes: FrameBox[] = []
     let anyNew = false, anyInvalid = false
+    const now = Date.now()
     for (const f of found) {
-      // Đếm theo KHÓA chuẩn hoá, KHÔNG theo chuỗi thô: cùng một tem UPC-A có khung trả 12 số, khung
-      // khác trả 13 số có '0' dẫn đầu ⇒ đếm thô là 1 tem ra 2 dòng (đo 21/08).
-      const key = scanKey(f.text)
-      let entry = codesRef.current.get(key)
-      if (!entry) {
-        entry = { text: f.text, valid: isValidTem(f.text), at: Date.now(), hits: 0 }
-        codesRef.current.set(key, entry)
-      }
-      entry.hits++
+      // Gom mã: khoá chuẩn hoá (1 tem không thành 2 dòng) + gỡ bản ĐỌC SAI cùng ô.
+      // Logic thuần nằm ở utils/scanDedupe (gói QA 30 kiểm bằng chuỗi khung mô phỏng).
+      const { entry, removed } = registerHit(codesRef.current, { text: f.text, points: f.points, now })
+      if (removed.length) setVersion(v => v + 1)   // danh sách vừa bị gỡ dòng → vẽ lại
       const need = entry.valid ? 1 : INVALID_MIN_HITS    // hợp lệ: nhận ngay · sai định dạng: cần 2 lần
       const confirmed = entry.hits >= need
       const justConfirmed = entry.hits === need           // frame vừa chốt

@@ -26,6 +26,15 @@ const ZX = join(FE, 'node_modules', 'zxing-wasm', 'dist', 'es')
 const { writeBarcode } = await import(pathToFileURL(join(ZX, 'writer', 'index.js')).href)
 const { readBarcodes } = await import(pathToFileURL(join(ZX, 'reader', 'index.js')).href)
 
+// Nạp helper TS của app để kiểm logic THUẦN (dedupe/validate) — transpile bằng esbuild trong
+// node_modules của frontend; `import` giữa các file được nối tay theo thứ tự truyền vào.
+const { transformSync } = await import(pathToFileURL(join(FE, 'node_modules', 'esbuild', 'lib', 'main.js')).href)
+async function loadTs(files, exports) {
+  const js = files.map(f => transformSync(readFileSync(join(FE, f), 'utf8'), { loader: 'ts' }).code
+    .replace(/^import[^\n]*\n/gm, '').replace(/^export /gm, '')).join('\n')
+  return new Function(`${js}\nreturn { ${exports.join(', ')} }`)()
+}
+
 console.log('── GÓI TẬP MÃ QUÉT (QR + mã vạch 1D) ──')
 let pass = 0, fail = 0
 const check = (name, ok, note = '') => {
@@ -101,13 +110,7 @@ for (const fmt of ZXING_FORMATS) {
 // ── Mã vạch 1D KHÔNG được nhận là tem pallet (kẻo quét mã hàng trên thùng lại tưởng là pallet) ──
 // isValidTem là nguồn dùng chung FE (khung xanh/đỏ) — đọc luật bằng cách nạp chính file utils/qr.ts.
 {
-  const qrSrc = readFileSync(join(FE, 'src', 'utils', 'qr.ts'), 'utf8')
-  // Nạp isValidTem bằng cách bỏ type annotation (file thuần logic, không import gì)
-  const js = qrSrc
-    .replace(/export /g, '')
-    .replace(/: string \| null \| undefined/g, '').replace(/: string/g, '').replace(/: boolean/g, '')
-    .replace(/\(raw\)/g, '(raw)')
-  const mod = new Function(`${js}; return { isValidTem }`)()
+  const mod = await loadTs(['src/utils/qr.ts'], ['isValidTem'])
   const notTem = ['510000187', 'DO-2026-000123', '8934588123450', '96385074', 'PALLET123']
   const wrong = notTem.filter(s => mod.isValidTem(s))
   check('[8] Mã vạch 1D không bị nhận là tem pallet', wrong.length === 0, wrong.length ? `nhận sai: ${wrong.join(',')}` : '5 mẫu đều bị loại')
@@ -145,10 +148,7 @@ for (const fmt of ZXING_FORMATS) {
   check('[13] Cả 2 đường quét (luồng thật + quét loạt) đều áp ngưỡng đó', users.length === 2, users.join(', '))
 
   // scanKey: nạp từ chính utils/qr.ts (một nguồn) rồi thử các ca thật
-  const qrSrc = readFileSync(join(FE, 'src', 'utils', 'qr.ts'), 'utf8')
-    .replace(/export /g, '')
-    .replace(/: string \| null \| undefined/g, '').replace(/: string/g, '').replace(/: boolean/g, '')
-  const m = new Function(`${qrSrc}; return { scanKey }`)()
+  const m = await loadTs(['src/utils/qr.ts'], ['scanKey'])
   const upcaSame = m.scanKey('036000291452') === m.scanKey('0036000291452')
   check('[14] UPC-A 12 số và EAN-13 13 số của CÙNG tem ra CÙNG khoá', upcaSame,
     `${m.scanKey('036000291452')} vs ${m.scanKey('0036000291452')}`)
@@ -156,6 +156,60 @@ for (const fmt of ZXING_FORMATS) {
   const changed = keep.filter(s => m.scanKey(s) !== s)
   check('[15] Mã 8 số, mã chữ và tem pallet GIỮ NGUYÊN (không gộp oan)', changed.length === 0,
     changed.length ? `bị đổi: ${changed.join(' | ')}` : '4 mẫu giữ nguyên')
+}
+
+// ── BẢN ĐỌC SAI cùng ô phải bị gỡ khỏi danh sách (ca THẬT của user 21/08) ─────────────────────
+// Quét lưới 15 mã vạch, app hiện 18 dòng: 3 dòng dư đều là bản đọc sai của chính mã thật, ở ĐÚNG ô
+// đó, và đều thoả checksum nên checksum không loại được:
+//   96385074 (46×) → 06384074 (5×) · 4006381333931 (26×) → 0086301333931 (3×)
+//   0012345678905 (42×) → 0012344672904 (2×)
+// Kiểm bằng chuỗi khung mô phỏng đúng tỉ lệ đó (logic thuần ở utils/scanDedupe).
+{
+  // Nạp CHÍNH nguồn TS của app (một nguồn sự thật) — transpile bằng esbuild của frontend thay vì
+  // bóc type bằng regex (regex vỡ mỗi lần code đổi, và vỡ kiểu SyntaxError khó lần).
+  const mod = await loadTs(['src/utils/qr.ts', 'src/utils/scanDedupe.ts'], ['registerHit', 'scanKey'])
+
+  // 2 ô cách nhau; mỗi ô: mã thật thấy nhiều lần, bản đọc sai thấy vài lần ở CÙNG vùng
+  const boxA = [{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 300, y: 160 }, { x: 100, y: 160 }]
+  const boxB = [{ x: 700, y: 100 }, { x: 900, y: 100 }, { x: 900, y: 160 }, { x: 700, y: 160 }]
+  const map = new Map()
+  let t = 1_000_000
+  const feed = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map, { text, points, now: (t += 60) }) }
+
+  feed('96385074', boxA, 20)            // mã thật ô A
+  feed('SKU-100294', boxB, 12)          // mã thật ô B
+  feed('06384074', boxA, 5)             // bản đọc sai của ô A
+  feed('96385074', boxA, 26)            // tiếp tục thấy mã thật
+  const keys = [...map.keys()]
+  check('[16] Bản đọc sai cùng ô bị gỡ khỏi danh sách', !keys.includes('06384074'), `còn: ${keys.join(', ')}`)
+  check('[17] Mã thật của cả 2 ô vẫn còn (không dọn oan)',
+    keys.includes('96385074') && keys.includes('SKU-100294'), keys.join(', '))
+
+  // Bản đọc sai xuất hiện TRƯỚC mã thật ⇒ vẫn phải giữ được mã thật (không được chặn theo vị trí)
+  const map2 = new Map()
+  t = 2_000_000
+  const feed2 = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map2, { text, points, now: (t += 60) }) }
+  feed2('06384074', boxA, 5)
+  feed2('96385074', boxA, 30)
+  const k2 = [...map2.keys()]
+  check('[18] Bản đọc sai đến TRƯỚC vẫn không khoá được mã thật', k2.includes('96385074'), k2.join(', '))
+  check('[19] …và chính nó bị gỡ khi mã thật vượt hẳn', !k2.includes('06384074'), k2.join(', '))
+
+  // Hai tem THẬT ở hai ô khác nhau, số lần thấy lệch nhiều → KHÔNG được dọn nhau
+  const map3 = new Map()
+  t = 3_000_000
+  const feed3 = (text, points, times) => { for (let i = 0; i < times; i++) mod.registerHit(map3, { text, points, now: (t += 60) }) }
+  feed3('8934567890120', boxA, 40)
+  feed3('5901234123457', boxB, 4)
+  const k3 = [...map3.keys()]
+  check('[20] Hai tem ở HAI ô khác nhau không dọn nhau dù lệch 10×', k3.length === 2, k3.join(', '))
+
+  // Cùng tem UPC-A trả 2 dạng chuỗi ⇒ chỉ 1 dòng
+  const map4 = new Map()
+  t = 4_000_000
+  mod.registerHit(map4, { text: '036000291452', points: boxA, now: t + 60 })
+  mod.registerHit(map4, { text: '0036000291452', points: boxA, now: t + 120 })
+  check('[21] UPC-A 12 số + EAN-13 13 số của cùng tem = 1 dòng', map4.size === 1, `${map4.size} dòng`)
 }
 
 console.log(`\n[SCAN-FORMATS] ${pass}/${pass + fail} PASS`)

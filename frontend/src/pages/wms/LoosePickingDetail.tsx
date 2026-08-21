@@ -2,9 +2,8 @@ import { useState, useEffect, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import {
-  ArrowLeft, Package, ChevronRight, ChevronDown, QrCode, Scissors, Truck, Search, Bookmark, Info,
-} from 'lucide-react'
+import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -344,7 +343,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                           onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
                           className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
                         >
-                          <QrCode className="h-2.5 w-2.5" /> Quét
+                          <ScanIcon className="h-2.5 w-2.5" /> Quét
                         </button>
                       )}
                     </div>
@@ -568,7 +567,7 @@ export default function LoosePickingDetail() {
     i.material?.no_qr_tracking !== true && itemLooseProgress(i).remaining > 0)
   if (hasLooseRemaining && gdo.status !== 'COMPLETED' && gdo.status !== 'CANCELLED' && can(perms, 'loosepicking', 'scan'))
     actionItems.push({
-      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      key: 'scan-order', icon: ScanIcon, label: 'Quét QR',
       tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện của mã đó',
       primary: true, variant: 'default',
       onClick: () => { unlockAudio(); setShowOrderScan(true) },

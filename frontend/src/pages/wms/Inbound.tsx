@@ -1,6 +1,7 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, QrCode, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
@@ -1328,7 +1329,7 @@ function InboundPane({ order, onClose, canScan }: { order: InboundOrder; onClose
         {canScan && order.status === 'OPEN' && !!order.location_id && (
           <button onClick={() => { unlockAudio(); navigate(`/wms/inbound/${order.id}?scan=1`) }}
             className="w-full rounded-lg bg-blue-600 text-white px-3 py-2 text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5">
-            <QrCode className="h-3.5 w-3.5" /> Quét thêm pallet
+            <ScanIcon className="h-3.5 w-3.5" /> Quét thêm pallet
           </button>
         )}
       </div>
@@ -1896,7 +1897,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
               className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-1 transition-colors"
               title="Thêm pallet"
             >
-              <QrCode className="h-3.5 w-3.5" />
+              <ScanIcon className="h-3.5 w-3.5" />
             </button>
           )}
         </div>

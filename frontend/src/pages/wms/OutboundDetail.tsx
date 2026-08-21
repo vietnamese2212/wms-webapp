@@ -8,10 +8,8 @@ import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate 
 import { isQtyLike } from '@/utils/inventoryMode'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
-import {
-  ArrowLeft, CheckCircle2,
-  AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, QrCode, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen,
-} from 'lucide-react'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { Input }   from '@/components/ui/input'
 import { Label }   from '@/components/ui/label'
@@ -1123,7 +1121,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                           className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
                           title="Quét pallet"
                         >
-                          <QrCode className="h-2.5 w-2.5" /> Quét
+                          <ScanIcon className="h-2.5 w-2.5" /> Quét
                         </button>
                       )
                     })()}
@@ -1614,7 +1612,7 @@ export default function OutboundDetail() {
     i.material?.no_qr_tracking !== true && i.status !== 'COMPLETED' && i.cartons_scanned < i.cartons_ordered)
   if (!!gdo.started_at && gdo.status !== 'PAUSED' && gdo.status !== 'COMPLETED' && hasScannableRemaining && can(perms, 'outbound', 'scan'))
     actionItems.push({
-      key: 'scan-order', icon: QrCode, label: 'Quét QR',
+      key: 'scan-order', icon: ScanIcon, label: 'Quét QR',
       tip: 'Quét tem pallet bất kỳ của đơn — tự nhận mã hàng, hiện ghi chú/điều kiện xuất của mã đó',
       primary: true, variant: 'default',
       onClick: () => { unlockAudio(); setShowOrderScan(true) },

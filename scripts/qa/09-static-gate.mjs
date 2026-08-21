@@ -44,6 +44,24 @@ function countMatches(roots, exts, test, sampleOut) {
 // kho (Bàu Bàng 1.517 = 616KB/lần + BE quét InventoryEntry chunk 300 để tính used_slots).
 // Hợp lệ khi có `limit` (typeahead) hoặc `ids` (tra nhãn giá trị đang chọn).
 // Bỏ qua chính file định nghĩa hook; đọc cả khối tham số nhiều dòng (ngoặc cân bằng).
+// MỘT symbol quét cho toàn app (components/shared/ScanIcon.tsx). Hai kiểu vi phạm:
+//   a) dùng lại lucide `ScanLine`/`ScanBarcode`/`ScanQrCode` (3 tên này KHÔNG có nghĩa nào khác)
+//   b) `QrCode` trên dòng nói về việc QUÉT (`Quét…`, `onScan`) — QrCode chỉ dành cho TEM QR
+function countScanIconDivergence(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    if (f.endsWith(`shared${sep}ScanIcon.tsx`)) continue
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\{\/\*)/.test(line)) return   // ghi chú (kể cả ghi chú JSX) không tính
+      const raw = /\b(ScanLine|ScanBarcode|ScanQrCode)\b/.test(line)
+      const qrAsScan = /\bQrCode\b/.test(line) && /Quét|onScan|handleScan/.test(line)
+      if (raw || qrAsScan) { n++; if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`) }
+    })
+  }
+  return n
+}
+
 // Màn nào ĐỌC danh mục vị trí (bất kể để chọn hay để lọc) thì phải có nút quét tem vị trí.
 // Đếm theo FILE, không theo dòng: 1 file thiếu = 1 vi phạm, đủ để CI chặn mà không nhiễu.
 function countLocPickerWithoutScan(sampleOut) {
@@ -439,6 +457,12 @@ const RULES = [
            'đo 15/08: 1 kho 1.517 vị trí = 616KB + hàng chục round-trip MỖI LẦN mở màn; phải `search` + `limit: 50` ' +
            '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
     count: (s) => countCatalogueFullLoad(s),
+  },
+  {
+    key: 'scan_icon_not_unified',
+    label: 'nút/nhãn HÀNH ĐỘNG QUÉT dùng icon riêng thay vì `ScanIcon` — user chốt 21/08 "mỗi chỗ 1 icon là k đc"; ' +
+           '`QrCode` chỉ còn để nói về TEM QR (trang In tem, cờ không-theo-dõi-QR), `Camera` cho CHỤP ẢNH',
+    count: (s) => countScanIconDivergence(s),
   },
   {
     key: 'location_picker_without_scan',

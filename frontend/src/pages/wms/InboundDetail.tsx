@@ -2,11 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
-import {
-  ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil,
-  MapPin, Package, AlertTriangle, QrCode,
-  Clock, Calendar, User, Bookmark, RotateCcw, History,
-} from 'lucide-react'
+import { ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil, MapPin, Package, AlertTriangle, Clock, Calendar, User, Bookmark, RotateCcw, History } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
@@ -951,7 +948,7 @@ export default function InboundDetail() {
               <TableSkeleton rows={5} cols={7} />
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                <QrCode className="h-10 w-10 opacity-30" />
+                <ScanIcon className="h-10 w-10 opacity-30" />
                 <p className="text-sm">Chưa có pallet nào được quét</p>
                 {isOpen && can(perms, 'inbound', 'scan') && !isNccFull && (
                   isManualEntry ? (

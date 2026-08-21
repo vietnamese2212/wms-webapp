@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { useQueryClient } from '@tanstack/react-query'
-import { QrCode, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { apiClient } from '@/api/client'
@@ -61,7 +62,7 @@ export function PlanScanOverlay({ plan, open, onClose }: {
   return (
     <div className={`fixed inset-0 z-50 bg-black flex flex-col ${open ? '' : 'hidden'}`}>
       <div className="flex items-center gap-2 px-3 py-2 shrink-0">
-        <QrCode className="h-4 w-4 text-sky-400 shrink-0" />
+        <ScanIcon className="h-4 w-4 text-sky-400 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold text-white truncate">Quét thực hiện — {plan.name}</p>
           <p className="text-[10px] text-white/60">Quét tem pallet ĐANG Ở vị trí nguồn của lệnh · phiên này: {count} pallet</p>

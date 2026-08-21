@@ -6,7 +6,8 @@
 // Giờ bấm nút chỉ là giờ THAO TÁC (đối chiếu chéo, không phải giờ SX).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { NotebookPen, ScanLine, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
+import { NotebookPen, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -586,7 +587,7 @@ function RunGroupedTable({ runs, loading, emptyText, h }: {
                     <span className="inline-flex gap-1">
                       {r.status === 'OPEN' && h.canRecord && (
                         <button type="button" title="Quét tem vào trang này" onClick={e => { e.stopPropagation(); h.onScan() }}
-                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanLine className="h-3.5 w-3.5" /></button>
+                          className="px-1.5 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"><ScanIcon className="h-3.5 w-3.5" /></button>
                       )}
                       {r.status === 'OPEN' && h.canOpenRun && (
                         <button type="button" title="Giờ kết thúc — đóng trang + tính tổng sản lượng" onClick={e => { e.stopPropagation(); h.onCloseRun(r) }}
@@ -738,7 +739,7 @@ function RecordSheet({ code, whName, onDone, onRescan, onError }: {
           <Button variant="outline" className="sm:shrink-0" onClick={onDone}>Hủy</Button>
           {/* Quét sai tem → quét lại ngay, không phải đóng form rồi tìm nút quét (camera đang TẮT) */}
           <Button variant="outline" className="gap-1 sm:shrink-0" onClick={onRescan} title="Bỏ tem này, bật camera quét tem khác">
-            <ScanLine className="h-3.5 w-3.5" /> Quét lại
+            <ScanIcon className="h-3.5 w-3.5" /> Quét lại
           </Button>
           <Button variant="outline" className="sm:flex-1 sm:min-w-[7.5rem]" disabled={openMut.isPending || busy || !run}
             title="Pallet chưa xếp xong — lưu trước, đóng sổ sau từ board"
@@ -1561,7 +1562,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           {/* Quét thêm pallet NGAY TỪ DETAIL (user 12/08 tối: "cần nút bấm để quét pallet thêm cho sổ") */}
           {run && run.status === 'OPEN' && h.canRecord && (
             <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onDone(); h.onScan() }}>
-              <ScanLine className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — thêm pallet</span>
+              <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét tem<span className="hidden sm:inline"> — thêm pallet</span>
             </Button>
           )}
           {run && run.status === 'OPEN' && canOpenRun && (
@@ -1628,7 +1629,7 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
               {run.status === 'OPEN' && h.canRecord && (
                 <button type="button" onClick={() => { onDone(); h.onScan() }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 text-[11px] font-medium">
-                  <ScanLine className="h-3.5 w-3.5" /> Quét tem thêm pallet
+                  <ScanIcon className="h-3.5 w-3.5" /> Quét tem thêm pallet
                 </button>
               )}
             </div>

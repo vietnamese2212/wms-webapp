@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { QrCode, Printer, Trash2, AlertTriangle, History, X, Search } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1190,7 +1191,7 @@ export default function PalletLabels() {
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã rồi Enter, hoặc bấm quét →" value={palletQ} onChange={e => setPalletQ(e.target.value)} onKeyDown={onScanEnter} />
                   </div>
                   <ActionCluster className="shrink-0" items={[{
-                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để thêm nhanh vào danh sách in lại', primary: true,
+                    key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để thêm nhanh vào danh sách in lại', primary: true,
                     onClick: () => setScanFor('reprint'),
                   } satisfies ActionItem]} />
                 </div>
@@ -1253,7 +1254,7 @@ export default function PalletLabels() {
                     <Input className="pl-7 h-8 text-sm" placeholder="Gõ mã pallet, hoặc bấm quét →" value={auQr} onChange={e => setAuQr(e.target.value)} />
                   </div>
                   <ActionCluster className="shrink-0" items={[{
-                    key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để truy cứu lịch sử in', primary: true,
+                    key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để truy cứu lịch sử in', primary: true,
                     onClick: () => setScanFor('audit'),
                   } satisfies ActionItem]} />
                 </div>

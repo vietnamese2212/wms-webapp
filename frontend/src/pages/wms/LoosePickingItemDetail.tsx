@@ -3,9 +3,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import {
-  ArrowLeft, QrCode, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info,
-} from 'lucide-react'
+import { ArrowLeft, CheckCircle2, AlertTriangle, Package, Scissors, ChevronDown, ChevronRight, PenSquare, Info } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button }  from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
@@ -249,7 +248,7 @@ function ScanDialog({ item, gdoId, warehouseId, onClose, pdaMode = false, initia
                     để chữ lại là đè mất chữ trên màn nhỏ (user báo 2 lần, 30/07). */}
                 {!checkResult && !checking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
                   </>
@@ -575,7 +574,7 @@ export default function LoosePickingItemDetail() {
         })
     } else if (!isDone) {
       actionItems.push({
-        key: 'scan', icon: QrCode, label: 'Quét pallet', tip: 'Quét QR pallet để chuẩn bị hàng lẻ',
+        key: 'scan', icon: ScanIcon, label: 'Quét pallet', tip: 'Quét QR pallet để chuẩn bị hàng lẻ',
         primary: true, variant: 'default',
         onClick: openScan,
       })
@@ -860,7 +859,7 @@ export default function LoosePickingItemDetail() {
             <Card className="min-w-max">
               {scans.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-12 text-slate-400">
-                  <QrCode className="h-10 w-10 opacity-30" />
+                  <ScanIcon className="h-10 w-10 opacity-30" />
                   <p className="text-sm">Chưa có pallet nào được quét</p>
                   {!isDone && can(perms, 'loosepicking', 'scan') && (
                     isNoQr ? (
@@ -869,7 +868,7 @@ export default function LoosePickingItemDetail() {
                       </Button>
                     ) : (
                       <Button size="sm" variant="outline" onClick={openScan}>
-                        <QrCode className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
+                        <ScanIcon className="h-4 w-4 mr-1" /> Quét pallet đầu tiên
                       </Button>
                     )
                   )}

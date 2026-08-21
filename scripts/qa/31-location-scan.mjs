@@ -20,6 +20,7 @@
 //  [13] nguồn: tem vị trí mã hoá NGUYÊN VĂN location_code (thêm ký tự = cửa tra không khớp trọn mã)
 //  [14] nguồn: khoá độc quyền phát bắn còn trong useWedgeScanner (2 handler ăn 1 phát = sai âm thầm)
 //  [15] nguồn: armWedge không được bật CỐ ĐỊNH (`armWedge` để trần / ={true}) — chặn cò súng của màn
+//  [16] nguồn: MỌI nút quét dùng chung 1 symbol ScanIcon (user: "mỗi chỗ 1 icon là k đc")
 // usage: node scripts/qa/31-location-scan.mjs
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { join, dirname } from 'path'
@@ -159,6 +160,21 @@ try {
   })
   check('[12] mọi màn dùng hook vị trí đều có nút quét', missing.length === 0,
     missing.map(f => f.slice(ROOT.length + 1)).join(', '))
+
+  // MỘT symbol quét cho toàn app (user chốt 21/08 "mỗi chỗ 1 icon là k đc"). Mirror ratchet
+  // `scan_icon_not_unified` — để gói này chạy tay cũng bắt được.
+  const iconDiverge = []
+  for (const f of tsx) {
+    if (f.endsWith('ScanIcon.tsx')) continue
+    readFileSync(f, 'utf8').split(/\r?\n/).forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\{\/\*)/.test(line)) return
+      if (/\b(ScanLine|ScanBarcode|ScanQrCode)\b/.test(line)
+        || (/\bQrCode\b/.test(line) && /Quét|onScan|handleScan/.test(line))) {
+        iconDiverge.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+      }
+    })
+  }
+  check('[16] mọi nút QUÉT dùng chung 1 symbol (ScanIcon)', iconDiverge.length === 0, iconDiverge.slice(0, 5).join(', '))
 
   const label = readFileSync(join(ROOT, 'frontend/src/components/wms/locationLabel.tsx'), 'utf8')
   check('[13] QR tem vị trí mã hoá NGUYÊN VĂN location_code',

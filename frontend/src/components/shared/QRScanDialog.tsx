@@ -1,4 +1,5 @@
-import { QrCode, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { QRScanner } from './QRScanner'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
@@ -25,7 +26,7 @@ export function QRScanDialog({ open, onClose, onScan, title = 'Quét mã QR / m�
       <DialogContent className="w-[calc(100vw-0.75rem)] max-w-md p-2 gap-2 [&>button]:hidden">
         <div className="flex items-center justify-between pl-1">
           <DialogTitle className="text-sm font-semibold flex items-center gap-2">
-            <QrCode className="h-4 w-4" />{title}
+            <ScanIcon className="h-4 w-4" />{title}
           </DialogTitle>
           <button
             type="button"

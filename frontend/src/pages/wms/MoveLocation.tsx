@@ -15,7 +15,8 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, Move, QrCode, UserRound } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, Move, UserRound } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Label } from '@/components/ui/label'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { apiClient } from '@/api/client'
@@ -283,7 +284,7 @@ function ScanTab() {
               onClick={() => setScannerOpen(o => !o)}
               disabled={searching || saving}
             >
-              <QrCode className="h-4 w-4" />
+              <ScanIcon className="h-4 w-4" />
             </Button>
             <PdaGunHint className="h-9 w-9" />
           </div>

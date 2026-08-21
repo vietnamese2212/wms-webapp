@@ -17,7 +17,8 @@
 //    đang mở. Không bao giờ tự đoán "tem này là pallet hay vị trí" theo nội dung.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MapPin, X, ScanLine } from 'lucide-react'
+import { MapPin, X } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { PutawayOption, putawayFull, type PutawayLocRow } from '@/components/wms/PutawayOption'
@@ -118,14 +119,14 @@ export function LocationScanButton({
       type="button" disabled={disabled} onClick={openScan} title={label}
       className={`h-6 inline-flex items-center gap-1 rounded-md border border-sky-300 bg-sky-50 px-2 text-[10px] font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-40 ${className ?? ''}`}
     >
-      <ScanLine className="h-3 w-3" /> Quét
+      <ScanIcon className="h-3 w-3" /> Quét
     </button>
   ) : (
     <button
       type="button" disabled={disabled} onClick={openScan} title={label}
       className={`h-9 sm:h-7 w-9 sm:w-7 shrink-0 inline-flex items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-sky-50 hover:border-sky-400 hover:text-sky-700 disabled:opacity-40 ${className ?? ''}`}
     >
-      <ScanLine className="h-4 w-4" />
+      <ScanIcon className="h-4 w-4" />
     </button>
   )
 

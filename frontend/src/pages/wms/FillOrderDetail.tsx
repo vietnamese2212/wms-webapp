@@ -5,7 +5,8 @@
 // Bulk chạy SONG SONG per-dòng qua route PATCH/DELETE /fill/tasks/:id (chuẩn Promise.all).
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowDownToLine, QrCode, UserPlus, MapPin, X } from 'lucide-react'
+import { ArrowLeft, ArrowDownToLine, UserPlus, MapPin, X } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -182,7 +183,7 @@ export default function FillOrderDetail() {
                 <Button size="sm" className="h-9 sm:h-7 text-[11px]"
                   title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh trong lệnh này"
                   onClick={() => { setScanMounted(true); setScanOpen(true) }}>
-                  <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
+                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
                 </Button>
               )}
               {canCancel && order.status === 'PENDING' && (

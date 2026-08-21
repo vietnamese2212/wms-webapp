@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Layers, Scissors, QrCode, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
+import { Layers, Scissors, Search, X, Plus, Trash2, AlertTriangle, CheckCircle2, History, RotateCcw, Printer } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input } from '@/components/ui/input'
@@ -274,7 +275,7 @@ export default function PalletOps() {
                 {/* Mobile: action + nút Lọc GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
                 <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
                 <ActionCluster className="shrink-0" mobileInline items={[{
-                  key: 'scan', icon: QrCode, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
+                  key: 'scan', icon: ScanIcon, label: 'Quét QR', tip: 'Quét QR mã pallet để tìm trong lịch sử dồn/tách', primary: true,
                   onClick: () => setScanFor('history'),
                 } satisfies ActionItem]} />
                 <FilterSheetButton defs={histDefs} className="sm:hidden" />
@@ -375,7 +376,7 @@ export default function PalletOps() {
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet đích" value={mergeTarget} disabled={!scopeReady} onChange={e => setMergeTarget(e.target.value)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-target', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-target', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet đích (giữ lại làm đại diện)' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('target'),
@@ -392,7 +393,7 @@ export default function PalletOps() {
                         onChange={e => setChildInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addChild(childInput) }} onBlur={() => addChild(childInput)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-child', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-child', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet con — quét liên tiếp để thêm nhiều pallet' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('child'),
@@ -442,7 +443,7 @@ export default function PalletOps() {
                       <Input className="pl-7 h-9 text-sm font-mono" placeholder="Quét/nhập mã pallet gốc" value={splitSrc} disabled={!scopeReady} onChange={e => setSplitSrc(e.target.value)} />
                     </div>
                     <ActionCluster className="shrink-0" items={[{
-                      key: 'scan-source', icon: QrCode, label: 'Quét QR',
+                      key: 'scan-source', icon: ScanIcon, label: 'Quét QR',
                       tip: scopeReady ? 'Quét QR pallet gốc cần tách' : 'Chọn Kho và Loại kho trước mới quét được',
                       primary: true, disabled: !scopeReady,
                       onClick: () => setScanFor('source'),

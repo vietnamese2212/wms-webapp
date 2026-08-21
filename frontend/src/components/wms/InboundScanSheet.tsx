@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { MapPin, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { QRScanner }           from '@/components/shared/QRScanner'
 import type { QRScannerHandle } from '@/components/shared/QRScanner'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
@@ -534,7 +535,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                     mất chữ — màn 360x640 vùng quét chỉ còn ~120px, canh kiểu gì cũng đụng (30/07). */}
                 {!pendingQR && !serverChecking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ = Lưu</p>
                   </>

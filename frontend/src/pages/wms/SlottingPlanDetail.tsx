@@ -4,7 +4,8 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, QrCode, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, ChevronDown, ChevronRight, RotateCcw, Trash2, XCircle, Printer } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SummaryBand, type BandTile } from '@/components/shared/SummaryBand'
@@ -387,7 +388,7 @@ function LineRow({ l, bracketPos = 'only', frees = false, onScan }: {
             <button className="ml-auto shrink-0 text-sky-600 hover:text-sky-800 px-1.5 py-1 rounded !min-h-0 !min-w-0"
               title="Quét thực hiện — quét tem pallet đang ở vị trí nguồn, tự chuyển sang vị trí đích"
               onClick={e => { e.stopPropagation(); onScan() }}>
-              <QrCode className="h-3.5 w-3.5" />
+              <ScanIcon className="h-3.5 w-3.5" />
             </button>
           )}
         </span>

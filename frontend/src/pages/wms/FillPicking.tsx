@@ -10,7 +10,8 @@
 // là thổi tổng (luật BASE UNIT trong CLAUDE.md, cổng tĩnh 09 đang gác nhãn này).
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDownToLine, QrCode, Plus, X, Rows3, AlignJustify, UserPlus, Info, CalendarSearch } from 'lucide-react'
+import { ArrowDownToLine, Plus, X, Rows3, AlignJustify, UserPlus, Info, CalendarSearch } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -206,7 +207,7 @@ export default function FillPicking() {
                 <Button size="sm" className="h-9 sm:h-7 text-[11px]"
                   title="Quét tem pallet đúng MÃ + đúng DATE của dòng lệnh → soi vị trí đến → xác nhận hạ"
                   onClick={() => openScan(undefined)}>
-                  <QrCode className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
+                  <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét thực hiện
                 </Button>
               )}
               <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]"
@@ -681,7 +682,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                   {o.status === 'PENDING' && canExecute && (
                     <Button size="sm" className="h-9 text-[11px] shrink-0"
                       onClick={e => { e.stopPropagation(); onScan(o.id) }}>
-                      <QrCode className="h-3.5 w-3.5 mr-1" /> Quét
+                      <ScanIcon className="h-3.5 w-3.5 mr-1" /> Quét
                     </Button>
                   )}
                 </div>
@@ -756,7 +757,7 @@ function OrdersTab({ warehouseId, dense, canCancel, canExecute, onScan }: {
                         {canExecute && (
                           <button type="button" title="Quét thực hiện trong lệnh này" onClick={() => onScan(o.id)}
                             className="px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100 hover:text-sky-600">
-                            <QrCode className="h-3.5 w-3.5" />
+                            <ScanIcon className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {canCancel && (

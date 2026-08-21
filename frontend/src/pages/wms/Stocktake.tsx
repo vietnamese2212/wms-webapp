@@ -11,7 +11,8 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { MapPin, AlertTriangle, CheckCircle2, Flag, QrCode, Clock, UserRound } from 'lucide-react'
+import { MapPin, AlertTriangle, CheckCircle2, Flag, Clock, UserRound } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { apiClient } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -299,7 +300,7 @@ export default function Stocktake() {
                   onClick={() => setScannerOpen(o => !o)}
                   disabled={searching || saving}
                 >
-                  <QrCode className="h-4 w-4" />
+                  <ScanIcon className="h-4 w-4" />
                 </Button>
                 <PdaGunHint className="h-9 w-9" />
               </div>

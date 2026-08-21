@@ -4,7 +4,8 @@ import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
-import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, QrCode, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
+import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, ShieldX, FileSpreadsheet, X, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
@@ -2926,7 +2927,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                         <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-center whitespace-nowrap">✓ Đã xong</span>
                                       ) : canReceiveNow ? (
                                         <>
-                                          {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (QrCode) */}
+                                          {/* Mã không QR: ô số + Lưu; mã QR: nút Quét chuẩn (ScanIcon) */}
                                           {isNoQr ? (
                                             !imp.posm_entry_id && canScan && (
                                               <div className="flex items-center gap-1">
@@ -2945,7 +2946,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
                                             canScan && (
                                               <Button size="sm" className="h-6 text-[10px] px-1.5 gap-1"
                                                 onClick={() => setScanImportId(imp.id)}>
-                                                <QrCode className="h-3 w-3" /> Quét
+                                                <ScanIcon className="h-3 w-3" /> Quét
                                               </Button>
                                             )
                                           )}

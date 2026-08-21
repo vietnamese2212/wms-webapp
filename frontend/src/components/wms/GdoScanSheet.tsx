@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
-import { AlertTriangle, CheckCircle2, QrCode } from 'lucide-react'
+import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
@@ -351,7 +352,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                     kiểu gì cũng đụng; lúc đã có tem thì việc cần làm là bấm Lưu, không phải đọc lại. */}
                 {!checkResult && !checking && (
                   <>
-                    <QrCode className="h-12 w-12 text-sky-400/70" />
+                    <ScanIcon className="h-12 w-12 text-sky-400/70" />
                     <p className="text-sm font-medium text-slate-200 text-center">Chế độ súng quét — bóp cò để quét tem</p>
                     <p className="text-[11px] text-slate-400 text-center">Camera tắt · bắn lại đúng tem đang chờ xác nhận = Lưu</p>
                   </>

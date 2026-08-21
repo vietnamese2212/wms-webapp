@@ -44,6 +44,12 @@ async function sweep() {
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
   }
   for (const e of await restAll('InventoryEntry', `select=id&pallet_code=like.${TAG}-*`)) await restWrite('InventoryEntry', 'DELETE', `id=eq.${e.id}`)
+  // Phiếu nhập của mục [12] — quét theo `notes` là lưới phòng thủ (lần chạy hỏng giữa chừng không
+  // thu được id thì phiếu OPEN mồ côi, kẹt luôn index "1 lệnh/NCC/ngày" của kho)
+  for (const o of await restAll('ProductionImport', `select=id&notes=like.*${TAG}*`)) {
+    await restWrite('InventoryEntry', 'DELETE', `import_order_id=eq.${o.id}`)
+    await restWrite('ProductionImport', 'DELETE', `id=eq.${o.id}`)
+  }
   for (const l of await restAll('Location', `select=id&location_code=like.${TAG}-*`)) await restWrite('Location', 'DELETE', `id=eq.${l.id}`)
 }
 async function cleanup() {
@@ -362,6 +368,69 @@ try {
     check('[11g] Xoá loại chưa có dữ liệu dùng → cho xoá', rmv.s === 200, `http=${rmv.s} msg=${String(rmv.j?.error?.message ?? '').slice(0, 100)}`)
     const left = await restAll('warehouse_type_configs', `select=id&type_code=eq.${tmpCode}`)
     check('[11h] Xoá loại dọn luôn setting riêng của MỌI kho (0 dòng mồ côi)', left.length === 0, `còn ${left.length} dòng`)
+  }
+
+  // ── [12] CỜ VẬN HÀNH RIÊNG PHẢI ĂN Ở CỬA GHI, không chỉ lưu được ─────────────
+  // Đây là lớp lỗi số 2 của gói này: cấu hình lưu êm nhưng engine vẫn chạy mặc định chung — không
+  // lỗi, không cảnh báo. Kiểm bằng chính cửa QUÉT NHẬP: cùng một pallet không NCC, chỉ đổi cờ của
+  // kho mà kết quả phải đảo (cho qua ↔ 422 NCC_REQUIRED).
+  {
+    const [whRow] = await restAll('Warehouse', `select=nmsx_code&id=eq.${whId}`)
+    const nmsx = whRow?.nmsx_code || 'B'
+    const d = new Date()
+    const ddmmyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getFullYear()).slice(2)}`
+    let seq = 810
+    // Đoạn 4 = 'M9' (KHÔNG phải mã NCC) + cờ is_ncc_goods=false ⇒ chắc chắn pallet không tự có NCC
+    const mkQR = () => `${ddmmyy}_${matA.code}_${TAG.replace(/-/g, '')}_M9_${++seq}_${nmsx}`
+    const setFlags = async patch => {
+      const cur = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+      const items = cur.map(r => r.type_code === catA ? { ...r, ...patch } : { ...r })
+      const w = await api(`/masterdata/warehouses/${whId}/type-configs`, 'PUT', { items })
+      await new Promise(r => setTimeout(r, 1200))   // cache cờ 30s/instance — chờ lượt ghi vào cache mới
+      return w
+    }
+    const mkOrder = async () => {
+      const r = await api('/wms/inbound-orders', 'POST', {
+        warehouse_id: whId, material_id: matA.id, location_id: loc, import_date: vnDate(),
+        source_type: 'FACTORY', warehouse_type: catA, notes: `${TAG} ncc-gate`, qty_semantics: 'base',
+      })
+      return r.j?.data?.order?.id
+    }
+    const scanQR = async (orderId, qr) => api(`/wms/inbound-orders/${orderId}/scan`, 'POST',
+      { qr_code: qr, location_id: loc, qty_semantics: 'base' })
+
+    await setFlags({ is_ncc_goods: false, requires_ncc: false })
+    const o1 = await mkOrder()
+    const s1 = await scanQR(o1, mkQR())
+    check('[12a] Kho khai riêng "không bắt buộc NCC" ⇒ pallet không NCC quét ĐƯỢC',
+      s1.s === 200 || s1.s === 201, `http=${s1.s} err=${s1.j?.error?.code ?? ''}`)
+
+    await setFlags({ is_ncc_goods: false, requires_ncc: true })
+    // Cờ đi qua cache 30s/instance: PUT xoá cache của instance nhận request, nhưng lượt quét có thể
+    // rơi vào instance KHÁC ⇒ thử lại vài lượt (mỗi lượt 1 QR mới) thay vì kết luận ngay.
+    let s2 = await scanQR(o1, mkQR())
+    for (let i = 0; i < 3 && s2.s !== 422; i++) {
+      await new Promise(r => setTimeout(r, 11000))
+      s2 = await scanQR(o1, mkQR())
+    }
+    check('[12b] Đổi cờ của KHO sang "bắt buộc NCC" ⇒ CÙNG pallet đó bị chặn 422 (cờ ĂN THẬT)',
+      s2.s === 422 && s2.j?.error?.code === 'NCC_REQUIRED',
+      `http=${s2.s} code=${s2.j?.error?.code} msg=${String(s2.j?.error?.message ?? '').slice(0, 90)}`)
+
+    // Kho KHÁC không được lây: cùng loại, cờ để trống ⇒ vẫn theo danh mục chung
+    const otherWh = FIX.WH_QTY.id
+    const oc = await api(`/masterdata/warehouses/${otherWh}/type-configs`)
+    const otherRow = (oc.j?.data ?? []).find(r => r.type_code === catA)
+    check('[12c] Kho khác vẫn để trống cờ đó (không lây)', !otherRow || otherRow.requires_ncc == null,
+      JSON.stringify(otherRow && { r: otherRow.requires_ncc }))
+
+    // Trả cờ về "theo danh mục chung" → hành vi quay lại đúng mặc định
+    await setFlags({ is_ncc_goods: null, requires_ncc: null })
+    const s3 = await scanQR(o1, mkQR())
+    const sharedNcc = (await restAll('LookupValue', `select=meta&type=eq.warehouse_type&value=eq.${catA}`))[0]?.meta?.requires_ncc === true
+    check('[12d] Bỏ khai riêng ⇒ chạy lại đúng mặc định chung của loại',
+      sharedNcc ? (s3.s === 422 && s3.j?.error?.code === 'NCC_REQUIRED') : (s3.s === 200 || s3.s === 201),
+      `chung=${sharedNcc} http=${s3.s} code=${s3.j?.error?.code ?? ''}`)
   }
 } catch (e) {
   check('gói chạy trọn', false, String(e?.message ?? e))

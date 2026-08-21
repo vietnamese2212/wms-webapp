@@ -6,7 +6,7 @@ import { fetchAllRowsParallel } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { asRotationPrinciple } from '../../utils/rotation'
 import { applyPutawayBody, applyWhTypeConfigBody, WH_TYPE_CFG_COLS } from '../../utils/putaway'
-import { WH_TYPE_META_COLS } from '../../utils/warehouseTypeMeta'
+import { WH_TYPE_META_COLS, invalidateWhTypeMetaCache } from '../../utils/warehouseTypeMeta'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { scopeCategoriesOf, categoryAllowed } from '../../utils/categoryScope'
 import { warehouseTypeUsage } from '../wms/lookupController'
@@ -408,6 +408,10 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
     // Luồng quét đọc cấu hình qua cache 30s → xoá ngay, không thì lưu form xong lượt quét kế vẫn
     // chạy chiến thuật cũ (cùng lý do với updateWarehouse).
     invalidatePutawayConfig(whId)
+    // 3 cờ VẬN HÀNH đi qua cache RIÊNG (`warehouseTypeMeta._whCache`) — thiếu dòng này thì bật
+    // "bắt buộc NCC" cho kho xong lượt quét kế vẫn cho qua, không lỗi không cảnh báo (QA 29 [12b]
+    // bắt được đúng ca này).
+    invalidateWhTypeMetaCache()
     const { data } = await wtcOrdered(whId)
     ok(res, data ?? [])
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

@@ -4,10 +4,13 @@
 import type { ElementType } from 'react'
 import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
-  Settings2, BarChart2, ClipboardList, UserCog, Scissors, ScanLine,
+  Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
   ArrowDownToLine, BellRing, NotebookPen, Move,
 } from 'lucide-react'
+// Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
+// `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { MODULES, type ModuleKey } from './permissions'
 
 export interface NavItem {
@@ -52,7 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/move-location', icon: Move,           label: 'Chuyển vị trí',     anyActions: [['inventory', 'move_location']] },
       { to: '/wms/slotting',      icon: Boxes,          label: 'Tối ưu vị trí',     module: 'slotting' },
       { to: '/wms/forklift',      icon: Forklift,       label: 'Xe nâng',           module: 'forklift' },
-      { to: '/wms/multi-scan',    icon: ScanLine,       label: 'Quét loạt (test)',  adminOnly: true },
+      { to: '/wms/multi-scan',    icon: ScanIcon,       label: 'Quét loạt (test)',  adminOnly: true },
     ],
   },
   {
@@ -76,7 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Báo cáo',
     items: [
       { to: '/wms/inventory',         icon: Package,   label: 'Tồn kho',      module: 'inventory' },
-      { to: '/wms/outbound/scan-log', icon: ScanLine,  label: 'Lịch sử quét', module: 'scanlog' },
+      { to: '/wms/outbound/scan-log', icon: ScanIcon,  label: 'Lịch sử quét', module: 'scanlog' },
       { to: '/tms/reports',           icon: BarChart2, label: 'Báo cáo nhập', module: 'tms_plan' },
       { to: '/external/do-sap',       icon: Database,  label: 'Dữ liệu bên ngoài', modules: ['external_do_sap', 'external_khvc'], anyActions: [['outbound', 'reconcile']] },
     ],

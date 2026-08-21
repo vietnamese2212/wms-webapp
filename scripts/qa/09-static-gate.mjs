@@ -49,7 +49,7 @@ function countMatches(roots, exts, test, sampleOut) {
 //   b) `QrCode` trên dòng nói về việc QUÉT (`Quét…`, `onScan`) — QrCode chỉ dành cho TEM QR
 function countScanIconDivergence(sampleOut) {
   let n = 0
-  for (const f of filesOf('frontend/src', ['.tsx'])) {
+  for (const f of filesOf('frontend/src', ['.ts', '.tsx'])) {
     if (f.endsWith(`shared${sep}ScanIcon.tsx`)) continue
     const lines = readFileSync(f, 'utf8').split(/\r?\n/)
     lines.forEach((line, i) => {

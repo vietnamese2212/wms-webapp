@@ -150,7 +150,7 @@ try {
   const walk = (d) => { for (const n of readdirSync(d)) {
     const p = join(d, n)
     if (statSync(p).isDirectory()) walk(p)
-    else if (p.endsWith('.tsx')) tsx.push(p)
+    else if (p.endsWith('.tsx') || p.endsWith('.ts')) tsx.push(p)
   } }
   walk(join(ROOT, 'frontend/src'))
   const LOC_HOOKS = /\b(useLocationsReal|usePickFaceLocations|useLocationsByFlag|useLocationsFull|useLocationsPaged)\s*\(/

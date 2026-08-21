@@ -261,4 +261,20 @@ for (const [table, label] of [
       : 'RPC secdef_public_grants chưa apply (migration 20260815j)')
 }
 
+// 14. KHÔNG HÀM NÀO ĐƯỢC SO `warehouse_id` (text) VỚI UUID (chốt 21/08).
+//     Gốc: `Warehouse.id` là text và 21 bảng trỏ FK vào nó, nhưng `InventoryEntry.warehouse_id` +
+//     `PalletOperation.warehouse_id` từng khai **uuid** (migration 20260821h dọn). Lớp lỗi này
+//     KHÔNG nổ lúc biên dịch — chỉ 42883 `operator does not exist: text = uuid` LÚC CHẠY, và chính
+//     nó vừa làm đỏ `GET /wms/inventory/facets` + gói RACE khi dọn kiểu: quét tay bằng grep chỉ tìm
+//     token `::uuid` cùng dòng nên BỎ SÓT hàm khai THAM SỐ kiểu uuid (`p_wh uuid`).
+//     Nay máy soi 2 chiều: dòng có cả warehouse_id lẫn uuid, VÀ tham số tên kho khai uuid.
+{
+  const rows = await restRpc('warehouse_id_uuid_mismatch')
+  check('Không hàm nào so warehouse_id (text) với uuid — lỗi này chỉ nổ LÚC CHẠY',
+    Array.isArray(rows) && rows.length === 0,
+    Array.isArray(rows)
+      ? (rows.length ? `LỆCH: ${rows.slice(0, 5).map(r => `${r.fn} (${r.why})`).join(' · ')}` : 'quét toàn schema public')
+      : 'RPC warehouse_id_uuid_mismatch chưa apply (migration 20260821j)')
+}
+
 finish('INVARIANT')

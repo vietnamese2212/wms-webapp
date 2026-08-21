@@ -7,7 +7,7 @@
 //   3. Payload < 4MB (trần Vercel 4,5MB — chừa lề an toàn).
 // usage: node scripts/qa/07-params-fuzz.mjs
 import { readFileSync, readdirSync } from 'fs'
-import { BASE, login, api, HAS_DB, restAll } from './lib.mjs'
+import { BASE, login, api, HAS_DB, restAll, FIX } from './lib.mjs'
 
 const MAX_BYTES = 4 * 1024 * 1024
 let pass = 0, fail = 0
@@ -273,6 +273,31 @@ const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-$
     bad5xx.length ? bad5xx.slice(0, 3).join(' | ') : 'sạch')
   chk(notBlocked.length === 0, 'giá trị tham số kiểu injection → chặn bằng 400 BAD_PARAM',
     notBlocked.length ? notBlocked.slice(0, 3).join(' | ') : `${HOST.length * PAYLOAD.length} lượt đều 400`)
+}
+
+// ── 8) Ô TỔNG TỒN KHO: phần TÁCH ĐƠN VỊ phải cộng lại ĐÚNG BẰNG tổng (21/08) ──
+// Ô "SL (quy đổi)" gộp nhiều đơn vị vật lý (đo Bàu Bàng 132.762.662 mà 131,2 triệu là EA) nên từ
+// 21/08 tile hiện thêm dòng "gồm những gì". Nếu phần tách LỆCH tổng thì user thấy 2 con số đá nhau
+// ngay trên CÙNG một ô — tệ hơn cả lúc chưa tách. Kiểm CẢ 2 chế độ xem: chi tiết pallet dùng RPC
+// inventory_band_totals, tổng hợp dùng inventory_summary_page — 2 RPC khác nhau, sửa 1 bên là lệch.
+{
+  const WH = [null, FIX.WH_QR.id]
+  for (const wh of WH) {
+    for (const [mode, path] of [
+      ['chi tiết',  `/wms/inventory?limit=1${wh ? '&warehouse_ids=' + wh : ''}`],
+      ['tổng hợp',  `/wms/inventory/summary?limit=1${wh ? '&warehouse_ids=' + wh : ''}`],
+    ]) {
+      const r = await api(path)
+      const d = r.j?.data ?? {}
+      const tot = Number(d.total_cartons_remaining ?? 0)
+      const bu = Array.isArray(d.by_unit) ? d.by_unit : null
+      if (bu === null) { chk(false, `by_unit của ô tổng — ${mode}${wh ? ' (1 kho)' : ' (toàn scope)'}`, 'API KHÔNG trả khoá by_unit (migration 20260821g/i chưa apply?)'); continue }
+      const sum = bu.reduce((a, u) => a + Number(u.qty), 0)
+      // sai số làm tròn: numeric chia per-mã rồi cộng — nới 0,05 trên tổng cỡ trăm triệu
+      chk(Math.abs(sum - tot) <= 0.05, `by_unit của ô tổng cộng lại = tổng — ${mode}${wh ? ' (1 kho)' : ' (toàn scope)'}`,
+        `tổng ${tot.toLocaleString('vi-VN')} vs Σ ${sum.toLocaleString('vi-VN')} · ${bu.length} đơn vị`)
+    }
+  }
 }
 
 console.log(`\n[PARAMS-FUZZ] ${pass}/${pass + fail} PASS${fail ? ` · ${fail} FAIL` : ''}`)

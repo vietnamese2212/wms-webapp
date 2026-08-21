@@ -632,14 +632,20 @@ export async function listInventory(req: Request, res: Response) {
   // Lỗi band KHÔNG chặn list (rows vẫn hiện), chỉ để tổng = 0 và log.
   let total_cartons_remaining = 0
   let total_pallets_in_stock = 0
+  // Tách ô tổng theo ĐƠN VỊ (21/08) — RPC cũ chưa trả khoá này thì [] và FE tự ẩn dòng phụ.
+  let by_unit: { unit: string; qty: number }[] = []
   if (bandRes.error) console.error('[inventory] tính 2 ô band lỗi:', bandRes.error.message)
   else {
-    const b = (bandRes.data ?? {}) as { total_cartons_remaining?: number; total_pallets_in_stock?: number }
+    const b = (bandRes.data ?? {}) as {
+      total_cartons_remaining?: number; total_pallets_in_stock?: number
+      by_unit?: { unit: string; qty: number }[]
+    }
     total_cartons_remaining = Number(b.total_cartons_remaining) || 0
     total_pallets_in_stock  = Number(b.total_pallets_in_stock)  || 0
+    by_unit = Array.isArray(b.by_unit) ? b.by_unit : []
   }
 
-  return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock })
+  return ok(res, { entries: data ?? [], total: count ?? 0, page: r.pageNum, limit: r.limitNum, total_cartons_remaining, total_pallets_in_stock, by_unit })
 }
 
 // View tổng hợp: gom tồn kho theo (Kho × Mã hàng × Ngày SX) — KHÔNG chi tiết tới pallet.
@@ -694,7 +700,10 @@ export async function summaryInventory(req: Request, res: Response) {
     cartons_imported: number; cartons_remaining: number; cartons_exported: number
     pallet_count: number; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
   }
-  const out = (data ?? {}) as { total?: number; total_cartons_remaining?: number; groups?: RpcGroup[] }
+  const out = (data ?? {}) as {
+    total?: number; total_cartons_remaining?: number; groups?: RpcGroup[]
+    by_unit?: { unit: string; qty: number }[]
+  }
   const now = Date.now()
   // %Date tính bằng hàm TẬP TRUNG `computePctDate` cho ĐÚNG các nhóm của trang — cố tình KHÔNG
   // viết lại công thức trong SQL (shelf-life có ngoại lệ theo NCC; tách 2 nơi là lệch số).
@@ -722,6 +731,8 @@ export async function summaryInventory(req: Request, res: Response) {
     total: out.total ?? 0,
     // BASE UNIT: tổng cross-mã = thùng quy đổi per-mã rồi mới cộng (SQL dùng chung qty_entry_decimal)
     total_cartons_remaining: Number(out.total_cartons_remaining) || 0,
+    // Tách ô tổng theo ĐƠN VỊ (21/08) — RPC cũ chưa trả thì [] và FE tự ẩn dòng phụ.
+    by_unit: Array.isArray(out.by_unit) ? out.by_unit : [],
     page: r.pageNum, limit: r.limitNum,
   })
 }

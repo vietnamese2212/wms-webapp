@@ -11,7 +11,12 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      'inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground',
+      // justify-START, KHÔNG center: các trang nhiều tab đặt `max-w-full overflow-x-auto` (Cài đặt
+      // WMS 8 tab, Cài đặt TMS, Xe nâng). Với `justify-center`, khi nội dung rộng hơn khung thì
+      // phần tràn ở ĐẦU nằm NGOÀI vùng cuộn — scrollLeft đã là 0 mà 2 tab đầu vẫn ở x âm ⇒ trên
+      // điện thoại 390 KHÔNG CÁCH NÀO bấm được tab "Kho" và "Loại kho" (đo thật 21/08).
+      // Tablist là inline-flex (co theo nội dung) nên khi không tràn, đổi justify không thay đổi gì.
+      'inline-flex h-10 items-center justify-start rounded-md bg-muted p-1 text-muted-foreground',
       className
     )}
     {...props}

@@ -396,6 +396,15 @@ const RULES = [
       l => /<Route path=/.test(l) && /element=\{/.test(l)
         && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),
   },
+  // Tablist cuộn ngang + justify-center = TAB ĐẦU KHÔNG BẤM ĐƯỢC trên phone (đo 21/08: Cài đặt WMS
+  // 390px, scrollLeft đã 0 mà tab "Kho"/"Loại kho" vẫn ở x âm ⇒ không cuộn tới). Lỗi chỉ hiện khi
+  // số tab đủ nhiều nên rất dễ tái sinh lúc thêm tab.
+  {
+    key: 'tablist_center_blocks_scroll',
+    label: 'TabsList căn giữa (justify-center) — tablist tràn thì tab ĐẦU nằm ngoài vùng cuộn, phone không bấm được (dùng justify-start)',
+    count: (s) => countMatches(['frontend/src/components/ui/tabs.tsx'], ['.tsx'],
+      l => /justify-center/.test(l) && /inline-flex h-10/.test(l), s),
+  },
   {
     key: 'component_defined_inside_component',
     label: 'component con có Ô NHẬP khai trong body component cha — remount mỗi lần state đổi, ô mất focus sau 1 ký tự (đưa ra module-level)',

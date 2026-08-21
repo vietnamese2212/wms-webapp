@@ -154,7 +154,9 @@ try {
   } }
   walk(join(ROOT, 'frontend/src'))
   const LOC_HOOKS = /\b(useLocationsReal|usePickFaceLocations|useLocationsByFlag|useLocationsFull|useLocationsPaged)\s*\(/
-  const missing = tsx.filter(f => {
+  // Chỉ soi MÀN (.tsx). `api/hooks.ts` là chỗ ĐỊNH NGHĨA hook, không phải màn — đòi nút quét ở đó
+  // là báo oan (chính nó vừa làm gói này đỏ khi mở rộng tầm quét sang .ts cho luật icon).
+  const missing = tsx.filter(f => f.endsWith('.tsx') && !f.endsWith('ScanIcon.tsx')).filter(f => {
     const s = readFileSync(f, 'utf8')
     return LOC_HOOKS.test(s) && !s.includes('LocationScanButton')
   })

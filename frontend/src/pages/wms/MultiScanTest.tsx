@@ -1,8 +1,8 @@
 // Trang TEST quét NHIỀU QR trong 1 phiên camera (kiểu Scandit MatrixScan).
 // Độc lập hoàn toàn: không gọi API, không ghi DB — chỉ để đo tốc độ/độ ổn định
 // trên thiết bị thật trước khi tích hợp vào luồng Xuất hàng.
-// Engine: BarcodeDetector native (Android Chrome — nhanh, đa mã) → fallback
-// zxing-wasm (iPhone/desktop — cũng đa mã, chạy WASM bundle nội bộ).
+// Engine: MẶC ĐỊNH zxing-wasm (bắt được nhiều mã 1D nhất trong 1 khung — xem ghi chú EN_CHOICE
+// trong start()); BarcodeDetector native chỉ còn là lựa chọn để so sánh.
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Flashlight, FlashlightOff, Pause, Play, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -60,7 +60,7 @@ const INVALID_MIN_HITS = MIN_HITS_1D
 const WEAK_HITS = 6
 
 // ── Setup người dùng (nhớ giữa các lần quét) ──────────────────────────────────
-interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean }
+interface ScanSettings { wasmWidth?: number; lens?: 'wide' | 'ultra'; zoom?: number; tryHarder?: boolean; engine?: EngineKind }
 const SETTINGS_KEY = 'multi_scan_settings_v1'
 function loadSettings(): ScanSettings {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') || {} } catch { return {} }
@@ -281,7 +281,7 @@ export default function MultiScanTest() {
     setError(null)
     unlockAudio()
     try {
-      // Chọn engine: ưu tiên native nếu hỗ trợ QR
+      // Chọn engine — MẶC ĐỊNH WASM cho quét LOẠT, xem ghi chú EN_CHOICE ở đầu file
       let native = false
       if (window.BarcodeDetector) {
         try {
@@ -294,12 +294,23 @@ export default function MultiScanTest() {
         } catch {}
       }
       setNativeAvail(native)
-      if (!native) {
-        await loadWasm()
-        setEngine('wasm')
-      } else {
-        setEngine('native')
+      // ⭐ EN_CHOICE — MẶC ĐỊNH WASM cho quét LOẠT (user báo 21/08: "chỉ bắt được 1,2 cái").
+      // Native (BarcodeDetector → API barcode ĐỜI CŨ của Play Services) bắt QR tốt nhưng trả về RẤT
+      // ÍT mã vạch 1D khi có NHIỀU mã trong CÙNG một khung: máy thật 15 tem chỉ ra 1–2, còn zxing
+      // tryHarder@2560 đo được 15/15. Trang này trước đây ƯU TIÊN native (hợp lý hồi chỉ đọc QR) và
+      // KHÔNG có lưới zxing đỡ như luồng quét đơn ⇒ mở trên Android là rơi vào nhánh kém nhất mà
+      // không có dấu hiệu gì để lần ra. Quét loạt cần ĐỘ PHỦ hơn tốc độ khung ⇒ chọn wasm.
+      // Nút chuyển engine vẫn còn để so sánh, và lựa chọn được NHỚ giữa các lần mở trang.
+      const want: EngineKind = loadSettings().engine ?? 'wasm'
+      let eff: EngineKind = want === 'native' && native ? 'native' : 'wasm'
+      if (eff === 'wasm') {
+        try { await loadWasm() }
+        catch {
+          if (!native) throw new Error('Không tải được bộ giải mã (zxing) — kiểm tra mạng rồi thử lại')
+          eff = 'native'          // mất mạng giữa đường: còn native thì chạy tạm, hơn là không quét được
+        }
       }
+      setEngine(eff)
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
@@ -435,6 +446,7 @@ export default function MultiScanTest() {
     if (next === 'wasm') await loadWasm()
     decodeEmaRef.current = 0
     setEngine(next)
+    saveSettings({ engine: next })
   }
 
   function applyTrack(set: ExtConstraintSet) {
@@ -585,9 +597,17 @@ export default function MultiScanTest() {
                     <span className="rounded bg-slate-100 px-1.5 py-0.5">Decode: {decodeMs}ms/khung</span>
                     {nativeAvail && (
                       <button onClick={() => switchEngine(engine === 'native' ? 'wasm' : 'native')}
+                        title={engine === 'native'
+                          ? 'Về WASM (zxing) — bắt được nhiều mã vạch 1D nhất trong 1 khung'
+                          : 'Thử Native (BarcodeDetector) — nhanh/đỡ pin nhưng bắt RẤT ÍT mã vạch 1D khi nhiều mã cùng khung'}
                         className="rounded border border-slate-300 px-1.5 py-0.5 hover:bg-slate-50">
                         Thử engine {engine === 'native' ? 'WASM' : 'Native'}
                       </button>
+                    )}
+                    {engine === 'native' && (
+                      <span className="rounded bg-amber-100 text-amber-700 px-1.5 py-0.5 font-semibold">
+                        Native bắt ít mã vạch — quét loạt nên dùng WASM
+                      </span>
                     )}
                     {engine === 'wasm' && (
                       <span className="flex items-center gap-1">

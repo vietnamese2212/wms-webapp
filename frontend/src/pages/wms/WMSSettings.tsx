@@ -758,7 +758,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           <div className="space-y-1">
             <span className="flex items-center gap-1">
               <Label className="text-xs">Camera quét loại mã *</Label>
-              <InfoTip tip={<>Mã vạch 1D (EAN/Code128…) <b>không có mã sửa lỗi</b> như QR, nên vạch mờ có thể đọc ra số không có thật. Kho chỉ dùng tem QR nên chọn <b>Chỉ tem QR</b> — camera không giải mã vạch nữa thì không thể đọc sai, lại đỡ pin. Kho có hàng NCC dán mã vạch trên thùng thì chọn <b>Cả hai</b>.</>} />
+              <InfoTip tip={<>Tick những loại mã camera ở kho này được phép đọc. Mã vạch 1D (EAN/Code128…) <b>không có mã sửa lỗi</b> như QR nên vạch mờ có thể đọc ra số không có thật — kho chỉ dùng tem QR thì bỏ tick <b>Mã vạch</b>, không giải thì không thể đọc sai, lại đỡ pin. Kho có hàng NCC dán mã vạch trên thùng thì tick cả hai. Bỏ tick hết = camera không đọc được gì nên không lưu được.</>} />
             </span>
             {/* Checkbox dropdown: 2 loại mã tick ĐỘC LẬP (đúng bản chất "camera đọc những gì"),
                 searchable=false vì chỉ 2 dòng + ô search autoFocus bị focus-trap của Dialog giật. */}

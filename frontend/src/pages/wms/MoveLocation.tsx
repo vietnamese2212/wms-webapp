@@ -93,6 +93,7 @@ function ScanTab() {
   const perms = user?.module_permissions as ModulePermissions | null ?? null
   const qc    = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
+  const locSectionRef = useRef<HTMLDivElement>(null)   // khối "Vị trí mới" — tự cuộn tới sau khi chọn
 
   // BẮT BUỘC chọn KHO trước khi quét (user chốt 20/08): 1 mã pallet có thể tồn ở NHIỀU kho —
   // không khoanh kho là tra ra pallet kho khác. Field dùng chung slice moveLog (bối cảnh Header
@@ -216,6 +217,9 @@ function ScanTab() {
     putGate.reset()
     setSaveErr('')
     focusInput()   // trả focus về ô quét: phát bắn kế tiếp (sửa ô đích / pallet khác) mới có đích
+    // Màn PDA không đủ chỗ cho cả thẻ pallet lẫn khối vị trí → chọn xong thì TỰ CUỘN tới khối vị
+    // trí (kèm "ô đang chứa gì"), đừng bắt người quét đi tìm thứ vừa mới chọn.
+    setTimeout(() => locSectionRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), 120)
   }
 
   async function handleMove() {
@@ -447,7 +451,7 @@ function ScanTab() {
 
             {/* Vị trí mới — Y HỆT ô "Vị trí nhập" của form Nhập SX (Inbound.tsx): SingleSelect
                 serverSearch + option render PutawayOption (★/nhãn chặn) + LocationContents bên dưới */}
-            <div className="px-3 py-2.5 space-y-2 border-b">
+            <div ref={locSectionRef} className="px-3 py-2.5 space-y-2 border-b">
               <Label className="text-xs">Vị trí mới <span className="text-red-500">*</span>
                 {/* Đang dùng súng thì phải nói RÕ cò đang chờ tem gì — nếu không, bắn xong không
                     thấy gì nhảy là người quét tưởng súng hỏng (đúng ca user báo 22/08). */}
@@ -515,9 +519,6 @@ function ScanTab() {
                   <p className="text-xs text-red-700">{saveErr}</p>
                 </div>
               )}
-              <p className="text-[10px] text-slate-400 flex items-center gap-1 sm:hidden">
-                <ClipboardCheck className="h-3 w-3 shrink-0" /> Mỗi lần chuyển được ghi 1 lượt kiểm kê của pallet
-              </p>
             </div>
 
             {/* Desktop: nút ở trong card như cũ (màn rộng, đẩy xuống đáy trang là hở khoảng trống) */}

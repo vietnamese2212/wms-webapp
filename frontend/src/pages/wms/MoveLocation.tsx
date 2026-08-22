@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, CheckCircle2, ClipboardCheck, Clock, History, Move, UserRound } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
+import { ScanOverlay } from '@/components/shared/ScanOverlay'
 import { Label } from '@/components/ui/label'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { apiClient } from '@/api/client'
@@ -380,7 +381,10 @@ function ScanTab() {
         </form>
 
         {scannerOpen && (
-          <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} codeTypes={codeTypes} />
+          <ScanOverlay title="Quét tem pallet" onClose={() => setScannerOpen(false)}
+            footer={<p className="text-[11px] text-slate-400">Đưa camera vào tem trên pallet. Súng PDA bắn được luôn, không cần chạm màn hình.</p>}>
+            <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} fill codeTypes={codeTypes} />
+          </ScanOverlay>
         )}
 
         {/* Success */}

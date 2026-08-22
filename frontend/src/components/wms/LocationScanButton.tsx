@@ -16,9 +16,9 @@
 //  · Súng PDA: chỉ nhận phát bắn khi `armWedge` (màn đang chờ ĐÚNG một tem vị trí) hoặc khi overlay
 //    đang mở. Không bao giờ tự đoán "tem này là pallet hay vị trí" theo nội dung.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { MapPin, X } from 'lucide-react'
+import { MapPin } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
+import { ScanOverlay } from '@/components/shared/ScanOverlay'
 import type { AxiosError } from 'axios'
 import { QRScanner, type QRScannerHandle } from '@/components/shared/QRScanner'
 import { PutawayOption, putawayFull, type PutawayLocRow } from '@/components/wms/PutawayOption'
@@ -157,25 +157,12 @@ export function LocationScanButton({
       {/* Overlay portal ra body + pointer-events-auto: component này còn được dùng TRONG FormSheet /
           Dialog của Radix (modal set pointer-events:none lên body) — không có 2 thứ đó thì camera
           hiện ra mà bấm không được (bẫy đã ghi ở skill table-format §17). */}
-      {open && createPortal(
-        <div
-          className="fixed inset-0 z-[300] pointer-events-auto bg-black/80 flex flex-col"
-          onPointerDown={e => e.stopPropagation()}
-        >
-          <div className="flex items-center gap-2 px-3 py-2 bg-slate-900 text-white shrink-0">
-            <MapPin className="h-4 w-4 text-sky-400 shrink-0" />
-            <p className="text-sm font-semibold">Quét tem vị trí</p>
-            <button type="button" onClick={() => setOpen(false)}
-              className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/10">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-
-          <div className="flex-1 min-h-0 relative">
-            <QRScanner ref={scannerRef} onScan={handleCode} onClose={() => setOpen(false)} fill codeTypes={codeTypes} />
-          </div>
-
-          <div className="shrink-0 px-3 py-2 bg-slate-900 space-y-1.5">
+      {open && (
+        <ScanOverlay
+          title="Quét tem vị trí"
+          icon={<MapPin className="h-4 w-4 text-sky-400 shrink-0" />}
+          onClose={() => setOpen(false)}
+          footer={<>
             {busy && <p className="text-xs text-sky-300">Đang tra vị trí…</p>}
             {err && (
               <div className="rounded-lg border border-red-400 bg-red-950/60 px-2.5 py-2">
@@ -192,9 +179,10 @@ export function LocationScanButton({
                 Đưa camera vào tem của ô/kệ. Súng PDA bắn được luôn, không cần chạm màn hình.
               </p>
             )}
-          </div>
-        </div>,
-        document.body,
+          </>}
+        >
+          <QRScanner ref={scannerRef} onScan={handleCode} onClose={() => setOpen(false)} fill codeTypes={codeTypes} />
+        </ScanOverlay>
       )}
     </>
   )

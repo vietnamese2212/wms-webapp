@@ -21,6 +21,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { StocktakeTabs } from '@/components/wms/StocktakeTabs'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { ScanOverlay } from '@/components/shared/ScanOverlay'
 import { PdaGunHint } from '@/components/shared/PdaGunHint'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 
@@ -254,6 +255,13 @@ export default function Stocktake() {
             warehouseId={warehouseId}
             disabled={!warehouseId}
             armWedge={!locationId}
+            // Tick "Chỉ vị trí cần check" mà CỬA QUÉT không kiểm lại là bypass: ô chọn tay đã lọc
+            // theo cờ `requires_stocktake`, còn bắn tem thì nhận mọi ô (user báo 22/08). Luật riêng
+            // của màn phải khai qua `validate` — cùng tiền lệ Fill chỉ nhận ô nhặt lẻ.
+            validate={requiresOnly
+              ? loc => (flagLocs.some(l => l.id === loc.id) ? null
+                  : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
+              : undefined}
             onPicked={loc => {
               setStocktake({ locationId: loc.id })
               setResultState({ mode: 'none' })
@@ -312,11 +320,10 @@ export default function Stocktake() {
 
             {/* Camera scanner */}
             {scannerOpen && (
-              <QRScanner
-                onScan={handleQRScan}
-                onClose={() => setScannerOpen(false)}
-                codeTypes={codeTypes}
-              />
+              <ScanOverlay title="Quét tem pallet" onClose={() => setScannerOpen(false)}
+                footer={<p className="text-[11px] text-slate-400">Đưa camera vào tem trên pallet. Súng PDA bắn được luôn, không cần chạm màn hình.</p>}>
+                <QRScanner onScan={handleQRScan} onClose={() => setScannerOpen(false)} fill codeTypes={codeTypes} />
+              </ScanOverlay>
             )}
 
             {/* Success */}

@@ -144,33 +144,46 @@ function ScanTab() {
     !!entry,
   )
 
+  // Ô mã pallet phải GIỮ ĐƯỢC FOCUS suốt phiên quét: súng PDA ở chế độ IME chỉ chèn được chữ khi
+  // có một ô nhập đang focus (đo 22/08 — mới mở màn `activeElement` là BODY, và `disabled` lúc đang
+  // tra làm trình duyệt GỠ focus ⇒ phát bắn thứ hai rơi vào hư không, người quét tưởng súng hỏng).
+  const focusInput = () => setTimeout(() => inputRef.current?.focus(), 50)
+  useEffect(() => { if (warehouseId) focusInput() }, [warehouseId])
+
   function clearResult() {
     setResultState({ mode: 'none' })
     setInputVal('')
     setSaveErr('')
     setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm('')
     putGate.reset()
-    setTimeout(() => inputRef.current?.focus(), 50)
+    focusInput()
   }
 
-  async function handleSearch(code: string) {
+  // `keepContext` = lượt bắn đến từ cò đang chờ TEM VỊ TRÍ (BE đã trả "không phải vị trí"). Ca đó
+  // KHÔNG được dọn màn trước khi biết kết quả: bắn nhầm một tem lạ mà mất luôn pallet đang làm thì
+  // người quét phải bắn lại từ đầu.
+  async function handleSearch(code: string, keepContext = false) {
     const palletCode = code.trim()
     if (!palletCode || !warehouseId) return
+    const resetPick = () => { setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm(''); putGate.reset() }
     setSearching(true)
     setScannerOpen(false)
     setSaveErr('')
-    setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm('')
-    putGate.reset()
-    setResultState({ mode: 'none' })
+    if (!keepContext) { resetPick(); setResultState({ mode: 'none' }) }
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check',
         { qr_code: palletCode, warehouse_id: warehouseId })   // khoanh ĐÚNG kho đã chọn
+      if (keepContext) { resetPick(); setInputVal(palletCode) }   // đúng là tem pallet khác → đổi pallet đang làm
       setResultState({ mode: 'result', entry: data.data.entry as MoveEntryData })
     } catch (e: any) {
-      setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
-      setTimeout(() => inputRef.current?.focus(), 50)
+      const msg = e?.response?.data?.error?.message ?? 'Không tìm thấy pallet'
+      // Không phải vị trí (BE đã nói), cũng không phải pallet → NÓI RÕ là tem không đọc được, đừng
+      // im lặng (user báo 22/08: "bắn sai QR thì cũng không cảnh báo gì cả").
+      if (keepContext) setSaveErr(`Không nhận ra tem "${palletCode}" — không phải vị trí của kho này, cũng không phải pallet đang tồn`)
+      else setResultState({ mode: 'error', message: msg })
     } finally {
       setSearching(false)
+      focusInput()
     }
   }
 
@@ -185,6 +198,7 @@ function ScanTab() {
     setLocHint(l?.putaway ?? null)
     putGate.reset()
     setSaveErr('')
+    focusInput()   // trả focus về ô quét: phát bắn kế tiếp (sửa ô đích / pallet khác) mới có đích
   }
 
   async function handleMove() {
@@ -209,6 +223,7 @@ function ScanTab() {
     } catch (e: any) {
       // LOCATION_FULL / PUTAWAY_* / 4xx: giữ nguyên tem + kết quả, chỉ báo đỏ để chọn ô khác
       setSaveErr(e?.response?.data?.error?.message ?? 'Lỗi khi chuyển vị trí')
+      focusInput()
     }
   }
 
@@ -274,7 +289,9 @@ function ScanTab() {
               onChange={e => setInputVal(e.target.value)}
               placeholder="Quét hoặc nhập mã pallet…"
               className="font-mono text-sm h-9"
-              disabled={searching || saving}
+              // readOnly chứ KHÔNG disabled: `disabled` làm trình duyệt gỡ focus khỏi ô, mà focus
+              // là thứ duy nhất giữ cho súng chế độ IME bắn được (xem focusInput ở trên).
+              readOnly={searching || saving}
             />
             <Button
               type="button"
@@ -410,8 +427,8 @@ function ScanTab() {
                   disabled={saving}
                   armWedge={!saving}
                   onArmedMiss={(raw, message) => {
-                    if (message) { setSaveErr(message); return }   // ô tra ra được nhưng bị chặn
-                    handleQRScan(raw)                              // không phải vị trí → tem pallet khác
+                    if (message) { setSaveErr(message); focusInput(); return }   // ô tra ra được nhưng bị chặn
+                    handleSearch(raw, true)                                      // không phải vị trí → thử tem pallet
                   }}
                   onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
                 />

@@ -140,8 +140,10 @@ export default function Stocktake() {
       setResultState({ mode: 'result', entry })
     } catch (e: any) {
       setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
-      setTimeout(() => inputRef.current?.focus(), 50)
     } finally {
+      // Lấy lại focus SAU MỌI lượt tra (không chỉ lượt lỗi): súng PDA ở chế độ IME chỉ chèn được chữ
+      // khi có ô nhập đang focus — mất focus là phát bắn kế tiếp rơi vào hư không mà không báo gì.
+      setTimeout(() => inputRef.current?.focus(), 50)
       setSearching(false)
     }
   }
@@ -290,7 +292,9 @@ export default function Stocktake() {
                   onChange={e => setInputVal(e.target.value)}
                   placeholder="Nhập mã pallet…"
                   className="font-mono text-sm h-9"
-                  disabled={searching || saving}
+                  // readOnly chứ KHÔNG disabled: `disabled` làm trình duyệt gỡ focus khỏi ô, mà
+                  // focus là thứ duy nhất giữ cho súng PDA (chế độ IME) bắn được.
+                  readOnly={searching || saving}
                 />
                 <Button
                   type="button"

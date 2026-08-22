@@ -495,12 +495,37 @@ const RULES = [
     },
   },
   {
+    key: 'scan_input_disabled_drops_focus',
+    label: 'ô nhập mã của màn QUÉT dùng `disabled` lúc đang tra — trình duyệt GỠ focus khỏi ô, mà focus là thứ ' +
+           'duy nhất giữ cho súng PDA chế độ IME bắn được ⇒ phát bắn kế tiếp rơi vào hư không, KHÔNG báo gì ' +
+           '(user báo 22/08). Dùng `readOnly` + lấy lại focus trong `finally` của lượt tra',
+    count: (s) => countScanInputDisabled(s),
+  },
+  {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',
     count: (s) => countUploadsMissingPreflight(s),
   },
 ]
+
+// Ô nhập của màn quét = `<Input ref={inputRef}` trong file có `useWedgeScanner`. Vi phạm khi khối
+// khai báo ô đó (8 dòng kế) có `disabled=` — `disabled` gỡ focus, súng chế độ IME hết đích chèn chữ.
+function countScanInputDisabled(sampleOut) {
+  let n = 0
+  for (const f of filesOf('frontend/src', ['.tsx'])) {
+    const src = readFileSync(f, 'utf8')
+    if (!src.includes('useWedgeScanner')) continue
+    const lines = src.split(/\r?\n/)
+    lines.forEach((line, i) => {
+      if (!/ref=\{inputRef\}/.test(line)) return
+      if (!/disabled=\{/.test(lines.slice(i, i + 8).join('\n'))) return
+      n++
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${f.slice(ROOT.length + 1)}:${i + 1}`)
+    })
+  }
+  return n
+}
 
 // Khai báo component trong body hàm khác = dòng thụt lề ≥2 space, `const <TênHoa> = (`. Chỉ tính vi
 // phạm khi thân nó (≤16 dòng đầu) có ô nhập — đó là ca làm mất focus. Cụm thuần hiển thị (Tile/Row/

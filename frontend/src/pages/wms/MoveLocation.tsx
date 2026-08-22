@@ -217,10 +217,17 @@ function ScanTab() {
     putGate.reset()
     setSaveErr('')
     focusInput()   // trả focus về ô quét: phát bắn kế tiếp (sửa ô đích / pallet khác) mới có đích
-    // Màn PDA không đủ chỗ cho cả thẻ pallet lẫn khối vị trí → chọn xong thì TỰ CUỘN tới khối vị
-    // trí (kèm "ô đang chứa gì"), đừng bắt người quét đi tìm thứ vừa mới chọn.
-    setTimeout(() => locSectionRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), 120)
   }
+
+  // Màn PDA không đủ chỗ cho cả thẻ pallet lẫn khối vị trí → chọn xong thì TỰ CUỘN tới khối vị trí,
+  // đừng bắt người quét đi tìm thứ vừa mới chọn. Cuộn HAI nhịp: khối "ô đang chứa gì" là một truy
+  // vấn riêng, nạp xong mới cao lên — cuộn một nhịp là dừng ở chỗ chưa có nội dung đó (đo 22/08).
+  useEffect(() => {
+    if (!newLocId) return
+    const to = [150, 800].map(ms => setTimeout(
+      () => locSectionRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), ms))
+    return () => to.forEach(clearTimeout)
+  }, [newLocId])
 
   async function handleMove() {
     if (!entry || !newLocId || move.isPending) return

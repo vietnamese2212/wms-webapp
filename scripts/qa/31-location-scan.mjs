@@ -184,9 +184,14 @@ try {
     'thêm tiền tố/hậu tố vào QR = cửa tra không khớp trọn mã nữa')
 
   const wedge = readFileSync(join(ROOT, 'frontend/src/hooks/useWedgeScanner.ts'), 'utf8')
-  check('[14] useWedgeScanner còn khoá ĐỘC QUYỀN phát bắn',
-    /exclusiveCount/.test(wedge) && /!exclusive && exclusiveCount > 0/.test(wedge),
-    'mất khoá = 1 phát súng chạy cả tra-pallet lẫn chọn-vị-trí')
+  // MỘT máy đọc cho cả app + màn khai `exclusive` thì CHỈ nó nhận. Mỗi hook tự dựng listener là đẻ
+  // ra 2 lớp lỗi đã trả giá: (1) 2 handler cùng ăn 1 phát bắn, (2) mỗi bộ tự "trả lại giá trị ô"
+  // theo bản chụp riêng → bộ mount sau XOÁ TRẮNG mã pallet đang hiển thị (22/08).
+  check('[14] useWedgeScanner = MỘT máy đọc dùng chung + ưu tiên màn độc quyền',
+    /const subs = new Set/.test(wedge) && /subs\.size === 1/.test(wedge) && /subs\.size === 0/.test(wedge)
+      && /ex\.length \? ex : all/.test(wedge)
+      && (wedge.match(/window\.addEventListener/g) || []).length === 3,
+    'mỗi hook tự dựng listener = 1 phát súng chạy nhiều việc + ô nhập bị bộ khác xoá trắng')
 
   // `armWedge` bật CỐ ĐỊNH (`={true}` hoặc để trần kiểu prop boolean) = giành cò súng VĨNH VIỄN →
   // màn đó hết quét được tem pallet mà không báo gì. Bỏ qua chính file định nghĩa component

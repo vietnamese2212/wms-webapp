@@ -236,6 +236,23 @@ function ScanTab() {
   const canMove = can(perms, 'inventory', 'move_location')
   const saving  = move.isPending
 
+  // Một định nghĩa, hai chỗ đặt: desktop để trong card như cũ (thừa chỗ), màn nhỏ tách ra footer
+  // dính đáy — màn PDA 360×640 không đủ chỗ cho cả card nên nút nằm trong vùng cuộn là rơi khỏi màn.
+  const actionButtons = (
+    <>
+      <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={clearResult} disabled={saving}>
+        Bỏ qua
+      </Button>
+      {canMove && (
+        <Button size="sm" className="flex-1 text-xs bg-blue-600 hover:bg-blue-700"
+          disabled={saving || !newLocId || sameLoc || !putGate.ok}
+          onClick={handleMove}>
+          {saving ? 'Đang chuyển…' : 'Chuyển vị trí'}
+        </Button>
+      )}
+    </>
+  )
+
   return (
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header — ô Kho BẮT BUỘC (khuôn WarehouseSingleSelect như trang Kiểm kê) */}
@@ -449,6 +466,8 @@ function ScanTab() {
               </p>
             </div>
 
+            {/* Desktop: nút ở trong card như cũ (màn rộng, đẩy xuống đáy trang là hở khoảng trống) */}
+            <div className="hidden lg:flex px-3 py-2 gap-2">{actionButtons}</div>
           </div>
         )}
 
@@ -480,17 +499,8 @@ function ScanTab() {
           vùng cuộn thì màn PDA 360×640 là nó rơi khỏi màn; thử `sticky` bên trong card thì nút
           nổi lên GIỮA card, che mất số tồn — tệ hơn. `pb-20` chừa chỗ cho thanh điều hướng mobile. */}
       {entry && (
-        <div className="shrink-0 border-t bg-white px-3 py-2 pb-20 lg:pb-2 flex gap-2 sm:rounded-b-xl">
-          <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={clearResult} disabled={saving}>
-            Bỏ qua
-          </Button>
-          {canMove && (
-            <Button size="sm" className="flex-1 text-xs bg-blue-600 hover:bg-blue-700"
-              disabled={saving || !newLocId || sameLoc || !putGate.ok}
-              onClick={handleMove}>
-              {saving ? 'Đang chuyển…' : 'Chuyển vị trí'}
-            </Button>
-          )}
+        <div className="lg:hidden shrink-0 border-t bg-white px-3 py-2 pb-20 flex gap-2">
+          {actionButtons}
         </div>
       )}
      </div>

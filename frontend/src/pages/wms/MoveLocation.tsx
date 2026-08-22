@@ -260,7 +260,7 @@ function ScanTab() {
             placeholder="Chọn kho…"
             triggerClassName="h-9 sm:h-7 w-[160px]"
           />
-          <span className="text-[10px] text-slate-400">1 mã pallet có thể tồn ở nhiều kho — chỉ tra trong kho đã chọn</span>
+          <span className="hidden sm:inline text-[10px] text-slate-400">1 mã pallet có thể tồn ở nhiều kho — chỉ tra trong kho đã chọn</span>
         </div>
       </div>
 
@@ -389,8 +389,9 @@ function ScanTab() {
                     Súng đang chờ TEM VỊ TRÍ
                   </span>
                 )}
-                {/* mobile: chú thích ★ xuống dòng RIÊNG, không chen ngang làm gãy câu giữa chừng */}
-                <span className="block sm:inline sm:ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
+                {/* Chú giải ★ chỉ hiện từ sm trở lên: màn PDA 360×640 đang thiếu ~57px để thấy nút
+                    xác nhận, mà đây là chữ giải thích (dấu ★ vẫn nằm ngay trong danh sách chọn). */}
+                <span className="hidden sm:inline sm:ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
               </Label>
               <div className="flex items-center gap-1.5">
                 <div className="flex-1 min-w-0">

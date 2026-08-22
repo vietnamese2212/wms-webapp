@@ -389,7 +389,8 @@ function ScanTab() {
                     Súng đang chờ TEM VỊ TRÍ
                   </span>
                 )}
-                <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
+                {/* mobile: chú thích ★ xuống dòng RIÊNG, không chen ngang làm gãy câu giữa chừng */}
+                <span className="block sm:inline sm:ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
               </Label>
               <div className="flex items-center gap-1.5">
                 <div className="flex-1 min-w-0">

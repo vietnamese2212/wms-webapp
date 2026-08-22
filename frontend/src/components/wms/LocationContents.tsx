@@ -45,19 +45,24 @@ export function LocationContents({ locationId, highlightMaterialId }: {
           {rows.slice(0, 6).map(m => {
             const same = m.material_id === highlightMaterialId
             return (
-              <li key={m.material_id} className={`flex items-center gap-1.5 text-[10px] ${same ? 'text-emerald-700' : 'text-slate-600'}`}>
+              // Điện thoại: nhồi mã + tên + 3 con số vào MỘT dòng thì tên hàng cụt còn ngày SX bị
+              // đẩy khỏi màn (user báo 22/08 "nhìn không đủ để xem được"). Cho cụm số xuống dòng
+              // riêng ở mobile (`basis-full`), desktop vẫn 1 dòng ghim phải như cũ.
+              <li key={m.material_id} className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] ${same ? 'text-emerald-700' : 'text-slate-600'}`}>
                 {same && <PackageCheck className="h-3 w-3 shrink-0" />}
                 <span className="font-mono font-semibold shrink-0">{m.material_code ?? '—'}</span>
-                <span className="min-w-0 truncate text-slate-400">{m.short_name ?? ''}</span>
-                <span className="ml-auto shrink-0 tabular-nums">{m.pallets} pl</span>
-                <span className="shrink-0 tabular-nums text-slate-400">
-                  {qtyLabel(m.qty_base, { base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton })}
-                </span>
-                {m.date_min && (
-                  <span className="shrink-0 text-slate-400">
-                    {m.date_kind ?? ''} {formatDate(m.date_min)}{m.date_max && m.date_max !== m.date_min ? `→${formatDate(m.date_max)}` : ''}
+                <span className="min-w-0 flex-1 text-slate-400 break-words sm:truncate">{m.short_name ?? ''}</span>
+                <span className="flex basis-full items-center gap-1.5 sm:ml-auto sm:basis-auto sm:shrink-0">
+                  <span className="tabular-nums">{m.pallets} pl</span>
+                  <span className="tabular-nums text-slate-400">
+                    {qtyLabel(m.qty_base, { base_unit: m.base_unit, entry_unit: m.entry_unit, units_per_carton: m.units_per_carton })}
                   </span>
-                )}
+                  {m.date_min && (
+                    <span className="text-slate-400">
+                      {m.date_kind ?? ''} {formatDate(m.date_min)}{m.date_max && m.date_max !== m.date_min ? `→${formatDate(m.date_max)}` : ''}
+                    </span>
+                  )}
+                </span>
               </li>
             )
           })}

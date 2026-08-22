@@ -292,9 +292,9 @@ export default function Stocktake() {
                   onChange={e => setInputVal(e.target.value)}
                   placeholder="Nhập mã pallet…"
                   className="font-mono text-sm h-9"
-                  // readOnly chứ KHÔNG disabled: `disabled` làm trình duyệt gỡ focus khỏi ô, mà
-                  // focus là thứ duy nhất giữ cho súng PDA (chế độ IME) bắn được.
-                  readOnly={searching || saving}
+                  // KHÔNG `disabled`, cũng KHÔNG `readOnly` lúc đang tra: cả hai đều làm Android
+                  // RỜI kết nối bàn phím/IME khỏi ô — đúng đường mà súng chế độ IME chèn chữ vào.
+                  // Chặn lượt bắn trùng đã có ở callback của cò súng (`if (searching) return`).
                 />
                 <Button
                   type="button"

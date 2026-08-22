@@ -117,6 +117,8 @@ function ScanTab() {
   const [inputVal,    setInputVal]    = useState('')
   const [searching,   setSearching]   = useState(false)
   const [saveErr,     setSaveErr]     = useState('')      // lỗi lúc Chuyển — giữ nguyên tem, chọn lại ô
+  const [gunReady,    setGunReady]    = useState(false)   // ô quét đang giữ focus = súng bắn được
+  const [lastShot,    setLastShot]    = useState<{ code: string; note: string } | null>(null)
   const [moved,       setMoved]       = useState<MovedRow[]>([])   // phiên này (bản lưu = tab Lịch sử)
 
   // Vị trí mới — dropdown Y HỆT form Nhập SX: SingleSelect serverSearch, ★/nhãn chặn do BE chấm
@@ -229,6 +231,7 @@ function ScanTab() {
     if (move.isPending || searching) return
     if (!gunMode) setGunMode(true)
     setScannerOpen(false)
+    setLastShot({ code, note: 'tra tem pallet' })
     handleQRScan(code)
   }, !!warehouseId)
 
@@ -281,8 +284,16 @@ function ScanTab() {
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4 px-3 py-3 space-y-3">
+      {/* Body — CHẠM VÀO ĐÂU CŨNG TRẢ FOCUS VỀ Ô QUÉT. Android chỉ gắn bàn phím/IME (đường mà súng
+          chế độ IME dùng để chèn chữ) sau khi trang có THAO TÁC CHẠM THẬT; focus bằng code lúc mới
+          vào màn bị bỏ qua — đúng điều user báo 22/08 ("vào chuyển vị trí chưa focus"). Không ép
+          người quét phải bấm trúng ô nhỏ: chạm bất kỳ chỗ trống nào cũng bật. */}
+      <div className="flex-1 overflow-auto pb-20 lg:pb-4 px-3 py-3 space-y-3"
+        onClick={e => {
+          const t = e.target as HTMLElement
+          if (t.closest('button, input, textarea, select, a, [role="combobox"], [role="option"], [role="dialog"]')) return
+          inputRef.current?.focus()
+        }}>
         {!warehouseId && (
           <div className="flex flex-col items-center justify-center h-40 text-slate-400">
             <Move className="h-8 w-8 mb-2 opacity-40" />
@@ -298,11 +309,13 @@ function ScanTab() {
               autoFocus   // ô quét là việc DUY NHẤT của màn này; autoFocus bắt đúng lúc ô vừa gắn
               value={inputVal}
               onChange={e => setInputVal(e.target.value)}
+              onFocus={() => setGunReady(true)}
+              onBlur={() => setGunReady(false)}
               placeholder="Quét hoặc nhập mã pallet…"
               className="font-mono text-sm h-9"
-              // readOnly chứ KHÔNG disabled: `disabled` làm trình duyệt gỡ focus khỏi ô, mà focus
-              // là thứ duy nhất giữ cho súng chế độ IME bắn được (xem focusInput ở trên).
-              readOnly={searching || saving}
+              // KHÔNG `disabled`, cũng KHÔNG `readOnly` lúc đang tra: cả hai đều làm Android RỜI
+              // kết nối bàn phím/IME khỏi ô — mà đó đúng là đường súng chế độ IME chèn chữ vào.
+              // Chặn lượt bắn trùng đã có ở callback của cò súng (`if (searching) return`).
             />
             <Button
               type="button"
@@ -315,6 +328,21 @@ function ScanTab() {
               <ScanIcon className="h-4 w-4" />
             </Button>
             <PdaGunHint className="h-9 w-9" />
+          </div>
+          {/* Trạng thái cò súng + phát bắn gần nhất. Súng bắn mà màn không nhúc nhích thì người quét
+              không có cách nào biết app CÓ nhận được gì không — dòng này trả lời đúng câu đó. */}
+          <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+            <button type="button" onClick={() => inputRef.current?.focus()}
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                gunReady ? 'border-green-300 bg-green-50 text-green-700'
+                         : 'border-amber-300 bg-amber-50 text-amber-700'}`}>
+              {gunReady ? 'Súng sẵn sàng' : 'Chạm để bật súng'}
+            </button>
+            {lastShot && (
+              <span className="min-w-0 truncate text-[10px] text-slate-400">
+                Bắn gần nhất: <span className="font-mono text-slate-600">{lastShot.code}</span> → {lastShot.note}
+              </span>
+            )}
           </div>
         </form>
 
@@ -442,11 +470,15 @@ function ScanTab() {
                   disabled={saving}
                   armWedge={!saving}
                   onArmedMiss={(raw, message) => {
+                    setLastShot({ code: raw.trim(), note: message ? 'ô bị chặn' : 'không phải tem vị trí' })
                     setSaveErr(message   // có message = ô tra ra được nhưng bị chặn (đầy / ngưng dùng)
                       ?? `Tem "${raw.trim()}" không phải vị trí của kho này — bắn lại tem ô, hoặc bấm "Bỏ qua" nếu muốn quét pallet khác`)
                     focusInput()
                   }}
-                  onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
+                  onPicked={loc => {
+                    setLastShot({ code: loc.location_code, note: 'điền vào Vị trí mới' })
+                    pickLoc(loc as unknown as PutawayLocRow, loc.id)
+                  }}
                 />
               </div>
               {/* Chọn xong thì thấy NGAY ô đó đang chứa gì — mã trên pallet tô xanh + ghim đầu (như Nhập) */}

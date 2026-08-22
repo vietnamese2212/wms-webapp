@@ -149,8 +149,30 @@ function ScanTab() {
   // Ô mã pallet phải GIỮ ĐƯỢC FOCUS suốt phiên quét: súng PDA ở chế độ IME chỉ chèn được chữ khi
   // có một ô nhập đang focus (đo 22/08 — mới mở màn `activeElement` là BODY, và `disabled` lúc đang
   // tra làm trình duyệt GỠ focus ⇒ phát bắn thứ hai rơi vào hư không, người quét tưởng súng hỏng).
-  const focusInput = () => setTimeout(() => inputRef.current?.focus(), 50)
-  useEffect(() => { if (warehouseId) focusInput() }, [warehouseId])
+  // `retry`: lúc VÀO MÀN thì bám nhiều nhịp — chunk trang nạp lười, layout và bàn phím của Android
+  // không phải lúc nào cũng nhận focus ở nhịp đầu; một `setTimeout(50)` đơn lẻ thua cuộc là cả phiên
+  // quét chết mà không báo gì. Các lúc khác chỉ thử 1 nhịp (đừng giành focus của ô người ta vừa bấm).
+  const focusInput = (retry = false) => {
+    for (const ms of (retry ? [0, 120, 350, 800, 1500] : [50])) {
+      setTimeout(() => inputRef.current?.focus(), ms)
+    }
+  }
+  useEffect(() => { if (warehouseId) focusInput(true) }, [warehouseId])
+
+  // Quay lại app (mở khoá máy, chuyển từ app khác về) → lấy lại focus nếu KHÔNG có ô/nút nào đang
+  // giữ, để súng bắn được ngay mà không phải chạm lại.
+  useEffect(() => {
+    const back = () => {
+      const a = document.activeElement
+      if (!a || a === document.body) inputRef.current?.focus()
+    }
+    window.addEventListener('focus', back)
+    document.addEventListener('visibilitychange', back)
+    return () => {
+      window.removeEventListener('focus', back)
+      document.removeEventListener('visibilitychange', back)
+    }
+  }, [])
 
   function clearResult() {
     setResultState({ mode: 'none' })
@@ -288,7 +310,7 @@ function ScanTab() {
           chế độ IME dùng để chèn chữ) sau khi trang có THAO TÁC CHẠM THẬT; focus bằng code lúc mới
           vào màn bị bỏ qua — đúng điều user báo 22/08 ("vào chuyển vị trí chưa focus"). Không ép
           người quét phải bấm trúng ô nhỏ: chạm bất kỳ chỗ trống nào cũng bật. */}
-      <div className="flex-1 overflow-auto pb-20 lg:pb-4 px-3 py-3 space-y-3"
+      <div className={`flex-1 overflow-auto px-3 py-3 space-y-3 ${entry ? 'pb-3' : 'pb-20 lg:pb-4'}`}
         onClick={e => {
           const t = e.target as HTMLElement
           if (t.closest('button, input, textarea, select, a, [role="combobox"], [role="option"], [role="dialog"]')) return
@@ -531,7 +553,10 @@ function ScanTab() {
           vùng cuộn thì màn PDA 360×640 là nó rơi khỏi màn; thử `sticky` bên trong card thì nút
           nổi lên GIỮA card, che mất số tồn — tệ hơn. `pb-20` chừa chỗ cho thanh điều hướng mobile. */}
       {entry && (
-        <div className="lg:hidden shrink-0 border-t bg-white px-3 py-2 pb-20 flex gap-2">
+        // `pb-2` chứ KHÔNG `pb-20`: đo thật 360×640 — card đã kết thúc ĐÚNG mép trên thanh điều
+        // hướng (576px), nên chừa thêm 80px là phí trắng, vùng cuộn co còn 235px và khối vị trí bị
+        // đẩy khuất (user báo 22/08 "quét vị trí xong không nhìn được hết, phần Chuyển vị trí che").
+        <div className="lg:hidden shrink-0 border-t bg-white px-3 py-2 flex gap-2">
           {actionButtons}
         </div>
       )}

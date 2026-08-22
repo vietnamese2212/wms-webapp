@@ -159,28 +159,21 @@ function ScanTab() {
     focusInput()
   }
 
-  // `keepContext` = lượt bắn đến từ cò đang chờ TEM VỊ TRÍ (BE đã trả "không phải vị trí"). Ca đó
-  // KHÔNG được dọn màn trước khi biết kết quả: bắn nhầm một tem lạ mà mất luôn pallet đang làm thì
-  // người quét phải bắn lại từ đầu.
-  async function handleSearch(code: string, keepContext = false) {
+  async function handleSearch(code: string) {
     const palletCode = code.trim()
     if (!palletCode || !warehouseId) return
-    const resetPick = () => { setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm(''); putGate.reset() }
     setSearching(true)
     setScannerOpen(false)
     setSaveErr('')
-    if (!keepContext) { resetPick(); setResultState({ mode: 'none' }) }
+    setNewLocId(null); setNewLocRow(null); setLocHint(null); setTerm('')
+    putGate.reset()
+    setResultState({ mode: 'none' })
     try {
       const { data } = await apiClient.post('/wms/inventory/stocktake-check',
         { qr_code: palletCode, warehouse_id: warehouseId })   // khoanh ĐÚNG kho đã chọn
-      if (keepContext) { resetPick(); setInputVal(palletCode) }   // đúng là tem pallet khác → đổi pallet đang làm
       setResultState({ mode: 'result', entry: data.data.entry as MoveEntryData })
     } catch (e: any) {
-      const msg = e?.response?.data?.error?.message ?? 'Không tìm thấy pallet'
-      // Không phải vị trí (BE đã nói), cũng không phải pallet → NÓI RÕ là tem không đọc được, đừng
-      // im lặng (user báo 22/08: "bắn sai QR thì cũng không cảnh báo gì cả").
-      if (keepContext) setSaveErr(`Không nhận ra tem "${palletCode}" — không phải vị trí của kho này, cũng không phải pallet đang tồn`)
-      else setResultState({ mode: 'error', message: msg })
+      setResultState({ mode: 'error', message: e?.response?.data?.error?.message ?? 'Không tìm thấy pallet' })
     } finally {
       setSearching(false)
       focusInput()
@@ -285,6 +278,7 @@ function ScanTab() {
           <div className="flex gap-2">
             <Input
               ref={inputRef}
+              autoFocus   // ô quét là việc DUY NHẤT của màn này; autoFocus bắt đúng lúc ô vừa gắn
               value={inputVal}
               onChange={e => setInputVal(e.target.value)}
               placeholder="Quét hoặc nhập mã pallet…"
@@ -418,17 +412,20 @@ function ScanTab() {
                   />
                 </div>
                 {/* Quét tem ô đích — THÊM cạnh ô chọn tay, ô chọn giữ nguyên.
-                    armWedge: đã có pallet trên màn thì cò súng chuyển sang chờ TEM VỊ TRÍ, khỏi
-                    phải chạm nút. Bắn nhầm tem pallet → onArmedMiss(message=null) đưa lượt bắn về
-                    bước tra pallet, nên vẫn đổi được pallet giữa chừng. */}
+                    LUẬT ĐƠN GIẢN (user chốt 22/08): "pallet đã có thì súng bắn kết quả đưa vào VỊ
+                    TRÍ là xong" — đã có pallet trên màn thì MỌI phát bắn là tem vị trí, KHÔNG bao
+                    giờ đụng tới pallet đang làm. Bản trước tôi cho tem-không-phải-vị-trí tự tra
+                    sang pallet: chính nó XOÁ MẤT pallet đang làm khi bắn nhầm. Muốn đổi pallet thì
+                    bấm "Bỏ qua" — nút nằm ngay dưới, rõ ràng hơn là để súng tự đoán. */}
                 <LocationScanButton
                   warehouseId={entry.warehouse_id ?? warehouseId}
                   materialId={entry.material_id}
                   disabled={saving}
                   armWedge={!saving}
                   onArmedMiss={(raw, message) => {
-                    if (message) { setSaveErr(message); focusInput(); return }   // ô tra ra được nhưng bị chặn
-                    handleSearch(raw, true)                                      // không phải vị trí → thử tem pallet
+                    setSaveErr(message   // có message = ô tra ra được nhưng bị chặn (đầy / ngưng dùng)
+                      ?? `Tem "${raw.trim()}" không phải vị trí của kho này — bắn lại tem ô, hoặc bấm "Bỏ qua" nếu muốn quét pallet khác`)
+                    focusInput()
                   }}
                   onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
                 />

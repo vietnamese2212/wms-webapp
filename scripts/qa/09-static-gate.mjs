@@ -485,6 +485,16 @@ const RULES = [
     count: (s) => countLocPickerWithoutScan(s),
   },
   {
+    key: 'wedge_ime_path_missing',
+    label: 'useWedgeScanner mất đường đọc IME (listener `input`) — DataWedge tắt "Send Characters as Events" thì ' +
+           'keydown ra key="Unidentified" (229) và MỌI màn quét chết câm, chữ vẫn vào ô nên nhìn như "phải bấm Enter ' +
+           'mới ra kết quả" (user báo 22/08, tái hiện được). Không được rút về chỉ nghe keydown',
+    count: () => {
+      const src = readFileSync(join(ROOT, 'frontend/src/hooks/useWedgeScanner.ts'), 'utf8')
+      return /addEventListener\('input'/.test(src) && /insertCompositionText/.test(src) ? 0 : 1
+    },
+  },
+  {
     key: 'upload_without_preflight',
     label: 'route upload file KHÔNG có "kiểm trước khi ghi" — mọi upload phải chèn `isPreflight(req)` giữa pha kiểm và pha ghi ' +
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',

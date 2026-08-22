@@ -45,6 +45,15 @@ interface Props {
    */
   armWedge?: boolean
   /**
+   * Phát bắn lúc ARM (overlay CHƯA mở) mà không chọn được ô. `message === null` = mã KHÔNG PHẢI vị
+   * trí (BE trả 404) → màn cha tự xử lượt bắn đó (vd Chuyển vị trí: coi như tem PALLET, tra lại).
+   * Có `message` = ô tra ra được nhưng bị chặn (đầy / ngưng dùng / luật riêng của màn) → cha phải
+   * HIỆN lý do, vì khối lỗi của component này chỉ vẽ bên trong overlay.
+   * Nhờ nó mà ARM không lấy mất việc "bắn tem pallet khác" — phân loại dựa vào CÂU TRẢ LỜI CỦA BE,
+   * không đoán theo hình dạng chuỗi (luật: một cửa tra, không tự chế bộ nhận dạng tem).
+   */
+  onArmedMiss?: (raw: string, message: string | null) => void
+  /**
    * Luật RIÊNG của màn gọi (vd Fill chỉ nhận ô NHẶT LẺ). Trả chuỗi = từ chối kèm lý do hiện ngay
    * trên màn quét; trả null = nhận. Có prop này vì "quét ra rồi mới bị cửa ghi từ chối" là bắt
    * người quét đi tới ô đó xong mới biết sai.
@@ -58,7 +67,7 @@ interface Props {
 }
 
 export function LocationScanButton({
-  warehouseId, materialId, nccId, onPicked, armWedge = false, validate, disabled,
+  warehouseId, materialId, nccId, onPicked, armWedge = false, onArmedMiss, validate, disabled,
   variant = 'icon', label = 'Quét vị trí', className,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -71,6 +80,12 @@ export function LocationScanButton({
   const handleCode = useCallback(async (raw: string) => {
     const code = normalizeLocScan(raw)
     if (!code || busy) return
+    // Bắn lúc ARM thì khối lỗi/cảnh báo của overlay không hiển thị → đẩy lý do về cho màn cha.
+    const armedSilent = !open
+    const miss = (message: string | null) => {
+      if (armedSilent && onArmedMiss) { onArmedMiss(raw, message); return true }
+      return false
+    }
     setBusy(true); setErr(null); setLast(null)
     try {
       const loc = await resolveLocationByCode({
@@ -79,27 +94,33 @@ export function LocationScanButton({
       // Ô ngưng sử dụng / đã đầy: BÁO RÕ ngay tại đây thay vì để người quét chọn rồi ăn 422 ở
       // bước Lưu — lúc đó họ đã đẩy xe nâng tới ô đó rồi.
       if (loc.is_active === false) {
-        setLast(loc as unknown as ScannedLocation)
-        setErr(`Ô ${loc.location_code} đã NGƯNG sử dụng — chọn ô khác`)
+        const m = `Ô ${loc.location_code} đã NGƯNG sử dụng — chọn ô khác`
+        if (miss(m)) return
+        setLast(loc as unknown as ScannedLocation); setErr(m)
         return
       }
       if (putawayFull(loc as unknown as PutawayLocRow)) {
-        setLast(loc as unknown as ScannedLocation)
-        setErr(`Ô ${loc.location_code} đã ĐẦY (${loc.used_slots ?? 0}/${loc.max_pallets}) — chọn ô khác`)
+        const m = `Ô ${loc.location_code} đã ĐẦY (${loc.used_slots ?? 0}/${loc.max_pallets}) — chọn ô khác`
+        if (miss(m)) return
+        setLast(loc as unknown as ScannedLocation); setErr(m)
         return
       }
       const bad = validate?.(loc)
-      if (bad) { setLast(loc as unknown as ScannedLocation); setErr(bad); return }
+      if (bad) { if (miss(bad)) return; setLast(loc as unknown as ScannedLocation); setErr(bad); return }
       playBeep()
       onPicked(loc)
       setOpen(false)
     } catch (e) {
       const ax = e as AxiosError<{ error?: { message?: string } }>
-      setErr(ax.response?.data?.error?.message ?? 'Không tra được vị trí — thử lại')
+      const m = ax.response?.data?.error?.message ?? 'Không tra được vị trí — thử lại'
+      // 404 = mã này KHÔNG PHẢI vị trí → trả lượt bắn về cho màn cha (message null).
+      // Lỗi khác (mơ hồ 2 kho, mạng, 5xx) vẫn phải NÓI RÕ, đừng để cha hiểu nhầm là tem pallet.
+      if (miss(ax.response?.status === 404 ? null : m)) return
+      setErr(m)
     } finally {
       setBusy(false)
     }
-  }, [busy, warehouseId, materialId, nccId, onPicked, validate])
+  }, [busy, open, onArmedMiss, warehouseId, materialId, nccId, onPicked, validate])
 
   // Sau mỗi lượt quét lỗi: camera đang tạm dừng (QRScanner tự pause) → cho quét tiếp ngay.
   useEffect(() => { if (open && err) scannerRef.current?.resume() }, [open, err])

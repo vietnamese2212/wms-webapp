@@ -36,5 +36,6 @@
   "catalogue_full_load": 0,
   "scan_icon_not_unified": 0,
   "location_picker_without_scan": 0,
+  "wedge_ime_path_missing": 0,
   "upload_without_preflight": 0
 }

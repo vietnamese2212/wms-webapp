@@ -213,10 +213,10 @@ function ScanTab() {
   }
 
   // Súng PDA: bắn 1 phát → tắt camera, tra pallet ngay (chỉ khi ĐÃ chọn kho).
-  // ⚠️ GIỮ NGUYÊN điều kiện cũ (user chốt 21/08: "chỉ bổ sung scanner thôi"). Đã thử cho phát bắn
-  // kế tiếp tự chuyển sang TEM VỊ TRÍ khi đang chờ ô đích — nhanh hơn nhưng LẤY MẤT một việc đang
-  // có: bắn tem pallet KHÁC để tra lại. Quét tem ô ở đây đi qua nút quét (một chạm), và chỉ trong
-  // lúc màn quét đó mở thì cò súng mới nhường.
+  // Đây là cò súng của BƯỚC 1 (tem pallet). Khi đã tra ra pallet, `LocationScanButton` bên dưới
+  // giành cò (exclusive) để bắn tiếp TEM VỊ TRÍ mà không phải chạm màn hình — user 22/08: "bắn vị
+  // trí nhưng chưa tự chuyển nên súng bắn ra kết quả không nhận ở vị trí". Việc "bắn tem pallet
+  // KHÁC để tra lại" KHÔNG mất: mã nào BE trả 404-không-phải-vị-trí thì quay về đúng hàm này.
   useWedgeScanner(code => {
     if (move.isPending || searching) return
     if (!gunMode) setGunMode(true)
@@ -371,6 +371,13 @@ function ScanTab() {
                 serverSearch + option render PutawayOption (★/nhãn chặn) + LocationContents bên dưới */}
             <div className="px-3 py-2.5 space-y-2 border-b">
               <Label className="text-xs">Vị trí mới <span className="text-red-500">*</span>
+                {/* Đang dùng súng thì phải nói RÕ cò đang chờ tem gì — nếu không, bắn xong không
+                    thấy gì nhảy là người quét tưởng súng hỏng (đúng ca user báo 22/08). */}
+                {gunMode && (
+                  <span className="ml-2 rounded-full bg-sky-100 border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                    Súng đang chờ TEM VỊ TRÍ
+                  </span>
+                )}
                 <span className="ml-2 text-[10px] font-normal text-slate-400">★ = vị trí nên cất theo quy tắc của kho</span>
               </Label>
               <div className="flex items-center gap-1.5">
@@ -393,12 +400,19 @@ function ScanTab() {
                     }))}
                   />
                 </div>
-                {/* Quét tem ô đích — THÊM cạnh ô chọn tay, ô chọn giữ nguyên. KHÔNG armWedge: màn
-                    này cò súng vẫn đang dành cho tem PALLET (xem useWedgeScanner ở trên). */}
+                {/* Quét tem ô đích — THÊM cạnh ô chọn tay, ô chọn giữ nguyên.
+                    armWedge: đã có pallet trên màn thì cò súng chuyển sang chờ TEM VỊ TRÍ, khỏi
+                    phải chạm nút. Bắn nhầm tem pallet → onArmedMiss(message=null) đưa lượt bắn về
+                    bước tra pallet, nên vẫn đổi được pallet giữa chừng. */}
                 <LocationScanButton
                   warehouseId={entry.warehouse_id ?? warehouseId}
                   materialId={entry.material_id}
                   disabled={saving}
+                  armWedge={!saving}
+                  onArmedMiss={(raw, message) => {
+                    if (message) { setSaveErr(message); return }   // ô tra ra được nhưng bị chặn
+                    handleQRScan(raw)                              // không phải vị trí → tem pallet khác
+                  }}
                   onPicked={loc => pickLoc(loc as unknown as PutawayLocRow, loc.id)}
                 />
               </div>

@@ -331,9 +331,11 @@ function ScanTab() {
 
         {/* Result card */}
         {entry && (
-          <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+          // KHÔNG `overflow-hidden`: cụm nút bên dưới dùng `sticky` — ancestor overflow-hidden là
+          // sticky chết. Bo góc chuyển xuống từng khối đầu/cuối.
+          <div className="rounded-xl border bg-white shadow-sm">
             {/* Pallet + hàng */}
-            <div className="px-3 py-2 bg-slate-50 border-b">
+            <div className="px-3 py-2 bg-slate-50 border-b rounded-t-xl">
               <p className="text-[10px] font-mono font-semibold text-slate-700 break-all">{entry.pallet_code}</p>
               <p className="text-xs text-slate-600 mt-0.5">
                 {entry.material?.short_name ?? entry.material?.material_code ?? '—'}
@@ -449,8 +451,10 @@ function ScanTab() {
               </p>
             </div>
 
-            {/* Actions */}
-            <div className="px-3 py-2 flex gap-2">
+            {/* Actions — GHIM ĐÁY: khối "ô đang chứa gì" cao thay đổi theo số mã trong ô (tới 6
+                dòng), màn PDA 360×640 là nút xác nhận rơi khỏi màn, người quét phải cuộn đi tìm.
+                `bottom-20` để không nằm dưới thanh điều hướng của mobile (desktop không có nó). */}
+            <div className="sticky bottom-20 lg:bottom-0 bg-white border-t border-slate-100 rounded-b-xl px-3 py-2 flex gap-2">
               <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={clearResult} disabled={saving}>
                 Bỏ qua
               </Button>

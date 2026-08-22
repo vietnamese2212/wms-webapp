@@ -252,6 +252,10 @@ export default function Stocktake() {
               tem pallet còn tắt (enabled = !!locationId) nên phát bắn không bị hai bên cùng ăn —
               người kiểm đứng trước kệ bắn tem ô là vào việc ngay. */}
           <LocationScanButton
+            // KIỂM KÊ là ĐẾM hàng trong ô, không phải cất hàng vào ô: ô đầy mới đúng là ô cần đếm,
+            // ô ngưng dùng vẫn có thể còn tồn. Chặn theo luật cất ở đây là chặn OAN đúng những ô
+            // đáng kiểm nhất (đo 22/08: quét B_TP3_37_T2 bị từ chối "đã ĐẦY 22/22").
+            purpose="lookup"
             warehouseId={warehouseId}
             disabled={!warehouseId}
             armWedge={!locationId}

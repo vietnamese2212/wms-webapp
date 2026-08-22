@@ -174,6 +174,7 @@ export default function StocktakeHistory() {
           <FilterSheetButton defs={defs} className="sm:hidden" />
           {/* Quét tem ô để lọc lịch sử kiểm của đúng ô đó (cộng dồn, xem Tồn kho) */}
           <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc — ô đầy vẫn phải chọn được
             warehouseId={warehouseId || null}
             onPicked={loc => setF({
               locationIds: locationIds.includes(loc.id) ? locationIds : [...locationIds, loc.id],

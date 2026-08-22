@@ -1089,6 +1089,7 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
               thường, còn bỏ chọn thì 1 nhấp. Kho: chỉ khoanh khi bộ lọc đang đúng MỘT kho, còn
               lại để BE tự tìm trong phạm vi (trùng mã ở 2 kho thì nó báo mơ hồ, không đoán). */}
           <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc tồn — ô đầy mới càng phải xem được
             warehouseId={f.warehouseIds.length === 1 ? f.warehouseIds[0] : null}
             onPicked={loc => setInventory({
               filterLocations: f.filterLocations.includes(loc.location_code)

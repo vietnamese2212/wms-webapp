@@ -482,6 +482,7 @@ export default function Locations() {
               nhặt lẻ/cần kiểm). Đổ vào ô TÌM chứ không mở form: trang này là danh mục, thao tác
               tiếp theo do người dùng chọn. */}
           <LocationScanButton
+            purpose="lookup"   // chỉ đổ mã vào ô tìm — ô đầy/ngưng dùng vẫn phải tra được
             warehouseId={locFilter.warehouseId || null}
             onPicked={loc => setLocationsFilter({ search: loc.location_code })}
           />

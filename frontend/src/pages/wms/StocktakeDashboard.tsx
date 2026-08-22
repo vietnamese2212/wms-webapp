@@ -425,6 +425,7 @@ export default function StocktakeDashboard() {
           <FilterSheetButton defs={defs} className="sm:hidden" />
           {/* Quét tem ô để chọn vị trí cần tổng hợp (cộng dồn — kiểm vài kệ liền nhau) */}
           <LocationScanButton
+            purpose="lookup"   // chỉ trỏ tới ô để lọc — ô đầy vẫn phải chọn được
             warehouseId={warehouseId || null}
             onPicked={loc => {
               setStocktakeSummary({

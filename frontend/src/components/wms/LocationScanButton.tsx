@@ -59,6 +59,14 @@ interface Props {
    * người quét đi tới ô đó xong mới biết sai.
    */
   validate?: (loc: ScannedLocation) => string | null
+  /**
+   * Màn này quét ô để LÀM GÌ (chốt 22/08 — trước đó mọi chỗ đều bị chặn theo luật CẤT hàng):
+   *  · `putaway` (mặc định) = sắp ĐƯA HÀNG VÀO ô → chặn ô ngưng dùng / ô đã đầy ngay tại đây, vì
+   *    chọn xong cũng ăn 422 ở cửa ghi (đừng bắt người quét đẩy xe tới nơi rồi mới biết).
+   *  · `lookup` = chỉ TRỎ TỚI ô có sẵn (bộ lọc danh sách, chọn ô để KIỂM KÊ) → KHÔNG chặn: ô đầy
+   *    mới đúng là ô cần đếm, và lọc danh sách theo một ô đầy là việc hoàn toàn bình thường.
+   */
+  purpose?: 'putaway' | 'lookup'
   disabled?: boolean
   /** 'icon' = nút vuông cạnh ô chọn · 'pill' = nút chữ nhỏ (dùng cạnh nhãn/pill có sẵn) */
   variant?: 'icon' | 'pill'
@@ -67,7 +75,8 @@ interface Props {
 }
 
 export function LocationScanButton({
-  warehouseId, materialId, nccId, onPicked, armWedge = false, onArmedMiss, validate, disabled,
+  warehouseId, materialId, nccId, onPicked, armWedge = false, onArmedMiss, validate,
+  purpose = 'putaway', disabled,
   variant = 'icon', label = 'Quét vị trí', className,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -93,17 +102,19 @@ export function LocationScanButton({
       })
       // Ô ngưng sử dụng / đã đầy: BÁO RÕ ngay tại đây thay vì để người quét chọn rồi ăn 422 ở
       // bước Lưu — lúc đó họ đã đẩy xe nâng tới ô đó rồi.
-      if (loc.is_active === false) {
-        const m = `Ô ${loc.location_code} đã NGƯNG sử dụng — chọn ô khác`
-        if (miss(m)) return
-        setLast(loc as unknown as ScannedLocation); setErr(m)
-        return
-      }
-      if (putawayFull(loc as unknown as PutawayLocRow)) {
-        const m = `Ô ${loc.location_code} đã ĐẦY (${loc.used_slots ?? 0}/${loc.max_pallets}) — chọn ô khác`
-        if (miss(m)) return
-        setLast(loc as unknown as ScannedLocation); setErr(m)
-        return
+      if (purpose === 'putaway') {
+        if (loc.is_active === false) {
+          const m = `Ô ${loc.location_code} đã NGƯNG sử dụng — chọn ô khác`
+          if (miss(m)) return
+          setLast(loc as unknown as ScannedLocation); setErr(m)
+          return
+        }
+        if (putawayFull(loc as unknown as PutawayLocRow)) {
+          const m = `Ô ${loc.location_code} đã ĐẦY (${loc.used_slots ?? 0}/${loc.max_pallets}) — chọn ô khác`
+          if (miss(m)) return
+          setLast(loc as unknown as ScannedLocation); setErr(m)
+          return
+        }
       }
       const bad = validate?.(loc)
       if (bad) { if (miss(bad)) return; setLast(loc as unknown as ScannedLocation); setErr(bad); return }
@@ -120,7 +131,7 @@ export function LocationScanButton({
     } finally {
       setBusy(false)
     }
-  }, [busy, open, onArmedMiss, warehouseId, materialId, nccId, onPicked, validate])
+  }, [busy, open, onArmedMiss, warehouseId, materialId, nccId, onPicked, validate, purpose])
 
   // Sau mỗi lượt quét lỗi: camera đang tạm dừng (QRScanner tự pause) → cho quét tiếp ngay.
   useEffect(() => { if (open && err) scannerRef.current?.resume() }, [open, err])

@@ -138,6 +138,16 @@ function onKey(e: KeyboardEvent) {
   scheduleIdle()   // chốt bằng idle nếu không có Enter thật (Zebra gửi Enter kiểu string/IME)
 }
 
+// Giá trị ô NGAY TRƯỚC ký tự vừa chèn — dựng lại từ DOM + vị trí con trỏ, KHÔNG tin bộ nhớ `seen`.
+// Lý do (bug 22/08): React ghi thẳng `el.value` khi re-render và KHÔNG phát sự kiện `input`, nên
+// ngay sau lượt quét trước `seen` vẫn giữ giá trị cũ (thường là rỗng). Khôi phục ô theo `seen` sẽ
+// XOÁ TRẮNG mã pallet vừa tra ra — đúng triệu chứng "quét vị trí xong thì ô tem pallet bỏ trống".
+function valueBeforeInsert(el: HTMLInputElement | HTMLTextAreaElement, added: string) {
+  const sel = typeof el.selectionStart === 'number' ? el.selectionStart : el.value.length
+  const start = Math.max(0, sel - added.length)
+  return el.value.slice(0, start) + el.value.slice(sel)
+}
+
 // Đường (b): súng ở chế độ IME → chữ chỉ xuất hiện qua sự kiện `input`, không có keydown ký tự.
 function onFocusIn(e: FocusEvent) {
   if (isEditable(e.target)) seen.set(e.target, e.target.value)
@@ -158,7 +168,7 @@ function onInput(e: Event) {
     ? ie.data
     : (el.value.length > before.length && el.value.startsWith(before) ? el.value.slice(before.length) : '')
   if (!added) return
-  if (now - lastCharAt > GAP_MS) { reset(); inputSnap = { el, value: before } }
+  if (now - lastCharAt > GAP_MS) { reset(); inputSnap = { el, value: valueBeforeInsert(el, added) } }
   viaIme = true
   buf += added
   lastCharAt = now

@@ -260,7 +260,9 @@ export default function Stocktake() {
             // của màn phải khai qua `validate` — cùng tiền lệ Fill chỉ nhận ô nhặt lẻ.
             validate={requiresOnly
               ? loc => (flagLocs.some(l => l.id === loc.id) ? null
-                  : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
+                  : flagLocs.length === 0
+                    ? 'Kho này chưa có ô nào được đánh dấu cần kiểm — bỏ tick "Chỉ vị trí cần check" để kiểm ô bất kỳ'
+                    : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
               : undefined}
             onPicked={loc => {
               setStocktake({ locationId: loc.id })

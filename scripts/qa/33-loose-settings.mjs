@@ -109,6 +109,24 @@ async function looseOf(orderedFg, orderedPm) {
   check('[5] POSM hiện trên trang Nhặt lẻ (loose=full)', lp.s === 200 && hasPm, `http=${lp.s} hasPm=${hasPm}`)
 }
 
+// [5d][5e] Filter "Loại kho" trang Nhặt lẻ theo LOẠI CỦA MÃ NHẶT LẺ, không theo hàng xe CHỞ
+// (migration 20260824c — bug user bắt 24/08: chuyến chở lẫn FG01+PM01 nhưng FG lẻ=0 do trần
+// vẫn hiện dưới filter FG01 vì lọc trên GDO.warehouse_type chuỗi ghép)
+{
+  await api(`/masterdata/warehouses/${whId}`, 'PUT', { loose_max_cartons: 2 })
+  const r = await looseOf(127, 77)   // FG lẻ 2,7 thùng > trần 2 → 0; PM01=ALL → 77
+  check('[5d-pre] Chuyến chở lẫn: FG lẻ=0 (trần), POSM=77', r.fg === 0 && r.pm === 77, r.err ?? `fg=${r.fg} pm=${r.pm}`)
+  const gdoId = gdoIds.at(-1)
+  const qs = `warehouse_id=${whId}&date_from=${FIX.DATE}&date_to=${FIX.DATE}`
+  const fg = await api(`/wms/loosepicking?${qs}&wh_types=FG01`)
+  const pm = await api(`/wms/loosepicking?${qs}&wh_types=PM01`)
+  const inFg = JSON.stringify(fg.j?.data ?? '').includes(gdoId)
+  const inPm = JSON.stringify(pm.j?.data ?? '').includes(gdoId)
+  check('[5d] Filter FG01 KHÔNG hiện chuyến chỉ còn POSM lẻ', fg.s === 200 && !inFg, `http=${fg.s} inFg=${inFg}`)
+  check('[5e] Filter PM01 vẫn hiện chuyến đó', pm.s === 200 && inPm, `http=${pm.s} inPm=${inPm}`)
+  await api(`/masterdata/warehouses/${whId}`, 'PUT', { loose_max_cartons: null })
+}
+
 // [5b] Soạn/giữ POSM với POOL 2 DÒNG (nhập lại 2 đợt) — fix maybeSingle 24/08: trước đó 2 dòng
 // cùng pallet_code(=mã) làm tra pool lỗi → 404 "chưa có tồn" OAN dù tồn dư (họ lỗi ed92e2a)
 {

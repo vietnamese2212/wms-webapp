@@ -3,7 +3,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete', 'putaway_override'],
   outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override'],
   scanlog:      ['view', 'export'],
-  loosepicking: ['view', 'scan', 'complete'],
+  loosepicking: ['view', 'scan', 'complete', 'recalc'],
   stocktake:    ['view', 'scan', 'complete', 'export'],
   locations:    ['view', 'create', 'edit', 'delete', 'import', 'export', 'print_label'],
   employees:    ['view'],

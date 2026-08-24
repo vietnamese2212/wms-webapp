@@ -5613,6 +5613,94 @@ export async function getLoosePickingFacets(req: Request, res: Response) {
   return ok(res, data ?? {})
 }
 
+// NÚT "TÍNH LẠI NHẶT LẺ" (user chốt 24/08 — sau khi đổi setting nhặt lẻ giữa chừng):
+// setting KHÔNG hồi tố đơn đã tạo (chủ đích — số tự nhảy khi đang soạn là loạn hiện trường);
+// đây là đường ÁP LẠI có kiểm soát, phạm vi hẹp:
+// - Chỉ chuyến CHƯA BẮT ĐẦU (PENDING, không CHỜ SAP / NGỪNG) của MỘT kho (+ khoảng ngày nếu lọc).
+// - Dòng đã soạn/giữ hoặc đã xác nhận: chỉ cập nhật khi số MỚI ≥ số ĐÃ SOẠN (nới rule 20→50 vẫn
+//   lên 50 được, phần đã soạn giữ nguyên); số mới < số đã soạn → GIỮ NGUYÊN + đếm báo lại
+//   (không tự cắt dưới số người ta đã soạn — muốn hạ thì gỡ soạn trước).
+// - Số "Nhặt lẻ" nhập tay từ file cũ (chuyến origin EXCEL/LEGACY): giữ nguyên — trừ setting OFF
+//   (OFF ép 0 mọi đường, vẫn qua gác "đã soạn" ở trên).
+export async function recalcLoosePicking(req: Request, res: Response) {
+  try {
+    const { warehouse_id, date_from, date_to } = req.body as { warehouse_id?: string; date_from?: string; date_to?: string }
+    if (!warehouse_id) return fail(res, 'Chọn Kho xuất trước khi tính lại — setting nhặt lẻ đặt theo kho', 422)
+    if (req.user?.warehouse_scope !== 'NATIONAL' && !(req.user?.warehouse_ids ?? []).includes(warehouse_id))
+      return fail(res, 'Kho ngoài phạm vi được gán', 403)
+
+    const gdosAll = await fetchAllRowsParallel(() => {
+      let q = supabase.from('GroupDeliveryOrder')
+        .select('id, group_code, warehouse_type, origin, awaiting_sap, plan_dropped')
+        .eq('warehouse_id', warehouse_id).eq('status', 'PENDING')
+      if (date_from) q = q.gte('delivery_date', date_from)
+      if (date_to)   q = q.lte('delivery_date', date_to)
+      return q
+    }) as { id: string; group_code: string; warehouse_type: string | null; origin: string | null; awaiting_sap?: boolean | null; plan_dropped?: boolean | null }[]
+    // Chuyến bất động (chờ SAP / ngừng) không có gì để tính; scope Loại hàng = giao ≥1 như mọi cửa ghi GDO
+    const gdos = gdosAll.filter(g => !g.awaiting_sap && !g.plan_dropped && categoryAllowed(req, g.warehouse_type))
+    const originByGdo = new Map(gdos.map(g => [g.id, g.origin ?? null]))
+
+    const dels = await fetchAllByIdChunks(gdos.map(g => g.id), chunk =>
+      supabase.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', chunk)) as { id: string; gdo_id: string }[]
+    const gdoByDo = new Map(dels.map(d => [d.id, d.gdo_id]))
+    const items = await fetchAllByIdChunks(dels.map(d => d.id), chunk =>
+      supabase.from('OutboundItem').select('*').in('do_id', chunk).neq('status', 'CANCELLED')) as Record<string, any>[]
+
+    // Số ĐÃ SOẠN/GIỮ/XÁC NHẬN per dòng (base) — gác "không cắt dưới số đã soạn"
+    const looseScans = await fetchAllByIdChunks(items.map(i => String(i.id)), chunk =>
+      supabase.from('OutboundScanEntry').select('item_id, cartons_scanned')
+        .eq('is_loose_picking', true).in('item_id', chunk)) as { item_id: string; cartons_scanned: number }[]
+    const scannedByItem = new Map<string, number>()
+    for (const s of looseScans)
+      scannedByItem.set(s.item_id, (scannedByItem.get(s.item_id) ?? 0) + Number(s.cartons_scanned || 0))
+
+    const codes = [...new Set(items.map(i => String(i.material_code_raw ?? '').trim()).filter(Boolean))]
+    const mats = await fetchAllByIdChunks(codes, chunk =>
+      supabase.from('Material')
+        .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category')
+        .in('material_code', chunk)) as (MatPalletUnits & { material_code: string })[]
+    const matByCode = new Map(mats.map(m => [String(m.material_code), m]))
+    const loosePol = await looseConfigOf([warehouse_id])
+
+    const t = new Date().toISOString()
+    const changed: Record<string, any>[] = []
+    let keptScanned = 0, keptManual = 0
+    for (const it of items) {
+      const gdoId = gdoByDo.get(String(it.do_id))
+      if (!gdoId) continue
+      const cur = Number(it.loose_picking ?? 0)
+      const mu = matByCode.get(String(it.material_code_raw ?? '').trim()) ?? null
+      const policy = loosePol.of(warehouse_id, mu?.category ?? null)
+      const origin = originByGdo.get(gdoId)
+      let next: number
+      if (origin === 'EXCEL' || origin === 'LEGACY') {
+        // Số nhặt lẻ nhập tay từ file — công thức không đè, chỉ OFF mới ép 0
+        if (policy.mode !== 'OFF') { if (cur > 0) keptManual++; continue }
+        next = 0
+      } else {
+        next = loosePalletRemainder(Number(it.cartons_ordered ?? 0), mu, warehouse_id, policy)
+      }
+      if (next === cur) continue
+      const done = scannedByItem.get(String(it.id)) ?? 0
+      if (next < done) { keptScanned++; continue }   // đã soạn nhiều hơn số mới → giữ, báo lại
+      changed.push({ ...it, loose_picking: next, updated_at: t })
+    }
+
+    // UPDATE nhiều dòng giá trị khác nhau = upsert LÔ full-record (chuẩn upload) — không update lẻ
+    for (let i = 0; i < changed.length; i += 500) {
+      const { error } = await supabase.from('OutboundItem').upsert(changed.slice(i, i + 500), { onConflict: 'id' })
+      if (error) return fail(res, `Lỗi cập nhật: ${error.message}`)
+    }
+    return ok(res, {
+      gdos: gdos.length, items_checked: items.length, updated: changed.length,
+      kept_scanned: keptScanned, kept_manual: keptManual,
+    })
+  } catch (e) {
+    return fail(res, e instanceof Error ? e.message : 'Lỗi tính lại nhặt lẻ')
+  }
+}
+
 export async function listLoosePickingItems(req: Request, res: Response) {
   try {
     const { warehouse_id, date, date_from, date_to } = req.query as { warehouse_id?: string; date?: string; date_from?: string; date_to?: string }

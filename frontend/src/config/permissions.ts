@@ -75,6 +75,7 @@ export const MODULES = {
       view:     'Xem danh sách',
       scan:     'Quét QR',
       complete: 'Hoàn thành',
+      recalc:   'Tính lại nhặt lẻ theo setting (chuyến chưa bắt đầu)',
     },
   },
   stocktake: {

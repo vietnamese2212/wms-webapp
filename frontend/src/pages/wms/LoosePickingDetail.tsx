@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info } from 'lucide-react'
+import { ArrowLeft, Package, ChevronRight, ChevronDown, Scissors, Truck, Search, Bookmark, Info, PenSquare } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -339,11 +339,15 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                         {leThung ?? (!hasEnt && effective > 0 ? `${qtyEntryText(looseDone, item.material)}/${qtyEntryText(effective, item.material)}` : '—')}
                       </span>
                       {!isDone && (
+                        // Hàng no-QR (POSM/Loscam) = LƯU SỐ LƯỢNG tay, không đòi tem — icon PenSquare
+                        // thống nhất với "Lưu thủ công" bên Xuất (?scan=1 tự mở đúng dialog theo loại hàng)
                         <button
                           onClick={e => { e.stopPropagation(); navigate(`/wms/loosepicking/${gdoId}/items/${item.id}?scan=1`) }}
                           className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors"
                         >
-                          <ScanIcon className="h-2.5 w-2.5" /> Quét
+                          {item.material?.no_qr_tracking === true
+                            ? <><PenSquare className="h-2.5 w-2.5" /> Lưu SL</>
+                            : <><ScanIcon className="h-2.5 w-2.5" /> Quét</>}
                         </button>
                       )}
                     </div>

@@ -169,6 +169,7 @@ router.post('/inventory/:id/stocktake',           requirePerm('stocktake', 'scan
 // Loose picking (nhặt lẻ)
 router.get('/loosepicking/facets',                            requirePerm('loosepicking', 'view'), outbound.getLoosePickingFacets)   // phải trước '/loosepicking'
 router.get('/loosepicking',                                   requirePerm('loosepicking', 'view'), outbound.listLoosePickingItems)
+router.post('/loosepicking/recalc',                           requirePerm('loosepicking', 'recalc'), outbound.recalcLoosePicking)   // tính lại loose theo setting — chuyến CHƯA bắt đầu
 
 // Outbound (chuyến xe / xuất kho)
 router.get('/outbound',                                       requirePerm('outbound', 'view'), outbound.listGDOs)

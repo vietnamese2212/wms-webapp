@@ -2,14 +2,19 @@ import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
-import { Scissors, Bookmark, Rows3, AlignJustify } from 'lucide-react'
+import { Scissors, Bookmark, Rows3, AlignJustify, RefreshCcw } from 'lucide-react'
+import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
+import { ActionCluster } from '@/components/shared/ActionBtn'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, useBookingSequence, type LoosePickingItem, type BookingSeqRow } from '@/api/hooks'
+import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, useBookingSequence, useRecalcLoosePicking, type LoosePickingItem, type BookingSeqRow, type RecalcLooseResult } from '@/api/hooks'
 import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { qtyEntryDecimal, qtyUnitLabel, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
@@ -92,6 +97,13 @@ export default function LoosePicking() {
   }
 
   const { data: warehouses = [] } = useWarehouses(true)
+  const perms = (user?.module_permissions as ModulePermissions | null) ?? null
+
+  // "Tính lại nhặt lẻ" — setting không hồi tố đơn đã tạo; nút này áp lại cho chuyến CHƯA bắt đầu
+  const [recalcOpen,   setRecalcOpen]   = useState(false)
+  const [recalcResult, setRecalcResult] = useState<RecalcLooseResult | null>(null)
+  const [recalcError,  setRecalcError]  = useState('')
+  const { mutate: recalcLoose, isPending: recalcSaving } = useRecalcLoosePicking()
 
   useEffect(() => {
     if (!f.warehouseId) {
@@ -252,6 +264,16 @@ export default function LoosePicking() {
             title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
             {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
           </button>
+          {can(perms, 'loosepicking', 'recalc') && (
+            <ActionCluster mobileInline items={[{
+              key: 'recalc', icon: RefreshCcw, label: 'Tính lại',
+              tip: f.warehouseId
+                ? 'Tính lại số nhặt lẻ theo setting hiện tại của kho (chuyến chưa bắt đầu)'
+                : 'Chọn Kho xuất trước — setting nhặt lẻ đặt theo từng kho',
+              disabled: !f.warehouseId,
+              onClick: () => { setRecalcResult(null); setRecalcError(''); setRecalcOpen(true) },
+            }]} />
+          )}
           </div>
         </div>
 
@@ -406,6 +428,49 @@ export default function LoosePicking() {
       <ListFooter page={f.page} pageSize={f.pageSize} total={totalTrips} unit="chuyến xe"
         onPageSize={n => setLoosePicking({ pageSize: n, page: 1 })} />
      </div>
+
+      {/* Dialog "Tính lại nhặt lẻ" — có GIẢI THÍCH rõ phạm vi (user chốt 24/08: setting không hồi tố) */}
+      <Dialog open={recalcOpen} onOpenChange={o => { if (!recalcSaving) setRecalcOpen(o) }}>
+        <DialogContent className="max-w-[94vw] sm:max-w-md p-4 gap-3">
+          <DialogHeader><DialogTitle className="text-sm font-semibold">Tính lại nhặt lẻ theo setting</DialogTitle></DialogHeader>
+          <div className="text-xs text-slate-600 space-y-1.5">
+            <p>
+              Setting nhặt lẻ (Cài đặt WMS › Kho / Loại kho) <b>không tự áp cho đơn đã tạo trước đó</b>.
+              Nút này tính lại số nhặt lẻ theo setting hiện tại cho các <b>chuyến CHƯA BẮT ĐẦU</b> của kho đang lọc
+              {(f.dateFrom || f.dateTo) ? ' (trong khoảng Ngày xuất đang lọc)' : ''}.
+            </p>
+            <ul className="list-disc pl-4 space-y-0.5 text-slate-500">
+              <li>Chuyến đã bắt đầu / hoàn thành: giữ nguyên.</li>
+              <li>Dòng đã soạn NHIỀU HƠN số mới: giữ nguyên (muốn hạ thì gỡ soạn rồi tính lại).</li>
+              <li>Số nhặt lẻ nhập tay từ file Excel cũ: giữ nguyên — trừ khi setting là "Không nhặt lẻ" (về 0).</li>
+            </ul>
+          </div>
+          {recalcResult && (
+            <div className="text-xs bg-green-50 border border-green-200 text-green-700 rounded px-2 py-1.5">
+              Đã cập nhật <b>{recalcResult.updated}</b> dòng / {recalcResult.items_checked} dòng của {recalcResult.gdos} chuyến chưa bắt đầu
+              {recalcResult.kept_scanned > 0 ? <> · <b>{recalcResult.kept_scanned}</b> dòng giữ nguyên vì đã soạn nhiều hơn số mới</> : null}
+              {recalcResult.kept_manual > 0 ? <> · <b>{recalcResult.kept_manual}</b> dòng giữ số nhập tay</> : null}.
+            </div>
+          )}
+          {recalcError && <div className="text-xs bg-red-50 border border-red-200 text-red-600 rounded px-2 py-1.5">{recalcError}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRecalcOpen(false)} disabled={recalcSaving}>{recalcResult ? 'Đóng' : 'Hủy'}</Button>
+            {!recalcResult && (
+              <Button size="sm" disabled={recalcSaving || !f.warehouseId} onClick={() => {
+                setRecalcError('')
+                recalcLoose(
+                  { warehouse_id: f.warehouseId, date_from: f.dateFrom || undefined, date_to: f.dateTo || undefined },
+                  {
+                    onSuccess: r => setRecalcResult(r),
+                    onError: err => setRecalcError(
+                      (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? 'Lỗi tính lại nhặt lẻ'),
+                  },
+                )
+              }}>{recalcSaving ? 'Đang tính…' : 'Tính lại'}</Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

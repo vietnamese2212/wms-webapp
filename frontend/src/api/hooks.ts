@@ -2502,6 +2502,22 @@ export function useScanLoosePickingItem() {
   })
 }
 
+// Tính lại số nhặt lẻ theo setting hiện tại (24/08) — setting không hồi tố, nút này áp lại
+// cho chuyến CHƯA BẮT ĐẦU của 1 kho; dòng đã soạn nhiều hơn số mới / số nhập tay giữ nguyên
+export type RecalcLooseResult = { gdos: number; items_checked: number; updated: number; kept_scanned: number; kept_manual: number }
+export function useRecalcLoosePicking() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; date_from?: string; date_to?: string }) =>
+      apiClient.post('/wms/loosepicking/recalc', body).then(r => r.data.data as RecalcLooseResult),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['gdos'] })
+      qc.invalidateQueries({ queryKey: ['gdo'] })
+    },
+  })
+}
+
 // Lưu thủ công nhặt lẻ cho hàng no-QR (POSM/Loscam) — ghi số thùng tay, reserve tồn (trừ khi Check nhặt lẻ)
 export function useManualLooseItem() {
   const qc = useQueryClient()

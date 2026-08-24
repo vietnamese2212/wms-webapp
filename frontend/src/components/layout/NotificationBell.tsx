@@ -175,7 +175,7 @@ export function NotificationBell() {
               {PREF_LABEL.map(p => (
                 <div key={p.key} className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-slate-700">{p.label}</p>
+                    <p className="text-xs font-semibold text-slate-800">{p.label}</p>
                     <p className="text-[10px] text-slate-400 truncate" title={p.desc}>{p.desc}</p>
                   </div>
                   <Switch

@@ -26,10 +26,11 @@ export function SettingGroup({ title, meta, readOnly, children }: {
   children: ReactNode
 }) {
   return (
+    // Band tiêu đề ĐỒNG BỘ khuôn AppSheet 24/08 (components/shared/SettingRow.tsx) — đậm + màu
     <section className="border border-slate-200 rounded-lg overflow-hidden bg-white h-full">
-      <div className="flex items-center gap-1.5 bg-slate-100 border-b border-slate-200 px-2 py-1">
-        <span className="w-1 h-3 bg-sky-500 rounded-sm shrink-0" />
-        <span className="text-[9px] font-semibold text-slate-600 uppercase tracking-wide truncate">{title}</span>
+      <div className="flex items-center gap-1.5 bg-slate-50 border-b border-slate-200 px-2 py-1.5">
+        <span className="w-1 h-3 bg-sky-500 rounded-full shrink-0" />
+        <span className="text-[11px] font-bold text-sky-900 uppercase tracking-wide truncate">{title}</span>
         {meta?.updated_by && meta.updated_at && (
           <span className="ml-auto text-[9px] text-slate-400 whitespace-nowrap hidden lg:inline">
             {meta.updated_by} · {formatDateTime(meta.updated_at)}
@@ -46,7 +47,7 @@ export function SettingGroup({ title, meta, readOnly, children }: {
 export function SettingLabel({ text, tip }: { text: string; tip?: ReactNode }) {
   return (
     <span className="flex items-center gap-1 mb-0.5">
-      <span className="text-[10px] font-medium text-slate-700 truncate">{text}</span>
+      <span className="text-[11px] font-semibold text-slate-800 truncate">{text}</span>
       {tip && <InfoTip tip={tip} className="[&>svg]:h-3 [&>svg]:w-3" />}
     </span>
   )

@@ -905,7 +905,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           )}
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="wh-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="wh-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="wh-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
             </div>
           )}
@@ -1032,7 +1032,7 @@ function ZoneDialog({ zone, warehouseId, warehouses, warehouseTypes, open, onClo
 
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="zone-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="zone-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="zone-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
             </div>
           )}
@@ -1137,21 +1137,22 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
     }
   }
 
-  // Diễn giải trong ⓘ (17/08) — ⓘ đứng NGOÀI <label> để bấm nó không lật ô tick
+  // Diễn giải trong ⓘ (17/08) — ⓘ đứng NGOÀI <label> để bấm nó không lật switch.
+  // Khuôn AppSheet 24/08: tên đậm trái · Switch phải cùng hàng.
   const flagRow = (id: string, checked: boolean, onChange: (v: boolean) => void, label: string, hint: React.ReactNode) => (
-    <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-      <label htmlFor={id} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-        <input id={id} type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-        <span className="text-xs font-medium text-slate-700">{label}</span>
+    <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+      <label htmlFor={id} className="flex-1 min-w-0 cursor-pointer">
+        <span className="text-xs font-semibold text-slate-800">{label}</span>
       </label>
       <InfoTip tip={hint} />
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
     </div>
   )
   // Cờ RIÊNG kho: 3 trạng thái — "Theo mặc định chung" / Có / Không
   const triRow = (id: string, val: boolean | null, onChange: (v: boolean | null) => void, label: string, base: boolean, hint: React.ReactNode) => (
-    <div className="rounded-md px-1 py-1">
+    <div className="py-1">
       <span className="flex items-center gap-1">
-        <span className="text-[11px] text-slate-500">{label}{val !== null && <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span>}</span>
+        <span className="text-[11px] font-semibold text-slate-800">{label}{val !== null && <span className="ml-1 rounded bg-sky-100 px-1 text-[9px] font-medium text-sky-700">riêng</span>}</span>
         <InfoTip tip={hint} />
       </span>
       <SingleSelect value={val === null ? '__inherit__' : val ? '1' : '0'}
@@ -1317,7 +1318,7 @@ function MetaDialog({ kind, row, open, onClose }: {
           </div>
           {isEdit && (
             <div className="flex items-center gap-2">
-              <input id="meta-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+              <Switch id="meta-active" checked={isActive} onCheckedChange={setIsActive} />
               <Label htmlFor="meta-active" className="text-sm cursor-pointer">Đang sử dụng</Label>
             </div>
           )}

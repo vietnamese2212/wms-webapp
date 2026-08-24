@@ -5,6 +5,7 @@ import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } fro
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
+import { Switch }   from '@/components/ui/switch'
 import { Badge }    from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -78,7 +79,7 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
         <div className="space-y-1"><Label className="text-xs">Tên *</Label>
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
         {isEdit && <div className="flex items-center gap-2">
-          <input id="vt-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="vt-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>
@@ -294,7 +295,7 @@ function SlotRowEditDialog({ st, open, onClose, cargoOptions }: {
         <div className="space-y-1"><Label className="text-xs">Số xe tối đa *</Label>
           <Input type="number" min="0" value={maxVehicles} onChange={e => setMaxVehicles(e.target.value)} /></div>
         <div className="flex items-center gap-2">
-          <input id="st-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="st-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="st-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>
       </div>
@@ -366,7 +367,7 @@ function TransportCompanyDialog({ co, open, onClose }: { co: TransportCompany | 
         <div className="space-y-1"><Label className="text-xs">SĐT liên hệ</Label>
           <Input value={phone} onChange={e => setPhone(normalizePhone(e.target.value))} inputMode="numeric" placeholder="09xxxxxxxx" /></div>
         {isEdit && <div className="flex items-center gap-2">
-          <input id="co-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="co-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="co-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>
@@ -436,7 +437,7 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
             triggerClassName="w-full h-9" />
         </div>
         {isEdit && <div className="flex items-center gap-2">
-          <input id="v-active" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="h-4 w-4 rounded accent-blue-600" />
+          <Switch id="v-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="v-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
         </div>}
       </div>

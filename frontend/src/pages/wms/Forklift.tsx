@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Forklift as ForkliftIcon, ClipboardCheck, BarChart2, Settings2, Plus, Pencil, Trash2, CheckCircle2, XCircle, MoonStar, Eye, Camera, Maximize2, X, Grid3X3, Table as TableIcon, ListChecks } from 'lucide-react'
 import type { AxiosError } from 'axios'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1156,9 +1157,9 @@ function VehicleSheet({ vehicle, whOpts, onClose }: { vehicle: ForkliftVehicle |
           <SingleSelect options={whOpts} value={whId} onChange={setWhId} placeholder="Chọn kho…" triggerClassName="w-full" />
         </div>
         {vehicle && (
-          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-3.5 w-3.5" />
-            Đang dùng (bỏ tick = ngừng dùng, ẩn khỏi board — giữ lịch sử)
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+            <Switch checked={active} onCheckedChange={setActive} />
+            Đang dùng <span className="font-normal text-slate-500">(tắt = ngừng dùng, ẩn khỏi board — giữ lịch sử)</span>
           </label>
         )}
       </div>
@@ -1289,9 +1290,9 @@ function ItemSheet({ item, whOpts, defaultWarehouseId, onClose }: {
           <Input inputMode="numeric" value={sortOrder} onChange={e => setSortOrder(e.target.value)} className="h-9 w-28 tabular-nums" />
         </div>
         {item && (
-          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="h-3.5 w-3.5" />
-            Đang dùng (bỏ tick = không hiện trong check list mới — lịch sử giữ nguyên)
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+            <Switch checked={active} onCheckedChange={setActive} />
+            Đang dùng <span className="font-normal text-slate-500">(tắt = không hiện trong check list mới — lịch sử giữ nguyên)</span>
           </label>
         )}
       </div>

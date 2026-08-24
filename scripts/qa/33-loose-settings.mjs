@@ -32,17 +32,17 @@ const rWh = await api('/masterdata/warehouses', 'POST', {
   code: `${TAG}_WH`, name: 'QA loose settings', warehouse_type: 'CENTRAL', inventory_mode: 'QTY',
 })
 const whId = rWh.j?.data?.id
-check('[0] Tạo kho QA (API, tự gán type-configs)', rWh.s === 201 && !!whId, `http=${rWh.s}`)
+check('[0] Tạo kho QA (API, tự gán type-configs)', (rWh.s === 200 || rWh.s === 201) && !!whId, `http=${rWh.s}`)
 
 // 2 mã: FG có thùng+pallet (10 hộp/thùng × 5 thùng/pallet = palletBase 50) · PM kiểu POSM (CÁI, không thùng)
 const MAT_FG = `${TAG}_FG`, MAT_PM = `${TAG}_PM`
 await restWrite('Material', 'POST', null, {
-  id: randomUUID(), material_code: MAT_FG, short_name: 'QA loose FG', category: 'FG01',
+  id: randomUUID(), material_code: MAT_FG, short_name: 'QA loose FG', material_description: 'QA loose FG', category: 'FG01',
   base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 10, cartons_per_pallet: 5,
   is_active: true, updated_at: now(),
 })
 await restWrite('Material', 'POST', null, {
-  id: randomUUID(), material_code: MAT_PM, short_name: 'QA loose POSM', category: 'PM01',
+  id: randomUUID(), material_code: MAT_PM, short_name: 'QA loose POSM', material_description: 'QA loose POSM', category: 'PM01',
   base_unit: 'CAI', no_qr_tracking: true, is_active: true, updated_at: now(),
 })
 

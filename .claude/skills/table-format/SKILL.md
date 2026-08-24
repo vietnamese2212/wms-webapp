@@ -189,6 +189,14 @@ Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn 
 - **Thứ tự cột: cột NGHIỆP VỤ đứng trước, cột thường-rỗng (mã phụ, ship-to, địa chỉ, ghi chú) ra sau** — phone thấy thông tin chính không phải kéo ngang (mẫu: bảng Kho WMSSettings 24/08).
 - **Khối PHỤ trang detail = `CollapseSection`** (`components/shared/CollapseSection.tsx` — mobile thu gọn mặc định, desktop mở). KHÔNG áp cho khối cốt lõi (band, bảng dòng hàng); bảng dòng hàng luôn mở + scroll NGANG, **TUYỆT ĐỐI không mở/đóng từng row theo chiều dọc** (user chốt 24/08 — đơn nhiều mã sẽ thành scroll dọc dài).
 
+## 21. Form CẤU HÌNH = khuôn AppSheet (user chốt 24/08 — áp MỌI form setting/config)
+Dùng `SettingsGroup` + `SettingRow` (`components/shared/SettingRow.tsx`), KHÔNG tự chế khung:
+- **SettingsGroup** = band tiêu đề (vạch accent sky + IN HOA đậm `text-sky-900`) + các row ngăn `divide-y`.
+- **SettingRow** = tên **ĐẬM** + **diễn giải xám NHÌN THẤY NGAY** dưới tên (đừng giấu hết vào ⓘ — ⓘ chỉ cho chi tiết dài); control GỌN (Switch/chip/ô số) đứng **bên phải CÙNG HÀNG** qua prop `control`; control RỘNG (select/input dài) đứng dưới diễn giải qua `children`. Chip phụ (vd "Bắt buộc") phải nằm CÙNG HÀNG với setting của nó, không rớt xuống dòng riêng.
+- **Boolean = `Switch`** (ui/switch), không dùng checkbox thô trong form cấu hình; `htmlFor` để tên bấm được.
+- Nhóm xếp **lưới nhiều cột cân đối** (`xl:grid-cols-2` chẵn nhóm) — KHÔNG để cột mồ côi/lỗ trống lớn.
+Mẫu: `StrategyFields.tsx` + form Kho `WMSSettings.tsx` (24/08).
+
 ## Checklist tạo/sửa list page (Manhattan)
 - [ ] Card trên canvas xám (`sm:p-3` + panel trắng bo góc, KHÔNG `overflow-hidden`)
 - [ ] Toolbar (Search + FilterSheetButton + SavedViews + density + action) + FilterBar (hàng 2, `defs`) + SummaryBand

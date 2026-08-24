@@ -16,11 +16,14 @@ export interface BandTile {
 
 export function SummaryBand({ tiles, className, compact }: { tiles: BandTile[]; className?: string; compact?: boolean }) {
   return (
-    <div className={`flex divide-x divide-white/15 bg-sky-800 text-white overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
+    // Mobile (đợt UI 24/08): LƯỚI 3 CỘT — mọi ô hiện đủ trong 1-2 hàng, KHÔNG cuộn ngang, hết
+    // cảnh nhãn cắt cụt "SL (QUY Đ…". Desktop giữ flex 1 hàng chia vạch như cũ.
+    <div className={`grid grid-cols-3 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
       {tiles.map((t, i) => (
         // Màn nhỏ (PDA/phone) tự COMPACT để nhường chỗ cho bảng; desktop giữ cỡ đầy. compact=true ép nhỏ mọi cỡ.
-        // title fallback = label: nhãn dài bị truncate ("NHẶT LẺ (QU…") vẫn đọc được khi hover
-        <div key={i} title={t.tip ?? t.label} className={`flex-1 min-w-[84px] text-center ${compact ? 'px-3 py-0.5' : 'px-3 py-0.5 sm:py-1.5'}`}>
+        // title fallback = label: nhãn dài hiếm hoi vẫn truncate → đọc được khi giữ tay/hover
+        <div key={i} title={t.tip ?? t.label}
+          className={`sm:flex-1 min-w-0 sm:min-w-[84px] text-center border-white/10 border-b [&:nth-child(3n)]:border-r-0 border-r sm:border-0 ${compact ? 'px-2 py-0.5 sm:px-3' : 'px-2 py-1 sm:px-3 sm:py-1.5'}`}>
           <div className="text-[9px] font-medium uppercase tracking-wider text-sky-200/90 truncate">{t.label}</div>
           <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}

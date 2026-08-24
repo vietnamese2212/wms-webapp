@@ -6,6 +6,7 @@ import { Scissors, Bookmark, Rows3, AlignJustify, RefreshCcw } from 'lucide-reac
 import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { ActionCluster } from '@/components/shared/ActionBtn'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -67,20 +68,20 @@ function rowText(s: GDOSummary): string {
   return 'hover:bg-slate-50'
 }
 
-function gdoStatusInfo(gdo: LoosePickingItem['gdo']): { label: string; cls: string } {
-  if (!gdo) return { label: '—', cls: 'bg-slate-100 text-slate-400' }
-  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
-  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
-  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   cls: 'bg-red-100 text-red-700'     }
-  if (gdo.started_at)               return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
-  return                                   { label: 'Chờ xe',     cls: 'bg-slate-100 text-slate-500' }
+function gdoStatusInfo(gdo: LoosePickingItem['gdo']): { label: string; tone: BadgeTone } {
+  if (!gdo) return { label: '—', tone: 'slate' }
+  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', tone: 'blue'  }
+  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  tone: 'amber' }
+  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   tone: 'red'   }
+  if (gdo.started_at)               return { label: 'Đang xuất',  tone: 'amber' }
+  return                                   { label: 'Chờ xe',     tone: 'slate' }
 }
 
-function pickingStatusInfo(s: GDOSummary): { label: string; cls: string } {
-  if (s.totalLoose === 0)                           return { label: '—',              cls: 'bg-slate-100 text-slate-400' }
-  if (s.totalLooseDone >= s.totalLoose)             return { label: 'Xong',           cls: 'bg-blue-100 text-blue-700'   }
-  if (s.totalLooseDone > 0)                         return { label: 'Đang chuẩn bị', cls: 'bg-amber-100 text-amber-700' }
-  return                                                   { label: 'Chưa chuẩn bị', cls: 'bg-slate-100 text-slate-500' }
+function pickingStatusInfo(s: GDOSummary): { label: string; tone: BadgeTone } {
+  if (s.totalLoose === 0)                           return { label: '—',              tone: 'slate' }
+  if (s.totalLooseDone >= s.totalLoose)             return { label: 'Xong',           tone: 'blue'  }
+  if (s.totalLooseDone > 0)                         return { label: 'Đang chuẩn bị', tone: 'amber' }
+  return                                                   { label: 'Chưa chuẩn bị', tone: 'slate' }
 }
 
 // ─── Main page ─────────────────────────────────────────────────
@@ -243,7 +244,8 @@ export default function LoosePicking() {
       {/* ── Toolbar ── */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Nhặt lẻ</span>
+          {/* Mobile ẨN tiêu đề trang (bottom-nav đã báo) — giữ badge "chưa xong" vì mang thông tin */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Nhặt lẻ</span>
           {totalPending > 0 && (
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium shrink-0">
               {totalPending} chưa xong
@@ -333,8 +335,8 @@ export default function LoosePicking() {
             </TableHeader>
             <TableBody>
               {filtered.map(s => {
-                const { label: gLabel, cls: gCls } = gdoStatusInfo(s.gdo)
-                const { label: pLabel, cls: pCls } = pickingStatusInfo(s)
+                const { label: gLabel, tone: gTone } = gdoStatusInfo(s.gdo)
+                const { label: pLabel, tone: pTone } = pickingStatusInfo(s)
                 const pct      = s.totalLoose > 0 ? Math.min(100, (s.totalLooseDone / s.totalLoose) * 100) : 0
                 const dateStr  = s.gdo?.delivery_date
                   ? format(parseISO(s.gdo.delivery_date), 'dd-MM-yy', { locale: vi })
@@ -411,10 +413,10 @@ export default function LoosePicking() {
                       </div>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${gCls}`}>{gLabel}</span>
+                      <StatusBadge tone={gTone}>{gLabel}</StatusBadge>
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${pCls}`}>{pLabel}</span>
+                      <StatusBadge tone={pTone}>{pLabel}</StatusBadge>
                     </TableCell>
                   </TableRow>
                 )

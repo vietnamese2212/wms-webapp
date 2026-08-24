@@ -11,6 +11,7 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { ModalOverlay } from '@/components/shared/ModalOverlay'
@@ -84,12 +85,12 @@ export function itemStatusText(status: string): string {
   }
 }
 
-function gdoStatusInfo(gdo: GDO): { label: string; cls: string } {
-  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', cls: 'bg-blue-100 text-blue-700'   }
-  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  cls: 'bg-amber-100 text-amber-700' }
-  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   cls: 'bg-red-100 text-red-700'     }
-  if (gdo.assigned_at)              return { label: 'Giao đơn',   cls: 'bg-green-100 text-green-700' }
-  return                                   { label: '—',           cls: 'bg-slate-100 text-slate-400' }
+function gdoStatusInfo(gdo: GDO): { label: string; tone: BadgeTone } {
+  if (gdo.status === 'COMPLETED')   return { label: 'Hoàn thành', tone: 'blue'  }
+  if (gdo.status === 'IN_PROGRESS') return { label: 'Đang xuất',  tone: 'amber' }
+  if (gdo.status === 'PAUSED')      return { label: 'Tạm dừng',   tone: 'red'   }
+  if (gdo.assigned_at)              return { label: 'Giao đơn',   tone: 'green' }
+  return                                   { label: '—',           tone: 'slate' }
 }
 
 // (naturalSortCode đã chuyển xuống SQL — outbound_gdos_page sắp theo số ở CUỐI mã chuyến;
@@ -199,7 +200,7 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
     <aside className="hidden lg:flex flex-col w-56 shrink-0 border-l border-slate-200 bg-slate-50">
       <div className="px-3 py-2 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between">
-          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${st.cls}`}>{st.label}</span>
+          <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
         </div>
         <div className={`mt-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>{gdo.group_code}</div>
@@ -630,7 +631,8 @@ export default function Outbound() {
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density + Actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
+          {/* Mobile ẨN tiêu đề trang (bottom-nav đã báo đang ở đâu) — nhường chỗ cho ô tìm (đợt UI 24/08) */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Xuất kho</span>
           <SearchInput value={f.search} onChange={v => setOutbound({ search: v, page: 1 })} placeholder="Tìm số xe, ĐVVT, NPP, mã hàng, tem pallet…" className="flex-1 min-w-[140px]" />
           <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           {/* Mobile: SavedViews + action GOM 1 hàng chủ đích (hết cảnh mỗi nút 1 hàng rời rạc trên PDA);
@@ -693,7 +695,8 @@ export default function Outbound() {
           )}
         </div>
 
-        <p className="text-xs text-slate-500">
+        {/* Dòng ngày: mobile ẩn (ngày đã có ở chip Lọc + cột Ngày xuất) — bớt 1 hàng toolbar */}
+        <p className="hidden sm:block text-xs text-slate-500">
           {hasDate ? (
             <>
               <span className="font-medium text-slate-700">{dateLabel}</span>
@@ -997,7 +1000,7 @@ function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = tru
   // Ship-to = giá trị GỐC từ upload (shipto_party). Nối mode (None/QR/QTY) tra SỐNG từ Warehouse
   // theo chính mã shipto — không khớp kho nào thì chỉ hiện mã (không mode). KHÔNG suy từ Tên NPP.
   const shiptoMode = gdo.shipto_party ? (whInfoByKey.get(gdo.shipto_party.trim().toLowerCase())?.mode ?? '') : ''
-  const { label: statusLabel, cls: statusCls } = gdoStatusInfo(gdo)
+  const { label: statusLabel, tone: statusTone } = gdoStatusInfo(gdo)
   const isPending = gdo.status === 'PENDING'
   const showBracket = bracketPos !== 'none' && bracketPos !== 'only'
   const rowBg = selected ? 'bg-sky-50' : showBracket ? 'bg-slate-50' : 'bg-white'
@@ -1125,7 +1128,7 @@ function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = tru
         <span className="text-[10px] tabular-nums">{fTime(gdo.completed_at)}</span>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusCls}`}>{statusLabel}</span>
+        <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         {gdo.transfer_status ? (

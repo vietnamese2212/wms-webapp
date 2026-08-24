@@ -6,6 +6,7 @@ import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -1833,14 +1834,16 @@ export default function WMSSettings() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        {/* Cột NGHIỆP VỤ đứng trước, cột thường-rỗng (NMSX/Ship-to phụ) ra sau —
+                            phone 390px thấy ngay Tên/Chức năng/Quản tồn không phải kéo ngang (đợt UI 24/08) */}
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên kho</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Chức năng</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Quản tồn</TableHead>
-                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Trạng thái</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">NMSX</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Ship-to phụ</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Địa chỉ</TableHead>
                         {canManageWarehouse && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
                     </TableHeader>
@@ -1850,32 +1853,33 @@ export default function WMSSettings() {
                           className={`cursor-pointer ${!wh.is_active ? 'opacity-50' : ''} ${detailWh?.id === wh.id ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                           onClick={() => setDetailWh(prev => prev?.id === wh.id ? null : wh)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.code}</TableCell>
-                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
-                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">
                             {wh.name}
                             {wh.parent_warehouse_id && (
-                              <Badge variant="outline" className="ml-1.5 text-[9px] border-violet-400 text-violet-700 bg-violet-50">
+                              <StatusBadge tone="purple" className="ml-1.5">
                                 Nội bộ · {(allWh as WhRow[]).find(p => p.id === wh.parent_warehouse_id)?.code ?? '?'}
-                              </Badge>
+                              </StatusBadge>
                             )}
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant="outline" className={`text-[10px] ${wh.warehouse_type === 'NPP' ? 'border-amber-400 text-amber-700 bg-amber-50' : 'border-blue-400 text-blue-700 bg-blue-50'}`}>
+                            <StatusBadge tone={wh.warehouse_type === 'NPP' ? 'amber' : 'blue'}>
                               {wh.warehouse_type === 'NPP' ? 'Kho NPP' : 'Kho tổng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
                             <Badge variant="outline" className={`text-[10px] ${invModeMeta(wh.inventory_mode).badge}`}>
                               {invModeMeta(wh.inventory_mode).label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant={wh.is_active ? 'default' : 'secondary'} className="text-xs">
+                            {/* Hết badge nền đặc kiểu button — trạng thái = StatusBadge soft chuẩn toàn app */}
+                            <StatusBadge tone={wh.is_active ? 'green' : 'slate'}>
                               {wh.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
+                          <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600 whitespace-nowrap">{wh.nmsx_code || <span className="text-slate-300 font-sans font-normal">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 font-mono text-[10px] text-slate-500 whitespace-nowrap">{wh.shipto_codes?.length ? wh.shipto_codes.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{wh.address ?? '—'}</TableCell>
                           {canManageWarehouse && (
                             <TableCell className="px-2 py-1 whitespace-nowrap">
                               <div className="flex items-center gap-0.5">

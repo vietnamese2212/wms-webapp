@@ -9,7 +9,8 @@ import { SavedViews } from '@/components/shared/SavedViews'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, type LoosePickingItem } from '@/api/hooks'
+import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, useBookingSequence, type LoosePickingItem, type BookingSeqRow } from '@/api/hooks'
+import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { qtyEntryDecimal } from '@/utils/qtyUnits'
 import { useAuthStore } from '@/stores/authStore'
@@ -23,6 +24,7 @@ const LOOSE_COLS: { id: string; label: string; w: number; align?: 'right' }[] = 
   { id: 'pin',        label: '',             w: 34 },
   { id: 'date',       label: 'Ngày xuất',    w: 90 },
   { id: 'code',       label: 'Số xe',        w: 132 },
+  { id: 'stt',        label: 'STT booking',  w: 100 },   // thứ tự soạn theo khung giờ đặt lịch — nhặt lẻ soạn trước cho xe tới sớm
   { id: 'npp',        label: 'NPP',          w: 160 },
   { id: 'dvvt',       label: 'ĐVVT',         w: 90 },
   { id: 'wh',         label: 'Kho xuất',     w: 140 },
@@ -128,6 +130,20 @@ export default function LoosePicking() {
     date_to:      f.dateTo      || undefined,
   })
 
+  // STT theo booking khung giờ — nhặt lẻ soạn TRƯỚC khi xe tới nên thứ tự xe tới = thứ tự soạn
+  const seqRange = useMemo(() => {
+    const ds = items.map(i => i.gdo?.delivery_date).filter(Boolean) as string[]
+    if (!ds.length) return null
+    let min = ds[0], max = ds[0]
+    for (const d of ds) { if (d < min) min = d; if (d > max) max = d }
+    // BE chặn khoảng >190 ngày (chống fuzz) — trang trải quá rộng thì thôi không tra STT
+    const span = (new Date(`${max}T00:00:00Z`).getTime() - new Date(`${min}T00:00:00Z`).getTime()) / 86_400_000
+    return span > 190 ? null : { min, max }
+  }, [items])
+  const { data: seqRows = [] } = useBookingSequence(f.warehouseId || undefined, seqRange?.min, seqRange?.max)
+  const seqOfGdo = (g: LoosePickingItem['gdo']): BookingSeqRow | null =>
+    g?.delivery_date ? bookingSeqOf(seqRows, { group_code: g.group_code, delivery_date: g.delivery_date, warehouse_id: g.warehouse?.id }) : null
+
   const grouped = useMemo((): GDOSummary[] => {
     const map = new Map<string, { gdo: LoosePickingItem['gdo']; items: LoosePickingItem[] }>()
     for (const item of items) {
@@ -146,9 +162,12 @@ export default function LoosePicking() {
       .sort((a, b) => {
         const da = a.gdo?.delivery_date ?? '', db = b.gdo?.delivery_date ?? ''
         if (da !== db) return da.localeCompare(db)
+        // Trong cùng ngày: xe đặt khung giờ sớm soạn trước, xe chưa đặt lịch xuống cuối
+        const sa = seqOfGdo(a.gdo)?.stt ?? Infinity, sb = seqOfGdo(b.gdo)?.stt ?? Infinity
+        if (sa !== sb) return sa - sb
         return (a.gdo?.group_code ?? '').localeCompare(b.gdo?.group_code ?? '')
       })
-  }, [items])
+  }, [items, seqRows])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Server đã lọc → `grouped` CHÍNH LÀ danh sách hiển thị (đừng lọc lại: lọc lần hai trên trang
   // đang xem chỉ có thể làm mất dòng, không thể tìm thêm dòng ở trang khác).
@@ -296,6 +315,7 @@ export default function LoosePicking() {
                 const gdoId  = s.gdo?.id ?? ''
                 const pinned = isPinned(gdoId)
                 const npp    = s.gdo?.distributor_names?.join(', ') ?? ''
+                const seq    = seqOfGdo(s.gdo)
 
                 return (
                   <TableRow
@@ -323,6 +343,14 @@ export default function LoosePicking() {
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <span className="text-[10px] font-mono font-semibold truncate block" title={s.gdo?.group_code ?? ''}>{s.gdo?.group_code ?? '—'}</span>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      {seq ? (
+                        <span title={`Thứ tự soạn theo booking — khung giờ ${seqTimeLabel(seq)}`}>
+                          <span className="text-[11px] font-bold tabular-nums text-sky-700">#{seq.stt}</span>
+                          <span className="text-[9px] text-slate-400 ml-1 tabular-nums">{seqTimeLabel(seq)}</span>
+                        </span>
+                      ) : <span className="text-slate-300" title="Xe chưa đặt lịch khung giờ">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 max-w-[140px]">
                       <span className="text-[10px] text-slate-600 line-clamp-2 leading-tight" title={npp}>{npp || '—'}</span>

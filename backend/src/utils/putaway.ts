@@ -155,7 +155,46 @@ export function applyPutawayBody(
                    'putaway_block_full', 'putaway_single_ncc'] as const) {
     if (body[k] !== undefined) target[k] = Boolean(body[k])
   }
+  // Nhặt lẻ tự sinh (24/08) — cùng validator cho cả 2 tầng như các cờ trên
+  if (body.loose_mode !== undefined) {
+    if (!(LOOSE_MODES as readonly unknown[]).includes(body.loose_mode))
+      return 'Chế độ nhặt lẻ không hợp lệ (REMAINDER / ALL / OFF)'
+    target.loose_mode = body.loose_mode
+  }
+  if (body.loose_max_cartons !== undefined) {
+    const v = body.loose_max_cartons
+    if (v === null || v === '') target.loose_max_cartons = null
+    else {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n < 1) return 'Trần nhặt lẻ (thùng) phải là số ≥ 1 (để trống = không chặn)'
+      if (n > 100_000) return 'Trần nhặt lẻ (thùng) không quá 100.000 (để trống = không chặn)'
+      target.loose_max_cartons = n
+    }
+  }
   return null
+}
+
+// ─── Nhặt lẻ tự sinh — 2 tầng như chiến thuật (24/08) ────────────────────────
+// REMAINDER = phần lẻ dưới 1 pallet nguyên (hành vi gốc 20/07) · ALL = TOÀN BỘ SL vào nhặt lẻ
+// (user chốt cho POSM — mã CÁI/EA soạn full trước như nhặt lẻ) · OFF = kho/loại không nhặt lẻ.
+// Trần max_cartons CHỈ áp cho REMAINDER (khai bằng THÙNG — ALL/OFF không so được, user lưu ý 24/08).
+export const LOOSE_MODES = ['REMAINDER', 'ALL', 'OFF'] as const
+export type LooseMode = typeof LOOSE_MODES[number]
+export function asLooseMode(v: unknown): LooseMode {
+  return (LOOSE_MODES as readonly unknown[]).includes(v) ? v as LooseMode : 'REMAINDER'
+}
+export interface LoosePolicy { mode: LooseMode; max_cartons: number | null }
+export function resolveLoosePolicy(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): LoosePolicy {
+  const m = mergedConfig(wh, typeRowOf(typeRows, category))
+  const max = Number(m.loose_max_cartons)
+  return {
+    mode: asLooseMode(m.loose_mode),
+    max_cartons: Number.isFinite(max) && max > 0 ? max : null,
+  }
 }
 
 // Kho có bật luật nào cần biết ngày của hàng đang nằm trong ô không (quyết định có xin `lots` của
@@ -508,6 +547,7 @@ export const WH_TYPE_CFG_COLS = [
   'putaway_priority', 'putaway_enforced', 'putaway_max_materials', 'putaway_date_mix',
   'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full', 'putaway_single_ncc',
   'putaway_same_mat_date_pref', 'putaway_fallback',
+  'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 

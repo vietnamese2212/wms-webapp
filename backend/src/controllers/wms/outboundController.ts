@@ -13,7 +13,7 @@ import {
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationCheck, type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
-import { resolveRotation, type RotationConfig, type WhTypeConfigRow } from '../../utils/putaway'
+import { resolveRotation, resolveLoosePolicy, type RotationConfig, type WhTypeConfigRow, type LoosePolicy } from '../../utils/putaway'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeFilterValue, safeSearch } from '../../utils/search'
@@ -1110,23 +1110,67 @@ function uploadRowQtyBase(row: Record<string, any>, mu: MatUnitsQ | null | undef
   return thung * Number(mu!.units_per_carton) + parseDecimal(row['Hộp'])
 }
 
-// Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho).
+// Thông tin pallet để tính nhặt lẻ (định mức chung + ngoại lệ theo kho + loại kho để tra policy).
 export type MatPalletUnits = MatUnitsQ & {
   cartons_per_pallet?: number | null
   warehouse_pallet_overrides?: { warehouse_id: string; cartons_per_pallet: number }[] | null
+  category?: string | null
 }
 
-// ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07): loose = phần base KHÔNG đủ xếp 1 pallet nguyên
-// (thùng lẻ < 1 pallet → phải nhặt từng thùng, không quét được nguyên pallet). SAP luôn key thùng chẵn
-// nên nhặt lẻ theo hộp-lẻ-dưới-thùng gần như không phát sinh → dùng ngưỡng PALLET. Tính trên qty base ĐÃ GỘP
-// (nhiều dòng cùng mã/NPP đã cộng lại) — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). Mã không entry /
-// thiếu cartons_per_pallet → 0 (không ép nhặt lẻ).
-export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | null | undefined, warehouseId: string | null | undefined): number {
+// ĐỢT 3 — NHẶT LẺ THEO PALLET (user chốt 20/07) + SETTING 2 TẦNG (user chốt 24/08).
+// policy.mode: REMAINDER = phần base KHÔNG đủ xếp 1 pallet nguyên (hành vi gốc — thùng lẻ < 1 pallet
+// phải nhặt từng thùng); ALL = TOÀN BỘ SL vào nhặt lẻ (POSM soạn full trước); OFF = không nhặt lẻ.
+// Trần policy.max_cartons (THÙNG) chỉ áp REMAINDER: phần lẻ vượt trần → 0 (bốc nguyên pallet + khai
+// chỗ đặt phần dư nhanh hơn nhặt tay). Tính trên qty base ĐÃ GỘP (nhiều dòng cùng mã/NPP đã cộng lại)
+// — KHÔNG tính per-dòng rồi cộng (sẽ thổi loose). REMAINDER với mã không entry / thiếu
+// cartons_per_pallet → 0 (không ép nhặt lẻ). Policy lấy từ looseConfigOf(...).of(kho, loại của MÃ).
+export function loosePalletRemainder(
+  orderedBase: number, mu: MatPalletUnits | null | undefined,
+  warehouseId: string | null | undefined, policy: LoosePolicy,
+): number {
+  if (policy.mode === 'OFF') return 0
+  if (policy.mode === 'ALL') return Math.max(0, Number(orderedBase) || 0)
   if (!hasEntry(mu)) return 0
   const cpp = effCartonsPerPallet(mu, warehouseId ?? null)
   const palletBase = cpp > 0 ? cpp * Number(mu!.units_per_carton) : 0
   if (palletBase <= 0) return 0
-  return Number(orderedBase) % palletBase
+  const rem = Number(orderedBase) % palletBase
+  // Trần thùng: so trên PHẦN LẺ quy thùng của chính mã đó
+  if (policy.max_cartons != null && rem > policy.max_cartons * Number(mu!.units_per_carton)) return 0
+  return rem
+}
+
+// Resolver policy nhặt lẻ 2 tầng — mirror rotationConfigOf (2 câu cho CẢ danh sách kho; null = mọi
+// kho, cho upload nhiều kho). Trả HÀM tra theo (kho, loại kho của MÃ HÀNG) — caller tự ghép 2 map
+// là đường đẻ bản luật chép tay thứ hai.
+export interface LooseResolver {
+  of: (warehouseId: string | null | undefined, category: string | null | undefined) => LoosePolicy
+}
+export async function looseConfigOf(warehouseIds: string[] | null): Promise<LooseResolver> {
+  const FALLBACK: LoosePolicy = { mode: 'REMAINDER', max_cartons: null }
+  const ids = warehouseIds ? [...new Set(warehouseIds.filter(Boolean))] : null
+  if (ids && !ids.length) return { of: () => FALLBACK }
+  const whQ = () => supabase.from('Warehouse').select('id, loose_mode, loose_max_cartons')
+  const cfgQ = () => supabase.from('warehouse_type_configs').select('warehouse_id, type_code, loose_mode, loose_max_cartons')
+  const [whs, cfgs] = await Promise.all(ids
+    ? [fetchAllByIdChunks(ids, chunk => whQ().in('id', chunk).order('id')),
+       fetchAllByIdChunks(ids, chunk => cfgQ().in('warehouse_id', chunk).order('warehouse_id'))]
+    : [fetchAllRowsParallel(() => whQ()), fetchAllRowsParallel(() => cfgQ())])
+  const whById = new Map<string, Record<string, unknown>>()
+  const typesByWh = new Map<string, WhTypeConfigRow[]>()
+  for (const w of ((whs ?? []) as ({ id: string } & Record<string, unknown>)[])) whById.set(w.id, w)
+  for (const c of ((cfgs ?? []) as ({ warehouse_id: string } & WhTypeConfigRow)[])) {
+    const arr = typesByWh.get(c.warehouse_id) ?? []
+    arr.push(c)
+    typesByWh.set(c.warehouse_id, arr)
+  }
+  return {
+    of: (warehouseId, category) => {
+      const wh = warehouseId ? whById.get(warehouseId) : null
+      if (!wh) return FALLBACK
+      return resolveLoosePolicy(wh, typesByWh.get(warehouseId ?? '') ?? [], category ?? null)
+    },
+  }
 }
 
 // Form Tạo/Sửa bên Xuất KHÔNG sửa nhặt lẻ tay (user chốt 22/07): loose LUÔN TỰ TÍNH từ TỔNG
@@ -1134,7 +1178,7 @@ export function loosePalletRemainder(orderedBase: number, mu: MatPalletUnits | n
 async function loosePalletMats(codes: string[]): Promise<Map<string, MatPalletUnits>> {
   if (!codes.length) return new Map()
   const { data } = await supabase.from('Material')
-    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides')
+    .select('material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, category')
     .in('material_code', codes)   // form tay ≤ vài chục mã/đơn — không cần chunk
   return new Map(((data ?? []) as (MatPalletUnits & { material_code: string })[]).map(m => [String(m.material_code), m]))
 }
@@ -1200,6 +1244,7 @@ export async function createGDO(req: Request, res: Response) {
     if (doErr) return fail(res, doErr.message)
 
     const looseMats = await loosePalletMats(allCodes)
+    const loosePol = await looseConfigOf(warehouse_id ? [warehouse_id] : null)
     const itemsToInsert = items.map(item => {
       const matInfo = matMap.get(item.material_code)
       const material_type = matInfo?.category ?? null
@@ -1209,7 +1254,8 @@ export async function createGDO(req: Request, res: Response) {
         material_code_raw: item.material_code,
         cartons_ordered: item.cartons_ordered,
         boxes_display: 0, weight: null, pallets_estimated: 0,
-        loose_picking: loosePalletRemainder(item.cartons_ordered, looseMats.get(item.material_code), warehouse_id ?? null),
+        loose_picking: loosePalletRemainder(item.cartons_ordered, looseMats.get(item.material_code), warehouse_id ?? null,
+          loosePol.of(warehouse_id ?? null, looseMats.get(item.material_code)?.category ?? matInfo?.category ?? null)),
         header_text: item.header_text?.trim() || null,
         batch_required: item.batch_required?.trim() || null,
         date_required: item.date_required || null,
@@ -1350,13 +1396,15 @@ export async function quickExportGDO(req: Request, res: Response) {
     if (doErr) return fail(res, doErr.message)
 
     const qxLooseMats = await loosePalletMats(allCodes)
+    const qxLoosePol = await looseConfigOf([warehouse_id])
     const itemRows = items.map(item => ({
       id: randomUUID(), do_id: doId,
       material_id: matMap.get(item.material_code)!.id,
       material_code_raw: item.material_code,
       cartons_ordered: item.cartons_ordered,
       boxes_display: 0, weight: null, pallets_estimated: 0,
-      loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id),
+      loose_picking: loosePalletRemainder(item.cartons_ordered, qxLooseMats.get(item.material_code), warehouse_id,
+        qxLoosePol.of(warehouse_id, qxLooseMats.get(item.material_code)?.category ?? matMap.get(item.material_code)?.category ?? null)),
       header_text: item.header_text?.trim() || null,
       batch_required: item.batch_required?.trim() || null,
       date_required: item.date_required || null,
@@ -1897,8 +1945,10 @@ export async function updateGDO(req: Request, res: Response) {
     // Nhặt lẻ TỰ TÍNH từ Tổng (pallet-remainder) — bỏ qua loose_picking client gửi (user chốt 22/07)
     const effWh = warehouse_id !== undefined ? (warehouse_id ?? null) : ((gdo as { warehouse_id?: string | null }).warehouse_id ?? null)
     const looseMats = await loosePalletMats([...new Set(items.map(i => i.material_code).filter(Boolean))])
+    const upLoosePol = await looseConfigOf(effWh ? [effWh] : null)
     const looseOf = (i: { material_code: string; cartons_ordered: number }) =>
-      loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh)
+      loosePalletRemainder(i.cartons_ordered, looseMats.get(i.material_code), effWh,
+        upLoosePol.of(effWh, looseMats.get(i.material_code)?.category ?? null))
 
     // Lấy tất cả items của GDO (across all DOs)
     const doIds = doList.map((d: any) => d.id as string)
@@ -2688,7 +2738,8 @@ async function mergePausedGDO(
   warehouse_type: string | null,
   byNpp: Map<string, Record<string, any>[]>,
   matMap: Map<string, { id: string } & MatPalletUnits>,
-  autoLoosePallet = false,   // true (KHVC/SAP): loose = phần thùng lẻ < 1 pallet, tính trên qty base đã gộp
+  autoLoosePallet = false,   // true (KHVC/SAP): loose theo policy nhặt lẻ của (kho, loại) — mặc định phần thùng lẻ < 1 pallet
+  loosePol: LooseResolver,   // policy 2 tầng (24/08) — OFF ép 0 cả cột "Nhặt lẻ" ghi tay
 ): Promise<{ group_code: string; id?: string; merged?: boolean; skipped?: boolean; reason?: string }> {
   const t = now()
 
@@ -2802,7 +2853,10 @@ async function mergePausedGDO(
         cartons_ordered:   newCartons,
         boxes_display:     parseDecimal(row['Hộp']),
         weight:            parseDecimal(row['Tải']),
-        loose_picking:     autoLoosePallet ? loosePalletRemainder(newCartons, mu, warehouse_id) : parseDecimal(row['Nhặt lẻ']),
+        loose_picking:     autoLoosePallet
+          ? loosePalletRemainder(newCartons, mu, warehouse_id, loosePol.of(warehouse_id, mu?.category ?? null))
+          // Kho OFF ép 0 cả số ghi tay (user chốt 24/08) — file cũ không lách được setting
+          : (loosePol.of(warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
         pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
         material_type,
         export_type:    String(row['Loại xuất']     ?? '').trim() || null,
@@ -3058,8 +3112,10 @@ async function processVehicleGroups(
         .select('id, group_code, status, assigned_at, assigned_by, shipto_party, awaiting_sap, plan_dropped')
         .in('group_code', chunk).order('id')),
       // PHÂN TRANG: >1000 mã → nếu không phân trang bị cap 1000 → mã ngoài 1000 bị báo oan "chưa có trong hệ thống"
-      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
+      fetchAllRowsParallel(() => supabase.from('Material').select('id, material_code, base_unit, entry_unit, units_per_carton, cartons_per_pallet, warehouse_pallet_overrides, is_non_stock, category')) as Promise<({ id: string; material_code: string; is_non_stock?: boolean } & MatPalletUnits)[]>,
     ])
+    // Policy nhặt lẻ 2 tầng — file trải nhiều kho nên nạp MỌI kho 1 lượt (2 câu, không per-group)
+    const uploadLoosePol = await looseConfigOf(null)
 
     const warehouseByKey = new Map<string, string>()
     for (const w of (warehousesRes.data ?? []) as { id: string; code: string; name: string }[]) {
@@ -3308,7 +3364,7 @@ async function processVehicleGroups(
           pausedGDOMap.get(group_code)!,
           group_code, delivery_date, planned_date,
           resolved_warehouse_id, dvvt, loai_kho,
-          byNpp, matMap, autoLoosePallet
+          byNpp, matMap, autoLoosePallet, uploadLoosePol
         )
         if (resolvedShipto) {
           await supabase.from('GroupDeliveryOrder')
@@ -3337,7 +3393,9 @@ async function processVehicleGroups(
               cartons_ordered:   orderedBase,
               boxes_display:     parseDecimal(row['Hộp']),
               weight:            parseDecimal(row['Tải']),
-              loose_picking:     autoLoosePallet ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id) : parseDecimal(row['Nhặt lẻ']),
+              loose_picking:     autoLoosePallet
+                ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id, uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null))
+                : (uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
               pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
               material_type,
               export_type:    String(row['Loại xuất']     ?? '').trim() || null,

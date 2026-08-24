@@ -27,6 +27,10 @@ export interface StrategyValue {
   putaway_enforced:           string[] | null
   putaway_same_mat_date_pref: string | null
   putaway_fallback:           string | null
+  // Nhặt lẻ tự sinh 2 tầng (24/08): REMAINDER = phần lẻ dưới pallet (hành vi gốc) · ALL = toàn bộ SL
+  // (POSM soạn full trước) · OFF = không nhặt lẻ (ép 0 cả số tay upload cũ). Trần chỉ áp REMAINDER.
+  loose_mode:                 string | null
+  loose_max_cartons:          number | null
 }
 
 export const STRATEGY_EMPTY: StrategyValue = {
@@ -34,6 +38,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_max_materials: null, putaway_block_pick_face: null, putaway_block_qa_hold: null,
   putaway_block_full: null, putaway_single_ncc: null, putaway_enforced: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
+  loose_mode: null, loose_max_cartons: null,
 }
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
@@ -41,7 +46,14 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_date_mix: 'ANY', putaway_max_materials: null, putaway_block_pick_face: false,
   putaway_block_qa_hold: false, putaway_block_full: false, putaway_single_ncc: false,
   putaway_enforced: [], putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
+  loose_mode: 'REMAINDER', loose_max_cartons: null,
 }
+
+export const LOOSE_MODE_OPTS = [
+  { value: 'REMAINDER', label: 'Phần lẻ dưới pallet', sub: 'mặc định — thùng lẻ không chẵn pallet mới nhặt tay' },
+  { value: 'ALL',       label: 'Toàn bộ số lượng',    sub: 'cả đơn vào nhặt lẻ — soạn full trước (POSM…)' },
+  { value: 'OFF',       label: 'Không nhặt lẻ',       sub: 'xuất nguyên pallet + khai chỗ đặt phần dư' },
+] as const
 
 // Ghép 2 tầng — MIRROR `resolvePutawayRules`/`resolveRotation` bên BE để form nói đúng cái BE chạy.
 export function resolveStrategy(wh: StrategyValue, type: StrategyValue | null): StrategyValue {
@@ -170,6 +182,44 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
               <span className="text-xs font-medium truncate">Bắt buộc lấy đúng thứ tự</span>
             </label>
             <InfoTip tip={<>Không tick = chỉ <b>cảnh báo</b> khi quét sai thứ tự. Tick = <b>CHẶN</b> — người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do, và lý do được thống kê ở trang Lịch sử quét.</>} />
+          </div>
+        )}
+      </div>
+
+      {/* ───────── XUẤT — Nhặt lẻ tự sinh (24/08) ───────── */}
+      <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
+        <span className="flex items-center gap-1">
+          <Label className="text-xs">XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons)}</Label>
+          <InfoTip tip={<>
+            Khi tạo đơn / upload kế hoạch, app tự tính phần <b>nhặt lẻ</b> của từng mã theo chế độ này.
+            Áp cho đơn tạo <b>sau khi đổi</b> — đơn đã tạo giữ số cũ.
+            <br /><br />
+            <b>Không nhặt lẻ</b> ép về 0 kể cả cột "Nhặt lẻ" ghi tay trong file upload kiểu cũ.
+            Mã không khai quy cách thùng (CÁI/KG…): chế độ Phần lẻ luôn ra 0 — muốn nhặt lẻ loại đó
+            (vd POSM) thì đặt <b>Toàn bộ số lượng</b> ở tầng Loại kho.
+          </>} />
+        </span>
+        <SingleSelect
+          value={sel(value.loose_mode)} onChange={put('loose_mode')}
+          triggerClassName="h-8"
+          options={withInherit(LOOSE_MODE_OPTS, inherited.loose_mode)}
+        />
+        {(isType ? resolveStrategy(inherited, value).loose_mode ?? 'REMAINDER' : value.loose_mode ?? 'REMAINDER') === 'REMAINDER' && (
+          <div>
+            <span className="flex items-center gap-1">
+              <Label className="text-[11px] text-slate-500">Trần nhặt lẻ (thùng){own(value.loose_max_cartons)}</Label>
+              <InfoTip tip={<>Phần lẻ quy ra <b>thùng</b> vượt trần thì KHÔNG đưa vào nhặt lẻ (bốc nguyên pallet rồi khai chỗ đặt phần dư nhanh hơn nhặt tay từng thùng). Chỉ áp cho chế độ <b>Phần lẻ dưới pallet</b>; so theo quy cách thùng của TỪNG mã.</>} />
+            </span>
+            <Input type="number" min={1} max={100000}
+              value={value.loose_max_cartons != null ? String(value.loose_max_cartons) : ''}
+              onChange={e => {
+                const s = e.target.value.trim()
+                onPatch({ loose_max_cartons: s === '' ? null : Number(s) })
+              }}
+              placeholder={isType
+                ? `— Theo kho (${inherited.loose_max_cartons ?? 'không chặn'}) —`
+                : 'để trống = không chặn'}
+              className="h-8 text-xs" />
           </div>
         )}
       </div>

@@ -803,6 +803,9 @@ export interface WhTypeConfig {
   putaway_enforced?:           string[] | null
   putaway_same_mat_date_pref?: string | null
   putaway_fallback?:           string | null
+  // Nhặt lẻ tự sinh 2 tầng (24/08) — null = theo mặc định kho
+  loose_mode?:                 string | null
+  loose_max_cartons?:          number | null
 }
 
 export function useWhTypeConfigs(warehouseId: string | null | undefined) {

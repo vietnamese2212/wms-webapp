@@ -11,7 +11,7 @@
 import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { fetchAllByIdChunks } from '../utils/pagination'
-import { loosePalletRemainder, type MatPalletUnits } from '../controllers/wms/outboundController'
+import { loosePalletRemainder, looseConfigOf, type MatPalletUnits } from '../controllers/wms/outboundController'
 import { sendPushToPerm } from './pushService'
 
 const now = () => new Date().toISOString()
@@ -86,9 +86,11 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
   const matById = new Map<string, MatPalletUnits & { id: string }>()
   if (matIds.length) {
     const { data: mats } = await supabase.from('Material')
-      .select('id, units_per_carton, entry_unit, base_unit, cartons_per_pallet, warehouse_pallet_overrides').in('id', matIds)
+      .select('id, units_per_carton, entry_unit, base_unit, cartons_per_pallet, warehouse_pallet_overrides, category').in('id', matIds)
     for (const m of ((mats ?? []) as (MatPalletUnits & { id: string })[])) matById.set(m.id, m)
   }
+  // Policy nhặt lẻ 2 tầng (24/08) — engine dội SAP phải tính CÙNG luật với upload/tạo đơn
+  const loosePol = await looseConfigOf(null)
 
   const tasks: Record<string, unknown>[] = []
   const t = now()
@@ -143,7 +145,8 @@ export async function reconcileFromSap(changedKeys: OdKey[], opts: { actor: stri
       const patch: Record<string, unknown> = { batch_required: newBatch, date_required: newDate, updated_at: t }
       if (withQty) {
         patch.cartons_ordered = newOrdered
-        patch.loose_picking = loosePalletRemainder(newOrdered, mu, gdo?.warehouse_id ?? null)
+        patch.loose_picking = loosePalletRemainder(newOrdered, mu, gdo?.warehouse_id ?? null,
+          loosePol.of(gdo?.warehouse_id ?? null, mu?.category ?? null))
         // refresh snapshot od_refs.qty_base = raw hiện tại (nguồn so sánh lần sau)
         patch.od_refs = refs.map(r => ({ od_number: r.od_number, od_item: r.od_item, qty_base: Number(rawByKey.get(keyOf(r.od_number, r.od_item))?.qty_base ?? 0) }))
       }

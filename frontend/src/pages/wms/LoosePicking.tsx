@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useLoosePickingItems, useLoosePickingFacets, useWarehouses, useBookingSequence, type LoosePickingItem, type BookingSeqRow } from '@/api/hooks'
 import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
-import { qtyEntryDecimal } from '@/utils/qtyUnits'
+import { qtyEntryDecimal, qtyUnitLabel, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -44,6 +44,9 @@ type GDOSummary = {
   totalLoose: number
   totalLooseDone: number
   pendingCount: number
+  // Nhãn đơn vị của tổng: mọi mã cùng 1 đơn vị → in đúng đơn vị đó; trộn (POSM CÁI + FG thùng)
+  // → 'SL quy đổi' (từ vựng chốt 26/07 — đừng in "thùng" lên con số có CÁI/KG bên trong)
+  unitLabel: string | null
 }
 
 function itemLooseStats(i: LoosePickingItem) {
@@ -157,7 +160,9 @@ export default function LoosePicking() {
         const totalLoose    = gdoItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseStats(i).effective, i.material), 0)
         const totalLooseDone = gdoItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseStats(i).done, i.material), 0)
         const pendingCount  = gdoItems.filter(i => itemLooseStats(i).remaining > 0).length
-        return { gdo, items: gdoItems, totalLoose, totalLooseDone, pendingCount }
+        const units = new Set(gdoItems.map(i => qtyUnitLabel(i.material)))
+        return { gdo, items: gdoItems, totalLoose, totalLooseDone, pendingCount,
+          unitLabel: units.size === 1 ? [...units][0] : null }
       })
       .sort((a, b) => {
         const da = a.gdo?.delivery_date ?? '', db = b.gdo?.delivery_date ?? ''
@@ -266,7 +271,7 @@ export default function LoosePicking() {
       <SummaryBand tiles={[
         { label: 'Chuyến xe', value: summary.count },
         { label: 'Mặt hàng', value: summary.items },
-        { label: 'Nhặt lẻ', value: `${summary.looseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/${summary.looseTotal.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}` },
+        { label: 'Nhặt lẻ (quy đổi)', value: `${summary.looseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/${summary.looseTotal.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}`, tip: QTY_CONVERTED_TIP },
         { label: 'Chưa xong', value: totalPending, accent: totalPending > 0 },
       ]} />
 
@@ -368,7 +373,7 @@ export default function LoosePicking() {
                     <TableCell className="px-2 py-1 text-right whitespace-nowrap">
                       <span className="text-[10px] font-semibold tabular-nums">{s.totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
                       <span className="text-[9px] text-slate-400">/{s.totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
-                      <span className="text-[9px] text-slate-400 ml-0.5">thùng</span>
+                      <span className="text-[9px] text-slate-400 ml-0.5" title={s.unitLabel ? undefined : QTY_CONVERTED_TIP}>{s.unitLabel ?? 'SL quy đổi'}</span>
                     </TableCell>
                     <TableCell className="px-2 py-1">
                       <div className="flex items-center gap-1.5">

@@ -101,7 +101,7 @@ export default function Stocktake() {
     warehouseId ? { warehouse_id: warehouseId, category: category || undefined, search: locTermDeb || undefined, limit: 50 } : undefined,
     !!warehouseId && !requiresOnly,
   )
-  const { data: flagLocs = [] } = useLocationsByFlag(
+  const { data: flagLocs = [], isLoading: flagLoading } = useLocationsByFlag(
     'requires_stocktake',
     { warehouse_id: warehouseId, category: category || undefined },
     !!warehouseId && requiresOnly,
@@ -264,9 +264,13 @@ export default function Stocktake() {
             // của màn phải khai qua `validate` — cùng tiền lệ Fill chỉ nhận ô nhặt lẻ.
             validate={requiresOnly
               ? loc => (flagLocs.some(l => l.id === loc.id) ? null
-                  : flagLocs.length === 0
-                    ? 'Kho này chưa có ô nào được đánh dấu cần kiểm — bỏ tick "Chỉ vị trí cần check" để kiểm ô bất kỳ'
-                    : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
+                  // Danh sách cờ đang tải mà đã kết luận "kho chưa có ô nào" là báo oan — tick xong
+                  // bắn ngay trong <1s là dính. Nói đúng trạng thái, người quét bắn lại là xong.
+                  : flagLoading
+                    ? 'Đang tải danh sách ô cần kiểm — bắn lại tem sau một nhịp'
+                    : flagLocs.length === 0
+                      ? 'Kho này chưa có ô nào được đánh dấu cần kiểm — bỏ tick "Chỉ vị trí cần check" để kiểm ô bất kỳ'
+                      : `Ô ${loc.location_code} KHÔNG nằm trong ${flagLocs.length} ô cần kiểm — bỏ tick "Chỉ vị trí cần check" nếu vẫn muốn kiểm ô này`)
               : undefined}
             onPicked={loc => {
               setStocktake({ locationId: loc.id })

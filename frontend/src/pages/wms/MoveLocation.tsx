@@ -153,10 +153,19 @@ function ScanTab() {
   // tra làm trình duyệt GỠ focus ⇒ phát bắn thứ hai rơi vào hư không, người quét tưởng súng hỏng).
   // `retry`: lúc VÀO MÀN thì bám nhiều nhịp — chunk trang nạp lười, layout và bàn phím của Android
   // không phải lúc nào cũng nhận focus ở nhịp đầu; một `setTimeout(50)` đơn lẻ thua cuộc là cả phiên
-  // quét chết mà không báo gì. Các lúc khác chỉ thử 1 nhịp (đừng giành focus của ô người ta vừa bấm).
+  // quét chết mà không báo gì.
+  // ⚠️ Riêng nhịp MUỘN (≥350ms) chỉ lấy focus khi KHÔNG có Ô NHẬP nào khác đang giữ: trong 1,5s đó
+  // user có thể đã bấm vào ô tìm của dropdown Kho — giật focus lúc người ta đang gõ là đúng lớp lỗi
+  // "ô nhập mất focus sau 1 ký tự" từng phải làm ratchet riêng. Gọi thường (sau tra/sau chọn ô) vẫn
+  // ÉP focus: đó là hành động vừa hoàn tất có chủ đích, focus đang ở nút bấm chứ không ai đang gõ.
   const focusInput = (retry = false) => {
     for (const ms of (retry ? [0, 120, 350, 800, 1500] : [50])) {
-      setTimeout(() => inputRef.current?.focus(), ms)
+      setTimeout(() => {
+        const a = document.activeElement
+        const someoneTyping = ms >= 350 && !!a && a !== inputRef.current
+          && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')
+        if (!someoneTyping) inputRef.current?.focus()
+      }, ms)
     }
   }
   useEffect(() => { if (warehouseId) focusInput(true) }, [warehouseId])

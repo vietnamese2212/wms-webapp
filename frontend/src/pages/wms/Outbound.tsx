@@ -22,7 +22,8 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, UPLOAD_TOO_LARGE_MSG, type UploadPreflight } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, useBookingSequence, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type BookingSeqRow } from '@/api/hooks'
+import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
@@ -115,6 +116,7 @@ const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[]
   { id: 'pin',       label: '',              w: 34 },
   { id: 'date',      label: 'Ngày xuất',     w: 96 },
   { id: 'code',      label: 'Số xe',         w: 132 },
+  { id: 'stt',       label: 'STT booking',   w: 100 },   // thứ tự chuẩn bị theo khung giờ đặt lịch (kho, ngày, chiều xuất)
   { id: 'npp',       label: 'Tên NPP',       w: 150 },
   { id: 'shipto',    label: 'Ship-to',       w: 96 },
   { id: 'dvvt',      label: 'ĐVVT',          w: 80 },
@@ -369,6 +371,21 @@ export default function Outbound() {
   // KHÔNG lọc/sort lại ở client — làm vậy chỉ tác dụng trong trang đang xem = sai âm thầm.
   const filtered = gdos
   const sorted   = gdos
+
+  // STT chuẩn bị theo booking khung giờ — khoảng ngày lấy từ TRANG ĐANG XEM (không phụ thuộc
+  // filter ngày có set hay không); kho lấy theo filter, không chọn kho thì BE tự cắt theo scope
+  const seqRange = useMemo(() => {
+    if (!gdos.length) return null
+    let min = gdos[0].delivery_date, max = gdos[0].delivery_date
+    for (const g of gdos) {
+      if (g.delivery_date < min) min = g.delivery_date
+      if (g.delivery_date > max) max = g.delivery_date
+    }
+    // BE chặn khoảng >190 ngày (chống fuzz) — trang trải quá rộng thì thôi không tra STT
+    const span = (new Date(`${max}T00:00:00Z`).getTime() - new Date(`${min}T00:00:00Z`).getTime()) / 86_400_000
+    return span > 190 ? null : { min, max }
+  }, [gdos])
+  const { data: seqRows = [] } = useBookingSequence(f.warehouseId || undefined, seqRange?.min, seqRange?.max)
 
   // Vị trí bracket cho mỗi chuyến trong nhóm "cùng xe" (cùng ngày + cùng outboundGroupKey)
   const bracketPositions = useMemo(() => {
@@ -809,6 +826,7 @@ export default function Outbound() {
                   <GDORow
                     key={gdo.id}
                     gdo={gdo}
+                    seq={bookingSeqOf(seqRows, gdo)}
                     dense={dense}
                     pinW={colW[0]}
                     selected={gdo.id === selectedId}
@@ -956,8 +974,9 @@ export default function Outbound() {
 
 // ─── GDO Row ──────────────────────────────────────────────────
 
-function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
+function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = true, pinW = 34, selected = false, whInfoByKey, bracketPos = 'none', checkable = false, checked = false, onToggleCheck, sapLocked = false }: {
   gdo: GDO
+  seq?: BookingSeqRow | null   // STT chuẩn bị theo booking khung giờ (null = xe chưa đặt lịch)
   onClick: () => void
   onDoubleClick?: () => void
   onAssign?: (e: React.MouseEvent) => void
@@ -1025,6 +1044,14 @@ function GDORow({ gdo, onClick, onDoubleClick, onAssign, dense = true, pinW = 34
             aria-label={inert} />
         )}
         <span className="text-[10px] font-mono font-semibold" title={inert ?? undefined}>{gdo.group_code}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {seq ? (
+          <span title={`Thứ tự chuẩn bị theo booking — khung giờ ${seqTimeLabel(seq)}`}>
+            <span className="text-[11px] font-bold tabular-nums text-sky-700">#{seq.stt}</span>
+            <span className="text-[9px] text-slate-400 ml-1 tabular-nums">{seqTimeLabel(seq)}</span>
+          </span>
+        ) : <span className="text-slate-300" title="Xe chưa đặt lịch khung giờ">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 max-w-[150px]">
         <span className="text-[10px] truncate block" title={npp}>{npp}</span>

@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, usePctBands, type ItemInventoryEntry } from '@/api/hooks'
+import { useGDOs, useWarehouses, usePrepareBoard, useInventoryByMaterial, useOutboundShortages, usePctBands, useBookingSequence, type ItemInventoryEntry } from '@/api/hooks'
+import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { useAuthStore } from '@/stores/authStore'
@@ -188,10 +189,28 @@ export default function OutboundPrepare() {
     })
   }, [selectableGdos])
 
-  const selectedGdos = useMemo(() => gdos.filter(g => selected.has(g.id)), [gdos, selected])
+  // STT chuẩn bị theo booking khung giờ — xe đặt lịch sớm soạn trước (POSM/nhặt lẻ của xe đó soạn full theo board)
+  const { data: seqRows = [] } = useBookingSequence(warehouseId || undefined, date, date)
+  const seqOf = useMemo(() => {
+    const cache = new Map<string, ReturnType<typeof bookingSeqOf>>()
+    return (g: GDO) => {
+      if (!cache.has(g.id)) cache.set(g.id, bookingSeqOf(seqRows, g))
+      return cache.get(g.id) ?? null
+    }
+  }, [seqRows])
+  // Sort theo STT (chưa đặt lịch xuống cuối) — áp cả chip đã chọn lẫn dropdown thêm xe
+  const bySeq = (a: GDO, b: GDO) => {
+    const sa = seqOf(a)?.stt ?? Infinity, sb = seqOf(b)?.stt ?? Infinity
+    if (sa !== sb) return sa - sb
+    return a.group_code.localeCompare(b.group_code)
+  }
+
+  const selectedGdos = useMemo(() => gdos.filter(g => selected.has(g.id)).sort(bySeq),
+    [gdos, selected, seqOf])   // eslint-disable-line react-hooks/exhaustive-deps
   const toAdd = useMemo(() => selectableGdos.filter(g => !selected.has(g.id))
-    .filter(g => omniMatch([g.group_code, g.export_type, ...(g.distributor_names ?? []), ...(g.delivery_codes ?? [])], addSearch)),
-    [selectableGdos, selected, addSearch])
+    .filter(g => omniMatch([g.group_code, g.export_type, ...(g.distributor_names ?? []), ...(g.delivery_codes ?? [])], addSearch))
+    .sort(bySeq),
+    [selectableGdos, selected, addSearch, seqOf])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedIds = useMemo(() => [...selected], [selected])
   const { data: board, isFetching } = usePrepareBoard(selectedIds)
@@ -211,6 +230,22 @@ export default function OutboundPrepare() {
     g.export_type || null,
     (g.distributor_names ?? []).join(', ') || null,
   ].filter(Boolean).join(' · ')
+
+  // Badge STT + khung giờ booking — hiện cạnh Số xe ở dropdown thêm xe và chip đã chọn
+  const seqBadge = (g: GDO) => {
+    const s = seqOf(g)
+    return s ? (
+      <span className="inline-flex shrink-0 items-center rounded bg-sky-100 px-1 py-0.5 text-[9px] font-semibold tabular-nums text-sky-700"
+        title={`Thứ tự chuẩn bị theo booking — khung giờ ${seqTimeLabel(s)}`}>
+        #{s.stt} · {seqTimeLabel(s)}
+      </span>
+    ) : (
+      <span className="inline-flex shrink-0 items-center rounded bg-slate-100 px-1 py-0.5 text-[9px] text-slate-400"
+        title="Xe chưa đặt lịch khung giờ — soạn sau các xe đã đặt">
+        chưa đặt lịch
+      </span>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -261,7 +296,10 @@ export default function OutboundPrepare() {
                       ) : toAdd.map(g => (
                         <button key={g.id} onClick={() => { addGdo(g.id); setAddSearch('') }}
                           className="w-full text-left px-3 py-1.5 hover:bg-blue-50 border-b border-slate-50 last:border-0">
-                          <div className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</span>
+                            {seqBadge(g)}
+                          </div>
                           <div className="text-[9px] text-slate-500 truncate">{gdoMeta(g) || '—'}</div>
                         </button>
                       ))}
@@ -279,7 +317,10 @@ export default function OutboundPrepare() {
               {selectedGdos.map(g => (
                 <div key={g.id} className="flex items-start gap-1.5 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 py-1 max-w-[260px]">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-semibold text-slate-700">{g.group_code}</span>
+                      {seqBadge(g)}
+                    </div>
                     <div className="text-[9px] text-slate-500 truncate" title={gdoMeta(g)}>{gdoMeta(g) || '—'}</div>
                   </div>
                   <button onClick={() => removeGdo(g.id)} className="shrink-0 p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Bỏ xe này">

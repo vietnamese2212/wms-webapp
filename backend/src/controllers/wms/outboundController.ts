@@ -4781,6 +4781,35 @@ export async function getPrepareBoard(req: Request, res: Response) {
   } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
 }
 
+// ─── STT chuẩn bị theo booking khung giờ (user chốt 24/08) ───
+// Số DẪN XUẤT (không lưu cột): RPC booking_sequence đánh ROW_NUMBER theo
+// (kho, ngày, chiều) sort (khung giờ, giờ đặt) — đổi/hủy booking là số tự cập nhật.
+// Read-only, gate outbound view|prepare; kho cắt theo scope như getPrepareBoard.
+export async function getBookingSequence(req: Request, res: Response) {
+  try {
+    const dateFrom = typeof req.query.date_from === 'string' ? req.query.date_from : ''
+    const dateTo   = typeof req.query.date_to === 'string' && req.query.date_to ? req.query.date_to : dateFrom
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return fail(res, 'Thiếu hoặc sai khoảng ngày (date_from/date_to dạng YYYY-MM-DD)', 400)
+    }
+    // Chặn khoảng vô lý (fuzz 1900→9999) — list Xuất kho lấy range từ trang hiện tại nên ≤ vài tháng
+    const spanDays = (new Date(`${dateTo}T00:00:00Z`).getTime() - new Date(`${dateFrom}T00:00:00Z`).getTime()) / 86_400_000
+    if (spanDays < 0 || spanDays > 190) return fail(res, 'Khoảng ngày tối đa 190 ngày', 400)
+    const scope = req.user?.warehouse_scope !== 'NATIONAL' ? (req.user?.warehouse_ids ?? []) : null
+    const whParam = typeof req.query.warehouse_id === 'string' && req.query.warehouse_id ? req.query.warehouse_id : null
+    if (whParam && scope && !scope.includes(whParam)) {
+      return fail(res, 'Ngoài phạm vi kho được giao — không thể xem thứ tự booking của kho này', 403)
+    }
+    const whIds = whParam ? [whParam] : scope   // null = NATIONAL không lọc kho
+    if (whIds && whIds.length === 0) return ok(res, [])
+    const { data, error } = await supabase.rpc('booking_sequence', {
+      p_warehouse_ids: whIds, p_from: dateFrom, p_to: dateTo,
+    })
+    if (error) throw error
+    return ok(res, data ?? [])
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, QUERY_TIMEOUT_MSG, 400); return fail(res, String(e)) }
+}
+
 // ─── Check scan validity (no save) ───────────────────────────
 
 // Pallet KHÔNG nằm trong tồn khả dụng của kho này → phân biệt 3 trường hợp cho THÔNG BÁO ĐÚNG:

@@ -3353,6 +3353,26 @@ export function usePrepareBoard(gdoIds: string[]) {
   })
 }
 
+// STT chuẩn bị theo booking khung giờ — số DẪN XUẤT từ RPC booking_sequence
+// (kho, ngày, chiều) → 1,2,3… theo (khung giờ, giờ đặt). Đổi/hủy booking là số tự cập nhật.
+export type BookingSeqRow = {
+  warehouse_id: string; date: string; direction: 'OUTBOUND' | 'INBOUND'; stt: number
+  order_code: string; license_plate: string | null; time_from: string; time_to: string
+}
+export function useBookingSequence(warehouseId: string | null | undefined, dateFrom: string | null | undefined, dateTo: string | null | undefined) {
+  return useQuery({
+    queryKey: ['booking-sequence', warehouseId ?? '', dateFrom, dateTo],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/wms/outbound/booking-sequence', {
+        params: { warehouse_id: warehouseId || undefined, date_from: dateFrom, date_to: dateTo },
+      })
+      return data.data as BookingSeqRow[]
+    },
+    enabled: !!dateFrom && !!dateTo,
+    staleTime: 15_000,
+  })
+}
+
 // Cảnh báo thiếu tồn theo (kho, ngày giao) — level 1: tồn thiếu nhưng tồn + KH nhập đủ
 // (push hàng về đúng KH); level 2: tồn + KH nhập vẫn thiếu. Chỉ trả mã có cảnh báo.
 export type OutboundShortage = { material_id: string; demand: number; available: number; planned: number; level: 1 | 2 }

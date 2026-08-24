@@ -34,8 +34,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Vehicle:             [['tms-vehicles']],
   // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
   TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary']],
-  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest']],
-  DeliverySlot:        [['tms-delivery-slots']],
+  // booking-sequence: STT chuẩn bị theo booking (list Xuất kho + board Chuẩn bị hàng) — đặt/hủy/đổi khung giờ là số tự nhảy
+  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest'], ['booking-sequence']],
+  DeliverySlot:        [['tms-delivery-slots'], ['booking-sequence']],
   gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower']],
   alert_events:        [['alerts-list']],
   user_notifications:  [['notify-feed']],   // chuông Header nhảy badge ngay khi được giao việc

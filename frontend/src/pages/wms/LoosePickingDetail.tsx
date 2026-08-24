@@ -542,6 +542,10 @@ export default function LoosePickingDetail() {
   // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (loose_picking lưu base)
   const totalLoose    = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).effective, i.material), 0)
   const totalLooseDone = allLooseItems.reduce((s, i) => s + qtyEntryDecimal(itemLooseProgress(i).done, i.material), 0)
+  // Nhãn đơn vị tổng: mọi mã cùng đơn vị → in đúng đơn vị; trộn (POSM CÁI + FG thùng, từ 24/08
+  // POSM mode ALL vào nhặt lẻ) → "SL quy đổi" — đừng in "thùng" lên con số có CÁI/KG bên trong
+  const looseUnitSet  = new Set(allLooseItems.map(i => qtyUnitLabel(i.material)))
+  const looseUnitLabel = looseUnitSet.size === 1 ? ([...looseUnitSet][0] || 'thùng') : 'SL quy đổi'
 
   const npp = [...new Set(allDOs.map(d => d.distributor_name).filter(Boolean))].join(', ')
 
@@ -584,8 +588,8 @@ export default function LoosePickingDetail() {
   const bandTiles = [
     { label: 'DO',       value: allDOs.length },
     { label: 'Mã hàng',  value: allLooseItems.length },
-    { label: 'Đã nhặt',  value: `${totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalLooseDone > 0 },
-    { label: 'Cần nhặt', value: `${totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
+    { label: 'Đã nhặt',  value: `${totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} ${looseUnitLabel}`, accent: totalLooseDone > 0 },
+    { label: 'Cần nhặt', value: `${totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} ${looseUnitLabel}` },
   ]
   // Khối thông tin đơn — desktop hiện inline; mobile mở POPUP (nút Info trên thanh mảnh).
   const orderInfoJSX = (
@@ -600,7 +604,7 @@ export default function LoosePickingDetail() {
       <span className="flex items-center gap-1">
         <Package className="h-3 w-3 text-slate-400 shrink-0" />
         Nhặt lẻ <span className="font-medium ml-1">{totalLooseDone.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalLoose.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
-        <span className="text-slate-400 ml-0.5">thùng</span>
+        <span className="text-slate-400 ml-0.5">{looseUnitLabel}</span>
       </span>
     </div>
     <ProgressBar scanned={totalLooseDone} target={totalLoose} />

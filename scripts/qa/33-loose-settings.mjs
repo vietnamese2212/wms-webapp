@@ -20,6 +20,12 @@ async function cleanup() {
   for (const w of whs) {
     const gs = await restAll('GroupDeliveryOrder', `select=id&warehouse_id=eq.${w.id}`)
     for (const g of gs) await teardownGdo(g.id, 'PENDING')
+    // Pool entries sót từ lần chạy đứt: gỡ scan FK trước rồi mới xóa entry + kho
+    const ents = await restAll('InventoryEntry', `select=id&warehouse_id=eq.${w.id}`)
+    if (ents.length) {
+      await restWrite('OutboundScanEntry', 'DELETE', `inventory_entry_id=in.(${ents.map(e => e.id).join(',')})`)
+      await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${w.id}`)
+    }
     await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=eq.${w.id}`)
     await restWrite('Warehouse', 'DELETE', `id=eq.${w.id}`)
   }
@@ -107,10 +113,10 @@ async function looseOf(orderedFg, orderedPm) {
 // cùng pallet_code(=mã) làm tra pool lỗi → 404 "chưa có tồn" OAN dù tồn dư (họ lỗi ed92e2a)
 {
   const pmm = (await restAll('Material', `select=id&material_code=eq.${MAT_PM}`))[0]
-  for (const q of [300, 200]) {
+  for (const [j, q] of [300, 200].entries()) {
     await restWrite('InventoryEntry', 'POST', null, {
       id: randomUUID(), pallet_code: MAT_PM, material_id: pmm.id, warehouse_id: whId,
-      location_id: null, cartons_imported: q, cartons_remaining: q,
+      location_id: null, cartons_imported: q, cartons_remaining: q, production_date: j === 0 ? '2026-08-01' : '2026-08-10',
       status: 'IN_STOCK', import_date: FIX.DATE, updated_at: now(),
     })
   }
@@ -122,6 +128,9 @@ async function looseOf(orderedFg, orderedPm) {
     `http=${rM.s} ${JSON.stringify(rM.j?.error ?? '').slice(0, 100)}`)
   const rsv = await restAll('InventoryEntry', `select=cartons_reserved&pallet_code=eq.${MAT_PM}&warehouse_id=eq.${whId}&order=cartons_reserved.desc`)
   check('[5c] Giữ chỗ đúng 50 trên 1 dòng, không trừ tồn', Number(rsv[0]?.cartons_reserved) === 50, `reserved=${rsv.map(r => r.cartons_reserved).join(',')}`)
+  // Gỡ vết soạn TRƯỚC (scan entry FK vào pool) rồi mới xóa pool
+  const scs = await restAll('OutboundScanEntry', `select=id&item_id=eq.${its[0].id}`)
+  for (const sc of scs) await api(`/wms/outbound/${gdoId}/items/${its[0].id}/scans/${sc.id}`, 'DELETE')
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=eq.${MAT_PM}&warehouse_id=eq.${whId}`)
 }
 

@@ -7,6 +7,8 @@ import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Badge }    from '@/components/ui/badge'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
+import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -748,10 +750,10 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
         </>}>
         <div className="space-y-3">
           {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
-          {/* Panel rộng 80% ⇒ dàn LƯỚI thay vì một cột dài: cùng số field mà nhìn hết trong 1 màn */}
-          <div className="rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs text-slate-500">Thông tin kho</Label>
-            <div className="mt-1.5 grid gap-x-3 gap-y-2 sm:grid-cols-2 xl:grid-cols-3 items-start">
+          {/* Panel rộng 80% ⇒ dàn LƯỚI thay vì một cột dài: cùng số field mà nhìn hết trong 1 màn.
+              Khung nhóm = SettingsGroup (khuôn AppSheet 24/08 — band tiêu đề đậm màu thống nhất). */}
+          <SettingsGroup title="Thông tin kho">
+            <div className="py-2 grid gap-x-3 gap-y-2 sm:grid-cols-2 xl:grid-cols-3 items-start">
           <div className="space-y-1">
             <Label className="text-xs">Mã kho *</Label>
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="BV, BB, HN…" disabled={isEdit} className="h-8 text-sm" />
@@ -842,55 +844,47 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
             </div>
           </div>
             </div>
-          </div>
+          </SettingsGroup>
           <div className="grid gap-3 xl:grid-cols-2 items-start">
           {/* 2 RULE khi Bắt đầu chuyến xuất (user chốt 01/08) — độc lập, bật rule nào chấp hành
               rule đó, bật cả 2 phải đủ cả 2. Miễn trừ duy nhất = duyệt trên chuyến (outbound.weigh_waive). */}
-          <div className="space-y-1 rounded-md border border-slate-200 px-2.5 py-2">
-            <Label className="text-xs">Rule khi Bắt đầu chuyến xuất</Label>
-            {/* Diễn giải trong ⓘ (user chốt 17/08) — ⓘ là ANH EM của <label>, bấm không lật ô tick */}
-            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <label htmlFor="wh-requiregate" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                <input id="wh-requiregate" type="checkbox" checked={requireGate} onChange={e => setRequireGate(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs font-medium truncate">Rule 1 — Xe phải có ĐĂNG KÝ CỔNG</span>
-              </label>
-              <InfoTip tip={<>Bắt đầu phải chọn chuyến xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay. Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</>} />
-            </div>
-            <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
-              <label htmlFor="wh-requireweigh" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                <input id="wh-requireweigh" type="checkbox" checked={requireWeigh} onChange={e => setRequireWeigh(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs font-medium truncate">Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)</span>
-              </label>
-              <InfoTip tip={<>Biển số xe phải khớp 1 phiếu cân <b>chưa hoàn thành</b> của hôm nay mới bấm được Bắt đầu — phiếu cân tự gắn vào chuyến để đối chiếu KL. Xe không cân được (hỏng cân…) → duyệt trên chuyến như rule 1.</>} />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
-              <label htmlFor="wh-cartonscan" className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
-                <input id="wh-cartonscan" type="checkbox" checked={cartonScan} onChange={e => setCartonScan(e.target.checked)} className="h-4 w-4 rounded accent-blue-600 shrink-0" />
-                <span className="text-xs font-medium text-slate-700 truncate">Quét tới THÙNG khi xuất</span>
-              </label>
-              <InfoTip tip={<>Mặc định TẮT. Bật thì chọn các Loại kho phải quét tem thùng <b>TẠI KHO NÀY</b> (đính kèm truy vết, <b>không</b> tính tồn theo thùng). Mỗi kho chọn độc lập.</>} />
-            </div>
-            {cartonScan && (
-              <div className="pl-6 space-y-1">
-                <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {whTypesForCarton.map(t => (
-                    <label key={t.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[12px] cursor-pointer ${cartonCats.includes(t.value) ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
-                      <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600" checked={cartonCats.includes(t.value)}
-                        onChange={() => setCartonCats(p => p.includes(t.value) ? p.filter(x => x !== t.value) : [...p, t.value])} />
-                      {t.value}
-                    </label>
-                  ))}
+          <SettingsGroup title="XUẤT — Rule khi Bắt đầu chuyến">
+            <SettingRow label="Rule 1 — Xe phải có ĐĂNG KÝ CỔNG"
+              desc="Bắt đầu phải chọn xe từ Đăng ký cổng (đúng kho, chiều xuất, đã vào cổng, biển khớp) — khóa đường nhập biển tay."
+              tip={<>Xe không đăng ký (giao lẻ, xe máy, nhân viên nhận…) → người có quyền <b>Bỏ qua cổng/cân</b> duyệt trên chuyến.</>}
+              htmlFor="wh-requiregate"
+              control={<Switch id="wh-requiregate" checked={requireGate} onCheckedChange={setRequireGate} />} />
+            <SettingRow label="Rule 2 — Xe phải CÂN BÌ (kho có trạm cân)"
+              desc="Biển xe phải khớp 1 phiếu cân chưa hoàn thành của hôm nay — phiếu tự gắn chuyến để đối chiếu KL."
+              tip={<>Xe không cân được (hỏng cân…) → duyệt <b>Bỏ qua cân</b> trên chuyến như rule 1.</>}
+              htmlFor="wh-requireweigh"
+              control={<Switch id="wh-requireweigh" checked={requireWeigh} onCheckedChange={setRequireWeigh} />} />
+          </SettingsGroup>
+          <SettingsGroup title="XUẤT — Quét tem thùng">
+            <SettingRow label="Quét tới THÙNG khi xuất"
+              desc="Mặc định tắt. Bật thì chọn các Loại kho phải quét tem thùng tại kho này (đính kèm truy vết, không tính tồn theo thùng)."
+              htmlFor="wh-cartonscan"
+              control={<Switch id="wh-cartonscan" checked={cartonScan} onCheckedChange={setCartonScan} />}>
+              {cartonScan && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Loại kho phải quét thùng ở kho này *</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {whTypesForCarton.map(t => (
+                      <label key={t.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[12px] cursor-pointer ${cartonCats.includes(t.value) ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
+                        <input type="checkbox" className="h-3.5 w-3.5 accent-blue-600" checked={cartonCats.includes(t.value)}
+                          onChange={() => setCartonCats(p => p.includes(t.value) ? p.filter(x => x !== t.value) : [...p, t.value])} />
+                        {t.value}
+                      </label>
+                    ))}
+                  </div>
+                  <Label className="text-xs pt-1 block">Quét đủ thùng</Label>
+                  <SingleSelect options={CARTON_REQUIRE_OPTS} value={cartonRequire} onChange={setCartonRequire}
+                    triggerClassName="h-8 w-full text-sm" />
+                  <p className="text-[10px] text-slate-400">Bắt buộc: khi Hoàn thành chuyến, mỗi pallet đã quét phải đính đủ tem thùng khớp mã (bằng số thùng của pallet) — thiếu sẽ bị chặn kèm danh sách pallet.</p>
                 </div>
-                <Label className="text-xs pt-1 block">Quét đủ thùng</Label>
-                <SingleSelect options={CARTON_REQUIRE_OPTS} value={cartonRequire} onChange={setCartonRequire}
-                  triggerClassName="h-8 w-full text-sm" />
-                <p className="text-[10px] text-slate-400">Bắt buộc: khi Hoàn thành chuyến, mỗi pallet đã quét phải đính đủ tem thùng khớp mã (bằng số thùng của pallet) — thiếu sẽ bị chặn kèm danh sách pallet.</p>
-              </div>
-            )}
-          </div>
+              )}
+            </SettingRow>
+          </SettingsGroup>
           </div>
           {/* CHIẾN THUẬT XUẤT/NHẬP MẶC ĐỊNH TOÀN KHO (14–15/08 + thang 3 bước 21/08).
               Đây là phần DÙNG CHUNG cho cả kho; khai riêng cho từng Loại kho làm ở TAB LOẠI KHO

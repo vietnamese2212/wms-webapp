@@ -179,7 +179,9 @@ async function looseOf(orderedFg, orderedPm) {
     Number(fgAfter.loose_picking) === 27 && Number(pmAfter.loose_picking) === 77,
     `http=${r1.s} fg=${fgAfter?.loose_picking} pm=${pmAfter?.loose_picking} rs=${JSON.stringify(r1.j?.data ?? '')}`)
 
-  // [8b] SIẾT về OFF → tính lại: FG 27 → 0; dòng POSM đã soạn 30 > 0 mới ⇒ GIỮ 77 + đếm kept_scanned
+  // [8b] SIẾT về OFF → tính lại: FG 27 → 0; dòng POSM đã soạn 30 > 0 mới ⇒ GIỮ 77 + đếm kept_scanned.
+  // Phải GỠ override PM01=ALL trước (tầng LOẠI thắng kho — không gỡ thì POSM vẫn ALL, không vào ca OFF)
+  await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.PM01`, { loose_mode: null, updated_at: now() })
   await api(`/masterdata/warehouses/${whId}`, 'PUT', { loose_mode: 'OFF' })
   const r2 = await api('/wms/loosepicking/recalc', 'POST', { warehouse_id: whId })
   const fg2 = await itemOf(MAT_FG)
@@ -192,11 +194,12 @@ async function looseOf(orderedFg, orderedPm) {
   const r3 = await api('/wms/loosepicking/recalc', 'POST', {})
   check('[8c] Recalc thiếu kho → 4xx', r3.s >= 400 && r3.s < 500, `http=${r3.s}`)
 
-  // trả trạng thái: gỡ vết soạn + pool + về REMAINDER cho các block sau
+  // trả trạng thái: gỡ vết soạn + pool + về REMAINDER + PM01=ALL cho các block sau
   const scs = await restAll('OutboundScanEntry', `select=id&item_id=eq.${pmIt.id}`)
   for (const sc of scs) await api(`/wms/outbound/${gdoId}/items/${pmIt.id}/scans/${sc.id}`, 'DELETE')
   await restWrite('InventoryEntry', 'DELETE', `pallet_code=eq.${MAT_PM}&warehouse_id=eq.${whId}`)
   await api(`/masterdata/warehouses/${whId}`, 'PUT', { loose_mode: 'REMAINDER' })
+  await restWrite('warehouse_type_configs', 'PATCH', `warehouse_id=eq.${whId}&type_code=eq.PM01`, { loose_mode: 'ALL', updated_at: now() })
 }
 
 // [6] Validator: giá trị bậy → 400/422, không ghi

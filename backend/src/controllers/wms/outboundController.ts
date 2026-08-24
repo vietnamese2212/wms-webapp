@@ -5539,10 +5539,21 @@ export async function manualLooseItem(req: Request, res: Response) {
     const otherLoose      = looseScannedTot - oldQty
     const looseCap        = Math.max(0, effectiveLoose - otherLoose)
 
-    // Tồn chung theo warehouse_id trực tiếp (entry POSM location_id=null)
-    const { data: invEntry } = await supabase.from('InventoryEntry')
+    // Tồn chung theo warehouse_id trực tiếp (entry POSM location_id=null).
+    // KHÔNG maybeSingle: pool no-QR có thể 2+ dòng cùng pallet_code sau nhập lại (bài học
+    // ed92e2a — maybeSingle gặp 2 dòng trả error → 404 "chưa có tồn" OAN dù tồn dư; POSM
+    // mode ALL 24/08 đi qua đây hằng ngày). Bản ghi soạn cũ giữ ĐÚNG dòng đã reserve;
+    // bản ghi mới chọn dòng khả dụng cao nhất.
+    const { data: invRows } = await supabase.from('InventoryEntry')
       .select('id, cartons_remaining, cartons_imported, cartons_reserved')
-      .eq('pallet_code', matCode).eq('warehouse_id', gdo.warehouse_id).maybeSingle()
+      .eq('pallet_code', matCode).eq('warehouse_id', gdo.warehouse_id)
+      .gt('cartons_remaining', -1).limit(50)
+    type PoolRow = { id: string; cartons_remaining: number | null; cartons_imported: number | null; cartons_reserved: number | null }
+    const pool = ((invRows ?? []) as PoolRow[])
+    const availOf = (r: PoolRow) => Number(r.cartons_remaining ?? r.cartons_imported ?? 0) - Number(r.cartons_reserved ?? 0)
+    const existingEntryId = (looseEntries ?? []).find((e: any) => !e.loose_confirmed && e.pallet_code === matCode)?.inventory_entry_id as string | undefined
+    const invEntry = (existingEntryId ? pool.find(r => r.id === existingEntryId) : null)
+      ?? pool.sort((a, b) => availOf(b) - availOf(a))[0]
     if (!invEntry) return fail(res, `Mã "${matCode}" chưa có tồn trong kho — kiểm tra phiếu nhập`, 404)
 
     let newQty = Math.min(Math.round(Number(cartons)), looseCap)

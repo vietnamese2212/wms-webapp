@@ -103,6 +103,28 @@ async function looseOf(orderedFg, orderedPm) {
   check('[5] POSM hiện trên trang Nhặt lẻ (loose=full)', lp.s === 200 && hasPm, `http=${lp.s} hasPm=${hasPm}`)
 }
 
+// [5b] Soạn/giữ POSM với POOL 2 DÒNG (nhập lại 2 đợt) — fix maybeSingle 24/08: trước đó 2 dòng
+// cùng pallet_code(=mã) làm tra pool lỗi → 404 "chưa có tồn" OAN dù tồn dư (họ lỗi ed92e2a)
+{
+  const pmm = (await restAll('Material', `select=id&material_code=eq.${MAT_PM}`))[0]
+  for (const q of [300, 200]) {
+    await restWrite('InventoryEntry', 'POST', null, {
+      id: randomUUID(), pallet_code: MAT_PM, material_id: pmm.id, warehouse_id: whId,
+      location_id: null, cartons_imported: q, cartons_remaining: q,
+      status: 'IN_STOCK', import_date: FIX.DATE, updated_at: now(),
+    })
+  }
+  const gdoId = gdoIds.at(-1)
+  const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${gdoId}`)
+  const its = await restAll('OutboundItem', `select=id&do_id=eq.${dos[0].id}&material_code_raw=eq.${MAT_PM}`)
+  const rM = await api(`/wms/outbound/${gdoId}/items/${its[0].id}/manual-loose`, 'POST', { cartons: 50, qty_semantics: 'base' })
+  check('[5b] Pool no-QR 2 dòng: soạn/giữ vẫn OK (hết 404 oan maybeSingle)', rM.s === 200 || rM.s === 201,
+    `http=${rM.s} ${JSON.stringify(rM.j?.error ?? '').slice(0, 100)}`)
+  const rsv = await restAll('InventoryEntry', `select=cartons_reserved&pallet_code=eq.${MAT_PM}&warehouse_id=eq.${whId}&order=cartons_reserved.desc`)
+  check('[5c] Giữ chỗ đúng 50 trên 1 dòng, không trừ tồn', Number(rsv[0]?.cartons_reserved) === 50, `reserved=${rsv.map(r => r.cartons_reserved).join(',')}`)
+  await restWrite('InventoryEntry', 'DELETE', `pallet_code=eq.${MAT_PM}&warehouse_id=eq.${whId}`)
+}
+
 // [6] Validator: giá trị bậy → 400/422, không ghi
 {
   const r1 = await api(`/masterdata/warehouses/${whId}`, 'PUT', { loose_mode: 'XYZ' })

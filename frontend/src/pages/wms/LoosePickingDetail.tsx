@@ -242,12 +242,14 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
 
   // Bộ cột ĐỘNG — chuẩn table-format (table-fixed + kéo giãn + sticky), đồng bộ Xuất
   const cols: RtColDef[] = [
+    // Cột VIỆC PHẢI LÀM (Lẻ đã/cần + nút Quét/Lưu SL) đứng NGAY SAU mã — phone 390px thấy đủ
+    // không kéo ngang (user bắt 24/08: "Nhặt lẻ thậm chí còn không xem được hết")
     { id: 'mat',  label: 'Mã hàng', w: 92 },
+    { id: 'le_c',   label: 'Lẻ thùng', w: 84, align: 'right' },
+    { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'name', label: 'Tên hàng', w: nameMinW },
     { id: 'tong_c', label: 'Tổng thùng', w: 74, align: 'right' },
     { id: 'tong_b', label: 'Tổng hộp', w: 62, align: 'right' },
-    { id: 'le_c',   label: 'Lẻ thùng', w: 78, align: 'right' },
-    { id: 'le_b',   label: 'Lẻ hộp', w: 54, align: 'right' },
     { id: 'kho',  label: 'Kho', w: 46, align: 'center' },
     ...(hasPickSug ? [{ id: 'pick', label: 'Vị trí lấy', w: 175 }] : []),
     ...(hasBatchRequired ? [{ id: 'batch', label: 'Batch yêu cầu', w: 100 }] : []),
@@ -315,24 +317,7 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                       <ShortageBadge s={item.material_id ? shortageByMat.get(item.material_id) : undefined} mat={item.material} />
                     </div>
                   </TableCell>
-                  <TableCell className="px-2 py-1 align-top">
-                    {/* Mobile: tên 1 DÒNG (cắt …) — bấm dòng mở chi tiết. Desktop: xuống dòng bình thường. */}
-                    <div className={`text-[10px] font-medium leading-tight truncate sm:whitespace-normal ${textCls}`}>{matName}</div>
-                    {looseScanEntries.length > 0 && (
-                      <div className="hidden sm:block text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
-                    )}
-                  </TableCell>
-                  {/* BASE UNIT: Tổng thùng (kế hoạch) — mã KG giữ số base */}
-                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
-                    <span className={`text-[10px] tabular-nums ${textCls}`}>{hasEnt ? ordSplit.entry : qtyEntryText(item.cartons_ordered, item.material)}</span>
-                  </TableCell>
-                  {/* Tổng hộp lẻ — 0 → "—" */}
-                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
-                    {hasEnt && tHop
-                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{tHop}</span>
-                      : <span className="text-[10px] text-slate-300">—</span>}
-                  </TableCell>
-                  {/* Nhặt lẻ THÙNG (đã/cần) + nút Quét */}
+                  {/* Nhặt lẻ THÙNG (đã/cần) + nút Quét — đứng NGAY SAU mã (thứ tự khớp cols) */}
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     <div className="flex flex-col items-end gap-0.5">
                       <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>
@@ -356,6 +341,23 @@ function ItemsTable({ doRecords, gdoId, expandedItemIds, toggleExpand, warehouse
                   <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
                     {leHop
                       ? <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{leHop}</span>
+                      : <span className="text-[10px] text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell className="px-2 py-1 align-top">
+                    {/* Mobile: tên 1 DÒNG (cắt …) — bấm dòng mở chi tiết. Desktop: xuống dòng bình thường. */}
+                    <div className={`text-[10px] font-medium leading-tight truncate sm:whitespace-normal ${textCls}`}>{matName}</div>
+                    {looseScanEntries.length > 0 && (
+                      <div className="hidden sm:block text-[9px] text-slate-400 mt-0.5">{looseScanEntries.length} pallet đã quét</div>
+                    )}
+                  </TableCell>
+                  {/* BASE UNIT: Tổng thùng (kế hoạch) — mã KG giữ số base */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    <span className={`text-[10px] tabular-nums ${textCls}`}>{hasEnt ? ordSplit.entry : qtyEntryText(item.cartons_ordered, item.material)}</span>
+                  </TableCell>
+                  {/* Tổng hộp lẻ — 0 → "—" */}
+                  <TableCell className="px-2 py-1 align-top text-right whitespace-nowrap">
+                    {hasEnt && tHop
+                      ? <span className={`text-[10px] tabular-nums ${textCls}`}>{tHop}</span>
                       : <span className="text-[10px] text-slate-300">—</span>}
                   </TableCell>
                   <TableCell className="px-1 py-1 align-middle text-center">

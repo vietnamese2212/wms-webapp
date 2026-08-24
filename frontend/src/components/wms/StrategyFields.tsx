@@ -74,6 +74,18 @@ const BLOCK_ROWS = [
   ['putaway_single_ncc',      'NCC_MIX',   'Không trộn NCC khác nhau trong một vị trí'],
 ] as const
 
+// Đầu mục khối = mini section-band (đợt UI 24/08 — user chê form "cái thò cái thụt", đầu mục
+// không nổi): nền slate + vạch accent sky + chữ IN HOA đậm màu, full-bleed trong khung viền.
+function SecTitle({ children, tip }: { children: React.ReactNode; tip: React.ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5 -mx-2.5 -mt-2 mb-1 px-2 py-1.5 bg-slate-50 border-b border-slate-200 rounded-t-md">
+      <span className="h-3 w-1 rounded-full bg-sky-500 shrink-0" />
+      <Label className="text-[11px] font-bold uppercase tracking-wide text-sky-900 flex items-center">{children}</Label>
+      <InfoTip tip={tip} />
+    </span>
+  )
+}
+
 function EnforceChip({ id, on, onToggle }: { id: string; on: boolean; onToggle: () => void }) {
   return (
     <label htmlFor={id}
@@ -94,8 +106,9 @@ function TriBool({ value, onChange, label, inherited, tip }: {
 }) {
   // Nhãn NẰM TRÊN ô chọn (không kẹp cùng hàng): cột hẹp thì nhãn dài bị cắt cụt thành
   // "Không cất vào …" — đọc không ra luật gì. Xếp dọc cũng khớp các ô khác trong cùng khối.
+  // KHÔNG px lệch riêng — mọi hàng trong khối thẳng cùng mép trái (user chê "thò thụt" 24/08).
   return (
-    <div className="rounded-md px-1 py-1">
+    <div className="py-1">
       <span className="flex items-center gap-1">
         <span className="text-[11px] text-slate-500">{label}</span>
         {tip ? <InfoTip tip={tip} /> : null}
@@ -149,17 +162,14 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
     <div className={wide ? 'grid gap-2.5 lg:grid-cols-3 items-start [&>*]:min-w-0' : 'space-y-2.5'}>
       {/* ───────── XUẤT ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-        <span className="flex items-center gap-1">
-          <Label className="text-xs">XUẤT — Lấy hàng{own(value.rotation_principle ?? value.rotation_required)}</Label>
-          <InfoTip tip={<>
-            Thứ tự lấy hàng: <b>{eff.rotation_principle ?? 'FEFO'}</b>
-            {eff.rotation_required ? ' — BẮT BUỘC (quét sai thứ tự bị chặn)' : ' — chỉ cảnh báo khi quét sai'}.
-            <br /><br />
-            Khi hai pallet cùng {dateLabel}, app xếp tiếp theo: <b>khu gần cửa xuất</b> (hạng nhặt khai ở
-            Tối ưu vị trí) → <b>ô ít hàng nhất</b> (vét lẻ trước) → tên vị trí. Thang này CỐ ĐỊNH, không
-            bao giờ đổi được thứ tự lấy hàng theo nguyên tắc ở trên.
-          </>} />
-        </span>
+        <SecTitle tip={<>
+          Thứ tự lấy hàng: <b>{eff.rotation_principle ?? 'FEFO'}</b>
+          {eff.rotation_required ? ' — BẮT BUỘC (quét sai thứ tự bị chặn)' : ' — chỉ cảnh báo khi quét sai'}.
+          <br /><br />
+          Khi hai pallet cùng {dateLabel}, app xếp tiếp theo: <b>khu gần cửa xuất</b> (hạng nhặt khai ở
+          Tối ưu vị trí) → <b>ô ít hàng nhất</b> (vét lẻ trước) → tên vị trí. Thang này CỐ ĐỊNH, không
+          bao giờ đổi được thứ tự lấy hàng theo nguyên tắc ở trên.
+        </>}>XUẤT — Lấy hàng{own(value.rotation_principle ?? value.rotation_required)}</SecTitle>
         <SingleSelect
           value={sel(value.rotation_principle)} onChange={put('rotation_principle')}
           triggerClassName="h-8"
@@ -174,7 +184,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
             inherited={inherited.rotation_required === true} onChange={v => onPatch({ rotation_required: v })}
             tip={<>Chặn quét sai thứ tự cho RIÊNG loại hàng này. Người có quyền <b>Duyệt lấy khác thứ tự</b> vẫn qua được nhưng phải chọn lý do.</>} />
         ) : (
-          <div className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+          <div className="flex items-center gap-1.5 py-1 hover:bg-slate-50">
             <label htmlFor={`${idPrefix}-rotreq`} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
               <input id={`${idPrefix}-rotreq`} type="checkbox" checked={value.rotation_required === true}
                 onChange={e => onPatch({ rotation_required: e.target.checked })}
@@ -188,17 +198,14 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
 
       {/* ───────── XUẤT — Nhặt lẻ tự sinh (24/08) ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-        <span className="flex items-center gap-1">
-          <Label className="text-xs">XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons)}</Label>
-          <InfoTip tip={<>
-            Khi tạo đơn / upload kế hoạch, app tự tính phần <b>nhặt lẻ</b> của từng mã theo chế độ này.
-            Áp cho đơn tạo <b>sau khi đổi</b> — đơn đã tạo giữ số cũ.
-            <br /><br />
-            <b>Không nhặt lẻ</b> ép về 0 kể cả cột "Nhặt lẻ" ghi tay trong file upload kiểu cũ.
-            Mã không khai quy cách thùng (CÁI/KG…): chế độ Phần lẻ luôn ra 0 — muốn nhặt lẻ loại đó
-            (vd POSM) thì đặt <b>Toàn bộ số lượng</b> ở tầng Loại kho.
-          </>} />
-        </span>
+        <SecTitle tip={<>
+          Khi tạo đơn / upload kế hoạch, app tự tính phần <b>nhặt lẻ</b> của từng mã theo chế độ này.
+          Áp cho đơn tạo <b>sau khi đổi</b> — đơn đã tạo giữ số cũ (nút "Tính lại" ở trang Nhặt lẻ).
+          <br /><br />
+          <b>Không nhặt lẻ</b> ép về 0 kể cả cột "Nhặt lẻ" ghi tay trong file upload kiểu cũ.
+          Mã không khai quy cách thùng (CÁI/KG…): chế độ Phần lẻ luôn ra 0 — muốn nhặt lẻ loại đó
+          (vd POSM) thì đặt <b>Toàn bộ số lượng</b> ở tầng Loại kho.
+        </>}>XUẤT — Nhặt lẻ{own(value.loose_mode ?? value.loose_max_cartons)}</SecTitle>
         <SingleSelect
           value={sel(value.loose_mode)} onChange={put('loose_mode')}
           triggerClassName="h-8"
@@ -226,15 +233,12 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
 
       {/* ───────── NHẬP — thang 3 bước ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-        <span className="flex items-center gap-1">
-          <Label className="text-xs">NHẬP — Cất hàng (thứ tự gợi ý vị trí)</Label>
-          <InfoTip tip={<>
-            {putawayExplain(eff)}
-            <br /><br />
-            Áp ở 4 màn cất hàng: form Nhập kho · quét tem (PDA) · đổi vị trí trong phiếu nhập ·
-            Chuyển vị trí hàng loạt. Vị trí ★ đứng đầu, vị trí vướng luật xuống cuối.
-          </>} />
-        </span>
+        <SecTitle tip={<>
+          {putawayExplain(eff)}
+          <br /><br />
+          Áp ở 4 màn cất hàng: form Nhập kho · quét tem (PDA) · đổi vị trí trong phiếu nhập ·
+          Chuyển vị trí hàng loạt. Vị trí ★ đứng đầu, vị trí vướng luật xuống cuối.
+        </>}>NHẬP — Cất hàng (gợi ý vị trí)</SecTitle>
         <div>
           <Label className="text-[11px] text-slate-500">Bước 1 — Ưu tiên nhóm ô{own(value.putaway_priority)}</Label>
           <SingleSelect value={sel(value.putaway_priority)} onChange={put('putaway_priority')}
@@ -269,19 +273,16 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
 
       {/* ───────── NHẬP — ràng buộc ───────── */}
       <div className="space-y-1.5 rounded-md border border-slate-200 px-2.5 py-2">
-        <span className="flex items-center gap-1">
-          <Label className="text-xs">NHẬP — Ràng buộc vị trí</Label>
-          <InfoTip tip={<>
-            Không tick <b>Bắt buộc</b> = chỉ <b>cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting, nhưng cất vẫn được và có ghi vết.
-            Tick = <b>CHẶN</b> — chỉ người có quyền <b>Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
-            <br /><br />
-            Chặn ở <b>mọi thao tác đặt pallet vào vị trí</b>: tạo phiếu nhập · đổi vị trí trong phiếu nhập ·
-            quét tem vào vị trí · Chuyển vị trí hàng loạt. Riêng chỗ đặt <b>phần dư khi quét xuất</b> cố ý
-            KHÔNG chặn — người quét buộc phải khai được chỗ để lại.
-          </>} />
-        </span>
-        <div className="flex items-center gap-1.5 rounded-md px-1 py-1">
-          <span className="text-[11px] flex-1 min-w-0">Vị trí đánh dấu “Không đưa hàng vào”</span>
+        <SecTitle tip={<>
+          Không tick <b>Bắt buộc</b> = chỉ <b>cảnh báo</b>: loại khỏi gợi ý + khỏi kế hoạch Slotting, nhưng cất vẫn được và có ghi vết.
+          Tick = <b>CHẶN</b> — chỉ người có quyền <b>Duyệt cất khác quy tắc</b> mới qua được, và phải chọn lý do trong danh sách.
+          <br /><br />
+          Chặn ở <b>mọi thao tác đặt pallet vào vị trí</b>: tạo phiếu nhập · đổi vị trí trong phiếu nhập ·
+          quét tem vào vị trí · Chuyển vị trí hàng loạt. Riêng chỗ đặt <b>phần dư khi quét xuất</b> cố ý
+          KHÔNG chặn — người quét buộc phải khai được chỗ để lại.
+        </>}>NHẬP — Ràng buộc vị trí</SecTitle>
+        <div className="flex items-center gap-1.5 py-1">
+          <span className="text-[11px] text-slate-700 flex-1 min-w-0">Vị trí đánh dấu “Không đưa hàng vào”</span>
           <InfoTip tip={<>Khai ở trang <b>Vị trí kho</b>. Vị trí đó LUÔN bị loại khỏi gợi ý — ô tick bên phải chỉ quyết định lúc cất thật có chặn hay không.</>} />
           <EnforceChip id={`${idPrefix}-enf-noin`} on={enforced.includes('NO_IN')} onToggle={() => toggleEnf('NO_IN')} />
         </div>
@@ -332,7 +333,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
               )}
             </div>
           ) : (
-            <div key={key} className="flex items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-slate-50">
+            <div key={key} className="flex items-center gap-1.5 py-1 hover:bg-slate-50">
               <label htmlFor={`${idPrefix}-${code}`} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
                 <input id={`${idPrefix}-${code}`} type="checkbox" checked={value[key] === true}
                   onChange={e => onPatch({ [key]: e.target.checked } as Partial<StrategyValue>)}

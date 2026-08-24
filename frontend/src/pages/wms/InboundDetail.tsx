@@ -671,8 +671,8 @@ export default function InboundDetail() {
           </div>
         )}
 
-        {/* ── Compact header (~20%) ── */}
-        <div className="border-b bg-white px-4 pt-3 pb-3 shrink-0 space-y-2">
+        {/* ── Compact header (~20%) — mobile nén đệm (đợt UI 24/08: user chê "nhiều vị trí dư thừa") ── */}
+        <div className="border-b bg-white px-3 pt-2 pb-2 space-y-1 sm:px-4 sm:pt-3 sm:pb-3 sm:space-y-2 shrink-0">
 
           {/* Row 1: navigation + code + actions — flex-wrap để cụm action xuống dòng thay vì bị cắt trên màn hẹp */}
           <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap">
@@ -698,11 +698,12 @@ export default function InboundDetail() {
               </button>
             </div>
 
-            <ActionCluster items={headerActionItems} />
+            {/* mobileInline: cụm nút CHUNG HÀNG với mã phiếu — hết cảnh ⋮ chiếm nguyên 1 hàng riêng */}
+            <ActionCluster mobileInline items={headerActionItems} />
           </div>
 
           {/* Row 2: info chips */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:gap-x-4 sm:gap-y-1 text-xs text-slate-600">
             {((order as any).from_gdo_delivery_codes?.length ?? 0) > 0 && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">Số DO:</span>
@@ -893,7 +894,7 @@ export default function InboundDetail() {
         ]} />
 
         {/* Heading + action — thanh CỐ ĐỊNH (ngoài vùng cuộn ngang) nên không bị trôi/cắt khi kéo bảng */}
-        <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
+        <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-1.5">
               <span className="h-3.5 w-1 rounded-full bg-sky-500" />
               Pallet đã quét
@@ -940,8 +941,8 @@ export default function InboundDetail() {
             </div>
           </div>
 
-        {/* ── Pallet table (~80%) ── */}
-        <div className="flex-1 p-4 overflow-auto pb-20 lg:pb-4">
+        {/* ── Pallet table (~80%) — mobile bảng sát mép (đệm to chỉ để desktop) ── */}
+        <div className="flex-1 p-1.5 sm:p-4 overflow-auto pb-20 lg:pb-4">
           {/* min-w-max: Card nở đúng bằng bảng để nền+viền phủ trọn, không lộ vạch xám giữa bảng khi cuộn ngang */}
           <Card className="min-w-max">
             {isPlaceholderData ? (

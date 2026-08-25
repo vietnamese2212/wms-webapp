@@ -263,8 +263,9 @@ try {
       check('[12d] Mức CẢNH BÁO: dồn chạy + response nói ra vi phạm (putaway_warning, không im lặng)',
         dM.s === 200 && /không đưa hàng vào/i.test(dM.j?.data?.putaway_warning ?? ''),
         `http=${dM.s} warn=${dM.j?.data?.putaway_warning ?? 'KHÔNG'}`)
-      const [otherLoc] = await restAll('Location', `select=id&warehouse_id=eq.${FIX.WH_QTY.id}&is_active=is.true&limit=1`)
-      const eS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: otherLoc?.id })
+      // Kho QTY không có vị trí sẵn (pool không vị trí) → tự tạo 1 ô ở kho khác để thử guard cùng-kho
+      const locOtherWh = await mkLoc(FIX.WH_QTY.id, 'XWH')
+      const eS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: locOtherWh })
       check('[12e] Tách sang vị trí của KHO KHÁC → 400 (trước fix: pallet con "dịch chuyển" sang kho khác)',
         eS.s === 400, `http=${eS.s}`)
       const fS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: locCap })

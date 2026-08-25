@@ -7,12 +7,21 @@ import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint } from './systemSettingController'
 import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
+import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
 
 function ok(res: Response, data: unknown) { return res.json({ success: true, data }) }
 function fail(res: Response, message: string, status = 400) {
   // 5xx KHÔNG trả nguyên văn message (lộ tên bảng/cột PostgREST) — xem utils/response.ts
   return res.status(status).json({ success: false, error: { message: maskServerMessage(message, status, res) } })
 }
+function failCode(res: Response, status: number, code: string, message: string) {
+  return res.status(status).json({ success: false, error: { code, message: maskServerMessage(message, status, res) } })
+}
+
+// Quyền duyệt CẤT khác quy tắc — cùng một năng lực với inbound/inventory (xem inboundController)
+const canPutawayOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true ||
+  (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
 
 const vnDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const ACTIVE = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']
@@ -71,12 +80,34 @@ export async function mergePallets(req: Request, res: Response) {
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
     const { data: kRows, error: kErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, parent_pallet_code, location_id, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
+      .select(`id, pallet_code, parent_pallet_code, location_id, material_id, ncc_id, production_date, expiry_date, shelf_life_days, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
     if (kErr) return fail(res, kErr.message, 500)
     const kids = (kRows ?? []).filter((k: any) => matchWh(k, warehouse_id))
     const found = kids.map((k: any) => k.pallet_code)
     const missing = children.filter(c => !found.includes(c))
     if (missing.length) return fail(res, (await wrongFormatHint(missing[0])) ?? `Pallet không tồn tại/đã xuất: ${missing.join(', ')}`)
+
+    // Pallet con đang đứng Ô KHÁC bị kéo về ô của pallet đích = hàng MỚI đi vào ô đó ⇒ một lần
+    // CẤT HÀNG, phải qua luật cất của kho (bịt lỗ 25/08 — trước đây dồn đi thẳng, kho bật "bắt
+    // buộc" vẫn dồn được hàng vào ô cấm/vượt số mã). Sức chứa cố ý KHÔNG kiểm: dồn = chồng vật lý
+    // lên pallet đích, không chiếm thêm chân pallet.
+    let putawayWarning: string | null = null
+    const movingKids = tgt.location_id ? kids.filter((k: any) => k.location_id !== tgt.location_id) : []
+    if (movingKids.length) {
+      const put = await guardPutawayBatch({
+        warehouseId: ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]),
+        locationId:  tgt.location_id,
+        entries: movingKids.map((k: any): IncomingInput => ({
+          material_id: k.material_id, ncc_id: k.ncc_id ?? null,
+          production_date: k.production_date ?? null, expiry_date: k.expiry_date ?? null,
+          shelf_life_days: k.shelf_life_days ?? null,
+        })),
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return failCode(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putawayWarning = put.warning
+    }
 
     const now = new Date().toISOString()
     // Lưu trạng thái cũ (parent + vị trí) để hoàn tác
@@ -87,7 +118,7 @@ export async function mergePallets(req: Request, res: Response) {
     if (uErr) return fail(res, uErr.message, 500)
 
     await logOp(req, 'MERGE', children, [target], { count: kids.length, prev }, ENTRY_WH(tgt as unknown as Parameters<typeof ENTRY_WH>[0]))
-    return ok(res, { target, merged: kids.length })
+    return ok(res, { target, merged: kids.length, putaway_warning: putawayWarning })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 
@@ -144,7 +175,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -163,6 +194,43 @@ export async function splitPallet(req: Request, res: Response) {
     }
     const totalSplit = items.reduce((s, q) => s + q, 0)
     if (totalSplit > free) return fail(res, `Tách ${qtyLabel(totalSplit, (source as any).material as MatUnits)} vượt số khả dụng (${qtyLabel(free, (source as any).material as MatUnits)}, đã trừ ${qtyLabel(reserved, (source as any).material as MatUnits)} giữ chỗ)`)
+
+    // ĐÍCH do người chọn = một lần CẤT HÀNG (bịt lỗ 25/08 — trước đây tách đặt con vào Ô BẤT KỲ:
+    // không kiểm cùng kho, không sức chứa, không luật cất ⇒ kho bật "bắt buộc" vẫn bị lách qua
+    // đường Tách). Mặc định giữ chỗ pallet nguồn thì MIỄN — hàng không di chuyển, cùng lý lẽ
+    // "Giữ chỗ cũ" của quét xuất (chặn là ngõ cụt).
+    let putawayWarning: string | null = null
+    const srcWh = ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0])
+    if (location_id && location_id !== source.location_id) {
+      const { data: dest } = await supabase.from('Location')
+        .select('id, location_code, warehouse_id, is_active, max_pallets').eq('id', location_id).maybeSingle()
+      if (!dest) return fail(res, 'Không tìm thấy vị trí đặt pallet con', 404)
+      if (dest.is_active === false) return fail(res, `Vị trí ${dest.location_code} không hoạt động`)
+      if (srcWh && dest.warehouse_id !== srcWh)
+        return fail(res, `Vị trí ${dest.location_code} thuộc kho khác — pallet con phải nằm trong kho của pallet gốc`)
+      // Sức chứa (loại tồn=0 — cùng định nghĩa used_slots): N pallet con cần N chỗ
+      const cap = Number(dest.max_pallets ?? 0)
+      if (cap > 0) {
+        const { count } = await supabase.from('InventoryEntry')
+          .select('id', { count: 'exact', head: true })
+          .eq('location_id', location_id).gt('cartons_remaining', 0)
+        if ((count ?? 0) + items.length > cap)
+          return failCode(res, 400, 'LOCATION_FULL',
+            `Vị trí ${dest.location_code} không đủ chỗ (đang ${count ?? 0}/${cap} pallet, cần thêm ${items.length})`)
+      }
+      const put = await guardPutawayBatch({
+        warehouseId: srcWh, locationId: location_id,
+        entries: items.map((): IncomingInput => ({
+          material_id: source.material_id, ncc_id: (source as any).ncc_id ?? null,
+          production_date: source.production_date ?? null, expiry_date: source.expiry_date ?? null,
+          shelf_life_days: (source as any).shelf_life_days ?? null,
+        })),
+        overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
+        canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return failCode(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      putawayWarning = put.warning
+    }
 
     // Tìm số thứ tự con kế tiếp (baseCode.N) — mã con = mã gốc + ".N".
     // V1 (`_`): ".N" gắn vào ĐOẠN SEQ (đoạn 5).
@@ -281,7 +349,7 @@ export async function splitPallet(req: Request, res: Response) {
     const childCodes = rows.map(r => r.pallet_code)
     await logOp(req, 'SPLIT', [src], childCodes, { children: rows.map(r => ({ code: r.pallet_code, qty: r.cartons_remaining })), source_remaining: newRemaining }, ENTRY_WH(source as unknown as Parameters<typeof ENTRY_WH>[0]))
 
-    return ok(res, { source: src, source_remaining: newRemaining, children: created ?? [] })
+    return ok(res, { source: src, source_remaining: newRemaining, children: created ?? [], putaway_warning: putawayWarning })
   } catch (e) { return fail(res, (e as Error).message, 500) }
 }
 

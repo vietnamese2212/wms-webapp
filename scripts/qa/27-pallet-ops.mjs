@@ -48,11 +48,11 @@ for (const o of await restAll('Location', `select=id&location_code=like.${TAG}-*
 
 try {
   // ── Fixture: 1 vị trí SIM ở kho QR + các pallet V1/V2 ─────────────────────
-  const mkLoc = async (whId, code) => {
+  const mkLoc = async (whId, code, extra = {}) => {
     const [row] = await restWrite('Location', 'POST', null, {
       id: randomUUID(), location_code: `${TAG}-${code}`, warehouse_id: whId, max_pallets: 30,
       is_active: true, row: 'QA', shelf: '1', sub_code: `${TAG}-${code}`,
-      created_at: nowIso(), updated_at: nowIso(),
+      created_at: nowIso(), updated_at: nowIso(), ...extra,
     })
     created.locs.push(row.id)
     return row.id
@@ -228,6 +228,51 @@ try {
     check('[11] Gỡ nhóm: ungrouped=1 + parent về null',
       r.s === 200 && r.j?.data?.ungrouped === 1 && !e2?.parent_pallet_code,
       `http=${r.s} n=${r.j?.data?.ungrouped}`)
+  }
+  // ── [12] LUẬT CẤT BẮT BUỘC áp cho Dồn/Tách (bịt lỗ 25/08) ─────────────────
+  // Trước fix: tách đặt con vào Ô BẤT KỲ + dồn kéo con về ô đích mà KHÔNG qua luật cất, không
+  // kiểm cùng kho, không sức chứa — kho bật "bắt buộc" vẫn bị lách qua 2 cửa này. Đích do người
+  // chọn = một lần CẤT HÀNG; giữ chỗ pallet nguồn thì miễn (hàng không di chuyển).
+  {
+    const [whRow] = await restAll('Warehouse', `select=putaway_enforced&id=eq.${FIX.WH_QR.id}`)
+    const putBackup = whRow?.putaway_enforced ?? []
+    const setPut = (enforced) => api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { putaway_enforced: enforced })
+    const waitCfg = () => new Promise(r => setTimeout(r, 31_000))   // cache cấu hình 30s/instance
+    const locNoIn = await mkLoc(FIX.WH_QR.id, 'NOIN', { slot_no_in: true })
+    const locCap  = await mkLoc(FIX.WH_QR.id, 'CAP1', { max_pallets: 1 })
+    const SRC3 = v1('905'); await mkPallet(SRC3, 100, FIX.WH_QR.id, locA)
+    const OCC  = v1('906'); await mkPallet(OCC, 10, FIX.WH_QR.id, locCap)
+    try {
+      await setPut(['NO_IN']); await waitCfg()
+      const a = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: FIX.WH_QR.id, location_id: locNoIn })
+      check('[12a] Kho BẮT BUỘC NO_IN: tách sang ô cấm → 422 PUTAWAY_VIOLATION, không sinh con, nguồn nguyên 100',
+        a.s === 422 && a.j?.error?.code === 'PUTAWAY_VIOLATION'
+        && Number((await entryOf(SRC3))?.cartons_remaining) === 100,
+        `http=${a.s} code=${a.j?.error?.code}`)
+      const b = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 10 }], warehouse_id: FIX.WH_QR.id })
+      for (const c of b.j?.data?.children ?? []) allCodes.push(c.pallet_code)
+      check('[12b] Giữ chỗ pallet nguồn (không truyền vị trí) → tách vẫn chạy, không ngõ cụt', b.s === 200, `http=${b.s}`)
+      const TGN = v1('907'); await mkPallet(TGN, 10, FIX.WH_QR.id, locNoIn)
+      const KID = v1('908'); await mkPallet(KID, 10, FIX.WH_QR.id, locA)
+      const cM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: FIX.WH_QR.id })
+      check('[12c] Dồn về pallet đích đang đứng trong ô cấm → 422, pallet con đứng yên',
+        cM.s === 422 && cM.j?.error?.code === 'PUTAWAY_VIOLATION' && (await entryOf(KID))?.location_id === locA,
+        `http=${cM.s} code=${cM.j?.error?.code}`)
+      await setPut([]); await waitCfg()
+      const dM = await api('/wms/pallet-ops/merge', 'POST', { target_pallet_code: TGN, child_pallet_codes: [KID], warehouse_id: FIX.WH_QR.id })
+      check('[12d] Mức CẢNH BÁO: dồn chạy + response nói ra vi phạm (putaway_warning, không im lặng)',
+        dM.s === 200 && /không đưa hàng vào/i.test(dM.j?.data?.putaway_warning ?? ''),
+        `http=${dM.s} warn=${dM.j?.data?.putaway_warning ?? 'KHÔNG'}`)
+      const [otherLoc] = await restAll('Location', `select=id&warehouse_id=eq.${FIX.WH_QTY.id}&is_active=is.true&limit=1`)
+      const eS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: otherLoc?.id })
+      check('[12e] Tách sang vị trí của KHO KHÁC → 400 (trước fix: pallet con "dịch chuyển" sang kho khác)',
+        eS.s === 400, `http=${eS.s}`)
+      const fS = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRC3, children: [{ qty: 5 }], warehouse_id: FIX.WH_QR.id, location_id: locCap })
+      check('[12f] Ô đã kín chỗ → tách vào đó 400 LOCATION_FULL (trước fix: vượt sức chứa âm thầm)',
+        fS.s === 400 && fS.j?.error?.code === 'LOCATION_FULL', `http=${fS.s} code=${fS.j?.error?.code}`)
+    } finally {
+      await api(`/masterdata/warehouses/${FIX.WH_QR.id}`, 'PUT', { putaway_enforced: putBackup })
+    }
   }
 } catch (e) {
   check('gói chạy không nổ', false, String(e))

@@ -664,6 +664,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     putaway_block_full:         wh?.putaway_block_full === true,
     putaway_single_ncc:         wh?.putaway_single_ncc === true,
     putaway_enforced:           Array.isArray(wh?.putaway_enforced) ? wh!.putaway_enforced! : [],
+    putaway_enforced_off:       null,   // chỉ tầng LOẠI mới có (ép 1 luật của kho về chỉ-cảnh-báo)
     putaway_same_mat_date_pref: wh?.putaway_same_mat_date_pref ?? 'NONE',
     putaway_fallback:           wh?.putaway_fallback ?? 'BY_CODE',
     loose_mode:                 wh?.loose_mode ?? 'REMAINDER',
@@ -1365,9 +1366,9 @@ function MetaTab({ noun, rows, loading, canManage, onAdd, onEdit }: {
                       <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800 whitespace-nowrap">{r.name}</TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{r.display_order}</TableCell>
                       <TableCell className="px-2 py-1 whitespace-nowrap">
-                        <Badge variant={r.is_active ? 'default' : 'secondary'} className="text-xs">
+                        <StatusBadge tone={r.is_active ? 'green' : 'slate'}>
                           {r.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                        </Badge>
+                        </StatusBadge>
                       </TableCell>
                       {canManage && (
                         <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -2160,9 +2161,9 @@ export default function WMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{z.categories?.length ? z.categories.join(', ') : <span className="text-slate-300">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-right font-semibold tabular-nums whitespace-nowrap">{z.max_pallets != null ? z.max_pallets.toLocaleString('vi-VN') : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                           <TableCell className="px-2 py-1 whitespace-nowrap">
-                            <Badge variant={z.is_active ? 'default' : 'secondary'} className="text-xs">
+                            <StatusBadge tone={z.is_active ? 'green' : 'slate'}>
                               {z.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {canManageZone && (
                             <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -2327,9 +2328,9 @@ function MachineTab({ canManage, warehouses }: { canManage: boolean; warehouses:
                   <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800 whitespace-nowrap">{m.code}</TableCell>
                   <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{m.note || <span className="text-slate-300">—</span>}</TableCell>
                   <TableCell className="px-2 py-1 whitespace-nowrap">
-                    <Badge variant={m.is_active ? 'default' : 'secondary'} className="text-xs">
+                    <StatusBadge tone={m.is_active ? 'green' : 'slate'}>
                       {m.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
                   {canManage && (
                     <TableCell className="px-2 py-1 whitespace-nowrap">

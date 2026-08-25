@@ -3,16 +3,7 @@ import { useInventoryEntry } from '@/api/hooks'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { computePctDate } from '@/utils/shelfLife'
 import { qtyLabel } from '@/utils/qtyUnits'
-
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-}
+import { InventoryStatusBadge } from '@/lib/statusMaps'
 
 function datePctCls(pct: number): string {
   if (pct >= 70) return 'text-green-600 font-semibold'
@@ -67,9 +58,7 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
             <p className="text-slate-400 text-center py-4 text-xs">Không tìm thấy pallet</p>
           ) : (
             <>
-              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[entry.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                {STATUS_LABEL[entry.status] ?? entry.status}
-              </span>
+              <InventoryStatusBadge status={entry.status} />
 
               <Section title="Thông tin hàng">
                 <Row label="Kho"      value={entry.location?.warehouse?.name ?? '—'} />

@@ -38,9 +38,9 @@ function apiMsg(err: unknown) {
   return (err as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message ?? String(err)
 }
 
-// ABC badge: A = nhặt nhiều (ưu tiên cao nhất)
+// ABC badge: A = nhặt nhiều (ưu tiên cao nhất) — cùng hệ sky, A đậm hơn B (không nền đặc kiểu button)
 const ABC_BADGE: Record<string, string> = {
-  A: 'bg-sky-600 text-white',
+  A: 'bg-sky-200 text-sky-800',
   B: 'bg-sky-100 text-sky-700',
   C: 'bg-slate-100 text-slate-500',
 }

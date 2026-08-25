@@ -6,7 +6,7 @@ import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Switch }   from '@/components/ui/switch'
-import { Badge }    from '@/components/ui/badge'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -731,9 +731,9 @@ export default function TMSSettings() {
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={vt.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={vt.is_active ? 'green' : 'slate'}>
                               {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {vtWrite && (
                             <TableCell className="px-2 py-1">
@@ -860,9 +860,9 @@ export default function TMSSettings() {
                                   </TableCell>
                                   <TableCell className="px-2 py-1 text-right font-semibold tabular-nums text-[10px]">{st.max_vehicles}</TableCell>
                                   <TableCell className="px-2 py-1">
-                                    <Badge variant={st.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                                    <StatusBadge tone={st.is_active ? 'green' : 'slate'}>
                                       {st.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                                    </Badge>
+                                    </StatusBadge>
                                   </TableCell>
                                   {slotWrite && (
                                     <TableCell className="px-2 py-1">
@@ -969,9 +969,9 @@ export default function TMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{co.contact_phone ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={co.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={co.is_active ? 'green' : 'slate'}>
                               {co.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {coWrite && (
                             <TableCell className="px-2 py-1">
@@ -1067,9 +1067,9 @@ export default function TMSSettings() {
                           <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1">
-                            <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                            <StatusBadge tone={v.is_active ? 'green' : 'slate'}>
                               {v.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           {vWrite && (
                             <TableCell className="px-2 py-1">

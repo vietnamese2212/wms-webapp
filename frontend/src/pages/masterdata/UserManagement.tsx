@@ -16,6 +16,7 @@ import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Card }     from '@/components/ui/card'
 import { Badge }    from '@/components/ui/badge'
+import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -1118,9 +1119,9 @@ export default function UserManagement() {
                             {isDeleted ? (
                               <Badge variant="secondary" className="text-[9px] text-amber-700 bg-amber-50">Đã ẩn</Badge>
                             ) : (
-                              <Badge variant={emp.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                              <StatusBadge tone={emp.is_active ? 'green' : 'slate'}>
                                 {emp.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                              </Badge>
+                              </StatusBadge>
                             )}
                           </TableCell>
                           <TableCell className="px-2 py-2">
@@ -1268,9 +1269,9 @@ export default function UserManagement() {
                           <TableCell className="px-2 py-1.5 font-mono font-semibold text-slate-600">{d.code}</TableCell>
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={d.name}>{d.name}</TableCell>
                           <TableCell className="px-2 py-1.5">
-                            <Badge variant={d.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                            <StatusBadge tone={d.is_active ? 'green' : 'slate'}>
                               {d.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {isAdminUser && (
@@ -1352,9 +1353,9 @@ export default function UserManagement() {
                           <TableCell className="px-2 py-1.5 font-medium text-slate-800 truncate" title={jt.name}>{jt.name}</TableCell>
                           <TableCell className="px-2 py-1.5 text-slate-600 truncate" title={jt.department?.name ?? '—'}>{jt.department?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1.5">
-                            <Badge variant={jt.is_active ? 'default' : 'secondary'} className="text-[9px]">
+                            <StatusBadge tone={jt.is_active ? 'green' : 'slate'}>
                               {jt.is_active ? 'Hoạt động' : 'Tạm dừng'}
-                            </Badge>
+                            </StatusBadge>
                           </TableCell>
                           <TableCell className="px-2 py-1.5">
                             {canEditJt(jt.id) && (

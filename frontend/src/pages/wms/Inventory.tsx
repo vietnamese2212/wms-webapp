@@ -32,6 +32,8 @@ import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { PutawayOption, putawayBlocked, type PutawayLocRow } from '@/components/wms/PutawayOption'
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { InventoryStatusBadge, inventoryStatusInfo } from '@/lib/statusMaps'
 import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -66,18 +68,6 @@ function entryRowText(e: InventoryEntry, selected: boolean): string {
   if (pct !== null && pct < 60) return '[&_td_span]:text-purple-600'
   if (pct !== null && pct < 80) return '[&_td_span]:text-orange-600'
   return '[&_td_span]:text-slate-700'
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-  LOOSE_PICKING: 'Đang nhặt lẻ',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-  LOOSE_PICKING: 'bg-purple-100 text-purple-700',
 }
 
 const LIMIT = 50
@@ -1478,9 +1468,8 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
         )}
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${STATUS_CLS[e.status] ?? 'bg-gray-100 text-gray-500'}`}>
-          {qa}
-        </span>
+        {/* Ô QA mượn TONE của trạng thái pallet (giữ nguyên ý nghĩa màu cũ) — nhãn vẫn là mã QA */}
+        <StatusBadge tone={inventoryStatusInfo(e.status).tone}>{qa}</StatusBadge>
       </TableCell>
       {/* Điều chỉnh: giữ dấu +/- (đủ phân biệt tăng/giảm), bỏ màu green/red → kế thừa màu dòng */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
@@ -1626,9 +1615,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
 
       <div className="p-3 space-y-3 text-xs flex-1">
         {/* Status badge */}
-        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[e.status] ?? 'bg-gray-100 text-gray-500'}`}>
-          {STATUS_LABEL[e.status] ?? e.status}
-        </span>
+        <InventoryStatusBadge status={e.status} />
 
         {/* Core info */}
         <Section title="Thông tin hàng">

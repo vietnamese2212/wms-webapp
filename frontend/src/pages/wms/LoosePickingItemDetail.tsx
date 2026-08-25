@@ -28,29 +28,9 @@ import { usePutawayGate } from '@/components/wms/PutawayGate'
 import type { PutawayHint } from '@/utils/putaway'
 import { useRotationGate } from '@/components/wms/RotationGate'
 import { scanRotationOf } from '@/utils/rotation'
-import type { OutboundItem, OutboundStatus } from '@/types'
+import type { OutboundItem } from '@/types'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
-
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
-}
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, target, mat }: { scanned: number; target: number; mat?: MatUnits | null }) {
   const pct = target > 0 ? Math.min(100, (scanned / target) * 100) : 0
@@ -694,7 +674,7 @@ export default function LoosePickingItemDetail() {
                 <ArrowLeft className="h-4 w-4" />
               </button>
               <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{matCode}</span>
-              <Badge status={item.status} />
+              <OutboundStatusBadge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}
                 className="sm:hidden p-1 rounded hover:bg-slate-100 text-slate-400 shrink-0"

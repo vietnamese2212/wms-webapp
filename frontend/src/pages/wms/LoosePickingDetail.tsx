@@ -21,28 +21,8 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { unlockAudio } from '@/utils/audio'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
-import type { OutboundItem, OutboundDelivery, OutboundStatus } from '@/types'
-
-// ─── Status badge ──────────────────────────────────────────────
-
-const statusCls: Record<OutboundStatus, string> = {
-  PENDING:     'bg-slate-100 text-slate-600',
-  IN_PROGRESS: 'bg-amber-100 text-amber-800',
-  COMPLETED:   'bg-green-100 text-green-800',
-  CANCELLED:   'bg-red-100 text-red-600',
-  PAUSED:      'bg-red-100 text-red-700',
-}
-const statusLabel: Record<OutboundStatus, string> = {
-  PENDING: 'Chờ xuất', IN_PROGRESS: 'Đang xuất', COMPLETED: 'Hoàn thành', CANCELLED: 'Đã hủy', PAUSED: 'Tạm dừng',
-}
-function Badge({ status }: { status: string }) {
-  const s = status as OutboundStatus
-  return (
-    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${statusCls[s] ?? 'bg-slate-100 text-slate-600'}`}>
-      {statusLabel[s] ?? status}
-    </span>
-  )
-}
+import type { OutboundItem, OutboundDelivery } from '@/types'
+import { OutboundStatusBadge } from '@/lib/statusMaps'
 
 function ProgressBar({ scanned, target, compact = false }: { scanned: number; target: number; compact?: boolean }) {
   const pct = target > 0 ? Math.min(100, (scanned / target) * 100) : 0
@@ -647,7 +627,7 @@ export default function LoosePickingDetail() {
             <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
             {/* Mã đơn = ĐỊNH DANH — mobile xuống dòng hiện đủ, không che "…" (đồng bộ Xuất 24/08) */}
             <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{gdo.group_code}</span>
-            <Badge status={gdo.status} />
+            <OutboundStatusBadge status={gdo.status} />
             <button
               onClick={() => pinned
                 ? unpin(gdo.id)

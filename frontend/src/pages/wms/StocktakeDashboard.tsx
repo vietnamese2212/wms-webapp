@@ -16,6 +16,7 @@ import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { LocationScanButton } from '@/components/wms/LocationScanButton'
+import { InventoryStatusBadge } from '@/lib/statusMaps'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useColumnResize } from '@/components/shared/useColumnResize'
@@ -62,15 +63,6 @@ function StatCard({ label, value, active, color, onClick }: {
 }
 
 // ─── Side Detail Panel ───────────────────────────────────────────
-const STATUS_LABEL: Record<string, string> = {
-  IN_STOCK: 'Còn hàng', PARTIAL: 'Xuất 1 phần', EXPORTED: 'Đã xuất',
-  TRANSFERRED: 'Đã chuyển', QUARANTINE: 'Cách ly', CANCELLED: 'Đã hủy',
-}
-const STATUS_CLS: Record<string, string> = {
-  IN_STOCK: 'bg-green-100 text-green-700', PARTIAL: 'bg-amber-100 text-amber-700',
-  EXPORTED: 'bg-blue-100 text-blue-700', TRANSFERRED: 'bg-slate-100 text-slate-600',
-  QUARANTINE: 'bg-red-100 text-red-700', CANCELLED: 'bg-gray-100 text-gray-500',
-}
 
 function DR({ label, value, mono, bold, cls }: {
   label: string; value: string; mono?: boolean; bold?: boolean; cls?: string
@@ -124,9 +116,7 @@ function DetailPanel({ entryId, onClose }: { entryId: string; onClose: () => voi
           <p className="text-xs text-slate-400 text-center py-4">Không tìm thấy</p>
         ) : (
           <>
-            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_CLS[entry.status] ?? 'bg-gray-100 text-gray-500'}`}>
-              {STATUS_LABEL[entry.status] ?? entry.status}
-            </span>
+            <InventoryStatusBadge status={entry.status} />
 
             {/* Kiểm kê — đặt lên đầu vì đây là thông tin quan trọng nhất ở trang này */}
             <Sec title="Kiểm kê vị trí">

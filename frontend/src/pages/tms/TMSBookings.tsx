@@ -4231,7 +4231,8 @@ export default function TMSBookings() {
         {/* flex-wrap: mobile cụm ActionCluster (w-full) xuống dòng riêng thay vì tràn */}
         <div className="flex items-center justify-between gap-x-2 gap-y-1.5 flex-wrap mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
+            {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08) — toggle tab Kế hoạch/Chuyển kho vẫn giữ */}
+            <span className="hidden sm:inline text-sm font-semibold text-slate-700">Kế hoạch vận chuyển</span>
             {/* Toggle 2 tab chỉ hiện khi có quyền nhận hàng chuyển kho — không có quyền thì chỉ xem Kế hoạch (#1) */}
             {canConfirmReceipt && (
               <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">

@@ -1169,11 +1169,13 @@ export default function GateRegistration() {
       {/* ── Toolbar */}
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
-          <div className="flex-1" />
-          <FilterSheetButton defs={filterDefs} className="sm:hidden" />
-          {/* Mobile: SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08); nút Lọc dời vào cụm dưới để mobile chỉ 1 hàng
+              (desktop sm:contents tan wrapper nên thứ tự hiển thị không đổi) */}
+          <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Đăng ký cổng</span>
+          <div className="hidden sm:block flex-1" />
+          {/* Mobile: Lọc + SavedViews + action GOM 1 hàng (PDA); desktop sm:contents → như cũ */}
           <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <FilterSheetButton defs={filterDefs} className="sm:hidden" />
           <SavedViews
             module="gateRegistration"
             currentFilters={viewSnapshot}

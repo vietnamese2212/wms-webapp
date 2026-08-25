@@ -1074,7 +1074,8 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
       <div className="border-b bg-white px-3 py-1.5 shrink-0 space-y-1 sm:py-2 sm:space-y-1.5 sm:rounded-t-xl">
         {/* Row 1: Title + Search + Views + Density */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-700 shrink-0 flex items-center gap-1.5">
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08 — tên trang đã có ở nav, nhường chỗ dữ liệu) */}
+          <span className="hidden sm:flex text-sm font-semibold text-slate-700 shrink-0 items-center gap-1.5">
             <Package className="h-4 w-4 text-slate-500" /> Tồn kho
           </span>
           <SearchInput

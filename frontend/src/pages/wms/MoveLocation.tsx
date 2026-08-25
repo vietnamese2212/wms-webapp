@@ -302,10 +302,13 @@ function ScanTab() {
   return (
      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
       {/* Header — ô Kho BẮT BUỘC (khuôn WarehouseSingleSelect như trang Kiểm kê) */}
-      <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl space-y-1.5">
+      <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 sm:rounded-t-xl space-y-1.5">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Move className="h-4 w-4 text-slate-500 shrink-0" />
-          <p className="text-sm font-semibold text-slate-700">Chuyển vị trí</p>
+          {/* Mobile ẩn tiêu đề (khuôn Đợt 1 24/08) — chip "Súng" vẫn hiện vì là trạng thái sống */}
+          <span className="hidden sm:flex items-center gap-1.5">
+            <Move className="h-4 w-4 text-slate-500 shrink-0" />
+            <p className="text-sm font-semibold text-slate-700">Chuyển vị trí</p>
+          </span>
           {gunMode && (
             <span className="ml-1 rounded-full bg-sky-100 border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
               Súng · camera tắt

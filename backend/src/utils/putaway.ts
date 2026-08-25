@@ -544,7 +544,9 @@ export function putawayBlockMessage(
 // Thêm luật mới chỉ cần thêm tên vào đây (+ cột DB) là 4 chỗ kia tự theo.
 export const WH_TYPE_CFG_COLS = [
   'rotation_principle', 'rotation_required',
-  'putaway_priority', 'putaway_enforced', 'putaway_max_materials', 'putaway_date_mix',
+  // `putaway_enforced` (bật bắt buộc) + `putaway_enforced_off` (ép về chỉ-cảnh-báo) — 2 cột này
+  // KHÔNG ghép theo kiểu "khai thì đè" như các cột khác, xem `mergedConfig`.
+  'putaway_priority', 'putaway_enforced', 'putaway_enforced_off', 'putaway_max_materials', 'putaway_date_mix',
   'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full', 'putaway_single_ncc',
   'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody
@@ -574,9 +576,18 @@ function mergedConfig(
   const out: Record<string, unknown> = { ...(wh ?? {}) }
   if (!row) return out
   for (const k of WH_TYPE_CFG_COLS) {
+    if (k === 'putaway_enforced' || k === 'putaway_enforced_off') continue   // ghép per-LUẬT, xem dưới
     const v = row[k]
     if (v !== null && v !== undefined) out[k] = v
   }
+  // MỨC XỬ LÝ của từng luật kế thừa ĐỘC LẬP nhau (user chốt 25/08: "không khai gì thì để bao nhiêu
+  // thì để, có thì cũng cho theo rule"). Trước đây mảng của loại THAY THẾ nguyên khối mảng của kho
+  // ⇒ khai 1 luật là lặng lẽ tắt mọi luật bắt buộc còn lại (đo thật: PM01 khai [FULL] làm hàng POSM
+  // thoát luật "tối đa 2 mã/vị trí" của kho). Nay: hiệu lực = (kho ∪ loại.bật) \ loại.tắt.
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+  const off = new Set(arr(row.putaway_enforced_off))
+  out.putaway_enforced = [...new Set([...arr(out.putaway_enforced), ...arr(row.putaway_enforced)])]
+    .filter(code => !off.has(code))
   return out
 }
 
@@ -628,10 +639,23 @@ export function applyWhTypeConfigBody(
   if (body.rotation_required !== undefined)
     target.rotation_required = body.rotation_required === null ? null : Boolean(body.rotation_required)
 
+  // Danh sách luật ép về CHỈ CẢNH BÁO — chỉ tầng LOẠI mới có cột này (bảng Warehouse không có),
+  // nên validate tại đây chứ KHÔNG giao cho applyPutawayBody dùng chung với form Kho.
+  if (body.putaway_enforced_off !== undefined) {
+    const v = body.putaway_enforced_off
+    if (v === null || (Array.isArray(v) && v.length === 0)) target.putaway_enforced_off = null
+    else {
+      if (!Array.isArray(v)) return 'Danh sách luật chỉ-cảnh-báo không hợp lệ'
+      const bad = v.find(x => !PUTAWAY_BLOCKS.some(b => b.code === x))
+      if (bad !== undefined) return `Mã luật không hợp lệ: ${String(bad).slice(0, 30)}`
+      target.putaway_enforced_off = [...new Set(v as string[])]
+    }
+  }
+
   // Các cờ putaway: null = theo kho (applyPutawayBody không hiểu null nên xử trước rồi mới giao)
   const rest: Record<string, unknown> = {}
   for (const k of WH_TYPE_CFG_COLS) {
-    if (k === 'rotation_principle' || k === 'rotation_required') continue
+    if (k === 'rotation_principle' || k === 'rotation_required' || k === 'putaway_enforced_off') continue
     if (body[k] === undefined) continue
     if (body[k] === null || body[k] === '') { target[k] = null; continue }
     rest[k] = body[k]

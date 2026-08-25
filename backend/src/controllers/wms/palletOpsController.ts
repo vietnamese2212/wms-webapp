@@ -221,9 +221,9 @@ export async function splitPallet(req: Request, res: Response) {
       const put = await guardPutawayBatch({
         warehouseId: srcWh, locationId: location_id,
         entries: items.map((): IncomingInput => ({
-          material_id: source.material_id, ncc_id: (source as any).ncc_id ?? null,
+          material_id: source.material_id, ncc_id: source.ncc_id ?? null,
           production_date: source.production_date ?? null, expiry_date: source.expiry_date ?? null,
-          shelf_life_days: (source as any).shelf_life_days ?? null,
+          shelf_life_days: source.shelf_life_days ?? null,
         })),
         overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
         canOverride: canPutawayOverride(req),

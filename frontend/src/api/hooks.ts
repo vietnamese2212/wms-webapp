@@ -801,6 +801,9 @@ export interface WhTypeConfig {
   putaway_block_full?:         boolean | null
   putaway_single_ncc?:         boolean | null
   putaway_enforced?:           string[] | null
+  // Luật ép về CHỈ CẢNH BÁO dù kho đang bắt buộc (25/08). Không có mặt ở CẢ HAI cột = theo kho —
+  // trước đó mảng `putaway_enforced` thay thế nguyên khối nên khai 1 luật là tắt hết luật còn lại.
+  putaway_enforced_off?:       string[] | null
   putaway_same_mat_date_pref?: string | null
   putaway_fallback?:           string | null
   // Nhặt lẻ tự sinh 2 tầng (24/08) — null = theo mặc định kho

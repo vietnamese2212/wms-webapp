@@ -228,6 +228,40 @@ try {
     await setCfg(allTypes())
   }
 
+  // ── [5f..5i] MỨC XỬ LÝ từng luật kế thừa PER-LUẬT (user chốt 25/08) ───────
+  // Trước đó mảng `putaway_enforced` của LOẠI thay thế NGUYÊN KHỐI mảng của kho ⇒ loại khai 1 luật
+  // là lặng lẽ gỡ mọi luật bắt buộc còn lại (đo thật: PM01 khai [FULL] làm hàng POSM thoát luật
+  // "tối đa N mã/vị trí" của kho — không ai đọc form mà đoán ra). Nay: không khai = THEO KHO.
+  {
+    const whBk = (await restAll('Warehouse', `select=putaway_enforced,putaway_max_materials&id=eq.${whId}`))[0]
+    await api(`/masterdata/warehouses/${whId}`, 'PUT',
+      { putaway_enforced: ['MAX_MATERIALS', 'FULL'], putaway_max_materials: 2 })
+    // Loại chỉ khai BẬT thêm 1 luật (giống hệt ca PM01 thật)
+    await setCfg(allTypes([{ type_code: catB, putaway_enforced: ['FULL'] }]))
+    const eff1 = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
+    const row1 = eff1.find(r => r.type_code === catB)
+    check('[5f] Loại khai [FULL] KHÔNG xoá mảng của kho — cột lưu đúng phần loại tự khai',
+      JSON.stringify(row1?.putaway_enforced) === JSON.stringify(['FULL']) && !row1?.putaway_enforced_off,
+      `got=${JSON.stringify(row1?.putaway_enforced)} off=${JSON.stringify(row1?.putaway_enforced_off)}`)
+    // (Hiệu lực CHẶN THẬT của mức bắt buộc đo ở gói 26-putaway — cùng engine resolvePutawayRules;
+    //  ở đây chỉ khoá phần LƯU + ngữ nghĩa 2 cột để không ai quay lại kiểu "thay thế nguyên mảng".)
+    // Loại ép 1 luật của kho về CHỈ CẢNH BÁO
+    await setCfg(allTypes([{ type_code: catB, putaway_enforced_off: ['MAX_MATERIALS'] }]))
+    const row2 = ((await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? [])
+      .find(r => r.type_code === catB)
+    check('[5h] Loại ép luật của kho về "chỉ cảnh báo" → lưu vào cột riêng, không đụng cột bật',
+      JSON.stringify(row2?.putaway_enforced_off) === JSON.stringify(['MAX_MATERIALS']),
+      `off=${JSON.stringify(row2?.putaway_enforced_off)}`)
+    const badOff = await setCfg(allTypes([{ type_code: catB, putaway_enforced_off: ['KHONG_CO_LUAT'] }]))
+    check('[5i] Mã luật bậy trong danh sách chỉ-cảnh-báo → 422 (không ghi rác vào DB)',
+      badOff.s === 422, `http=${badOff.s}`)
+    await setCfg(allTypes())
+    await api(`/masterdata/warehouses/${whId}`, 'PUT', {
+      putaway_enforced: whBk?.putaway_enforced ?? [],
+      putaway_max_materials: whBk?.putaway_max_materials ?? null,
+    })
+  }
+
   // ── [6] Thang cất hàng: Bước 2/Bước 3 lưu được ở CẢ HAI tầng ──────────────
   {
     const r = await setWh({ putaway_same_mat_date_pref: 'OLDER_FIRST', putaway_fallback: 'MOST_FREE' })

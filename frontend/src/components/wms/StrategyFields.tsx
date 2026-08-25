@@ -28,7 +28,10 @@ export interface StrategyValue {
   putaway_block_qa_hold:      boolean | null
   putaway_block_full:         boolean | null
   putaway_single_ncc:         boolean | null
+  // Mức xử lý từng luật: `putaway_enforced` = luật ép BẮT BUỘC · `putaway_enforced_off` = luật ép
+  // về CHỈ CẢNH BÁO. Ở tầng LOẠI, luật không có trong cả hai = theo kho (kế thừa per-luật, 25/08).
   putaway_enforced:           string[] | null
+  putaway_enforced_off:       string[] | null
   putaway_same_mat_date_pref: string | null
   putaway_fallback:           string | null
   // Nhặt lẻ tự sinh 2 tầng (24/08): REMAINDER = phần lẻ dưới pallet (hành vi gốc) · ALL = toàn bộ SL
@@ -40,7 +43,8 @@ export interface StrategyValue {
 export const STRATEGY_EMPTY: StrategyValue = {
   rotation_principle: null, rotation_required: null, putaway_priority: null, putaway_date_mix: null,
   putaway_max_materials: null, putaway_block_pick_face: null, putaway_block_qa_hold: null,
-  putaway_block_full: null, putaway_single_ncc: null, putaway_enforced: null,
+  putaway_block_full: null, putaway_single_ncc: null,
+  putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
   loose_mode: null, loose_max_cartons: null,
 }
@@ -49,7 +53,8 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   rotation_principle: 'FEFO', rotation_required: false, putaway_priority: 'CONSOLIDATE',
   putaway_date_mix: 'ANY', putaway_max_materials: null, putaway_block_pick_face: false,
   putaway_block_qa_hold: false, putaway_block_full: false, putaway_single_ncc: false,
-  putaway_enforced: [], putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
+  putaway_enforced: [], putaway_enforced_off: null,
+  putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
   loose_mode: 'REMAINDER', loose_max_cartons: null,
 }
 
@@ -64,9 +69,15 @@ export function resolveStrategy(wh: StrategyValue, type: StrategyValue | null): 
   if (!type) return wh
   const out = { ...wh }
   for (const k of Object.keys(wh) as (keyof StrategyValue)[]) {
+    if (k === 'putaway_enforced' || k === 'putaway_enforced_off') continue   // ghép per-LUẬT, xem dưới
     const v = type[k]
     if (v !== null && v !== undefined) (out as Record<string, unknown>)[k] = v
   }
+  // MIRROR `mergedConfig` bên BE: mức xử lý từng luật kế thừa ĐỘC LẬP — hiệu lực = (kho ∪ loại.bật)
+  // \ loại.tắt. Sửa công thức phải sửa CẢ HAI (form nói sai cái BE chạy là lớp lỗi tệ nhất ở đây).
+  const off = new Set(type.putaway_enforced_off ?? [])
+  out.putaway_enforced = [...new Set([...(wh.putaway_enforced ?? []), ...(type.putaway_enforced ?? [])])]
+    .filter(code => !off.has(code))
   return out
 }
 
@@ -90,6 +101,26 @@ function EnforceChip({ id, on, onToggle }: { id: string; on: boolean; onToggle: 
   )
 }
 
+// Tầng LOẠI: mức xử lý của TỪNG luật có 3 trạng thái độc lập (đồng bộ với các cờ tri-state khác của
+// tầng này). Không khai = theo kho — chứ KHÔNG phải "tắt", vì trước 25/08 khai 1 luật là lặng lẽ
+// gỡ mọi luật bắt buộc còn lại của kho (đo thật: PM01 khai [Vị trí đầy] làm POSM thoát luật số mã).
+type EnfState = 'INHERIT' | 'ON' | 'OFF'
+function EnforceTri({ state, whOn, onCycle }: { state: EnfState; whOn: boolean; onCycle: () => void }) {
+  const label = state === 'ON' ? 'Bắt buộc'
+    : state === 'OFF' ? 'Chỉ cảnh báo'
+      : `Theo kho: ${whOn ? 'Bắt buộc' : 'Cảnh báo'}`
+  const cls = state === 'ON' ? 'bg-red-50 border-red-300 text-red-700 font-medium'
+    : state === 'OFF' ? 'bg-amber-50 border-amber-300 text-amber-700'
+      : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+  return (
+    <button type="button" onClick={onCycle}
+      title="Bấm để đổi: Theo kho → Bắt buộc → Chỉ cảnh báo. Để 'Theo kho' thì luật này chạy đúng như cấu hình kho."
+      className={`shrink-0 rounded border px-1.5 py-1 text-[10px] transition-colors ${cls}`}>
+      {label}
+    </button>
+  )
+}
+
 export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide }: {
   mode: 'warehouse' | 'type'
   value: StrategyValue
@@ -105,11 +136,31 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
   const eff = isType ? resolveStrategy(inherited, value) : value
   const dateLabel = (eff.rotation_principle ?? 'FEFO') === 'FEFO' ? 'HSD' : 'NSX'
   const enforced = eff.putaway_enforced ?? []
-  const ownEnforced = value.putaway_enforced
+  // Tầng KHO: bật/tắt trực tiếp (kho là gốc, không có gì để kế thừa)
   const toggleEnf = (code: string) => {
-    const base = ownEnforced ?? (isType ? [...enforced] : [])
+    const base = value.putaway_enforced ?? []
     onPatch({ putaway_enforced: base.includes(code) ? base.filter(x => x !== code) : [...base, code] })
   }
+  // Tầng LOẠI: xoay vòng Theo kho → Bắt buộc → Chỉ cảnh báo (mảng rỗng ghi null = "không khai")
+  const enfStateOf = (code: string): EnfState =>
+    (value.putaway_enforced ?? []).includes(code) ? 'ON'
+      : (value.putaway_enforced_off ?? []).includes(code) ? 'OFF' : 'INHERIT'
+  const cycleEnf = (code: string) => {
+    const next: EnfState = enfStateOf(code) === 'INHERIT' ? 'ON' : enfStateOf(code) === 'ON' ? 'OFF' : 'INHERIT'
+    const on  = (value.putaway_enforced ?? []).filter(x => x !== code)
+    const off = (value.putaway_enforced_off ?? []).filter(x => x !== code)
+    const nextOn  = next === 'ON'  ? [...on, code]  : on
+    const nextOff = next === 'OFF' ? [...off, code] : off
+    onPatch({
+      putaway_enforced:     nextOn.length  ? nextOn  : null,
+      putaway_enforced_off: nextOff.length ? nextOff : null,
+    })
+  }
+  // Một ô điều khiển cho cả 2 tầng — nơi gọi không phải biết đang ở tầng nào
+  const enfCtl = (code: string, id: string) => isType
+    ? <EnforceTri state={enfStateOf(code)} whOn={(inherited.putaway_enforced ?? []).includes(code)}
+        onCycle={() => cycleEnf(code)} />
+    : <EnforceChip id={id} on={enforced.includes(code)} onToggle={() => toggleEnf(code)} />
   // Ở tầng loại: chọn "— Theo kho —" nghĩa là ghi null; ô select không nhận null nên quy về sentinel
   const sel = (v: string | null) => (isType && v === null ? INHERIT : (v ?? ''))
   const put = (k: keyof StrategyValue) => (v: string) =>
@@ -234,11 +285,11 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
         </>}>
         <SettingRow label={<>Vị trí đánh dấu “Không đưa hàng vào”</>}
           desc="Khai ở trang Vị trí kho. Luôn bị loại khỏi gợi ý — chip Bắt buộc quyết định lúc cất thật có chặn hay không."
-          control={<EnforceChip id={`${idPrefix}-enf-noin`} on={enforced.includes('NO_IN')} onToggle={() => toggleEnf('NO_IN')} />} />
+          control={enfCtl('NO_IN', `${idPrefix}-enf-noin`)} />
         <SettingRow label={<>Trộn {dateLabel} trong một vị trí{own(value.putaway_date_mix)}</>}
           tip={<>Luật này cần biết {dateLabel} của pallet nên chỉ kết luận được <b>lúc quét/ghi nhận</b>. Ở ô chọn vị trí (trước khi quét) chưa có date để so nên không đánh dấu gì.</>}
           control={eff.putaway_date_mix !== 'ANY'
-            ? <EnforceChip id={`${idPrefix}-enf-datemix`} on={enforced.includes('DATE_MIX')} onToggle={() => toggleEnf('DATE_MIX')} />
+            ? enfCtl('DATE_MIX', `${idPrefix}-enf-datemix`)
             : undefined}>
           <SingleSelect value={sel(value.putaway_date_mix)} onChange={put('putaway_date_mix')}
             triggerClassName="h-8"
@@ -248,7 +299,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
           desc={isType ? 'Để trống = theo kho.' : 'Để trống = không giới hạn.'}
           control={<>
             {eff.putaway_max_materials != null && (
-              <EnforceChip id={`${idPrefix}-enf-maxmat`} on={enforced.includes('MAX_MATERIALS')} onToggle={() => toggleEnf('MAX_MATERIALS')} />
+              enfCtl('MAX_MATERIALS', `${idPrefix}-enf-maxmat`)
             )}
             <Input type="number" min={1} max={1000}
               value={value.putaway_max_materials != null ? String(value.putaway_max_materials) : ''}
@@ -264,7 +315,7 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
             htmlFor={isType ? undefined : `${idPrefix}-${code}`}
             control={<>
               {eff[key] === true && (
-                <EnforceChip id={`${idPrefix}-${code}-enf`} on={enforced.includes(code)} onToggle={() => toggleEnf(code)} />
+                enfCtl(code, `${idPrefix}-${code}-enf`)
               )}
               {boolCtl(key, `${idPrefix}-${code}`)}
             </>} />

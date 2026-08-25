@@ -18,8 +18,8 @@ jobs:
   static:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 20 }
       - name: Cài dependency (BE + FE)
         run: |
@@ -40,8 +40,8 @@ jobs:
     env:
       PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 20 }
       - name: Chờ Vercel Preview build ĐÚNG commit này (poll /api/version, tối đa 12')
         run: |

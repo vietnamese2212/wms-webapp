@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { scopeCategoriesOf, categoriesAllAllowed, categoriesAnyAllowed, categoriesOrScopeFilter, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
-import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
+import { fetchAllRowsParallel, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { safeFilterValue, safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
@@ -121,7 +121,10 @@ export async function listLocationsSummary(req: Request, res: Response) {
     const { data, error } = await supabase.rpc('locations_summary', locRpcParams(ctx))
     if (error) throw error
     return ok(res, data ?? {})
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // Tập vị trí ĐANG ĐỂ DỞ đúng mã này (layer-1, còn tồn) — nguồn của gợi ý ★ "gom pallet".
@@ -312,7 +315,10 @@ export async function listLocations(req: Request, res: Response) {
     }
 
     ok(res, withUsage)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // ─── QUÉT TEM VỊ TRÍ ────────────────────────────────────────────────────────────────────────────
@@ -417,7 +423,10 @@ export async function resolveLocation(req: Request, res: Response) {
       row.used_slots = Number(facts?.[0]?.pallets ?? 0)
     }
     ok(res, row)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // GET /masterdata/locations/:id/contents — "Ô này đang chứa GÌ" (user yêu cầu 17/08).
@@ -494,7 +503,10 @@ export async function getLocationContents(req: Request, res: Response) {
       qa_hold: ents.length - live.length,
       materials: rows,
     })
-  } catch (e) { console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); return fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function listSubGroups(req: Request, res: Response) {
@@ -519,7 +531,10 @@ export async function listSubGroups(req: Request, res: Response) {
       groupMap.get(key)!.location_count++
     }
     ok(res, Array.from(groupMap.values()))
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function getLocation(req: Request, res: Response) {
@@ -540,7 +555,10 @@ export async function getLocation(req: Request, res: Response) {
     if (entErr) throw entErr
 
     ok(res, { ...loc, inventory_entries: entries ?? [] })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function createLocation(req: Request, res: Response) {
@@ -599,7 +617,10 @@ export async function createLocation(req: Request, res: Response) {
       throw error
     }
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function updateLocation(req: Request, res: Response) {
@@ -625,7 +646,10 @@ export async function updateLocation(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // Gắn / bỏ cờ HÀNG LOẠT — "cần kiểm kê" / "vị trí nhặt lẻ" / "không đưa hàng vào" / "không lấy
@@ -682,7 +706,10 @@ export async function bulkFlagLocations(req: Request, res: Response) {
       updated += allowed.length
     }
     ok(res, { updated, ...flags })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 // ─── UPLOAD EXCEL VỊ TRÍ KHO ────────────────────────────────────────────────
@@ -863,7 +890,10 @@ export async function uploadExcel(req: Request, res: Response) {
       updated += chunk.length
     }
     ok(res, { inserted, updated, errors: [] })
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }
 
 export async function deleteLocation(req: Request, res: Response) {
@@ -882,5 +912,8 @@ export async function deleteLocation(req: Request, res: Response) {
     if (error) throw error
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
     ok(res, data)
-  } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+  } catch (e) {
+    if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG)
+    console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server')
+  }
 }

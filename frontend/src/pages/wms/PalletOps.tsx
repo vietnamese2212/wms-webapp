@@ -93,7 +93,8 @@ export default function PalletOps() {
     if (!scopeReady) { setMsg({ ok: false, text: 'Chọn Kho và Loại kho trước khi dồn' }); return }
     try {
       const r = await merge.mutateAsync({ target_pallet_code: mergeTarget.trim(), child_pallet_codes: allChildren, warehouse_id: opWh })
-      setMsg({ ok: true, text: `Đã dồn ${r.merged} pallet vào ${r.target}` })
+      // Luật cất mức CẢNH BÁO: cho dồn nhưng phải nói ra (BE trả putaway_warning)
+      setMsg({ ok: true, text: `Đã dồn ${r.merged} pallet vào ${r.target}${(r as { putaway_warning?: string | null }).putaway_warning ? ` — ⚠ ${(r as { putaway_warning?: string | null }).putaway_warning}` : ''}` })
       setMergeChildren([]); setChildInput('')
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi dồn pallet' }) }
   }
@@ -204,7 +205,7 @@ export default function PalletOps() {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
       const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
       setSplitDone(labels)   // KHÔNG tự in — chờ người dùng bấm "In tem" (hoặc in sau ở tab Lịch sử)
-      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.` })
+      setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.${(res as { putaway_warning?: string | null }).putaway_warning ? ` — ⚠ ${(res as { putaway_warning?: string | null }).putaway_warning}` : ''}` })
       setSplitQtys([''])
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Lỗi tách pallet' }) }
   }

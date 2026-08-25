@@ -38,6 +38,7 @@
   "location_picker_without_scan": 0,
   "wedge_ime_path_missing": 0,
   "wedge_always_enabled": 4,
+  "filterbar_without_sheetbutton": 0,
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0
 }

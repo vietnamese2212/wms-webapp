@@ -65,8 +65,9 @@ export function SavedViews({ module, currentFilters, onApply, activeId }: {
                   : <Bookmark className="h-3 w-3 text-slate-300 shrink-0" />}
                 <span className="truncate">{v.name}</span>
               </button>
+              {/* Máy có chuột: ẩn tới khi hover (đỡ rối); máy TOUCH không có hover → luôn hiện, không thì không xóa được view */}
               <button type="button" onClick={() => removeView(module, v.id)}
-                className="text-slate-300 hover:text-red-500 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
+                className="text-slate-300 hover:text-red-500 transition-colors shrink-0 [@media(hover:hover)]:opacity-0 group-hover:opacity-100"
                 title="Xóa view">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -18,7 +18,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { SETTINGS_GRID, SettingGroup, SettingLabel, SettingField, SettingNum, SettingSaveBar } from '@/components/shared/SettingsForm'
 import type { ScanCodeTypes } from '@/utils/scanEngine'
 import { InfoTip } from '@/components/shared/InfoTip'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { StrategyFields, STRATEGY_EMPTY, type StrategyValue } from '@/components/wms/StrategyFields'
@@ -1608,10 +1608,14 @@ export default function WMSSettings() {
     if (from === null || !ov) return
     let toIdx = ov.below ? ov.idx + 1 : ov.idx
     if (from < toIdx) toIdx--               // bù lại do đã splice phần tử kéo
-    if (toIdx === from) return
+    moveTypeTo(from, toIdx)
+  }
+  // Touch (điện thoại/tablet) KHÔNG kéo-thả HTML5 được → nút ▲▼ là đường đổi thứ tự tương đương
+  function moveTypeTo(from: number, to: number) {
+    if (to === from || to < 0 || to >= orderedTypes.length) return
     const next = [...orderedTypes]
     const [moved] = next.splice(from, 1)
-    next.splice(toIdx, 0, moved)
+    next.splice(to, 0, moved)
     setOrderedTypes(next)
     saveWhTypeCfgs({ id: typeWhFilter, items: buildWhTypeItems(next) }, {
       onError: e => {
@@ -1812,6 +1816,7 @@ export default function WMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={whSearch} onChange={setWhSearch} placeholder="Tìm mã, tên, địa chỉ kho…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={whFilterDefs} />
+            <FilterSheetButton defs={whFilterDefs} className="sm:hidden" />
             {canManageWarehouse && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add', icon: Plus, label: 'Thêm kho', tip: 'Thêm kho mới',
@@ -1968,7 +1973,7 @@ export default function WMSSettings() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          {canManageType && <TableHead className="px-2 py-1.5 w-8" />}
+                          {canManageType && <TableHead className="px-2 py-1.5 w-14" />}
                           <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên loại kho</TableHead>
                           <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap w-40">Chiến thuật xuất / nhập</TableHead>
                           {canManageType && <TableHead className="px-2 py-1.5 w-16" />}
@@ -1992,9 +1997,23 @@ export default function WMSSettings() {
                             className={`cursor-pointer ${detailType?.id === t.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragIdx === idx ? 'opacity-40' : ''} ${isOver && !overType?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overType?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                             onClick={() => setDetailType(prev => prev?.id === t.id ? null : t)}>
                             {canManageType && (
-                              <TableCell className="px-2 py-1 w-8 text-slate-300 cursor-grab active:cursor-grabbing"
-                                onClick={e => e.stopPropagation()} title="Kéo để đổi thứ tự loại kho của kho này">
-                                <GripVertical className="h-4 w-4" />
+                              <TableCell className="px-1 py-1 w-14" onClick={e => e.stopPropagation()}>
+                                {/* Kéo-thả (chuột) + nút ▲▼ (touch không drag HTML5 được — cùng một đường lưu) */}
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-slate-300 cursor-grab active:cursor-grabbing" title="Kéo để đổi thứ tự loại kho của kho này">
+                                    <GripVertical className="h-4 w-4" />
+                                  </span>
+                                  <span className="flex flex-col">
+                                    <button type="button" disabled={idx === 0} onClick={() => moveTypeTo(idx, idx - 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển lên">
+                                      <ChevronUp className="h-3 w-3" />
+                                    </button>
+                                    <button type="button" disabled={idx === orderedTypes.length - 1} onClick={() => moveTypeTo(idx, idx + 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển xuống">
+                                      <ChevronDown className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                </div>
                               </TableCell>
                             )}
                             <TableCell className="px-2 py-1 whitespace-nowrap">
@@ -2093,6 +2112,7 @@ export default function WMSSettings() {
               <>
                 <SearchInput value={zoneSearch} onChange={setZoneSearch} placeholder="Tìm mã, tên khu vực…" className="flex-1 min-w-[140px]" />
                 <FilterBar defs={zoneFilterDefs} />
+                <FilterSheetButton defs={zoneFilterDefs} className="sm:hidden" />
               </>
             )}
             {canManageZone && (

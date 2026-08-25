@@ -506,6 +506,23 @@ const RULES = [
         && (/useWedgeScanner\(.*,\s*true\s*\)/.test(l) || /^\s*\},\s*true\s*\)/.test(l)), s),
   },
   {
+    key: 'filterbar_without_sheetbutton',
+    label: 'trang render <FilterBar> mà KHÔNG có <FilterSheetButton> — FilterBar gốc là `hidden sm:flex` nên ' +
+           'trên điện thoại nó BIẾN MẤT hoàn toàn: browser lọc được, mobile không (bắt 25/08 ở WMSSettings + ' +
+           'TMSSettings, 6 tab). Mỗi chỗ <FilterBar defs={X}/> phải kèm <FilterSheetButton defs={X} className="sm:hidden"/>',
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src/pages', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        if (/<FilterBar[\s>]/.test(src) && !/FilterSheetButton/.test(src)) {
+          n++
+          if (s && s.length < 5) s.push(f.slice(ROOT.length + 1))
+        }
+      }
+      return n
+    },
+  },
+  {
     key: 'scan_input_disabled_drops_focus',
     label: 'ô nhập mã của màn QUÉT dùng `disabled` lúc đang tra — trình duyệt GỠ focus khỏi ô, mà focus là thứ ' +
            'duy nhất giữ cho súng PDA chế độ IME bắn được ⇒ phát bắn kế tiếp rơi vào hư không, KHÔNG báo gì ' +

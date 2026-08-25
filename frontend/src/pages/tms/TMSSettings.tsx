@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Clock, Building2, Settings2, Warehouse, X, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
-import { FilterBar, type FilterDef } from '@/components/shared/FilterBar'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -513,10 +513,15 @@ export default function TMSSettings() {
     if (from === null || !ov) return
     let toIdx = ov.below ? ov.idx + 1 : ov.idx
     if (from < toIdx) toIdx--
-    if (toIdx === from) return
+    moveVTTo(from, toIdx)
+  }
+  // Touch (điện thoại/tablet) KHÔNG kéo-thả HTML5 được → nút ▲▼ là đường đổi thứ tự tương đương
+  // (chỉ khi không lọc — index mới khớp orderedVT, cùng điều kiện với kéo-thả)
+  function moveVTTo(from: number, to: number) {
+    if (to === from || to < 0 || to >= orderedVT.length) return
     const next = [...orderedVT]
     const [moved] = next.splice(from, 1)
-    next.splice(toIdx, 0, moved)
+    next.splice(to, 0, moved)
     setOrderedVT(next)
     reorderVT.mutate(next.map(v => v.id), {
       onError: e => { toast({ variant: 'destructive', title: 'Không lưu được thứ tự', description: apiMsg(e) }); setOrderedVT(vehicleTypes) },
@@ -660,6 +665,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vtSearch} onChange={setVtSearch} placeholder="Tìm mã, tên loại xe…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vtFilterDefs} />
+            <FilterSheetButton defs={vtFilterDefs} className="sm:hidden" />
             {vtCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-vt', icon: Plus, label: 'Thêm loại xe', tip: 'Thêm loại xe mới',
@@ -703,8 +709,23 @@ export default function TMSSettings() {
                           className={`cursor-pointer ${detailVT?.id === vt.id ? 'bg-slate-100' : 'hover:bg-slate-50'} ${dragVTIdx === idx ? 'opacity-40' : ''} ${isOver && !overVT?.below ? '[&>td]:border-t-2 [&>td]:border-t-sky-500' : ''} ${isOver && overVT?.below ? '[&>td]:border-b-2 [&>td]:border-b-sky-500' : ''}`}
                           onClick={() => setDetailVT(prev => prev?.id === vt.id ? null : vt)}>
                           {vtEdit && (
-                            <TableCell className="px-2 py-1 w-7 text-slate-300 cursor-grab active:cursor-grabbing" onClick={e => e.stopPropagation()} title={vtFiltering ? 'Xóa bộ lọc để sắp thứ tự' : 'Kéo để đổi thứ tự'}>
-                              {!vtFiltering && <GripVertical className="h-3.5 w-3.5" />}
+                            <TableCell className="px-1 py-1 w-14" onClick={e => e.stopPropagation()} title={vtFiltering ? 'Xóa bộ lọc để sắp thứ tự' : 'Kéo hoặc bấm ▲▼ để đổi thứ tự'}>
+                              {/* Kéo-thả (chuột) + nút ▲▼ (touch không drag HTML5 được — cùng một đường lưu) */}
+                              {!vtFiltering && (
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-slate-300 cursor-grab active:cursor-grabbing"><GripVertical className="h-3.5 w-3.5" /></span>
+                                  <span className="flex flex-col">
+                                    <button type="button" disabled={idx === 0} onClick={() => moveVTTo(idx, idx - 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển lên">
+                                      <ChevronUp className="h-3 w-3" />
+                                    </button>
+                                    <button type="button" disabled={idx === shownVT.length - 1} onClick={() => moveVTTo(idx, idx + 1)}
+                                      className="p-0.5 text-slate-400 hover:text-sky-600 disabled:opacity-25" title="Chuyển xuống">
+                                      <ChevronDown className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                </div>
+                              )}
                             </TableCell>
                           )}
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
@@ -765,6 +786,7 @@ export default function TMSSettings() {
             <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId} onChange={setWarehouseId} placeholder="Chọn kho…" triggerClassName="h-8 w-44 shrink-0" />
             <SearchInput value={stSearch} onChange={setStSearch} placeholder="Tìm loại xe, loại hàng…" className="flex-1 min-w-[140px]" />
             <FilterBar defs={stFilterDefs} />
+            <FilterSheetButton defs={stFilterDefs} className="sm:hidden" />
             {slotCreate && warehouseId && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-slot', icon: Plus, label: 'Thêm khung giờ', tip: 'Thêm khung giờ mới cho kho đang chọn',
@@ -896,6 +918,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={coSearch} onChange={setCoSearch} placeholder="Tìm mã, tên, người LH, SĐT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={coFilterDefs} />
+            <FilterSheetButton defs={coFilterDefs} className="sm:hidden" />
             {coCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-co', icon: Plus, label: 'Thêm ĐVVT', tip: 'Thêm đơn vị vận tải / nhà cung cấp mới',
@@ -1003,6 +1026,7 @@ export default function TMSSettings() {
           <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
             <SearchInput value={vSearch} onChange={setVSearch} placeholder="Tìm biển số, loại xe, ĐVVT…" className="flex-1 min-w-[160px]" />
             <FilterBar defs={vFilterDefs} />
+            <FilterSheetButton defs={vFilterDefs} className="sm:hidden" />
             {vCreate && (
               <ActionCluster className="shrink-0" items={[{
                 key: 'add-v', icon: Plus, label: 'Thêm xe', tip: 'Thêm xe mới cho ĐVVT / NCC',

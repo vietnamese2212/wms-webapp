@@ -303,13 +303,16 @@ export default function InboundDetail() {
   const gunArmed = !!order && isOpen && !isNccFull && !isManualEntry && !!order.location_id && can(perms, 'inbound', 'scan')
 
   // Cò súng cấp trang (user chốt: Nhập thì bóp cò NGAY tại trang phiếu) → tự mở màn quét chế độ SÚNG + xử lý tem.
-  // Đang mở dialog/sheet khác thì bỏ qua (sheet tự có listener súng riêng khi đã mở).
+  // Form/dialog đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã: máy đọc bắt chuỗi
+  // phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ — gõ trên điện thoại trong form bị xoá trắng
+  // (bug xe vãng lai 25/08). Sheet quét tự có listener súng riêng khi đã mở.
+  const wedgeFormOpen = showManualDialog || showLocHistory || !!editState || !!confirm || !!completeDlg
   useWedgeScanner(code => {
-    if (!gunArmed || showScan || showManualDialog || showLocHistory || editState || confirm || completeDlg) return
+    if (!gunArmed || showScan) return
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   // Cửa sổ người nhập tự sửa/xóa = cờ `inbound_edit_window_days` (mặc định 2) — mirror gate BE checkDeletePermission
   const editWindowDays = useSettingNumber('inbound_edit_window_days', 2)

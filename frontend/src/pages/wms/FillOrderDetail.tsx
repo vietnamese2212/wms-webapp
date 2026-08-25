@@ -112,14 +112,16 @@ export default function FillOrderDetail() {
 
   // PDA: bóp cò NGAY TẠI TRANG chi tiết → mở màn quét chế độ SÚNG (không bật camera) + xử lý
   // luôn tem vừa bắn — quét giới hạn trong lệnh này (đồng bộ chuẩn Outbound, user nhắc 05/08)
+  // Dialog đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã: máy đọc bắt chuỗi
+  // phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
   useWedgeScanner(code => {
     if (scanOpen || !canExecute || !order || order.status !== 'PENDING') return
-    if (dlg || busy) return
+    if (busy) return
     unlockAudio()
     setPdaScan(code)
     setScanMounted(true)
     setScanOpen(true)
-  }, true)
+  }, !dlg)
 
   const tot = useMemo(() => {
     let req = 0, done = 0, plReq = 0, plDone = 0

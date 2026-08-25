@@ -531,10 +531,12 @@ export default function OutboundItemDetail() {
   const hasAutoScanned = useRef(false)
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
-  // validate mã giữ nguyên (BE chặn tem sai mã của item này như quét thường)
+  // validate mã giữ nguyên (BE chặn tem sai mã của item này như quét thường).
+  // Dialog/panel đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã — máy đọc bắt
+  // chuỗi phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
+  const wedgeFormOpen = !!confirmScanId || confirmLooseOpen || showLoscamDialog || !!cartonRowId || !!cartonListId
   useWedgeScanner(code => {
     if (!gdo || showScan) return
-    if (confirmScanId || confirmLooseOpen || showLoscamDialog || cartonRowId || cartonListId) return
     const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
     if (!it || it.material?.no_qr_tracking === true || it.status === 'COMPLETED') return
     if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
@@ -542,7 +544,7 @@ export default function OutboundItemDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return

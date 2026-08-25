@@ -1417,9 +1417,12 @@ export default function OutboundDetail() {
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG (chưa mở màn quét) → tự mở màn quét chế độ SÚNG
   // (không bật camera) và xử lý luôn tem vừa bắn. Điều kiện = đúng điều kiện nút Quét QR.
+  // ⚠️ Form đang mở phải TẮT HẲN máy đọc (enabled=false), KHÔNG chỉ bỏ qua mã trong callback:
+  // máy đọc bắt chuỗi ký tự nhanh/IME ở MỌI ô nhập rồi TRẢ LẠI giá trị cũ — bàn phím điện thoại
+  // chèn cả cụm ký tự nên gõ biển số vãng lai trong form Bắt đầu bị xoá trắng (user báo 25/08).
+  const wedgeFormOpen = showStart || showEditGDO || showEditTransport || showQuickExport || showLoadPlan || !!pendingConfirm
   useWedgeScanner(code => {
     if (!gdo || showOrderScan) return
-    if (showStart || showEditGDO || showEditTransport || showQuickExport || showLoadPlan || pendingConfirm) return
     if (!gdo.started_at || gdo.status === 'PAUSED' || gdo.status === 'COMPLETED') return
     if (!can(user?.module_permissions as ModulePermissions | null ?? null, 'outbound', 'scan')) return
     const anyScannable = (gdo.delivery_orders ?? []).some(d => d.items.some(i =>
@@ -1428,7 +1431,7 @@ export default function OutboundDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowOrderScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   function doUndo(mutateFn: (id: string, opts: { onError: (e: unknown) => void }) => void) {
     setUndoErr(null)

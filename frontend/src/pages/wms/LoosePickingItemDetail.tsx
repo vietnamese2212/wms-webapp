@@ -398,10 +398,12 @@ export default function LoosePickingItemDetail() {
   const hasAutoScanned = useRef(false)
 
   // PDA (user 19/07): bóp cò NGAY TẠI TRANG MÃ → tự mở màn quét chế độ SÚNG (không camera),
-  // rule chặn giữ nguyên (sai mã / vượt số nhặt lẻ như quét thường)
+  // rule chặn giữ nguyên (sai mã / vượt số nhặt lẻ như quét thường).
+  // Form đang mở → TẮT HẲN máy đọc (enabled=false) — máy đọc bắt chuỗi phím nhanh/IME ở mọi
+  // ô nhập rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
+  const wedgeFormOpen = confirmLooseOpen || showManualLoose
   useWedgeScanner(code => {
     if (!gdo || showScan) return
-    if (confirmLooseOpen || showManualLoose) return
     const it = (gdo.delivery_orders ?? []).flatMap(d => d.items).find(i => i.id === itemId)
     if (!it || it.material?.no_qr_tracking === true || it.loose_picking <= 0) return
     const ls = (it.scan_entries ?? []).filter(s => s.is_loose_picking).reduce((sum, s) => sum + Number(s.cartons_scanned), 0)
@@ -412,7 +414,7 @@ export default function LoosePickingItemDetail() {
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
-  }, true)
+  }, !wedgeFormOpen)
 
   useEffect(() => {
     if (!autoScan || !gdo || hasAutoScanned.current) return

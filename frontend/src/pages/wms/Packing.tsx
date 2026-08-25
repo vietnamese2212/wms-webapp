@@ -367,11 +367,12 @@ export default function Packing() {
   // đang xem detail trang sổ thì đóng detail rồi vào form ghi (giống nút "Quét tem — thêm pallet").
   const formSheetOpen = !!(pendingQR || closeTarget || editTarget || cancelTarget
     || openRunForm || closeRunTarget || editRunTarget || cancelRunTarget)
+  // Form đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ nuốt mã: máy đọc bắt chuỗi phím
+  // nhanh/IME ở mọi ô nhập (giờ SX, số thùng…) rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
   useWedgeScanner(code => {
-    if (formSheetOpen) return
     if (detailRunId) setDetailRunId(null)
     handleScan(code)
-  }, canRecord)
+  }, canRecord && !formSheetOpen)
 
   const runHandlers: RunTableHandlers = {
     canRecord, canOpenRun, canEdit, canCancel, whName,

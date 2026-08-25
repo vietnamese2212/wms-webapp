@@ -163,12 +163,14 @@ export default function FillPicking() {
 
   // PDA: bóp cò NGAY TẠI TRANG (tab Lệnh fill, chưa mở màn quét) → mở màn quét chế độ SÚNG
   // (không bật camera) và xử lý luôn tem vừa bắn — đồng bộ chuẩn Outbound/Nhập (user nhắc 05/08)
+  // Chỉ tab Lệnh fill mới có súng — tab khác TẮT HẲN máy đọc (enabled=false) để không nuốt/xoá
+  // chữ gõ nhanh trong dialog ra lệnh của tab Đề xuất (bug xe vãng lai 25/08).
   useWedgeScanner(code => {
-    if (scanOpen || !whId || !canExecute || f.tab !== 'tasks') return
+    if (scanOpen || !whId || !canExecute) return
     unlockAudio()
     setPdaScan(code)
     openScan(undefined)
-  }, true)
+  }, f.tab === 'tasks' && !scanOpen)
 
   return (
     <div className="flex flex-col h-full sm:p-3">

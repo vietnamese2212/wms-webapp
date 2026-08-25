@@ -495,6 +495,17 @@ const RULES = [
     },
   },
   {
+    key: 'wedge_always_enabled',
+    label: 'useWedgeScanner đăng ký với enabled=true CỨNG — máy đọc súng là MODULE-LEVEL: bắt chuỗi phím nhanh/IME ' +
+           'ở MỌI ô nhập rồi TRẢ LẠI giá trị cũ, nên form/dialog mở mà máy còn armed thì bàn phím điện thoại (chèn ' +
+           'cả cụm ký tự) bị xoá trắng chữ đang gõ (bug biển số vãng lai 25/08). Điều kiện "màn đang cần súng / form ' +
+           'đang mở" phải nằm ở THAM SỐ enabled, không phải return sớm trong callback. Chỉ scan sheet mount-có-điều-kiện ' +
+           'mới được để true — baseline khoá đúng số đó',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (l, f) => !f.endsWith(`hooks${sep}useWedgeScanner.ts`)
+        && (/useWedgeScanner\(.*,\s*true\s*\)/.test(l) || /^\s*\},\s*true\s*\)/.test(l)), s),
+  },
+  {
     key: 'scan_input_disabled_drops_focus',
     label: 'ô nhập mã của màn QUÉT dùng `disabled` lúc đang tra — trình duyệt GỠ focus khỏi ô, mà focus là thứ ' +
            'duy nhất giữ cho súng PDA chế độ IME bắn được ⇒ phát bắn kế tiếp rơi vào hư không, KHÔNG báo gì ' +

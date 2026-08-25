@@ -2015,7 +2015,8 @@ export default function OutboundDetail() {
                 className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
+              {/* Mã đơn = ĐỊNH DANH — mobile XUỐNG DÒNG hiện đủ, không che "…" (user bắt 24/08) */}
+              <span className={`font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
               <Badge status={gdo.status} />
               <button
                 onClick={() => pinned

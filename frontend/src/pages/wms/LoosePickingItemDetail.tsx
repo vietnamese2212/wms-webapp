@@ -691,7 +691,7 @@ export default function LoosePickingItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className="font-mono font-semibold text-sm truncate">{matCode}</span>
+              <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{matCode}</span>
               <Badge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}

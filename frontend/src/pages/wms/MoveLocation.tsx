@@ -441,7 +441,8 @@ function ScanTab() {
               </div>
               <div className="text-right min-w-0 shrink-0">
                 <p className="text-[10px] text-slate-400 mb-0.5">Vị trí hiện tại</p>
-                <p className="font-mono text-lg font-semibold text-slate-800 truncate">
+                {/* Mã vị trí = định danh thao tác — hiện đủ, không che "…" (sweep 24/08) */}
+                <p className="font-mono text-base sm:text-lg font-semibold text-slate-800 break-all leading-tight">
                   {entry.location?.location_code ?? '—'}
                 </p>
                 {entry.location?.warehouse?.name && (
@@ -556,7 +557,8 @@ function ScanTab() {
             <div className="divide-y divide-slate-100">
               {moved.map((m, i) => (
                 <div key={i} className="px-3 py-1.5 flex items-center gap-2 text-[11px]">
-                  <span className="font-mono text-slate-700 truncate flex-1 min-w-0">{m.pallet}</span>
+                  {/* Tem pallet phân biệt nhau ở ĐUÔI (STT) — không truncate kẻo 2 dòng nhìn như một */}
+                  <span className="font-mono text-slate-700 break-all leading-tight flex-1 min-w-0">{m.pallet}</span>
                   <span className="font-mono text-slate-500 shrink-0">{m.from}</span>
                   <ArrowRight className="h-3 w-3 text-slate-400 shrink-0" />
                   <span className="font-mono font-semibold text-slate-700 shrink-0">{m.to}</span>

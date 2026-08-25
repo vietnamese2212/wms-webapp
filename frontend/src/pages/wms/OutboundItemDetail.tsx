@@ -926,7 +926,7 @@ export default function OutboundItemDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-mono font-semibold text-sm truncate ${itemStatusText(item.status)}`}>{matCode}</span>
+              <span className={`font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${itemStatusText(item.status)}`}>{matCode}</span>
               <Badge status={item.status} />
               <button
                 onClick={() => setHdrOpen(true)}

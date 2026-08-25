@@ -188,6 +188,7 @@ Popover/sheet không tràn màn 360px; toolbar co giãn (search `flex-1`, nhãn 
 - **Toolbar mobile ≤ 2 hàng**: tiêu đề trang `hidden sm:inline` (bottom-nav đã báo đang ở trang nào); dòng meta phụ (dòng ngày…) `hidden sm:block`. Mục tiêu đo được: **dòng dữ liệu đầu tiên xuất hiện ≤ ~300px** từ mép trên ở 390px.
 - **Thứ tự cột: cột NGHIỆP VỤ đứng trước, cột thường-rỗng (mã phụ, ship-to, địa chỉ, ghi chú) ra sau** — phone thấy thông tin chính không phải kéo ngang (mẫu: bảng Kho WMSSettings 24/08).
 - **Khối PHỤ trang detail = `CollapseSection`** (`components/shared/CollapseSection.tsx` — mobile thu gọn mặc định, desktop mở). KHÔNG áp cho khối cốt lõi (band, bảng dòng hàng); bảng dòng hàng luôn mở + scroll NGANG, **TUYỆT ĐỐI không mở/đóng từng row theo chiều dọc** (user chốt 24/08 — đơn nhiều mã sẽ thành scroll dọc dài).
+- **Mã ĐỊNH DANH (Số xe/mã phiếu/mã hàng/tem pallet/mã vị trí) ở HEADER detail & màn quét KHÔNG được truncate** (user bắt 24/08 "Số đơn bị che dưới dạng …"): mobile cho XUỐNG DÒNG hiện đủ — `text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0`; tem pallet còn phân biệt nhau ở ĐUÔI (STT) nên che đuôi = 2 tem nhìn như một. `truncate` chỉ dành cho CELL bảng (kéo giãn cột + `title` tooltip).
 
 ## 21. Form CẤU HÌNH = khuôn AppSheet (user chốt 24/08 — áp MỌI form setting/config)
 Dùng `SettingsGroup` + `SettingRow` (`components/shared/SettingRow.tsx`), KHÔNG tự chế khung:

@@ -284,11 +284,11 @@ export default function FillOrderDetail() {
                   <p className="text-[10px] text-slate-500 truncate mt-0.5" title={l.material_name ?? ''}>{l.material_name ?? '—'}</p>
                   {l.status !== 'CANCELLED' && (
                     <div className="mt-1 space-y-0.5">
-                      <p className="text-[13px] font-mono font-semibold text-slate-800 truncate" title={l.from_location_code ?? ''}>
+                      <p className="text-[13px] font-mono font-semibold text-slate-800 break-all leading-tight" title={l.from_location_code ?? ''}>
                         <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">LẤY</span>
                         {l.from_location_code ?? '—'}
                       </p>
-                      <p className="text-[13px] font-mono font-semibold text-sky-700 truncate" title={l.to_location_code ?? ''}>
+                      <p className="text-[13px] font-mono font-semibold text-sky-700 break-all leading-tight" title={l.to_location_code ?? ''}>
                         <span className="font-sans text-[10px] font-normal text-slate-400 mr-1">VỀ</span>
                         {l.to_location_code ?? '—'}
                       </p>

@@ -645,7 +645,8 @@ export default function LoosePickingDetail() {
               <ArrowLeft className="h-4 w-4" />
             </button>
             <Scissors className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <span className="font-mono font-semibold text-sm truncate min-w-0">{gdo.group_code}</span>
+            {/* Mã đơn = ĐỊNH DANH — mobile xuống dòng hiện đủ, không che "…" (đồng bộ Xuất 24/08) */}
+            <span className="font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0">{gdo.group_code}</span>
             <Badge status={gdo.status} />
             <button
               onClick={() => pinned

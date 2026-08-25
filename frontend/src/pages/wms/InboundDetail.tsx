@@ -683,7 +683,7 @@ export default function InboundDetail() {
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-semibold font-mono text-sm truncate ${statusText(inboundKey(order))}`}>
+              <span className={`font-semibold font-mono text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(inboundKey(order))}`}>
                 {order.import_code ?? order.id.slice(0, 8)}
               </span>
               <button

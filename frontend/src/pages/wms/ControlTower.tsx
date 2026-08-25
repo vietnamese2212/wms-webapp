@@ -533,7 +533,10 @@ function WeighBlock({ data }: { data: ControlTowerData }) {
 }
 
 // ─── thân console (dùng chung màn thường + TV) ────────────────────────────────
-function ConsoleBody({ data, now }: { data: ControlTowerData; now: Date }) {
+// `tv` = đang chiếu lên màn treo tường: xem từ 3–5m nên (a) phóng to toàn bộ theo bề rộng màn,
+// (b) BỎ HẲN khối rỗng — trên bàn làm việc câu "Chưa có hàng nhập hôm nay" là thông tin, trên TV
+// nó chỉ là ô trống chiếm nửa màn hình mà không nói gì (user 25/08: "tivi xấu quá").
+function ConsoleBody({ data, now, tv = false }: { data: ControlTowerData; now: Date; tv?: boolean }) {
   const dwellTh = useGateDwellThresholds()
   const r = data.resources ?? null
 
@@ -619,14 +622,14 @@ function ConsoleBody({ data, now }: { data: ControlTowerData; now: Date }) {
         </div>
       </div>
 
-      {/* Khối chi tiết */}
+      {/* Khối chi tiết — trên TV chỉ giữ khối CÓ dữ liệu (ô trống không đáng chiếm chỗ trên tường) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <OutMatBlock data={data} />
-        <TripsBlock data={data} />
-        <InMatBlock data={data} />
-        <GateBlock data={data} now={now} />
-        <WeighBlock data={data} />
-        <HourlyBlock data={data} />
+        {(!tv || (data.out_by_material?.list?.length ?? 0) > 0) && <OutMatBlock data={data} />}
+        {(!tv || (data.outbound.active?.length ?? 0) > 0) && <TripsBlock data={data} />}
+        {(!tv || (data.in_by_material?.list?.length ?? 0) > 0) && <InMatBlock data={data} />}
+        {(!tv || (data.gate.inside_list?.length ?? 0) > 0) && <GateBlock data={data} now={now} />}
+        {(!tv || data.weigh.tickets > 0) && <WeighBlock data={data} />}
+        {(!tv || (data.hourly?.length ?? 0) > 0) && <HourlyBlock data={data} />}
       </div>
     </div>
   )
@@ -664,6 +667,16 @@ export default function ControlTower() {
     document.addEventListener('fullscreenchange', onFs)
     return () => document.removeEventListener('fullscreenchange', onFs)
   }, [])
+  // Hệ số phóng của màn TV: bám BỀ RỘNG thật (TV 1920 → 1,4× · màn 2560 → trần 1,7× · laptop 1280
+  // → 1× như cũ). Tính theo state để đổi ngay khi cắm sang màn khác / xoay màn, không cần F5.
+  const [tvZoom, setTvZoom] = useState(1)
+  useEffect(() => {
+    if (!tv) return
+    const calc = () => setTvZoom(Math.min(1.7, Math.max(1, window.innerWidth / 1366)))
+    calc()
+    window.addEventListener('resize', calc)
+    return () => window.removeEventListener('resize', calc)
+  }, [tv])
 
   const filterDefs: FilterDef[] = [
     { key: 'warehouse', label: 'Kho', type: 'multi', searchable: true,
@@ -734,21 +747,25 @@ export default function ControlTower() {
         // ⚠️ Nền/chữ của CHÍNH lớp này phải là class TỐI trực tiếp, KHÔNG dùng `dark:` — Tailwind
         // sinh selector `.dark <phần tử>` nên phần tử MANG class `dark` không tự áp biến thể cho
         // mình, chỉ con cháu mới nhận (đo thật: nền ra slate-100 dù đã có class `dark`).
-        <div className="dark fixed inset-0 z-[45] bg-slate-900 text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
+        <div className="dark fixed inset-0 z-[45] bg-slate-900 text-slate-100 flex flex-col px-5 py-4 gap-4 overflow-auto">
           <div className="flex items-center gap-3 shrink-0 flex-wrap">
-            <Activity className="h-6 w-6 text-sky-600 dark:text-sky-400" />
-            <span className="text-xl font-semibold uppercase tracking-wide">Giám sát vận hành</span>
-            <span className="text-sm text-slate-500 dark:text-slate-400">{formatDate(data.date)}</span>
+            <Activity className="h-8 w-8 text-sky-400" />
+            <span className="text-3xl font-bold uppercase tracking-wide">Giám sát vận hành</span>
+            <span className="text-lg text-slate-300">{formatDate(data.date)}</span>
             {tvFilterChips.map(c => (
-              <span key={c} className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-500/40 max-w-[300px] truncate" title={c}>{c}</span>
+              <span key={c} className="text-sm px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-200 border border-sky-500/40 max-w-[360px] truncate" title={c}>{c}</span>
             ))}
             <FilterSheetButton defs={filterDefs} />
-            <span className="ml-auto text-3xl font-mono font-semibold tabular-nums text-sky-700 dark:text-sky-300">{clock}</span>
-            <button onClick={exitTv} className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-white/10" title="Thoát chế độ TV">
-              <X className="h-5 w-5" />
+            <span className="ml-auto text-5xl font-mono font-bold tabular-nums text-sky-300 leading-none">{clock}</span>
+            <button onClick={exitTv} className="p-2 rounded-md hover:bg-white/10" title="Thoát chế độ TV">
+              <X className="h-6 w-6" />
             </button>
           </div>
-          <ConsoleBody data={data} now={now} />
+          {/* Xem từ 3–5m: phóng nội dung theo BỀ RỘNG màn (TV 1920 → ~1,4×; laptop 1280 → 1×).
+              `zoom` giữ nguyên bố cục lưới, khác `transform: scale` là không phá luồng cuộn. */}
+          <div style={{ zoom: tvZoom }} className="flex-1">
+            <ConsoleBody data={data} now={now} tv />
+          </div>
         </div>
       )}
     </div>

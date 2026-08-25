@@ -4658,8 +4658,15 @@ async function rotationCheckOf(args: {
   entry: RotationEntry; material: MaterialShelfInfo | null; materialId: string | null
   warehouseId: string | null; principle: RotationPrinciple; required: boolean
   source?: 'WAREHOUSE' | 'TYPE'
+  // %Date tối thiểu ĐƠN yêu cầu (item.date_required): pallet dưới ngưỡng KHÔNG xuất được cho đơn
+  // này (bị chặn 400 ở check %Date) nên không được đề cử làm "pallet phải lấy trước" — nếu không,
+  // đơn đòi date cao ở kho bật "bắt buộc" sẽ KẸT: mọi pallet đạt yêu cầu đều "sai thứ tự" so với
+  // pallet không đạt (cùng lớp lỗi "gợi ý chỉ vào pallet không lấy được" ở đầu utils/rotation.ts,
+  // đã fix cho QA-giữ, sót ca này — user hỏi trúng 25/08).
+  minPctDate?: number
 }): Promise<RotationCheck> {
   const { entry, material, materialId, warehouseId, principle, required } = args
+  const minPct = Number(args.minPctDate ?? 0)
   const base: RotationCheck = {
     principle, required, source: args.source ?? 'WAREHOUSE',
     violation: false, date_label: ROTATION_DATE_LABEL[principle],
@@ -4681,6 +4688,12 @@ async function rotationCheckOf(args: {
   let bestKey: number | null = null
   for (const r of rows) {
     if (!isPickEligible(r)) continue
+    // Đơn có yêu cầu %Date: pallet dưới ngưỡng (hoặc không tính được %Date) sẽ bị chặn lúc quét
+    // cho đơn này → loại khỏi tập so sánh, "pallet tốt nhất" = tốt nhất TRONG SỐ lấy được.
+    if (minPct > 0) {
+      const pct = computePctDate(r, material)
+      if (pct == null || pct < minPct) continue
+    }
     const k = rotationSortKey(r, material, principle)
     if (k == null) continue
     if (bestKey == null || k < bestKey) { bestKey = k; best = r }
@@ -4990,6 +5003,7 @@ export async function checkScanItem(req: Request, res: Response) {
       entry: inv as RotationEntry, material: mat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
       principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
+      minPctDate: dateReqPct,
     })
 
     return res.json({
@@ -5074,6 +5088,7 @@ export async function scanItem(req: Request, res: Response) {
       entry: inv as RotationEntry, material: shelfMat as MaterialShelfInfo | null,
       materialId: inv.material_id ?? null, warehouseId: gdo?.warehouse_id ?? null,
       principle: rotCfg.principle, required: rotCfg.required, source: rotCfg.source,
+      minPctDate: Number(item.date_required ?? 0),
     })
 
     // ── CHẶN khi kho bật "bắt buộc lấy đúng thứ tự" ──────────────────────────

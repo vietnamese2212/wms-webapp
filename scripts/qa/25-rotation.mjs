@@ -8,7 +8,8 @@
 // Fixture cố tình dựng ca mà FEFO và FIFO TRẢ LỜI KHÁC NHAU (pallet NSX mới nhưng HSD ngắn nhất):
 // nếu ai đó lỡ gộp hai khái niệm lại làm một, gói này đỏ ngay.
 //
-// 13 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NSX cũ nhất (KHÁC pallet FEFO) ·
+// 16 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NSX cũ nhất (KHÁC pallet FEFO) ·
+// [14..15] đơn có %Date yêu cầu: pallet không đạt bị LOẠI khỏi đề cử (không kẹt 2 luật) ·
 // pallet QA giữ không bao giờ được đề cử · quét đúng thứ tự = không vi phạm · kho chỉ-cảnh-báo
 // KHÔNG chặn · kho bắt-buộc chặn khi thiếu lý do · mã lý do bậy bị từ chối · có lý do thì qua và
 // GHI VẾT đủ 4 cột · cột gợi ý không liệt kê vị trí của pallet QA · dòng ghi lưu đúng nguyên tắc
@@ -222,6 +223,38 @@ try {
     check('[10] Có lý do hợp lệ → qua được VÀ lưu vết lý do (van xả có dấu vết, không phải cửa mở toang)',
       (r.s === 200 || r.s === 201) && se?.rotation_violation === true && se?.rotation_override_reason === 'BLOCKED',
       `http=${r.s} se=${JSON.stringify(se)}`)
+  }
+
+  // ── [14..15] ĐƠN có yêu cầu %Date: pallet KHÔNG ĐẠT bị loại khỏi đề cử (bắt 25/08) ────
+  // Đơn đòi %Date ≥ 30 mà pallet HSD ngắn nhất chỉ còn ~8% (quét nó = 400 %Date) → nếu vẫn lấy
+  // nó làm "best" thì MỌI pallet đạt yêu cầu đều "sai thứ tự": kho bắt buộc KẸT CỨNG (lượt nào
+  // cũng phải xin vượt rào), kho cảnh báo thì ghi vết vi phạm OAN. Best phải = tốt nhất TRONG SỐ
+  // pallet đạt %Date của đơn. Ngày 2 pallet mới tính TƯƠNG ĐỐI theo hôm nay để %Date không mục
+  // theo thời gian (%Date phụ thuộc NOW, khác các phép so thứ tự phía trên).
+  const dPlus = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+  await mkPallet('NEAR', 100, locMain, dPlus(-360), dPlus(30))   // FEFO-best tuyệt đối, %Date ≈ 8%
+  await mkPallet('GOOD', 100, locMain, dPlus(-45),  dPlus(45))   // %Date = 50%, HSD ngắn nhất TRONG SỐ đạt (today+45 < SHORT/OLD)
+  const [itemE] = await restWrite('OutboundItem', 'POST', null, {
+    id: randomUUID(), do_id: dlv.id, material_id: mat.id, material_code_raw: mat.material_code,
+    cartons_ordered: 500, cartons_scanned: 0, loose_picking: 0, status: 'PENDING',
+    date_required: 30, created_at: nowIso(), updated_at: nowIso(),
+  })
+  created.items.push(itemE.id)
+  {
+    const r = await checkScan(itemE.id, `${TAG}-GOOD`)
+    const rot = r.j?.data?.rotation
+    check('[14] Đơn đòi %Date≥30: pallet ~8% bị loại khỏi đề cử — best = HSD ngắn nhất TRONG SỐ đạt, quét nó KHÔNG vi phạm',
+      r.s === 200 && rot?.violation === false && rot?.best_pallet_code === `${TAG}-GOOD`,
+      `http=${r.s} rot=${JSON.stringify(rot)}`)
+    const w = await scan(itemE.id, { qr_code: `${TAG}-GOOD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[14b] Kho BẮT BUỘC: lượt quét đó LƯU ĐƯỢC không cần lý do (hết kẹt giữa 2 luật)',
+      w.s === 200 || w.s === 201, `http=${w.s} ${JSON.stringify(w.j?.error ?? '')}`)
+  }
+  {
+    const r = await scan(itemE.id, { qr_code: `${TAG}-OLD`, cartons_override: 10, qty_semantics: 'base', leftover_ui: true, leftover_location_id: 'KEEP' })
+    check('[15] Trong số pallet ĐẠT %Date luật vẫn giữ: quét pallet HSD xa hơn → 422 như thường',
+      r.s === 422 && String(r.j?.error?.code ?? '').startsWith('ROTATION'),
+      `http=${r.s} code=${r.j?.error?.code}`)
   }
 
   // ── [11..13] HÀNG DƯ SAU KHI BỐC = MỘT LẦN CẤT HÀNG (user chốt 18/08) ─────────────────

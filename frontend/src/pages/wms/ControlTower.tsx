@@ -731,7 +731,10 @@ export default function ControlTower() {
         // `dark` trên WRAPPER: màn thường theo tông SÁNG của app (25/08), riêng màn TV treo tường
         // GIỮ TỐI như cũ — chữ sáng trên nền tối nhìn xa rõ hơn và không chói cả xưởng. Tailwind
         // darkMode:'class' áp theo ancestor nên mọi khối con tự lấy biến thể `dark:` sẵn có.
-        <div className="dark fixed inset-0 z-[45] bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
+        // ⚠️ Nền/chữ của CHÍNH lớp này phải là class TỐI trực tiếp, KHÔNG dùng `dark:` — Tailwind
+        // sinh selector `.dark <phần tử>` nên phần tử MANG class `dark` không tự áp biến thể cho
+        // mình, chỉ con cháu mới nhận (đo thật: nền ra slate-100 dù đã có class `dark`).
+        <div className="dark fixed inset-0 z-[45] bg-slate-900 text-slate-100 flex flex-col p-4 gap-3 overflow-auto">
           <div className="flex items-center gap-3 shrink-0 flex-wrap">
             <Activity className="h-6 w-6 text-sky-600 dark:text-sky-400" />
             <span className="text-xl font-semibold uppercase tracking-wide">Giám sát vận hành</span>

@@ -1131,8 +1131,13 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
 export function spreadOnTopOfPallets(plan: LoadPlan, topIdx: number[], groupsIn: LoadGroup[]): LoadPlan {
   if (!topIdx.length || !plan.placed.length) return plan
   const H = plan.truck.height
-  type Surf = { x: number; y: number; l: number; w: number; top: number }
-  const surfs: Surf[] = plan.placed.map(b => ({ x: b.x, y: b.y, l: b.l, w: b.w, top: b.z + b.h }))
+  // owner: mỗi mặt pallet thuộc ĐỘC QUYỀN 1 mã nóc (user chốt vòng 11: "lên hết loại hàng này
+  // mới tới loại hàng khác" — KHÔNG được 1 lớp hàng A dưới, 1 lớp hàng B đè lên cùng chỗ).
+  type Surf = { x: number; y: number; l: number; w: number; top: number; owner: number | null }
+  const surfs: Surf[] = plan.placed
+    .map(b => ({ x: b.x, y: b.y, l: b.l, w: b.w, top: b.z + b.h, owner: null as number | null }))
+    // mặt THẤP xếp trước (nhiều khoảng trống nhất), cùng cao thì từ phía cabin ra
+    .sort((a, b) => a.top - b.top || a.x - b.x || a.y - b.y)
   const placed = [...plan.placed]
   const leftover = [...plan.leftover]
   let step = plan.stepCount
@@ -1143,29 +1148,27 @@ export function spreadOnTopOfPallets(plan: LoadPlan, topIdx: number[], groupsIn:
     addTotal += g.count
     let left = g.count
     step += 1
-    // Mỗi vòng đặt ĐÚNG 1 LỚP lên mặt THẤP NHẤT còn chỗ — tải dâng đều khắp các pallet,
-    // không dựng cột chạm trần trên một pallet rồi mới sang pallet kế.
-    while (left > 0 && g.h > 0) {
-      let best: Surf | null = null
-      let bl = 0, bw = 0, nx = 0, ny = 0
-      for (const s of surfs) {
-        if (H - s.top < g.h) continue
-        if (best && s.top >= best.top) continue
-        // lưới thùng trên mặt này — thử 2 hướng đặt, lấy hướng chứa nhiều hơn
-        const n1 = Math.floor(s.l / g.l) * Math.floor(s.w / g.w)
-        const n2 = Math.floor(s.l / g.w) * Math.floor(s.w / g.l)
-        if (Math.max(n1, n2) <= 0) continue
-        const rot = n2 > n1
-        best = s
-        bl = rot ? g.w : g.l; bw = rot ? g.l : g.w
-        nx = Math.floor(s.l / bl); ny = Math.floor(s.w / bw)
+    // Chất ĐẦY TỚI TRẦN từng mặt rồi mới sang mặt kế — hết mã này mới tới mã khác
+    for (const s of surfs) {
+      if (left <= 0 || g.h <= 0) break
+      if (s.owner !== null) continue          // mặt đã thuộc mã nóc khác
+      // lưới thùng trên mặt này — thử 2 hướng đặt, lấy hướng chứa nhiều hơn
+      const n1 = Math.floor(s.l / g.l) * Math.floor(s.w / g.w)
+      const n2 = Math.floor(s.l / g.w) * Math.floor(s.w / g.l)
+      if (Math.max(n1, n2) <= 0) continue
+      const rot = n2 > n1
+      const bl = rot ? g.w : g.l, bw = rot ? g.l : g.w
+      const nx = Math.floor(s.l / bl), ny = Math.floor(s.w / bw)
+      let placedHere = false
+      while (left > 0 && H - s.top >= g.h) {
+        for (let ix = 0; ix < nx && left > 0; ix++) for (let iy = 0; iy < ny && left > 0; iy++) {
+          placed.push({ x: s.x + ix * bl, y: s.y + iy * bw, z: s.top, l: bl, w: bw, h: g.h, group: gi, step })
+          left--; addPlaced++; addVol += bl * bw * g.h; addW += g.weightKg ?? 0
+        }
+        s.top += g.h   // lớp thiếu thùng vẫn nâng mặt trọn lớp — không đặt chồng lên lớp hụt
+        placedHere = true
       }
-      if (!best) break
-      for (let ix = 0; ix < nx && left > 0; ix++) for (let iy = 0; iy < ny && left > 0; iy++) {
-        placed.push({ x: best.x + ix * bl, y: best.y + iy * bw, z: best.top, l: bl, w: bw, h: g.h, group: gi, step })
-        left--; addPlaced++; addVol += bl * bw * g.h; addW += g.weightKg ?? 0
-      }
-      best.top += g.h   // lớp thiếu thùng vẫn nâng mặt trọn lớp — không đặt chồng lên lớp hụt
+      if (placedHere) s.owner = gi   // mặt này từ giờ chỉ của mã này — mã sau đi mặt khác
     }
     if (left > 0) leftover.push({ group: gi, count: left })
   }

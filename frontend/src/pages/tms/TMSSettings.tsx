@@ -722,6 +722,9 @@ export default function TMSSettings() {
                         {vtEdit && <TableHead className="px-2 py-1.5 w-7" />}
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Mã</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Tên loại xe</TableHead>
+                        {/* Cờ pallet phải NHÌN THẤY từ danh sách — nằm mỗi trong form Sửa thì như
+                            chưa tồn tại (user bắt 26/08: "loại xe chưa có 2 mục xe thường/xe pallet") */}
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Kiểu xếp xe</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                         {vtWrite && <TableHead className="px-2 py-1.5 w-16" />}
                       </TableRow>
@@ -767,6 +770,11 @@ export default function TMSSettings() {
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-600">{vt.code}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] font-medium text-slate-800">{vt.name}</TableCell>
                           <TableCell className="px-2 py-1">
+                            <StatusBadge tone={vt.is_pallet_truck ? 'green' : 'slate'}>
+                              {vt.is_pallet_truck ? 'Xe pallet' : 'Xe thường'}
+                            </StatusBadge>
+                          </TableCell>
+                          <TableCell className="px-2 py-1">
                             <StatusBadge tone={vt.is_active ? 'green' : 'slate'}>
                               {vt.is_active ? 'Hoạt động' : 'Tạm dừng'}
                             </StatusBadge>
@@ -802,6 +810,7 @@ export default function TMSSettings() {
                   <span className="font-semibold text-slate-700">{detailVT.code} — {detailVT.name}</span>
                   <button onClick={() => setDetailVT(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
+                <div><span className="text-slate-400">Kiểu xếp xe:</span> <span className="font-medium">{detailVT.is_pallet_truck ? 'Xe pallet — gom hàng lên pallet rồi xếp' : 'Xe thường — xếp từng thùng'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailVT.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Tạo / Sửa</p>

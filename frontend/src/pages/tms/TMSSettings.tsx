@@ -1098,6 +1098,7 @@ export default function TMSSettings() {
                       <TableRow>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Biển số</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Loại xe</TableHead>
+                        <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Lòng thùng D×R×C (mm)</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">ĐVVT / NCC</TableHead>
                         <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Trạng thái</TableHead>
                         {vWrite && <TableHead className="px-2 py-1.5 w-16" />}
@@ -1110,6 +1111,11 @@ export default function TMSSettings() {
                           onClick={() => setDetailV(prev => prev?.id === v.id ? null : v)}>
                           <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-800">{v.license_plate}</TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-700">{v.vehicle_type?.name ?? '—'}</TableCell>
+                          <TableCell className="px-2 py-1 text-[10px] text-slate-600 tabular-nums whitespace-nowrap">
+                            {v.box_length_mm && v.box_width_mm && v.box_height_mm
+                              ? `${v.box_length_mm}×${v.box_width_mm}×${v.box_height_mm}`
+                              : <span className="text-slate-300">—</span>}
+                          </TableCell>
                           <TableCell className="px-2 py-1 text-[10px] text-slate-600">{v.ncc?.name ?? '—'}</TableCell>
                           <TableCell className="px-2 py-1">
                             <StatusBadge tone={v.is_active ? 'green' : 'slate'}>
@@ -1144,6 +1150,10 @@ export default function TMSSettings() {
                   <button onClick={() => setDetailV(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
                 </div>
                 <div><span className="text-slate-400">Loại xe:</span> <span className="font-medium">{detailV.vehicle_type?.name ?? '—'}</span></div>
+                <div><span className="text-slate-400">Lòng thùng:</span> <span className="font-medium tabular-nums">
+                  {detailV.box_length_mm && detailV.box_width_mm && detailV.box_height_mm
+                    ? `${detailV.box_length_mm}×${detailV.box_width_mm}×${detailV.box_height_mm} mm` : '—'}
+                </span></div>
                 <div><span className="text-slate-400">ĐVVT:</span> <span className="font-medium">{detailV.ncc?.name ?? '—'}</span></div>
                 <div><span className="text-slate-400">Trạng thái:</span> <span className="font-medium">{detailV.is_active ? 'Hoạt động' : 'Tạm dừng'}</span></div>
                 <div className="border-t pt-2 space-y-1.5">

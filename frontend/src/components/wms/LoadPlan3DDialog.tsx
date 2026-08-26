@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehiclesPaged, useVehicleTypes, usePalletCarrierMaterials } from '@/api/hooks'
+import { SingleSelect, type SingleSelectOption } from '@/components/shared/SingleSelect'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
@@ -206,13 +208,58 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       setBoxW(String(tripVehicle.box_width_mm))
       setBoxH(String(tripVehicle.box_height_mm))
       setTmName(`Xe ${tripVehicle.license_plate}`)
+      setPicked({ key: '__trip__', label: `Xe của chuyến ${tripVehicle.license_plate}` })
     }
   }, [open, tripVehicle])
-  // Ô "Dòng xe" hiện mục "Xe của chuyến" khi các ô kích thước đang khớp đúng số của xe đó
-  const tripSelected = tripHasDims && tripVehicle
-    && boxL === String(tripVehicle.box_length_mm)
-    && boxW === String(tripVehicle.box_width_mm)
-    && boxH === String(tripVehicle.box_height_mm)
+
+  // ── Ô CHỌN XE / DÒNG XE chuẩn (26/08 vòng 6 — user: "cần checkbox, search đúng chuẩn và
+  // biển số xe hiện lên ở Chọn dòng xe"): SingleSelect server-search — gõ BIỂN SỐ tra danh mục
+  // Vehicle (lấy lòng thùng đã khai ở Cài đặt TMS), dòng xe generic (truck_models) vẫn nằm chung
+  // danh sách cho xe vãng lai/cont. Chọn = điền kích thước. ──
+  const [picked, setPicked] = useState<{ key: string; label: string } | null>(null)
+  const [pickSearch, setPickSearch] = useState('')
+  const pickTerm = pickSearch.trim()
+  const { data: pickHits, isFetching: pickLoading } = useTmsVehiclesPaged(
+    { search: pickTerm, page: 1, page_size: 20 }, open && pickTerm.length > 0)
+  const pickOptions: SingleSelectOption[] = useMemo(() => {
+    const opts: SingleSelectOption[] = []
+    if (tripHasDims && tripVehicle) opts.push({
+      value: '__trip__', label: `Xe của chuyến ${tripVehicle.license_plate}`,
+      sub: `${tripVehicle.box_length_mm}×${tripVehicle.box_width_mm}×${tripVehicle.box_height_mm}`,
+    })
+    for (const v of pickHits?.items ?? []) {
+      if (tripHasDims && v.license_plate === plate) continue   // đã có mục "Xe của chuyến"
+      const has = v.box_length_mm && v.box_width_mm && v.box_height_mm
+      opts.push({
+        value: `veh:${v.id}`, label: v.license_plate,
+        sub: has ? `${v.box_length_mm}×${v.box_width_mm}×${v.box_height_mm}` : 'chưa khai lòng thùng',
+        disabled: !has,   // xe chưa khai thì thấy được (biết đường đi khai) nhưng không chọn được
+      })
+    }
+    const s = pickTerm.toLowerCase()
+    for (const m of truckModels)
+      if (!s || m.name.toLowerCase().includes(s))
+        opts.push({ value: `tm:${m.name}`, label: m.name, sub: `${m.l}×${m.w}×${m.h}` })
+    return opts
+  }, [tripHasDims, tripVehicle, pickHits, truckModels, pickTerm, plate])
+  function onPick(val: string) {
+    if (val === '__trip__') {
+      applyTripDims()
+      setPicked({ key: val, label: `Xe của chuyến ${plate}` })
+      return
+    }
+    if (val.startsWith('veh:')) {
+      const v = (pickHits?.items ?? []).find(x => `veh:${x.id}` === val)
+      if (!v?.box_length_mm || !v.box_width_mm || !v.box_height_mm) return
+      setBoxL(String(v.box_length_mm)); setBoxW(String(v.box_width_mm)); setBoxH(String(v.box_height_mm))
+      setTmName(`Xe ${v.license_plate}`)
+      setPicked({ key: val, label: v.license_plate })
+      return
+    }
+    const name = val.slice(3)
+    pickTruckModel(name)
+    setPicked({ key: val, label: name })
+  }
 
   // Quy cách + màu pallet lấy từ DANH MỤC mã pallet (26/08 vòng 3): trước đây chỉ tra mã pallet
   // NẰM TRONG ĐƠN — đơn thường không có dòng Loscam nên màu user khai ở Mã hàng không bao giờ
@@ -796,7 +843,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               cách rồi" — đúng, nên quy cách đọc thẳng từ Mã hàng, không bắt gõ lại). ── */}
           {isPalletTruck && (
             <div className="space-y-1">
-              <Label className="text-xs">Loại pallet</Label>
+              <div className="flex items-center gap-1">
+                <Label className="text-xs">Loại pallet</Label>
+                <InfoTip tip="Quy cách (chân D×R, cao đế) + màu vẽ lấy từ Mã hàng tick “Mã là pallet”. Đơn vị có nhiều dạng pallet thì chọn dạng ở đây." />
+              </div>
               {activePalletMat && Number(activePalletMat.carton_length_mm) > 0 && Number(activePalletMat.carton_width_mm) > 0 ? (
                 <>
                   {palletMats.length > 1 && (
@@ -813,7 +863,6 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                     <span>
                       <b>{activePalletMat.short_name}</b> — chân {activePalletMat.carton_length_mm}×{activePalletMat.carton_width_mm}mm,
                       đế cao {Number(activePalletMat.carton_height_mm) > 0 ? activePalletMat.carton_height_mm : DEFAULT_PALLET.baseH}mm.
-                      Quy cách + màu vẽ khai ở Mã hàng (tick “Mã là pallet”).
                     </span>
                   </p>
                 </>
@@ -832,13 +881,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               )}
               <div className="flex items-center gap-1.5 pt-0.5">
                 <Label className="text-xs whitespace-nowrap">Cao pallet LẺ gộp (mm)</Label>
+                <InfoTip tip="Chỉ pallet LẺ (gộp nhiều mã) dùng chiều cao này. Pallet HÀNG NGUYÊN tự tính: đế + số lớp × cao thùng của TỪNG MÃ — nên mỗi mã một chiều cao, các pallet cùng mã luôn cao bằng nhau (bấm “Cách tính” bên dưới để xem từng mã)." />
                 <Input type="number" min={0} className="h-8 text-xs w-24" value={palH} onChange={e => setPalH(e.target.value)} />
               </div>
-              <p className="text-[10px] text-slate-400">
-                Chỉ pallet LẺ (gộp nhiều mã) dùng chiều cao này. Pallet HÀNG NGUYÊN tự tính:
-                đế + số lớp × cao thùng của TỪNG MÃ — nên mỗi mã một chiều cao, các pallet
-                cùng mã luôn cao bằng nhau (bấm “Cách tính” bên dưới để xem từng mã).
-              </p>
               {floorSlots > 0 && (
                 <p className="text-[10px] text-slate-500">
                   Sàn xe chứa được <b className="tabular-nums">{floorSlots}</b> chỗ pallet
@@ -884,35 +929,36 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           )}
 
           <div className="space-y-1">
-            <Label className="text-xs">Dòng xe (ghi nhớ lòng thùng)</Label>
-            {/* Xe của chuyến = MỤC CHỌN ĐỨNG ĐẦU, tự chọn sẵn khi biển số đã khai lòng thùng
-                (26/08 vòng 3 — trước đây dims tự điền nhưng select vẫn hiện "— Chọn dòng xe —"
-                nên user tưởng chưa nhận). */}
-            <select
-              value={tripSelected ? '__trip__' : (truckModels.some(x => x.name === tmName) ? tmName : '')}
-              onChange={e => (e.target.value === '__trip__' ? applyTripDims() : pickTruckModel(e.target.value))}
-              className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
-              {tripHasDims && tripVehicle && (
-                <option value="__trip__">
-                  Xe của chuyến {tripVehicle.license_plate} ({tripVehicle.box_length_mm}×{tripVehicle.box_width_mm}×{tripVehicle.box_height_mm})
-                </option>
-              )}
-              <option value="">— Chọn dòng xe —</option>
-              {truckModels.map(m => (
-                <option key={m.name} value={m.name}>{m.name} ({m.l}×{m.w}×{m.h})</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1">
+              <Label className="text-xs">Chọn xe / dòng xe</Label>
+              <InfoTip tip="Gõ BIỂN SỐ để lấy lòng thùng đã khai ở Cài đặt TMS → Số xe (xe chưa khai sẽ mờ — khai ở đó rồi quay lại), hoặc chọn dòng xe đã lưu. Xe của chuyến có biển số thì tự chọn sẵn. Xe vãng lai: nhập tay kích thước bên dưới, muốn dùng lại thì đặt tên rồi bấm Lưu dòng xe." />
+            </div>
+            <SingleSelect
+              options={pickOptions}
+              value={picked?.key ?? ''}
+              onChange={onPick}
+              placeholder="— Chọn biển số / dòng xe —"
+              searchPlaceholder="Gõ biển số hoặc tên dòng xe…"
+              serverSearch
+              onSearchChange={setPickSearch}
+              loading={pickLoading}
+              selectedLabel={picked?.label}
+              triggerClassName="w-full h-8"
+            />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Lòng thùng xe D×R×C (mm)</Label>
-            <div className="flex items-center gap-1.5">
-              <Input type="number" min={0} className="h-8 text-xs" value={boxL} onChange={e => setBoxL(e.target.value)} placeholder="Dài" />
-              <span className="text-slate-400 text-xs">×</span>
-              <Input type="number" min={0} className="h-8 text-xs" value={boxW} onChange={e => setBoxW(e.target.value)} placeholder="Rộng" />
-              <span className="text-slate-400 text-xs">×</span>
-              <Input type="number" min={0} className="h-8 text-xs" value={boxH} onChange={e => setBoxH(e.target.value)} placeholder="Cao" />
+            <div className="flex items-center gap-1">
+              <Label className="text-xs">Lòng thùng xe D×R×C (mm)</Label>
+              <InfoTip tip="Sửa tay được cho riêng chuyến này (chọn xe/dòng xe ở trên là tự điền). Muốn ghi nhớ kích thước đang nhập cho xe vãng lai/cont: đặt tên rồi bấm Lưu dòng xe — dùng chung toàn đơn vị." />
             </div>
-            {canManageModels ? (
+            <div className="flex items-center gap-1.5">
+              <Input type="number" min={0} className="h-8 text-xs" value={boxL} onChange={e => { setBoxL(e.target.value); setPicked(null) }} placeholder="Dài" />
+              <span className="text-slate-400 text-xs">×</span>
+              <Input type="number" min={0} className="h-8 text-xs" value={boxW} onChange={e => { setBoxW(e.target.value); setPicked(null) }} placeholder="Rộng" />
+              <span className="text-slate-400 text-xs">×</span>
+              <Input type="number" min={0} className="h-8 text-xs" value={boxH} onChange={e => { setBoxH(e.target.value); setPicked(null) }} placeholder="Cao" />
+            </div>
+            {canManageModels && (
               <>
                 <div className="flex items-center gap-1.5 pt-0.5">
                   <Input className="h-8 text-xs flex-1" value={tmName} onChange={e => { setTmName(e.target.value); setTmError('') }}
@@ -927,10 +973,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                   </button>
                 )}
                 {tmError && <p className="text-[10px] text-red-600">{tmError}</p>}
-                <p className="text-[10px] text-slate-400">Lưu kích thước đang nhập thành dòng xe để lần sau chọn lại (dùng chung toàn đơn vị).</p>
               </>
-            ) : (
-              <p className="text-[10px] text-slate-400">Chọn dòng xe đã lưu hoặc nhập tay kích thước cho chuyến này.</p>
             )}
           </div>
 

@@ -102,7 +102,7 @@ export async function listVehicles(req: Request, res: Response) {
     if (req.query.page) return await listVehiclesPaged(req, res)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userNccId: string | null = req.user?.ncc_id ?? null
-    const { ncc_id, is_active, unassigned, pool_branches, search, limit } = req.query as Record<string, string>
+    const { ncc_id, is_active, unassigned, pool_branches, search, limit, has_box } = req.query as Record<string, string>
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     const cap = Math.min(Math.max(Number(limit) || 0, 0), 200)
 
@@ -131,6 +131,9 @@ export async function listVehicles(req: Request, res: Response) {
       else if (ncc_id)             q = q.eq('ncc_id', ncc_id)
       if (is_active !== undefined) q = q.eq('is_active', is_active === 'true')
       if (search)                  q = q.ilike('license_plate', `%${safeSearch(search)}%`)
+      // has_box=1: chỉ xe ĐÃ KHAI lòng thùng — sơ đồ xếp xe 3D nạp sẵn dropdown (vài chục xe,
+      // không dội cả đội ~950 chiếc về trình duyệt)
+      if (has_box === '1') q = q.not('box_length_mm', 'is', null).not('box_width_mm', 'is', null).not('box_height_mm', 'is', null)
       return q
     }
     let vehicles: Record<string, unknown>[]

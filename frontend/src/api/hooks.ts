@@ -4467,6 +4467,20 @@ export function useTmsVehiclesPaged(
   })
 }
 
+// Xe ĐÃ KHAI lòng thùng (has_box=1) — sơ đồ xếp xe 3D nạp sẵn dropdown chọn xe (vài chục xe,
+// không nạp cả đội ~950 chiếc; xe khác vẫn tra được bằng ô tìm theo biển số)
+export function useTmsVehiclesWithBox(enabled = true) {
+  return useQuery({
+    queryKey: ['tms-vehicles-with-box'],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/tms/vehicles', { params: { has_box: 1, is_active: true, limit: 200 } })
+      return (data.data ?? []) as TmsVehicle[]
+    },
+  })
+}
+
 // Danh mục MÃ PALLET (Material.is_pallet_carrier) — sơ đồ xếp xe 3D lấy quy cách chân/đế + màu vẽ
 // từ đây (vài dòng; BE bỏ cắt scope loại hàng cho nhánh này vì là tham số VẼ dùng chung)
 export function usePalletCarrierMaterials(enabled = true) {

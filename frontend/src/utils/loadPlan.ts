@@ -946,9 +946,12 @@ export interface PalletizeInput {
   cartonsPerPallet: number | null     // Material.cartons_per_pallet
   isPalletCarrier: boolean            // Material.is_pallet_carrier — pallet rỗng chở đi
   weightKg: number | null
-  // Kích thước THÙNG đã khai (Material.carton_*_mm) — null khi chưa khai / đang dùng cỡ giả định.
-  // Có nó mới tính được chiều cao pallet của mã; thiếu thì rơi về spec.h + đánh dấu ước lượng.
+  // Kích thước THÙNG — thật (Material.carton_*_mm) hoặc CỠ GIẢ ĐỊNH khi mã chưa khai (kèm
+  // assumed=true). User chốt 26/08 vòng 7: cao pallet NGUYÊN phải tính từ thùng × quy cách để
+  // quy cách 140 vs 216 thùng/pallet ra chiều cao KHÁC NHAU — kể cả khi phải dùng cỡ giả định
+  // (có nhãn); "Cao pallet lẻ gộp" CHỈ khống chế pallet LẺ, không đụng pallet chẵn.
   carton: { l: number; w: number; h: number } | null
+  assumed?: boolean          // thùng đang là cỡ giả định — truyền xuống nhãn "cỡ giả định"
 }
 
 // Số thùng xếp được trên MỘT LỚP của chân pallet — lưới đều, thử cả 2 hướng đặt (cùng triết lý
@@ -1015,14 +1018,15 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       const full = Math.floor(it.cartons / cpp)
       const rem  = it.cartons - full * cpp
 
-      // CHIỀU CAO pallet đầy của MÃ NÀY — tính từ thùng thật (user chốt: "không phải các pallet
-      // đều cao như nhau"). Thùng to hơn chân (0 thùng/lớp) coi như thiếu dữ liệu tin được.
+      // CHIỀU CAO pallet đầy của MÃ NÀY — luôn tính từ thùng × quy cách (user chốt: "không phải
+      // các pallet đều cao như nhau"; quy cách 140 vs 216 phải khác cao dù thùng là cỡ giả định).
+      // Thùng to hơn chân (0 thùng/lớp) coi như thiếu dữ liệu tin được → mới rơi về spec.h.
       const perLayer = it.carton ? cartonsPerLayer(spec, it.carton) : 0
       const layers = perLayer > 0 ? Math.ceil(cpp / perLayer) : 0
       const fullH = layers > 0 ? spec.baseH + layers * it.carton!.h : spec.h
       const hNote = layers > 0
-        ? `${perLayer} thùng/lớp × ${layers} lớp → cao ${(fullH / 1000).toFixed(2)}m`
-        : 'chưa khai kích thước thùng — tạm cao theo pallet lẻ'
+        ? `${perLayer} thùng/lớp × ${layers} lớp → cao ${(fullH / 1000).toFixed(2)}m${it.assumed ? ' (cỡ thùng giả định)' : ''}`
+        : 'thiếu kích thước thùng tin được — tạm cao theo pallet lẻ'
 
       if (full > 0) {
         groups.push({
@@ -1031,7 +1035,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           base: { h: spec.baseH, color: spec.baseColor },
           // KL khối = hàng + CHÍNH CÁI PALLET lót dưới (dòng Loscam không còn là khối riêng)
           weightKg: it.weightKg != null ? it.weightKg * cpp + pw : (pw > 0 ? pw : null),
-          assumed: layers === 0,   // cao ước lượng vì thiếu kích thước thùng — panel gắn nhãn
+          assumed: it.assumed === true || layers === 0,   // cao từ cỡ giả định — panel gắn nhãn
           maxLayers: 1,            // pallet hàng KHÔNG chồng lên nhau
           onTop: false,
         })

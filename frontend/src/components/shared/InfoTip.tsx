@@ -40,7 +40,9 @@ export function InfoTip({ tip, side = 'bottom', className }: {
           <Info className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>
-      <TooltipContent side={side} className="max-w-[280px] text-[11px] leading-snug">{tip}</TooltipContent>
+      {/* z-[210]: TooltipContent gốc z-[60] CHÌM DƯỚI overlay full-màn z-[120] (sơ đồ xếp xe 3D)
+          — user 26/08 "info không hiện thông tin". Tooltip transient nên nổi trên tất cả là an toàn. */}
+      <TooltipContent side={side} className="z-[210] max-w-[280px] text-[11px] leading-snug">{tip}</TooltipContent>
     </Tooltip>
   )
 }

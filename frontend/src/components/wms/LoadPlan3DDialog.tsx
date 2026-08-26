@@ -7,7 +7,7 @@
 //  gdo đến từ useGDO (realtime invalidate) → quét tới đâu sơ đồ tự cập nhật tới đó.
 // Mỗi MẢNG hàng có nhãn tên + mũi tên chỉ xuống khối (sprite + cone).
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { qtyEntryDecimal } from '@/utils/qtyUnits'
+import { qtyEntryDecimal, unitLabel, hasEntry } from '@/utils/qtyUnits'
 import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +44,9 @@ type ThreeCtx = {
 type PlanGroup = LoadGroup & {
   done: number; cpp: number | null; isPallet: boolean
   category: string | null; topCarton?: boolean
+  // Số lượng NGHIỆP VỤ + đơn vị tính của MÃ (user chốt 26/08: danh sách hiện "290 thùng" /
+  // "200 cái" theo danh mục ĐVT, không hiện "2 pallet"). Không có (pallet gộp/Loscam) → đếm pallet.
+  qty?: number; qtyDone?: number; qtyUnit?: string
 }
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
@@ -333,6 +336,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           cpp: it.material?.cartons_per_pallet ?? null,
           isPallet: it.material?.is_pallet_carrier ?? false,
           category: it.material?.category ?? null,
+          // SL nghiệp vụ + ĐVT theo DANH MỤC (unitLabel): mã có entry → thùng; không entry
+          // (POSM quạt/bóng… đơn vị cái/EA) → nhãn của base_unit — KHÔNG gọi bừa "thùng"
+          qty: ordPhys, qtyDone: done,
+          qtyUnit: hasEntry(it.material) ? unitLabel(it.material?.entry_unit) : unitLabel(it.material?.base_unit),
         })
       }
     }
@@ -394,11 +401,16 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       }))
     const res = palletizeGroups(items, palSpec)
     // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
-    const doneRatio = new Map(cartonGroups.map(g => [g.key, g.count > 0 ? g.done / g.count : 0]))
+    const srcByKey = new Map(cartonGroups.map(g => [g.key, g]))
     const withDone: PlanGroup[] = res.groups.map(g => {
-      const srcKey = g.key.replace(/\|(full|plt)$/, '')
-      const r = doneRatio.get(srcKey) ?? 0
-      return { ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false, category: null }
+      const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
+      const r = src && src.count > 0 ? src.done / src.count : 0
+      return {
+        ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false, category: null,
+        // Dòng pallet NGUYÊN của 1 mã: danh sách hiện SL + ĐVT của mã đó (pallet gộp không quy
+        // được về 1 mã → để trống, hiện số pallet)
+        qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit,
+      }
     })
     return { ...res, groups: withDone }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -700,7 +712,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(gi => [gi, visibleByGroup.get(gi)!] as const)
         .map(([gi, agg]) => {
           const g = groups[gi]
-          const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : 'thùng'
+          const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
           const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
           const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
           return {
@@ -1134,10 +1146,17 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                       {g.onTop && <span className="text-[9px] px-1 ml-1 rounded bg-sky-100 text-sky-700 whitespace-nowrap" title="Xếp trên nóc hàng khác">nhẹ↑</span>}
                       {!isPalletTruck && g.maxLayers != null && <span className="text-[9px] px-1 ml-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
                     </span>
-                    <span className={`tabular-nums font-semibold shrink-0 ${g.done >= g.count ? 'text-green-600' : g.done > 0 ? 'text-amber-600' : ''}`}>
-                      {g.done > 0 ? `${g.done}/${g.count}` : g.count}
-                      <span className="font-normal text-slate-400"> {isPalletTruck && !g.topCarton ? 'pallet' : 'thùng'}</span>
-                    </span>
+                    {(() => {
+                      // SL nghiệp vụ + ĐVT danh mục khi quy về được 1 mã; pallet gộp → đếm pallet
+                      const tot = g.qtyUnit ? (g.qty ?? 0) : g.count
+                      const dn  = g.qtyUnit ? (g.qtyDone ?? 0) : g.done
+                      return (
+                        <span className={`tabular-nums font-semibold shrink-0 ${dn >= tot && tot > 0 ? 'text-green-600' : dn > 0 ? 'text-amber-600' : ''}`}>
+                          {dn > 0 ? `${dn}/${tot}` : tot}
+                          <span className="font-normal text-slate-400"> {g.qtyUnit ?? 'pallet'}</span>
+                        </span>
+                      )
+                    })()}
                   </div>
                 ))}
               </div>

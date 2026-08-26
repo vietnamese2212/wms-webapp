@@ -891,8 +891,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 </>
               )}
               <div className="flex items-center gap-1.5 pt-0.5">
-                <Label className="text-xs whitespace-nowrap">Cao pallet LẺ gộp (mm)</Label>
-                <InfoTip tip="Chỉ khống chế chiều cao chất xếp của pallet LẺ (gộp nhiều mã). Pallet CHẴN không bị khống chế — cao tự tính theo quy cách: đế + số lớp × cao thùng của từng mã, nên quy cách 140 hay 216 thùng/pallet sẽ ra chiều cao khác nhau (mã chưa khai kích thước thùng thì tính bằng cỡ giả định, có gắn nhãn)." />
+                <Label className="text-xs whitespace-nowrap">Cao TỐI ĐA pallet lẻ (mm)</Label>
+                <InfoTip tip="TRẦN chiều cao chất xếp của pallet LẺ (gộp nhiều mã): hàng lẻ vẫn xếp thật theo kích thước thùng từng lớp, chồng vượt trần thì tự SAN sang pallet lẻ khác. Pallet CHẴN không bị khống chế — cao tự tính theo quy cách: đế + số lớp × cao thùng của từng mã (mã chưa khai kích thước thùng thì tính bằng cỡ giả định, có gắn nhãn)." />
                 <Input type="number" min={0} className="h-8 text-xs w-24" value={palH} onChange={e => setPalH(e.target.value)} />
               </div>
               {floorSlots > 0 && (

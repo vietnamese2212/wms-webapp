@@ -932,8 +932,9 @@ export const GROUP_COLORS = [
 
 export interface PalletSpec {
   l: number; w: number    // CHÂN pallet (mm) — mặc định 1200×1000
-  // Cao pallet HÀNG LẺ (gộp) + trần dự phòng cho mã thiếu kích thước thùng (user chốt 1650).
-  // Pallet ĐẦY của từng mã KHÔNG dùng số này — cao của nó tính từ thùng.
+  // TRẦN chiều cao pallet LẺ gộp (user chốt vòng 8: "mức đó chỉ là chiều cao TỐI ĐA") —
+  // pallet lẻ vẫn xếp THẬT theo kích thước thùng, chồng vượt trần thì SAN sang pallet khác.
+  // Pallet ĐẦY không dùng số này — cao của nó tính từ thùng × quy cách.
   h: number
   baseH: number           // chiều cao ĐẾ pallet rỗng (mm) — cộng vào mọi pallet, và là cao của Loscam rỗng
   baseColor: string       // màu vẽ đế pallet (#rrggbb) — từ Material.pallet_color của mã pallet; mặc định xanh Loscam
@@ -988,9 +989,10 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
 
   for (const [doKey, lines] of byDo) {
     const doLabel = lines[0].doLabel
-    let fracSum = 0                       // tổng phần dư (đơn vị: pallet) của đơn này
-    let fracW = 0                         // tổng KL hàng của phần dư (kg)
-    const fracParts: string[] = []
+    // Phần DƯ của từng mã trong đơn — gom lại rồi xếp theo LỚP lên pallet gộp
+    type RemItem = { label: string; cartons: number; perLayer: number; cartonH: number
+      weightKg: number | null; assumed: boolean }
+    const rems: RemItem[] = []
 
     for (const it of lines) {
       // ── Dòng PALLET MANG HÀNG (Loscam, is_pallet_carrier): chính là pallet LÓT DƯỚI các khối
@@ -1040,26 +1042,57 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           onTop: false,
         })
       }
-      if (rem > 0) {
-        fracSum += rem / cpp
-        fracW += rem * (it.weightKg ?? 0)
-        fracParts.push(`${it.label} dư ${rem}/${cpp}`)
-      }
+      if (rem > 0) rems.push({
+        label: it.label, cartons: rem, perLayer,
+        cartonH: it.carton && it.carton.h > 0 ? it.carton.h : 0,
+        weightKg: it.weightKg, assumed: it.assumed === true || layers === 0,
+      })
       if (full > 0 || rem > 0)
         notes.push(`${it.label}: ${it.cartons} thùng ÷ ${cpp} = ${full} pallet đầy${rem > 0 ? ` + dư ${rem} thùng` : ''} (${hNote})`)
     }
 
-    // ── Phần dư của cả đơn → pallet GỘP ──
-    if (fracSum > 0) {
-      const mixed = Math.ceil(fracSum - 1e-9)   // 1e-9: chặn 0,9999999 do chia số thực thành 2 pallet
-      groups.push({
-        key: `${doKey}|mixed`, label: 'Pallet gộp (hàng lẻ)', doKey, doLabel,
-        count: mixed, l: spec.l, w: spec.w, h: spec.h,
-        base: { h: spec.baseH, color: spec.baseColor },
-        weightKg: fracW > 0 || pw > 0 ? fracW / mixed + pw : null,
-        assumed: false, maxLayers: 1, onTop: false,
+    // ── Phần dư của cả đơn → pallet GỘP: xếp THẬT theo LỚP thùng, spec.h là TRẦN (user chốt
+    // vòng 8 — "pallet lẻ cũng dựa vào kích thước thùng; mức đó chỉ là cao tối đa, vượt thì
+    // san sang pallet khác"). Lớp cuối thiếu thùng vẫn chiếm trọn cao thùng. ──
+    if (rems.length) {
+      const budget = Math.max(0, spec.h - spec.baseH)   // phần cao dành cho HÀNG (trừ đế)
+      type Layer = { h: number; kg: number; assumed: boolean }
+      const layerList: Layer[] = []
+      for (const r of rems) {
+        if (r.perLayer > 0 && r.cartonH > 0) {
+          let left = r.cartons
+          while (left > 0) {
+            const take = Math.min(left, r.perLayer)
+            layerList.push({ h: r.cartonH, kg: take * (r.weightKg ?? 0), assumed: r.assumed })
+            left -= take
+          }
+        } else {
+          // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
+          // 1 pallet cao bằng trần, gắn nhãn ước lượng
+          layerList.push({ h: budget > 0 ? budget : spec.h, kg: r.cartons * (r.weightKg ?? 0), assumed: true })
+        }
+      }
+      // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
+      // Lớp đơn lẻ cao hơn trần vẫn phải nằm 1 pallet riêng (thực tế không cưa đôi thùng được).
+      layerList.sort((a, b) => b.h - a.h)
+      const pals: { h: number; kg: number; assumed: boolean }[] = []
+      for (const ly of layerList) {
+        const p = pals.find(x => x.h + ly.h <= budget)
+        if (p) { p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed }
+        else pals.push({ h: ly.h, kg: ly.kg, assumed: ly.assumed })
+      }
+      pals.forEach((p, i) => {
+        groups.push({
+          key: `${doKey}|mixed${i}`,
+          label: pals.length > 1 ? `Pallet gộp (hàng lẻ) #${i + 1}` : 'Pallet gộp (hàng lẻ)',
+          doKey, doLabel, count: 1, l: spec.l, w: spec.w,
+          h: spec.baseH + p.h,
+          base: { h: spec.baseH, color: spec.baseColor },
+          weightKg: p.kg > 0 || pw > 0 ? p.kg + pw : null,
+          assumed: p.assumed, maxLayers: 1, onTop: false,
+        })
       })
-      notes.push(`Pallet gộp đơn ${doLabel}: ${fracParts.join(' + ')} = ${fracSum.toFixed(2)} pallet → ${mixed} pallet gộp`)
+      notes.push(`Pallet gộp đơn ${doLabel}: ${layerList.length} lớp hàng lẻ → ${pals.length} pallet (trần ${(spec.h / 1000).toFixed(2)}m)`)
     }
   }
 

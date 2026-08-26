@@ -25,7 +25,7 @@ const created = { locs: [], entries: [], gdo: null, do: null, items: [] }
 let whBackup = null, cfgBackup = null
 
 const STRAT_COLS = 'rotation_principle,rotation_required,putaway_priority,putaway_enforced,' +
-  'putaway_max_materials,putaway_date_mix,putaway_block_pick_face,putaway_block_qa_hold,' +
+  'putaway_date_mix,putaway_block_pick_face,putaway_block_qa_hold,' +
   'putaway_block_full,putaway_single_ncc,putaway_same_mat_date_pref,putaway_fallback'
 
 // Dọn theo TAG trước (lần chạy hỏng giữa chừng để lại fixture mồ côi)
@@ -205,13 +205,13 @@ try {
   // ── [5] PUT round-trip + validate ─────────────────────────────────────────
   {
     const payload = allTypes([{ type_code: catB, rotation_principle: 'LIFO', putaway_priority: 'SPREAD',
-      putaway_date_mix: 'SAME', putaway_max_materials: 2, putaway_block_full: true,
+      putaway_date_mix: 'SAME', putaway_block_full: true,
       putaway_same_mat_date_pref: 'SAME_DATE', putaway_fallback: 'EMPTY_FIRST', putaway_enforced: ['FULL'] }])
     const put = await setCfg(payload)
     const got = (put.j?.data ?? []).find(r => r.type_code === catB)
     check('[5a] PUT → GET round-trip giữ nguyên MỌI field chiến thuật',
       put.s === 200 && got?.rotation_principle === 'LIFO' && got?.putaway_priority === 'SPREAD'
-      && got?.putaway_date_mix === 'SAME' && Number(got?.putaway_max_materials) === 2
+      && got?.putaway_date_mix === 'SAME'
       && got?.putaway_block_full === true && got?.putaway_same_mat_date_pref === 'SAME_DATE'
       && got?.putaway_fallback === 'EMPTY_FIRST' && JSON.stringify(got?.putaway_enforced) === JSON.stringify(['FULL']),
       `http=${put.s} got=${JSON.stringify(got)}`)
@@ -233,9 +233,9 @@ try {
   // là lặng lẽ gỡ mọi luật bắt buộc còn lại (đo thật: PM01 khai [FULL] làm hàng POSM thoát luật
   // "tối đa N mã/vị trí" của kho — không ai đọc form mà đoán ra). Nay: không khai = THEO KHO.
   {
-    const whBk = (await restAll('Warehouse', `select=putaway_enforced,putaway_max_materials&id=eq.${whId}`))[0]
+    const whBk = (await restAll('Warehouse', `select=putaway_enforced&id=eq.${whId}`))[0]
     await api(`/masterdata/warehouses/${whId}`, 'PUT',
-      { putaway_enforced: ['MAX_MATERIALS', 'FULL'], putaway_max_materials: 2 })
+      { putaway_enforced: ['MAX_MATERIALS', 'FULL'] })
     // Loại chỉ khai BẬT thêm 1 luật (giống hệt ca PM01 thật)
     await setCfg(allTypes([{ type_code: catB, putaway_enforced: ['FULL'] }]))
     const eff1 = (await api(`/masterdata/warehouses/${whId}/type-configs`)).j?.data ?? []
@@ -258,7 +258,6 @@ try {
     await setCfg(allTypes())
     await api(`/masterdata/warehouses/${whId}`, 'PUT', {
       putaway_enforced: whBk?.putaway_enforced ?? [],
-      putaway_max_materials: whBk?.putaway_max_materials ?? null,
     })
   }
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
-import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer } from 'lucide-react'
+import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers } from 'lucide-react'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { formatDateTime } from '@/utils/formatters'
 import { SearchInput } from '@/components/shared/SearchInput'
@@ -50,6 +50,10 @@ interface RealLocation {
   row:          string
   shelf:        string
   max_pallets:        number
+  // Trần số MÃ được để chung trong ô (26/08) — null = KHÔNG GIỚI HẠN (mặc định).
+  // Khai theo TỪNG vị trí, không kế thừa kho/loại kho: nơi chứa chung ("Ngoài đường", "Mặt đất")
+  // nằm cùng khu + cùng loại hàng với kệ thường nên không tầng nào của kho tách được chúng.
+  max_materials:      number | null
   used_slots:         number
   is_active:          boolean
   requires_stocktake: boolean
@@ -72,7 +76,7 @@ interface WhWithCount {
   _count:     { locations: number }
 }
 
-const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '' }
+const EMPTY_FORM = { warehouse_id: '', sub_code: '', sub_name: '', row: '', shelf: '', max_pallets: '', max_materials: '' }
 
 const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'check',   label: '',                w: 34 },
@@ -85,6 +89,8 @@ const LOC_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'noout',   label: 'Không lấy hàng đi', w: 125 },
   { id: 'stock',   label: 'Cần check hàng ngày', w: 130 },
   { id: 'max',     label: 'Sức chứa tối đa', w: 110, align: 'right' },
+  // Cùng họ "giới hạn của ô" với Sức chứa nên đứng cạnh nhau (26/08)
+  { id: 'maxmat',  label: 'Số mã tối đa',    w: 105, align: 'right' },
   { id: 'used',    label: 'Đang dùng',       w: 100, align: 'right' },
   { id: 'status',  label: 'Trạng thái',      w: 100 },
   { id: 'actions', label: '',                w: 64 },
@@ -178,7 +184,10 @@ export default function Locations() {
   const [selectedLoc,   setSelectedLoc]   = useState<RealLocation | null>(null)
   // Dialog gắn/bỏ cờ HÀNG LOẠT — 3 cờ dùng chung 1 dialog: 'stocktake' (cần kiểm kê) | 'pickface'
   // (vị trí nhặt lẻ) | 'noin' (không đưa hàng vào — kho tạm/ngoài đường, dùng cho quy tắc cất hàng)
-  const [bulkMode,      setBulkMode]      = useState<BulkMode | null>(null)
+  // 'maxmat' KHÔNG nằm trong BULK_MODES: 4 chế độ kia là cờ boolean (bật/tắt), còn đây là
+  // khai một CON SỐ (hoặc xoá số = không giới hạn) nên dialog + payload đi nhánh riêng.
+  const [bulkMode,      setBulkMode]      = useState<BulkMode | 'maxmat' | null>(null)
+  const [maxMatInput,   setMaxMatInput]   = useState('')
   // CHỌN DÒNG (chuẩn trang Mã hàng): tick từng dòng → thanh action nổi ở đáy.
   // `allFiltered` = đã bấm "chọn tất cả N đang lọc" → gửi CỜ BỘ LỌC cho BE tự resolve, vì danh sách
   // đã phân trang server nên client không có đủ id (và nhồi nghìn id qua URL là vỡ — id-list-url-limits).
@@ -224,10 +233,26 @@ export default function Locations() {
   const bulkFlag        = useBulkFlagLocations()
   const uploadLocations = useUploadLocationsExcel()
 
+  // Khai TRẦN SỐ MÃ hàng loạt (26/08). `value === null` = gỡ giới hạn — phải gửi null TƯỜNG MINH,
+  // không phải bỏ field (BE hiểu vắng field là "đừng đụng cột này").
+  async function applyBulkMaxMat(value: number | null) {
+    setBulkErr('')
+    try {
+      await bulkFlag.mutateAsync(allFiltered
+        ? { by_filter: true, filter: listParams ?? {}, max_materials: value }
+        : { ids: [...selected], max_materials: value })
+      setBulkMode(null)
+      setSelected(new Set())
+      setAllFiltered(false)
+    } catch (e: unknown) {
+      setBulkErr((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Có lỗi xảy ra')
+    }
+  }
+
   async function applyBulkFlag(flag: boolean) {
     setBulkErr('')
     try {
-      const cờ = { [BULK_MODES[bulkMode ?? 'stocktake'].field]: flag }
+      const cờ = { [BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].field]: flag }
       await bulkFlag.mutateAsync(allFiltered
         // "Chọn tất cả đang lọc": gửi CỜ bộ lọc để BE tự resolve — client không có đủ id sau phân trang
         ? { by_filter: true, filter: listParams ?? {}, ...cờ }
@@ -302,6 +327,7 @@ export default function Locations() {
       row:          loc.row,
       shelf:        loc.shelf,
       max_pallets:  String(loc.max_pallets),
+      max_materials: loc.max_materials != null ? String(loc.max_materials) : '',
     })
     setEditIsActive(loc.is_active)
     setEditRequiresStocktake(loc.requires_stocktake ?? false)
@@ -331,12 +357,16 @@ export default function Locations() {
           row:          form.row.trim(),
           shelf:        form.shelf.trim() || undefined,
           max_pallets:  form.max_pallets ? Number(form.max_pallets) : undefined,
+          max_materials: form.max_materials.trim() ? Number(form.max_materials) : null,
         })
       } else if (editing) {
         await updateLocation.mutateAsync({
           id:                 editing.id,
           sub_name:           form.sub_name.trim() || undefined,
           max_pallets:        form.max_pallets ? Number(form.max_pallets) : undefined,
+          // Ô trống phải gửi `null` TƯỜNG MINH = "gỡ giới hạn". Gửi `undefined` thì BE hiểu là
+          // "đừng đụng cột này" ⇒ xoá số trong ô rồi bấm Lưu sẽ không có tác dụng gì.
+          max_materials:      form.max_materials.trim() ? Number(form.max_materials) : null,
           is_active:          editIsActive,
           requires_stocktake: editRequiresStocktake,
           is_pick_face:       editIsPickFace,
@@ -445,7 +475,8 @@ export default function Locations() {
       'Kho': l.warehouse?.name ?? '', 'Loại': (l.categories ?? []).join(', '),
       'Nhóm': l.sub_code + (l.sub_name && l.sub_name !== l.sub_code ? ` (${l.sub_name})` : ''),
       'Khu': l.sub_code, 'Dãy': l.row, 'Tầng': l.shelf ?? '', 'Kiểu': l.sub_type ?? '',
-      'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets, 'Đang dùng': l.used_slots,
+      'Mã vị trí': l.location_code, 'Sức chứa': l.max_pallets,
+      'Số mã tối đa': l.max_materials ?? '', 'Đang dùng': l.used_slots,
       'Cần check': l.requires_stocktake ? 'x' : '', 'Nhặt lẻ': l.is_pick_face ? 'x' : '',
       'Không đưa hàng vào': l.slot_no_in ? 'x' : '', 'Không lấy hàng đi': l.slot_no_out ? 'x' : '',
       'Trạng thái': !l.is_active ? 'Đã xóa' : (l.used_slots >= l.max_pallets ? 'Đầy' : l.used_slots > 0 ? 'Còn chỗ' : 'Trống'),
@@ -458,8 +489,8 @@ export default function Locations() {
 
   // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key, dòng 3 = ví dụ (ghi đè bằng dữ liệu thật)
   function downloadLocationTemplate() {
-    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Kiểu']
-    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'sub_type']
+    const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Số mã tối đa', 'Kiểu']
+    const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'max_materials', 'sub_type']
     const ex     = ['20000016', 'TP1', '1', 'T1', 2, '']
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
@@ -634,6 +665,14 @@ export default function Locations() {
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
                         {loc.max_pallets} <span className="text-slate-400 font-normal">pl</span>
                       </TableCell>
+                      {/* Số mã tối đa: để trống = KHÔNG GIỚI HẠN. Viết hẳn chữ "Không giới hạn"
+                          thay vì dấu "—" — cột này là LUẬT CHẶN, đọc nhầm ô trống thành "chưa khai
+                          nên chắc có luật gì đó" là hiểu ngược hẳn ý nghĩa. */}
+                      <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
+                        {loc.max_materials != null
+                          ? <span className="font-semibold">{loc.max_materials} <span className="text-slate-400 font-normal">mã</span></span>
+                          : <span className="text-slate-300 font-normal">Không giới hạn</span>}
+                      </TableCell>
                       <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums">
                         <span className={isFull ? 'text-blue-600 font-semibold' : isPartial ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
                           {loc.used_slots}
@@ -751,6 +790,10 @@ export default function Locations() {
           <button onClick={() => { setBulkErr(''); setBulkMode('stocktake') }}
             className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 transition-colors">
             <Flag className="h-3.5 w-3.5" />Cần kiểm kê
+          </button>
+          <button onClick={() => { setBulkErr(''); setMaxMatInput(''); setBulkMode('maxmat') }}
+            className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 transition-colors">
+            <Layers className="h-3.5 w-3.5" />Số mã tối đa
           </button>
           <button onClick={() => { setSelected(new Set()); setAllFiltered(false) }} className="text-slate-400 hover:text-white ml-1">
             <X className="h-3.5 w-3.5" />
@@ -880,6 +923,24 @@ export default function Locations() {
                 value={form.max_pallets} onChange={e => setField('max_pallets', e.target.value)} />
             </div>
 
+            {/* ── Số mã tối đa (26/08) ── khai theo TỪNG vị trí, không kế thừa kho/loại kho */}
+            <div>
+              <Label className="text-xs flex items-center gap-1">
+                Số mã tối đa trong vị trí
+                <InfoTip tip={<>
+                  Số <b>mã hàng khác nhau</b> được để chung trong ô này. Để trống = <b>không giới hạn</b> —
+                  dùng cho nơi chứa chung như <b>Ngoài đường</b>, <b>Mặt đất</b>, <b>Kho lẻ</b>.
+                  Kệ thường thì khai 1–2 để tránh xếp lẫn.
+                  <br /><br />
+                  Vượt trần thì <b>chặn hẳn hay chỉ cảnh báo</b> là do kho quyết định:
+                  Cài đặt WMS → form Kho → quy tắc <b>“Số mã tối đa trong một vị trí”</b>.
+                </>} />
+              </Label>
+              <Input className="h-8 text-sm mt-1" type="number" min="1" max="1000"
+                placeholder="Để trống = không giới hạn"
+                value={form.max_materials} onChange={e => setField('max_materials', e.target.value)} />
+            </div>
+
             {/* ── Trạng thái + Kiểm kê hàng ngày (chỉ edit) ── */}
             {dialogMode === 'edit' && (
               <div className="space-y-2 pt-1 border-t">
@@ -934,8 +995,45 @@ export default function Locations() {
           </div>
       </FormSheet>
 
+      {/* Khai TRẦN SỐ MÃ hàng loạt — nhánh riêng vì đây là con số, không phải cờ bật/tắt */}
+      <Dialog open={bulkMode === 'maxmat'} onOpenChange={open => !open && setBulkMode(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5">
+              <Layers className="h-4 w-4 text-emerald-600" />Số mã tối đa — hàng loạt
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
+            {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
+          </p>
+          <div>
+            <Label className="text-xs">Số mã hàng khác nhau được để chung trong một vị trí</Label>
+            <Input className="h-9 text-sm mt-1" type="number" min="1" max="1000" placeholder="VD: 2"
+              value={maxMatInput} onChange={e => setMaxMatInput(e.target.value)} autoFocus />
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              Kệ thường thường khai <b>1–2</b>. Nơi chứa chung (Ngoài đường, Mặt đất, Kho lẻ) thì
+              bấm <b>“Bỏ giới hạn”</b> — đó cũng là mặc định của mọi vị trí.
+            </p>
+          </div>
+          {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
+            <Button variant="outline" size="sm" className="border-slate-300"
+              onClick={() => applyBulkMaxMat(null)} disabled={bulkFlag.isPending}>
+              {bulkFlag.isPending ? '…' : 'Bỏ giới hạn'}
+            </Button>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => applyBulkMaxMat(Number(maxMatInput))}
+              disabled={bulkFlag.isPending || !maxMatInput.trim() || !(Number(maxMatInput) >= 1)}>
+              {bulkFlag.isPending ? 'Đang lưu…' : 'Áp dụng'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Gắn / bỏ cờ hàng loạt — cần-kiểm kê HOẶC vị trí nhặt lẻ */}
-      <Dialog open={bulkMode !== null} onOpenChange={open => !open && setBulkMode(null)}>
+      <Dialog open={bulkMode !== null && bulkMode !== 'maxmat'} onOpenChange={open => !open && setBulkMode(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-1.5">
@@ -943,24 +1041,24 @@ export default function Locations() {
                 : bulkMode === 'noin' ? <Ban className="h-4 w-4 text-red-500" />
                 : bulkMode === 'noout' ? <Lock className="h-4 w-4 text-amber-600" />
                 : <Flag className="h-4 w-4 text-red-500" />}
-              {BULK_MODES[bulkMode ?? 'stocktake'].title}
+              {BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].title}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-slate-600">
             Áp cho <span className="font-semibold">{allFiltered ? totalRows : selected.size}</span> vị trí
             {allFiltered ? ' — TOÀN BỘ kết quả đang lọc (không chỉ trang đang xem).' : ' đã chọn.'}
-            {' ' + BULK_MODES[bulkMode ?? 'stocktake'].desc}
+            {' ' + BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].desc}
           </p>
           {bulkErr && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1.5">{bulkErr}</p>}
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(null)} disabled={bulkFlag.isPending}>Hủy</Button>
             <Button variant="outline" size="sm" className="border-slate-300"
               onClick={() => applyBulkFlag(false)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode ?? 'stocktake'].off}
+              {bulkFlag.isPending ? '…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].off}
             </Button>
-            <Button size="sm" className={BULK_MODES[bulkMode ?? 'stocktake'].btn}
+            <Button size="sm" className={BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].btn}
               onClick={() => applyBulkFlag(true)} disabled={bulkFlag.isPending}>
-              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode ?? 'stocktake'].on}
+              {bulkFlag.isPending ? 'Đang lưu…' : BULK_MODES[bulkMode === 'maxmat' || !bulkMode ? 'stocktake' : bulkMode].on}
             </Button>
           </DialogFooter>
         </DialogContent>

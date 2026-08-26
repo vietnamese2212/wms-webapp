@@ -49,7 +49,11 @@ export interface PutawayRules {
   // Cố ý KHÔNG còn trường `required` chung: một công tắc không diễn đạt được hai ý định trái chiều
   // của cùng một kho ("cấm ngoài đường" chỉ muốn hết gợi ý · "trộn date" muốn chặn thật).
   enforced:        PutawayBlockCode[]
-  max_materials:   number | null    // null = không giới hạn số mã trong 1 ô
+  // ⚠️ KHÔNG có `max_materials` ở đây — trần số mã là thuộc tính của TỪNG VỊ TRÍ
+  // (`Location.max_materials`), không phải của kho. Xem `putawayBlock`. Đổi trục 26/08 vì nơi chứa
+  // chung ("Ngoài đường", "Mặt đất", "Kho lẻ") nằm cùng khu + cùng loại hàng với kệ thường nên
+  // không tầng nào của kho tách được chúng. Kho chỉ còn quyết định luật đó CÓ CHẶN CỨNG không
+  // (`enforced`), không quyết định con số.
   date_mix:        PutawayDateMix
   block_pick_face: boolean
   block_qa_hold:   boolean
@@ -60,7 +64,7 @@ export interface PutawayRules {
 }
 
 export const PUTAWAY_RULES_DEFAULT: PutawayRules = {
-  priority: 'CONSOLIDATE', enforced: [], max_materials: null, date_mix: 'ANY',
+  priority: 'CONSOLIDATE', enforced: [], date_mix: 'ANY',
   block_pick_face: false, block_qa_hold: false, block_full: false, single_ncc: false,
   same_mat_date_pref: 'NONE', fallback: 'BY_CODE',
 }
@@ -72,7 +76,7 @@ export function putawayEnforces(rules: PutawayRules, code: PutawayBlockCode): bo
 
 // Cột cần select ở bảng Warehouse (giữ 1 chỗ để thêm luật mới không phải đi sửa từng controller)
 export const PUTAWAY_WH_COLS =
-  'putaway_priority, putaway_enforced, putaway_max_materials, putaway_date_mix,' +
+  'putaway_priority, putaway_enforced, putaway_date_mix,' +
   'putaway_block_pick_face, putaway_block_qa_hold, putaway_block_full, putaway_single_ncc,' +
   'putaway_same_mat_date_pref, putaway_fallback'
 
@@ -81,7 +85,6 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
   const w = wh ?? {}
   const pri = w.putaway_priority
   const mix = w.putaway_date_mix
-  const maxMat = Number(w.putaway_max_materials)
   // Mức xử lý theo TỪNG luật. Cột RỖNG là ý định thật của người dùng ("không luật nào chặn cứng")
   // — không suy diễn thêm. (Công tắc chung `putaway_required` đã bị migration 20260816 thay thế.)
   const enforced: PutawayBlockCode[] = Array.isArray(w.putaway_enforced)
@@ -93,7 +96,6 @@ export function putawayRulesOf(wh: Record<string, unknown> | null | undefined): 
   return {
     priority: (PUTAWAY_PRIORITIES as readonly unknown[]).includes(pri) ? pri as PutawayPriority : 'CONSOLIDATE',
     enforced,
-    max_materials: Number.isFinite(maxMat) && maxMat >= 1 ? Math.floor(maxMat) : null,
     date_mix: (PUTAWAY_DATE_MIXES as readonly unknown[]).includes(mix) ? mix as PutawayDateMix : 'ANY',
     block_pick_face: w.putaway_block_pick_face === true,
     block_qa_hold:   w.putaway_block_qa_hold === true,
@@ -121,19 +123,9 @@ export function applyPutawayBody(
       return 'Luật trộn date không hợp lệ'
     target.putaway_date_mix = body.putaway_date_mix
   }
-  if (body.putaway_max_materials !== undefined) {
-    const v = body.putaway_max_materials
-    if (v === null || v === '') target.putaway_max_materials = null
-    else {
-      const n = Number(v)
-      // Trần 1000: cột DB là `integer` nên số quá lớn (vd 1e12) làm Postgres tràn kiểu → 500
-      // thay vì lỗi nhập liệu 4xx (fuzz 15/08 bắt được). Ô lớn nhất đo thật mới 69 mã ⇒ 1000 là
-      // thừa sức, và "không giới hạn" đã có cách khai riêng là ĐỂ TRỐNG.
-      if (!Number.isFinite(n) || n < 1) return 'Số mã tối đa trong 1 vị trí phải là số nguyên ≥ 1'
-      if (n > 1000) return 'Số mã tối đa trong 1 vị trí không quá 1000 (để trống = không giới hạn)'
-      target.putaway_max_materials = Math.floor(n)
-    }
-  }
+  // `putaway_max_materials` ĐÃ GỠ KHỎI TẦNG KHO (26/08) — trần số mã khai theo TỪNG VỊ TRÍ, xem
+  // `parseLocationMaxMaterials`. Bundle cũ còn gửi field này lên thì im lặng bỏ qua (không 4xx:
+  // người dùng không làm gì sai, chỉ là tab mở từ trước khi deploy).
   if (body.putaway_enforced !== undefined) {
     const v = body.putaway_enforced
     if (!Array.isArray(v)) return 'Danh sách luật bắt buộc không hợp lệ'
@@ -174,6 +166,28 @@ export function applyPutawayBody(
   return null
 }
 
+// ─── Trần số mã của MỘT VỊ TRÍ (26/08) ───────────────────────────────────────
+// Ngữ nghĩa user chốt — cố ý CHỈ 2 trạng thái, KHÔNG kế thừa tầng nào:
+//   để trống (null) = KHÔNG GIỚI HẠN — mặc định của mọi vị trí
+//   N ≥ 1            = ô này tối đa N mã
+// Nhìn vào ô là biết luật của ô. (Vì thế KHÔNG mượn quy ước "0 = không giới hạn" của `max_pallets`:
+// ở đây trạng thái mặc định phải là ô TRỐNG, mà trống thì không được mang nghĩa "0 mã" = cấm sạch.)
+//
+// MỘT parser cho cả form sửa 1 ô · khai hàng loạt · upload Excel — ba đường ghi mà chép tay 3 bản
+// validate thì sớm muộn có đường nhận được số 0 hoặc số âm rồi biến ô thành "cấm mọi thứ".
+// Trả `{ value }` nếu hợp lệ, `{ error }` nếu không.
+export function parseLocationMaxMaterials(v: unknown): { value: number | null } | { error: string } {
+  if (v === null || v === undefined || v === '') return { value: null }
+  const n = Number(v)
+  // Trần 1000 = lưới chặn tràn kiểu `integer` của Postgres (số kiểu 1e12 làm câu UPDATE nổ 500
+  // thay vì trả lỗi nhập liệu 4xx — fuzz 15/08 bắt được). Ô lớn nhất đo thật mới 111 mã.
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1)
+    return { error: 'Số mã tối đa phải là số nguyên ≥ 1 (để trống = không giới hạn)' }
+  if (n > 1000)
+    return { error: 'Số mã tối đa không quá 1000 (để trống = không giới hạn)' }
+  return { value: n }
+}
+
 // ─── Nhặt lẻ tự sinh — 2 tầng như chiến thuật (24/08) ────────────────────────
 // REMAINDER = phần lẻ dưới 1 pallet nguyên (hành vi gốc 20/07) · ALL = TOÀN BỘ SL vào nhặt lẻ
 // (user chốt cho POSM — mã CÁI/EA soạn full trước như nhặt lẻ) · OFF = kho/loại không nhặt lẻ.
@@ -206,8 +220,9 @@ export function putawayNeedsLots(rules: PutawayRules): boolean {
 }
 
 // Cất theo LÔ mới cần TẬP mã của ô (xem `putawayBlockBatch`); cất 1 pallet thì không.
-export function putawayNeedsMats(rules: PutawayRules): boolean {
-  return rules.max_materials != null
+// Hỏi theo VỊ TRÍ (không theo kho) từ 26/08 — ô không khai trần thì khỏi kéo tập mã về.
+export function putawayNeedsMats(loc: PutawayLoc): boolean {
+  return loc.max_materials != null
 }
 
 // ─── Lý do CHẶN — danh sách cố định, có nhãn để hiện thẳng cho người quét ────
@@ -319,6 +334,10 @@ export interface PutawayLoc {
   max_pallets?: number | null   // <= 0 = không giới hạn sức chứa (nhiều khu đang khai 0)
   slot_no_in?:  boolean | null
   is_pick_face?: boolean | null
+  // Trần số MÃ được để chung trong ô — null/vắng mặt = KHÔNG GIỚI HẠN (26/08, xem
+  // `parseLocationMaxMaterials`). Cố ý khác quy ước của `max_pallets` ở trên: mặc định phải là ô
+  // TRỐNG, nên 0 không mang nghĩa "không giới hạn" mà là giá trị bị CHECK của DB từ chối.
+  max_materials?: number | null
 }
 
 // Chiến thuật ABC (đợt C): khu NÊN cất mã này, do `utils/slottingBands` tính từ hạng nhặt khu +
@@ -351,7 +370,8 @@ export function putawayBlock(
   if (rules.block_pick_face && loc.is_pick_face === true) return 'PICK_FACE'
   if (rules.block_qa_hold && facts.qaHold) return 'QA_HOLD'
   // Mã mới làm tăng số mã trong ô; mã đã có sẵn thì không.
-  if (rules.max_materials != null && !facts.sameMaterial && facts.materials >= rules.max_materials)
+  // Trần lấy từ CHÍNH Ô (26/08), không từ kho — ô để trống = không giới hạn ⇒ luật im.
+  if (loc.max_materials != null && !facts.sameMaterial && facts.materials >= loc.max_materials)
     return 'MAX_MATERIALS'
   // null-inclusive: pallet hoặc hàng trong ô chưa khai NCC → không kết luận
   if (rules.single_ncc && incoming.ncc_id && facts.nccs.some(n => n !== incoming.ncc_id))
@@ -390,10 +410,10 @@ export function putawayBlockBatch(
   // (đúng số pallet của lô, loại pallet đang dời khỏi chính ô đó) — kiểm thêm ở backend chỉ tạo
   // định nghĩa "đầy" thứ hai, lệch nhau là báo oan.
 
-  if (rules.max_materials != null) {
+  if (loc.max_materials != null) {
     const after = new Set(facts.mats)
     for (const p of batch) after.add(p.material_id)
-    if (after.size > rules.max_materials) return 'MAX_MATERIALS'
+    if (after.size > loc.max_materials) return 'MAX_MATERIALS'
   }
   if (rules.single_ncc) {
     const nccs = new Set(facts.nccs)
@@ -405,9 +425,9 @@ export function putawayBlockBatch(
       // Dùng lại ĐÚNG hàm chấm 1 pallet — luật trộn date chỉ có một bản, ở `putawayBlock`.
       // Tắt hết luật khác để không có luật nào trả về TRƯỚC date_mix (thứ tự kiểm trong
       // `putawayBlock` đặt date_mix cuối cùng) — nếu không sẽ bỏ sót vi phạm date thật.
-      if (putawayBlock({ ...loc, slot_no_in: false, is_pick_face: false }, facts, p,
+      if (putawayBlock({ ...loc, slot_no_in: false, is_pick_face: false, max_materials: null }, facts, p,
                        { ...rules, block_full: false, block_pick_face: false, block_qa_hold: false,
-                         max_materials: null, single_ncc: false }) === 'DATE_MIX')
+                         single_ncc: false }) === 'DATE_MIX')
         return 'DATE_MIX'
     }
   }
@@ -506,21 +526,23 @@ export function putawayDateMixLabel(mix: PutawayDateMix, principle: RotationPrin
 // Thông báo chặn — nói rõ VÌ SAO và cần làm gì, để người cất còn xoay được, thay vì chỉ bị từ chối
 // (cùng tinh thần rotationBlockMessage).
 export function putawayBlockMessage(
-  code: PutawayBlockCode, locationCode: string, facts: SlotFacts, rules: PutawayRules,
-  principle: RotationPrinciple,
+  code: PutawayBlockCode, loc: PutawayLoc & { location_code: string }, facts: SlotFacts,
+  rules: PutawayRules, principle: RotationPrinciple,
   // Cất theo LÔ: nói con số SAU KHI chuyển. Nói "đang có 1 mã, kho giới hạn 1 mã" thì người đọc
   // thấy hai số bằng nhau, tưởng app báo nhầm — lý do thật là 2 mã của lô sẽ nâng ô lên 3.
   afterMaterials?: number,
 ): string {
-  const at = `Vị trí ${locationCode}`
+  const at = `Vị trí ${loc.location_code}`
   switch (code) {
     case 'NO_IN':         return `${at} được đánh dấu KHÔNG ĐƯA HÀNG VÀO. Chọn vị trí khác.`
     case 'FULL':          return `${at} đã đầy (${facts.pallets} pallet). Chọn vị trí còn chỗ.`
     case 'PICK_FACE':     return `${at} là vị trí nhặt lẻ — kho không cho cất pallet nguyên vào đây (chỗ này để lệnh Fill đổ hàng).`
     case 'QA_HOLD':       return `${at} đang có pallet bị QA giữ — cất đè lên sẽ chôn pallet đó. Chọn vị trí khác.`
+    // Nói "vị trí này khai tối đa N mã" chứ KHÔNG nói "kho giới hạn": trần khai trên chính ô
+    // (26/08), nói sai chỗ là đẩy người ta đi sửa nhầm cấu hình kho rồi tưởng app hỏng.
     case 'MAX_MATERIALS': return afterMaterials != null
-      ? `${at} sẽ có ${afterMaterials} mã sau khi chuyển (đang có ${facts.materials}), kho giới hạn ${rules.max_materials} mã cho một vị trí.`
-      : `${at} đang có ${facts.materials} mã, kho giới hạn ${rules.max_materials} mã cho một vị trí.`
+      ? `${at} sẽ có ${afterMaterials} mã sau khi chuyển (đang có ${facts.materials}), mà vị trí này khai tối đa ${loc.max_materials} mã.`
+      : `${at} đang có ${facts.materials} mã, đã đủ mức tối đa ${loc.max_materials} mã khai cho vị trí này.`
     case 'NCC_MIX':       return `${at} đang để hàng của NCC khác — kho không cho trộn NCC trong một vị trí.`
     // KHÔNG toLowerCase cả câu — nuốt luôn chữ viết tắt ("HSD" thành "hsd"). Chỉ hạ chữ ĐẦU.
     case 'DATE_MIX': {
@@ -546,7 +568,10 @@ export const WH_TYPE_CFG_COLS = [
   'rotation_principle', 'rotation_required',
   // `putaway_enforced` (bật bắt buộc) + `putaway_enforced_off` (ép về chỉ-cảnh-báo) — 2 cột này
   // KHÔNG ghép theo kiểu "khai thì đè" như các cột khác, xem `mergedConfig`.
-  'putaway_priority', 'putaway_enforced', 'putaway_enforced_off', 'putaway_max_materials', 'putaway_date_mix',
+  // `putaway_max_materials` ĐÃ GỠ (26/08): trần số mã khai theo TỪNG VỊ TRÍ (`Location.max_materials`).
+  // Danh sách này sinh ra cả KIỂU dữ liệu của tầng 2, nên gỡ khỏi đây làm mọi chỗ lỡ dùng lại
+  // thành LỖI BIÊN DỊCH — đó là lưới chống tái sinh, không cần thêm cổng tĩnh.
+  'putaway_priority', 'putaway_enforced', 'putaway_enforced_off', 'putaway_date_mix',
   'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full', 'putaway_single_ncc',
   'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody

@@ -556,7 +556,7 @@ interface WhTypeOpt { value: string; label?: string | null }
 
 const STRAT_FIELDS = [
   'rotation_principle', 'rotation_required', 'putaway_priority', 'putaway_date_mix',
-  'putaway_max_materials', 'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full',
+  'putaway_block_pick_face', 'putaway_block_qa_hold', 'putaway_block_full',
   'putaway_single_ncc', 'putaway_enforced', 'putaway_same_mat_date_pref', 'putaway_fallback',
   'loose_mode', 'loose_max_cartons',
 ] as const
@@ -594,7 +594,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_max_materials?: number | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -658,7 +658,6 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     rotation_required:          wh?.rotation_required === true,
     putaway_priority:           wh?.putaway_priority ?? 'CONSOLIDATE',
     putaway_date_mix:           wh?.putaway_date_mix ?? 'ANY',
-    putaway_max_materials:      wh?.putaway_max_materials ?? null,
     putaway_block_pick_face:    wh?.putaway_block_pick_face === true,
     putaway_block_qa_hold:      wh?.putaway_block_qa_hold === true,
     putaway_block_full:         wh?.putaway_block_full === true,
@@ -705,13 +704,9 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     const carton_scan_override = cartonScan
     const carton_scan_categories = cartonScan ? cartonCats : null
     const carton_scan_require_full = cartonScan && cartonRequire === 'required'
-    const maxMat = strat.putaway_max_materials
-    if (maxMat !== null && (!Number.isFinite(maxMat) || maxMat < 1 || maxMat > 1000))
-      { setErr('Số mã tối đa trong 1 vị trí phải là số nguyên 1–1000 (để trống = không giới hạn)'); return }
     const putaway = {
       putaway_priority: strat.putaway_priority ?? 'CONSOLIDATE',
       putaway_date_mix: strat.putaway_date_mix ?? 'ANY',
-      putaway_max_materials: maxMat === null ? null : Math.floor(maxMat),
       putaway_block_pick_face: strat.putaway_block_pick_face === true,
       putaway_block_qa_hold: strat.putaway_block_qa_hold === true,
       putaway_block_full: strat.putaway_block_full === true,

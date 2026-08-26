@@ -1536,7 +1536,7 @@ export async function scanQR(req: Request, res: Response) {
       // Chỉ chốt dưới row-lock khi luật này ở mức BẮT BUỘC — mức Cảnh báo thì backend đã nói ra rồi,
       // RPC mà vẫn chặn là mức "cảnh báo" hoá ra chặn cứng.
       p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason)
-        ? put.rules.max_materials : null,
+        ? put.max_materials : null,
     })
     if (!rpcErr) {
       const parts = String(rpcRes ?? '').split('|')

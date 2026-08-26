@@ -83,6 +83,9 @@ export interface PutawayGuardResult {
   blocked: string | null
   // Cấu hình đang hiệu lực — caller cần để chốt lại ràng buộc ĐẾM dưới row-lock của RPC
   rules:   PutawayRules
+  // Trần số mã CỦA CHÍNH Ô ĐÓ (26/08) — null = không giới hạn. Tách khỏi `rules` vì nó không còn
+  // là cấu hình của kho nữa; caller truyền thẳng xuống `p_max_materials` của RPC để chốt dưới lock.
+  max_materials: number | null
   trace:   { putaway_checked: boolean; putaway_violation: string | null; putaway_override_reason: string | null }
   warning: string | null     // kho CHƯA bật bắt buộc: cho qua nhưng nói ra
 }
@@ -101,35 +104,36 @@ export async function guardPutaway(opts: {
 }): Promise<PutawayGuardResult> {
   const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
   const loc = opts.loc ?? (await supabase.from('Location')
-    .select('id, location_code, max_pallets, slot_no_in, is_pick_face')
+    .select('id, location_code, max_pallets, slot_no_in, is_pick_face, max_materials')
     .eq('id', opts.locationId).maybeSingle()).data
-  if (!loc) return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, trace: NO_TRACE, warning: null }   // vị trí sai đã có guard riêng ở controller
+  if (!loc) return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, max_materials: null, trace: NO_TRACE, warning: null }   // vị trí sai đã có guard riêng ở controller
 
   const ctx = await loadPutawayContext({
     warehouseId: opts.warehouseId, locIds: [opts.locationId], incoming: opts.incoming,
     material: opts.material,
   })
-  const l = loc as { id: string; location_code: string; max_pallets: number | null; slot_no_in: boolean | null; is_pick_face: boolean | null }
+  const l = loc as PutawayLocRow
   const facts = ctx.factsOf(l.id)
   const block = putawayBlock(l, facts, ctx.incoming, ctx.rules)
-  if (!block) return { blocked: null, rules: ctx.rules, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
+  const maxMat = l.max_materials ?? null
+  if (!block) return { blocked: null, rules: ctx.rules, max_materials: maxMat, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
 
-  const msg = putawayBlockMessage(block, l.location_code, facts, ctx.rules, ctx.principle)
+  const msg = putawayBlockMessage(block, l, facts, ctx.rules, ctx.principle)
 
   // Luật này chỉ ở mức CẢNH BÁO → vẫn cất được, nhưng ghi vết + nói ra (không im lặng).
   if (!putawayEnforces(ctx.rules, block))
-    return { blocked: block, rules: ctx.rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
+    return { blocked: block, rules: ctx.rules, max_materials: maxMat, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
 
   const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''
   if (!reason)
     return { error: { code: 'PUTAWAY_VIOLATION', message: `${msg} Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.` },
-             blocked: block, rules: ctx.rules, trace: NO_TRACE, warning: null }
+             blocked: block, rules: ctx.rules, max_materials: maxMat, trace: NO_TRACE, warning: null }
   if (!opts.canOverride)
-    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, blocked: block, rules: ctx.rules, trace: NO_TRACE, warning: null }
+    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, blocked: block, rules: ctx.rules, max_materials: maxMat, trace: NO_TRACE, warning: null }
   if (!isPutawayOverrideReason(reason))
-    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules: ctx.rules, trace: NO_TRACE, warning: null }
+    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules: ctx.rules, max_materials: maxMat, trace: NO_TRACE, warning: null }
 
-  return { blocked: block, rules: ctx.rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
+  return { blocked: block, rules: ctx.rules, max_materials: maxMat, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
 // ─── CỬA GHI cất NHIỀU pallet một lượt (đợt D) ───────────────────────────────
@@ -145,11 +149,11 @@ export async function guardPutawayBatch(opts: {
 }): Promise<PutawayGuardResult> {
   const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
   const { data: loc } = await supabase.from('Location')
-    .select('id, location_code, max_pallets, slot_no_in, is_pick_face')
+    .select('id, location_code, max_pallets, slot_no_in, is_pick_face, max_materials')
     .eq('id', opts.locationId).maybeSingle()
   // Vị trí sai/không tồn tại đã có guard riêng trong RPC move (NOT_FOUND/INACTIVE)
   if (!loc || opts.entries.length === 0)
-    return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, trace: NO_TRACE, warning: null }
+    return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, max_materials: null, trace: NO_TRACE, warning: null }
   const l = loc as PutawayLocRow
 
   const cfg = opts.warehouseId ? await whConfig(opts.warehouseId) : EMPTY_CFG
@@ -172,8 +176,10 @@ export async function guardPutawayBatch(opts: {
 
   // ⚠️ CA DUY NHẤT hai bộ luật đụng MỘT ô: lô dồn có thể lẫn nhiều LOẠI KHO (vd 3 pallet FG01 +
   // 2 pallet RM01 vào cùng ô), mà từ 21/08 mỗi loại có thể mang chiến thuật riêng. Xử lý:
-  //   • Ràng buộc trên TẬP (số mã tối đa, một NCC) chấm bằng bộ luật CHẶT NHẤT trong lô — ô là
-  //     tài nguyên chung, chọn bộ lỏng hơn là để loại "dễ tính" mở cửa cho loại "khó tính".
+  //   • Ràng buộc trên TẬP (một NCC) chấm bằng bộ luật CHẶT NHẤT trong lô — ô là tài nguyên chung,
+  //     chọn bộ lỏng hơn là để loại "dễ tính" mở cửa cho loại "khó tính".
+  //     (Trần SỐ MÃ không còn nằm ở đây từ 26/08: nó khai trên chính ô nên chỉ có MỘT giá trị,
+  //      không phụ thuộc lô gồm mấy loại hàng ⇒ hết chuyện phải chọn bộ chặt nhất.)
   //   • Ràng buộc theo TỪNG pallet (trộn date, cấm ô nhặt lẻ…) chấm theo bộ luật CỦA CHÍNH loại đó.
   const rulesOfCat = new Map<string, PutawayRules>()
   const rulesFor = (cat: string | null) => {
@@ -189,8 +195,6 @@ export async function guardPutawayBatch(opts: {
   // Bộ CHẶT NHẤT cho ràng buộc trên tập + dùng làm bộ "đại diện" cho thông báo/nạp dữ liệu.
   const rules: PutawayRules = {
     ...(allRules[0] ?? PUTAWAY_RULES_DEFAULT),
-    max_materials: allRules.reduce<number | null>((m, r) =>
-      r.max_materials == null ? m : m == null ? r.max_materials : Math.min(m, r.max_materials), null),
     single_ncc:      allRules.some(r => r.single_ncc),
     block_pick_face: allRules.some(r => r.block_pick_face),
     block_qa_hold:   allRules.some(r => r.block_qa_hold),
@@ -202,7 +206,7 @@ export async function guardPutawayBatch(opts: {
 
   const raws = await loadSlotFactsRaw(
     [opts.locationId], null,
-    allRules.some(putawayNeedsLots), allRules.some(putawayNeedsMats))
+    allRules.some(putawayNeedsLots), putawayNeedsMats(l))
 
   // Mã đang NẰM trong ô cũng cần shelf-life để dựng khoảng ngày của ô (gộp chung lượt với mã của lô
   // khi kho chưa có override — `loadMats` tự bỏ mã đã nạp).
@@ -229,24 +233,24 @@ export async function guardPutawayBatch(opts: {
       block = putawayBlockBatch(l, facts, [batch[i]], rulesFor(catOf(opts.entries[i])))
   }
   if (!block)
-    return { blocked: null, rules, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
+    return { blocked: null, rules, max_materials: l.max_materials ?? null, trace: { putaway_checked: true, putaway_violation: null, putaway_override_reason: null }, warning: null }
 
   const after = block === 'MAX_MATERIALS'
     ? new Set([...facts.mats, ...batch.map(b => b.material_id)]).size : undefined
-  const msg = putawayBlockMessage(block, l.location_code, facts, rules, principle, after)
+  const msg = putawayBlockMessage(block, l, facts, rules, principle, after)
   if (!putawayEnforces(rules, block))
-    return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
+    return { blocked: block, rules, max_materials: l.max_materials ?? null, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: null }, warning: msg }
 
   const reason = typeof opts.overrideReason === 'string' ? opts.overrideReason.trim() : ''
   if (!reason)
     return { error: { code: 'PUTAWAY_VIOLATION', message: `${msg} Kho yêu cầu cất đúng quy tắc — cần người có quyền duyệt cất khác quy tắc.` },
-             blocked: block, rules, trace: NO_TRACE, warning: null }
+             blocked: block, rules, max_materials: l.max_materials ?? null, trace: NO_TRACE, warning: null }
   if (!opts.canOverride)
-    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, blocked: block, rules, trace: NO_TRACE, warning: null }
+    return { error: { code: 'FORBIDDEN', message: 'Bạn không có quyền duyệt cất khác quy tắc' }, blocked: block, rules, max_materials: l.max_materials ?? null, trace: NO_TRACE, warning: null }
   if (!isPutawayOverrideReason(reason))
-    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules, trace: NO_TRACE, warning: null }
+    return { error: { code: 'PUTAWAY_REASON_REQUIRED', message: 'Chọn lý do cất khác quy tắc trong danh sách' }, blocked: block, rules, max_materials: l.max_materials ?? null, trace: NO_TRACE, warning: null }
 
-  return { blocked: block, rules, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
+  return { blocked: block, rules, max_materials: l.max_materials ?? null, trace: { putaway_checked: true, putaway_violation: block, putaway_override_reason: reason }, warning: msg }
 }
 
 // Cấu hình kho đổi rất hiếm (form Cài đặt) nhưng bị đọc MỖI LƯỢT QUÉT → cache 30s, cùng khuôn với

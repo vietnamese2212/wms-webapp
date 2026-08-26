@@ -23,7 +23,6 @@ export interface StrategyValue {
   rotation_required:          boolean | null
   putaway_priority:           string | null
   putaway_date_mix:           string | null
-  putaway_max_materials:      number | null
   putaway_block_pick_face:    boolean | null
   putaway_block_qa_hold:      boolean | null
   putaway_block_full:         boolean | null
@@ -42,7 +41,7 @@ export interface StrategyValue {
 
 export const STRATEGY_EMPTY: StrategyValue = {
   rotation_principle: null, rotation_required: null, putaway_priority: null, putaway_date_mix: null,
-  putaway_max_materials: null, putaway_block_pick_face: null, putaway_block_qa_hold: null,
+  putaway_block_pick_face: null, putaway_block_qa_hold: null,
   putaway_block_full: null, putaway_single_ncc: null,
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
@@ -51,7 +50,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   rotation_principle: 'FEFO', rotation_required: false, putaway_priority: 'CONSOLIDATE',
-  putaway_date_mix: 'ANY', putaway_max_materials: null, putaway_block_pick_face: false,
+  putaway_date_mix: 'ANY', putaway_block_pick_face: false,
   putaway_block_qa_hold: false, putaway_block_full: false, putaway_single_ncc: false,
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
@@ -295,21 +294,14 @@ export function StrategyFields({ mode, value, inherited, onPatch, idPrefix, wide
             triggerClassName="h-8"
             options={withInherit(putawayDateMixOpts(dateLabel), inherited.putaway_date_mix)} />
         </SettingRow>
-        <SettingRow label={<>Số mã tối đa trong một vị trí{own(value.putaway_max_materials)}</>}
-          desc={isType ? 'Để trống = theo kho.' : 'Để trống = không giới hạn.'}
-          control={<>
-            {eff.putaway_max_materials != null && (
-              enfCtl('MAX_MATERIALS', `${idPrefix}-enf-maxmat`)
-            )}
-            <Input type="number" min={1} max={1000}
-              value={value.putaway_max_materials != null ? String(value.putaway_max_materials) : ''}
-              onChange={e => {
-                const s = e.target.value.trim()
-                onPatch({ putaway_max_materials: s === '' ? null : Number(s) })
-              }}
-              placeholder={isType ? `Kho: ${inherited.putaway_max_materials ?? '—'}` : '—'}
-              className="h-7 w-24 text-xs text-right" />
-          </>} />
+        {/* Số mã tối đa: CON SỐ khai ở TỪNG VỊ TRÍ (26/08), không còn ở kho/loại kho — nơi chứa
+            chung ("Ngoài đường", "Mặt đất") nằm cùng khu + cùng loại hàng với kệ thường nên không
+            tầng nào của kho tách được chúng. Ở đây chỉ còn MỨC XỬ LÝ, đồng bộ với 6 luật kia. */}
+        {!isType && (
+          <SettingRow label="Số mã tối đa trong một vị trí"
+            desc="Khai số ở từng vị trí (trang Vị trí kho — để trống = không giới hạn). Ở đây chỉ chọn: vượt trần thì chặn hay chỉ cảnh báo."
+            control={enfCtl('MAX_MATERIALS', `${idPrefix}-enf-maxmat`)} />
+        )}
         {BLOCK_ROWS.map(([key, code, title]) => (
           <SettingRow key={key} label={<>{title}{own(value[key])}</>}
             htmlFor={isType ? undefined : `${idPrefix}-${code}`}

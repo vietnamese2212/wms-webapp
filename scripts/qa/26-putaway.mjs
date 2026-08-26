@@ -54,7 +54,7 @@ async function cleanup() {
 // Tàn dư lần chạy trước → dọn TRƯỚC khi dựng fixture (gói phải TỰ HỒI PHỤC)
 await sweepByTag()
 
-const PUT_COLS = 'putaway_priority,putaway_enforced,putaway_max_materials,putaway_date_mix,' +
+const PUT_COLS = 'putaway_priority,putaway_enforced,putaway_date_mix,' +
   'putaway_block_pick_face,putaway_block_qa_hold,putaway_block_full,putaway_single_ncc'
 
 try {
@@ -71,7 +71,7 @@ try {
   // buộc + 1 mã/ô"; gói này chụp đúng trạng thái BẨN đó làm bản gốc rồi khôi phục y nguyên, và
   // phép kiểm dọn (so với chính bản gốc) vẫn XANH. ⇒ Nói ra ngay từ đầu để người đọc còn phân
   // biệt "kho thật sự cấu hình vậy" với "tàn dư lần chạy trước".
-  if ((wh?.putaway_enforced ?? []).length || wh?.putaway_max_materials != null || wh?.putaway_priority !== 'CONSOLIDATE'
+  if ((wh?.putaway_enforced ?? []).length || wh?.putaway_priority !== 'CONSOLIDATE'
       || wh?.putaway_date_mix !== 'ANY' || wh?.putaway_block_pick_face || wh?.putaway_block_qa_hold
       || wh?.putaway_block_full || wh?.putaway_single_ncc) {
     console.log(`  ⚠️  kho test đang có cấu hình cất hàng KHÁC mặc định: ${JSON.stringify(whBackup)}`)
@@ -106,7 +106,7 @@ try {
   await mkLoc('NOOUT', { slot_no_out: true })
 
   // ── 1. Picker: mặc định = hành vi cũ, ★ do BE chấm ───────────────────────────────────
-  await setRules({ putaway_priority: 'CONSOLIDATE', putaway_date_mix: 'ANY', putaway_max_materials: null,
+  await setRules({ putaway_priority: 'CONSOLIDATE', putaway_date_mix: 'ANY',
     putaway_enforced: [], putaway_block_pick_face: false, putaway_block_qa_hold: false,
     putaway_block_full: false, putaway_single_ncc: false })
 
@@ -286,8 +286,9 @@ try {
   const raceMats = (await restAll('Material',
     `select=id,material_code&category=eq.${encodeURIComponent(mat.category)}&no_qr_tracking=not.is.true&cartons_per_pallet=gt.0`)).slice(0, 6)
   if (raceMats.length >= 3) {
-    const locRace = await mkLoc('RACE')
-    await setRules({ putaway_max_materials: 1, putaway_enforced: ['MAX_MATERIALS'] })
+    // Trần khai TRÊN Ô (26/08). Kho chỉ còn quyết định MỨC XỬ LÝ (chặn hay cảnh báo).
+    const locRace = await mkLoc('RACE', { max_materials: 1 })
+    await setRules({ putaway_enforced: ['MAX_MATERIALS'] })
     await waitConfigSettled()
     const raceOrders = []
     for (const m of raceMats) {
@@ -303,8 +304,55 @@ try {
     const distinct = new Set(inSlot.map(x => x.material_id)).size
     check('[18] ĐUA nhiều mã vào 1 ô giới hạn 1 mã → vẫn chỉ 1 mã chiếm chỗ (đếm dưới row-lock)',
       distinct <= 1, `${raceOrders.length} lượt đồng thời · ${raceRes.filter(x => x.s === 200).length} HTTP 200 · ${distinct} mã chiếm chỗ`)
-    await setRules({ putaway_max_materials: null, putaway_enforced: [] })
+    await setRules({ putaway_enforced: [] })
   } else check('[18] ĐUA tối đa N mã/ô', true, 'bỏ qua — không đủ 3 mã có khai thùng/pallet')
+
+  // ── 6b. TRẦN SỐ MÃ KHAI THEO TỪNG VỊ TRÍ (26/08) ─────────────────────────────────────
+  // Đây là lý do đổi trục: "Ngoài đường" / "Mặt đất" là nơi CHỨA CHUNG nhưng nằm CÙNG KHU và
+  // CÙNG LOẠI HÀNG với kệ thường (đo staging: B_TP1_NGOÀI ĐƯỜNG SCA giữ 29 mã, ngay cạnh các kệ
+  // 1-2 mã cùng khu TP1). Không tầng nào của kho tách được hai thứ đó ⇒ phép kiểm phải dựng đúng
+  // hình đó: HAI Ô cùng kho, cùng loại hàng, chỉ khác ở CHÍNH Ô — một ô phải chặn, ô kia phải qua.
+  if (raceMats.length >= 3) {
+    const locLimit = await mkLoc('MMLIMIT', { max_materials: 1 })   // kệ thường: 1 mã
+    const locFree  = await mkLoc('MMFREE')                          // "Ngoài đường": để trống
+    await setRules({ putaway_enforced: ['MAX_MATERIALS'] })
+    await waitConfigSettled()
+
+    // Cất TUẦN TỰ 2 mã khác nhau vào từng ô (đua đã đo ở [18]; ở đây đo LUẬT, không đo khoá)
+    const put = async (locId, m, seq) => {
+      const rr = await mkOrder(locId, { material_id: m.id })
+      const oid = rr.j?.data?.order?.id
+      if (!oid) return { s: 0 }
+      return api(`/wms/inbound-orders/${oid}/scan`, 'POST',
+        { qr_code: `${ddmmyy}_${m.material_code}_${TAG.replace(/-/g, '')}_M8_${seq}_${wh.nmsx_code ?? 'B'}`,
+          location_id: locId, qty_semantics: 'base' })
+    }
+    const l1 = await put(locLimit.id, raceMats[0], 971)
+    const l2 = await put(locLimit.id, raceMats[1], 972)
+    check('[18b] ô KHAI trần 1 mã → mã thứ HAI bị CHẶN (mã đầu vẫn vào bình thường)',
+      l1.s === 200 && l2.s === 422 && l2.j?.error?.code === 'PUTAWAY_VIOLATION',
+      `mã1 HTTP ${l1.s} · mã2 HTTP ${l2.s} ${l2.j?.error?.code ?? ''}`)
+    // Câu chữ phải chỉ đúng chỗ cần sửa. Nói "kho giới hạn" là đẩy người ta đi sửa nhầm cấu hình kho.
+    check('[18c] thông báo chặn nói "vị trí này", KHÔNG đổ cho kho',
+      typeof l2.j?.error?.message === 'string' && /vị trí này/i.test(l2.j.error.message)
+        && !/kho giới hạn/i.test(l2.j.error.message),
+      String(l2.j?.error?.message ?? '').slice(0, 120))
+
+    const f1 = await put(locFree.id, raceMats[0], 973)
+    const f2 = await put(locFree.id, raceMats[1], 974)
+    const f3 = await put(locFree.id, raceMats[2], 975)
+    check('[18d] ô ĐỂ TRỐNG = KHÔNG GIỚI HẠN → 3 mã vào cùng ô đều qua, DÙ cùng kho + cùng loại hàng với [18b]',
+      f1.s === 200 && f2.s === 200 && f3.s === 200,
+      `HTTP ${f1.s}/${f2.s}/${f3.s} — chứng minh luật đi theo Ô, không theo kho/loại kho`)
+
+    // Trần nằm trên dòng Location nên đọc TƯƠI mỗi lượt — khác cấu hình kho (cache 30s). Khai xong
+    // là ăn ngay, không có cửa sổ "vừa bật xong mà lượt kế vẫn lọt" như luật của kho.
+    await restWrite('Location', 'PATCH', `id=eq.${locLimit.id}`, { max_materials: null })
+    const l3 = await put(locLimit.id, raceMats[1], 976)
+    check('[18e] gỡ trần của ô → có hiệu lực NGAY (không phải chờ 30s như cấu hình kho)',
+      l3.s === 200, `HTTP ${l3.s} ${l3.j?.error?.code ?? ''}`)
+    await setRules({ putaway_enforced: [] })
+  } else check('[18b] trần số mã theo từng vị trí', true, 'bỏ qua — không đủ 3 mã có khai thùng/pallet')
 
   // ── 7. CHIẾN THUẬT ABC (đợt C) — phải chỉ vào ĐÚNG khu Slotting coi là band của hạng đó ──────
   // Oracle dựng ĐỘC LẬP từ `material_abc` + hạng nhặt khu, rồi so với cái BE đánh dấu. Đây chính
@@ -365,7 +413,7 @@ try {
   // cả lô mới bắt được.
   {
     const mat2 = (raceMats ?? []).find(m => m.id !== mat.id)
-    await setRules({ putaway_enforced: [], putaway_max_materials: null, putaway_date_mix: 'ANY' })
+    await setRules({ putaway_enforced: [], putaway_date_mix: 'ANY' })
     const locBulk = await mkLoc('BULK')
     const qrFor = (code, s) => `${ddmmyy}_${code}_${TAG.replace(/-/g, '')}_M9_${s}_${wh.nmsx_code ?? 'B'}`
     const mkPallet = async (m, s) => {
@@ -400,7 +448,8 @@ try {
     }
 
     if (p1 && p2) {
-      await setRules({ putaway_max_materials: 1, putaway_enforced: ['MAX_MATERIALS'] })
+      await restWrite('Location', 'PATCH', `id=eq.${locBulk.id}`, { max_materials: 1 })
+      await setRules({ putaway_enforced: ['MAX_MATERIALS'] })
       await waitConfigSettled()
       let rb = await move([p1.id, p2.id], locBulk.id)
       check('[28] ô trống giới hạn 1 mã + lô 2 MÃ → CHẶN (chấm từng pallet với sự thật tĩnh sẽ lọt cả 2)',
@@ -412,14 +461,14 @@ try {
 
       // Đua: 2 lượt chuyển đồng thời, mỗi lượt 1 mã, vào CÙNG ô trống giới hạn 1 mã. Cả hai đều
       // qua được guard ở backend (lúc đọc, ô còn trống) ⇒ chỉ row-lock trong RPC mới cứu được.
-      const locR2 = await mkLoc('RACE2')
+      const locR2 = await mkLoc('RACE2', { max_materials: 1 })
       await Promise.all([move([p1.id], locR2.id), move([p2.id], locR2.id)])
       const inR2 = await restAll('InventoryEntry',
         `select=material_id&location_id=eq.${locR2.id}&stack_layer=eq.1&status=in.(IN_STOCK,PARTIAL)&cartons_remaining=gt.0`)
       check('[30] ĐUA 2 lượt chuyển đồng thời vào ô giới hạn 1 mã → chỉ 1 mã chiếm chỗ (đếm dưới row-lock)',
         new Set(inR2.map(x => x.material_id)).size <= 1,
         `${inR2.length} pallet · ${new Set(inR2.map(x => x.material_id)).size} mã`)
-      await setRules({ putaway_max_materials: null, putaway_enforced: [] })
+      await setRules({ putaway_enforced: [] })
     } else check('[28] lô nhiều mã vào ô giới hạn 1 mã', true, 'bỏ qua — không tìm được mã thứ hai cùng loại hàng')
   }
 

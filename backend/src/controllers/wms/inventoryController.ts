@@ -1022,7 +1022,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
     // Chốt lại số mã dưới row-lock — hai người cùng dồn vào một ô thì cả hai cùng đọc "còn chỗ mã"
     // Chỉ chốt dưới row-lock khi luật này ở mức BẮT BUỘC (xem inboundController cùng lý lẽ)
     p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason)
-      ? put.rules.max_materials : null,
+      ? put.max_materials : null,
     p_putaway_checked:         put.trace.putaway_checked ? true : null,
     p_putaway_violation:       put.trace.putaway_violation,
     p_putaway_override_reason: put.trace.putaway_override_reason,

@@ -11,7 +11,7 @@ import { parseListParam } from '../../utils/httpQuery'
 import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
-import { putawayBlock, putawayReason, putawayScore, putawayEnforces, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
+import { putawayBlock, putawayReason, putawayScore, putawayEnforces, parseLocationMaxMaterials, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -40,7 +40,9 @@ async function guardLocScope(req: Request, res: Response, locationId: string): P
 // Giữ max_pallets/categories/slot_no_* vì picker Nhập kho & Slotting đọc.
 const LOCATION_LITE_COLS =
   'id, location_code, warehouse_id, sub_code, sub_name, categories, row, shelf,' +
-  'max_pallets, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
+  // `max_materials` (trần số mã của ô, 26/08) đi cùng nhóm max_pallets/slot_no_*: picker Nhập kho
+  // chấm luật cất hàng ngay trên danh sách nên phải có, không thì ô bị chặn vẫn hiện ★.
+  'max_pallets, max_materials, is_active, requires_stocktake, is_pick_face, slot_no_in, slot_no_out'
 
 // ─── Phân trang SERVER cho TRANG danh mục Vị trí kho ────────────────────────────────────────────
 // 1 kho có thể vài nghìn vị trí (Bàu Bàng 1.517) — trước đây render hết + cộng tổng ở máy.
@@ -566,6 +568,8 @@ export async function createLocation(req: Request, res: Response) {
     const { warehouse_id, sub_code, sub_name, sub_type, row, shelf, max_pallets } = req.body
     if (!warehouse_id || !sub_code || !row)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu warehouse_id, sub_code hoặc row')
+    const maxMat = parseLocationMaxMaterials(req.body.max_materials)
+    if ('error' in maxMat) return fail(res, 400, 'VALIDATION_ERROR', maxMat.error)
     const scope = scopeWhIds(req)
     if (scope !== null && !scope.includes(String(warehouse_id)))
       return fail(res, 403, 'FORBIDDEN', 'Không thể tạo vị trí ở kho ngoài phạm vi của bạn')
@@ -606,6 +610,7 @@ export async function createLocation(req: Request, res: Response) {
         row: String(row).trim(),
         shelf: String(shelf ?? '').trim(),
         max_pallets: max_pallets ? Number(max_pallets) : 1,
+        max_materials: maxMat.value,          // null = không giới hạn (mặc định)
         created_by: actor, updated_by: actor,
         updated_at: new Date().toISOString(),
       })
@@ -635,6 +640,12 @@ export async function updateLocation(req: Request, res: Response) {
     if (is_active !== undefined)         patch.is_active         = Boolean(is_active)
     if (requires_stocktake !== undefined) patch.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face !== undefined)      patch.is_pick_face       = Boolean(is_pick_face)
+    // Trần số mã của ô (26/08) — để trống = không giới hạn. CÙNG parser với khai hàng loạt + upload.
+    if (req.body.max_materials !== undefined) {
+      const m = parseLocationMaxMaterials(req.body.max_materials)
+      if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
+      patch.max_materials = m.value
+    }
     // 2 cờ "Vị trí đặc biệt". Trang này là ĐƯỜNG KHAI DUY NHẤT từ 18/08 — khối multi-select
     // replace-all ở tab Cài đặt trang Tối ưu vị trí đã gỡ (user chê khó config; và một cờ hai chỗ
     // khai thì thêm cờ mới là quên một bên).
@@ -660,11 +671,19 @@ export async function bulkFlagLocations(req: Request, res: Response) {
     const { ids, requires_stocktake, is_pick_face, slot_no_in, slot_no_out } = req.body as {
       ids?: unknown; requires_stocktake?: unknown; is_pick_face?: unknown; slot_no_in?: unknown; slot_no_out?: unknown
     }
-    const flags: Record<string, boolean> = {}
+    const flags: Record<string, unknown> = {}
     if (requires_stocktake !== undefined) flags.requires_stocktake = Boolean(requires_stocktake)
     if (is_pick_face       !== undefined) flags.is_pick_face       = Boolean(is_pick_face)
     if (slot_no_in         !== undefined) flags.slot_no_in         = Boolean(slot_no_in)
     if (slot_no_out        !== undefined) flags.slot_no_out        = Boolean(slot_no_out)
+    // Trần số mã (26/08) — KHÔNG phải cờ boolean: `null` là GIÁ TRỊ THẬT ("không giới hạn"), khác
+    // hẳn `undefined` ("đừng đụng cột này"). Vì thế phải kiểm `!== undefined` chứ đừng dùng
+    // truthiness — `Boolean(null)` sẽ biến "gỡ giới hạn" thành "không làm gì".
+    if (req.body.max_materials !== undefined) {
+      const m = parseLocationMaxMaterials(req.body.max_materials)
+      if ('error' in m) return fail(res, 400, 'VALIDATION_ERROR', m.error)
+      flags.max_materials = m.value
+    }
     if (Object.keys(flags).length === 0)
       return fail(res, 400, 'INVALID_INPUT', 'Thiếu cờ cần gắn')
     let idList = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
@@ -726,6 +745,8 @@ const L_FIELDS: FieldDef[] = [
   { key: 'row',         label: 'Dãy',      aliases: ['hang'], required: true },
   { key: 'shelf',       label: 'Tầng',     aliases: ['ke'] },
   { key: 'max_pallets', label: 'Sức chứa', aliases: ['so pallet toi da', 'max pallets'] },
+  // Trần số mã của ô (26/08) — ô trống = không giới hạn, nên KHÔNG required.
+  { key: 'max_materials', label: 'Số mã tối đa', aliases: ['so ma toi da', 'max materials', 'so ma'] },
   { key: 'sub_type',    label: 'Kiểu',     aliases: ['kieu vi tri', 'sub type'] },
 ]
 
@@ -760,7 +781,8 @@ export async function uploadExcel(req: Request, res: Response) {
     // ── PHA 1: validate TOÀN BỘ (all-or-nothing) ─────────────────────────────
     const errors: string[] = []
     type Parsed = { code: string; wh_id: string; sub_code: string; sub_name: string | null
-                    categories: string[] | null; row: string; shelf: string; max_pallets: number; sub_type: string | null }
+                    categories: string[] | null; row: string; shelf: string; max_pallets: number
+                    max_materials: number | null; sub_type: string | null }
     const parsed: Parsed[] = []
     const seenCode = new Map<string, number>()
     const scope = scopeWhIds(req)
@@ -803,6 +825,10 @@ export async function uploadExcel(req: Request, res: Response) {
       const maxRaw = lcStr(r.max_pallets)
       const max_pallets = lcInt(r.max_pallets)
       if (maxRaw && max_pallets == null) { errors.push(`${at} — sức chứa phải là số nguyên > 0 (nhận "${maxRaw}")`); continue }
+      // Ô trống = KHÔNG GIỚI HẠN (mặc định). Cùng parser với form sửa + khai hàng loạt.
+      const mmRaw = lcStr(r.max_materials)
+      const mm = parseLocationMaxMaterials(mmRaw === "" ? null : mmRaw)
+      if ("error" in mm) { errors.push(`${at} — ${mm.error} (nhận "${mmRaw}")`); continue }
 
       const prefix = (wh.nmsx_code && lcStr(wh.nmsx_code)) || wh.code
       const code = buildLocationCode(prefix, sub, rowRaw, shelf)
@@ -812,7 +838,7 @@ export async function uploadExcel(req: Request, res: Response) {
 
       parsed.push({
         code, wh_id: wh.id, sub_code: sub, sub_name: zone.name ?? null, categories: zone.categories ?? null,
-        row: rowRaw, shelf, max_pallets: max_pallets ?? 1, sub_type: lcStr(r.sub_type) || null,
+        row: rowRaw, shelf, max_pallets: max_pallets ?? 1, max_materials: mm.value, sub_type: lcStr(r.sub_type) || null,
       })
     }
     // KIỂM TRƯỚC (preflight): file có lỗi → báo cáo luôn, khỏi phải đếm insert/update
@@ -837,7 +863,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const buildNew = (p: Parsed) => ({
       id: randomUUID(), location_code: p.code, warehouse_id: p.wh_id,
       sub_code: p.sub_code, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-      row: p.row, shelf: p.shelf, max_pallets: p.max_pallets,
+      row: p.row, shelf: p.shelf, max_pallets: p.max_pallets, max_materials: p.max_materials,
       is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     })
     const inserts: Record<string, unknown>[] = []
@@ -848,7 +874,7 @@ export async function uploadExcel(req: Request, res: Response) {
         // Vị trí đã có → cập nhật sức chứa/kiểu + đồng bộ lại Tên khu & Loại theo ZONE.
         // KHÔNG đụng is_active/requires_stocktake/slot_no_in/slot_no_out (quản ở nơi khác).
         updates.push({ ...ex, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-                       max_pallets: p.max_pallets, updated_at: now, updated_by: actor })
+                       max_pallets: p.max_pallets, max_materials: p.max_materials, updated_at: now, updated_by: actor })
       } else inserts.push(buildNew(p))
     }
 

@@ -795,7 +795,6 @@ export interface WhTypeConfig {
   rotation_required?:          boolean | null
   putaway_priority?:           string | null
   putaway_date_mix?:           string | null
-  putaway_max_materials?:      number | null
   putaway_block_pick_face?:    boolean | null
   putaway_block_qa_hold?:      boolean | null
   putaway_block_full?:         boolean | null
@@ -849,7 +848,7 @@ export function useCreateLocation() {
   const qc = useQueryClient()
   return useMutation({
     // Loại của vị trí KẾ THỪA từ Khu vực (không gửi category — BE tự lấy từ zone)
-    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number }) =>
+    mutationFn: (body: { warehouse_id: string; sub_code: string; sub_name?: string; row: string; shelf?: string; max_pallets?: number; max_materials?: number | null }) =>
       apiClient.post('/masterdata/locations', body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -861,7 +860,7 @@ export function useCreateLocation() {
 export function useUpdateLocation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; sub_name?: string; max_pallets?: number; max_materials?: number | null; is_active?: boolean; requires_stocktake?: boolean; is_pick_face?: boolean; slot_no_in?: boolean; slot_no_out?: boolean }) =>
       apiClient.put(`/masterdata/locations/${id}`, body).then((r) => r.data.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })
@@ -895,7 +894,10 @@ export function useBulkFlagLocations() {
     // Gửi cờ nào thì BE ghi cờ đó; thiếu tất cả → 400 (không ghi mù).
     mutationFn: (body: { ids?: string[]; by_filter?: boolean; filter?: Record<string, unknown>
                          requires_stocktake?: boolean; is_pick_face?: boolean
-                         slot_no_in?: boolean; slot_no_out?: boolean }) =>
+                         slot_no_in?: boolean; slot_no_out?: boolean
+                         // Trần số mã của ô (26/08) — KHÔNG phải cờ: `null` = gỡ giới hạn (giá trị
+                         // thật), vắng field = đừng đụng cột. Vì thế kiểu phải cho phép null.
+                         max_materials?: number | null }) =>
       apiClient.patch('/masterdata/locations/bulk-flag', body).then((r) => r.data.data as { updated: number }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['locations-real'] })

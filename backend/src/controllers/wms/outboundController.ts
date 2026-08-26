@@ -499,7 +499,7 @@ async function fetchGDOFull(id: string) {
   // Detail chuyến phải ĐỦ item/scan (chuyến >1000 scan: cap-1000 làm "đã quét" hiển thị thiếu)
   const items = doIds.length
     ? await fetchAllByIdChunks(doIds, chunk => supabase.from('OutboundItem')
-        .select('*, material:Material(id,material_code,short_name,custom_short_name,cartons_per_pallet,warehouse_pallet_overrides,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,is_pallet_carrier,pallet_color,base_unit,entry_unit,units_per_carton)')
+        .select('*, material:Material(id,material_code,short_name,custom_short_name,category,cartons_per_pallet,warehouse_pallet_overrides,weight_kg,shelf_life_days,no_qr_tracking,carton_length_mm,carton_width_mm,carton_height_mm,max_stack_layers,stack_on_top,is_pallet_carrier,pallet_color,base_unit,entry_unit,units_per_carton)')
         .in('do_id', chunk)
         .order('id'))
     : []

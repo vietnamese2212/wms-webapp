@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label'
 import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehiclesPaged, useTmsVehiclesWithBox, useVehicleTypes, usePalletCarrierMaterials } from '@/api/hooks'
 import { SingleSelect, type SingleSelectOption } from '@/components/shared/SingleSelect'
 import { InfoTip } from '@/components/shared/InfoTip'
+import { useLoadPlanPrefsStore, type LoadPlacement } from '@/stores/loadPlanPrefsStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
@@ -38,7 +39,12 @@ type ThreeCtx = {
 
 // done = thùng ĐÃ XUẤT thật (nhặt lẻ chưa xác nhận KHÔNG tính).
 // cpp/isPallet đi kèm để chế độ XE PALLET gom được hàng lên pallet mà không phải duyệt lại gdo.
-type PlanGroup = LoadGroup & { done: number; cpp: number | null; isPallet: boolean }
+// category = Loại hàng của mã — quyết định CÁCH LÊN XE (gộp chung / pallet riêng / lên nóc);
+// topCarton = khối này là THÙNG rời nằm nóc ở chế độ xe pallet (không đếm vào số pallet).
+type PlanGroup = LoadGroup & {
+  done: number; cpp: number | null; isPallet: boolean
+  category: string | null; topCarton?: boolean
+}
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
   for (const child of [...group.children]) {
@@ -326,6 +332,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           onTop: it.material?.stack_on_top ?? false,
           cpp: it.material?.cartons_per_pallet ?? null,
           isPallet: it.material?.is_pallet_carrier ?? false,
+          category: it.material?.category ?? null,
         })
       }
     }
@@ -356,34 +363,59 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     }
   }, [palL, palW, palH, activePalletMat])
 
+  // ── CÁCH LÊN XE theo (KHO × Loại hàng) — nhớ theo USER (user chốt 26/08 "lưu setting kho
+  // rồi lưu theo user"): chọn 1 lần trong màn này, mọi chuyến sau của kho đó tự áp. ──
+  const placements = useLoadPlanPrefsStore(s => s.placements)
+  const setPlacement = useLoadPlanPrefsStore(s => s.setPlacement)
+  const whId = gdo.warehouse_id
+  const placeOf = (cat: string | null): LoadPlacement =>
+    (cat && whId ? placements[`${whId}|${cat}`] ?? 'MIX' : 'MIX')
+  const catList = useMemo(
+    () => [...new Set(cartonGroups.filter(g => !g.isPallet && g.category).map(g => g.category as string))].sort(),
+    [cartonGroups])
+
   const palletized = useMemo(() => {
     if (!isPalletTruck || !palSpec) return null
-    const items: PalletizeInput[] = cartonGroups.map(g => ({
-      key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
-      cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
-      weightKg: g.weightKg,
-      // Cao pallet tính từ thùng × quy cách — mã chưa khai thì dùng CỠ GIẢ ĐỊNH kèm nhãn
-      // (user chốt vòng 7: quy cách 140 vs 216 thùng/pallet phải ra chiều cao KHÁC NHAU,
-      // đồng cao 1650 hết là sai; nhãn "cỡ giả định" vẫn giữ để biết số là ước lượng).
-      carton: { l: g.l, w: g.w, h: g.h },
-      assumed: g.assumed,
-    }))
+    const items: PalletizeInput[] = cartonGroups
+      // Loại hàng khai "Lên nóc" KHÔNG palletize — đi thẳng làm thùng rời nằm nóc (bên dưới)
+      .filter(g => g.isPallet || placeOf(g.category) !== 'ON_TOP')
+      .map(g => ({
+        key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
+        cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
+        weightKg: g.weightKg,
+        // Cao pallet tính từ thùng × quy cách — mã chưa khai thì dùng CỠ GIẢ ĐỊNH kèm nhãn
+        // (user chốt vòng 7: quy cách 140 vs 216 thùng/pallet phải ra chiều cao KHÁC NHAU,
+        // đồng cao 1650 hết là sai; nhãn "cỡ giả định" vẫn giữ để biết số là ước lượng).
+        carton: { l: g.l, w: g.w, h: g.h },
+        assumed: g.assumed,
+        // "Pallet riêng": phần dư của loại này gom bể riêng, không trộn pallet lẻ chung
+        remPool: !g.isPallet && g.category && placeOf(g.category) === 'OWN_PALLET'
+          ? { key: g.category, label: g.category } : undefined,
+      }))
     const res = palletizeGroups(items, palSpec)
     // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
     const doneRatio = new Map(cartonGroups.map(g => [g.key, g.count > 0 ? g.done / g.count : 0]))
     const withDone: PlanGroup[] = res.groups.map(g => {
       const srcKey = g.key.replace(/\|(full|plt)$/, '')
       const r = doneRatio.get(srcKey) ?? 0
-      return { ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false }
+      return { ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false, category: null }
     })
     return { ...res, groups: withDone }
-  }, [isPalletTruck, palSpec, cartonGroups])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPalletTruck, palSpec, cartonGroups, placements, whId])
 
-  // Nhóm THỰC SỰ đưa vào thuật toán xếp
+  // Nhóm THỰC SỰ đưa vào thuật toán xếp: xe pallet = khối pallet + THÙNG RỜI của loại "Lên nóc"
+  // (onTop — thuật toán tự đặt lên nóc các khối, không chiếm chỗ pallet trên sàn)
   const groups: PlanGroup[] = useMemo(() => {
-    if (isPalletTruck) return palletized?.groups ?? []
+    if (isPalletTruck) {
+      const top = cartonGroups
+        .filter(g => !g.isPallet && placeOf(g.category) === 'ON_TOP')
+        .map(g => ({ ...g, onTop: true, topCarton: true }))
+      return [...(palletized?.groups ?? []), ...top]
+    }
     return cartonGroups.filter(g => !g.isPallet)
-  }, [isPalletTruck, palletized, cartonGroups])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPalletTruck, palletized, cartonGroups, placements, whId])
 
   const droppedPallets = useMemo(
     () => (isPalletTruck ? [] : cartonGroups.filter(g => g.isPallet)), [isPalletTruck, cartonGroups])
@@ -413,8 +445,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
   const assumedCount = groups.filter(g => g.assumed).length
   const sumDone = groups.reduce((s, g) => s + g.done, 0)
-  // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET, không phải 1 thùng — chữ phải nói đúng
-  const unitWord = isPalletTruck ? 'pallet' : 'thùng'
+  // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET — trừ loại "Lên nóc" là THÙNG rời;
+  // có lẫn cả hai thì chữ chung dùng "khối", nhãn từng nhóm vẫn nói đúng pallet/thùng.
+  const topCount = isPalletTruck ? groups.filter(g => g.topCarton).reduce((s, g) => s + g.count, 0) : 0
+  const unitWord = isPalletTruck ? (topCount > 0 ? 'khối' : 'pallet') : 'thùng'
 
   // Tiến độ hiển thị: thứ tự "đã xuất" đi theo đúng thứ tự xếp của kế hoạch (ordinal trong nhóm)
   const ordinals = useMemo(() => {
@@ -659,7 +693,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(gi => [gi, visibleByGroup.get(gi)!] as const)
         .map(([gi, agg]) => {
           const g = groups[gi]
-          const countTxt = mode === 'progress' ? `${g.done} ${unitWord}` : (g.done > 0 ? `${g.done}/${g.count} ${unitWord}` : `${g.count} ${unitWord}`)
+          const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : 'thùng'
+          const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
           const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
           return {
             gi, sprite, w: labelH * aspect,
@@ -899,7 +934,28 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 <p className="text-[10px] text-slate-500">
                   Sàn xe chứa được <b className="tabular-nums">{floorSlots}</b> chỗ pallet
                   {palletized ? <> · đơn cần <b className="tabular-nums">{palletized.palletCount}</b> pallet</> : null}
+                  {topCount > 0 && <> + <b className="tabular-nums">{topCount}</b> thùng lên nóc</>}
                 </p>
+              )}
+              {/* Cách lên xe của TỪNG Loại hàng — nhớ theo (kho × user), áp mọi chuyến sau của kho */}
+              {whId && catList.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center gap-1">
+                    <Label className="text-xs">Cách lên xe theo Loại hàng</Label>
+                    <InfoTip tip="Gộp chung pallet = phần lẻ trộn pallet lẻ chung của đơn · Pallet lẻ riêng = phần lẻ nằm pallet lẻ riêng của loại đó · Lên nóc hàng khác = không chiếm pallet, thùng xếp lên nóc các khối. Lựa chọn được GHI NHỚ theo tài khoản của bạn cho TỪNG KHO — mọi chuyến sau của kho này tự áp." />
+                  </div>
+                  {catList.map(cat => (
+                    <div key={cat} className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-600 flex-1 truncate">{cat}</span>
+                      <select value={placeOf(cat)} onChange={e => setPlacement(whId, cat, e.target.value as LoadPlacement)}
+                        className="h-7 text-[11px] border border-input rounded-md px-1.5 bg-white">
+                        <option value="MIX">Gộp chung pallet</option>
+                        <option value="OWN_PALLET">Pallet lẻ riêng</option>
+                        <option value="ON_TOP">Lên nóc hàng khác</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

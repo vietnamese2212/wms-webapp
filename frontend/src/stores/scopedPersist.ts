@@ -7,6 +7,7 @@ import { useAuthStore } from './authStore'
 import { useWmsFilterStore } from './wmsFilterStore'
 import { useSavedViewsStore } from './savedViewsStore'
 import { useGlobalScopeStore, GLOBAL_SCOPE_BASE, sweepGlobalScope } from './globalScopeStore'
+import { useLoadPlanPrefsStore, LOADPLAN_PREFS_BASE } from './loadPlanPrefsStore'
 
 const FILTER_BASE = 'wms-filters-v10'
 const VIEWS_BASE  = 'wms-saved-views'
@@ -38,6 +39,11 @@ function applyScope(uid: string | null) {
   useSavedViewsStore.getState().reset()
   useSavedViewsStore.persist.setOptions({ name: keyFor(VIEWS_BASE, uid) })
   void useSavedViewsStore.persist.rehydrate()
+
+  // Cách lên xe theo Loại hàng của sơ đồ 3D (localStorage, bền): reset → nạp của user.
+  useLoadPlanPrefsStore.getState().reset()
+  useLoadPlanPrefsStore.persist.setOptions({ name: keyFor(LOADPLAN_PREFS_BASE, uid) })
+  void useLoadPlanPrefsStore.persist.rehydrate()
 
   // Bối cảnh Kho/Loại kho toàn cục (localStorage, bền): reset → nạp của user → sau khi CẢ HAI
   // store sẵn sàng thì áp lại vào filter các trang (force=false — chỉ áp phần ĐANG CHỌN, không

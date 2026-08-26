@@ -953,6 +953,10 @@ export interface PalletizeInput {
   // (có nhãn); "Cao pallet lẻ gộp" CHỈ khống chế pallet LẺ, không đụng pallet chẵn.
   carton: { l: number; w: number; h: number } | null
   assumed?: boolean          // thùng đang là cỡ giả định — truyền xuống nhãn "cỡ giả định"
+  // Bể gom phần dư RIÊNG (26/08 — "Pallet riêng" per Loại hàng): phần dư của mã này chỉ trộn
+  // với mã CÙNG BỂ trong cùng đơn (vd POSM không nằm chung pallet lẻ với thành phẩm).
+  // Không khai = bể chung của đơn.
+  remPool?: { key: string; label: string }
 }
 
 // Số thùng xếp được trên MỘT LỚP của chân pallet — lưới đều, thử cả 2 hướng đặt (cùng triết lý
@@ -991,7 +995,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
     const doLabel = lines[0].doLabel
     // Phần DƯ của từng mã trong đơn — gom lại rồi xếp theo LỚP lên pallet gộp
     type RemItem = { label: string; cartons: number; perLayer: number; cartonH: number
-      weightKg: number | null; assumed: boolean }
+      weightKg: number | null; assumed: boolean; pool: string; poolLabel: string }
     const rems: RemItem[] = []
 
     for (const it of lines) {
@@ -1046,6 +1050,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         label: it.label, cartons: rem, perLayer,
         cartonH: it.carton && it.carton.h > 0 ? it.carton.h : 0,
         weightKg: it.weightKg, assumed: it.assumed === true || layers === 0,
+        pool: it.remPool?.key ?? '', poolLabel: it.remPool?.label ?? '',
       })
       if (full > 0 || rem > 0)
         notes.push(`${it.label}: ${it.cartons} thùng ÷ ${cpp} = ${full} pallet đầy${rem > 0 ? ` + dư ${rem} thùng` : ''} (${hNote})`)
@@ -1056,43 +1061,53 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
     // san sang pallet khác"). Lớp cuối thiếu thùng vẫn chiếm trọn cao thùng. ──
     if (rems.length) {
       const budget = Math.max(0, spec.h - spec.baseH)   // phần cao dành cho HÀNG (trừ đế)
-      type Layer = { h: number; kg: number; assumed: boolean }
-      const layerList: Layer[] = []
+      // Tách theo BỂ (remPool): loại hàng khai "Pallet riêng" gom bể riêng, còn lại bể chung
+      const byPool = new Map<string, RemItem[]>()
       for (const r of rems) {
-        if (r.perLayer > 0 && r.cartonH > 0) {
-          let left = r.cartons
-          while (left > 0) {
-            const take = Math.min(left, r.perLayer)
-            layerList.push({ h: r.cartonH, kg: take * (r.weightKg ?? 0), assumed: r.assumed })
-            left -= take
+        const arr = byPool.get(r.pool)
+        if (arr) arr.push(r); else byPool.set(r.pool, [r])
+      }
+      for (const [poolKey, poolRems] of byPool) {
+        const poolLabel = poolRems[0].poolLabel
+        type Layer = { h: number; kg: number; assumed: boolean }
+        const layerList: Layer[] = []
+        for (const r of poolRems) {
+          if (r.perLayer > 0 && r.cartonH > 0) {
+            let left = r.cartons
+            while (left > 0) {
+              const take = Math.min(left, r.perLayer)
+              layerList.push({ h: r.cartonH, kg: take * (r.weightKg ?? 0), assumed: r.assumed })
+              left -= take
+            }
+          } else {
+            // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
+            // 1 pallet cao bằng trần, gắn nhãn ước lượng
+            layerList.push({ h: budget > 0 ? budget : spec.h, kg: r.cartons * (r.weightKg ?? 0), assumed: true })
           }
-        } else {
-          // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
-          // 1 pallet cao bằng trần, gắn nhãn ước lượng
-          layerList.push({ h: budget > 0 ? budget : spec.h, kg: r.cartons * (r.weightKg ?? 0), assumed: true })
         }
-      }
-      // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
-      // Lớp đơn lẻ cao hơn trần vẫn phải nằm 1 pallet riêng (thực tế không cưa đôi thùng được).
-      layerList.sort((a, b) => b.h - a.h)
-      const pals: { h: number; kg: number; assumed: boolean }[] = []
-      for (const ly of layerList) {
-        const p = pals.find(x => x.h + ly.h <= budget)
-        if (p) { p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed }
-        else pals.push({ h: ly.h, kg: ly.kg, assumed: ly.assumed })
-      }
-      pals.forEach((p, i) => {
-        groups.push({
-          key: `${doKey}|mixed${i}`,
-          label: pals.length > 1 ? `Pallet gộp (hàng lẻ) #${i + 1}` : 'Pallet gộp (hàng lẻ)',
-          doKey, doLabel, count: 1, l: spec.l, w: spec.w,
-          h: spec.baseH + p.h,
-          base: { h: spec.baseH, color: spec.baseColor },
-          weightKg: p.kg > 0 || pw > 0 ? p.kg + pw : null,
-          assumed: p.assumed, maxLayers: 1, onTop: false,
+        // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
+        // Lớp đơn lẻ cao hơn trần vẫn phải nằm 1 pallet riêng (thực tế không cưa đôi thùng được).
+        layerList.sort((a, b) => b.h - a.h)
+        const pals: { h: number; kg: number; assumed: boolean }[] = []
+        for (const ly of layerList) {
+          const p = pals.find(x => x.h + ly.h <= budget)
+          if (p) { p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed }
+          else pals.push({ h: ly.h, kg: ly.kg, assumed: ly.assumed })
+        }
+        const baseLabel = poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'
+        pals.forEach((p, i) => {
+          groups.push({
+            key: `${doKey}|mixed|${poolKey}|${i}`,
+            label: pals.length > 1 ? `${baseLabel} #${i + 1}` : baseLabel,
+            doKey, doLabel, count: 1, l: spec.l, w: spec.w,
+            h: spec.baseH + p.h,
+            base: { h: spec.baseH, color: spec.baseColor },
+            weightKg: p.kg > 0 || pw > 0 ? p.kg + pw : null,
+            assumed: p.assumed, maxLayers: 1, onTop: false,
+          })
         })
-      })
-      notes.push(`Pallet gộp đơn ${doLabel}: ${layerList.length} lớp hàng lẻ → ${pals.length} pallet (trần ${(spec.h / 1000).toFixed(2)}m)`)
+        notes.push(`${baseLabel} đơn ${doLabel}: ${layerList.length} lớp hàng lẻ → ${pals.length} pallet (trần ${(spec.h / 1000).toFixed(2)}m)`)
+      }
     }
   }
 

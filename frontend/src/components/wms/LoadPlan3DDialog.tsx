@@ -12,7 +12,7 @@ import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehiclesPaged, useVehicleTypes } from '@/api/hooks'
+import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehiclesPaged, useVehicleTypes, usePalletCarrierMaterials } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
@@ -182,33 +182,58 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     } catch { setTmError('Xóa dòng xe thất bại — thử lại') }
   }
 
-  // Tự nhận xe của chuyến: biển số đã có trong danh mục ⇒ điền lòng thùng (26/08). Kiểu xếp
-  // (pallet/thường) không cần effect — nó SUY trực tiếp từ loại của xe, trừ khi người dùng override.
-  // Chỉ điền kích thước khi ô đang TRỐNG — không đè lên số người dùng vừa gõ tay.
+  // Tự nhận xe của chuyến (26/08 vòng 3 — user: "biển số đã khai kích thước nhưng chưa được chọn"):
+  // dialog GIỮ STATE qua các lần đóng/mở (không unmount, chỉ return null) nên phải áp lại MỖI LẦN
+  // MỞ, không chỉ khi ô trống — vừa khai lòng thùng cho xe xong mở lại là phải thấy số mới.
+  const appliedRef = useRef(false)
   useEffect(() => {
-    if (!open || !tripVehicle) return
+    if (!open) { appliedRef.current = false; return }
+    setPalletOverride(null)   // mở lại = về theo loại của xe; đổi tay chỉ sống trong 1 lần mở
+  }, [open])
+  const tripHasDims = !!(tripVehicle?.box_length_mm && tripVehicle?.box_width_mm && tripVehicle?.box_height_mm)
+  function applyTripDims() {
+    if (!tripVehicle || !tripHasDims) return
+    setBoxL(String(tripVehicle.box_length_mm))
+    setBoxW(String(tripVehicle.box_width_mm))
+    setBoxH(String(tripVehicle.box_height_mm))
+    setTmName(`Xe ${tripVehicle.license_plate}`)
+  }
+  useEffect(() => {
+    if (!open || !tripVehicle || appliedRef.current) return
+    appliedRef.current = true   // đánh dấu cả khi xe chưa khai dims — không đè số gõ tay về sau
     if (tripVehicle.box_length_mm && tripVehicle.box_width_mm && tripVehicle.box_height_mm) {
-      setBoxL(cur => cur || String(tripVehicle.box_length_mm))
-      setBoxW(cur => cur || String(tripVehicle.box_width_mm))
-      setBoxH(cur => cur || String(tripVehicle.box_height_mm))
-      setTmName(cur => cur || `Xe ${tripVehicle.license_plate}`)
+      setBoxL(String(tripVehicle.box_length_mm))
+      setBoxW(String(tripVehicle.box_width_mm))
+      setBoxH(String(tripVehicle.box_height_mm))
+      setTmName(`Xe ${tripVehicle.license_plate}`)
     }
   }, [open, tripVehicle])
+  // Ô "Dòng xe" hiện mục "Xe của chuyến" khi các ô kích thước đang khớp đúng số của xe đó
+  const tripSelected = tripHasDims && tripVehicle
+    && boxL === String(tripVehicle.box_length_mm)
+    && boxW === String(tripVehicle.box_width_mm)
+    && boxH === String(tripVehicle.box_height_mm)
 
-  // Kích thước pallet khai ở MÃ PALLET của chính đơn (Material.carton_*_mm của mã is_pallet_carrier)
-  const palletMat = useMemo(() => {
+  // Quy cách + màu pallet lấy từ DANH MỤC mã pallet (26/08 vòng 3): trước đây chỉ tra mã pallet
+  // NẰM TRONG ĐƠN — đơn thường không có dòng Loscam nên màu user khai ở Mã hàng không bao giờ
+  // được dùng. Nay: ưu tiên mã pallet trong đơn, không có thì lấy từ danh mục (chọn được khi
+  // đơn vị có nhiều dạng pallet).
+  const { data: palletMats = [] } = usePalletCarrierMaterials(open)
+  const orderPalletMat = useMemo(() => {
     for (const d of gdo.delivery_orders ?? [])
       for (const it of d.items)
         if (it.material?.is_pallet_carrier) return it.material
     return null
   }, [gdo])
-  useEffect(() => {
-    if (!open || !palletMat) return
-    if (palletMat.carton_length_mm && palletMat.carton_width_mm) {
-      setPalL(cur => cur || String(palletMat.carton_length_mm))
-      setPalW(cur => cur || String(palletMat.carton_width_mm))
+  const [palletMatId, setPalletMatId] = useState('')
+  const activePalletMat = useMemo(() => {
+    if (palletMatId) {
+      const hit = palletMats.find(m => m.id === palletMatId)
+      if (hit) return hit
     }
-  }, [open, palletMat])
+    if (orderPalletMat) return palletMats.find(m => m.id === orderPalletMat.id) ?? orderPalletMat
+    return palletMats[0] ?? null
+  }, [palletMatId, palletMats, orderPalletMat])
 
   // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo).
   // Đây là NGUYÊN LIỆU: xe thường xếp thẳng mảng này, xe pallet gom nó lên pallet trước.
@@ -259,14 +284,16 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   // Xe thường: xếp từng thùng như cũ, và KHÔNG xếp khối pallet lên xe — nhưng nói ra là đã bỏ,
   // không im lặng nuốt mất một dòng hàng của đơn.
   const palSpec: PalletSpec | null = useMemo(() => {
-    const l = Number(palL), w = Number(palW), h = Number(palH)
-    if (!(l > 0 && w > 0 && h > 0)) return null
-    // Cao pallet RỖNG = phần đế; lấy từ mã pallet nếu đã khai, không thì 150mm (đế pallet gỗ chuẩn)
-    const baseH = Number(palletMat?.carton_height_mm) > 0 ? Number(palletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
-    // Màu đế = Material.pallet_color của mã pallet trong đơn (mỗi dạng pallet 1 màu, user 26/08);
-    // đơn không có mã pallet / chưa khai màu → xanh Loscam mặc định.
-    return { l, w, h, baseH, baseColor: palletMat?.pallet_color ?? DEFAULT_PALLET.baseColor }
-  }, [palL, palW, palH, palletMat])
+    const h = Number(palH)
+    if (!(h > 0)) return null
+    // CHÂN pallet: từ quy cách của mã pallet (Material.carton_l/w) — mã chưa khai mới rơi về ô
+    // nhập tay. Đế = carton_height_mm của mã pallet (Loscam khai 150); màu = Material.pallet_color.
+    const mL = Number(activePalletMat?.carton_length_mm), mW = Number(activePalletMat?.carton_width_mm)
+    const l = mL > 0 ? mL : Number(palL), w = mW > 0 ? mW : Number(palW)
+    if (!(l > 0 && w > 0)) return null
+    const baseH = Number(activePalletMat?.carton_height_mm) > 0 ? Number(activePalletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
+    return { l, w, h, baseH, baseColor: activePalletMat?.pallet_color ?? DEFAULT_PALLET.baseColor }
+  }, [palL, palW, palH, activePalletMat])
 
   const palletized = useMemo(() => {
     if (!isPalletTruck || !palSpec) return null
@@ -323,6 +350,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
   const assumedCount = groups.filter(g => g.assumed).length
   const sumDone = groups.reduce((s, g) => s + g.done, 0)
+  // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET, không phải 1 thùng — chữ phải nói đúng
+  const unitWord = isPalletTruck ? 'pallet' : 'thùng'
 
   // Tiến độ hiển thị: thứ tự "đã xuất" đi theo đúng thứ tự xếp của kế hoạch (ordinal trong nhóm)
   const ordinals = useMemo(() => {
@@ -546,7 +575,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(gi => [gi, visibleByGroup.get(gi)!] as const)
         .map(([gi, agg]) => {
           const g = groups[gi]
-          const countTxt = mode === 'progress' ? `${g.done} thùng` : (g.done > 0 ? `${g.done}/${g.count} thùng` : `${g.count} thùng`)
+          const countTxt = mode === 'progress' ? `${g.done} ${unitWord}` : (g.done > 0 ? `${g.done}/${g.count} ${unitWord}` : `${g.count} ${unitWord}`)
           const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
           return {
             gi, sprite, w: labelH * aspect,
@@ -683,7 +712,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           )}
           {plan && mode === 'progress' && (
             <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-green-600/95 text-white text-[11px] rounded-full px-3 py-1 shadow">
-              Tiến độ thực tế: đã xuất <b className="tabular-nums">{sumDone}/{plan.totalCount}</b> thùng
+              Tiến độ thực tế: đã xuất <b className="tabular-nums">{sumDone}/{plan.totalCount}</b> {unitWord}
               {sumDone === 0 && ' — chưa quét thùng nào'}
             </div>
           )}
@@ -698,7 +727,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               <p className="text-[11px] text-center text-slate-600 mt-0.5">
                 {maxStep === 0
                   ? 'Xe trống — bấm ▶ để xem thứ tự xếp từng cột'
-                  : <>Bước <b className="tabular-nums">{maxStep}/{plan.stepCount}</b>{currentGroup && <> — xếp <b>{currentColCount} thùng</b> · <span className="font-medium">{currentGroup.label}</span>{hasManyDos && <span className="text-slate-400"> · {currentGroup.doLabel}</span>} (chân sáng)</>}</>}
+                  : <>Bước <b className="tabular-nums">{maxStep}/{plan.stepCount}</b>{currentGroup && <> — xếp <b>{currentColCount} {unitWord}</b> · <span className="font-medium">{currentGroup.label}</span>{hasManyDos && <span className="text-slate-400"> · {currentGroup.doLabel}</span>} (chân sáng)</>}</>}
               </p>
             </div>
           )}
@@ -736,20 +765,53 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             )}
           </div>
 
-          {/* ── Kích thước pallet: chỉ hỏi khi thật sự dùng tới ── */}
+          {/* ── Quy cách pallet: lấy từ MÃ PALLET trong danh mục (chân + đế + màu) — chỉ hỏi tay
+              khi danh mục chưa khai (26/08 vòng 3: user hỏi "ô này để làm gì vì pallet có quy
+              cách rồi" — đúng, nên quy cách đọc thẳng từ Mã hàng, không bắt gõ lại). ── */}
           {isPalletTruck && (
             <div className="space-y-1">
-              <Label className="text-xs">Chân pallet D×R + cao pallet LẺ (mm)</Label>
-              <div className="flex items-center gap-1.5">
-                <Input type="number" min={0} className="h-8 text-xs" value={palL} onChange={e => setPalL(e.target.value)} placeholder="Dài" />
-                <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} className="h-8 text-xs" value={palW} onChange={e => setPalW(e.target.value)} placeholder="Rộng" />
-                <span className="text-slate-400 text-xs">×</span>
-                <Input type="number" min={0} className="h-8 text-xs" value={palH} onChange={e => setPalH(e.target.value)} placeholder="Cao" />
+              <Label className="text-xs">Loại pallet</Label>
+              {activePalletMat && Number(activePalletMat.carton_length_mm) > 0 && Number(activePalletMat.carton_width_mm) > 0 ? (
+                <>
+                  {palletMats.length > 1 && (
+                    <select value={activePalletMat.id} onChange={e => setPalletMatId(e.target.value)}
+                      className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
+                      {palletMats.map(m => (
+                        <option key={m.id} value={m.id}>{m.short_name} ({m.carton_length_mm}×{m.carton_width_mm})</option>
+                      ))}
+                    </select>
+                  )}
+                  <p className="text-[10px] text-slate-500 flex items-start gap-1.5">
+                    <span className="inline-block h-3 w-3 mt-0.5 rounded-sm border border-slate-300 shrink-0"
+                      style={{ background: activePalletMat.pallet_color ?? DEFAULT_PALLET.baseColor }} />
+                    <span>
+                      <b>{activePalletMat.short_name}</b> — chân {activePalletMat.carton_length_mm}×{activePalletMat.carton_width_mm}mm,
+                      đế cao {Number(activePalletMat.carton_height_mm) > 0 ? activePalletMat.carton_height_mm : DEFAULT_PALLET.baseH}mm.
+                      Quy cách + màu vẽ khai ở Mã hàng (tick “Mã là pallet”).
+                    </span>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="number" min={0} className="h-8 text-xs" value={palL} onChange={e => setPalL(e.target.value)} placeholder="Chân dài" />
+                    <span className="text-slate-400 text-xs">×</span>
+                    <Input type="number" min={0} className="h-8 text-xs" value={palW} onChange={e => setPalW(e.target.value)} placeholder="Chân rộng" />
+                  </div>
+                  <p className="text-[10px] text-amber-700">
+                    Danh mục chưa có mã pallet khai kích thước — đang dùng chân nhập tay. Khai ở Mã hàng
+                    (tick “Mã là pallet” + Thùng D×R×C) để tự lấy quy cách và màu.
+                  </p>
+                </>
+              )}
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <Label className="text-xs whitespace-nowrap">Cao pallet LẺ gộp (mm)</Label>
+                <Input type="number" min={0} className="h-8 text-xs w-24" value={palH} onChange={e => setPalH(e.target.value)} />
               </div>
               <p className="text-[10px] text-slate-400">
-                Cao của pallet HÀNG NGUYÊN tự tính từ kích thước thùng của từng mã (xem “Cách tính”);
-                ô Cao chỉ áp cho pallet LẺ gộp nhiều mã.
+                Chỉ pallet LẺ (gộp nhiều mã) dùng chiều cao này. Pallet HÀNG NGUYÊN tự tính:
+                đế + số lớp × cao thùng của TỪNG MÃ — nên mỗi mã một chiều cao, các pallet
+                cùng mã luôn cao bằng nhau (bấm “Cách tính” bên dưới để xem từng mã).
               </p>
               {floorSlots > 0 && (
                 <p className="text-[10px] text-slate-500">
@@ -797,8 +859,18 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
           <div className="space-y-1">
             <Label className="text-xs">Dòng xe (ghi nhớ lòng thùng)</Label>
-            <select value={truckModels.some(x => x.name === tmName) ? tmName : ''} onChange={e => pickTruckModel(e.target.value)}
+            {/* Xe của chuyến = MỤC CHỌN ĐỨNG ĐẦU, tự chọn sẵn khi biển số đã khai lòng thùng
+                (26/08 vòng 3 — trước đây dims tự điền nhưng select vẫn hiện "— Chọn dòng xe —"
+                nên user tưởng chưa nhận). */}
+            <select
+              value={tripSelected ? '__trip__' : (truckModels.some(x => x.name === tmName) ? tmName : '')}
+              onChange={e => (e.target.value === '__trip__' ? applyTripDims() : pickTruckModel(e.target.value))}
               className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
+              {tripHasDims && tripVehicle && (
+                <option value="__trip__">
+                  Xe của chuyến {tripVehicle.license_plate} ({tripVehicle.box_length_mm}×{tripVehicle.box_width_mm}×{tripVehicle.box_height_mm})
+                </option>
+              )}
               <option value="">— Chọn dòng xe —</option>
               {truckModels.map(m => (
                 <option key={m.name} value={m.name}>{m.name} ({m.l}×{m.w}×{m.h})</option>
@@ -879,9 +951,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
           {plan && plan.leftover.length > 0 && mode === 'plan' && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700 space-y-0.5">
-              <p className="font-semibold">Không vừa xe ({plan.leftover.reduce((s, x) => s + x.count, 0)} thùng):</p>
+              <p className="font-semibold">Không vừa xe ({plan.leftover.reduce((s, x) => s + x.count, 0)} {unitWord}):</p>
               {plan.leftover.map((x, i) => (
-                <p key={i}>• {plan.groups[x.group].label}: <b className="tabular-nums">{x.count}</b> thùng</p>
+                <p key={i}>• {plan.groups[x.group].label}: <b className="tabular-nums">{x.count}</b> {unitWord}</p>
               ))}
               <p className="text-red-500">→ cần xe lớn hơn hoặc tách chuyến.</p>
             </div>

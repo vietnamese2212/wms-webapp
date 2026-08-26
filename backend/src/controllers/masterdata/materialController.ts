@@ -110,7 +110,7 @@ export async function listMaterialsSummary(req: Request, res: Response) {
 
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids, pallet_carrier } = req.query
     // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
@@ -142,7 +142,11 @@ export async function listMaterials(req: Request, res: Response) {
       if (manufacturer_id) query = query.eq('manufacturer_id', String(manufacturer_id))
       if (storage_category) query = query.eq('storage_category', String(storage_category))
       if (category) query = query.eq('category', String(category))
-      if (scopeCats) query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
+      // pallet_carrier=1: danh mục MÃ PALLET (vài dòng) cho sơ đồ xếp xe 3D lấy quy cách + màu vẽ.
+      // KHÔNG cắt scope loại hàng cho nhánh này: quy cách pallet là tham số VẼ dùng chung — user
+      // chỉ có scope Thành phẩm vẫn phải thấy pallet (mã pallet thường thuộc loại Thùng/bao bì).
+      if (pallet_carrier === '1') query = query.eq('is_pallet_carrier', true)
+      if (scopeCats && pallet_carrier !== '1') query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
       // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
       if (codeList) query = query.in('material_code', codeList)

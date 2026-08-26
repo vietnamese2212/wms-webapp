@@ -13,7 +13,7 @@ import { toast } from '@/components/ui/use-toast'
 import { suppressTmsOrdersRealtime } from './realtimeEvents'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
-import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle } from '@/types'
+import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -4463,6 +4463,22 @@ export function useTmsVehiclesPaged(
         },
       })
       return data.data as TmsVehiclesPage
+    },
+  })
+}
+
+// Danh mục MÃ PALLET (Material.is_pallet_carrier) — sơ đồ xếp xe 3D lấy quy cách chân/đế + màu vẽ
+// từ đây (vài dòng; BE bỏ cắt scope loại hàng cho nhánh này vì là tham số VẼ dùng chung)
+export function usePalletCarrierMaterials(enabled = true) {
+  return useQuery({
+    queryKey: ['materials-pallet-carriers'],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/masterdata/materials', {
+        params: { pallet_carrier: 1, active: true, limit: 50 },
+      })
+      return (data.data ?? []) as Material[]
     },
   })
 }

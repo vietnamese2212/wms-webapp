@@ -504,6 +504,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(g => ({ ...g, onTop: true, topCarton: true }))
       effGroups = [...pal, ...top]
     }
+    // computeLoadPlan sắp lại nhóm theo (đơn → diện tích → cỡ) — sẽ ĐẢO mất trình tự quét.
+    // Gắn doKey TUẦN TỰ theo thứ tự quét để trình xếp tôn trọng đúng thứ tự đó (doLabel giữ
+    // nguyên cho nhãn; pooling pallet lẻ đã chạy TRƯỚC bằng doKey thật nên không ảnh hưởng).
+    effGroups = effGroups.map((g, i) => ({ ...g, doKey: `${String(i).padStart(3, '0')}|${g.doKey}` }))
     const truck = { length: truckL, width: truckW, height: truckH }
     const topIdx = effGroups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
     const base = computeLoadPlan(truck, topIdx.length

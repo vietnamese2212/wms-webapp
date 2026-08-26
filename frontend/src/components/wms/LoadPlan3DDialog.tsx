@@ -1198,13 +1198,22 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             </div>
           )}
 
-          {plan && plan.leftover.length > 0 && mode === 'plan' && (
+          {/* Không vừa xe — phải hiện Ở CẢ Tiến độ: chuyến thật 15/08 cần 28 pallet mà sàn chỉ 14 chỗ,
+              tab Tiến độ nói "đã xuất 28/28" nhưng hình chỉ vẽ 14 và KHÔNG giải thích gì (số ≠ hình). */}
+          {viewPlan && viewPlan.leftover.length > 0 && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700 space-y-0.5">
-              <p className="font-semibold">Không vừa xe ({plan.leftover.reduce((s, x) => s + x.count, 0)} {unitWord}):</p>
-              {plan.leftover.map((x, i) => (
-                <p key={i}>• {plan.groups[x.group].label}: <b className="tabular-nums">{x.count}</b> {unitWord}</p>
+              <p className="font-semibold">
+                {progressActive ? 'Đã xuất nhưng KHÔNG vẽ vừa xe' : 'Không vừa xe'}
+                {' '}({viewPlan.leftover.reduce((s, x) => s + x.count, 0)} {unitWord}):
+              </p>
+              {viewPlan.leftover.map((x, i) => (
+                <p key={i}>• {viewGroups[x.group]?.label ?? '—'}: <b className="tabular-nums">{x.count}</b> {unitWord}</p>
               ))}
-              <p className="text-red-500">→ cần xe lớn hơn hoặc tách chuyến.</p>
+              <p className="text-red-500">
+                {progressActive
+                  ? '→ hàng đã xuất thật, nhưng lòng xe khai chỉ chứa được ngần này — kiểm lại kích thước lòng thùng.'
+                  : '→ cần xe lớn hơn hoặc tách chuyến.'}
+              </p>
             </div>
           )}
           {assumedCount > 0 && (

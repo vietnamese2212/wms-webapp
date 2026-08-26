@@ -47,6 +47,9 @@ type PlanGroup = LoadGroup & {
   // Số lượng NGHIỆP VỤ + đơn vị tính của MÃ (user chốt 26/08: danh sách hiện "290 thùng" /
   // "200 cái" theo danh mục ĐVT, không hiện "2 pallet"). Không có (pallet gộp/Loscam) → đếm pallet.
   qty?: number; qtyDone?: number; qtyUnit?: string
+  // mã KHÔNG có đơn vị "thùng" (base cái/kg) — pallet hoá phải tính theo tỷ lệ pallet, xem
+  // `PalletizeInput.unitless` trong loadPlan.ts
+  unitless?: boolean
   // Mốc quét ĐẦU TIÊN của mã (scanned_at) — tab Tiến độ xếp lại sơ đồ theo TRÌNH TỰ QUÉT THẬT
   // (user chốt 26/08: "dự toán là dự kiến, tiến độ là lên thực tế — có thể khác nhau")
   firstScanAt?: string | null
@@ -351,6 +354,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           // (POSM quạt/bóng… đơn vị cái/EA) → nhãn của base_unit — KHÔNG gọi bừa "thùng"
           qty: ordPhys, qtyDone: done,
           qtyUnit: hasEntry(it.material) ? unitLabel(it.material?.entry_unit) : unitLabel(it.material?.base_unit),
+          unitless: !hasEntry(it.material),
           firstScanAt,
         })
       }
@@ -392,12 +396,26 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const catList = useMemo(
     () => [...new Set(cartonGroups.filter(g => !g.isPallet && g.category).map(g => g.category as string))].sort(),
     [cartonGroups])
+  // "Lên nóc" chỉ có nghĩa khi CÓ hàng khác làm nền. Chuyến toàn hàng khai "Lên nóc" mà vẫn ép
+  // lên nóc thì không có mặt nào để đặt → sơ đồ TRỐNG TRƠN, ô "Xếp được" hiện 0/0 mà không một
+  // dòng cảnh báo (bắt được trên đơn THẬT 15/08: 4 chuyến toàn FG02). Không có nền thì hàng đó
+  // phải tự đứng pallet của nó — đúng thực tế xe chở toàn POSM.
+  const hasBaseIn = (list: PlanGroup[]) =>
+    list.some(g => !g.isPallet && g.count > 0 && placeOf(g.category) !== 'ON_TOP')
+  const onTopActive = (g: PlanGroup, list: PlanGroup[]) =>
+    !g.isPallet && placeOf(g.category) === 'ON_TOP' && hasBaseIn(list)
+  const topNoBase = useMemo(
+    () => isPalletTruck && !hasBaseIn(cartonGroups)
+      && cartonGroups.some(g => !g.isPallet && g.count > 0 && placeOf(g.category) === 'ON_TOP'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isPalletTruck, cartonGroups, placements, whId])
 
   const palletized = useMemo(() => {
     if (!isPalletTruck || !palSpec) return null
     const items: PalletizeInput[] = cartonGroups
-      // Loại hàng khai "Lên nóc" KHÔNG palletize — đi thẳng làm thùng rời nằm nóc (bên dưới)
-      .filter(g => g.isPallet || placeOf(g.category) !== 'ON_TOP')
+      // Loại hàng khai "Lên nóc" KHÔNG palletize — đi thẳng làm thùng rời nằm nóc (bên dưới).
+      // Trừ khi chuyến KHÔNG có hàng nền: lúc đó chính nó phải lên pallet (xem `hasBaseIn`).
+      .filter(g => !onTopActive(g, cartonGroups))
       .map(g => ({
         key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
         cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
@@ -406,7 +424,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         // (user chốt vòng 7: quy cách 140 vs 216 thùng/pallet phải ra chiều cao KHÁC NHAU,
         // đồng cao 1650 hết là sai; nhãn "cỡ giả định" vẫn giữ để biết số là ước lượng).
         carton: { l: g.l, w: g.w, h: g.h },
-        assumed: g.assumed,
+        assumed: g.assumed, unitless: g.unitless,
         // "Pallet riêng": phần dư của loại này gom bể riêng, không trộn pallet lẻ chung
         remPool: !g.isPallet && g.category && placeOf(g.category) === 'OWN_PALLET'
           ? { key: g.category, label: g.category } : undefined,
@@ -433,7 +451,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const groups: PlanGroup[] = useMemo(() => {
     if (isPalletTruck) {
       const top = cartonGroups
-        .filter(g => !g.isPallet && placeOf(g.category) === 'ON_TOP')
+        .filter(g => onTopActive(g, cartonGroups))
         .map(g => ({ ...g, onTop: true, topCarton: true }))
       return [...(palletized?.groups ?? []), ...top]
     }
@@ -484,11 +502,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     let effGroups: PlanGroup[] = scanned
     if (isPalletTruck && palSpec) {
       const items: PalletizeInput[] = scanned
-        .filter(g => placeOf(g.category) !== 'ON_TOP')
+        .filter(g => !onTopActive(g, scanned))
         .map(g => ({
           key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
           cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: false,
           weightKg: g.weightKg, carton: { l: g.l, w: g.w, h: g.h }, assumed: g.assumed,
+          unitless: g.unitless,
           remPool: g.category && placeOf(g.category) === 'OWN_PALLET'
             ? { key: g.category, label: g.category } : undefined,
         }))
@@ -500,7 +519,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit }
       })
       const top = scanned
-        .filter(g => placeOf(g.category) === 'ON_TOP')
+        .filter(g => onTopActive(g, scanned))
         .map(g => ({ ...g, onTop: true, topCarton: true }))
       effGroups = [...pal, ...top]
     }
@@ -1069,6 +1088,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
               Xe thường nên <b>dòng pallet không vẽ</b> lên sơ đồ:{' '}
               {droppedPallets.map(g => `${g.label} (${g.count})`).join(', ')}. Ở chế độ Xe pallet, chúng là pallet LÓT dưới các khối hàng.
+            </p>
+          )}
+
+          {topNoBase && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+              Chuyến này <b>chỉ có loại hàng đang để "Lên nóc"</b> — không có khối nào để đặt lên,
+              nên sơ đồ xếp chúng thành pallet riêng.
             </p>
           )}
 

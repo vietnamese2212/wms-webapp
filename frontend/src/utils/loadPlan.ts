@@ -953,6 +953,12 @@ export interface PalletizeInput {
   // (có nhãn); "Cao pallet lẻ gộp" CHỈ khống chế pallet LẺ, không đụng pallet chẵn.
   carton: { l: number; w: number; h: number } | null
   assumed?: boolean          // thùng đang là cỡ giả định — truyền xuống nhãn "cỡ giả định"
+  // Mã KHÔNG có đơn vị "thùng" (đơn vị gốc cái/kg — POSM quạt, bóng, balo…): quy cách chỉ nói
+  // "bao nhiêu CÁI trên 1 pallet", không có thùng để xếp lớp. Coi mỗi CÁI là một thùng cỡ giả
+  // định thì phần dư phồng lên khủng khiếp — đo đơn THẬT 15/08 (chuyến 108): 200 cái quạt
+  // (4.000 cái/pallet ≈ 0,05 pallet) bị tính thành 20 LỚP, pallet gộp từ ~1,5 vọt lên 5 và cảnh
+  // báo "lệch pallet" kêu oan. Mã như vậy: phần dư tính theo TỶ LỆ pallet.
+  unitless?: boolean
   // Bể gom phần dư RIÊNG (26/08 — "Pallet riêng" per Loại hàng): phần dư của mã này chỉ trộn
   // với mã CÙNG BỂ trong cùng đơn (vd POSM không nằm chung pallet lẻ với thành phẩm).
   // Không khai = bể chung của đơn.
@@ -995,7 +1001,8 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
     const doLabel = lines[0].doLabel
     // Phần DƯ của từng mã trong đơn — gom lại rồi xếp theo LỚP lên pallet gộp
     type RemItem = { label: string; cartons: number; perLayer: number; cartonH: number
-      weightKg: number | null; assumed: boolean; pool: string; poolLabel: string }
+      weightKg: number | null; assumed: boolean; pool: string; poolLabel: string
+      frac: number | null }   // mã tính theo cái/kg → phần dư = tỷ lệ của 1 pallet
     const rems: RemItem[] = []
 
     for (const it of lines) {
@@ -1027,12 +1034,14 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       // CHIỀU CAO pallet đầy của MÃ NÀY — luôn tính từ thùng × quy cách (user chốt: "không phải
       // các pallet đều cao như nhau"; quy cách 140 vs 216 phải khác cao dù thùng là cỡ giả định).
       // Thùng to hơn chân (0 thùng/lớp) coi như thiếu dữ liệu tin được → mới rơi về spec.h.
-      const perLayer = it.carton ? cartonsPerLayer(spec, it.carton) : 0
+      const perLayer = it.carton && !it.unitless ? cartonsPerLayer(spec, it.carton) : 0
       const layers = perLayer > 0 ? Math.ceil(cpp / perLayer) : 0
       const fullH = layers > 0 ? spec.baseH + layers * it.carton!.h : spec.h
       const hNote = layers > 0
         ? `${perLayer} thùng/lớp × ${layers} lớp → cao ${(fullH / 1000).toFixed(2)}m${it.assumed ? ' (cỡ thùng giả định)' : ''}`
-        : 'thiếu kích thước thùng tin được — tạm cao theo pallet lẻ'
+        : it.unitless
+          ? 'mã tính theo cái/kg — cao tạm theo pallet lẻ, phần dư tính theo tỷ lệ pallet'
+          : 'thiếu kích thước thùng tin được — tạm cao theo pallet lẻ'
 
       if (full > 0) {
         groups.push({
@@ -1051,6 +1060,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         cartonH: it.carton && it.carton.h > 0 ? it.carton.h : 0,
         weightKg: it.weightKg, assumed: it.assumed === true || layers === 0,
         pool: it.remPool?.key ?? '', poolLabel: it.remPool?.label ?? '',
+        frac: it.unitless ? rem / cpp : null,
       })
       if (full > 0 || rem > 0)
         notes.push(`${it.label}: ${it.cartons} thùng ÷ ${cpp} = ${full} pallet đầy${rem > 0 ? ` + dư ${rem} thùng` : ''} (${hNote})`)
@@ -1072,7 +1082,12 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         type Layer = { h: number; kg: number; assumed: boolean }
         const layerList: Layer[] = []
         for (const r of poolRems) {
-          if (r.perLayer > 0 && r.cartonH > 0) {
+          if (r.frac != null) {
+            // mã tính theo cái/kg: chiếm đúng TỶ LỆ của một pallet (0,05 pallet = 5% chiều cao),
+            // không dựng lớp thùng ảo
+            layerList.push({ h: Math.max(1, Math.min(budget, Math.round(budget * r.frac))),
+              kg: r.cartons * (r.weightKg ?? 0), assumed: true })
+          } else if (r.perLayer > 0 && r.cartonH > 0) {
             let left = r.cartons
             while (left > 0) {
               const take = Math.min(left, r.perLayer)
@@ -1129,7 +1144,19 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
 // pallet đã xếp là một mặt sàn mới, MẶT THẤP LẤP TRƯỚC (giữ tải phẳng), mỗi mặt tile lưới
 // thùng (thử 2 hướng), chồng lớp tới trần lòng xe; lớp cuối thiếu thùng vẫn nâng mặt trọn lớp.
 export function spreadOnTopOfPallets(plan: LoadPlan, topIdx: number[], groupsIn: LoadGroup[]): LoadPlan {
-  if (!topIdx.length || !plan.placed.length) return plan
+  if (!topIdx.length) return plan
+  // KHÔNG có mặt nào để đặt lên (xe chưa xếp được khối nào) → phải NÓI RA bằng "không vừa xe".
+  // Trước 26/08 hàm này lặng lẽ `return plan`: cả xe hàng biến mất, ô "Xếp được" hiện 0/0 mà
+  // không một dòng cảnh báo (đo trên đơn THẬT 15/08: 4 chuyến toàn FG02 khai "Lên nóc").
+  if (!plan.placed.length) {
+    const leftover = [...plan.leftover]
+    let addTotal = 0
+    for (const gi of topIdx) {
+      const g = groupsIn[gi]
+      if (g.count > 0) { leftover.push({ group: gi, count: g.count }); addTotal += g.count }
+    }
+    return { ...plan, leftover, totalCount: plan.totalCount + addTotal }
+  }
   const H = plan.truck.height
   // owner: mỗi mặt pallet thuộc ĐỘC QUYỀN 1 mã nóc (user chốt vòng 11: "lên hết loại hàng này
   // mới tới loại hàng khác" — KHÔNG được 1 lớp hàng A dưới, 1 lớp hàng B đè lên cùng chỗ).

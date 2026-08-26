@@ -949,7 +949,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 <div className="space-y-1 pt-1">
                   <div className="flex items-center gap-1">
                     <Label className="text-xs">Cách lên xe theo Loại hàng</Label>
-                    <InfoTip tip="Gộp chung pallet = phần lẻ trộn pallet lẻ chung của đơn · Pallet lẻ riêng = phần lẻ nằm pallet lẻ riêng của loại đó · Lên nóc hàng khác = không chiếm pallet, thùng xếp lên nóc các khối. Lựa chọn được GHI NHỚ theo tài khoản của bạn cho TỪNG KHO — mọi chuyến sau của kho này tự áp." />
+                    <InfoTip tip={<span>
+                      Hàng của Loại này nằm đâu trên xe:<br />
+                      • <b>Gộp chung pallet</b> — lên pallet như hàng thường: đủ quy cách thành pallet nguyên, phần dư TRỘN CHUNG pallet lẻ với các loại khác cùng đơn.<br />
+                      • <b>Pallet lẻ riêng</b> — vẫn lên pallet, nhưng phần dư nằm pallet lẻ RIÊNG của loại đó (kho nhận dễ tách, không moi giữa pallet hàng khác).<br />
+                      • <b>Lên nóc hàng khác</b> — không chiếm pallet nào: thùng chất lên nóc các khối pallet, tận dụng khoảng trống tới trần xe; xếp HẾT mã này mới tới mã khác, mỗi chỗ một mã.<br />
+                      Lựa chọn được GHI NHỚ theo tài khoản của bạn cho TỪNG KHO — mọi chuyến sau của kho này tự áp.
+                    </span>} />
                   </div>
                   {catList.map(cat => (
                     <div key={cat} className="flex items-center gap-1.5">

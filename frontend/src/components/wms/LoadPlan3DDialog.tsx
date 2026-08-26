@@ -47,6 +47,9 @@ type PlanGroup = LoadGroup & {
   // Số lượng NGHIỆP VỤ + đơn vị tính của MÃ (user chốt 26/08: danh sách hiện "290 thùng" /
   // "200 cái" theo danh mục ĐVT, không hiện "2 pallet"). Không có (pallet gộp/Loscam) → đếm pallet.
   qty?: number; qtyDone?: number; qtyUnit?: string
+  // Mốc quét ĐẦU TIÊN của mã (scanned_at) — tab Tiến độ xếp lại sơ đồ theo TRÌNH TỰ QUÉT THẬT
+  // (user chốt 26/08: "dự toán là dự kiến, tiến độ là lên thực tế — có thể khác nhau")
+  firstScanAt?: string | null
 }
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
@@ -317,8 +320,16 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           .filter(s => s.is_loose_picking && !s.loose_confirmed)
           .reduce((sum, s) => sum + s.cartons_scanned, 0)
         const done = Math.max(0, Math.min(ordPhys, Math.floor(qtyEntryDecimal(it.cartons_scanned - looseUnconfirmed, it.material))))
+        // Mốc quét đầu của mã — chỉ tính lượt ĐÃ ăn vào tiến độ (bỏ nhặt lẻ chưa xác nhận)
+        const firstScanAt = (it.scan_entries ?? [])
+          .filter(s => !(s.is_loose_picking && !s.loose_confirmed))
+          .reduce<string | null>((min, s) => (min === null || s.scanned_at < min ? s.scanned_at : min), null)
         const cur = map.get(key)
-        if (cur) { cur.count += ordPhys; cur.done += done; continue }
+        if (cur) {
+          cur.count += ordPhys; cur.done += done
+          if (firstScanAt && (!cur.firstScanAt || firstScanAt < cur.firstScanAt)) cur.firstScanAt = firstScanAt
+          continue
+        }
         map.set(key, {
           key,
           label: it.material?.short_name ?? it.material_code_raw ?? code,
@@ -340,6 +351,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           // (POSM quạt/bóng… đơn vị cái/EA) → nhãn của base_unit — KHÔNG gọi bừa "thùng"
           qty: ordPhys, qtyDone: done,
           qtyUnit: hasEntry(it.material) ? unitLabel(it.material?.entry_unit) : unitLabel(it.material?.base_unit),
+          firstScanAt,
         })
       }
     }
@@ -460,6 +472,52 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     return spreadOnTopOfPallets(base, topIdx, groups)
   }, [truckOk, truckL, truckW, truckH, groups, palFitErr])
 
+  // ── TAB TIẾN ĐỘ = xếp lại theo TRÌNH TỰ QUÉT THẬT (user chốt 26/08): mã quét trước nằm
+  // sâu phía cabin; số lượng = phần ĐÃ quét. Khác hẳn Dự toán — không tô lại vị trí dự kiến. ──
+  const progressPlan = useMemo(() => {
+    if (mode !== 'progress' || !truckOk || palFitErr) return null
+    const scanned: PlanGroup[] = cartonGroups
+      .filter(g => !g.isPallet && g.done > 0)
+      .map(g => ({ ...g, count: g.done }))
+      .sort((a, b) => ((a.firstScanAt ?? '9999') < (b.firstScanAt ?? '9999') ? -1 : 1))
+    if (!scanned.length) return null
+    let effGroups: PlanGroup[] = scanned
+    if (isPalletTruck && palSpec) {
+      const items: PalletizeInput[] = scanned
+        .filter(g => placeOf(g.category) !== 'ON_TOP')
+        .map(g => ({
+          key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
+          cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: false,
+          weightKg: g.weightKg, carton: { l: g.l, w: g.w, h: g.h }, assumed: g.assumed,
+          remPool: g.category && placeOf(g.category) === 'OWN_PALLET'
+            ? { key: g.category, label: g.category } : undefined,
+        }))
+      const res = palletizeGroups(items, palSpec)
+      const srcByKey = new Map(scanned.map(g => [g.key, g]))
+      const pal: PlanGroup[] = res.groups.map(g => {
+        const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
+        return { ...g, done: g.count, cpp: null, isPallet: false, category: null,
+          qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit }
+      })
+      const top = scanned
+        .filter(g => placeOf(g.category) === 'ON_TOP')
+        .map(g => ({ ...g, onTop: true, topCarton: true }))
+      effGroups = [...pal, ...top]
+    }
+    const truck = { length: truckL, width: truckW, height: truckH }
+    const topIdx = effGroups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
+    const base = computeLoadPlan(truck, topIdx.length
+      ? effGroups.map(g => (g.topCarton ? { ...g, count: 0 } : g)) : effGroups)
+    const p = topIdx.length ? spreadOnTopOfPallets(base, topIdx, effGroups) : base
+    return { plan: p, groups: effGroups }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, truckOk, truckL, truckW, truckH, palFitErr, cartonGroups, isPalletTruck, palSpec, placements, whId])
+
+  // Sơ đồ đang VẼ: Tiến độ có hàng đã quét → plan xếp-theo-quét; còn lại → plan Dự toán
+  const progressActive = mode === 'progress' && progressPlan != null
+  const viewPlan = progressActive ? progressPlan.plan : plan
+  const viewGroups: PlanGroup[] = progressActive ? progressPlan.groups : groups
+
   useEffect(() => { setMaxStep(plan?.stepCount ?? 0) }, [plan?.stepCount])
 
   const assumedCount = groups.filter(g => g.assumed).length
@@ -551,8 +609,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     if (!ready || !c) return
     const { THREE, boxGroup } = c
     disposeChildren(THREE, boxGroup)
-    if (!plan) return
-    const { length: L, width: W, height: H } = plan.truck
+    const dPlan = viewPlan          // Tiến độ có hàng quét → plan xếp-theo-trình-tự-quét
+    const dGroups = viewGroups
+    if (!dPlan) return
+    const { length: L, width: W, height: H } = dPlan.truck
     const toX = (x: number, l: number) => x + l / 2 - L / 2
     const toY = (z: number, h: number) => z + h / 2
     const toZ = (y: number, w: number) => y + w / 2 - W / 2
@@ -608,12 +668,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     //  - Dự toán: theo thanh trượt (step ≤ maxStep); phần đã xuất thật → MỜ; chân đang xếp (step=maxStep) → SÁNG.
     //  - Tiến độ: CHỈ thùng đã xuất thật (ordinal trong nhóm < done), theo đúng thứ tự xếp.
     type Kind = 'normal' | 'done' | 'current'
-    const buckets = new Map<string, { boxes: { b: (typeof plan.placed)[number] }[]; gi: number; kind: Kind }>()
-    plan.placed.forEach((b, i) => {
-      const g = groups[b.group]
+    const buckets = new Map<string, { boxes: { b: (typeof dPlan.placed)[number] }[]; gi: number; kind: Kind }>()
+    dPlan.placed.forEach((b, i) => {
+      const g = dGroups[b.group]
       let show = false, kind: Kind = 'normal'
       if (mode === 'progress') {
-        show = ordinals[i] < g.done
+        // Plan tiến độ CHỈ chứa hàng đã quét → hiện hết; fallback (chưa quét gì) giữ lọc cũ
+        show = progressActive ? true : ordinals[i] < g.done
       } else {
         show = b.step <= maxStep
         if (ordinals[i] < g.done) kind = 'done'
@@ -630,17 +691,17 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const visibleByGroup = new Map<number, { cx: number; cy: number; top: number; n: number }>()
     for (const { boxes, gi, kind } of buckets.values()) {
       const color = new THREE.Color(GROUP_COLORS[gi % GROUP_COLORS.length])
-      const dimmed = spotlight && !selectedKeys.has(groups[gi].key)
+      const dimmed = spotlight && !selectedKeys.has(dGroups[gi].key)
       const mat = new THREE.MeshLambertMaterial({
         color,
         transparent: dimmed || kind === 'done',
         opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
-        emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(groups[gi].key))) ? color : new THREE.Color(0x000000),
+        emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(dGroups[gi].key))) ? color : new THREE.Color(0x000000),
         emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
       })
       // ĐẾ PALLET (26/08): khối pallet vẽ 2 phần — đế MÀU RIÊNG đồng nhất (phân biệt rõ, user
       // chốt) + hàng phía trên mang màu nhóm. Loscam rỗng: cả khối là đế. Khối thường: 1 phần.
-      const base = groups[gi].base
+      const base = dGroups[gi].base
       const baseH = base ? Math.min(base.h, ...boxes.map(({ b }) => b.h)) : 0
       const goods = boxes.filter(({ b }) => b.h - baseH > 1)
       const mkInst = (mesh: import('three').InstancedMesh, list: typeof boxes,
@@ -703,15 +764,15 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
     // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0), dàn không đè nhau.
     // Chỉ vẽ nhãn cho: mã đang CHỌN (spotlight) + khối của BƯỚC hiện tại; bật "tất cả nhãn" mới vẽ hết.
-    const curStepGi = mode === 'plan' && maxStep > 0 ? plan.placed.find(b => b.step === maxStep)?.group ?? -1 : -1
+    const curStepGi = mode === 'plan' && maxStep > 0 ? dPlan.placed.find(b => b.step === maxStep)?.group ?? -1 : -1
     const labelGis = [...visibleByGroup.keys()].filter(gi =>
-      showLabels || selectedKeys.has(groups[gi].key) || gi === curStepGi)
+      showLabels || selectedKeys.has(dGroups[gi].key) || gi === curStepGi)
     if (labelGis.length) {
       const labelH = 240
       const entries = labelGis
         .map(gi => [gi, visibleByGroup.get(gi)!] as const)
         .map(([gi, agg]) => {
-          const g = groups[gi]
+          const g = dGroups[gi]
           const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
           const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
           const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
@@ -800,7 +861,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       c.controls.update()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, plan, maxStep, mode, showLabels, groups, ordinals, selKey])
+  }, [ready, viewPlan, viewGroups, progressActive, maxStep, mode, showLabels, ordinals, selKey])
 
   if (!open) return null
 

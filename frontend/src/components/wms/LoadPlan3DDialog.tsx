@@ -127,10 +127,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     () => (plateHit?.items ?? []).find(v => v.license_plate === plate) ?? null,
     [plateHit, plate])
   const { data: vehicleTypes = [] } = useVehicleTypes(true)
-  // Loại xe: mặc định theo xe của chuyến, người dùng đổi được (xe vãng lai / cont chưa có trong sổ)
-  const [vtId, setVtId] = useState('')
-  const vt = vehicleTypes.find(t => t.id === vtId) ?? null
-  const isPalletTruck = vt?.is_pallet_truck === true
+  // Ô chọn ở đây CHỈ CÓ 2 MỤC: Xe thường / Xe pallet (user chốt 26/08 vòng 2 — liệt kê cả 7 loại
+  // xe là thừa: chọn giữa XE SCA với CONTAINER không đổi gì cách vẽ, chỉ CỜ pallet mới đổi).
+  // Danh mục Loại xe vẫn là NGUỒN của cờ — chuyến có biển số thì tự suy từ loại của xe đó;
+  // `override` null = theo chuyến, true/false = người dùng đã tự chọn (xe vãng lai, ca đặc biệt).
+  const [palletOverride, setPalletOverride] = useState<boolean | null>(null)
+  const tripVt = vehicleTypes.find(t => t.id === tripVehicle?.vehicle_type_id) ?? null
+  const isPalletTruck = palletOverride ?? (tripVt?.is_pallet_truck === true)
 
   // Kích thước pallet ĐÃ XẾP HÀNG. Lấy từ mã PALLET của đơn nếu đã khai (user chốt "kích thước
   // pallet cần phải khai nếu nó là pallet"); chưa khai thì để trống và nói rõ, KHÔNG bịa số.
@@ -179,11 +182,11 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     } catch { setTmError('Xóa dòng xe thất bại — thử lại') }
   }
 
-  // Tự nhận xe của chuyến: biển số đã có trong danh mục ⇒ điền lòng thùng + loại xe (26/08).
-  // Chỉ điền khi ô đang TRỐNG — không đè lên số người dùng vừa gõ tay.
+  // Tự nhận xe của chuyến: biển số đã có trong danh mục ⇒ điền lòng thùng (26/08). Kiểu xếp
+  // (pallet/thường) không cần effect — nó SUY trực tiếp từ loại của xe, trừ khi người dùng override.
+  // Chỉ điền kích thước khi ô đang TRỐNG — không đè lên số người dùng vừa gõ tay.
   useEffect(() => {
     if (!open || !tripVehicle) return
-    setVtId(cur => cur || tripVehicle.vehicle_type_id || '')
     if (tripVehicle.box_length_mm && tripVehicle.box_width_mm && tripVehicle.box_height_mm) {
       setBoxL(cur => cur || String(tripVehicle.box_length_mm))
       setBoxW(cur => cur || String(tripVehicle.box_width_mm))
@@ -703,24 +706,32 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
         {/* Panel điều khiển */}
         <div className="shrink-0 lg:w-80 max-h-[45%] lg:max-h-none border-t lg:border-t-0 lg:border-l bg-white overflow-y-auto p-3 space-y-3">
-          {/* ── LOẠI XE: quyết định CÁCH VẼ (xe pallet vs xe thường) — 26/08 ── */}
+          {/* ── KIỂU XẾP XE — CHỈ 2 MỤC (user chốt 26/08 vòng 2): liệt kê cả 7 loại xe là thừa,
+              chọn giữa XE SCA với CONTAINER không đổi gì cách vẽ, chỉ CỜ pallet mới đổi. Chuyến
+              có biển số → tự suy từ loại của xe; 2 nút để đổi tay (xe vãng lai / ca đặc biệt). ── */}
           <div className="space-y-1">
-            <Label className="text-xs">Loại xe</Label>
-            <select value={vtId} onChange={e => setVtId(e.target.value)}
-              className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
-              <option value="">— Xe thường (xếp từng thùng) —</option>
-              {vehicleTypes.map(t => (
-                <option key={t.id} value={t.id}>{t.name}{t.is_pallet_truck ? ' · xe pallet' : ''}</option>
-              ))}
-            </select>
-            {tripVehicle && (
+            <Label className="text-xs">Kiểu xếp xe</Label>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button type="button" onClick={() => setPalletOverride(false)}
+                className={`h-9 rounded-md border text-xs font-medium transition-colors ${!isPalletTruck
+                  ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}>
+                Xe thường
+                <span className="block text-[9px] font-normal opacity-70">xếp từng thùng</span>
+              </button>
+              <button type="button" onClick={() => setPalletOverride(true)}
+                className={`h-9 rounded-md border text-xs font-medium transition-colors ${isPalletTruck
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}>
+                Xe pallet
+                <span className="block text-[9px] font-normal opacity-70">gom hàng lên pallet</span>
+              </button>
+            </div>
+            {tripVehicle && tripVt && (
               <p className="text-[10px] text-slate-400">
-                Tự nhận từ biển số <b>{tripVehicle.license_plate}</b> của chuyến.
-              </p>
-            )}
-            {isPalletTruck && (
-              <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-1">
-                Xe pallet — hàng được <b>gom lên pallet</b> rồi mới xếp lên xe.
+                {palletOverride === null || palletOverride === (tripVt.is_pallet_truck === true)
+                  ? <>Tự nhận từ biển số <b>{tripVehicle.license_plate}</b> — loại {tripVt.name}.</>
+                  : <>Đang chọn KHÁC với loại {tripVt.name} của xe <b>{tripVehicle.license_plate}</b>{' '}
+                      <button type="button" className="underline hover:text-slate-600"
+                        onClick={() => setPalletOverride(null)}>— về theo xe</button></>}
               </p>
             )}
           </div>

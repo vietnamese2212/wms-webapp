@@ -1141,9 +1141,12 @@ export async function checkScanQR(req: Request, res: Response) {
       // (thiếu 2 cột này thì luật trộn date ở PREVIEW im lặng trong khi lúc GHI lại chặn)
       supabase.from('Material').select('id, material_code, category, cartons_per_pallet, warehouse_pallet_overrides, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', parsed.material_code).maybeSingle(),
       supabase.from('InventoryEntry').select('id, status, cartons_remaining, import_order_id, location:Location!location_id(warehouse_id)').eq('pallet_code', parsed.pallet_code).in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PICKING']),
-      // slot_no_in + is_pick_face: 2 cờ quy tắc cất hàng — thiếu thì preview KHÔNG thấy ô bị cấm
-      // trong khi lúc quét thật lại chặn (người quét đi tới nơi mới biết)
-      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories, slot_no_in, is_pick_face').eq('id', location_id).maybeSingle(),
+      // slot_no_in + is_pick_face + max_materials: 3 thuộc tính quy tắc cất hàng CỦA CHÍNH Ô —
+      // thiếu thì preview KHÔNG thấy ô bị cấm trong khi lúc quét thật lại chặn (người quét đi tới
+      // nơi mới biết). Dòng này được truyền THẲNG vào `guardPutaway({ loc })` để đỡ 1 round-trip,
+      // nên cột nào thiếu ở đây là luật đó IM LẶNG KHÔNG CHẠY ở cửa quét — không có lỗi, không có
+      // cảnh báo. Thêm thuộc tính mới vào `PutawayLoc` thì phải thêm vào câu select này.
+      supabase.from('Location').select('id, location_code, max_pallets, is_active, categories, slot_no_in, is_pick_face, max_materials').eq('id', location_id).maybeSingle(),
       isTransfer
         ? supabase.from('OutboundScanEntry').select('cartons_scanned').eq('pallet_code', parsed.pallet_code).order('created_at', { ascending: false }).limit(1).maybeSingle()
         : Promise.resolve({ data: null }),

@@ -103,9 +103,23 @@ export async function guardPutaway(opts: {
   material?: MatRow | null
 }): Promise<PutawayGuardResult> {
   const NO_TRACE = { putaway_checked: false, putaway_violation: null, putaway_override_reason: null }
-  const loc = opts.loc ?? (await supabase.from('Location')
+  // Caller được phép truyền dòng Location đã nạp sẵn để đỡ 1 round-trip trên đường quét nóng.
+  // ⚠️ Nhưng nếu câu select của caller THIẾU cột nào thì luật đó IM LẶNG KHÔNG CHẠY — không lỗi,
+  // không cảnh báo, chỉ là hàng cất sai. Lớp lỗi này đã tái diễn 2 lần trong ngày 26/08 (picker
+  // `listLocations` dựng PutawayLoc bằng tay, rồi `scanQR` select thiếu `max_materials`), và cả
+  // hai lần đều lọt qua tsc vì `as PutawayLocRow` vô hiệu hoá phép kiểm kiểu.
+  // ⇒ Phân biệt được nhờ `undefined` (caller QUÊN cột) vs `null` (cột có, giá trị rỗng): thấy
+  // undefined thì tự nạp lại dòng đầy đủ + kêu to để digest hằng ngày dựng cờ, thay vì âm thầm
+  // chạy với luật thiếu.
+  const fetchLoc = async () => (await supabase.from('Location')
     .select('id, location_code, max_pallets, slot_no_in, is_pick_face, max_materials')
     .eq('id', opts.locationId).maybeSingle()).data
+  let loc = opts.loc ?? await fetchLoc()
+  if (opts.loc && opts.loc.max_materials === undefined) {
+    console.error('[putaway] caller truyền dòng Location THIẾU cột max_materials — nạp lại. ' +
+      'Sửa câu select của caller, đừng dựa vào đường vá này.', new Error('putaway_loc_incomplete').stack)
+    loc = await fetchLoc()
+  }
   if (!loc) return { blocked: null, rules: PUTAWAY_RULES_DEFAULT, max_materials: null, trace: NO_TRACE, warning: null }   // vị trí sai đã có guard riêng ở controller
 
   const ctx = await loadPutawayContext({

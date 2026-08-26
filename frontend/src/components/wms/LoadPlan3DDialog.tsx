@@ -1122,18 +1122,22 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             {doLabels.map(dl => (
               <div key={dl} className="space-y-1">
                 {hasManyDos && <p className="text-[10px] font-semibold text-slate-600 border-b border-slate-100 pb-0.5">{dl}</p>}
+                {/* Dòng GỌN (user chốt 26/08): tên hiện ĐỦ (wrap, không cắt) · số lượng KÈM ĐƠN VỊ ·
+                    bỏ cột kích thước · thiếu kích thước/đang dùng cỡ mặc định = dấu * ĐỎ (thay chip) */}
                 {groups.map((g, i) => g.doLabel === dl && (
                   <div key={g.key} onClick={() => toggleSelect(g.key)}
-                    className={`flex items-center gap-2 text-[11px] cursor-pointer rounded px-1 -mx-1 ${selectedKeys.has(g.key) ? 'bg-sky-100 ring-1 ring-sky-300' : 'hover:bg-slate-50'}`}>
-                    <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
-                    <span className="truncate flex-1" title={`${g.key} — ${g.label}`}>{g.label}</span>
-                    {g.onTop && <span className="text-[9px] px-1 rounded bg-sky-100 text-sky-700 shrink-0" title="Hàng nhẹ — xếp trên nóc mã hàng khác">nhẹ↑</span>}
-                    {g.maxLayers != null && <span className="text-[9px] px-1 rounded bg-slate-100 text-slate-600 shrink-0" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
-                    {g.assumed && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 shrink-0">cỡ giả định</span>}
+                    className={`flex items-start gap-2 text-[11px] cursor-pointer rounded px-1 -mx-1 py-0.5 ${selectedKeys.has(g.key) ? 'bg-sky-100 ring-1 ring-sky-300' : 'hover:bg-slate-50'}`}>
+                    <span className="h-3 w-3 mt-0.5 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
+                    <span className="flex-1 min-w-0 break-words leading-tight">
+                      {g.label}
+                      {g.assumed && <span className="text-red-500 font-bold ml-0.5" title="Chưa khai kích thước thùng — đang tính bằng cỡ mặc định. Khai ở Mã hàng → Thùng D×R×C.">*</span>}
+                      {g.onTop && <span className="text-[9px] px-1 ml-1 rounded bg-sky-100 text-sky-700 whitespace-nowrap" title="Xếp trên nóc hàng khác">nhẹ↑</span>}
+                      {!isPalletTruck && g.maxLayers != null && <span className="text-[9px] px-1 ml-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
+                    </span>
                     <span className={`tabular-nums font-semibold shrink-0 ${g.done >= g.count ? 'text-green-600' : g.done > 0 ? 'text-amber-600' : ''}`}>
                       {g.done > 0 ? `${g.done}/${g.count}` : g.count}
+                      <span className="font-normal text-slate-400"> {isPalletTruck && !g.topCarton ? 'pallet' : 'thùng'}</span>
                     </span>
-                    <span className="text-slate-400 shrink-0">{g.l}×{g.w}×{g.h}</span>
                   </div>
                 ))}
               </div>

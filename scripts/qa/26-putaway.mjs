@@ -318,11 +318,14 @@ try {
     await setRules({ putaway_enforced: ['MAX_MATERIALS'] })
     await waitConfigSettled()
 
-    // Cất TUẦN TỰ 2 mã khác nhau vào từng ô (đua đã đo ở [18]; ở đây đo LUẬT, không đo khoá)
+    // Cất TUẦN TỰ 2 mã khác nhau vào từng ô (đua đã đo ở [18]; ở đây đo LUẬT, không đo khoá).
+    // ⚠️ Luật cất được gác ở NHIỀU cửa, và cửa SỚM NHẤT là lúc TẠO PHIẾU (`createOrder` cũng gọi
+    // guardPutaway) chứ không phải lúc quét. Nên khi bị chặn thì trả về NGUYÊN response của khâu
+    // tạo phiếu — nuốt nó rồi trả `{s:0}` sẽ làm phép kiểm đỏ oan trong khi app đang chặn ĐÚNG.
     const put = async (locId, m, seq) => {
       const rr = await mkOrder(locId, { material_id: m.id })
       const oid = rr.j?.data?.order?.id
-      if (!oid) return { s: 0 }
+      if (!oid) return rr
       return api(`/wms/inbound-orders/${oid}/scan`, 'POST',
         { qr_code: `${ddmmyy}_${m.material_code}_${TAG.replace(/-/g, '')}_M8_${seq}_${wh.nmsx_code ?? 'B'}`,
           location_id: locId, qty_semantics: 'base' })

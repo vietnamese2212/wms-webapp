@@ -41,6 +41,9 @@ export interface LoadGroup {
   assumed: boolean
   maxLayers: number | null
   onTop: boolean
+  // ĐẾ PALLET (26/08): khối này là pallet → phần đáy cao `h` vẽ MÀU RIÊNG đồng nhất để phân biệt
+  // rõ với hàng phía trên (user chốt; màu khai per MÃ pallet — tương lai có pallet dạng khác).
+  base?: { h: number; color: string }
 }
 
 export interface PlacedBox {
@@ -910,21 +913,30 @@ export const GROUP_COLORS = [
 // không phải số thùng. Nên với loại xe này, sơ đồ phải xếp PALLET chứ không xếp thùng —
 // cùng một đơn nhưng hai loại xe cho hai bức tranh khác hẳn nhau.
 //
-// LUẬT GOM (user chốt 26/08 — "hàng xếp trên pallet, thường nó cũng là quy cách pallet; với hàng
-// nhặt lẻ thì sẽ gộp lên theo tính toán là 1, 2, hoặc nhiều pallet hơn"):
-//   • Mỗi mã: pallet ĐẦY = phần NGUYÊN của (số thùng ÷ thùng-mỗi-pallet)
-//   • Phần DƯ của các mã (mỗi mã là một phân số pallet) CỘNG DỒN trong cùng ĐƠN rồi LÀM TRÒN LÊN
-//     → ra pallet GỘP. Vd 0,3 + 0,5 + 0,4 = 1,2 → 2 pallet gộp.
+// LUẬT GOM (user chốt 26/08, tinh chỉnh cùng ngày — "coi pallet 1,2m×1m là CHÂN, xếp theo quy
+// cách tối đa của thùng trên pallet; KHÔNG phải các pallet đều cao như nhau khi D×R×C thùng khác
+// nhau"):
+//   • Mỗi mã: pallet ĐẦY = phần NGUYÊN của (số thùng ÷ thùng-mỗi-pallet).
+//     CHIỀU CAO pallet đầy TÍNH TỪ THÙNG: số thùng/lớp = xếp lưới thùng lên chân (thử cả 2 hướng),
+//     số lớp = quy cách ÷ thùng/lớp (làm tròn lên) → cao = đế + lớp × cao thùng. Mỗi mã một chiều
+//     cao — thùng thấp thì pallet thấp, không phải cây 1650 đồng loạt.
+//   • Phần DƯ của các mã CỘNG DỒN trong cùng ĐƠN rồi LÀM TRÒN LÊN → pallet GỘP hàng lẻ, cao theo
+//     `spec.h` (user chốt 1650 cho hàng lẻ). Vd 0,3 + 0,5 + 0,4 = 1,2 → 2 pallet gộp.
 //     Cộng dồn theo ĐƠN chứ không theo cả xe: hàng của hai NPP khác nhau không chất chung pallet.
 //   • Mã PALLET (Loscam) là pallet RỖNG chở đi — không chia cho quy cách, số lượng đặt CHÍNH LÀ
 //     số pallet; và pallet rỗng CHỒNG được nên để thuật toán tự tính lớp theo chiều cao.
 //
-// KHÔNG tự bịa kích thước: mã chưa khai `cartons_per_pallet` thì KHÔNG đoán mà tạm tính 1 pallet
-// và NÊU TÊN trong `notes` — vẽ ra một con số sai trông vẫn "hợp lý" còn tệ hơn là nói không biết.
+// KHÔNG tự bịa: mã chưa khai `cartons_per_pallet` → tạm 1 pallet + NÊU TÊN; mã chưa khai kích
+// thước thùng → cao rơi về `spec.h` + đánh dấu ước lượng — vẽ một con số sai trông vẫn "hợp lý"
+// còn tệ hơn là nói không biết.
 
 export interface PalletSpec {
-  l: number; w: number; h: number    // kích thước pallet ĐÃ XẾP HÀNG (mm)
-  baseH: number                      // chiều cao pallet RỖNG (mm) — dùng cho mã pallet Loscam
+  l: number; w: number    // CHÂN pallet (mm) — mặc định 1200×1000
+  // Cao pallet HÀNG LẺ (gộp) + trần dự phòng cho mã thiếu kích thước thùng (user chốt 1650).
+  // Pallet ĐẦY của từng mã KHÔNG dùng số này — cao của nó tính từ thùng.
+  h: number
+  baseH: number           // chiều cao ĐẾ pallet rỗng (mm) — cộng vào mọi pallet, và là cao của Loscam rỗng
+  baseColor: string       // màu vẽ đế pallet (#rrggbb) — từ Material.pallet_color của mã pallet; mặc định xanh Loscam
 }
 
 export interface PalletizeInput {
@@ -933,6 +945,16 @@ export interface PalletizeInput {
   cartonsPerPallet: number | null     // Material.cartons_per_pallet
   isPalletCarrier: boolean            // Material.is_pallet_carrier — pallet rỗng chở đi
   weightKg: number | null
+  // Kích thước THÙNG đã khai (Material.carton_*_mm) — null khi chưa khai / đang dùng cỡ giả định.
+  // Có nó mới tính được chiều cao pallet của mã; thiếu thì rơi về spec.h + đánh dấu ước lượng.
+  carton: { l: number; w: number; h: number } | null
+}
+
+// Số thùng xếp được trên MỘT LỚP của chân pallet — lưới đều, thử cả 2 hướng đặt (cùng triết lý
+// "xoay theo làn" của computeLoadPlan: mục đích là tận dụng mặt chân, không trộn hướng trong lớp).
+export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number }): number {
+  const grid = (l: number, w: number) => Math.floor(spec.l / l) * Math.floor(spec.w / w)
+  return Math.max(grid(carton.l, carton.w), grid(carton.w, carton.l))
 }
 
 export interface PalletizeResult {
@@ -969,6 +991,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           key: `${it.key}|plt`, label: it.label, doKey, doLabel,
           count: it.cartons,
           l: spec.l, w: spec.w, h: spec.baseH,   // rỗng → thấp → chồng được nhiều lớp
+          base: { h: spec.baseH, color: spec.baseColor },   // cả khối là đế — vẽ nguyên màu pallet
           weightKg: it.weightKg, assumed: false,
           maxLayers: null,                        // để thuật toán tự tính lớp theo chiều cao xe
           onTop: false,
@@ -984,6 +1007,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         groups.push({
           key: `${it.key}|full`, label: `${it.label} (chưa khai quy cách)`, doKey, doLabel,
           count: 1, l: spec.l, w: spec.w, h: spec.h,
+          base: { h: spec.baseH, color: spec.baseColor },
           weightKg: it.weightKg, assumed: true, maxLayers: 1, onTop: false,
         })
         continue
@@ -991,13 +1015,24 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
 
       const full = Math.floor(it.cartons / cpp)
       const rem  = it.cartons - full * cpp
+
+      // CHIỀU CAO pallet đầy của MÃ NÀY — tính từ thùng thật (user chốt: "không phải các pallet
+      // đều cao như nhau"). Thùng to hơn chân (0 thùng/lớp) coi như thiếu dữ liệu tin được.
+      const perLayer = it.carton ? cartonsPerLayer(spec, it.carton) : 0
+      const layers = perLayer > 0 ? Math.ceil(cpp / perLayer) : 0
+      const fullH = layers > 0 ? spec.baseH + layers * it.carton!.h : spec.h
+      const hNote = layers > 0
+        ? `${perLayer} thùng/lớp × ${layers} lớp → cao ${(fullH / 1000).toFixed(2)}m`
+        : 'chưa khai kích thước thùng — tạm cao theo pallet lẻ'
+
       if (full > 0) {
         groups.push({
           key: `${it.key}|full`, label: it.label, doKey, doLabel,
-          count: full, l: spec.l, w: spec.w, h: spec.h,
+          count: full, l: spec.l, w: spec.w, h: fullH,
+          base: { h: spec.baseH, color: spec.baseColor },
           weightKg: it.weightKg != null ? it.weightKg * cpp : null,
-          assumed: false,
-          maxLayers: 1,          // pallet hàng KHÔNG chồng lên nhau
+          assumed: layers === 0,   // cao ước lượng vì thiếu kích thước thùng — panel gắn nhãn
+          maxLayers: 1,            // pallet hàng KHÔNG chồng lên nhau
           onTop: false,
         })
       }
@@ -1006,7 +1041,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         fracParts.push(`${it.label} dư ${rem}/${cpp}`)
       }
       if (full > 0 || rem > 0)
-        notes.push(`${it.label}: ${it.cartons} thùng ÷ ${cpp} = ${full} pallet đầy${rem > 0 ? ` + dư ${rem} thùng` : ''}`)
+        notes.push(`${it.label}: ${it.cartons} thùng ÷ ${cpp} = ${full} pallet đầy${rem > 0 ? ` + dư ${rem} thùng` : ''} (${hNote})`)
     }
 
     // ── Phần dư của cả đơn → pallet GỘP ──
@@ -1015,6 +1050,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       groups.push({
         key: `${doKey}|mixed`, label: 'Pallet gộp (hàng lẻ)', doKey, doLabel,
         count: mixed, l: spec.l, w: spec.w, h: spec.h,
+        base: { h: spec.baseH, color: spec.baseColor },
         weightKg: null, assumed: false, maxLayers: 1, onTop: false,
       })
       notes.push(`Pallet gộp đơn ${doLabel}: ${fracParts.join(' + ')} = ${fracSum.toFixed(2)} pallet → ${mixed} pallet gộp`)
@@ -1038,8 +1074,18 @@ export function palletFitError(spec: PalletSpec, truck: TruckDims): string | nul
   if (!fitsFlat(spec.l, spec.w))
     return `Pallet ${spec.l}×${spec.w}mm KHÔNG vừa mặt sàn xe ${truck.length}×${truck.width}mm (đã thử cả xoay ngang) — kiểm lại kích thước pallet hoặc chọn xe khác.`
   if (spec.h > truck.height)
-    return `Pallet cao ${spec.h}mm vượt chiều cao lòng xe ${truck.height}mm — hạ chiều cao xếp hàng trên pallet hoặc chọn xe khác.`
+    return `Pallet hàng lẻ cao ${spec.h}mm vượt chiều cao lòng xe ${truck.height}mm — hạ chiều cao xếp hàng trên pallet hoặc chọn xe khác.`
   return null
+}
+
+/**
+ * Các KHỐI pallet cao quá lòng xe — cao của pallet đầy nay TÍNH TỪ THÙNG nên phải soi TỪNG khối,
+ * `palletFitError` chỉ gác được chân + cao pallet lẻ. Trả tên các mã vượt (rỗng = ổn); caller báo
+ * đỏ NGAY thay vì để thuật toán im lặng bỏ khối lại rồi hiện "xếp được N/M" khó hiểu.
+ */
+export function palletsTooTall(groups: LoadGroup[], truck: TruckDims): string[] {
+  return [...new Set(groups.filter(g => g.h > truck.height)
+    .map(g => `${g.label} (cao ${(g.h / 1000).toFixed(2)}m)`))]
 }
 
 /** Số CHỖ pallet trên sàn xe (1 lớp) — để đối chiếu với sức chứa danh nghĩa ("16-17 pallet"). */
@@ -1052,4 +1098,5 @@ export function palletFloorSlots(spec: PalletSpec, truck: TruckDims): number {
 // Pallet chuẩn dùng chung (user chốt 26/08): Loscam 1200×1000mm, cao 1650mm khi ĐÃ XẾP HÀNG —
 // con số này áp cho pallet HÀNG LẺ (gộp nhiều mã), cũng là mặc định cho pallet hàng nguyên khi mã
 // chưa khai riêng. `baseH` = đế pallet RỖNG (pallet không chở hàng thì chồng được nhiều lớp).
-export const DEFAULT_PALLET: PalletSpec = { l: 1200, w: 1000, h: 1650, baseH: 150 }
+// baseColor mặc định = xanh Loscam (pallet thuê phổ biến nhất) — mã pallet khai màu riêng thì thắng
+export const DEFAULT_PALLET: PalletSpec = { l: 1200, w: 1000, h: 1650, baseH: 150, baseColor: '#1d4ed8' }

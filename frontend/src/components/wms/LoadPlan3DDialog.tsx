@@ -16,7 +16,7 @@ import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehi
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
-  computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots,
+  computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
   DEFAULT_PALLET, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
@@ -260,7 +260,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     if (!(l > 0 && w > 0 && h > 0)) return null
     // Cao pallet RỖNG = phần đế; lấy từ mã pallet nếu đã khai, không thì 150mm (đế pallet gỗ chuẩn)
     const baseH = Number(palletMat?.carton_height_mm) > 0 ? Number(palletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
-    return { l, w, h, baseH }
+    // Màu đế = Material.pallet_color của mã pallet trong đơn (mỗi dạng pallet 1 màu, user 26/08);
+    // đơn không có mã pallet / chưa khai màu → xanh Loscam mặc định.
+    return { l, w, h, baseH, baseColor: palletMat?.pallet_color ?? DEFAULT_PALLET.baseColor }
   }, [palL, palW, palH, palletMat])
 
   const palletized = useMemo(() => {
@@ -269,6 +271,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
       cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
       weightKg: g.weightKg,
+      // Cao pallet TÍNH TỪ THÙNG THẬT — cỡ giả định (assumed) không được dùng: tính cao từ số
+      // bịa là ra chiều cao sai trông vẫn "hợp lý", tệ hơn là nói thẳng "chưa khai".
+      carton: g.assumed ? null : { l: g.l, w: g.w, h: g.h },
     }))
     const res = palletizeGroups(items, palSpec)
     // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
@@ -295,6 +300,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     () => (isPalletTruck && palSpec && truckOk
       ? palletFitError(palSpec, { length: truckL, width: truckW, height: truckH }) : null),
     [isPalletTruck, palSpec, truckOk, truckL, truckW, truckH])
+  // Pallet đầy cao TÍNH TỪ THÙNG (mỗi mã một khác) — khối nào vượt lòng xe phải báo TÊN ngay,
+  // không để thuật toán im lặng bỏ lại rồi hiện "xếp được N/M" khó hiểu.
+  const tooTall = useMemo(
+    () => (isPalletTruck && palletized && truckOk
+      ? palletsTooTall(palletized.groups, { length: truckL, width: truckW, height: truckH }) : []),
+    [isPalletTruck, palletized, truckOk, truckL, truckW, truckH])
   const floorSlots = useMemo(
     () => (isPalletTruck && palSpec && truckOk && !palFitErr
       ? palletFloorSlots(palSpec, { length: truckL, width: truckW, height: truckH }) : 0),
@@ -479,19 +490,46 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(groups[gi].key))) ? color : new THREE.Color(0x000000),
         emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
       })
-      const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, boxes.length)
-      const m = new THREE.Matrix4()
-      boxes.forEach(({ b }, i) => {
-        m.makeScale(Math.max(1, b.l - 10), Math.max(1, b.h - 10), Math.max(1, b.w - 10))   // hở 10mm nhìn rõ từng thùng
-        m.setPosition(toX(b.x, b.l), toY(b.z, b.h), toZ(b.y, b.w))
-        inst.setMatrixAt(i, m)
+      // ĐẾ PALLET (26/08): khối pallet vẽ 2 phần — đế MÀU RIÊNG đồng nhất (phân biệt rõ, user
+      // chốt) + hàng phía trên mang màu nhóm. Loscam rỗng: cả khối là đế. Khối thường: 1 phần.
+      const base = groups[gi].base
+      const baseH = base ? Math.min(base.h, ...boxes.map(({ b }) => b.h)) : 0
+      const goods = boxes.filter(({ b }) => b.h - baseH > 1)
+      const mkInst = (mesh: import('three').InstancedMesh, list: typeof boxes,
+                      zOff: number, hOf: (bh: number) => number) => {
+        const m = new THREE.Matrix4()
+        list.forEach(({ b }, i) => {
+          const hh = hOf(b.h)
+          m.makeScale(Math.max(1, b.l - 10), Math.max(1, hh - 8), Math.max(1, b.w - 10))   // hở nhìn rõ từng khối
+          m.setPosition(toX(b.x, b.l), toY(b.z + zOff, hh), toZ(b.y, b.w))
+          mesh.setMatrixAt(i, m)
+        })
+        mesh.instanceMatrix.needsUpdate = true
+        boxGroup.add(mesh)
+      }
+      if (base && baseH > 0) {
+        // Đế: cùng chế độ chìm/mờ với khối (spotlight/done) nhưng KHÔNG phát sáng — đế là mốc
+        // nhìn, không phải thứ đang thao tác.
+        const baseMat = new THREE.MeshLambertMaterial({
+          color: new THREE.Color(base.color),
+          transparent: dimmed || kind === 'done',
+          opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
+        })
+        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, boxes.length),
+          boxes, 0, () => baseH)
+        if (goods.length)
+          mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, goods.length),
+            goods, baseH, bh => bh - baseH)
+      } else {
+        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, boxes.length),
+          boxes, 0, bh => bh)
+      }
+      boxes.forEach(({ b }) => {
         const agg = visibleByGroup.get(gi) ?? { cx: 0, cy: 0, top: 0, n: 0 }
         agg.cx += b.x + b.l / 2; agg.cy += b.y + b.w / 2
         agg.top = Math.max(agg.top, b.z + b.h); agg.n++
         visibleByGroup.set(gi, agg)
       })
-      inst.instanceMatrix.needsUpdate = true
-      boxGroup.add(inst)
     }
 
     // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0), dàn không đè nhau.
@@ -690,7 +728,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {/* ── Kích thước pallet: chỉ hỏi khi thật sự dùng tới ── */}
           {isPalletTruck && (
             <div className="space-y-1">
-              <Label className="text-xs">Pallet D×R×C khi đã xếp hàng (mm)</Label>
+              <Label className="text-xs">Chân pallet D×R + cao pallet LẺ (mm)</Label>
               <div className="flex items-center gap-1.5">
                 <Input type="number" min={0} className="h-8 text-xs" value={palL} onChange={e => setPalL(e.target.value)} placeholder="Dài" />
                 <span className="text-slate-400 text-xs">×</span>
@@ -698,6 +736,10 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 <span className="text-slate-400 text-xs">×</span>
                 <Input type="number" min={0} className="h-8 text-xs" value={palH} onChange={e => setPalH(e.target.value)} placeholder="Cao" />
               </div>
+              <p className="text-[10px] text-slate-400">
+                Cao của pallet HÀNG NGUYÊN tự tính từ kích thước thùng của từng mã (xem “Cách tính”);
+                ô Cao chỉ áp cho pallet LẺ gộp nhiều mã.
+              </p>
               {floorSlots > 0 && (
                 <p className="text-[10px] text-slate-500">
                   Sàn xe chứa được <b className="tabular-nums">{floorSlots}</b> chỗ pallet
@@ -705,6 +747,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 </p>
               )}
             </div>
+          )}
+
+          {tooTall.length > 0 && (
+            <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+              <b>Pallet cao quá lòng xe {(truckH / 1000).toFixed(2)}m:</b> {tooTall.join(', ')} —
+              giảm quy cách thùng/pallet của mã đó hoặc chọn xe cao hơn.
+            </p>
           )}
 
           {/* Pallet không vừa xe — báo NGAY, không vẽ ra một sơ đồ vô nghĩa (user chốt 26/08) */}

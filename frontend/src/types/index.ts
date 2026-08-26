@@ -246,6 +246,7 @@ export interface Material {
   no_qr_tracking:             boolean
   is_non_stock?:              boolean
   is_pallet_carrier?:         boolean   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
+  pallet_color?:              string | null   // màu vẽ pallet trên sơ đồ xếp xe 3D (#rrggbb) — chỉ nghĩa khi là pallet; null = mặc định
   is_active:                  boolean
   created_at?:                string
   updated_at?:                string | null
@@ -657,7 +658,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; pallet_color?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered:    number
   od_refs?:           { od_number: string; od_item: string; qty_base?: number }[] | null   // liên kết dòng DO SAP (đơn upload) — rỗng = đơn tay
   boxes_display:      number

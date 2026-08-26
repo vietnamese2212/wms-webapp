@@ -11,6 +11,15 @@ import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 
+// Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
+// null = màu mặc định; chuỗi lạ → 400 (DB cũng có CHECK hex, đây là lưới trước để lỗi ra tiếng Việt).
+function parsePalletColor(v: unknown): { value: string | null } | { error: string } {
+  if (v === null || v === undefined || v === '') return { value: null }
+  const t = String(v).trim()
+  if (!/^#[0-9a-fA-F]{6}$/.test(t)) return { error: 'Màu pallet phải dạng #rrggbb (vd #2563eb) — để trống = màu mặc định' }
+  return { value: t.toLowerCase() }
+}
+
 function buildShortName(description: string, code: string, custom?: string | null) {
   const suffix = code.slice(-3)
   const base = custom ?? description
@@ -191,6 +200,8 @@ export async function createMaterial(req: Request, res: Response) {
       return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
 
     const short_name = buildShortName(material_description, material_code, custom_short_name)
+    const palColor = parsePalletColor(req.body.pallet_color)
+    if ('error' in palColor) return fail(res, 400, 'VALIDATION_ERROR', palColor.error)
 
     const { data, error } = await supabase
       .from('Material')
@@ -217,6 +228,7 @@ export async function createMaterial(req: Request, res: Response) {
         entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
         is_non_stock: Boolean(is_non_stock),
         is_pallet_carrier: Boolean(is_pallet_carrier),   // mã PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến
+        pallet_color: palColor.value,                    // màu vẽ pallet trên sơ đồ 3D (chỉ nghĩa khi là pallet)
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
@@ -307,6 +319,11 @@ export async function updateMaterial(req: Request, res: Response) {
     if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
     if (is_non_stock !== undefined) patch.is_non_stock = Boolean(is_non_stock)
     if (is_pallet_carrier !== undefined) patch.is_pallet_carrier = Boolean(is_pallet_carrier)
+    if (req.body.pallet_color !== undefined) {
+      const pc = parsePalletColor(req.body.pallet_color)
+      if ('error' in pc) return fail(res, 400, 'VALIDATION_ERROR', pc.error)
+      patch.pallet_color = pc.value
+    }
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null

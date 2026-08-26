@@ -144,7 +144,9 @@ export default function Materials() {
   const [editActive,       setEditActive]       = useState(true)
   const [noQr,             setNoQr]             = useState(false)
   const [nonStock,         setNonStock]         = useState(false)   // mã phi hàng hóa (chiết khấu/dịch vụ) — chỉ cần Mã+Tên, loại khỏi mọi tác vụ kho
-  const [palletCarrier,    setPalletCarrier]    = useState(false)   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
+  const [palletCarrier,    setPalletCarrier]    = useState(false)
+  // Màu vẽ pallet trên sơ đồ xếp xe — mỗi DẠNG pallet 1 màu (user 26/08); rỗng = mặc định xanh Loscam
+  const [palletColor,      setPalletColor]      = useState('')   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
   const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
   const [overrides,        setOverrides]        = useState<{ warehouse_id: string; cartons_per_pallet: string }[]>([])
   const [supplierOverrides,setSupplierOverrides] = useState<{ transport_company_id: string; shelf_life_days: string }[]>([])
@@ -280,6 +282,7 @@ export default function Materials() {
     setNoQr(false)
     setNonStock(false)
     setPalletCarrier(false)
+    setPalletColor('')
     setStackOnTop(false)
     setFormError('')
     setDialogMode('add')
@@ -324,6 +327,7 @@ export default function Materials() {
     setNoQr(mat.no_qr_tracking ?? false)
     setNonStock(mat.is_non_stock ?? false)
     setPalletCarrier(mat.is_pallet_carrier ?? false)
+    setPalletColor(mat.pallet_color ?? '')
     setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
     setDialogMode('edit')
@@ -365,6 +369,8 @@ export default function Materials() {
         no_qr_tracking:                noQr,
         is_non_stock:                  nonStock,
         is_pallet_carrier:             palletCarrier,
+        // Bỏ tick pallet thì màu về null luôn — không để giá trị ma nằm lại trên mã thường
+        pallet_color:                  palletCarrier && palletColor ? palletColor : null,
         warehouse_pallet_overrides:    palletOverrides,
         supplier_shelf_life_overrides: supplierHsdOverrides,
       }
@@ -932,6 +938,22 @@ export default function Materials() {
                 <span className="block text-[11px] text-slate-500 leading-snug">Chính là pallet chứa hàng bên trên — KHÔNG cộng vào đếm Pallet của chuyến xuất (tránh double); vẫn tính ở Tổng (k QR).</span>
               </span>
             </label>
+            )}
+            {/* Màu vẽ pallet trên sơ đồ xếp xe — mỗi DẠNG pallet 1 màu (user 26/08). Chỉ hiện khi
+                đã tick "là PALLET": mã thường không có màu để khỏi ai thắc mắc ô này làm gì. */}
+            {!nonStock && palletCarrier && (
+              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 -mt-1">
+                <Label className="text-xs text-slate-700 shrink-0">Màu pallet trên sơ đồ xếp xe</Label>
+                <input type="color" value={palletColor || '#1d4ed8'}
+                  onChange={e => setPalletColor(e.target.value)}
+                  className="h-7 w-10 rounded border border-slate-300 cursor-pointer bg-white p-0.5" />
+                {palletColor ? (
+                  <button type="button" className="text-[10px] text-slate-400 hover:text-slate-600 underline"
+                    onClick={() => setPalletColor('')}>Dùng màu mặc định</button>
+                ) : (
+                  <span className="text-[10px] text-slate-400">mặc định — xanh Loscam</span>
+                )}
+              </div>
             )}
 
             {/* Mã hàng */}

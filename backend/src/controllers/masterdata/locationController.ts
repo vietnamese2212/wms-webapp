@@ -295,6 +295,9 @@ export async function listLocations(req: Request, res: Response) {
           max_pallets:  rest.max_pallets  as number | null,
           slot_no_in:   rest.slot_no_in   as boolean | null,
           is_pick_face: rest.is_pick_face as boolean | null,
+          // Trần số mã của ô (26/08) — thiếu dòng này thì picker vẫn đánh ★ cho ô đã đủ mã rồi
+          // cửa ghi mới chặn: người quét bị "gợi ý xong lại từ chối", đúng lớp lỗi tệ nhất ở đây.
+          max_materials: rest.max_materials as number | null,
         }
         row.has_same_material = f.sameMaterial
         // FE CHỈ hiển thị khối này, KHÔNG tự tính lại (luật một nguồn — utils/putaway.ts)

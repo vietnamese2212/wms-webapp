@@ -547,8 +547,29 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           transparent: dimmed || kind === 'done',
           opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
         })
+        // PALLET 4 CỔNG (user chốt 26/08): đế vẽ 2 tầng — MẶT pallet (ván trên) + 9 CHÂN xếp
+        // lưới 3×3, để HỞ LỖ càng xe nâng ở CẢ 4 PHÍA cho trực quan, thay cho khối đặc cũ.
+        const deckH = Math.max(20, baseH * 0.35)
+        const blockH = baseH - deckH
         mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, boxes.length),
-          boxes, 0, () => baseH)
+          boxes, blockH, () => deckH)
+        if (blockH > 4) {
+          const legs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, boxes.length * 9)
+          const lm = new THREE.Matrix4()
+          let li = 0
+          for (const { b } of boxes) {
+            const bl = Math.max(40, b.l * 0.16), bw = Math.max(40, b.w * 0.19)   // cỡ chân ~ Loscam 3×3
+            const xs = [b.x + bl / 2 + 5, b.x + b.l / 2, b.x + b.l - bl / 2 - 5]
+            const ys = [b.y + bw / 2 + 5, b.y + b.w / 2, b.y + b.w - bw / 2 - 5]
+            for (const cx of xs) for (const cy of ys) {
+              lm.makeScale(bl, Math.max(1, blockH - 2), bw)
+              lm.setPosition(toX(cx, 0), toY(b.z, blockH), toZ(cy, 0))
+              legs.setMatrixAt(li++, lm)
+            }
+          }
+          legs.instanceMatrix.needsUpdate = true
+          boxGroup.add(legs)
+        }
         if (goods.length)
           mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, goods.length),
             goods, baseH, bh => bh - baseH)

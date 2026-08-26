@@ -29,6 +29,12 @@ SELECT 'warehouse_type_configs', c.warehouse_id::text || '|' || c.type_code, c.t
   FROM public.warehouse_type_configs c
  WHERE c.putaway_max_materials IS NOT NULL;
 
+-- ⚠️ BẢNG SAO LƯU CŨNG PHẢI KHOÁ RLS — quên bước này là bảng hở với anon key.
+-- Đo thật 26/08: tôi tạo bảng trên mà không bật RLS ⇒ bất biến "mọi bảng public đều bật RLS" của
+-- gói QA 00 đỏ ngay ở CI. 3 bảng `x_bak_*` trước đó đều đã bật + 0 policy (khoá hẳn) — cùng khuôn.
+-- `CREATE TABLE AS` KHÔNG kế thừa RLS của bảng nguồn, nên phải bật TAY, lần nào cũng vậy.
+ALTER TABLE public.x_bak_20260826_max_materials ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE public."Warehouse"              DROP COLUMN IF EXISTS putaway_max_materials;
 ALTER TABLE public.warehouse_type_configs   DROP COLUMN IF EXISTS putaway_max_materials;
 

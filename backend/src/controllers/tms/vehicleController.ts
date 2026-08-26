@@ -6,6 +6,7 @@ import { fetchAllRowsParallel, fetchAllByIdChunks, isRangeNotSatisfiable } from 
 import { safeSearch, searchLooksLikeInjection, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
+import { applyBoxDims } from '../../utils/boxDims'
 
 // Helper: fetch related ncc + vehicle_type and merge into vehicle rows
 // Avoids PostgREST FK-join syntax which requires schema-cache to know about FKs
@@ -191,9 +192,13 @@ export async function createVehicle(req: Request, res: Response) {
     // giữ nguyên dấu gạch nên chính nó đẻ ra "29E-09404", "98C-06739" trong danh mục (đo 30/07)
     const plate = normalizePlate(license_plate)
     if (!plate) return fail(res, 'Biển số phải có ít nhất 1 chữ hoặc số', 400)
+    // Kích thước lòng thùng của CHIẾC xe này (26/08) — sơ đồ xếp xe tự điền khi chọn biển số.
+    const dims: Record<string, unknown> = {}
+    const dimErr = applyBoxDims(req.body as Record<string, unknown>, dims)
+    if (dimErr) return fail(res, dimErr, 400)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await supabase.from('Vehicle')
-      .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, created_at: now, updated_at: now })
+      .insert({ id: randomUUID(), ncc_id: effectiveNccId, license_plate: plate, vehicle_type_id, is_active: true, ...dims, created_at: now, updated_at: now })
       .select('*').single()
     if (error) return fail(res, error.message)
     const [merged] = await withRelations([data])
@@ -222,6 +227,8 @@ export async function updateVehicle(req: Request, res: Response) {
       return fail(res, 'Bạn không có quyền chỉnh sửa xe này', 403)
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const dimErr = applyBoxDims(req.body as Record<string, unknown>, updates)
+    if (dimErr) return fail(res, dimErr, 400)
     if (ncc_id          !== undefined) updates.ncc_id          = ncc_id
     if (vehicle_type_id !== undefined) updates.vehicle_type_id = vehicle_type_id
     if (is_active       !== undefined) updates.is_active       = is_active

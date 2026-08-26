@@ -4273,7 +4273,7 @@ export function useVehicleTypes(onlyActive = false) {
 export function useCreateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
+    mutationFn: (body: { code: string; name: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
       apiClient.post('/tms/vehicle-types', body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -4292,7 +4292,7 @@ export function useReorderVehicleTypes() {
 export function useUpdateVehicleType() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null; is_pallet_truck?: boolean }) =>
       apiClient.put(`/tms/vehicle-types/${id}`, body).then(r => r.data.data as TmsVehicleType),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tms-vehicle-types'] }),
   })
@@ -4470,7 +4470,7 @@ export function useTmsVehiclesPaged(
 export function useCreateTmsVehicle() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string }) =>
+    mutationFn: (body: { ncc_id: string; license_plate: string; vehicle_type_id: string; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.post('/tms/vehicles', body).then(r => r.data.data as TmsVehicle),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-vehicles'] })
@@ -4482,7 +4482,7 @@ export function useCreateTmsVehicle() {
 export function useUpdateTmsVehicle() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; ncc_id?: string; license_plate?: string; vehicle_type_id?: string; is_active?: boolean; box_length_mm?: number | null; box_width_mm?: number | null; box_height_mm?: number | null }) =>
       apiClient.put(`/tms/vehicles/${id}`, body).then(r => r.data.data as TmsVehicle),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tms-vehicles'] })

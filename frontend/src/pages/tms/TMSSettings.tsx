@@ -46,6 +46,10 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
   const [code, setCode] = useState(vt?.code ?? '')
   const [name, setName] = useState(vt?.name ?? '')
   const [isActive, setIsActive] = useState(vt?.is_active ?? true)
+  // Xe chở hàng ĐÃ LÊN PALLET (26/08) — quyết định CÁCH VẼ sơ đồ xếp xe, không dính gì tới đặt lịch.
+  // Là CỜ chứ không đọc tên: danh mục đang có 'XE PALLET (16-17 PALLET)' / 'XE XÁ' nên tên đã ngầm
+  // phân biệt, nhưng đổi tên danh mục sẽ làm luồng hỏng ÂM THẦM (ratchet role_by_vietnamese_name).
+  const [isPalletTruck, setIsPalletTruck] = useState(vt?.is_pallet_truck ?? false)
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateVehicleType()
@@ -56,9 +60,9 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
     setErr('')
     if (!code || !name) { setErr('Mã và tên là bắt buộc'); return }
     if (isEdit) {
-      update({ id: vt.id, name, is_active: isActive }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      update({ id: vt.id, name, is_active: isActive, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ code, name }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
+      create({ code, name, is_pallet_truck: isPalletTruck }, { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
 
@@ -78,6 +82,16 @@ function VehicleTypeDialog({ vt, open, onClose }: { vt: TmsVehicleType | null; o
           {isEdit && <p className="text-[10px] text-slate-400">Mã là định danh cố định, không sửa được.</p>}</div>
         <div className="space-y-1"><Label className="text-xs">Tên *</Label>
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="Xe pallet, Xe SCA…" /></div>
+        <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <Switch id="vt-pallet" checked={isPalletTruck} onCheckedChange={setIsPalletTruck} />
+            <Label htmlFor="vt-pallet" className="text-sm cursor-pointer">Xe chở pallet</Label>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Bật: sơ đồ xếp xe <b>gom hàng lên pallet</b> rồi xếp pallet (sức chứa tính bằng chỗ pallet).
+            Tắt: xếp <b>từng thùng</b> như xe xá, và không xếp khối pallet lên xe.
+          </p>
+        </div>
         {isEdit && <div className="flex items-center gap-2">
           <Switch id="vt-active" checked={isActive} onCheckedChange={setIsActive} />
           <Label htmlFor="vt-active" className="text-sm cursor-pointer">Đang hoạt động</Label>
@@ -387,6 +401,11 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
   const [plate,    setPlate]    = useState(v?.license_plate    ?? '')
   const [vtId,     setVtId]     = useState(v?.vehicle_type_id  ?? '')
   const [isActive, setIsActive] = useState(v?.is_active ?? true)
+  // Lòng thùng THẬT của chiếc xe (mm, 26/08) — sơ đồ xếp xe tự điền khi chọn biển số. Tuỳ chọn:
+  // để trống = chưa khai (952 xe hiện có đều vậy), sơ đồ sẽ rơi về nhập tay như cũ.
+  const [dimL, setDimL] = useState(v?.box_length_mm != null ? String(v.box_length_mm) : '')
+  const [dimW, setDimW] = useState(v?.box_width_mm  != null ? String(v.box_width_mm)  : '')
+  const [dimH, setDimH] = useState(v?.box_height_mm != null ? String(v.box_height_mm) : '')
   const [err, setErr] = useState('')
 
   const { mutate: create, isPending: creating } = useCreateTmsVehicle()
@@ -396,11 +415,17 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
   function handleSubmit() {
     setErr('')
     if (!nccId || !plate || !vtId) { setErr('Vui lòng điền đủ thông tin'); return }
+    // Ô trống gửi null TƯỜNG MINH = xoá số cũ (cùng quy ước max_materials của Vị trí kho)
+    const dims = {
+      box_length_mm: dimL.trim() ? Number(dimL) : null,
+      box_width_mm:  dimW.trim() ? Number(dimW) : null,
+      box_height_mm: dimH.trim() ? Number(dimH) : null,
+    }
     if (isEdit) {
-      update({ id: v.id, ncc_id: nccId, vehicle_type_id: vtId, is_active: isActive },
+      update({ id: v.id, ncc_id: nccId, vehicle_type_id: vtId, is_active: isActive, ...dims },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     } else {
-      create({ ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId },
+      create({ ncc_id: nccId, license_plate: plate, vehicle_type_id: vtId, ...dims },
         { onSuccess: onClose, onError: e => setErr(apiMsg(e)) })
     }
   }
@@ -435,6 +460,17 @@ function VehicleDialog({ v, open, onClose, companies, vehicleTypes, lockedNccId 
             value={vtId} onChange={setVtId}
             placeholder="Chọn loại xe" searchPlaceholder="Tìm tên hoặc mã loại xe…"
             triggerClassName="w-full h-9" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Lòng thùng xe D×R×C (mm) — tuỳ chọn</Label>
+          <div className="flex items-center gap-1.5">
+            <Input type="number" min={0} className="h-9 text-sm" value={dimL} onChange={e => setDimL(e.target.value)} placeholder="Dài" />
+            <span className="text-slate-400 text-xs">×</span>
+            <Input type="number" min={0} className="h-9 text-sm" value={dimW} onChange={e => setDimW(e.target.value)} placeholder="Rộng" />
+            <span className="text-slate-400 text-xs">×</span>
+            <Input type="number" min={0} className="h-9 text-sm" value={dimH} onChange={e => setDimH(e.target.value)} placeholder="Cao" />
+          </div>
+          <p className="text-[10px] text-slate-400">Khai ở đây thì sơ đồ xếp xe 3D tự nhận kích thước khi chuyến gắn biển số này.</p>
         </div>
         {isEdit && <div className="flex items-center gap-2">
           <Switch id="v-active" checked={isActive} onCheckedChange={setIsActive} />

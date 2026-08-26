@@ -482,9 +482,12 @@ export interface TmsVehicleType {
   code:       string
   name:       string
   is_active:  boolean
-  box_length_mm?: number | null   // lòng thùng xe (cm) — phục vụ sơ đồ xếp xe 3D
+  box_length_mm?: number | null   // lòng thùng xe (mm) — cỡ TIÊU BIỂU của loại; cỡ THẬT khai ở từng biển số
   box_width_mm?:  number | null
   box_height_mm?: number | null
+  // Xe chở hàng ĐÃ LÊN PALLET (26/08) — quyết định CÁCH VẼ sơ đồ xếp xe: bật = gom hàng lên pallet
+  // rồi xếp pallet (sức chứa tính bằng chỗ pallet); tắt = xếp từng thùng như cũ.
+  is_pallet_truck?: boolean | null
   created_at?: string
   updated_at?: string
   created_by?: string | null
@@ -535,7 +538,12 @@ export interface TmsVehicle {
   ncc?:            Pick<TransportCompany, 'id' | 'code' | 'name'>
   license_plate:   string
   vehicle_type_id: string
-  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'>
+  vehicle_type?:   Pick<TmsVehicleType, 'id' | 'code' | 'name'> & { is_pallet_truck?: boolean | null }
+  // Kích thước lòng thùng THẬT của CHIẾC xe này (26/08) — sơ đồ xếp xe tự điền khi chọn biển số.
+  // Khai ở đây (không phải ở Loại xe) vì hai xe cùng loại vẫn có lòng thùng khác nhau.
+  box_length_mm?:  number | null
+  box_width_mm?:   number | null
+  box_height_mm?:  number | null
   is_active:       boolean
   created_at?:     string
   updated_at?:     string
@@ -649,7 +657,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered:    number
   od_refs?:           { od_number: string; od_item: string; qty_base?: number }[] | null   // liên kết dòng DO SAP (đơn upload) — rỗng = đơn tay
   boxes_display:      number

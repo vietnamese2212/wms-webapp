@@ -12,10 +12,13 @@ import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton } from '@/api/hooks'
+import { useSystemSettings, useUpdateSystemSetting, useAssumedCarton, useTmsVehiclesPaged, useVehicleTypes } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { computeLoadPlan, GROUP_COLORS, type LoadGroup, type LoadPlan } from '@/utils/loadPlan'
+import {
+  computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots,
+  DEFAULT_PALLET, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
+} from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 
 // Dòng xe ghi nhớ lòng thùng (mm) — SystemSetting 'truck_models'. ĐỘC LẬP với Loại xe TMS
@@ -31,7 +34,9 @@ type ThreeCtx = {
   boxGroup: import('three').Group
 }
 
-type PlanGroup = LoadGroup & { done: number }   // done = thùng ĐÃ XUẤT thật (nhặt lẻ chưa xác nhận KHÔNG tính)
+// done = thùng ĐÃ XUẤT thật (nhặt lẻ chưa xác nhận KHÔNG tính).
+// cpp/isPallet đi kèm để chế độ XE PALLET gom được hàng lên pallet mà không phải duyệt lại gdo.
+type PlanGroup = LoadGroup & { done: number; cpp: number | null; isPallet: boolean }
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
   for (const child of [...group.children]) {
@@ -110,6 +115,28 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const [boxL, setBoxL] = useState('')
   const [boxW, setBoxW] = useState('')
   const [boxH, setBoxH] = useState('')
+
+  // ── XE PALLET (26/08) ─────────────────────────────────────────────────────
+  // Phân vai user chốt: LOẠI XE giữ cờ pallet (cách vẽ) · BIỂN SỐ giữ kích thước (lòng thùng).
+  // Chuyến đã có biển số ⇒ tra ĐÚNG biển đó trên server rồi tự điền — KHÔNG nạp cả đội xe về
+  // trình duyệt (đo 26/08: 952 xe; luật danh mục lớn của CLAUDE.md).
+  const plate = gdo.license_plate?.trim() || ''
+  const { data: plateHit } = useTmsVehiclesPaged(
+    { search: plate, page: 1, page_size: 5 }, open && plate.length > 0)
+  const tripVehicle = useMemo(
+    () => (plateHit?.items ?? []).find(v => v.license_plate === plate) ?? null,
+    [plateHit, plate])
+  const { data: vehicleTypes = [] } = useVehicleTypes(true)
+  // Loại xe: mặc định theo xe của chuyến, người dùng đổi được (xe vãng lai / cont chưa có trong sổ)
+  const [vtId, setVtId] = useState('')
+  const vt = vehicleTypes.find(t => t.id === vtId) ?? null
+  const isPalletTruck = vt?.is_pallet_truck === true
+
+  // Kích thước pallet ĐÃ XẾP HÀNG. Lấy từ mã PALLET của đơn nếu đã khai (user chốt "kích thước
+  // pallet cần phải khai nếu nó là pallet"); chưa khai thì để trống và nói rõ, KHÔNG bịa số.
+  const [palL, setPalL] = useState(String(DEFAULT_PALLET.l))
+  const [palW, setPalW] = useState(String(DEFAULT_PALLET.w))
+  const [palH, setPalH] = useState(String(DEFAULT_PALLET.h))   // cao pallet khi đã xếp hàng
   const [maxStep, setMaxStep] = useState(0)
   const [mode, setMode] = useState<'plan' | 'progress'>('plan')   // Dự toán · Tiến độ
   // Nhãn: mặc định KHÔNG phủ hết (26 nhãn + dây dẫn = rối) — bấm mã ở panel để SOI từng khối;
@@ -152,8 +179,37 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     } catch { setTmError('Xóa dòng xe thất bại — thử lại') }
   }
 
-  // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo)
-  const groups: PlanGroup[] = useMemo(() => {
+  // Tự nhận xe của chuyến: biển số đã có trong danh mục ⇒ điền lòng thùng + loại xe (26/08).
+  // Chỉ điền khi ô đang TRỐNG — không đè lên số người dùng vừa gõ tay.
+  useEffect(() => {
+    if (!open || !tripVehicle) return
+    setVtId(cur => cur || tripVehicle.vehicle_type_id || '')
+    if (tripVehicle.box_length_mm && tripVehicle.box_width_mm && tripVehicle.box_height_mm) {
+      setBoxL(cur => cur || String(tripVehicle.box_length_mm))
+      setBoxW(cur => cur || String(tripVehicle.box_width_mm))
+      setBoxH(cur => cur || String(tripVehicle.box_height_mm))
+      setTmName(cur => cur || `Xe ${tripVehicle.license_plate}`)
+    }
+  }, [open, tripVehicle])
+
+  // Kích thước pallet khai ở MÃ PALLET của chính đơn (Material.carton_*_mm của mã is_pallet_carrier)
+  const palletMat = useMemo(() => {
+    for (const d of gdo.delivery_orders ?? [])
+      for (const it of d.items)
+        if (it.material?.is_pallet_carrier) return it.material
+    return null
+  }, [gdo])
+  useEffect(() => {
+    if (!open || !palletMat) return
+    if (palletMat.carton_length_mm && palletMat.carton_width_mm) {
+      setPalL(cur => cur || String(palletMat.carton_length_mm))
+      setPalW(cur => cur || String(palletMat.carton_width_mm))
+    }
+  }, [open, palletMat])
+
+  // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo).
+  // Đây là NGUYÊN LIỆU: xe thường xếp thẳng mảng này, xe pallet gom nó lên pallet trước.
+  const cartonGroups: PlanGroup[] = useMemo(() => {
     const map = new Map<string, PlanGroup>()
     for (const d of gdo.delivery_orders ?? []) {
       for (const it of d.items) {
@@ -184,6 +240,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           assumed: !hasDims,
           maxLayers: it.material?.max_stack_layers ?? null,
           onTop: it.material?.stack_on_top ?? false,
+          cpp: it.material?.cartons_per_pallet ?? null,
+          isPallet: it.material?.is_pallet_carrier ?? false,
         })
       }
     }
@@ -193,10 +251,59 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const truckL = Number(boxL), truckW = Number(boxW), truckH = Number(boxH)
   const truckOk = truckL > 0 && truckW > 0 && truckH > 0
 
+  // ── XE PALLET vs XE THƯỜNG (26/08) ────────────────────────────────────────
+  // Xe pallet: gom hàng lên pallet rồi xếp PALLET (sức chứa nói bằng "16-17 pallet").
+  // Xe thường: xếp từng thùng như cũ, và KHÔNG xếp khối pallet lên xe — nhưng nói ra là đã bỏ,
+  // không im lặng nuốt mất một dòng hàng của đơn.
+  const palSpec: PalletSpec | null = useMemo(() => {
+    const l = Number(palL), w = Number(palW), h = Number(palH)
+    if (!(l > 0 && w > 0 && h > 0)) return null
+    // Cao pallet RỖNG = phần đế; lấy từ mã pallet nếu đã khai, không thì 150mm (đế pallet gỗ chuẩn)
+    const baseH = Number(palletMat?.carton_height_mm) > 0 ? Number(palletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
+    return { l, w, h, baseH }
+  }, [palL, palW, palH, palletMat])
+
+  const palletized = useMemo(() => {
+    if (!isPalletTruck || !palSpec) return null
+    const items: PalletizeInput[] = cartonGroups.map(g => ({
+      key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
+      cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
+      weightKg: g.weightKg,
+    }))
+    const res = palletizeGroups(items, palSpec)
+    // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
+    const doneRatio = new Map(cartonGroups.map(g => [g.key, g.count > 0 ? g.done / g.count : 0]))
+    const withDone: PlanGroup[] = res.groups.map(g => {
+      const srcKey = g.key.replace(/\|(full|plt)$/, '')
+      const r = doneRatio.get(srcKey) ?? 0
+      return { ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false }
+    })
+    return { ...res, groups: withDone }
+  }, [isPalletTruck, palSpec, cartonGroups])
+
+  // Nhóm THỰC SỰ đưa vào thuật toán xếp
+  const groups: PlanGroup[] = useMemo(() => {
+    if (isPalletTruck) return palletized?.groups ?? []
+    return cartonGroups.filter(g => !g.isPallet)
+  }, [isPalletTruck, palletized, cartonGroups])
+
+  const droppedPallets = useMemo(
+    () => (isPalletTruck ? [] : cartonGroups.filter(g => g.isPallet)), [isPalletTruck, cartonGroups])
+
+  // Pallet có vừa lòng xe không — báo NGAY, đừng để thuật toán im lặng xếp được 0 cái
+  const palFitErr = useMemo(
+    () => (isPalletTruck && palSpec && truckOk
+      ? palletFitError(palSpec, { length: truckL, width: truckW, height: truckH }) : null),
+    [isPalletTruck, palSpec, truckOk, truckL, truckW, truckH])
+  const floorSlots = useMemo(
+    () => (isPalletTruck && palSpec && truckOk && !palFitErr
+      ? palletFloorSlots(palSpec, { length: truckL, width: truckW, height: truckH }) : 0),
+    [isPalletTruck, palSpec, truckOk, truckL, truckW, truckH, palFitErr])
+
   const plan: LoadPlan | null = useMemo(() => {
-    if (!truckOk || !groups.length) return null
+    if (!truckOk || !groups.length || palFitErr) return null
     return computeLoadPlan({ length: truckL, width: truckW, height: truckH }, groups)
-  }, [truckOk, truckL, truckW, truckH, groups])
+  }, [truckOk, truckL, truckW, truckH, groups, palFitErr])
 
   useEffect(() => { setMaxStep(plan?.stepCount ?? 0) }, [plan?.stepCount])
 
@@ -529,7 +636,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {!plan && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
               <p className="text-sm text-slate-500 px-6 text-center">
-                {groups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
+                {cartonGroups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
               </p>
             </div>
           )}
@@ -558,6 +665,76 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
         {/* Panel điều khiển */}
         <div className="shrink-0 lg:w-80 max-h-[45%] lg:max-h-none border-t lg:border-t-0 lg:border-l bg-white overflow-y-auto p-3 space-y-3">
+          {/* ── LOẠI XE: quyết định CÁCH VẼ (xe pallet vs xe thường) — 26/08 ── */}
+          <div className="space-y-1">
+            <Label className="text-xs">Loại xe</Label>
+            <select value={vtId} onChange={e => setVtId(e.target.value)}
+              className="w-full h-8 text-xs border border-input rounded-md px-2 bg-white">
+              <option value="">— Xe thường (xếp từng thùng) —</option>
+              {vehicleTypes.map(t => (
+                <option key={t.id} value={t.id}>{t.name}{t.is_pallet_truck ? ' · xe pallet' : ''}</option>
+              ))}
+            </select>
+            {tripVehicle && (
+              <p className="text-[10px] text-slate-400">
+                Tự nhận từ biển số <b>{tripVehicle.license_plate}</b> của chuyến.
+              </p>
+            )}
+            {isPalletTruck && (
+              <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-1">
+                Xe pallet — hàng được <b>gom lên pallet</b> rồi mới xếp lên xe.
+              </p>
+            )}
+          </div>
+
+          {/* ── Kích thước pallet: chỉ hỏi khi thật sự dùng tới ── */}
+          {isPalletTruck && (
+            <div className="space-y-1">
+              <Label className="text-xs">Pallet D×R×C khi đã xếp hàng (mm)</Label>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={0} className="h-8 text-xs" value={palL} onChange={e => setPalL(e.target.value)} placeholder="Dài" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} className="h-8 text-xs" value={palW} onChange={e => setPalW(e.target.value)} placeholder="Rộng" />
+                <span className="text-slate-400 text-xs">×</span>
+                <Input type="number" min={0} className="h-8 text-xs" value={palH} onChange={e => setPalH(e.target.value)} placeholder="Cao" />
+              </div>
+              {floorSlots > 0 && (
+                <p className="text-[10px] text-slate-500">
+                  Sàn xe chứa được <b className="tabular-nums">{floorSlots}</b> chỗ pallet
+                  {palletized ? <> · đơn cần <b className="tabular-nums">{palletized.palletCount}</b> pallet</> : null}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Pallet không vừa xe — báo NGAY, không vẽ ra một sơ đồ vô nghĩa (user chốt 26/08) */}
+          {palFitErr && (
+            <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+              <b>Pallet không vừa xe.</b> {palFitErr}
+            </p>
+          )}
+
+          {/* Xe thường mà đơn có mã pallet → đã bỏ ra, nhưng phải NÓI, không nuốt im lặng */}
+          {droppedPallets.length > 0 && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+              Xe thường nên <b>không xếp khối pallet</b> lên sơ đồ:{' '}
+              {droppedPallets.map(g => `${g.label} (${g.count})`).join(', ')}. Chọn loại xe pallet nếu muốn thấy chúng.
+            </p>
+          )}
+
+          {palletized?.warnings.map((w, i) => (
+            <p key={i} className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{w}</p>
+          ))}
+
+          {palletized && palletized.notes.length > 0 && (
+            <details className="text-[10px] text-slate-500">
+              <summary className="cursor-pointer hover:text-slate-700">Cách tính ra {palletized.palletCount} pallet</summary>
+              <div className="pt-1 space-y-0.5">
+                {palletized.notes.map((n, i) => <p key={i}>• {n}</p>)}
+              </div>
+            </details>
+          )}
+
           <div className="space-y-1">
             <Label className="text-xs">Dòng xe (ghi nhớ lòng thùng)</Label>
             <select value={truckModels.some(x => x.name === tmName) ? tmName : ''} onChange={e => pickTruckModel(e.target.value)}

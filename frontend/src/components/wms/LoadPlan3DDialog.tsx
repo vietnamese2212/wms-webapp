@@ -20,7 +20,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
-  DEFAULT_PALLET, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
+  spreadOnTopOfPallets, DEFAULT_PALLET, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 
@@ -438,7 +438,14 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
 
   const plan: LoadPlan | null = useMemo(() => {
     if (!truckOk || !groups.length || palFitErr) return null
-    return computeLoadPlan({ length: truckL, width: truckW, height: truckH }, groups)
+    const truck = { length: truckL, width: truckW, height: truckH }
+    // Thùng "Lên nóc" (topCarton) KHÔNG đi qua thuật toán thùng-sàn (nó dựng tháp lẻ loi khi
+    // trộn với pallet): xếp pallet trước (count 0 giữ nguyên CHỈ SỐ nhóm cho nhãn/màu), rồi
+    // rải thùng lên MẶT các pallet bằng spreadOnTopOfPallets.
+    const topIdx = groups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
+    if (!topIdx.length) return computeLoadPlan(truck, groups)
+    const base = computeLoadPlan(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g)))
+    return spreadOnTopOfPallets(base, topIdx, groups)
   }, [truckOk, truckL, truckW, truckH, groups, palFitErr])
 
   useEffect(() => { setMaxStep(plan?.stepCount ?? 0) }, [plan?.stepCount])

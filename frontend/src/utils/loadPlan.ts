@@ -1123,6 +1123,63 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   return { groups, notes, warnings, palletCount, carrierCount }
 }
 
+// ─── Rải THÙNG RỜI lên MẶT các khối pallet (loại hàng "Lên nóc", 26/08 vòng 10) ─────────────
+// Thuật toán thùng-sàn (computeLoadPlan) dựng TIỀN TỆ tháp lẻ loi khi trộn thùng với pallet
+// (ảnh nghiệm thu: 278/836 thùng bị bỏ oan) — đường xếp đúng của "lên nóc" là: coi NÓC từng
+// pallet đã xếp là một mặt sàn mới, MẶT THẤP LẤP TRƯỚC (giữ tải phẳng), mỗi mặt tile lưới
+// thùng (thử 2 hướng), chồng lớp tới trần lòng xe; lớp cuối thiếu thùng vẫn nâng mặt trọn lớp.
+export function spreadOnTopOfPallets(plan: LoadPlan, topIdx: number[], groupsIn: LoadGroup[]): LoadPlan {
+  if (!topIdx.length || !plan.placed.length) return plan
+  const H = plan.truck.height
+  type Surf = { x: number; y: number; l: number; w: number; top: number }
+  const surfs: Surf[] = plan.placed.map(b => ({ x: b.x, y: b.y, l: b.l, w: b.w, top: b.z + b.h }))
+  const placed = [...plan.placed]
+  const leftover = [...plan.leftover]
+  let step = plan.stepCount
+  let addVol = 0, addW = 0, addPlaced = 0, addTotal = 0
+  for (const gi of topIdx) {
+    const g = groupsIn[gi]
+    if (g.count <= 0) continue
+    addTotal += g.count
+    let left = g.count
+    step += 1
+    // Mỗi vòng đặt ĐÚNG 1 LỚP lên mặt THẤP NHẤT còn chỗ — tải dâng đều khắp các pallet,
+    // không dựng cột chạm trần trên một pallet rồi mới sang pallet kế.
+    while (left > 0 && g.h > 0) {
+      let best: Surf | null = null
+      let bl = 0, bw = 0, nx = 0, ny = 0
+      for (const s of surfs) {
+        if (H - s.top < g.h) continue
+        if (best && s.top >= best.top) continue
+        // lưới thùng trên mặt này — thử 2 hướng đặt, lấy hướng chứa nhiều hơn
+        const n1 = Math.floor(s.l / g.l) * Math.floor(s.w / g.w)
+        const n2 = Math.floor(s.l / g.w) * Math.floor(s.w / g.l)
+        if (Math.max(n1, n2) <= 0) continue
+        const rot = n2 > n1
+        best = s
+        bl = rot ? g.w : g.l; bw = rot ? g.l : g.w
+        nx = Math.floor(s.l / bl); ny = Math.floor(s.w / bw)
+      }
+      if (!best) break
+      for (let ix = 0; ix < nx && left > 0; ix++) for (let iy = 0; iy < ny && left > 0; iy++) {
+        placed.push({ x: best.x + ix * bl, y: best.y + iy * bw, z: best.top, l: bl, w: bw, h: g.h, group: gi, step })
+        left--; addPlaced++; addVol += bl * bw * g.h; addW += g.weightKg ?? 0
+      }
+      best.top += g.h   // lớp thiếu thùng vẫn nâng mặt trọn lớp — không đặt chồng lên lớp hụt
+    }
+    if (left > 0) leftover.push({ group: gi, count: left })
+  }
+  const truckVol = plan.truck.length * plan.truck.width * plan.truck.height
+  return {
+    ...plan, placed, leftover,
+    stepCount: step,
+    placedCount: plan.placedCount + addPlaced,
+    totalCount: plan.totalCount + addTotal,
+    weightKg: plan.weightKg + addW,
+    volumePct: Math.round((((plan.volumePct / 100) * truckVol + addVol) / truckVol) * 1000) / 10,
+  }
+}
+
 /**
  * Pallet có vừa lòng xe không — kiểm CẢ HAI hướng đặt (dọc/ngang) như thuật toán xếp vẫn làm.
  * Trả câu giải thích nếu KHÔNG vừa, null nếu vừa. (user chốt 26/08: "pallet k vừa kích thước xe

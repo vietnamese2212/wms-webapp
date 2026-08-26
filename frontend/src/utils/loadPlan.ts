@@ -937,6 +937,7 @@ export interface PalletSpec {
   h: number
   baseH: number           // chiều cao ĐẾ pallet rỗng (mm) — cộng vào mọi pallet, và là cao của Loscam rỗng
   baseColor: string       // màu vẽ đế pallet (#rrggbb) — từ Material.pallet_color của mã pallet; mặc định xanh Loscam
+  weightKg?: number | null // khối lượng 1 pallet rỗng (Material.weight_kg của mã pallet) — cộng vào KL từng khối
 }
 
 export interface PalletizeInput {
@@ -962,6 +963,7 @@ export interface PalletizeResult {
   notes: string[]        // giải thích cách ra số pallet — hiện thẳng cho người dùng đọc
   warnings: string[]     // thiếu khai báo / không vừa xe
   palletCount: number
+  carrierCount: number   // số pallet MANG HÀNG khai trong đơn (dòng is_pallet_carrier) — để đối chiếu
 }
 
 /** Gom danh sách dòng hàng thành các KHỐI PALLET để đưa vào `computeLoadPlan`. */
@@ -970,6 +972,8 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   const notes: string[] = []
   const warnings: string[] = []
   const missingSpec: string[] = []
+  const pw = spec.weightKg && spec.weightKg > 0 ? spec.weightKg : 0   // KL 1 pallet rỗng
+  let carrierCount = 0
 
   // Gom theo ĐƠN để phần dư chỉ cộng dồn trong cùng một đơn
   const byDo = new Map<string, PalletizeInput[]>()
@@ -982,21 +986,16 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   for (const [doKey, lines] of byDo) {
     const doLabel = lines[0].doLabel
     let fracSum = 0                       // tổng phần dư (đơn vị: pallet) của đơn này
+    let fracW = 0                         // tổng KL hàng của phần dư (kg)
     const fracParts: string[] = []
 
     for (const it of lines) {
-      // ── Pallet RỖNG chở đi: số lượng đặt CHÍNH LÀ số pallet, không chia quy cách ──
+      // ── Dòng PALLET MANG HÀNG (Loscam, is_pallet_carrier): chính là pallet LÓT DƯỚI các khối
+      // hàng của đơn — KHÔNG xếp thành khối riêng (user bắt 26/08: vẽ vừa lót dưới hàng vừa chất
+      // cột 17 pallet rỗng = đếm TRÙNG). Chỉ ghi nhận số khai để đối chiếu với số sơ đồ cần. ──
       if (it.isPalletCarrier) {
-        groups.push({
-          key: `${it.key}|plt`, label: it.label, doKey, doLabel,
-          count: it.cartons,
-          l: spec.l, w: spec.w, h: spec.baseH,   // rỗng → thấp → chồng được nhiều lớp
-          base: { h: spec.baseH, color: spec.baseColor },   // cả khối là đế — vẽ nguyên màu pallet
-          weightKg: it.weightKg, assumed: false,
-          maxLayers: null,                        // để thuật toán tự tính lớp theo chiều cao xe
-          onTop: false,
-        })
-        notes.push(`${it.label}: ${it.cartons} pallet rỗng (chồng theo chiều cao xe)`)
+        carrierCount += it.cartons
+        notes.push(`${it.label}: ${it.cartons} chiếc = pallet LÓT dưới hàng — không xếp thành khối riêng`)
         continue
       }
 
@@ -1030,7 +1029,8 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           key: `${it.key}|full`, label: it.label, doKey, doLabel,
           count: full, l: spec.l, w: spec.w, h: fullH,
           base: { h: spec.baseH, color: spec.baseColor },
-          weightKg: it.weightKg != null ? it.weightKg * cpp : null,
+          // KL khối = hàng + CHÍNH CÁI PALLET lót dưới (dòng Loscam không còn là khối riêng)
+          weightKg: it.weightKg != null ? it.weightKg * cpp + pw : (pw > 0 ? pw : null),
           assumed: layers === 0,   // cao ước lượng vì thiếu kích thước thùng — panel gắn nhãn
           maxLayers: 1,            // pallet hàng KHÔNG chồng lên nhau
           onTop: false,
@@ -1038,6 +1038,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       }
       if (rem > 0) {
         fracSum += rem / cpp
+        fracW += rem * (it.weightKg ?? 0)
         fracParts.push(`${it.label} dư ${rem}/${cpp}`)
       }
       if (full > 0 || rem > 0)
@@ -1051,7 +1052,8 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         key: `${doKey}|mixed`, label: 'Pallet gộp (hàng lẻ)', doKey, doLabel,
         count: mixed, l: spec.l, w: spec.w, h: spec.h,
         base: { h: spec.baseH, color: spec.baseColor },
-        weightKg: null, assumed: false, maxLayers: 1, onTop: false,
+        weightKg: fracW > 0 || pw > 0 ? fracW / mixed + pw : null,
+        assumed: false, maxLayers: 1, onTop: false,
       })
       notes.push(`Pallet gộp đơn ${doLabel}: ${fracParts.join(' + ')} = ${fracSum.toFixed(2)} pallet → ${mixed} pallet gộp`)
     }
@@ -1060,7 +1062,13 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   if (missingSpec.length)
     warnings.push(`${missingSpec.length} mã chưa khai "Thùng/pallet" nên không tính được số pallet — tạm tính 1 pallet mỗi mã: ${missingSpec.slice(0, 6).join(', ')}${missingSpec.length > 6 ? '…' : ''}`)
 
-  return { groups, notes, warnings, palletCount: groups.reduce((s, g) => s + g.count, 0) }
+  const palletCount = groups.reduce((s, g) => s + g.count, 0)
+  // Đơn khai N pallet mang hàng mà sơ đồ tính cần M ≠ N → nói ra cho người soát (không chặn:
+  // lệch 1-2 chiếc là chuyện thường khi pallet gộp / quy cách chưa chuẩn).
+  if (carrierCount > 0 && carrierCount !== palletCount)
+    warnings.push(`Đơn khai ${carrierCount} pallet mang hàng nhưng sơ đồ tính cần ${palletCount} pallet cho hàng — rà lại số pallet trong đơn nếu lệch nhiều.`)
+
+  return { groups, notes, warnings, palletCount, carrierCount }
 }
 
 /**

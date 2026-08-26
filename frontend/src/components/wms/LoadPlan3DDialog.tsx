@@ -292,7 +292,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const l = mL > 0 ? mL : Number(palL), w = mW > 0 ? mW : Number(palW)
     if (!(l > 0 && w > 0)) return null
     const baseH = Number(activePalletMat?.carton_height_mm) > 0 ? Number(activePalletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
-    return { l, w, h, baseH, baseColor: activePalletMat?.pallet_color ?? DEFAULT_PALLET.baseColor }
+    return {
+      l, w, h, baseH,
+      baseColor: activePalletMat?.pallet_color ?? DEFAULT_PALLET.baseColor,
+      // KL 1 pallet rỗng — cộng vào từng khối vì dòng Loscam trong đơn không còn vẽ thành khối riêng
+      weightKg: Number(activePalletMat?.weight_kg) > 0 ? Number(activePalletMat!.weight_kg) : null,
+    }
   }, [palL, palW, palH, activePalletMat])
 
   const palletized = useMemo(() => {
@@ -860,8 +865,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {/* Xe thường mà đơn có mã pallet → đã bỏ ra, nhưng phải NÓI, không nuốt im lặng */}
           {droppedPallets.length > 0 && (
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-              Xe thường nên <b>không xếp khối pallet</b> lên sơ đồ:{' '}
-              {droppedPallets.map(g => `${g.label} (${g.count})`).join(', ')}. Chọn loại xe pallet nếu muốn thấy chúng.
+              Xe thường nên <b>dòng pallet không vẽ</b> lên sơ đồ:{' '}
+              {droppedPallets.map(g => `${g.label} (${g.count})`).join(', ')}. Ở chế độ Xe pallet, chúng là pallet LÓT dưới các khối hàng.
             </p>
           )}
 

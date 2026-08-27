@@ -145,7 +145,11 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
     { value: '3m', label: '3 tháng gần nhất', from: monthStart(2), to: TODAY() },
     { value: '12m', label: '12 tháng gần nhất', from: monthStart(11), to: TODAY() },
   ]
-  const rangeValue = RANGES.find(r => r.from === from && r.to === to)?.value ?? ''
+  // Chỉ coi là ĐANG LỌC khi người dùng thực sự chọn — suy từ from/to đã-đổ-mặc-định thì chip
+  // "Kỳ: Tháng này" bấm ✕ không tắt được (xoá xong lại suy ra đúng giá trị cũ).
+  const rangeValue = (prodFrom || prodTo)
+    ? RANGES.find(r => r.from === from && r.to === to)?.value ?? ''
+    : ''
 
   // Khoảng ngày luôn HỢP LỆ: sửa 1 đầu vượt qua đầu kia thì kéo đầu kia theo (thay cho min/max của
   // ô ngày cũ) — không để lọt from > to xuống API rồi báo lỗi đỏ.

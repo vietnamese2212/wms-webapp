@@ -88,7 +88,12 @@ export default function WarehouseCosts() {
     { value: '3m', label: '3 tháng gần nhất', from: monthAdd(2), to: monthAdd(0) },
     { value: '12m', label: '12 tháng gần nhất', from: monthAdd(11), to: monthAdd(0) },
   ]
-  const presetValue = PRESETS.find(p => p.from === from && p.to === to)?.value ?? ''
+  // ⚠️ Chỉ coi là ĐANG LỌC khi người dùng THỰC SỰ chọn (store có giá trị). Nếu suy từ from/to
+  // đã-đổ-mặc-định thì chip "Khoảng: Tháng này" hiện ngay lúc mới mở và bấm ✕ KHÔNG TẮT ĐƯỢC —
+  // xoá xong lại suy ra đúng giá trị cũ (user 27/08: "Ko xóa đc Khoảng Tháng này à??").
+  const presetValue = (f.periodFrom || f.periodTo)
+    ? PRESETS.find(p => p.from === from && p.to === to)?.value ?? ''
+    : ''
 
   const filterDefs: FilterDef[] = [
     { key: 'from', label: 'Từ kỳ', type: 'single', pinned: true, options: monthOpts(), allLabel: 'Tháng này',
@@ -139,7 +144,10 @@ export default function WarehouseCosts() {
 
   const actions: ActionItem[] = [
     ...(canEdit ? [
-      { key: 'open', icon: FilePlus2, label: 'Mở phiếu', tip: 'Chọn kho + kỳ rồi kê khai các khoản chi phí trong phiếu', primary: true,
+      // Nhãn phải nói được việc TẠO MỚI — "Mở phiếu" đọc ra như chỉ mở cái đã có (user 27/08:
+      // "thế tạo phiếu mở chi phí mới thì ở đâu?"). Cùng một nút: kho+kỳ chưa có phiếu thì tạo
+      // mới, đã có thì mở đúng phiếu đó (phiếu là NHÓM dẫn xuất nên không đẻ bản trùng).
+      { key: 'open', icon: FilePlus2, label: 'Tạo phiếu', tip: 'Tạo phiếu chi phí mới: chọn Kho + Kỳ tháng rồi kê khai các khoản (kho+kỳ đã có phiếu thì mở phiếu đó ra sửa)', primary: true,
         onClick: () => setShowOpen(true), disabled: busy },
       { key: 'copy', icon: Copy, label: 'Chép tháng trước', tip: `Đắp các dòng CÒN THIẾU của kỳ ${to} từ tháng liền trước (không đè số đã khai)`,
         onClick: onCopyPrev, busy: copyPrev.isPending, disabled: busy },
@@ -205,7 +213,8 @@ export default function WarehouseCosts() {
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {isVoucherView
             ? <VoucherTable rows={vouchers.data?.rows ?? []} loading={vouchers.isLoading}
-                onOpen={v => nav(voucherPath(v.warehouse_id, v.period))} canEdit={canEdit} />
+                onOpen={v => nav(voucherPath(v.warehouse_id, v.period))} canEdit={canEdit}
+                onCreate={() => setShowOpen(true)} />
             : <LineTable rows={book.data?.rows ?? []} loading={book.isLoading}
                 onOpen={(wid, period) => nav(voucherPath(wid, period))} />}
         </div>
@@ -252,8 +261,9 @@ export default function WarehouseCosts() {
 }
 
 // ── Bảng PHIẾU (kho × kỳ) ─────────────────────────────────────────────────────────────────────
-function VoucherTable({ rows, loading, onOpen, canEdit }: {
+function VoucherTable({ rows, loading, onOpen, canEdit, onCreate }: {
   rows: CostVoucher[]; loading: boolean; onOpen: (v: CostVoucher) => void; canEdit: boolean
+  onCreate?: () => void
 }) {
   return (
     <table className="min-w-full text-left">
@@ -299,8 +309,15 @@ function VoucherTable({ rows, loading, onOpen, canEdit }: {
           </tr>
         ))}
         {!loading && rows.length === 0 && (
-          <tr><td colSpan={8} className="px-2 py-8 text-center text-[11px] text-slate-400">
-            Kỳ đang chọn chưa có phiếu chi phí nào. Bấm <b>Mở phiếu</b> để kê khai cho một kho.
+          <tr><td colSpan={8} className="px-2 py-8 text-center">
+            <div className="text-[11px] text-slate-400">Kỳ đang chọn chưa có phiếu chi phí nào.</div>
+            {canEdit && onCreate && (
+              // Trạng thái rỗng phải có ĐƯỜNG ĐI NGAY TẠI ĐÓ, đừng bắt người dùng đi dò nút trên toolbar
+              <button type="button" onClick={onCreate}
+                className="mt-2 inline-flex items-center gap-1 h-8 px-3 rounded-md bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700">
+                <FilePlus2 className="h-3.5 w-3.5" /> Tạo phiếu chi phí
+              </button>
+            )}
           </td></tr>
         )}
       </tbody>
@@ -381,7 +398,7 @@ function OpenVoucherDialog({ whOpts, period, onClose, onGo }: {
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle className="text-base">Mở phiếu chi phí</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="text-base">Tạo phiếu chi phí</DialogTitle></DialogHeader>
         <p className="text-[11px] text-slate-500 -mt-2">
           Một phiếu = <b>một kho</b> trong <b>một kỳ tháng</b>. Mở ra rồi thêm/sửa các khoản chi phí bên trong
           (dán được cả bảng từ Excel).
@@ -398,7 +415,7 @@ function OpenVoucherDialog({ whOpts, period, onClose, onGo }: {
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!wh || !p} onClick={() => onGo(wh, p)}>Mở phiếu</Button>
+          <Button disabled={!wh || !p} onClick={() => onGo(wh, p)}>Tạo / mở phiếu</Button>
         </div>
       </DialogContent>
     </Dialog>

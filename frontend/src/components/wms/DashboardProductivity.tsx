@@ -67,8 +67,11 @@ const METRICS: Array<{ key: string; label: string; unit: string; goodUp: boolean
   { key: 'otr', label: 'Tỷ lệ tăng ca', unit: '', goodUp: false, d: 1, pct: true, of: m => otRate(m) },
 ]
 
-function Delta({ cur, prev, goodUp }: { cur: number | null; prev: number | null; goodUp: boolean }) {
-  if (cur == null || prev == null || prev === 0) return <span className="text-[9px] text-slate-300">—</span>
+// `floor` = ngưỡng NỀN đáng kể. Không có nó thì tháng nền cực nhỏ (4 tấn → 883 tấn) in ra
+// "▲21.758%" — đúng toán nhưng đọc thành tin giả; số phần trăm chỉ có nghĩa khi mẫu số có nghĩa.
+function Delta({ cur, prev, goodUp, floor = 0 }: { cur: number | null; prev: number | null; goodUp: boolean; floor?: number }) {
+  if (cur == null || prev == null || prev === 0 || Math.abs(prev) < floor)
+    return <span className="text-[9px] text-slate-300">—</span>
   const p = (cur - prev) / Math.abs(prev)
   if (Math.abs(p) < 0.005) return <span className="text-[9px] text-slate-400">≈</span>
   const up = p > 0
@@ -86,6 +89,7 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
   const vals = rows.map(M.of)
   const max = Math.max(1e-9, ...vals.map(v => v ?? 0))
   const fmt = (v: number | null) => (M.pct ? fmtPct(v, M.d) : fmtNum(v, M.d))
+  const floor = max * 0.02          // nền < 2% đỉnh thì KHÔNG so phần trăm (xem ghi chú ở <Delta/>)
   const last = vals[vals.length - 1], prev = vals[vals.length - 2]
 
   return (
@@ -109,7 +113,7 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
         ))}
         <span className="flex-1" />
         <span className="text-[10px] text-slate-500">
-          Tháng cuối: <b className="text-slate-700 dark:text-slate-200">{fmt(last ?? null)}</b> <Delta cur={last ?? null} prev={prev ?? null} goodUp={M.goodUp} />
+          Tháng cuối: <b className="text-slate-700 dark:text-slate-200">{fmt(last ?? null)}</b> <Delta cur={last ?? null} prev={prev ?? null} goodUp={M.goodUp} floor={floor} />
         </span>
       </div>
 
@@ -120,7 +124,7 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
             const h = v == null ? 0 : Math.max(3, (v / max) * 96)
             return (
               <div key={m.month} className="flex flex-col items-center justify-end gap-1 w-16">
-                <Delta cur={v} prev={i > 0 ? vals[i - 1] : null} goodUp={M.goodUp} />
+                <Delta cur={v} prev={i > 0 ? vals[i - 1] : null} goodUp={M.goodUp} floor={floor} />
                 <span className="text-[9px] tabular-nums text-slate-600 dark:text-slate-300">{fmt(v)}</span>
                 {v == null
                   ? <div className="w-9 border-b-2 border-dashed border-slate-300 dark:border-slate-600" title="Chưa có dữ liệu chấm công tháng này" />

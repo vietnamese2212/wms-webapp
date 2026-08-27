@@ -104,11 +104,24 @@ export default function WarehouseCosts() {
     ? PRESETS.find(p => p.from === from && p.to === to)?.value ?? ''
     : ''
 
+  // ⚠️ Hai ô Từ/Đến ràng buộc nhau nên PHẢI đọc state MỚI NHẤT lúc chạy, không dùng `f` chụp lại
+  // lúc render: "Xóa tất cả" gọi liên tiếp clear(Từ) rồi clear(Đến) TRONG CÙNG một render, ô Đến
+  // sẽ ghi lại `periodFrom` bằng giá trị CŨ ⇒ chip "Từ kỳ" xoá xong lại hiện (đo thật 27/08).
+  const nowF = () => useWmsFilterStore.getState().warehouseCost
+  const setFrom = (v: string) => {
+    const cur = nowF()
+    setF({ periodFrom: v, periodTo: v && cur.periodTo && cur.periodTo < v ? v : cur.periodTo, page: 1 })
+  }
+  const setTo = (v: string) => {
+    const cur = nowF()
+    setF({ periodTo: v, periodFrom: v && cur.periodFrom && v < cur.periodFrom ? v : cur.periodFrom, page: 1 })
+  }
+
   const filterDefs: FilterDef[] = [
-    { key: 'from', label: 'Từ kỳ', type: 'single', pinned: true, options: monthOpts(), allLabel: 'Tháng này',
-      value: f.periodFrom, onChange: v => setF({ periodFrom: v, periodTo: v && to < v ? v : f.periodTo, page: 1 }) },
+    { key: 'from', label: 'Từ kỳ', type: 'single', pinned: true, options: monthOpts(), allLabel: 'Tất cả kỳ',
+      value: f.periodFrom, onChange: setFrom },
     { key: 'to', label: 'Đến kỳ', type: 'single', pinned: true, options: monthOpts(), allLabel: 'Cùng kỳ "Từ"',
-      value: f.periodTo, onChange: v => setF({ periodTo: v, periodFrom: v && v < from ? v : f.periodFrom, page: 1 }) },
+      value: f.periodTo, onChange: setTo },
     { key: 'preset', label: 'Khoảng', type: 'single', options: PRESETS, allLabel: 'Về mặc định (tháng này)',
       value: presetValue,
       onChange: v => {

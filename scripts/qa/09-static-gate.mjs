@@ -471,6 +471,16 @@ const RULES = [
            '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
     count: (s) => countCatalogueFullLoad(s),
   },
+  // Sơ đồ xếp xe: cỡ khối phải đi qua `cartonBoxOf` (loadPlan.ts). Tự `hasDims ? … : assumedCarton.l`
+  // ở màn nào là màn đó vẽ 1 CÁI = 1 THÙNG giả định — 200 quạt (4.000 cái/pallet) thành 2m³ phủ kín
+  // nóc xe, mọi pallet trông cao bằng nhau (user báo 27/08). Nhánh suy cỡ từ quy cách nằm 1 chỗ.
+  {
+    key: 'assumed_carton_used_directly',
+    label: 'lấy cỡ thùng GIẢ ĐỊNH làm giá trị dự phòng tại chỗ (`? … : assumedCarton.x` / `?? assumedCarton.x`) — ' +
+           'phải gọi `cartonBoxOf` trong utils/loadPlan.ts để mã bán theo cái suy cỡ từ quy cách cái/pallet',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      l => /(:|\?\?)\s*assumedCarton\s*\./.test(l) && !/^\s*(\/\/|\*)/.test(l), s),
+  },
   {
     key: 'scan_icon_not_unified',
     label: 'nút/nhãn HÀNH ĐỘNG QUÉT dùng icon riêng thay vì `ScanIcon` — user chốt 21/08 "mỗi chỗ 1 icon là k đc"; ' +

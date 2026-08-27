@@ -20,7 +20,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
-  spreadOnTopOfPallets, DEFAULT_PALLET, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
+  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 
@@ -313,6 +313,23 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     return palletMats[0] ?? null
   }, [palletMatId, palletMats, orderPalletMat])
 
+  const palSpec: PalletSpec | null = useMemo(() => {
+    const h = Number(palH)
+    if (!(h > 0)) return null
+    // CHÂN pallet: từ quy cách của mã pallet (Material.carton_l/w) — mã chưa khai mới rơi về ô
+    // nhập tay. Đế = carton_height_mm của mã pallet (Loscam khai 150); màu = Material.pallet_color.
+    const mL = Number(activePalletMat?.carton_length_mm), mW = Number(activePalletMat?.carton_width_mm)
+    const l = mL > 0 ? mL : Number(palL), w = mW > 0 ? mW : Number(palW)
+    if (!(l > 0 && w > 0)) return null
+    const baseH = Number(activePalletMat?.carton_height_mm) > 0 ? Number(activePalletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
+    return {
+      l, w, h, baseH,
+      baseColor: activePalletMat?.pallet_color ?? DEFAULT_PALLET.baseColor,
+      // KL 1 pallet rỗng — cộng vào từng khối vì dòng Loscam trong đơn không còn vẽ thành khối riêng
+      weightKg: Number(activePalletMat?.weight_kg) > 0 ? Number(activePalletMat!.weight_kg) : null,
+    }
+  }, [palL, palW, palH, activePalletMat])
+
   // Gom nhóm theo (ĐƠN × mã hàng) — kèm tiến độ đã xuất thật (realtime theo gdo).
   // Đây là NGUYÊN LIỆU: xe thường xếp thẳng mảng này, xe pallet gom nó lên pallet trước.
   const cartonGroups: PlanGroup[] = useMemo(() => {
@@ -334,6 +351,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         const firstScanAt = (it.scan_entries ?? [])
           .filter(s => !(s.is_loose_picking && !s.loose_confirmed))
           .reduce<string | null>((min, s) => (min === null || s.scanned_at < min ? s.scanned_at : min), null)
+        // Cỡ khối để VẼ — cửa duy nhất là `cartonBoxOf`: khai rồi thì dùng đúng khai; mã bán theo
+        // cái chưa khai thì suy từ quy cách cái/pallet; hết đường mới rơi về cỡ thùng giả định.
+        const unitless = !hasEntry(it.material)
+        const cppNow = it.material?.cartons_per_pallet ?? null
+        const box = cartonBoxOf(
+          hasDims ? { l: Number(it.material!.carton_length_mm), w: Number(it.material!.carton_width_mm), h: Number(it.material!.carton_height_mm) } : null,
+          cppNow, assumedCarton, palSpec ?? DEFAULT_PALLET, unitless)
         const cur = map.get(key)
         if (cur) {
           cur.count += ordPhys; cur.done += done
@@ -347,27 +371,25 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           doLabel: d.distributor_name ? `${d.delivery_code} · ${d.distributor_name}` : d.delivery_code,
           count: ordPhys,
           done,
-          l: hasDims ? Number(it.material!.carton_length_mm) : assumedCarton.l,
-          w: hasDims ? Number(it.material!.carton_width_mm)  : assumedCarton.w,
-          h: hasDims ? Number(it.material!.carton_height_mm) : assumedCarton.h,
+          l: box.l, w: box.w, h: box.h,
           weightKg: it.material?.weight_kg ?? null,
           assumed: !hasDims,
           maxLayers: it.material?.max_stack_layers ?? null,
           onTop: it.material?.stack_on_top ?? false,
-          cpp: it.material?.cartons_per_pallet ?? null,
+          cpp: cppNow,
           isPallet: it.material?.is_pallet_carrier ?? false,
           category: it.material?.category ?? null,
           // SL nghiệp vụ + ĐVT theo DANH MỤC (unitLabel): mã có entry → thùng; không entry
           // (POSM quạt/bóng… đơn vị cái/EA) → nhãn của base_unit — KHÔNG gọi bừa "thùng"
           qty: ordPhys, qtyDone: done,
           qtyUnit: hasEntry(it.material) ? unitLabel(it.material?.entry_unit) : unitLabel(it.material?.base_unit),
-          unitless: !hasEntry(it.material),
+          unitless,
           firstScanAt,
         })
       }
     }
     return [...map.values()]
-  }, [gdo, assumedCarton])
+  }, [gdo, assumedCarton, palSpec])
 
   const truckL = Number(boxL), truckW = Number(boxW), truckH = Number(boxH)
   const truckOk = truckL > 0 && truckW > 0 && truckH > 0
@@ -376,23 +398,6 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   // Xe pallet: gom hàng lên pallet rồi xếp PALLET (sức chứa nói bằng "16-17 pallet").
   // Xe thường: xếp từng thùng như cũ, và KHÔNG xếp khối pallet lên xe — nhưng nói ra là đã bỏ,
   // không im lặng nuốt mất một dòng hàng của đơn.
-  const palSpec: PalletSpec | null = useMemo(() => {
-    const h = Number(palH)
-    if (!(h > 0)) return null
-    // CHÂN pallet: từ quy cách của mã pallet (Material.carton_l/w) — mã chưa khai mới rơi về ô
-    // nhập tay. Đế = carton_height_mm của mã pallet (Loscam khai 150); màu = Material.pallet_color.
-    const mL = Number(activePalletMat?.carton_length_mm), mW = Number(activePalletMat?.carton_width_mm)
-    const l = mL > 0 ? mL : Number(palL), w = mW > 0 ? mW : Number(palW)
-    if (!(l > 0 && w > 0)) return null
-    const baseH = Number(activePalletMat?.carton_height_mm) > 0 ? Number(activePalletMat!.carton_height_mm) : DEFAULT_PALLET.baseH
-    return {
-      l, w, h, baseH,
-      baseColor: activePalletMat?.pallet_color ?? DEFAULT_PALLET.baseColor,
-      // KL 1 pallet rỗng — cộng vào từng khối vì dòng Loscam trong đơn không còn vẽ thành khối riêng
-      weightKg: Number(activePalletMat?.weight_kg) > 0 ? Number(activePalletMat!.weight_kg) : null,
-    }
-  }, [palL, palW, palH, activePalletMat])
-
   // ── CÁCH LÊN XE theo (KHO × Loại hàng) — nhớ theo USER (user chốt 26/08 "lưu setting kho
   // rồi lưu theo user"): chọn 1 lần trong màn này, mọi chuyến sau của kho đó tự áp. ──
   const placements = useLoadPlanPrefsStore(s => s.placements)
@@ -1228,7 +1233,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           )}
           {assumedCount > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
-              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang dùng cỡ giả định {assumedCarton.l}×{assumedCarton.w}×{assumedCarton.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
+              <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang ƯỚC LƯỢNG cỡ: mã bán theo cái có khai quy cách <i>cái/pallet</i> thì suy cỡ 1 cái từ quy cách đó, còn lại dùng cỡ giả định {assumedCarton.l}×{assumedCarton.w}×{assumedCarton.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
             </div>
           )}
 

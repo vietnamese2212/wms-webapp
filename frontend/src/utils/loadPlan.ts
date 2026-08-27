@@ -972,6 +972,38 @@ export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number
   return Math.max(grid(carton.l, carton.w), grid(carton.w, carton.l))
 }
 
+/**
+ * Cỡ MỘT KHỐI để vẽ, theo thứ tự tin cậy: kích thước ĐÃ KHAI → suy từ quy cách (cái/pallet) →
+ * cỡ thùng giả định. Đây là cửa DUY NHẤT chọn cỡ khối — đừng tự `hasDims ? … : assumedCarton` ở
+ * màn nào khác (cổng tĩnh `assumed_carton_used_directly` gác).
+ *
+ * Vì sao có nhánh giữa (user báo 27/08): mã bán theo CÁI mà chưa khai kích thước bị vẽ 1 cái = 1
+ * thùng giả định — 200 quạt (quy cách 4.000 cái/pallet) thành 200 thùng ≈ 2m³, gấp ~25 lần chỗ
+ * thật; POSM phủ kín nóc xe nên MỌI pallet trông cao bằng nhau, sơ đồ vô nghĩa. Quy cách cái/pallet
+ * là thứ duy nhất biết được về cỡ ⇒ thể tích 1 cái = thể tích hàng trên 1 pallet ÷ cpp, giữ TỶ LỆ
+ * của cỡ giả định, kẹp trong lòng 1 pallet để hình không vỡ khi cpp quá nhỏ.
+ * Mã CÓ đơn vị thùng thì KHÔNG suy kiểu này (số lượng vốn đã đếm theo thùng).
+ */
+export function cartonBoxOf(
+  declared: { l: number; w: number; h: number } | null,
+  cpp: number | null,
+  assumed: { l: number; w: number; h: number },
+  spec: PalletSpec,
+  unitless: boolean,
+): { l: number; w: number; h: number } {
+  if (declared && declared.l > 0 && declared.w > 0 && declared.h > 0) return declared
+  const payload = spec.l * spec.w * Math.max(0, spec.h - spec.baseH)
+  if (!unitless || !(cpp && cpp > 0) || !(payload > 0) || !(assumed.l > 0 && assumed.w > 0 && assumed.h > 0))
+    return assumed
+  const f = Math.cbrt((payload / cpp) / (assumed.l * assumed.w * assumed.h))
+  if (!(f > 0)) return assumed
+  return {
+    l: Math.max(20, Math.min(spec.l, Math.round(assumed.l * f))),
+    w: Math.max(20, Math.min(spec.w, Math.round(assumed.w * f))),
+    h: Math.max(20, Math.min(spec.h - spec.baseH, Math.round(assumed.h * f))),
+  }
+}
+
 export interface PalletizeResult {
   groups: LoadGroup[]
   notes: string[]        // giải thích cách ra số pallet — hiện thẳng cho người dùng đọc

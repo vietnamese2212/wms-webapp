@@ -34,6 +34,7 @@
   "tablist_center_blocks_scroll": 0,
   "component_defined_inside_component": 0,
   "catalogue_full_load": 0,
+  "assumed_carton_used_directly": 0,
   "scan_icon_not_unified": 0,
   "location_picker_without_scan": 0,
   "wedge_ime_path_missing": 0,

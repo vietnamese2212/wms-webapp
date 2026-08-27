@@ -9,8 +9,10 @@
 import { useMemo } from 'react'
 import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useProductivity, type ProductivityRow } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { formatDate } from '@/utils/formatters'
 import { tonsPerWorkDay, tonsPerWorkHour, otRate, costPerTon, fmtNum, fmtPct } from '@/utils/productivity'
 
 // "Hôm nay" phải là HÀM (màn kho mở qua đêm sẽ giữ ngày hôm qua — ratchet today_frozen_at_import)
@@ -26,6 +28,11 @@ function monthStart(back: number): string {
 function monthEnd(ymd: string): string {
   const [y, m] = ymd.split('-').map(Number)
   return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
+}
+/** Số ngày của khoảng (tính cả 2 đầu) — cho người đọc biết mẫu số đang là bao nhiêu ngày. */
+function dayCount(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`), b = Date.parse(`${to}T00:00:00Z`)
+  return isNaN(a) || isNaN(b) ? 0 : Math.floor((b - a) / 86400000) + 1
 }
 
 const sk = 'bg-slate-200 dark:bg-slate-700/50'
@@ -56,11 +63,35 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
 
   const { data, isLoading, isError, error } = useProductivity({ warehouseId, from, to }, true)
 
+  // Kỳ dựng sẵn = CÁCH NHẬP NHANH của chính khoảng ngày (giống filter "Tháng sản xuất" bên Sổ đóng
+  // gói): chọn kỳ → set from/to, giá trị chip SUY NGƯỢC từ from/to ⇒ không đẻ state thứ hai, không
+  // bao giờ mâu thuẫn kiểu "chip 3 tháng nhưng khoảng ngày là 1 tuần".
   const RANGES = [
-    { key: 'this', label: 'Tháng này', from: monthStart(0), to: TODAY() },
-    { key: 'prev', label: 'Tháng trước', from: monthStart(1), to: monthEnd(monthStart(1)) },
-    { key: '3m', label: '3 tháng', from: monthStart(2), to: TODAY() },
-    { key: '12m', label: '12 tháng', from: monthStart(11), to: TODAY() },
+    { value: 'this', label: 'Tháng này', from: monthStart(0), to: TODAY() },
+    { value: 'prev', label: 'Tháng trước', from: monthStart(1), to: monthEnd(monthStart(1)) },
+    { value: '3m', label: '3 tháng gần nhất', from: monthStart(2), to: TODAY() },
+    { value: '12m', label: '12 tháng gần nhất', from: monthStart(11), to: TODAY() },
+  ]
+  const rangeValue = RANGES.find(r => r.from === from && r.to === to)?.value ?? ''
+
+  // Khoảng ngày luôn HỢP LỆ: sửa 1 đầu vượt qua đầu kia thì kéo đầu kia theo (thay cho min/max của
+  // ô ngày cũ) — không để lọt from > to xuống API rồi báo lỗi đỏ.
+  function setRange(nf: string, nt: string) {
+    if (!nf && !nt) { setDashboard({ prodFrom: '', prodTo: '' }); return }   // Xóa → về mặc định tháng này
+    const f2 = nf || nt, t2 = nt || nf
+    setDashboard(f2 > t2
+      ? (nf !== from ? { prodFrom: f2, prodTo: f2 } : { prodFrom: t2, prodTo: t2 })
+      : { prodFrom: f2, prodTo: t2 })
+  }
+
+  const filterDefs: FilterDef[] = [
+    { key: 'range', label: 'Khoảng ngày', type: 'daterange', pinned: true, from, to, onChange: setRange },
+    { key: 'period', label: 'Kỳ', type: 'single', pinned: true, options: RANGES,
+      allLabel: 'Về mặc định (tháng này)', value: rangeValue,
+      onChange: v => {
+        const r = RANGES.find(x => x.value === v)
+        setDashboard(r ? { prodFrom: r.from, prodTo: r.to } : { prodFrom: '', prodTo: '' })
+      } },
   ]
 
   const t = data?.totals
@@ -75,29 +106,14 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
 
   return (
     <div className="space-y-3">
-      {/* Khoảng ngày — chip nhanh + 2 ô ngày */}
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2.5 py-2 flex flex-wrap items-center gap-1.5">
-        <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mr-0.5">Khoảng ngày</span>
-        {RANGES.map(r => {
-          const active = from === r.from && to === r.to
-          return (
-            <button key={r.key} type="button"
-              onClick={() => setDashboard({ prodFrom: r.from, prodTo: r.to })}
-              className={`h-7 px-2 rounded text-[11px] font-medium border transition-colors ${active
-                ? 'bg-sky-600 text-white border-sky-600'
-                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-white/5'}`}>
-              {r.label}
-            </button>
-          )
-        })}
+      {/* Chọn kỳ = FilterBar chuẩn (chip desktop · nút "Lọc" + sheet trên mobile), không tự chế ô lọc */}
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2.5 py-1.5 flex flex-wrap items-center gap-2">
+        <FilterSheetButton defs={filterDefs} className="sm:hidden" />
+        <FilterBar defs={filterDefs} />
         <span className="flex-1 min-w-2" />
-        <input type="date" value={from} max={to}
-          onChange={e => setDashboard({ prodFrom: e.target.value, prodTo: to })}
-          className="h-7 px-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] text-slate-700 dark:text-slate-200" />
-        <span className="text-[11px] text-slate-400">→</span>
-        <input type="date" value={to} min={from}
-          onChange={e => setDashboard({ prodFrom: from, prodTo: e.target.value })}
-          className="h-7 px-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] text-slate-700 dark:text-slate-200" />
+        <span className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
+          {formatDate(from)} – {formatDate(to)} · {dayCount(from, to)} ngày
+        </span>
       </div>
 
       {isError && (

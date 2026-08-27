@@ -491,6 +491,21 @@ async function fetchGDOFull(id: string) {
     westData = (await supabase.rpc('gdo_weight_estimates', { p_gdo_ids: [id] })).data
   const weightEstimate = (Array.isArray(westData) ? westData : [])[0] ?? null
 
+  // LOẠI XE DỰ KIẾN từ lệnh vận chuyển (KHVC, order_code = Số xe): chuyến CHƯA gắn biển số thì đây
+  // là nguồn DUY NHẤT để sơ đồ xếp xe biết vẽ theo XE PALLET hay xe thường — trước 26/08 màn 3D chỉ
+  // suy từ biển số nên mọi chuyến đang lên kế hoạch đều mặc định "Xe thường" (đo đơn thật 15/08:
+  // 55/95 chuyến chưa gắn xe có kế hoạch khai XE PALLET, 14 chuyến khai CONTAINER — vẽ sai hẳn kiểu).
+  // CHỈ hỏi khi chưa có biển: chuyến đang xuất luôn có biển ⇒ không thêm round-trip vào đường nóng.
+  const plateNow = (gdo as unknown as { license_plate?: string | null }).license_plate
+  let plannedVehicleType: string | null = null
+  if (!plateNow) {
+    const { data: tord } = await supabase.from('TmsOrder')
+      .select('vehicle_type')
+      .eq('order_code', (gdo as unknown as { group_code: string }).group_code)
+      .limit(1).maybeSingle()
+    plannedVehicleType = (tord as { vehicle_type?: string | null } | null)?.vehicle_type ?? null
+  }
+
   const dos = await fetchAllRowsParallel(() => supabase.from('OutboundDelivery')
     .select('*').eq('gdo_id', id).order('delivery_code').order('id'))
 
@@ -552,6 +567,7 @@ async function fetchGDOFull(id: string) {
 
   return {
     ...gdo,
+    planned_vehicle_type: plannedVehicleType,
     weigh_tickets: wtRes.data ?? [],
     weight_estimate: weightEstimate,
     delivery_orders: (dos ?? []).map((d: any) => ({

@@ -149,7 +149,14 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   // Danh mục Loại xe vẫn là NGUỒN của cờ — chuyến có biển số thì tự suy từ loại của xe đó;
   // `override` null = theo chuyến, true/false = người dùng đã tự chọn (xe vãng lai, ca đặc biệt).
   const [palletOverride, setPalletOverride] = useState<boolean | null>(null)
-  const tripVt = vehicleTypes.find(t => t.id === tripVehicle?.vehicle_type_id) ?? null
+  // Chuyến CHƯA gắn biển số (đang lên kế hoạch — đúng lúc cần sơ đồ nhất) thì suy loại xe từ KẾ
+  // HOẠCH VẬN CHUYỂN (`planned_vehicle_type`, khớp TÊN loại trong danh mục). Trước 26/08 chỉ suy
+  // từ biển số nên mọi chuyến chưa gắn xe đều rơi về "Xe thường" — đo đơn thật 15/08: 55/95 chuyến
+  // như vậy có kế hoạch khai XE PALLET, tức vẽ sai hẳn kiểu xe mà không ai biết.
+  const planVtName = gdo.planned_vehicle_type?.trim().toUpperCase() ?? ''
+  const planVt = planVtName ? vehicleTypes.find(t => t.name.trim().toUpperCase() === planVtName) ?? null : null
+  const tripVt = vehicleTypes.find(t => t.id === tripVehicle?.vehicle_type_id) ?? planVt
+  const vtSource: 'plate' | 'plan' | null = tripVehicle && tripVt ? 'plate' : tripVt ? 'plan' : null
   const isPalletTruck = palletOverride ?? (tripVt?.is_pallet_truck === true)
 
   // Kích thước pallet ĐÃ XẾP HÀNG. Lấy từ mã PALLET của đơn nếu đã khai (user chốt "kích thước
@@ -976,11 +983,14 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 <span className="block text-[9px] font-normal opacity-70">gom hàng lên pallet</span>
               </button>
             </div>
-            {tripVehicle && tripVt && (
+            {tripVt && vtSource && (
               <p className="text-[10px] text-slate-400">
                 {palletOverride === null || palletOverride === (tripVt.is_pallet_truck === true)
-                  ? <>Tự nhận từ biển số <b>{tripVehicle.license_plate}</b> — loại {tripVt.name}.</>
-                  : <>Đang chọn KHÁC với loại {tripVt.name} của xe <b>{tripVehicle.license_plate}</b>{' '}
+                  ? (vtSource === 'plate'
+                      ? <>Tự nhận từ biển số <b>{tripVehicle!.license_plate}</b> — loại {tripVt.name}.</>
+                      : <>Chuyến chưa gắn xe — tự nhận theo <b>kế hoạch vận chuyển</b>: loại {tripVt.name}.</>)
+                  : <>Đang chọn KHÁC với loại {tripVt.name} {vtSource === 'plate'
+                        ? <>của xe <b>{tripVehicle!.license_plate}</b></> : <>theo kế hoạch</>}{' '}
                       <button type="button" className="underline hover:text-slate-600"
                         onClick={() => setPalletOverride(null)}>— về theo xe</button></>}
               </p>

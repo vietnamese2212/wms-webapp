@@ -733,6 +733,9 @@ export interface GDO {
   scan_completed_at?:  string | null
   completed_at?:       string | null
   license_plate?:      string | null
+  // Loại xe DỰ KIẾN theo kế hoạch vận chuyển (getGDO trả khi chuyến CHƯA gắn biển số) — sơ đồ
+  // xếp xe dùng để biết vẽ XE PALLET hay xe thường lúc còn đang lên kế hoạch
+  planned_vehicle_type?: string | null
   container_number?:   string | null
   exporter_name?:      string | null
   loader_name?:        string | null

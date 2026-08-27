@@ -18,6 +18,7 @@ import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
+import * as warehouseCost from '../controllers/wms/warehouseCostController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
@@ -56,8 +57,16 @@ router.get('/events', (req, res) => {
 // Dashboard tổng quan — hở đọc có chủ đích (auth-only, cắt scope kho+loại trong controller)
 router.get('/dashboard', dashboard.getDashboard)
 // Năng suất kho (tab riêng): CÓ gate — số liệu này là NHÂN SỰ (ngày công, giờ tăng ca), không
-// nằm trong diện "hở đọc" như tồn kho.
+// nằm trong diện "hở đọc" như tồn kho. Các khoá TIỀN trong payload bị controller cắt bỏ nếu
+// người gọi không có `warehouse_cost.view`.
 router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboard.getProductivity)
+
+// Chi phí kho — kê khai theo (Kho × Tháng × Khoản mục); mỗi việc 1 quyền riêng
+router.get ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'), warehouseCost.getCostGrid)
+router.put ('/warehouse-costs',               requirePerm('warehouse_cost', 'edit'), warehouseCost.saveCostGrid)
+router.post('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'), warehouseCost.copyPreviousMonth)
+router.post('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'), upload.single('file'), warehouseCost.uploadCostExcel)
+router.post('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'), warehouseCost.setCostLock)
 
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)

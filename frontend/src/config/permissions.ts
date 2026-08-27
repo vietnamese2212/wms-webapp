@@ -233,7 +233,15 @@ export const MODULES = {
   dashboard: {
     page: 'Dashboard (Tổng quan)',
     actions: {
-      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay)',
+      view: 'Xem trang Tổng quan hệ thống (tồn kho, sức chứa khu vực, hoạt động hôm nay, tab Năng suất)',
+    },
+  },
+  warehouse_cost: {
+    page: 'Chi phí kho (kê khai + chỉ số chi phí/tấn)',
+    actions: {
+      view: 'Xem chi phí kho + các ô chi phí/tấn trong tab Năng suất của Dashboard',
+      edit: 'Kê khai / sửa số tiền theo Kho × Tháng × Khoản mục (gồm chép tháng trước, upload Excel)',
+      lock: 'Chốt kỳ (khoá không cho sửa nữa) và mở lại kỳ đã chốt',
     },
   },
   control_tower: {

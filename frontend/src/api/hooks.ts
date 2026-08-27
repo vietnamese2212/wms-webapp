@@ -2135,13 +2135,20 @@ export type ProductivityRow = {
   pallets_in: number; trips: number
   work_days: number; work_hours: number; ot_hours: number; early_hours: number
   leave_days: number; headcount: number; lines_no_weight: number
+  // TIỀN — chỉ có khi người gọi có quyền `warehouse_cost.view` (BE cắt khỏi payload nếu không)
+  cost?: number; cost_own?: number; cost_labor?: number
 }
 export type ProductivityData = {
   from: string; to: string; std_hours: number; categories_filtered: boolean
   rows: ProductivityRow[]
   by_month: Array<{ month: string; tons_in: number; tons_out: number; tons: number
     trips: number; work_days: number; work_hours: number; ot_hours: number }>
-  totals: Omit<ProductivityRow, 'warehouse_id' | 'warehouse_name'> & { warehouses_no_labor: number }
+  totals: Omit<ProductivityRow, 'warehouse_id' | 'warehouse_name'> & {
+    warehouses_no_labor: number; warehouses_no_cost?: number
+  }
+  cost_prorated?: boolean    // khoảng ngày LẺ → chi phí là số PHÂN BỔ theo ngày, phải nói rõ
+  cost_shared?: number       // chi phí CHUNG (chưa gán kho) đã gộp vào tổng
+  cost_hidden?: boolean      // thiếu quyền xem tiền → mọi khoá tiền đã bị cắt
   cached?: boolean
 }
 export function useProductivity(
@@ -2160,6 +2167,69 @@ export function useProductivity(
         date_from: params.from, date_to: params.to,
       },
     }).then(r => r.data.data),
+  })
+}
+
+// ─── Chi phí kho (27/08) — kê khai theo Kho × Tháng × Khoản mục ──────────────────────────────
+export type CostItem = { code: string; label: string; is_labor: boolean; group: string | null }
+export type CostCell = { warehouse_id: string | null; cost_item: string; amount: number; note: string | null }
+export type CostGrid = {
+  period: string
+  can_edit_shared: boolean
+  items: CostItem[]
+  warehouses: Array<{ id: string; name: string }>
+  cells: CostCell[]
+  locks: Array<{ warehouse_id: string | null; locked_at: string; locked_by: string | null }>
+}
+
+export function useCostGrid(period: string) {
+  return useQuery<CostGrid>({
+    queryKey: ['warehouse-costs', period],
+    enabled: !!period,
+    queryFn: () => apiClient.get('/wms/warehouse-costs', { params: { period } }).then(r => r.data.data),
+  })
+}
+/** Mọi mutation chi phí đều đụng cả lưới LẪN ô chi phí/tấn ở Dashboard → invalidate cả hai. */
+function invalidateCost(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['warehouse-costs'] })
+  qc.invalidateQueries({ queryKey: ['dashboard-productivity'] })
+}
+export function useSaveCostGrid() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { period: string; cells: Array<{ warehouse_id: string | null; cost_item: string; amount: number; note?: string | null }> }) =>
+      apiClient.put('/wms/warehouse-costs', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useCopyPrevCosts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (period: string) => apiClient.post('/wms/warehouse-costs/copy-previous', { period }).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useLockCostPeriod() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { period: string; warehouse_id: string | null; locked: boolean }) =>
+      apiClient.post('/wms/warehouse-costs/lock', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+/** Upload 2 pha (chuẩn UploadExcelDialog): preflight=true trả UploadPreflight, false trả UploadResult. */
+export function useUploadCosts() {
+  const qc = useQueryClient()
+  return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { period: string; file: File; preflight: boolean }>({
+    mutationFn: ({ period, file, preflight }) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('period', period)
+      return apiClient.post('/wms/warehouse-costs/upload', fd, { params: preflight ? { preflight: 1 } : {} })
+        .then(r => r.data.data)
+    },
+    // Pha xem trước KHÔNG ghi gì → không cần invalidate; chỉ pha ghi thật mới nạp lại
+    onSuccess: (_d, v) => { if (!v.preflight) invalidateCost(qc) },
   })
 }
 

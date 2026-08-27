@@ -7,11 +7,11 @@
 // TẤN = chứng từ, cộng CẢ nhập lẫn xuất (bốc hàng nhập cũng là công). CÔNG = module Chấm công.
 // Mọi tỷ số lấy từ `utils/productivity.ts` (một nguồn), thiếu mẫu số thì hiện "—" chứ không hiện 0.
 import { useMemo } from 'react'
-import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle } from 'lucide-react'
+import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProductivity, type ProductivityRow } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { tonsPerWorkDay, tonsPerWorkHour, otRate, fmtNum, fmtPct } from '@/utils/productivity'
+import { tonsPerWorkDay, tonsPerWorkHour, otRate, costPerTon, fmtNum, fmtPct } from '@/utils/productivity'
 
 // "Hôm nay" phải là HÀM (màn kho mở qua đêm sẽ giữ ngày hôm qua — ratchet today_frozen_at_import)
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -138,8 +138,24 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
           )}
       </div>
 
+      {/* Ô TIỀN — chỉ hiện khi có quyền warehouse_cost.view (BE đã cắt khoá tiền khỏi payload) */}
+      {!isLoading && !data?.cost_hidden && t && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <Tile icon={Wallet} tone="text-rose-500" label="Chi phí kho (kỳ)"
+            value={fmtNum(t.cost, 0)}
+            sub={data?.cost_shared ? `gồm ${fmtNum(data.cost_shared, 0)} chi phí chung` : 'đồng'} />
+          <Tile icon={Wallet} tone="text-rose-500" label="Chi phí / tấn"
+            value={fmtNum(costPerTon(t.cost ?? 0, t.tons), 0)} sub="đồng / tấn" />
+          <Tile icon={Wallet} tone="text-emerald-600" label="Chi phí nhân công / tấn"
+            value={fmtNum(costPerTon(t.cost_labor ?? 0, t.tons), 0)} sub="đồng / tấn" />
+          <Tile icon={Wallet} tone="text-slate-500" label="Chi phí / công"
+            value={fmtNum(t.work_days > 0 ? (t.cost ?? 0) / t.work_days : null, 0)} sub="đồng / ngày công" />
+        </div>
+      )}
+
       {/* Nói thẳng chỗ dữ liệu còn thiếu — không để người đọc tưởng năng suất kém */}
-      {!isLoading && (noLabor || someNoLabor || noWeight > 0 || data?.categories_filtered) && (
+      {!isLoading && (noLabor || someNoLabor || noWeight > 0 || data?.categories_filtered
+        || (!data?.cost_hidden && ((t?.warehouses_no_cost ?? 0) > 0 || data?.cost_prorated))) && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
           {noLabor && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
@@ -152,6 +168,14 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
           {noWeight > 0 && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
               <span><b>{fmtNum(noWeight, 0)} dòng hàng chưa khai khối lượng thùng</b> — phần này KHÔNG được tính vào tấn. Khai ở Mã hàng → KL/thùng để số tấn đủ.</span></div>
+          )}
+          {!data?.cost_hidden && (t?.warehouses_no_cost ?? 0) > 0 && (
+            <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+              <span><b>{t!.warehouses_no_cost} kho có phát sinh hàng nhưng chưa khai chi phí</b> — chi phí/tấn đang thấp hơn thực tế. Khai ở <b>Tổng quan → Chi phí kho</b>.</span></div>
+          )}
+          {!data?.cost_hidden && data?.cost_prorated && (
+            <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+              <span>Khoảng ngày không tròn tháng: chi phí đang là số <b>PHÂN BỔ THEO NGÀY</b> (kế toán chốt theo tháng). Chọn trọn tháng để xem số chi phí thật.</span></div>
           )}
           {data?.categories_filtered && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
@@ -198,7 +222,8 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
           <table className="min-w-full text-left">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800">
-                {['Kho', 'Tấn nhập', 'Tấn xuất', 'Tổng tấn', 'Chuyến', 'Công', 'Giờ công', 'Tấn/công', 'Tấn/giờ', 'Giờ OT', '% OT', 'Người']
+                {['Kho', 'Tấn nhập', 'Tấn xuất', 'Tổng tấn', 'Chuyến', 'Công', 'Giờ công', 'Tấn/công', 'Tấn/giờ', 'Giờ OT', '% OT', 'Người',
+                  ...(data?.cost_hidden ? [] : ['Chi phí', 'Chi phí/tấn'])]
                   .map((h, i) => (
                     <th key={h} className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-10 bg-slate-50 dark:bg-slate-800' : 'text-right'}`}>{h}</th>
                   ))}
@@ -206,10 +231,10 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
             </thead>
             <tbody>
               {isLoading && Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i}><td colSpan={12} className="px-2 py-1"><Skeleton className={`h-5 rounded ${sk}`} /></td></tr>
+                <tr key={i}><td colSpan={14} className="px-2 py-1"><Skeleton className={`h-5 rounded ${sk}`} /></td></tr>
               ))}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={12} className="px-2 py-4 text-center text-[11px] text-slate-400">Không có kho nào trong phạm vi.</td></tr>
+                <tr><td colSpan={14} className="px-2 py-4 text-center text-[11px] text-slate-400">Không có kho nào trong phạm vi.</td></tr>
               )}
               {!isLoading && rows.map((r: ProductivityRow) => {
                 const rate = otRate(r)
@@ -227,6 +252,10 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
                     <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.ot_hours, 1)}</td>
                     <td className={`px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-medium ${rate != null && rate > 0.15 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-300'}`}>{fmtPct(rate, 1)}</td>
                     <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.headcount, 0)}</td>
+                    {!data?.cost_hidden && <>
+                      <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.cost, 0)}</td>
+                      <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold text-rose-600 dark:text-rose-400">{fmtNum(costPerTon(r.cost ?? 0, r.tons), 0)}</td>
+                    </>}
                   </tr>
                 )
               })}

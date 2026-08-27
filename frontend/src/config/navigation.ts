@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -35,6 +35,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard' },
       { to: '/wms/control-tower', icon: Activity, label: 'Giám sát vận hành', module: 'control_tower' },
+      // Kê khai chi phí kho (Kho × Tháng × Khoản mục) — nuôi ô "chi phí/tấn" ở tab Năng suất
+      { to: '/wms/warehouse-costs', icon: Wallet, label: 'Chi phí kho', module: 'warehouse_cost' },
       // Không gate module: tab Cá nhân (feed việc của mình) dành cho MỌI user; tab Chung tự ẩn khi thiếu alerts.view
       { to: '/wms/alerts',        icon: BellRing, label: 'Thông báo' },
     ],

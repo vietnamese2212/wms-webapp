@@ -207,6 +207,29 @@ export async function getDashboard(req: Request, res: Response) {
 // một dòng cache cho mọi người, còn cụm này chạy theo KHOẢNG NGÀY người dùng tự chọn — nhét chung
 // sẽ băm nhỏ cache của trang ai cũng mở (đúng thứ đã làm p50 28,3s hồi 21/08). FE chỉ gọi khi
 // người dùng BẤM vào tab, nên ai không xem thì không trả giá gì.
+/**
+ * CẮT mọi khoá TIỀN khỏi payload khi người gọi không có `warehouse_cost.view`.
+ * Cache lưu bản ĐỦ (một dòng dùng chung cho mọi người cùng phạm vi) — chốt chặn nằm ở tầng API
+ * này, không phải ở cache. Ẩn ở FE là chưa đủ: gọi thẳng endpoint vẫn phải không thấy tiền.
+ */
+function stripCost(req: Request, payload: unknown): unknown {
+  const perms = req.user?.module_permissions as Record<string, string[]> | null | undefined
+  if (req.user?.is_superadmin === true || perms?.warehouse_cost?.includes('view')) return payload
+  const COST_KEYS = ['cost', 'cost_own', 'cost_labor', 'cost_shared', 'cost_prorated', 'warehouses_no_cost']
+  const drop = (o: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(o)) if (!COST_KEYS.includes(k)) out[k] = v
+    return out
+  }
+  const p = payload as { rows?: Record<string, unknown>[]; totals?: Record<string, unknown> } & Record<string, unknown>
+  return {
+    ...drop(p),
+    rows: (p.rows ?? []).map(drop),
+    totals: p.totals ? drop(p.totals) : p.totals,
+    cost_hidden: true,
+  }
+}
+
 export async function getProductivity(req: Request, res: Response) {
   try {
     const q = req.query as { warehouse_id?: string; date_from?: string; date_to?: string }
@@ -229,10 +252,10 @@ export async function getProductivity(req: Request, res: Response) {
     const [stdHours, ttl] = await Promise.all([getStandardWorkHours(), getDashboardCacheSeconds()])
     const args = { p_warehouse_ids: whIds, p_categories: cats, p_from: from, p_to: to, p_std_hours: stdHours }
     const { data, error } = await supabase.rpc('warehouse_productivity_cached', { ...args, p_ttl_seconds: ttl })
-    if (!error && data) return ok(res, data)
+    if (!error && data) return ok(res, stripCost(req, data))
     // Nhánh dự phòng cửa sổ triển khai (bản _cached chưa apply) — bản không cache, số liệu như nhau
     const { data: raw, error: rawErr } = await supabase.rpc('warehouse_productivity', args)
-    if (!rawErr && raw) return ok(res, raw)
+    if (!rawErr && raw) return ok(res, stripCost(req, raw))
     return fail(res, rawErr?.message ?? error?.message ?? 'Không lấy được số liệu năng suất')
   } catch (e) { return fail(res, String(e)) }
 }

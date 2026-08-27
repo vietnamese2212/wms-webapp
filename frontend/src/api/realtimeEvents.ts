@@ -17,7 +17,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   FillOrder:           [['fill-orders'], ['fill-order']],
   // gdos/gdo: cột Tổng (QR)/(k QR) của Xuất tách theo Material.no_qr_tracking (join sống) —
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
-  Material:            [['materials'], ['gdos'], ['gdo']],
+  // materials-paged/summary: trang danh mục phân trang SERVER — key RIÊNG, không nằm dưới tiền tố
+  // ['materials'] (TanStack khớp theo từng phần tử) nên thiếu 2 key này là trang đứng im sau khi sửa.
+  Material:            [['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
@@ -69,9 +71,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // map ở đây là lời hứa suông: sự kiện KHÔNG BAO GIỜ tới, người đọc code lại tưởng đã có realtime.
   // Muốn realtime cho nhân sự thì phải quyết định mở đọc bảng này trước (quyết định về dữ liệu, không
   // phải kỹ thuật). Bất biến "bảng khai realtime phải nhận được sự kiện" ở gói QA 00 gác luật này.
-  JobTitle:             [['job-titles'], ['employee-records']],
+  JobTitle:             [['job-titles'], ['employee-records'], ['employee-records-paged']],
   Department:           [['departments'], ['job-titles']],
-  UserWarehouseAccess:  [['employee-record'], ['employee-records']],
+  UserWarehouseAccess:  [['employee-record'], ['employee-records'], ['employee-records-paged']],
   Skill:                [['hr-skills'], ['hr-emp-skills']],
   EmployeeSkill:        [['hr-emp-skills']],
   LeaveRequest:         [['hr-leaves'], ['hr-leaves-paged']],

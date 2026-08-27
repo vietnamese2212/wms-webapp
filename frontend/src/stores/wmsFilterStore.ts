@@ -168,6 +168,8 @@ interface MaterialsFilters {
   statusFilter: string[]
   qrFilter: string[]
   dqFilter: string[]   // chất lượng dữ liệu: 'incomplete' (thiếu thông tin) | 'dup' (trùng tên)
+  dimsFilter: string[]  // kích thước thùng: 'has_dims' | 'no_dims' (sơ đồ xếp xe cần D×R×C)
+  flagsFilter: string[] // cờ đặc biệt: 'non_stock' | 'pallet_carrier' | 'stack_on_top'
   page: number
   pageSize: number
 }
@@ -471,7 +473,7 @@ function initialFilters() {
       fDate: today(), fDateTo: '', fWarehouse: '', fWarehouseType: '',
       fVehicleTypes: [], fCompany: '', fDirection: '', fStatus: '',
     },
-    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], page: 1, pageSize: 200 },
+    materials:  { search: '', catFilter: [], statusFilter: ['active'], qrFilter: [], dqFilter: [], dimsFilter: [], flagsFilter: [], page: 1, pageSize: 200 },
     inboundReport: {
       dateFrom: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) })(),
       dateTo: today(), warehouseId: '', selCategories: [],

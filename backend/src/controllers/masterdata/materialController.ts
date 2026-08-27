@@ -45,6 +45,8 @@ type MatListCtx = {
   status: string[] | null
   qr: string[] | null
   dq: string[] | null
+  dims: string[] | null    // 'has_dims' | 'no_dims' — đã khai D×R×C thùng chưa
+  flags: string[] | null   // 'non_stock' | 'pallet_carrier' | 'stack_on_top'
 }
 const matCsv = (v?: string | string[]): string[] | null => {
   const a = parseListParam(v) ?? []
@@ -62,12 +64,14 @@ function getMatListCtx(req: Request): MatListCtx {
     status: matCsv(q.status),
     qr: matCsv(q.qr),
     dq: matCsv(q.dq),
+    dims: matCsv(q.dims),
+    flags: matCsv(q.flags),
   }
 }
 async function matRpcParams(c: MatListCtx) {
   return {
     p_tokens: c.tokens, p_categories: c.categories, p_scope_cats: c.scopeCats,
-    p_status: c.status, p_qr: c.qr, p_dq: c.dq,
+    p_status: c.status, p_qr: c.qr, p_dq: c.dq, p_dims: c.dims, p_flags: c.flags,
     p_cat_rules: await getMaterialCategoryRules(),
     p_legacy_no_sl: LEGACY_NO_SHELF_LIFE, p_legacy_pe: LEGACY_PALLET_PER_EA,
   }

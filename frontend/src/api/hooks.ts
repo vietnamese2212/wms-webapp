@@ -520,13 +520,32 @@ export function useMaterialsFull(params?: MaterialListParams, enabled = true) {
 // trên TOÀN bảng (không suy được từ 200 dòng đang xem) — server gắn cờ `is_dup_name` per dòng.
 export type MaterialsListParams = {
   search?: string; categories?: string[]; status?: string[]; qr?: string[]; dq?: string[]
+  // dims: 'has_dims' | 'no_dims' (đã khai D×R×C thùng chưa) · flags: 'non_stock' | 'pallet_carrier' | 'stack_on_top'
+  dims?: string[]; flags?: string[]
 }
 export type MaterialsPage = { rows: (import('@/types').Material & { is_dup_name?: boolean })[]; total: number }
-export type MaterialsSummary = { total: number; active: number; inactive: number; no_qr: number; incomplete: number; dup: number }
+export type MaterialsSummary = { total: number; active: number; inactive: number; no_qr: number; incomplete: number; dup: number; no_dims: number }
+
+/**
+ * MỌI query key của danh mục Mã hàng — dùng ở TẤT CẢ mutation đụng Material.
+ * Bẫy đã cắn 26/08 (user: "áp kích thước cho 51 mã, lưu xong không có dữ liệu"): dữ liệu ĐÃ ghi
+ * xuống DB nhưng trang vẫn hiện bản cũ vì mutation chỉ `invalidateQueries(['materials'])`, trong
+ * khi trang danh mục (phân trang SERVER từ 28/07) đọc `['materials-paged']` / `['materials-summary']`
+ * — TanStack khớp key theo TỪNG PHẦN TỬ nên `'materials'` KHÔNG khớp `'materials-paged'`.
+ * Thêm key mới cho Material → thêm vào đây (và vào TABLE_QUERY_MAP.Material cho realtime).
+ */
+// (`['materials','lite'|'by-codes'|'by-ids'|'full']` đã nằm dưới tiền tố ['materials'] nên khỏi liệt kê)
+export const MATERIAL_QUERY_KEYS: string[][] = [
+  ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'],
+]
+export function invalidateMaterialQueries(qc: ReturnType<typeof useQueryClient>): void {
+  for (const k of MATERIAL_QUERY_KEYS) qc.invalidateQueries({ queryKey: k })
+}
 
 function materialsCsvParams(p: MaterialsListParams) {
   const j = (a?: string[]) => (a?.length ? a.join(',') : undefined)
-  return { search: p.search || undefined, categories: j(p.categories), status: j(p.status), qr: j(p.qr), dq: j(p.dq) }
+  return { search: p.search || undefined, categories: j(p.categories), status: j(p.status), qr: j(p.qr), dq: j(p.dq),
+    dims: j(p.dims), flags: j(p.flags) }
 }
 
 export function useMaterialsPaged(params: MaterialsListParams & { page: number; page_size: number }) {
@@ -921,7 +940,7 @@ export function useCreateMaterial() {
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.post('/masterdata/materials', body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -940,7 +959,7 @@ export function useUpdateMaterial() {
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -949,7 +968,7 @@ export function useDeleteMaterial() {
   return useMutation({
     mutationFn: (id: string) =>
       apiClient.delete(`/masterdata/materials/${id}`).then((r) => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }),
+    onSuccess: () => invalidateMaterialQueries(qc),
   })
 }
 
@@ -2251,7 +2270,7 @@ export function useCreateEmployee() {
       warehouse_ids?: string[]
       ncc_id?: string | null; is_driver?: boolean
     }) => apiClient.post('/masterdata/employees', body).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2290,7 +2309,7 @@ export function useDeleteEmployee() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/masterdata/employees/${id}`).then(r => r.data.data as { message: string; deleted: 'hard' | 'soft' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2298,7 +2317,7 @@ export function useRestoreEmployee() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiClient.post(`/masterdata/employees/${id}/restore`).then(r => r.data.data as EmployeeRecord),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employee-records'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] }) },
   })
 }
 
@@ -2308,7 +2327,7 @@ export function useSetEmployeeWarehouses() {
     mutationFn: ({ id, warehouse_ids }: { id: string; warehouse_ids: string[] }) =>
       apiClient.put(`/masterdata/employees/${id}/warehouses`, { warehouse_ids }).then(r => r.data.data),
     onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: ['employee-records'] })
+      qc.invalidateQueries({ queryKey: ['employee-records'] }); qc.invalidateQueries({ queryKey: ['employee-records-paged'] })
       qc.invalidateQueries({ queryKey: ['employee-record', v.id] })
     },
   })
@@ -2496,7 +2515,7 @@ export function useScanLoosePickingItem() {
     }).then(r => r.data.data),
     onSuccess: (data) => {
       warnPutaway(data)   // hàng dư đặt sang ô lệch quy tắc cất (kho chưa bật bắt buộc)
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
       // quét nhặt lẻ reserve tồn → làm mới tồn kho & gợi ý FEFO
@@ -2516,7 +2535,7 @@ export function useRecalcLoosePicking() {
     mutationFn: (body: { warehouse_id: string; date_from?: string; date_to?: string }) =>
       apiClient.post('/wms/loosepicking/recalc', body).then(r => r.data.data as RecalcLooseResult),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
     },
@@ -2530,7 +2549,7 @@ export function useManualLooseItem() {
     mutationFn: ({ gdoId, itemId, cartons }: { gdoId: string; itemId: string; cartons: number }) =>
       apiClient.post(`/wms/outbound/${gdoId}/items/${itemId}/manual-loose`, { cartons }).then(r => r.data.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['gdos'] })
       qc.invalidateQueries({ queryKey: ['gdo'] })
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
@@ -3038,7 +3057,7 @@ export function useUploadMaterialsExcel() {
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return           // chỉ KIỂM TRƯỚC, DB không đổi → khỏi refetch
-      qc.invalidateQueries({ queryKey: ['materials'] })
+      invalidateMaterialQueries(qc)
       qc.invalidateQueries({ queryKey: ['material-categories'] })
     },
   })
@@ -3284,7 +3303,7 @@ export function useConfirmLoosePickingItem() {
       // confirm-loose giảm tồn InventoryEntry → làm mới cả tồn kho & list nhặt lẻ
       qc.invalidateQueries({ queryKey: ['gdo', v.gdoId] })
       qc.invalidateQueries({ queryKey: ['inventory-entries'] })
-      qc.invalidateQueries({ queryKey: ['loosepicking'] })
+      qc.invalidateQueries({ queryKey: ['loosepicking'] }); qc.invalidateQueries({ queryKey: ['loosepicking-facets'] })
       qc.invalidateQueries({ queryKey: ['item-inventory'] })
       qc.invalidateQueries({ queryKey: ['inventory-by-material'] })
     },

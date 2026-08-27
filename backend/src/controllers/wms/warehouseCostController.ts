@@ -46,22 +46,32 @@ function readScoped<T>(scope: string[] | null, build: (chunk: string[] | null) =
     : fetchAllRowsParallel(() => build(null) as never)) as Promise<T[]>
 }
 
-/** 'YYYY-MM' hoặc 'YYYY-MM-DD' → ngày đầu tháng 'YYYY-MM-01'; sai dạng → null. */
+/**
+ * 'YYYY-MM' hoặc 'YYYY-MM-DD' → ngày đầu tháng 'YYYY-MM-01'; sai dạng → null.
+ * ⚠️ Phải kiểm THÁNG 01–12 và NĂM trong dải hợp lý chứ không chỉ kiểm DẠNG: `2026-13` khớp regex
+ * `\d{4}-\d{2}` nhưng xuống Postgres là 22008 "date/time field value out of range" → controller
+ * nuốt thành **500**. 500 rác vừa báo sai cho user vừa làm rule cảnh báo "lỗi BE 24h" kêu oan
+ * (luật CLAUDE.md 21/08). Bắt được bằng fuzz tham số 27/08.
+ */
 function monthOf(raw: unknown): string | null {
   const s = String(raw ?? '').trim()
-  if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(0, 7)}-01`
-  return null
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(s)
+  if (!m) return null
+  const y = Number(m[1]), mo = Number(m[2]), d = m[3] ? Number(m[3]) : 1
+  if (y < 2000 || y > 2100 || mo < 1 || mo > 12) return null
+  if (m[3] && (d < 1 || d > 31)) return null
+  return `${m[1]}-${m[2]}-01`
 }
 /** Excel hay trả "8/2026", "08-2026", "01/08/2026" — chấp nhận hết, quy về đầu tháng. */
 function monthLoose(raw: unknown): string | null {
   const direct = monthOf(raw)
   if (direct) return direct
   const s = String(raw ?? '').trim()
+  // Kiểm lại qua monthOf để tháng 13 trong file Excel bị TỪ CHỐI THEO DÒNG, không thành 500 cả file
   let m = /^(\d{1,2})[/\-.](\d{4})$/.exec(s)
-  if (m) return `${m[2]}-${String(Number(m[1])).padStart(2, '0')}-01`
+  if (m) return monthOf(`${m[2]}-${String(Number(m[1])).padStart(2, '0')}`)
   m = /^\d{1,2}[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(s)
-  if (m) return `${m[2]}-${String(Number(m[1])).padStart(2, '0')}-01`
+  if (m) return monthOf(`${m[2]}-${String(Number(m[1])).padStart(2, '0')}`)
   return null
 }
 const prevMonth = (period: string): string => {

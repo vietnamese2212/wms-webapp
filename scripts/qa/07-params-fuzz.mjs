@@ -87,6 +87,15 @@ const LIST_FUZZ = [
   `/wms/fill/demand?warehouse_id=x&date=2026-13-99`,
   `/wms/fill/orders?warehouse_id=x&date_from=2026-13-99`,
   `/wms/fill/report?warehouse_id=x&date_to=0000-00-00`,
+  // KỲ THÁNG cũng cùng họ đó (check-app 27/08): `\d{4}-\d{2}` cho "2026-13" qua rồi Postgres nổ
+  // 22008 → 500. Chi phí kho nhận period ở CẢ query lẫn body nên fuzz cả GET.
+  `/wms/warehouse-costs?period=2026-13`,
+  `/wms/warehouse-costs?period=0000-00`,
+  `/wms/warehouse-costs?period=2026-08-99`,
+  `/wms/warehouse-costs?period=`,
+  `/wms/warehouse-costs?period=2026-08&items=&warehouse_id=&search=`,
+  `/wms/dashboard/productivity?date_from=2026-13-01&date_to=2026-08-31`,
+  `/wms/dashboard/productivity?date_from=2026-08-01&date_to=0000-00-00`,
 ]
 for (const path of LIST_FUZZ) {
   const r = await api(path)

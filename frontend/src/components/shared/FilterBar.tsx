@@ -169,9 +169,11 @@ export function FilterBar({ defs, className }: { defs: FilterDef[]; className?: 
         <button
           type="button"
           onClick={() => { activeDefs.forEach(clearDef); setOpenKey(null) }}
-          className="h-7 px-1.5 inline-flex items-center gap-0.5 text-[11px] text-red-400 hover:text-red-600 transition-colors"
+          // Là NÚT thì phải trông như nút: chữ nhạt không viền trước đây đọc ra như dòng ghi chú,
+          // vùng bấm cũng hẹp hơn các chip đứng cạnh (user 27/08: "xóa lọc hơi khó bấm").
+          className="h-7 px-2 inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50/60 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition-colors"
         >
-          <X className="h-3 w-3" /> Xóa tất cả
+          <X className="h-3.5 w-3.5" /> Xóa tất cả
         </button>
       )}
     </div>
@@ -212,9 +214,12 @@ function MobileFilterSheet({ defs, activeCount, onClearAll, className }: {
           <DialogHeader className="px-4 py-3 border-b shrink-0">
             <div className="flex items-center justify-between pr-7">
               <DialogTitle className="text-base">Bộ lọc</DialogTitle>
+              {/* Trên phone đây là chữ 12px sát nút đóng ⇒ hay bấm trượt; cho hẳn viền + h-8 */}
               {activeCount > 0 && (
                 <button type="button" onClick={() => { onClearAll(); setExpanded(null) }}
-                  className="text-xs text-red-500 hover:text-red-700">Xóa tất cả</button>
+                  className="h-8 px-2.5 inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 text-xs font-medium text-red-600 active:bg-red-100">
+                  <X className="h-3.5 w-3.5" /> Xóa tất cả
+                </button>
               )}
             </div>
           </DialogHeader>
@@ -281,9 +286,13 @@ function FilterChip({ def, open, onToggle, onClose }: {
           <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
         </button>
         {active && (
+          // Ô BỎ LỌC phải ĐỦ TO và tách hẳn khỏi phần bấm-mở (user 27/08: "xóa lọc hơi khó bấm").
+          // Trước: icon 12px trong khe ~22px dính liền mũi chevron ⇒ trượt tay là MỞ popover thay vì
+          // xoá. Nay: vạch ngăn + vùng bấm ~30px + nền đỏ nhạt khi rê chuột (thấy được đích bấm).
           <button type="button" onClick={() => { clearDef(def); onClose() }}
-            className="h-full pr-2 pl-0.5 text-slate-400 hover:text-red-500 transition-colors" title="Bỏ lọc">
-            <X className="h-3 w-3" />
+            className="h-full px-2 -ml-0.5 rounded-r-full border-l border-slate-300/70 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+            title={`Bỏ lọc ${def.label}`} aria-label={`Bỏ lọc ${def.label}`}>
+            <X className="h-3.5 w-3.5" />
           </button>
         )}
       </div>

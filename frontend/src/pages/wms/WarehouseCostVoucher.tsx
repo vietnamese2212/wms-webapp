@@ -2,34 +2,43 @@
 // "mở nó ra thì có thể add, edit các khoản chi phí — áp dụng tương tự form xuất nhập, bao gồm cả
 //  việc copy paste…").
 //
-// Vì sao sửa TẠI CHỖ cả bảng rồi bấm Lưu MỘT lần (không phải mỗi dòng một form): kế toán kê một
-// phiếu là điền cả cụm khoản mục, thường dán thẳng từ file Excel đang mở. Mỗi dòng một lượt gọi
-// API vừa chậm vừa để lại phiếu ghi DỞ khi mạng rớt giữa chừng — ở đây một lần bấm là một lượt ghi
-// (BE xoá/thêm/sửa theo lô trong `saveVoucher`).
-import { useEffect, useMemo, useState } from 'react'
+// DÁN LÀM ĐÚNG KIỂU FORM PHIẾU XUẤT (user bác bản đầu 27/08: "cái tôi yêu cầu là tính năng tương tự
+// như Mở phiếu xuất, nơi có thể copy paste giá trị mã hàng, số lượng cơ mà"): dán THẲNG VÀO Ô của
+// lưới, không qua hộp thoại riêng —
+//   · dán vào ô **Khoản mục**: mỗi dòng Excel = 1 dòng phiếu, cột `Khoản mục ⇥ Số tiền ⇥ Ghi chú`,
+//     tự thêm dòng cho đủ (khớp `handlePasteRowAt` của `Outbound.tsx`);
+//   · dán vào ô **Số tiền** / **Ghi chú**: điền lần lượt XUỐNG DƯỚI từ ô đang dán (khớp
+//     `handlePasteCartonsAt` / `handlePasteNoteAt`).
+// Vì thế ô Khoản mục là Ô NHẬP có gợi ý (kiểu `MatPicker`), KHÔNG phải dropdown — dropdown thì
+// không dán vào được, đó chính là chỗ bản đầu làm sai.
+//
+// Vì sao sửa TẠI CHỖ cả bảng rồi bấm Lưu MỘT lần: kế toán kê một phiếu là điền cả cụm, thường dán
+// thẳng từ file Excel đang mở. Mỗi dòng một lượt gọi API vừa chậm vừa để lại phiếu ghi DỞ khi mạng
+// rớt giữa chừng — ở đây một lần bấm là một lượt ghi (BE xoá/thêm/sửa theo lô trong `saveVoucher`).
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Wallet, Plus, Trash2, Save, ClipboardPaste, Lock, Unlock, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Wallet, Plus, Trash2, Save, Lock, Unlock, RotateCcw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { SingleSelect } from '@/components/shared/SingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { formatTimestampDate } from '@/utils/formatters'
 import { useCostVoucher, useSaveCostVoucher, useLockCostPeriod, type CostItem } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { money, parseMoney, warehouseKeyOf } from './costShared'
+import { money, parseMoney, warehouseKeyOf, SHARED_KEY } from './costShared'
 
-type Row = { key: string; id?: string; cost_item: string; amount: number; note: string }
+/** `raw` = chữ đang hiện trong ô Khoản mục; `cost_item` rỗng = chưa khớp danh mục (dòng đỏ). */
+type Row = { key: string; id?: string; cost_item: string; raw: string; amount: number; note: string }
 let seq = 0
 const newKey = () => `n${++seq}`
+const blankRow = (): Row => ({ key: newKey(), cost_item: '', raw: '', amount: 0, note: '' })
 
 function apiErr(e: unknown): string {
   const m = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   return m ?? 'Có lỗi xảy ra — thử lại.'
 }
-/** So khớp tên khoản mục khi dán: bỏ dấu, bỏ hoa/thường, bỏ khoảng trắng thừa. */
+/** So khớp tên khoản mục khi dán/gõ: bỏ dấu, bỏ hoa/thường, gộp khoảng trắng. */
 const normItem = (s: string) => s.trim().toLowerCase()
   .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/\s+/g, ' ')
 
@@ -49,18 +58,25 @@ export default function WarehouseCostVoucher() {
   const [rows, setRows] = useState<Row[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  const [showPaste, setShowPaste] = useState(false)
 
+  const items = useMemo(() => data?.items ?? [], [data])
+  const itemBy = useMemo(() => new Map(items.map(i => [i.code, i])), [items])
+  /** nhãn/mã (đã chuẩn hoá) → khoản mục, dùng khi dán và khi gõ tay. */
+  const itemByName = useMemo(() => {
+    const m = new Map<string, CostItem>()
+    for (const i of items) { m.set(normItem(i.label), i); m.set(normItem(i.code), i) }
+    return m
+  }, [items])
+
+  const fromServer = (): Row[] => (data?.rows ?? []).map(r => ({
+    key: r.id, id: r.id, cost_item: r.cost_item, raw: r.item_label, amount: r.amount, note: r.note ?? '',
+  }))
   // Nạp lại lưới mỗi khi dữ liệu server đổi (mở phiếu, lưu xong, người khác vừa sửa)
   const serverStamp = useMemo(
     () => (data?.rows ?? []).map(r => `${r.id}:${r.cost_item}:${r.amount}:${r.note ?? ''}`).join('|'),
     [data])
-  useEffect(() => {
-    setRows((data?.rows ?? []).map(r => ({ key: r.id, id: r.id, cost_item: r.cost_item, amount: r.amount, note: r.note ?? '' })))
-  }, [serverStamp])
+  useEffect(() => { setRows(fromServer()) }, [serverStamp])
 
-  const items = data?.items ?? []
-  const itemBy = useMemo(() => new Map(items.map(i => [i.code, i])), [items])
   const locked = data?.locked === true
   const readOnly = locked || !canEdit
 
@@ -74,38 +90,54 @@ export default function WarehouseCostVoucher() {
   const labor = rows.reduce((s, r) => s + (r.cost_item && itemBy.get(r.cost_item)?.is_labor ? r.amount : 0), 0)
   const filled = rows.filter(r => r.cost_item).length
 
+  // Dòng hỏng: tên chưa có trong danh mục, hoặc khoản mục bị khai 2 lần trong cùng phiếu
+  const unknownNames = rows.filter(r => !r.cost_item && r.raw.trim()).map(r => r.raw.trim())
+  const dupCodes = useMemo(() => {
+    const seen = new Set<string>(), dup = new Set<string>()
+    for (const r of rows) if (r.cost_item) (seen.has(r.cost_item) ? dup : seen).add(r.cost_item)
+    return dup
+  }, [rows])
+  const blocked = unknownNames.length > 0 || dupCodes.size > 0
+
   function patch(key: string, p: Partial<Row>) {
     setRows(rs => rs.map(r => (r.key === key ? { ...r, ...p } : r)))
   }
-  function addRow() { setRows(rs => [...rs, { key: newKey(), cost_item: '', amount: 0, note: '' }]) }
+  function addRow() { setRows(rs => [...rs, blankRow()]) }
+  /** Điền lần lượt xuống dưới từ dòng `startIdx`, tự thêm dòng cho đủ (kiểu form phiếu xuất). */
+  function fillDown(startIdx: number, values: string[], apply: (val: string, row: Row) => Partial<Row>) {
+    setRows(prev => {
+      const next = [...prev]
+      while (next.length < startIdx + values.length) next.push(blankRow())
+      values.forEach((v, off) => { next[startIdx + off] = { ...next[startIdx + off], ...apply(v.trim(), next[startIdx + off]) } })
+      return next
+    })
+  }
 
-  /**
-   * Dán từ Excel: mỗi dòng = Khoản mục ⇥ Số tiền ⇥ Ghi chú. Khoản mục ĐÃ CÓ trong lưới thì ĐÈ số
-   * (dán lại là cập nhật, không nhân đôi — cùng luật idempotent của upload). Tên lạ KHÔNG tự đẻ
-   * khoản mục mới: liệt kê ra để người dùng thêm vào danh mục, tránh sinh rác do gõ sai chính tả.
-   */
-  function applyPaste(text: string): { added: number; updated: number; unknown: string[] } {
-    const byName = new Map<string, CostItem>()
-    for (const i of items) { byName.set(normItem(i.label), i); byName.set(normItem(i.code), i) }
-    const unknown: string[] = []
-    let added = 0, updated = 0
-    const next = [...rows]
-    for (const raw of text.split(/\r?\n/)) {
-      if (!raw.trim()) continue
-      const cells = raw.split('\t').map(c => c.trim())
-      const name = cells[0] ?? ''
-      if (!name) continue
-      if (/^(khoản mục|khoan muc|item)$/i.test(name)) continue     // dòng tiêu đề copy kèm
-      const it = byName.get(normItem(name))
-      if (!it) { if (!unknown.includes(name)) unknown.push(name); continue }
-      const amount = parseMoney(cells[1] ?? '')
-      const note = cells[2] ?? ''
-      const at = next.findIndex(r => r.cost_item === it.code)
-      if (at >= 0) { next[at] = { ...next[at], amount, note: note || next[at].note }; updated++ }
-      else { next.push({ key: newKey(), cost_item: it.code, amount, note }); added++ }
-    }
-    setRows(next)
-    return { added, updated, unknown }
+  /** Dán vào ô KHOẢN MỤC: 1 dòng Excel = 1 dòng phiếu (Khoản mục ⇥ Số tiền ⇥ Ghi chú). */
+  function handlePasteItemAt(startIdx: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\t') && !text.includes('\n')) return   // dán 1 ô chữ → để trình duyệt dán bình thường
+    e.preventDefault()
+    const lines = text.trim().split(/\r?\n/).filter(l => l.trim())
+    setRows(prev => {
+      const next = [...prev]
+      while (next.length < startIdx + lines.length) next.push(blankRow())
+      lines.forEach((line, off) => {
+        const cols = line.split('\t')
+        const name = (cols[0] ?? '').trim()
+        if (!name || /^(khoản mục|khoan muc|item)$/i.test(name)) return   // bỏ dòng tiêu đề copy kèm
+        const it = itemByName.get(normItem(name))
+        const row = next[startIdx + off]
+        next[startIdx + off] = {
+          ...row,
+          cost_item: it?.code ?? '',      // không khớp danh mục → giữ nguyên chữ, dòng hiện ĐỎ
+          raw: it?.label ?? name,
+          ...(cols[1] != null && cols[1].trim() ? { amount: parseMoney(cols[1]) } : {}),
+          ...(cols[2] != null && cols[2].trim() ? { note: cols[2].trim() } : {}),
+        }
+      })
+      return next
+    })
   }
 
   async function onSave() {
@@ -113,21 +145,18 @@ export default function WarehouseCostVoucher() {
     const payload = rows.filter(r => r.cost_item)
       .map(r => ({ id: r.id, cost_item: r.cost_item, amount: Math.round(r.amount), note: r.note.trim() || null }))
     try {
-      const r = await save.mutateAsync({ period, warehouse_id: warehouseKey === '__shared__' ? null : warehouseKey, lines: payload })
+      const r = await save.mutateAsync({ period, warehouse_id: warehouseKey === SHARED_KEY ? null : warehouseKey, lines: payload })
       setMsg(`Đã lưu phiếu: ${r.saved} khoản mục${r.deleted ? ` · xoá ${r.deleted} dòng` : ''} · tổng ${money(r.amount)} đ.`)
     } catch (e) { setErr(apiErr(e)) }
   }
 
   const actions: ActionItem[] = [
     ...(readOnly ? [] : [
-      { key: 'save', icon: Save, label: 'Lưu phiếu', tip: 'Ghi toàn bộ thay đổi của phiếu trong một lần',
-        primary: true, onClick: onSave, busy: save.isPending, disabled: !dirty || save.isPending },
+      { key: 'save', icon: Save, label: 'Lưu phiếu', tip: blocked ? 'Còn dòng chưa hợp lệ — xem dòng tô đỏ' : 'Ghi toàn bộ thay đổi của phiếu trong một lần',
+        primary: true, onClick: onSave, busy: save.isPending, disabled: !dirty || blocked || save.isPending },
       { key: 'add', icon: Plus, label: 'Thêm dòng', tip: 'Thêm một khoản mục vào phiếu', onClick: addRow },
-      { key: 'paste', icon: ClipboardPaste, label: 'Dán từ Excel', tip: 'Dán cột Khoản mục / Số tiền / Ghi chú từ bảng tính',
-        onClick: () => setShowPaste(true) },
       { key: 'reset', icon: RotateCcw, label: 'Bỏ thay đổi', tip: 'Trở lại đúng số đang lưu trên hệ thống',
-        onClick: () => setRows((data?.rows ?? []).map(r => ({ key: r.id, id: r.id, cost_item: r.cost_item, amount: r.amount, note: r.note ?? '' }))),
-        disabled: !dirty },
+        onClick: () => setRows(fromServer()), disabled: !dirty },
     ] satisfies ActionItem[]),
     ...(canLock && data ? [{
       key: 'lock', icon: locked ? Unlock : Lock, label: locked ? 'Mở lại kỳ' : 'Chốt kỳ',
@@ -141,12 +170,6 @@ export default function WarehouseCostVoucher() {
       },
     } satisfies ActionItem] : []),
   ]
-
-  // Mỗi khoản mục chỉ 1 dòng/phiếu → ô chọn của dòng này bỏ các khoản mục dòng khác đang dùng
-  const optionsFor = (row: Row) => {
-    const used = new Set(rows.filter(r => r.key !== row.key).map(r => r.cost_item))
-    return items.filter(i => !used.has(i.code)).map(i => ({ value: i.code, label: i.is_labor ? `${i.label} ◆` : i.label }))
-  }
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -176,7 +199,7 @@ export default function WarehouseCostVoucher() {
           { label: 'Tổng chi phí phiếu', value: money(total), accent: true },
           { label: 'Trong đó nhân công', value: money(labor) },
           { label: 'Số khoản mục', value: String(filled) },
-          { label: 'Cập nhật cuối', value: data?.rows?.[0]?.updated_at ? formatTimestampDate(
+          { label: 'Cập nhật cuối', value: data?.rows?.length ? formatTimestampDate(
             data.rows.reduce((a, b) => ((b.updated_at ?? '') > (a.updated_at ?? '') ? b : a)).updated_at as string, true) : '—' },
         ]} />
 
@@ -188,16 +211,25 @@ export default function WarehouseCostVoucher() {
         {locked && <div className="mx-3 mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
           Kỳ này của kho đã <b>CHỐT</b> — phiếu chỉ xem. {canLock ? 'Bấm "Mở lại kỳ" nếu cần sửa.' : 'Nhờ người có quyền chốt kỳ mở lại nếu cần sửa.'}
         </div>}
+        {blocked && (
+          <div className="mx-3 mt-2 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 flex gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+            <span>
+              {unknownNames.length > 0 && <>Khoản mục chưa có trong danh mục: <b>{[...new Set(unknownNames)].join(', ')}</b> — thêm ở nút <b>Khoản mục</b> (trang danh sách phiếu) rồi chọn lại. </>}
+              {dupCodes.size > 0 && <>Có khoản mục bị khai <b>2 dòng</b> trong cùng phiếu — gộp lại thành một dòng. </>}
+              Lưu phiếu đang tạm khoá.
+            </span>
+          </div>
+        )}
 
-        {/* Dán thẳng vào bảng cũng được (Ctrl+V) — không bắt buộc phải mở hộp thoại */}
-        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4"
-          onPaste={readOnly ? undefined : e => {
-            const text = e.clipboardData.getData('text/plain')
-            if (!text.includes('\t') && !text.includes('\n')) return   // dán vào 1 ô thì để nguyên
-            e.preventDefault()
-            const r = applyPaste(text)
-            setMsg(`Đã dán: thêm ${r.added} · cập nhật ${r.updated}${r.unknown.length ? ` · BỎ QUA ${r.unknown.length} tên lạ (${r.unknown.slice(0, 3).join(', ')}…)` : ''}. Bấm Lưu phiếu để ghi.`)
-          }}>
+        {!readOnly && (
+          <div className="mx-3 mt-2 text-[11px] text-slate-500">
+            Dán từ Excel: copy vùng <b>Khoản mục ⇥ Số tiền ⇥ Ghi chú</b> rồi dán vào ô <b>Khoản mục</b> —
+            các dòng tự điền xuống dưới. Dán một cột số vào ô <b>Số tiền</b> cũng được.
+          </div>
+        )}
+
+        <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <table className="min-w-full text-left">
             <thead>
               <tr className="bg-slate-50">
@@ -211,11 +243,12 @@ export default function WarehouseCostVoucher() {
               {isLoading && Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i}><td colSpan={5} className="px-2 py-1"><Skeleton className="h-7 rounded bg-slate-200" /></td></tr>
               ))}
-              {!isLoading && rows.map(r => {
+              {!isLoading && rows.map((r, idx) => {
                 const srv = data?.rows.find(x => x.id === r.id)
+                const bad = (!r.cost_item && !!r.raw.trim()) || (r.cost_item && dupCodes.has(r.cost_item))
                 return (
-                  <tr key={r.key} className="border-t border-slate-100">
-                    <td className="sticky left-0 z-10 bg-white px-1.5 py-1 whitespace-nowrap">
+                  <tr key={r.key} className={`border-t border-slate-100 ${bad ? 'bg-red-50/60' : ''}`}>
+                    <td className={`sticky left-0 z-10 px-1.5 py-1 whitespace-nowrap ${bad ? 'bg-red-50' : 'bg-white'}`}>
                       {readOnly ? <span className="text-slate-300">—</span> : (
                         <button type="button" title="Xoá dòng khỏi phiếu" onClick={() => setRows(rs => rs.filter(x => x.key !== r.key))}
                           className="px-1.5 py-1 rounded text-slate-500 hover:bg-red-50 hover:text-red-600">
@@ -225,21 +258,38 @@ export default function WarehouseCostVoucher() {
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       {readOnly
-                        ? <span className="text-[10px] text-slate-700">{srv?.item_label ?? r.cost_item}{srv?.is_labor && <span className="ml-1 text-emerald-600">◆</span>}</span>
-                        : <SingleSelect options={optionsFor(r)} value={r.cost_item} onChange={v => patch(r.key, { cost_item: v })}
-                            placeholder="Chọn khoản mục…" triggerClassName="w-40 sm:w-56 h-8 text-[11px]" />}
+                        ? <span className="text-[10px] text-slate-700">{srv?.item_label ?? r.raw}{srv?.is_labor && <span className="ml-1 text-emerald-600">◆</span>}</span>
+                        : <ItemPicker
+                            row={r} items={items} itemByName={itemByName}
+                            usedCodes={rows.filter(x => x.key !== r.key).map(x => x.cost_item)}
+                            invalid={!!bad}
+                            onChange={p => patch(r.key, p)}
+                            onPaste={e => handlePasteItemAt(idx, e)}
+                          />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap text-right">
                       {readOnly
                         ? <span className="text-[10px] tabular-nums font-semibold text-slate-800">{money(r.amount)}</span>
                         : <input value={r.amount ? money(r.amount) : ''} inputMode="numeric" placeholder="0"
                             onChange={e => patch(r.key, { amount: parseMoney(e.target.value) })}
+                            onPaste={e => {
+                              const text = e.clipboardData.getData('text')
+                              if (!text.includes('\n')) return          // dán 1 số → để bình thường
+                              e.preventDefault()
+                              fillDown(idx, text.trim().split(/\r?\n/).filter(v => v.trim()), v => ({ amount: parseMoney(v) }))
+                            }}
                             className="w-28 sm:w-36 h-8 px-2 rounded border border-slate-200 text-[11px] text-right tabular-nums outline-none focus:border-blue-400" />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       {readOnly
                         ? <span className="text-[10px] text-slate-500">{r.note || <span className="text-slate-300">—</span>}</span>
                         : <input value={r.note} onChange={e => patch(r.key, { note: e.target.value })} placeholder="Số hợp đồng, diễn giải…"
+                            onPaste={e => {
+                              const text = e.clipboardData.getData('text')
+                              if (!text.includes('\n')) return
+                              e.preventDefault()
+                              fillDown(idx, text.trim().split(/\r?\n/).filter(v => v.trim()), v => ({ note: v }))
+                            }}
                             className="w-40 sm:w-64 h-8 px-2 rounded border border-slate-200 text-[11px] outline-none focus:border-blue-400" />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
@@ -256,7 +306,7 @@ export default function WarehouseCostVoucher() {
               {!isLoading && rows.length === 0 && (
                 <tr><td colSpan={5} className="px-2 py-8 text-center text-[11px] text-slate-400">
                   Phiếu chưa có khoản chi phí nào.
-                  {!readOnly && <> Bấm <b>Thêm dòng</b>, hoặc <b>Dán từ Excel</b> (Khoản mục ⇥ Số tiền ⇥ Ghi chú).</>}
+                  {!readOnly && <> Bấm <b>Thêm dòng</b> rồi gõ, hoặc dán thẳng bảng Excel vào ô <b>Khoản mục</b>.</>}
                 </td></tr>
               )}
               {!isLoading && !readOnly && (
@@ -277,43 +327,73 @@ export default function WarehouseCostVoucher() {
           <span>{filled} khoản mục · tổng <b className="text-slate-700 tabular-nums">{money(total)}</b> đ</span>
           <span className="flex-1" />
           {!readOnly && (
-            <Button size="sm" className="h-7 text-[11px]" onClick={onSave} disabled={!dirty || save.isPending}>
+            <Button size="sm" className="h-7 text-[11px]" onClick={onSave} disabled={!dirty || blocked || save.isPending}>
               {save.isPending ? 'Đang lưu…' : 'Lưu phiếu'}
             </Button>
           )}
         </div>
       </div>
-
-      {showPaste && (
-        <PasteDialog onClose={() => setShowPaste(false)} onApply={text => {
-          const r = applyPaste(text)
-          setShowPaste(false)
-          setMsg(`Đã dán: thêm ${r.added} · cập nhật ${r.updated}${r.unknown.length
-            ? ` · BỎ QUA ${r.unknown.length} tên chưa có trong danh mục: ${r.unknown.join(', ')}` : ''}. Bấm Lưu phiếu để ghi.`)
-        }} />
-      )}
     </div>
   )
 }
 
-function PasteDialog({ onClose, onApply }: { onClose: () => void; onApply: (text: string) => void }) {
-  const [text, setText] = useState('')
+// ── Ô KHOẢN MỤC: ô nhập có gợi ý (khuôn `MatPicker` của form phiếu xuất) ──────────────────────
+// Là <input> chứ không phải dropdown vì phải DÁN ĐƯỢC vào đây; danh mục khoản mục nhỏ (vài chục
+// dòng) nên lọc ngay tại client, không cần gọi API tìm kiếm như mã hàng.
+function ItemPicker({ row, items, itemByName, usedCodes, invalid, onChange, onPaste }: {
+  row: Row
+  items: CostItem[]
+  itemByName: Map<string, CostItem>
+  usedCodes: string[]
+  invalid: boolean
+  onChange: (p: Partial<Row>) => void
+  onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [style, setStyle] = useState<React.CSSProperties>({})
+  const inputRef = useRef<HTMLInputElement>(null)
+  const used = new Set(usedCodes.filter(Boolean))
+  const kw = normItem(row.raw)
+  const list = items.filter(i => !used.has(i.code) && (!kw || normItem(i.label).includes(kw) || normItem(i.code).includes(kw)))
+
+  function place() {
+    setOpen(true)
+    const el = inputRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    // Panel bám theo ô bằng position:fixed → không bị vùng cuộn của bảng cắt mất
+    setStyle({ position: 'fixed', top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 240), zIndex: 9999 })
+  }
+
   return (
-    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle className="text-base">Dán từ Excel</DialogTitle></DialogHeader>
-        <p className="text-[11px] text-slate-500 -mt-2">
-          Bôi đen vùng trong Excel rồi dán vào ô dưới. Thứ tự cột: <b>Khoản mục</b> ⇥ <b>Số tiền</b> ⇥ <b>Ghi chú</b>.
-          Khoản mục đã có trong phiếu sẽ được <b>cập nhật số tiền</b>; tên chưa có trong danh mục bị bỏ qua và liệt kê ra.
-        </p>
-        <textarea value={text} onChange={e => setText(e.target.value)} rows={8} autoFocus
-          placeholder={'Thuê xe nâng\t96.000.000\tHĐ 12/2026\nThuê pallet\t38.400.000'}
-          className="w-full rounded border border-slate-200 p-2 text-xs font-mono outline-none focus:border-blue-400" />
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!text.trim()} onClick={() => onApply(text)}>Đưa vào phiếu</Button>
+    <div className="w-40 sm:w-56">
+      <input
+        ref={inputRef}
+        value={row.raw}
+        placeholder="Gõ hoặc dán khoản mục…"
+        onChange={e => {
+          const v = e.target.value
+          // Gõ đúng tên thì khớp luôn; chưa khớp thì để trống mã (dòng đỏ nhắc chọn lại)
+          onChange({ raw: v, cost_item: itemByName.get(normItem(v))?.code ?? '' })
+          place()
+        }}
+        onFocus={place}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onPaste={onPaste}
+        className={`w-full h-8 px-2 rounded border text-[11px] outline-none focus:border-blue-400 ${
+          invalid ? 'border-red-300 bg-red-50 text-red-700' : 'border-slate-200'}`}
+      />
+      {open && list.length > 0 && (
+        <div style={style} className="bg-white border border-slate-200 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+          {list.map(i => (
+            <button key={i.code} type="button"
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-700 hover:bg-blue-50 border-b border-slate-50 last:border-0"
+              onMouseDown={() => { onChange({ cost_item: i.code, raw: i.label }); setOpen(false) }}>
+              {i.label}{i.is_labor && <span className="ml-1 text-emerald-600" title="Chi phí nhân công">◆</span>}
+            </button>
+          ))}
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+    </div>
   )
 }

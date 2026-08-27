@@ -6,7 +6,7 @@
 //
 // TẤN = chứng từ, cộng CẢ nhập lẫn xuất (bốc hàng nhập cũng là công). CÔNG = module Chấm công.
 // Mọi tỷ số lấy từ `utils/productivity.ts` (một nguồn), thiếu mẫu số thì hiện "—" chứ không hiện 0.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -49,6 +49,92 @@ function Tile({ icon: Icon, tone, label, value, sub, danger }: {
         {value}
       </div>
       {sub && <div className="text-[9px] text-slate-500">{sub}</div>}
+    </div>
+  )
+}
+
+// ── XEM THEO THÁNG ────────────────────────────────────────────────────────────────────────────
+// Cột = tháng, chọn được CHỈ SỐ muốn nhìn. Mỗi cột kèm ▲▼ % so THÁNG LIỀN TRƯỚC — không có mũi
+// tên thì người xem phải tự trừ nhẩm, mà "lên hay xuống" mới là câu hỏi thật sự của biểu đồ này.
+// `goodUp=false` cho tỷ lệ tăng ca: tăng ca tăng là chuyện XẤU, không được tô xanh.
+type TrendRow = { month: string; tons: number; tons_in: number; tons_out: number; trips: number; work_days: number; work_hours: number; ot_hours: number }
+const METRICS: Array<{ key: string; label: string; unit: string; goodUp: boolean; d: number; pct?: boolean; of: (m: TrendRow) => number | null }> = [
+  { key: 'tons', label: 'Sản lượng (tấn)', unit: 'tấn', goodUp: true, d: 0, of: m => m.tons },
+  { key: 'tpd', label: 'Tấn / công', unit: 'tấn/công', goodUp: true, d: 2, of: m => tonsPerWorkDay(m) },
+  { key: 'tph', label: 'Tấn / giờ công', unit: 'tấn/giờ', goodUp: true, d: 3, of: m => tonsPerWorkHour(m) },
+  { key: 'days', label: 'Số công', unit: 'công', goodUp: true, d: 0, of: m => m.work_days },
+  { key: 'ot', label: 'Giờ tăng ca', unit: 'giờ', goodUp: false, d: 0, of: m => m.ot_hours },
+  { key: 'otr', label: 'Tỷ lệ tăng ca', unit: '', goodUp: false, d: 1, pct: true, of: m => otRate(m) },
+]
+
+function Delta({ cur, prev, goodUp }: { cur: number | null; prev: number | null; goodUp: boolean }) {
+  if (cur == null || prev == null || prev === 0) return <span className="text-[9px] text-slate-300">—</span>
+  const p = (cur - prev) / Math.abs(prev)
+  if (Math.abs(p) < 0.005) return <span className="text-[9px] text-slate-400">≈</span>
+  const up = p > 0
+  const good = up === goodUp
+  return (
+    <span className={`text-[9px] tabular-nums font-medium ${good ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+      {up ? '▲' : '▼'}{fmtPct(Math.abs(p), 0)}
+    </span>
+  )
+}
+
+function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => void }) {
+  const [metric, setMetric] = useState(METRICS[0].key)
+  const M = METRICS.find(m => m.key === metric) ?? METRICS[0]
+  const vals = rows.map(M.of)
+  const max = Math.max(1e-9, ...vals.map(v => v ?? 0))
+  const fmt = (v: number | null) => (M.pct ? fmtPct(v, M.d) : fmtNum(v, M.d))
+  const last = vals[vals.length - 1], prev = vals[vals.length - 2]
+
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 flex-wrap">
+        <span className="w-1 h-3.5 rounded bg-sky-500" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Xem theo tháng</span>
+        <span className="text-[9px] text-slate-500">{rows.length} tháng · ▲▼ so tháng liền trước</span>
+        <span className="flex-1" />
+        <button type="button" onClick={onPick12} className="text-[10px] text-sky-600 hover:text-sky-700">12 tháng</button>
+      </div>
+
+      <div className="px-2.5 py-1.5 flex items-center gap-1 flex-wrap border-b border-slate-100 dark:border-slate-700/60">
+        {METRICS.map(m => (
+          <button key={m.key} type="button" onClick={() => setMetric(m.key)}
+            className={`h-6 px-2 rounded text-[10px] font-medium border transition-colors ${m.key === metric
+              ? 'bg-sky-600 text-white border-sky-600'
+              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-white/5'}`}>
+            {m.label}
+          </button>
+        ))}
+        <span className="flex-1" />
+        <span className="text-[10px] text-slate-500">
+          Tháng cuối: <b className="text-slate-700 dark:text-slate-200">{fmt(last ?? null)}</b> <Delta cur={last ?? null} prev={prev ?? null} goodUp={M.goodUp} />
+        </span>
+      </div>
+
+      <div className="p-3 overflow-x-auto">
+        <div className="flex items-end gap-2 min-w-max h-40">
+          {rows.map((m, i) => {
+            const v = vals[i]
+            const h = v == null ? 0 : Math.max(3, (v / max) * 96)
+            return (
+              <div key={m.month} className="flex flex-col items-center justify-end gap-1 w-16">
+                <Delta cur={v} prev={i > 0 ? vals[i - 1] : null} goodUp={M.goodUp} />
+                <span className="text-[9px] tabular-nums text-slate-600 dark:text-slate-300">{fmt(v)}</span>
+                {v == null
+                  ? <div className="w-9 border-b-2 border-dashed border-slate-300 dark:border-slate-600" title="Chưa có dữ liệu chấm công tháng này" />
+                  : <div className="w-9 rounded-t bg-sky-500/80 hover:bg-sky-500" style={{ height: `${h}px` }}
+                      title={`${m.month}: ${fmtNum(m.tons, 1)} tấn · ${fmtNum(m.work_days, 0)} công · ${fmtNum(m.ot_hours, 1)} giờ OT`} />}
+                <span className="text-[9px] text-slate-600 dark:text-slate-300">{m.month.slice(5)}/{m.month.slice(2, 4)}</span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="mt-1 text-[9px] text-slate-400">
+          Cột đứt nét = tháng chưa có dữ liệu để tính chỉ số này (thường là chưa chấm công).
+        </div>
+      </div>
     </div>
   )
 }
@@ -102,7 +188,6 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
   const rows = useMemo(() => allRows.filter(r => r.tons > 0 || r.work_days > 0 || (r.cost ?? 0) > 0), [allRows])
   const hiddenRows = allRows.length - rows.length
   const trend = data?.by_month ?? []
-  const maxTrend = useMemo(() => Math.max(1, ...trend.map(m => m.tons)), [trend])
 
   // Cảnh báo dữ liệu — số liệu THIẾU phải nói ra, đừng để người đọc tưởng năng suất kém
   const noLabor = !!t && t.work_days === 0
@@ -206,32 +291,21 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
         </div>
       )}
 
-      {/* Xu hướng theo tháng — chỉ có nghĩa khi khoảng ngày trải nhiều tháng */}
-      {!isLoading && trend.length > 1 && (
-        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700">
-            <span className="w-1 h-3.5 rounded bg-sky-500" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Xu hướng theo tháng</span>
-            <span className="text-[9px] text-slate-500">tấn · tấn/công</span>
-          </div>
-          <div className="p-3 overflow-x-auto">
-            <div className="flex items-end gap-2 min-w-max h-32">
-              {trend.map(m => {
-                const perDay = tonsPerWorkDay({ tons: m.tons, work_days: m.work_days, work_hours: m.work_hours, ot_hours: m.ot_hours })
-                return (
-                  <div key={m.month} className="flex flex-col items-center justify-end gap-1 w-14">
-                    <span className="text-[9px] tabular-nums text-slate-500">{fmtNum(m.tons, 0)}</span>
-                    <div className="w-8 rounded-t bg-sky-500/80" style={{ height: `${Math.max(3, (m.tons / maxTrend) * 88)}px` }}
-                      title={`${m.month}: ${fmtNum(m.tons, 1)} tấn · ${fmtNum(m.work_days, 0)} công · ${fmtNum(perDay, 2)} tấn/công`} />
-                    <span className="text-[9px] text-slate-600 dark:text-slate-300">{m.month.slice(5)}/{m.month.slice(2, 4)}</span>
-                    <span className="text-[9px] tabular-nums text-indigo-500">{fmtNum(perDay, 2)}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+      {/* XEM THEO THÁNG — biểu đồ có lên/xuống (user chốt 27/08) */}
+      {!isLoading && (trend.length > 1 ? (
+        <MonthlyTrend rows={trend} onPick12={() => setDashboard({ prodFrom: monthStart(11), prodTo: TODAY() })} />
+      ) : (
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <TrendingUp className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+          <span className="text-[11px] text-slate-600 dark:text-slate-300">
+            Kỳ đang chọn chỉ có 1 tháng nên chưa vẽ được xu hướng.
+          </span>
+          <button type="button" onClick={() => setDashboard({ prodFrom: monthStart(11), prodTo: TODAY() })}
+            className="h-7 px-2 rounded text-[11px] font-medium bg-sky-600 text-white hover:bg-sky-700">
+            Xem 12 tháng gần nhất
+          </button>
         </div>
-      )}
+      ))}
 
       {/* Bảng theo kho */}
       <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">

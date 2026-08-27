@@ -350,7 +350,17 @@ interface ReconcileFilters {
   page: number
   pageSize: number
 }
+/** Chi phí kho — sổ kê khai theo KỲ THÁNG (period rỗng = tháng này, không ghim tháng cứng). */
+interface WarehouseCostFilters {
+  period: string       // 'YYYY-MM'; '' = tháng hiện tại
+  warehouseId: string  // '' tất cả | '__shared__' chi phí chung | id kho
+  items: string[]
+  search: string
+  page: number
+  pageSize: number
+}
 interface WmsFilterState {
+  warehouseCost:     WarehouseCostFilters
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
   outbound:          OutboundFilters
@@ -388,6 +398,7 @@ interface WmsFilterState {
   setKhvc:              (f: Partial<KhvcFilters>)              => void
   setReconcile:         (f: Partial<ReconcileFilters>)         => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
+  setWarehouseCost:     (f: Partial<WarehouseCostFilters>)     => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
   setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
@@ -432,6 +443,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 function initialFilters() {
   return {
     dashboard: { warehouseId: '', prodFrom: '', prodTo: '' },
+    warehouseCost: { period: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
@@ -502,6 +514,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
     (set) => ({
       ...initialFilters(),
       setDashboard:        (f) => set(s => ({ dashboard:        { ...s.dashboard,        ...f } })),
+      setWarehouseCost:    (f) => set(s => ({ warehouseCost:    { ...s.warehouseCost,    ...f } })),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),

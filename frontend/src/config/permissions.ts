@@ -240,8 +240,9 @@ export const MODULES = {
     page: 'Chi phí kho (kê khai + chỉ số chi phí/tấn)',
     actions: {
       view: 'Xem chi phí kho + các ô chi phí/tấn trong tab Năng suất của Dashboard',
-      edit: 'Kê khai / sửa số tiền theo Kho × Tháng × Khoản mục (gồm chép tháng trước, upload Excel)',
+      edit: 'Thêm / sửa / xoá dòng chi phí (gồm chép tháng trước, upload Excel)',
       lock: 'Chốt kỳ (khoá không cho sửa nữa) và mở lại kỳ đã chốt',
+      manage_item: 'Quản lý DANH MỤC khoản mục chi phí (thêm "Thuê pallet", "Thuê xe nâng"…)',
     },
   },
   control_tower: {

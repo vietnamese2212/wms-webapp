@@ -2170,37 +2170,90 @@ export function useProductivity(
   })
 }
 
-// ─── Chi phí kho (27/08) — kê khai theo Kho × Tháng × Khoản mục ──────────────────────────────
-export type CostItem = { code: string; label: string; is_labor: boolean; group: string | null }
-export type CostCell = { warehouse_id: string | null; cost_item: string; amount: number; note: string | null }
-export type CostGrid = {
+// ─── Chi phí kho (27/08) — SỔ KÊ KHAI: 1 dòng = Kho · Kỳ tháng · Khoản mục · Số tiền ─────────
+export type CostItem = { code: string; label: string; is_labor: boolean; group: string | null; sort_order: number }
+export type CostLine = {
+  id: string
+  warehouse_id: string | null; warehouse_name: string
+  period: string
+  cost_item: string; item_label: string; is_labor: boolean
+  amount: number; note: string | null
+  updated_at: string | null; updated_by: string | null
+  locked: boolean
+}
+export type CostBook = {
   period: string
   can_edit_shared: boolean
   items: CostItem[]
-  warehouses: Array<{ id: string; name: string }>
-  cells: CostCell[]
+  rows: CostLine[]
+  total: number; page: number; pageSize: number
+  totals: { amount: number; labor: number; warehouses: number; lines: number }
   locks: Array<{ warehouse_id: string | null; locked_at: string; locked_by: string | null }>
 }
 
-export function useCostGrid(period: string) {
-  return useQuery<CostGrid>({
-    queryKey: ['warehouse-costs', period],
-    enabled: !!period,
-    queryFn: () => apiClient.get('/wms/warehouse-costs', { params: { period } }).then(r => r.data.data),
+export function useCostBook(params: {
+  period: string; warehouseId?: string; items?: string[]; search?: string; page: number; pageSize: number
+}) {
+  return useQuery<CostBook>({
+    queryKey: ['warehouse-costs', params],
+    enabled: !!params.period,
+    queryFn: () => apiClient.get('/wms/warehouse-costs', {
+      params: {
+        period: params.period,
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        ...(params.items?.length ? { items: params.items.join(',') } : {}),
+        ...(params.search ? { search: params.search } : {}),
+        page: params.page, pageSize: params.pageSize,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+export type CostLineInput = {
+  period: string; warehouse_id: string | null; cost_item: string; amount: number; note?: string | null
+}
+export function useCreateCost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CostLineInput) => apiClient.post('/wms/warehouse-costs', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useUpdateCost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<CostLineInput> & { id: string }) =>
+      apiClient.patch(`/wms/warehouse-costs/${id}`, body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useDeleteCost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/warehouse-costs/${id}`).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+/** Danh mục khoản mục — kế toán tự thêm "Thuê pallet"… (quyền `warehouse_cost.manage_item`). */
+export function useSaveCostItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code?: string; label: string; is_labor?: boolean }) =>
+      apiClient.post('/wms/warehouse-costs/items', body).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
+  })
+}
+export function useDeleteCostItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiClient.delete(`/wms/warehouse-costs/items/${code}`).then(r => r.data.data),
+    onSuccess: () => invalidateCost(qc),
   })
 }
 /** Mọi mutation chi phí đều đụng cả lưới LẪN ô chi phí/tấn ở Dashboard → invalidate cả hai. */
 function invalidateCost(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['warehouse-costs'] })
   qc.invalidateQueries({ queryKey: ['dashboard-productivity'] })
-}
-export function useSaveCostGrid() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { period: string; cells: Array<{ warehouse_id: string | null; cost_item: string; amount: number; note?: string | null }> }) =>
-      apiClient.put('/wms/warehouse-costs', body).then(r => r.data.data),
-    onSuccess: () => invalidateCost(qc),
-  })
 }
 export function useCopyPrevCosts() {
   const qc = useQueryClient()

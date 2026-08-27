@@ -20,7 +20,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   control_tower:     ['view'],
   // Chi phí kho (27/08): TIỀN là dữ liệu nhạy cảm — tách hẳn khỏi `dashboard.view`, ai không có
   // `warehouse_cost.view` vẫn xem được tấn/công/tăng ca nhưng KHÔNG thấy ô nào có tiền.
-  warehouse_cost:    ['view', 'edit', 'lock'],
+  warehouse_cost:    ['view', 'edit', 'lock', 'manage_item'],
   alerts:            ['view', 'ack'],   // Trung tâm cảnh báo (06/08): view = xem + nhận push cảnh báo mới theo kho; ack riêng
   slotting:          ['view', 'plan', 'delete', 'complete', 'cancel', 'reopen', 'configure'],   // Tối ưu vị trí: mỗi nút 1 quyền (tách 05/08 — tạo / xóa / hoàn thành / hủy / mở lại / tab Cài đặt)
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)

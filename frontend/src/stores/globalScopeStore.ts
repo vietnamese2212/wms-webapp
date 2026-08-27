@@ -43,6 +43,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
 
   if (opts.force || wid !== '') {
     s.setDashboard({ warehouseId: wid })
+    s.setWarehouseCost({ warehouseId: wid, page: 1 })
     s.setAssignment({ warehouseId: wid })
     s.setOutboundPrepare({ warehouseId: wid })
     s.setAlerts({ warehouseId: wid })

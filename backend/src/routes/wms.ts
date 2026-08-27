@@ -61,12 +61,17 @@ router.get('/dashboard', dashboard.getDashboard)
 // người gọi không có `warehouse_cost.view`.
 router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboard.getProductivity)
 
-// Chi phí kho — kê khai theo (Kho × Tháng × Khoản mục); mỗi việc 1 quyền riêng
-router.get ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'), warehouseCost.getCostGrid)
-router.put ('/warehouse-costs',               requirePerm('warehouse_cost', 'edit'), warehouseCost.saveCostGrid)
-router.post('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'), warehouseCost.copyPreviousMonth)
-router.post('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'), upload.single('file'), warehouseCost.uploadCostExcel)
-router.post('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'), warehouseCost.setCostLock)
+// Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
+// Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.
+router.get   ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'),        warehouseCost.listCosts)
+router.post  ('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'),        warehouseCost.copyPreviousMonth)
+router.post  ('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'),        upload.single('file'), warehouseCost.uploadCostExcel)
+router.post  ('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'),        warehouseCost.setCostLock)
+router.post  ('/warehouse-costs/items',         requirePerm('warehouse_cost', 'manage_item'), warehouseCost.saveCostItem)
+router.delete('/warehouse-costs/items/:code',   requirePerm('warehouse_cost', 'manage_item'), warehouseCost.deleteCostItem)
+router.post  ('/warehouse-costs',               requirePerm('warehouse_cost', 'edit'),        warehouseCost.createCost)
+router.patch ('/warehouse-costs/:id',           requirePerm('warehouse_cost', 'edit'),        warehouseCost.updateCost)
+router.delete('/warehouse-costs/:id',           requirePerm('warehouse_cost', 'edit'),        warehouseCost.deleteCost)
 
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)

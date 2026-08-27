@@ -227,20 +227,20 @@ export default function WarehouseCostVoucher() {
                       {readOnly
                         ? <span className="text-[10px] text-slate-700">{srv?.item_label ?? r.cost_item}{srv?.is_labor && <span className="ml-1 text-emerald-600">◆</span>}</span>
                         : <SingleSelect options={optionsFor(r)} value={r.cost_item} onChange={v => patch(r.key, { cost_item: v })}
-                            placeholder="Chọn khoản mục…" triggerClassName="w-56 h-8 text-[11px]" />}
+                            placeholder="Chọn khoản mục…" triggerClassName="w-40 sm:w-56 h-8 text-[11px]" />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap text-right">
                       {readOnly
                         ? <span className="text-[10px] tabular-nums font-semibold text-slate-800">{money(r.amount)}</span>
                         : <input value={r.amount ? money(r.amount) : ''} inputMode="numeric" placeholder="0"
                             onChange={e => patch(r.key, { amount: parseMoney(e.target.value) })}
-                            className="w-36 h-8 px-2 rounded border border-slate-200 text-[11px] text-right tabular-nums outline-none focus:border-blue-400" />}
+                            className="w-28 sm:w-36 h-8 px-2 rounded border border-slate-200 text-[11px] text-right tabular-nums outline-none focus:border-blue-400" />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       {readOnly
                         ? <span className="text-[10px] text-slate-500">{r.note || <span className="text-slate-300">—</span>}</span>
                         : <input value={r.note} onChange={e => patch(r.key, { note: e.target.value })} placeholder="Số hợp đồng, diễn giải…"
-                            className="w-64 h-8 px-2 rounded border border-slate-200 text-[11px] outline-none focus:border-blue-400" />}
+                            className="w-40 sm:w-64 h-8 px-2 rounded border border-slate-200 text-[11px] outline-none focus:border-blue-400" />}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       {srv?.updated_at ? (

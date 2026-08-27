@@ -106,6 +106,24 @@ for (const path of LIST_FUZZ) {
     `HTTP ${r.s} · ${(r.bytes / 1024).toFixed(0)}KB${okStatus ? '' : r.s === 404 ? ' → route đổi, sửa test!' : ' → 500!'}${okSize ? '' : ' → QUÁ 4MB!'}`)
 }
 
+// ── 2b) PHIẾU chi phí (kho × kỳ) — tham số rác phải ra 4xx CÓ NGHĨA ────────────────────────
+// Bắt 27/08: `warehouse_id` không có thật từng trả 200 và vẽ ra "phiếu ma" của "(kho đã xoá)",
+// còn đường GHI thì rơi xuống khoá ngoại 23503 → 500 rác. Ở đây soi ĐÚNG mã trạng thái mong đợi
+// (không chỉ "< 500") vì 404 mới là câu trả lời đúng cho id không tồn tại.
+const VOUCHER_FUZZ = [
+  [`/wms/warehouse-costs/vouchers?period=2026-13`, 400],
+  [`/wms/warehouse-costs/vouchers?period=`, 400],
+  [`/wms/warehouse-costs/vouchers?period_from=2026-08&period_to=2026-01`, 400],
+  [`/wms/warehouse-costs/vouchers?period_from=2019-01&period_to=2026-12`, 400],
+  [`/wms/warehouse-costs/voucher?warehouse_id=undefined&period=2026-08`, 404],
+  [`/wms/warehouse-costs/voucher?warehouse_id=00000000-0000-4000-8000-000000000000&period=2026-08`, 404],
+  [`/wms/warehouse-costs/voucher?warehouse_id=x&period=xx`, 400],
+]
+for (const [path, want] of VOUCHER_FUZZ) {
+  const r = await api(path)
+  chk(r.s === want, `fuzz phiếu ${path.replace('/wms/warehouse-costs', '').slice(0, 64)}`, `HTTP ${r.s} (mong ${want})`)
+}
+
 // ── 3) Danh sách id DÀI (300+) — không đứt kết nối, không 500 (chunk .in() phía BE) ──
 const longIds = Array.from({ length: 350 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`).join(',')
 {

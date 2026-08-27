@@ -559,7 +559,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const sumDone = groups.reduce((s, g) => s + g.done, 0)
   // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET — trừ loại "Lên nóc" là THÙNG rời;
   // có lẫn cả hai thì chữ chung dùng "khối", nhãn từng nhóm vẫn nói đúng pallet/thùng.
-  const topCount = isPalletTruck ? groups.filter(g => g.topCarton).reduce((s, g) => s + g.count, 0) : 0
+  const topGroups = isPalletTruck ? groups.filter(g => g.topCarton) : []
+  const topCount = topGroups.reduce((s, g) => s + g.count, 0)
+  // ĐVT của hàng lên nóc lấy theo DANH MỤC (POSM đếm "cái") — cùng một ĐVT thì nói đúng tên,
+  // lẫn nhiều ĐVT mới nói chung là "khối"
+  const topUnit = [...new Set(topGroups.map(g => g.qtyUnit ?? 'thùng'))].length === 1
+    ? topGroups[0].qtyUnit ?? 'thùng' : 'khối'
   const unitWord = isPalletTruck ? (topCount > 0 ? 'khối' : 'pallet') : 'thùng'
 
   // Tiến độ hiển thị: thứ tự "đã xuất" đi theo đúng thứ tự xếp của kế hoạch (ordinal trong nhóm)
@@ -1052,7 +1057,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 <p className="text-[10px] text-slate-500">
                   Sàn xe chứa được <b className="tabular-nums">{floorSlots}</b> chỗ pallet
                   {palletized ? <> · đơn cần <b className="tabular-nums">{palletized.palletCount}</b> pallet</> : null}
-                  {topCount > 0 && <> + <b className="tabular-nums">{topCount}</b> thùng lên nóc</>}
+                  {topCount > 0 && <> + <b className="tabular-nums">{topCount}</b> {topUnit} lên nóc</>}
                 </p>
               )}
               {/* Cách lên xe của TỪNG Loại hàng — nhớ theo (kho × user), áp mọi chuyến sau của kho */}

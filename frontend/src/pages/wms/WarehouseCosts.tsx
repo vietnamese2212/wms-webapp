@@ -13,6 +13,7 @@ import { Wallet, Copy, Upload, FilePlus2, Lock, Unlock, Tags, Check, Plus, Penci
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -30,6 +31,9 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { SHARED_KEY, monthOpts, monthAdd, money, voucherPath } from './costShared'
 
+const DEFAULT_BACK = 14    // 15 kỳ tính cả tháng này
+const DEFAULT_AHEAD = 3    // khai trước kỳ tới
+
 function apiErr(e: unknown): string {
   const m = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   return m ?? 'Có lỗi xảy ra — thử lại.'
@@ -45,9 +49,14 @@ export default function WarehouseCosts() {
 
   const f = useWmsFilterStore(s => s.warehouseCost)
   const setF = useWmsFilterStore(s => s.setWarehouseCost)
-  const from = f.periodFrom || monthAdd(0)          // rỗng = tháng này (không ghim tháng cứng vào store)
-  const to = f.periodTo || from
+  // MẶC ĐỊNH LÀ THẤY HẾT (user 27/08: "tại sao lại chỉ cho xem vài phiếu vậy — có rất nhiều mà??").
+  // Danh sách phiếu là SỔ, mở ra phải thấy mọi phiếu đã tạo; ghim sẵn 1 tháng làm người dùng tưởng
+  // phiếu bị mất. Dải mặc định = 15 tháng trước → 3 tháng tới (đúng dải ô chọn kỳ, dưới trần 24).
+  const from = f.periodFrom || monthAdd(DEFAULT_BACK)
+  const to = f.periodTo || (f.periodFrom ? f.periodFrom : monthAdd(-DEFAULT_AHEAD))
   const isVoucherView = f.view !== 'line'
+  /** Kỳ "đang đứng" cho các thao tác gắn với MỘT kỳ (chép tháng trước, upload, chốt kỳ, tạo phiếu). */
+  const focusPeriod = from === to ? to : monthAdd(0)
 
   const vouchers = useCostVouchers({
     periodFrom: from, periodTo: to, warehouseId: f.warehouseId || undefined,
@@ -121,9 +130,9 @@ export default function WarehouseCosts() {
   async function onCopyPrev() {
     setErr(null); setMsg(null)
     try {
-      const r = await copyPrev.mutateAsync(to)
+      const r = await copyPrev.mutateAsync(focusPeriod)
       setMsg(r.copied > 0
-        ? `Đã chép ${r.copied} dòng từ kỳ ${String(r.from).slice(0, 7)} sang kỳ ${to}${r.skipped_existing ? ` · giữ nguyên ${r.skipped_existing} dòng đã khai` : ''}${r.skipped_locked ? ` · bỏ qua ${r.skipped_locked} dòng của kho đã chốt` : ''}.`
+        ? `Đã chép ${r.copied} dòng từ kỳ ${String(r.from).slice(0, 7)} sang kỳ ${focusPeriod}${r.skipped_existing ? ` · giữ nguyên ${r.skipped_existing} dòng đã khai` : ''}${r.skipped_locked ? ` · bỏ qua ${r.skipped_locked} dòng của kho đã chốt` : ''}.`
         : `Kỳ ${String(r.from).slice(0, 7)} chưa có dòng nào để chép.`)
     } catch (e) { setErr(apiErr(e)) }
   }
@@ -134,12 +143,12 @@ export default function WarehouseCosts() {
     const ex = items.slice(0, 2).map(i => i.label)
     const ws = XLSX.utils.aoa_to_sheet([
       ['Tháng', 'Kho', 'Khoản mục', 'Số tiền', 'Ghi chú'],
-      [to, warehouses[0]?.name ?? 'Kho Ba Vì', ex[0] ?? 'Thuê xe nâng', 45000000, 'Hợp đồng số 12/2026'],
-      [to, 'CHUNG', ex[1] ?? 'Thuê pallet', 12000000, 'Chi phí chung toàn công ty'],
+      [focusPeriod, warehouses[0]?.name ?? 'Kho Ba Vì', ex[0] ?? 'Thuê xe nâng', 45000000, 'Hợp đồng số 12/2026'],
+      [focusPeriod, 'CHUNG', ex[1] ?? 'Thuê pallet', 12000000, 'Chi phí chung toàn công ty'],
     ])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'ChiPhiKho')
-    await saveWorkbook(wb, `Mau-chi-phi-kho-${to}.xlsx`)
+    await saveWorkbook(wb, `Mau-chi-phi-kho-${focusPeriod}.xlsx`)
   }
 
   const actions: ActionItem[] = [
@@ -151,7 +160,7 @@ export default function WarehouseCosts() {
       // (user 27/08: "tôi k thấy nút tạo phiếu đâu cả" dù nút đang hiện trên màn).
       { key: 'open', icon: FilePlus2, label: 'Tạo phiếu', tip: 'Tạo phiếu chi phí mới: chọn Kho + Kỳ tháng rồi kê khai các khoản (kho+kỳ đã có phiếu thì mở phiếu đó ra sửa)',
         primary: true, variant: 'default', onClick: () => setShowOpen(true), disabled: busy },
-      { key: 'copy', icon: Copy, label: 'Chép tháng trước', tip: `Đắp các dòng CÒN THIẾU của kỳ ${to} từ tháng liền trước (không đè số đã khai)`,
+      { key: 'copy', icon: Copy, label: 'Chép tháng trước', tip: `Đắp các dòng CÒN THIẾU của kỳ ${focusPeriod} từ tháng liền trước (không đè số đã khai)`,
         onClick: onCopyPrev, busy: copyPrev.isPending, disabled: busy },
       { key: 'up', icon: Upload, label: 'Upload Excel', tip: 'Nạp nhiều dòng từ file Excel (xem trước rồi mới ghi)',
         onClick: () => setShowUpload(true), disabled: busy, mobileHidden: true },
@@ -164,7 +173,7 @@ export default function WarehouseCosts() {
 
   const totalPages = Math.max(1, Math.ceil((q.data?.total ?? 0) / f.pageSize))
   const rowsShown = isVoucherView ? (vouchers.data?.rows.length ?? 0) : (book.data?.rows.length ?? 0)
-  const periodLabel = from === to ? `kỳ ${from}` : `kỳ ${from} → ${to}`
+  const periodLabel = from === to ? `kỳ ${from}` : (!f.periodFrom && !f.periodTo ? `tất cả kỳ (${from} → ${to})` : `kỳ ${from} → ${to}`)
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -233,7 +242,7 @@ export default function WarehouseCosts() {
       </div>
 
       {showOpen && (
-        <OpenVoucherDialog whOpts={whOpts} period={to} onClose={() => setShowOpen(false)}
+        <OpenVoucherDialog whOpts={whOpts} period={focusPeriod} onClose={() => setShowOpen(false)}
           onGo={(wid, period) => {
             // Kéo bộ lọc về đúng kỳ vừa tạo — nếu không, khai xong phiếu tháng 9 rồi quay ra
             // danh sách (mặc định tháng này) sẽ KHÔNG thấy phiếu vừa làm, tưởng mất.
@@ -244,22 +253,22 @@ export default function WarehouseCosts() {
 
       {showUpload && (
         <UploadExcelDialog
-          title={`Upload chi phí kho — kỳ mặc định ${to}`}
+          title={`Upload chi phí kho — kỳ mặc định ${focusPeriod}`}
           hint="Mỗi dòng = một khoản chi phí: Tháng | Kho | Khoản mục | Số tiền | Ghi chú. Tháng để trống = kỳ đang chọn; Kho ghi CHUNG = chi phí toàn công ty. Dòng trùng (kho+tháng+khoản mục) sẽ ĐÈ số cũ."
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={onDownloadTemplate}
-          onUpload={(file, preflight) => uploadMut.mutateAsync({ period: to, file, preflight })}
+          onUpload={(file, preflight) => uploadMut.mutateAsync({ period: focusPeriod, file, preflight })}
         />
       )}
 
       {showItems && <CostItemsDialog items={items} onClose={() => setShowItems(false)} />}
 
       {showLocks && (
-        <LockDialog period={to} vouchers={vouchers.data?.rows ?? []} busy={busy}
+        <LockDialog period={focusPeriod} vouchers={vouchers.data?.rows ?? []} busy={busy}
           onClose={() => setShowLocks(false)}
           onToggle={async (wid, locked) => {
             setErr(null); setMsg(null)
-            try { await lock.mutateAsync({ period: to, warehouse_id: wid, locked }); setMsg(locked ? 'Đã chốt kỳ.' : 'Đã mở lại kỳ.') }
+            try { await lock.mutateAsync({ period: focusPeriod, warehouse_id: wid, locked }); setMsg(locked ? 'Đã chốt kỳ.' : 'Đã mở lại kỳ.') }
             catch (e) { setErr(apiErr(e)) }
           }} />
       )}
@@ -393,7 +402,11 @@ function LineTable({ rows, loading, onOpen }: {
   )
 }
 
-// ── Mở phiếu: chọn Kho + Kỳ rồi vào thẳng trang phiếu (kể cả phiếu chưa có dòng nào) ──────────
+// ── Tạo phiếu: chọn Kho + Kỳ rồi vào thẳng trang phiếu (kể cả phiếu chưa có dòng nào) ─────────
+// Dùng FormSheet (panel phải, CAO FULL MÀN) chứ KHÔNG phải Dialog giữa màn: hộp thoại nhỏ chỉ cao
+// ~330px nên menu của ô chọn bị kẹp còn ~3 dòng rưỡi, dòng cuối cắt ngang mép hộp và đè luôn ô Kho
+// bên dưới (user 27/08: "xem lại lỗi giao diện khi bấm nút tạo phiếu"). Đây cũng là chuẩn CLAUDE.md:
+// form Thêm/Sửa dùng FormSheet, Dialog giữa màn chỉ để xác nhận/thông báo nhỏ.
 function OpenVoucherDialog({ whOpts, period, onClose, onGo }: {
   whOpts: Array<{ value: string; label: string }>
   period: string
@@ -403,29 +416,29 @@ function OpenVoucherDialog({ whOpts, period, onClose, onGo }: {
   const [wh, setWh] = useState('')
   const [p, setP] = useState(period)
   return (
-    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle className="text-base">Tạo phiếu chi phí</DialogTitle></DialogHeader>
-        <p className="text-[11px] text-slate-500 -mt-2">
-          Một phiếu = <b>một kho</b> trong <b>một kỳ tháng</b>. Mở ra rồi thêm/sửa các khoản chi phí bên trong
-          (dán được cả bảng từ Excel). Chọn được cả <b>kỳ tháng tới</b> để khai trước.
+    <FormSheet
+      open onClose={onClose}
+      title="Tạo phiếu chi phí"
+      description="Một phiếu = một kho trong một kỳ tháng. Mở ra rồi thêm/sửa các khoản chi phí bên trong (dán được cả bảng từ Excel). Chọn được cả kỳ tháng tới để khai trước."
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Huỷ</Button>
+        <Button disabled={!wh || !p} onClick={() => onGo(wh, p)}>Tạo / mở phiếu</Button>
+      </>}
+    >
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-slate-600">Kỳ (tháng)</label>
+          <SingleSelect options={monthOpts()} value={p} onChange={setP} triggerClassName="w-full" />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-slate-600">Kho</label>
+          <SingleSelect options={whOpts} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-full" />
+        </div>
+        <p className="text-[11px] text-slate-500">
+          Kho + kỳ đã có phiếu thì nút này <b>mở đúng phiếu đó</b> ra sửa, không tạo bản trùng.
         </p>
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-slate-600">Kỳ (tháng)</label>
-            <SingleSelect options={monthOpts()} value={p} onChange={setP} triggerClassName="w-full" />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-slate-600">Kho</label>
-            <SingleSelect options={whOpts} value={wh} onChange={setWh} placeholder="Chọn kho…" triggerClassName="w-full" />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" onClick={onClose}>Huỷ</Button>
-          <Button disabled={!wh || !p} onClick={() => onGo(wh, p)}>Tạo / mở phiếu</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </FormSheet>
   )
 }
 

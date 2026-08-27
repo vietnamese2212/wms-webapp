@@ -11,10 +11,15 @@ export function monthAdd(back: number): string {
   const t = y * 12 + (m - 1) - back
   return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`
 }
-/** 15 kỳ gần nhất cho ô chọn. */
-export const monthOpts = (n = 15) =>
-  Array.from({ length: n }, (_, i) => {
-    const v = monthAdd(i)
+/**
+ * Danh sách kỳ cho ô chọn: `ahead` tháng TỚI + tháng này + `back` tháng trước (mới nhất lên đầu).
+ * ⚠️ Phải có tháng TƯƠNG LAI: kế toán khai trước kỳ sau là chuyện thường (thuê kho, thuê pallet
+ * ký theo hợp đồng), mà bản đầu chỉ liệt kê tháng này trở về trước ⇒ **không có đường nào tạo
+ * phiếu tháng 9** — user 27/08: "tôi muốn tạo kỳ tháng 9 cũng k thấy nó đâu nhỉ?".
+ */
+export const monthOpts = (back = 15, ahead = 3) =>
+  Array.from({ length: back + ahead }, (_, i) => {
+    const v = monthAdd(i - ahead)          // i=0 → xa nhất trong tương lai
     return { value: v, label: `Tháng ${v.slice(5)}/${v.slice(0, 4)}` }
   })
 

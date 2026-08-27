@@ -147,8 +147,10 @@ export default function WarehouseCosts() {
       // Nhãn phải nói được việc TẠO MỚI — "Mở phiếu" đọc ra như chỉ mở cái đã có (user 27/08:
       // "thế tạo phiếu mở chi phí mới thì ở đâu?"). Cùng một nút: kho+kỳ chưa có phiếu thì tạo
       // mới, đã có thì mở đúng phiếu đó (phiếu là NHÓM dẫn xuất nên không đẻ bản trùng).
-      { key: 'open', icon: FilePlus2, label: 'Tạo phiếu', tip: 'Tạo phiếu chi phí mới: chọn Kho + Kỳ tháng rồi kê khai các khoản (kho+kỳ đã có phiếu thì mở phiếu đó ra sửa)', primary: true,
-        onClick: () => setShowOpen(true), disabled: busy },
+      // CTA xanh đặc: đứng giữa 4 nút icon trắng thì nút viền trắng KHÔNG đọc ra là hành động chính
+      // (user 27/08: "tôi k thấy nút tạo phiếu đâu cả" dù nút đang hiện trên màn).
+      { key: 'open', icon: FilePlus2, label: 'Tạo phiếu', tip: 'Tạo phiếu chi phí mới: chọn Kho + Kỳ tháng rồi kê khai các khoản (kho+kỳ đã có phiếu thì mở phiếu đó ra sửa)',
+        primary: true, variant: 'default', onClick: () => setShowOpen(true), disabled: busy },
       { key: 'copy', icon: Copy, label: 'Chép tháng trước', tip: `Đắp các dòng CÒN THIẾU của kỳ ${to} từ tháng liền trước (không đè số đã khai)`,
         onClick: onCopyPrev, busy: copyPrev.isPending, disabled: busy },
       { key: 'up', icon: Upload, label: 'Upload Excel', tip: 'Nạp nhiều dòng từ file Excel (xem trước rồi mới ghi)',
@@ -232,7 +234,12 @@ export default function WarehouseCosts() {
 
       {showOpen && (
         <OpenVoucherDialog whOpts={whOpts} period={to} onClose={() => setShowOpen(false)}
-          onGo={(wid, period) => nav(voucherPath(wid === SHARED_KEY ? null : wid, period))} />
+          onGo={(wid, period) => {
+            // Kéo bộ lọc về đúng kỳ vừa tạo — nếu không, khai xong phiếu tháng 9 rồi quay ra
+            // danh sách (mặc định tháng này) sẽ KHÔNG thấy phiếu vừa làm, tưởng mất.
+            setF({ periodFrom: period, periodTo: period, page: 1 })
+            nav(voucherPath(wid === SHARED_KEY ? null : wid, period))
+          }} />
       )}
 
       {showUpload && (
@@ -401,7 +408,7 @@ function OpenVoucherDialog({ whOpts, period, onClose, onGo }: {
         <DialogHeader><DialogTitle className="text-base">Tạo phiếu chi phí</DialogTitle></DialogHeader>
         <p className="text-[11px] text-slate-500 -mt-2">
           Một phiếu = <b>một kho</b> trong <b>một kỳ tháng</b>. Mở ra rồi thêm/sửa các khoản chi phí bên trong
-          (dán được cả bảng từ Excel).
+          (dán được cả bảng từ Excel). Chọn được cả <b>kỳ tháng tới</b> để khai trước.
         </p>
         <div className="space-y-3">
           <div className="space-y-1">

@@ -95,7 +95,12 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
   ]
 
   const t = data?.totals
-  const rows = data?.rows ?? []
+  // Bảng chỉ liệt kê kho CÓ PHÁT SINH trong kỳ — danh sách kho gồm cả trăm kho NPP, để nguyên thì
+  // 2 dòng có số nằm lẫn giữa 151 dòng 0 (đo thật: 153 kho, 2 kho hoạt động). Kho khai chi phí mà
+  // không có hàng vẫn hiện (chi phí > 0) — ẩn đi là giấu tiền.
+  const allRows = data?.rows ?? []
+  const rows = useMemo(() => allRows.filter(r => r.tons > 0 || r.work_days > 0 || (r.cost ?? 0) > 0), [allRows])
+  const hiddenRows = allRows.length - rows.length
   const trend = data?.by_month ?? []
   const maxTrend = useMemo(() => Math.max(1, ...trend.map(m => m.tons)), [trend])
 
@@ -234,7 +239,8 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
           <span className="w-1 h-3.5 rounded bg-sky-500" />
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Năng suất theo kho</span>
           <span className="text-[9px] text-slate-500">
-            {fmtNum(rows.length, 0)} kho{!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
+            {fmtNum(rows.length, 0)} kho có phát sinh{hiddenRows > 0 ? ` · ẩn ${fmtNum(hiddenRows, 0)} kho không phát sinh` : ''}
+            {!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -253,7 +259,9 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
                 <tr key={i}><td colSpan={14} className="px-2 py-1"><Skeleton className={`h-5 rounded ${sk}`} /></td></tr>
               ))}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={14} className="px-2 py-4 text-center text-[11px] text-slate-400">Không có kho nào trong phạm vi.</td></tr>
+                <tr><td colSpan={14} className="px-2 py-4 text-center text-[11px] text-slate-400">
+                  {allRows.length > 0 ? 'Không kho nào phát sinh nhập/xuất, chấm công hay chi phí trong kỳ.' : 'Không có kho nào trong phạm vi.'}
+                </td></tr>
               )}
               {!isLoading && rows.map((r: ProductivityRow) => {
                 const rate = otRate(r)

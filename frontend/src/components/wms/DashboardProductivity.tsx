@@ -145,7 +145,8 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
             value={fmtNum(t.cost, 0)}
             sub={data?.cost_shared ? `gồm ${fmtNum(data.cost_shared, 0)} chi phí chung` : 'đồng'} />
           <Tile icon={Wallet} tone="text-rose-500" label="Chi phí / tấn"
-            value={fmtNum(costPerTon(t.cost ?? 0, t.tons), 0)} sub="đồng / tấn" />
+            value={fmtNum(costPerTon(t.cost ?? 0, t.tons), 0)}
+            sub={data?.cost_shared ? 'đồng / tấn · gồm chi phí chung' : 'đồng / tấn'} />
           <Tile icon={Wallet} tone="text-emerald-600" label="Chi phí nhân công / tấn"
             value={fmtNum(costPerTon(t.cost_labor ?? 0, t.tons), 0)} sub="đồng / tấn" />
           <Tile icon={Wallet} tone="text-slate-500" label="Chi phí / công"
@@ -216,7 +217,9 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700">
           <span className="w-1 h-3.5 rounded bg-sky-500" />
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Năng suất theo kho</span>
-          <span className="text-[9px] text-slate-500">{fmtNum(rows.length, 0)} kho</span>
+          <span className="text-[9px] text-slate-500">
+            {fmtNum(rows.length, 0)} kho{!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left">

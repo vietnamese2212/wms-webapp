@@ -58,13 +58,21 @@ export default function WarehouseCosts() {
     return m
   }, [data])
 
+  // Đơn vị có HÀNG TRĂM kho NPP — không có ô tìm thì kế toán cuộn mòn chuột mới tới kho của mình
+  const [q, setQ] = useState('')
+  const [onlyFilled, setOnlyFilled] = useState(false)
   const rows = useMemo(() => {
-    const list = (data?.warehouses ?? []).map(w => ({ key: w.id, id: w.id as string | null, name: w.name }))
+    const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd')
+    const kw = norm(q.trim())
+    const hasCell = (id: string) => (data?.cells ?? []).some(c => c.warehouse_id === id && Number(c.amount) > 0)
+    const list = (data?.warehouses ?? [])
+      .filter(w => (!kw || norm(w.name).includes(kw)) && (!onlyFilled || hasCell(w.id)))
+      .map(w => ({ key: w.id, id: w.id as string | null, name: w.name }))
     // Dòng CHUNG đứng đầu, chỉ hiện với người không bị giới hạn kho (BE cũng chặn ghi)
-    return data?.can_edit_shared
+    return data?.can_edit_shared && !kw
       ? [{ key: SHARED, id: null as string | null, name: 'Chi phí chung (toàn công ty)' }, ...list]
       : list
-  }, [data])
+  }, [data, q, onlyFilled])
 
   const valueOf = (rowKey: string, item: string): string => {
     const k = `${rowKey}|${item}`
@@ -150,6 +158,15 @@ export default function WarehouseCosts() {
                 </Button>
               </>
             )}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm kho…"
+              className="h-9 sm:h-7 px-2 w-44 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200" />
+            <label className="flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={onlyFilled} onChange={e => setOnlyFilled(e.target.checked)} className="h-3.5 w-3.5" />
+              Chỉ kho đã khai
+            </label>
+            <span className="text-[10px] text-slate-400">{rows.length} dòng</span>
           </div>
           <p className="text-[10px] text-slate-500 dark:text-slate-400">
             Đơn vị: <b>đồng</b> · một dòng = một kho, một cột = một khoản mục. Khai lại là ĐÈ số cũ của đúng ô đó.

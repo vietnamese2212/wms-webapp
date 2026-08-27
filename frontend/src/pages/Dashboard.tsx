@@ -375,8 +375,8 @@ export default function Dashboard() {
             </Panel>
           </div>
 
-          {/* Thao tác nhanh */}
-          <div className="space-y-3">
+          {/* Thao tác nhanh — ẩn ở tab Năng suất (tab đó là một báo cáo, không phải bàn điều khiển) */}
+          <div className={`space-y-3 ${tab === 'prod' ? 'hidden' : ''}`}>
             <Panel title="Thao tác nhanh" icon={Clock}>
               <div className="p-3 space-y-2">
                 {[

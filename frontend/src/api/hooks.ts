@@ -2145,6 +2145,9 @@ export type ProductivityData = {
     trips: number; work_days: number; work_hours: number; ot_hours: number }>
   totals: Omit<ProductivityRow, 'warehouse_id' | 'warehouse_name'> & {
     warehouses_no_labor: number; warehouses_no_cost?: number
+    // Tháng CÓ HÀNG mà chưa khai chi phí — kỳ nhiều tháng mà chỉ 1 tháng có chi phí thì
+    // "chi phí/tấn" đọc ra rẻ giả tạo, phải nói ra (migration 20260827e)
+    months_total?: number; months_no_cost?: number
   }
   cost_prorated?: boolean    // khoảng ngày LẺ → chi phí là số PHÂN BỔ theo ngày, phải nói rõ
   cost_shared?: number       // chi phí CHUNG (chưa gán kho) đã gộp vào tổng

@@ -266,7 +266,7 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
 
       {/* Nói thẳng chỗ dữ liệu còn thiếu — không để người đọc tưởng năng suất kém */}
       {!isLoading && (noLabor || someNoLabor || noWeight > 0 || data?.categories_filtered
-        || (!data?.cost_hidden && ((t?.warehouses_no_cost ?? 0) > 0 || data?.cost_prorated))) && (
+        || (!data?.cost_hidden && ((t?.warehouses_no_cost ?? 0) > 0 || (t?.months_no_cost ?? 0) > 0 || data?.cost_prorated))) && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
           {noLabor && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
@@ -279,6 +279,10 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
           {noWeight > 0 && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
               <span><b>{fmtNum(noWeight, 0)} dòng hàng chưa khai khối lượng thùng</b> — phần này KHÔNG được tính vào tấn. Khai ở Mã hàng → KL/thùng để số tấn đủ.</span></div>
+          )}
+          {!data?.cost_hidden && (t?.months_no_cost ?? 0) > 0 && (
+            <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+              <span><b>{t!.months_no_cost}/{t!.months_total} tháng trong kỳ có hàng nhưng chưa khai chi phí</b> — tử số là chi phí của {(t!.months_total ?? 0) - (t!.months_no_cost ?? 0)} tháng còn mẫu số là tấn của cả kỳ, nên <b>chi phí/tấn đang rẻ hơn thực tế</b>. Khai đủ tháng ở <b>Tổng quan → Chi phí kho</b>, hoặc thu hẹp kỳ về tháng đã khai.</span></div>
           )}
           {!data?.cost_hidden && (t?.warehouses_no_cost ?? 0) > 0 && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />

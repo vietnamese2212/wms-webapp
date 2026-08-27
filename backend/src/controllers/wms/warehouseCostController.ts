@@ -290,6 +290,8 @@ export async function getVoucher(req: Request, res: Response) {
       costItems(), sel, wid ? whNames([wid]) : Promise.resolve(new Map<string, string>()), lockedKeys(period),
     ])
     if (rowsRes.error) return fail(res, rowsRes.error.message)
+    // Kho không có thật (URL gõ tay / id rác) → 404 rõ ràng, đừng vẽ ra một phiếu ma
+    if (wid !== null && !names.has(wid)) return fail(res, 'Không tìm thấy kho', 404, 'NOT_FOUND')
     const itemBy = new Map(items.map(i => [i.code, i]))
     const rows = ((rowsRes.data ?? []) as CostRow[]).map(r => ({
       id: r.id, cost_item: r.cost_item,
@@ -349,43 +351,63 @@ export async function saveVoucher(req: Request, res: Response) {
       lines.push({ id: raw.id ? String(raw.id) : undefined, cost_item: item, amount, note: raw.note ? String(raw.note) : null })
     }
 
-    let cur = supabase.from('warehouse_costs').select('*').eq('period', period)
-    cur = wid === null ? cur.is('warehouse_id', null) : cur.eq('warehouse_id', wid)
-    const { data: exRows, error: exErr } = await cur
-    if (exErr) return fail(res, exErr.message)
-    const ex = (exRows ?? []) as Array<Record<string, unknown> & { id: string }>
-    const exById = new Map(ex.map(r => [r.id, r]))
+    if (wid !== null) {
+      const { data: w } = await supabase.from('Warehouse').select('id').eq('id', wid).maybeSingle()
+      // Kho không có thật: chặn ở đây, không để rơi xuống khoá ngoại (23503 → 500 rác)
+      if (!w) return fail(res, 'Không tìm thấy kho', 404, 'NOT_FOUND')
+    }
 
-    const keep = new Set(lines.map(l => l.id).filter((x): x is string => !!x && exById.has(x)))
-    const toDelete = ex.filter(r => !keep.has(r.id)).map(r => r.id)
     const now = new Date().toISOString(), who = userName(req)
-    // Ô trống giữ giá trị cũ: dựng bản ghi ĐẦY ĐỦ từ dòng cũ rồi mới đắp — upsert thiếu cột
-    // NOT NULL là 23502, mà thiếu cột thường thì bị ghi NULL đè (bài học chuẩn upload).
-    const payload = lines.map(l => {
-      const old = l.id ? exById.get(l.id) : undefined
-      return {
-        ...(old ?? { created_at: now, created_by: who }),
-        id: old?.id ?? randomUUID(),
-        warehouse_id: wid, period, cost_item: l.cost_item, amount: l.amount, note: l.note,
-        updated_at: now, updated_by: who,
-      }
-    })
+    /**
+     * Ghép theo KHOẢN MỤC chứ không theo id client gửi lên: khoản mục MỚI là khoá nghiệp vụ trong
+     * một phiếu. Ghép theo id thì màn hình mở lâu (id cũ) gặp phiếu vừa bị người khác sửa sẽ đòi
+     * INSERT trên khoản mục đã tồn tại → 23505. Ghép theo khoản mục thì lưu lại lần nữa là HỘI TỤ.
+     * Xoá TRƯỚC rồi mới upsert: đổi khoản mục dòng A thành khoản mục của dòng B (đang bị xoá) mà
+     * làm ngược thứ tự là đụng unique (kho, kỳ, khoản mục).
+     */
+    async function applyOnce(): Promise<{ saved: number; deleted: number; amount: number; conflict?: boolean; err?: string }> {
+      let cur = supabase.from('warehouse_costs').select('*').eq('period', period)
+      cur = wid === null ? cur.is('warehouse_id', null) : cur.eq('warehouse_id', wid)
+      const { data: exRows, error: exErr } = await cur
+      if (exErr) return { saved: 0, deleted: 0, amount: 0, err: exErr.message }
+      const ex = (exRows ?? []) as Array<Record<string, unknown> & { id: string; cost_item: string }>
+      const exByItem = new Map(ex.map(r => [r.cost_item, r]))
 
-    for (let i = 0; i < toDelete.length; i += 300) {
-      const { error } = await supabase.from('warehouse_costs').delete().in('id', toDelete.slice(i, i + 300))
-      if (error) return fail(res, error.message)
+      const wantItems = new Set(lines.map(l => l.cost_item))
+      const toDelete = ex.filter(r => !wantItems.has(r.cost_item)).map(r => r.id)
+      // Ô trống giữ giá trị cũ: dựng bản ghi ĐẦY ĐỦ từ dòng cũ rồi mới đắp — upsert thiếu cột
+      // NOT NULL là 23502, mà thiếu cột thường thì bị ghi NULL đè (bài học chuẩn upload).
+      const payload = lines.map(l => {
+        const old = exByItem.get(l.cost_item)
+        return {
+          ...(old ?? { created_at: now, created_by: who }),
+          id: old?.id ?? randomUUID(),
+          warehouse_id: wid, period, cost_item: l.cost_item, amount: l.amount, note: l.note,
+          updated_at: now, updated_by: who,
+        }
+      })
+
+      for (let i = 0; i < toDelete.length; i += 300) {
+        const { error } = await supabase.from('warehouse_costs').delete().in('id', toDelete.slice(i, i + 300))
+        if (error) return { saved: 0, deleted: 0, amount: 0, err: error.message }
+      }
+      for (let i = 0; i < payload.length; i += 500) {
+        const { error } = await supabase.from('warehouse_costs').upsert(payload.slice(i, i + 500), { onConflict: 'id' })
+        if (error?.code === '23505') return { saved: 0, deleted: 0, amount: 0, conflict: true }
+        if (error) return { saved: 0, deleted: 0, amount: 0, err: error.message }
+      }
+      return { saved: payload.length, deleted: toDelete.length, amount: payload.reduce((s, p) => s + p.amount, 0) }
     }
-    for (let i = 0; i < payload.length; i += 500) {
-      const { error } = await supabase.from('warehouse_costs').upsert(payload.slice(i, i + 500), { onConflict: 'id' })
-      if (error?.code === '23505')
-        return fail(res, 'Có khoản mục bị trùng trong phiếu — mỗi khoản mục chỉ một dòng', 409, 'DUPLICATE')
-      if (error) return fail(res, error.message)
+
+    let r = await applyOnce()
+    if (r.conflict) {                       // người khác vừa lưu đúng phiếu này → đọc lại rồi thử LẠI
+      await new Promise(s => setTimeout(s, 100 + Math.floor(Math.random() * 300)))   // jitter, tránh dồn cục
+      r = await applyOnce()
     }
-    return ok(res, {
-      period, warehouse_id: wid,
-      saved: payload.length, deleted: toDelete.length,
-      amount: payload.reduce((s, p) => s + p.amount, 0),
-    })
+    if (r.conflict)
+      return fail(res, 'Phiếu vừa được người khác lưu — mở lại phiếu để xem số mới nhất rồi lưu lại', 409, 'CONCURRENT_SAVE')
+    if (r.err) return fail(res, r.err)
+    return ok(res, { period, warehouse_id: wid, saved: r.saved, deleted: r.deleted, amount: r.amount })
   } catch (e) { return fail(res, String(e)) }
 }
 

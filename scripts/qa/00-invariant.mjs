@@ -277,4 +277,35 @@ for (const [table, label] of [
       : 'RPC warehouse_id_uuid_mismatch chưa apply (migration 20260821j)')
 }
 
+// 15. CHI PHÍ CHUNG KHÔNG ĐƯỢC CHẢY VÀO Ô TỔNG KHI ĐANG LỌC 1 KHO (chốt 27/08).
+//     Gốc: check-app dựng vai kế toán chỉ được gán Kho Ba Vì thì trang Chi phí kho hiện
+//     1.063.200.000 (sổ CẮT dòng chi phí chung) còn tab Năng suất hiện 1.304.200.000 (cộng TRỌN
+//     241 triệu chi phí chung toàn công ty) — hai màn hình cùng một kỳ lệch nhau, và người chỉ
+//     quản 1 kho đọc được số cấp CÔNG TY. Bất biến: `warehouse_productivity` lọc theo kho phải
+//     trả ĐÚNG tổng tiền RIÊNG của kho đó (migration 20260827d).
+{
+  const costs = await restAll('warehouse_costs', 'select=warehouse_id,period,amount')
+  if (!costs.length) {
+    check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho', true, 'chưa có dòng chi phí nào để soi')
+  } else {
+    const byWh = new Map()
+    for (const r of costs) {
+      const p = String(r.period).slice(0, 7)
+      const k = `${r.warehouse_id ?? '*'}|${p}`
+      byWh.set(k, (byWh.get(k) ?? 0) + Number(r.amount))
+    }
+    const target = [...byWh.entries()].filter(([k]) => !k.startsWith('*|'))[0]
+    const [wid, period] = target[0].split('|')
+    const own = target[1]
+    const lastDay = new Date(Date.UTC(+period.slice(0, 4), +period.slice(5, 7), 0)).toISOString().slice(0, 10)
+    const j = await restRpc('warehouse_productivity', {
+      p_warehouse_ids: [wid], p_categories: null, p_from: `${period}-01`, p_to: lastDay, p_std_hours: 8,
+    })
+    const got = Number(j?.totals?.cost ?? -1)
+    check('Chi phí CHUNG không lọt vào tổng khi lọc 1 kho',
+      Math.abs(got - own) < 1 && Number(j?.cost_shared ?? -1) === 0,
+      `kỳ ${period}: RPC ${got.toLocaleString('vi-VN')} vs tiền riêng của kho ${own.toLocaleString('vi-VN')} · cost_shared=${j?.cost_shared}`)
+  }
+}
+
 finish('INVARIANT')

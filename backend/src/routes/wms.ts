@@ -55,6 +55,9 @@ router.get('/events', (req, res) => {
 
 // Dashboard tổng quan — hở đọc có chủ đích (auth-only, cắt scope kho+loại trong controller)
 router.get('/dashboard', dashboard.getDashboard)
+// Năng suất kho (tab riêng): CÓ gate — số liệu này là NHÂN SỰ (ngày công, giờ tăng ca), không
+// nằm trong diện "hở đọc" như tồn kho.
+router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboard.getProductivity)
 
 // Cờ hệ thống (SystemSetting) — đọc hở cho user đăng nhập (in tem/quét cần cờ); ghi = quyền riêng
 router.get('/settings',      systemSetting.listSettings)

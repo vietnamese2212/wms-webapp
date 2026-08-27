@@ -13,6 +13,7 @@ import { useDashboardStats, type DashboardStats } from '@/api/hooks'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { DashboardProductivity } from '@/components/wms/DashboardProductivity'
 import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
@@ -104,15 +105,19 @@ export default function Dashboard() {
   // (số liệu tổng hợp toàn công ty đi qua cache dashboard_all_cached; đẻ thêm lời gọi ở đây là
   // đúng cái đã làm p50 28,3s hồi 21/08). Trạng thái để local: đây là góc NHÌN, không phải bộ lọc
   // dữ liệu — filter list page mới bắt buộc vào wmsFilterStore.
+  // Tab "Năng suất" (27/08) là NGOẠI LỆ: nó theo KHOẢNG NGÀY tự chọn nên có lời gọi riêng và
+  // chỉ chạy khi người dùng bấm vào (component chỉ mount ở tab đó) — các tab kia vẫn dùng chung
+  // một lần lấy số liệu đã cache như cũ.
   const TABS = [
     { key: 'all',   label: 'Tổng quan' },
     { key: 'in',    label: 'Nhập' },
     { key: 'out',   label: 'Xuất' },
     { key: 'stock', label: 'Tồn kho' },
+    { key: 'prod',  label: 'Năng suất' },
   ] as const
   type TabKey = typeof TABS[number]['key']
   const [tab, setTab] = useState<TabKey>('all')
-  const show = (k: Exclude<TabKey, 'all'>) => tab === 'all' || tab === k
+  const show = (k: Exclude<TabKey, 'all' | 'prod'>) => tab !== 'prod' && (tab === 'all' || tab === k)
 
   return (
     <div className="flex flex-col h-full bg-slate-100 dark:bg-slate-900">
@@ -152,13 +157,16 @@ export default function Dashboard() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto p-3 pb-20 lg:pb-4 space-y-3">
-        {isError && (
+        {isError && tab !== 'prod' && (
           <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
             Không tải được số liệu dashboard — thử tải lại trang.
           </div>
         )}
 
+        {tab === 'prod' && <DashboardProductivity warehouseId={effWhId} />}
+
         {/* KPI tồn kho (data thật) — tile console */}
+        {tab !== 'prod' && (
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className={`h-[84px] rounded-lg ${sk}`} />)
@@ -212,8 +220,10 @@ export default function Dashboard() {
             </>
           )}
         </div>
+        )}
 
         {/* Hoạt động hôm nay */}
+        {tab !== 'prod' && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {[
             { icon: PackagePlus, ic: 'text-green-600 dark:text-green-400 bg-green-500/15', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay', topic: 'in' as const },
@@ -239,6 +249,7 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+        )}
 
         {/* Sức chứa khu vực kho: pallet đang chiếm chỗ / pallet tối đa (Σ max_pallets vị trí) */}
         {show('stock') && (isLoading || zonesByWh.length > 0) && (

@@ -252,6 +252,10 @@ interface SlottingFilters {
 }
 interface DashboardFilters {
   warehouseId: string   // '' = tất cả kho trong scope
+  // Khoảng ngày của tab NĂNG SUẤT (27/08) — '' = để component lấy mặc định THÁNG NÀY.
+  // Không lưu sẵn ngày cụ thể: app mở qua tháng mới mà nhớ tháng cũ thì user tưởng mất số liệu.
+  prodFrom: string
+  prodTo: string
 }
 // Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
 interface FillFilters {
@@ -427,7 +431,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
-    dashboard: { warehouseId: '' },
+    dashboard: { warehouseId: '', prodFrom: '', prodTo: '' },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),

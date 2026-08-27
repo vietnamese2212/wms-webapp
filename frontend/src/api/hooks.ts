@@ -2126,6 +2126,43 @@ export function useDashboardStats(warehouseId?: string) {
   })
 }
 
+// ─── Năng suất kho theo khoảng ngày (tab "Năng suất" của Dashboard, 27/08) ───────────────────
+// Tấn = CHỨNG TỪ cả 2 chiều nhập+xuất; công = module Chấm công. Số thô do BE trả — mọi TỶ SỐ
+// (tấn/công, tỷ lệ tăng ca…) tính ở `productivity.ts` để công thức nằm MỘT chỗ.
+export type ProductivityRow = {
+  warehouse_id: string; warehouse_name: string
+  tons_in: number; tons_out: number; tons: number
+  pallets_in: number; trips: number
+  work_days: number; work_hours: number; ot_hours: number; early_hours: number
+  leave_days: number; headcount: number; lines_no_weight: number
+}
+export type ProductivityData = {
+  from: string; to: string; std_hours: number; categories_filtered: boolean
+  rows: ProductivityRow[]
+  by_month: Array<{ month: string; tons_in: number; tons_out: number; tons: number
+    trips: number; work_days: number; work_hours: number; ot_hours: number }>
+  totals: Omit<ProductivityRow, 'warehouse_id' | 'warehouse_name'> & { warehouses_no_labor: number }
+  cached?: boolean
+}
+export function useProductivity(
+  params: { warehouseId?: string; from: string; to: string },
+  enabled: boolean,
+) {
+  return useQuery<ProductivityData>({
+    queryKey: ['dashboard-productivity', params.warehouseId || 'all', params.from, params.to],
+    // `enabled`: CHỈ gọi khi người dùng đang xem tab Năng suất — các tab khác của trang chủ
+    // vẫn dùng chung một lời gọi đã cache, không ai phải trả giá cho tab mình không mở.
+    enabled: enabled && !!params.from && !!params.to,
+    staleTime: 60_000,
+    queryFn: () => apiClient.get('/wms/dashboard/productivity', {
+      params: {
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        date_from: params.from, date_to: params.to,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
 export function useLocations() {
   return useQuery({
     queryKey: ['locations'],

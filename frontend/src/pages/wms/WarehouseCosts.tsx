@@ -29,7 +29,7 @@ import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { SHARED_KEY, monthOpts, monthAdd, money, voucherPath } from './costShared'
+import { SHARED_KEY, monthOpts, monthAdd, periodAdd, monthSpan, MAX_SPAN_MONTHS, money, voucherPath } from './costShared'
 
 const DEFAULT_BACK = 14    // 15 kỳ tính cả tháng này
 const DEFAULT_AHEAD = 3    // khai trước kỳ tới
@@ -52,8 +52,13 @@ export default function WarehouseCosts() {
   // MẶC ĐỊNH LÀ THẤY HẾT (user 27/08: "tại sao lại chỉ cho xem vài phiếu vậy — có rất nhiều mà??").
   // Danh sách phiếu là SỔ, mở ra phải thấy mọi phiếu đã tạo; ghim sẵn 1 tháng làm người dùng tưởng
   // phiếu bị mất. Dải mặc định = 15 tháng trước → 3 tháng tới (đúng dải ô chọn kỳ, dưới trần 24).
-  const from = f.periodFrom || monthAdd(DEFAULT_BACK)
+  // Kỳ đang xem = [from, to]. Giữ 2 bất biến TẠI ĐÂY (không tin state đã persist từ phiên trước):
+  // from ≤ to và span ≤ trần API — sai một trong hai là banner đỏ 400 thay vì danh sách.
   const to = f.periodTo || (f.periodFrom ? f.periodFrom : monthAdd(-DEFAULT_AHEAD))
+  const from0 = f.periodFrom || monthAdd(DEFAULT_BACK)
+  const from = from0 > to ? to
+    : monthSpan(from0, to) > MAX_SPAN_MONTHS ? periodAdd(to, -(MAX_SPAN_MONTHS - 1))
+    : from0
   const isVoucherView = f.view !== 'line'
   /** Kỳ "đang đứng" cho các thao tác gắn với MỘT kỳ (chép tháng trước, upload, chốt kỳ, tạo phiếu). */
   const focusPeriod = from === to ? to : monthAdd(0)
@@ -108,13 +113,26 @@ export default function WarehouseCosts() {
   // lúc render: "Xóa tất cả" gọi liên tiếp clear(Từ) rồi clear(Đến) TRONG CÙNG một render, ô Đến
   // sẽ ghi lại `periodFrom` bằng giá trị CŨ ⇒ chip "Từ kỳ" xoá xong lại hiện (đo thật 27/08).
   const nowF = () => useWmsFilterStore.getState().warehouseCost
+  // Chọn một đầu thì KÉO đầu kia vào chỗ hợp lệ (đảo ngược → bằng nhau; quá 24 tháng → cắt còn
+  // đúng 24 tháng tính từ đầu vừa chọn). Kẹp chứ không báo lỗi: ô chọn trải 5 năm nên "Từ kỳ
+  // 01/2024 + Đến kỳ 11/2026" là thao tác dễ gặp, mà đó là 35 tháng — vượt trần API.
   const setFrom = (v: string) => {
     const cur = nowF()
-    setF({ periodFrom: v, periodTo: v && cur.periodTo && cur.periodTo < v ? v : cur.periodTo, page: 1 })
+    let toV = cur.periodTo
+    if (v && toV) {
+      if (toV < v) toV = v
+      else if (monthSpan(v, toV) > MAX_SPAN_MONTHS) toV = periodAdd(v, MAX_SPAN_MONTHS - 1)
+    }
+    setF({ periodFrom: v, periodTo: toV, page: 1 })
   }
   const setTo = (v: string) => {
     const cur = nowF()
-    setF({ periodTo: v, periodFrom: v && cur.periodFrom && v < cur.periodFrom ? v : cur.periodFrom, page: 1 })
+    let fromV = cur.periodFrom
+    if (v && fromV) {
+      if (v < fromV) fromV = v
+      else if (monthSpan(fromV, v) > MAX_SPAN_MONTHS) fromV = periodAdd(v, -(MAX_SPAN_MONTHS - 1))
+    }
+    setF({ periodTo: v, periodFrom: fromV, page: 1 })
   }
 
   const filterDefs: FilterDef[] = [

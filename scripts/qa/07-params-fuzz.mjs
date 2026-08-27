@@ -115,6 +115,9 @@ const VOUCHER_FUZZ = [
   [`/wms/warehouse-costs/vouchers?period=`, 400],
   [`/wms/warehouse-costs/vouchers?period_from=2026-08&period_to=2026-01`, 400],
   [`/wms/warehouse-costs/vouchers?period_from=2019-01&period_to=2026-12`, 400],
+  // Mốc trần: ĐÚNG 24 tháng phải đọc được. FE (`costShared.MAX_SPAN_MONTHS`) kẹp Từ/Đến đúng con
+  // số này để người dùng không bao giờ thấy banner đỏ — hạ trần BE mà quên FE thì dòng này đỏ.
+  [`/wms/warehouse-costs/vouchers?period_from=2025-01&period_to=2026-12`, 200],
   [`/wms/warehouse-costs/voucher?warehouse_id=undefined&period=2026-08`, 404],
   [`/wms/warehouse-costs/voucher?warehouse_id=00000000-0000-4000-8000-000000000000&period=2026-08`, 404],
   [`/wms/warehouse-costs/voucher?warehouse_id=x&period=xx`, 400],

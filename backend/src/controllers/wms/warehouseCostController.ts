@@ -125,31 +125,57 @@ function writeGuard(wid: string | null, scope: string[] | null, locked: Set<stri
   return null
 }
 
-// ── ĐỌC: sổ kê khai của 1 kỳ ──────────────────────────────────────────────────────────────────
+// ── ĐỌC: sổ kê khai theo DÒNG ─────────────────────────────────────────────────────────────────
+// Nhận `period` (1 kỳ) HOẶC `period_from`/`period_to` (nhiều kỳ) — chế độ "xem 1 khoản mục qua
+// TẤT CẢ các tháng" (user chốt 27/08) chính là lọc khoản mục trên một KHOẢNG kỳ.
+const MAX_MONTHS = 24    // trần khoảng kỳ: 24 tháng × 153 kho × ~9 khoản mục vẫn trong tầm đọc
+/** Số tháng giữa 2 kỳ (tính cả 2 đầu). */
+function monthSpan(from: string, to: string): number {
+  const [y1, m1] = from.split('-').map(Number), [y2, m2] = to.split('-').map(Number)
+  return (y2 * 12 + m2) - (y1 * 12 + m1) + 1
+}
 export async function listCosts(req: Request, res: Response) {
   try {
-    const q = req.query as { period?: string; warehouse_id?: string; items?: string; search?: string; page?: string; pageSize?: string }
-    const period = monthOf(q.period)
-    if (!period) return fail(res, 'Tham số period (YYYY-MM) là bắt buộc', 400, 'BAD_PERIOD')
+    const q = req.query as {
+      period?: string; period_from?: string; period_to?: string
+      warehouse_id?: string; items?: string; search?: string; page?: string; pageSize?: string
+    }
+    const from = monthOf(q.period_from ?? q.period)
+    const to = monthOf(q.period_to ?? q.period) ?? from
+    if (!from || !to) return fail(res, 'Tham số period (YYYY-MM) là bắt buộc', 400, 'BAD_PERIOD')
+    if (to < from) return fail(res, 'Kỳ "đến" phải sau kỳ "từ"', 400, 'BAD_PERIOD')
+    if (monthSpan(from, to) > MAX_MONTHS)
+      return fail(res, `Khoảng kỳ tối đa ${MAX_MONTHS} tháng — thu hẹp lại`, 400, 'RANGE_TOO_WIDE')
+    const period = from
     const scope = scopeWhIds(req)
     const page = Math.max(1, Number(q.page) || 1)
     const pageSize = Math.min(200, Math.max(10, Number(q.pageSize) || 50))
+    // Lọc ngay ở DB (khoản mục + kho) — kéo cả sổ về Node rồi lọc là tự nhân số dòng phải đọc lên
+    // hàng chục lần khi xem 1 khoản mục qua 12 tháng.
+    const wanted = parseListParam(q.items, 200) ?? []
+    const whFilter = String(q.warehouse_id ?? '')
 
     const [items, rows, locksRes] = await Promise.all([
       costItems(),
       readScoped<CostRow>(scope, chunk => {
-        const sel = supabase.from('warehouse_costs')
+        let sel = supabase.from('warehouse_costs')
           .select('id, warehouse_id, period, cost_item, amount, note, updated_at, updated_by')
-          .eq('period', period).order('id')
-        return chunk ? sel.in('warehouse_id', chunk) : sel
+          .gte('period', from).lte('period', to).order('id')
+        if (chunk) sel = sel.in('warehouse_id', chunk)
+        // Mã khoản mục NGẮN (≤40 ký tự) và danh mục chỉ vài chục dòng; chặn cứng 200 cho khỏi
+        // đụng trần URL của PostgREST dù client có nhồi bao nhiêu mã đi nữa.
+        if (wanted.length) sel = sel.in('cost_item', wanted.slice(0, 200))
+        if (whFilter === '__shared__') sel = sel.is('warehouse_id', null)
+        else if (whFilter) sel = sel.eq('warehouse_id', whFilter)
+        return sel
       }),
-      supabase.from('warehouse_cost_locks').select('warehouse_id, locked_at, locked_by').eq('period', period),
+      supabase.from('warehouse_cost_locks').select('warehouse_id, period, locked_at, locked_by')
+        .gte('period', from).lte('period', to),
     ])
 
     const itemBy = new Map(items.map(i => [i.code, i]))
     const names = await whNames(rows.map(r => r.warehouse_id ?? '').filter(Boolean))
     const norm = (s: string) => s.toLowerCase()
-    const wanted = parseListParam(q.items, 200) ?? []
     const kw = norm(String(q.search ?? '').trim())
 
     const full = rows
@@ -167,21 +193,23 @@ export async function listCosts(req: Request, res: Response) {
         updated_by: r.updated_by,
         locked: false,   // gắn sau khi có danh sách khoá
       }))
-    const lockSet = new Set(((locksRes.data ?? []) as { warehouse_id: string | null }[]).map(l => l.warehouse_id ?? '*'))
-    for (const r of full) r.locked = lockSet.has(r.warehouse_id ?? '*')
+    // Khoá gắn theo ĐÚNG cặp (kỳ, kho) — khoảng nhiều kỳ thì mỗi kỳ có trạng thái riêng
+    const lockSet = new Set(((locksRes.data ?? []) as { warehouse_id: string | null; period: string }[])
+      .map(l => `${String(l.period).slice(0, 10)}|${l.warehouse_id ?? '*'}`))
+    for (const r of full) r.locked = lockSet.has(`${r.period.slice(0, 10)}|${r.warehouse_id ?? '*'}`)
 
+    // Kho + khoản mục đã lọc ở DB; còn lại chỉ là tìm chữ trên nhãn/ghi chú
     const filtered = full.filter(r =>
-      (!q.warehouse_id || (q.warehouse_id === '__shared__' ? r.warehouse_id === null : r.warehouse_id === q.warehouse_id))
-      && (!wanted.length || wanted.includes(r.cost_item))
-      && (!kw || norm(r.warehouse_name).includes(kw) || norm(r.item_label).includes(kw) || norm(r.note ?? '').includes(kw)))
+      !kw || norm(r.warehouse_name).includes(kw) || norm(r.item_label).includes(kw) || norm(r.note ?? '').includes(kw))
 
     filtered.sort((a, b) =>
-      a.warehouse_name.localeCompare(b.warehouse_name, 'vi')
+      b.period.localeCompare(a.period)
+      || a.warehouse_name.localeCompare(b.warehouse_name, 'vi')
       || (itemBy.get(a.cost_item)?.sort_order ?? 0) - (itemBy.get(b.cost_item)?.sort_order ?? 0)
       || a.item_label.localeCompare(b.item_label, 'vi'))
 
     return ok(res, {
-      period,
+      period, period_from: from, period_to: to,
       can_edit_shared: scope === null,
       items,
       rows: filtered.slice((page - 1) * pageSize, page * pageSize),
@@ -192,8 +220,171 @@ export async function listCosts(req: Request, res: Response) {
         labor: filtered.filter(r => r.is_labor).reduce((s, r) => s + r.amount, 0),
         warehouses: new Set(filtered.map(r => r.warehouse_id ?? '*')).size,
         lines: filtered.length,
+        vouchers: new Set(filtered.map(r => `${r.period.slice(0, 10)}|${r.warehouse_id ?? '*'}`)).size,
       },
       locks: locksRes.data ?? [],
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ── PHIẾU CHI PHÍ = (Kho × Kỳ tháng) ──────────────────────────────────────────────────────────
+// "1 kho sẽ có chi phí của 1 Phiếu" (user chốt 27/08). Phiếu KHÔNG có bảng riêng — nó là NHÓM của
+// các dòng cùng (warehouse_id, period), trạng thái chốt lấy từ `warehouse_cost_locks` đúng cặp đó.
+// Danh sách phiếu đếm/cộng bằng RPC (migration 20260827f): 1 round-trip, số dòng về bằng số phiếu
+// của TRANG — không kéo dòng thô về Node để tự cộng.
+export async function listVouchers(req: Request, res: Response) {
+  try {
+    const q = req.query as { period_from?: string; period_to?: string; period?: string; warehouse_id?: string; search?: string; page?: string; pageSize?: string }
+    const from = monthOf(q.period_from ?? q.period)
+    const to = monthOf(q.period_to ?? q.period) ?? from
+    if (!from || !to) return fail(res, 'Tham số period (YYYY-MM) là bắt buộc', 400, 'BAD_PERIOD')
+    if (to < from) return fail(res, 'Kỳ "đến" phải sau kỳ "từ"', 400, 'BAD_PERIOD')
+    if (monthSpan(from, to) > MAX_MONTHS)
+      return fail(res, `Khoảng kỳ tối đa ${MAX_MONTHS} tháng — thu hẹp lại`, 400, 'RANGE_TOO_WIDE')
+    const scope = scopeWhIds(req)
+    const whFilter = String(q.warehouse_id ?? '')
+    if (whFilter && whFilter !== '__shared__' && scope !== null && !scope.includes(whFilter))
+      return fail(res, 'Kho nằm ngoài phạm vi được gán', 403, 'FORBIDDEN')
+
+    const [items, rpc] = await Promise.all([
+      costItems(),
+      supabase.rpc('warehouse_cost_vouchers', {
+        p_from: from, p_to: to, p_wh_ids: scope,
+        p_warehouse_id: whFilter || null,
+        p_search: q.search ? String(q.search) : null,
+        p_page: Math.max(1, Number(q.page) || 1),
+        p_page_size: Math.min(200, Math.max(10, Number(q.pageSize) || 50)),
+      }),
+    ])
+    if (rpc.error) return fail(res, rpc.error.message)
+    const d = (rpc.data ?? {}) as { rows?: unknown[]; total?: number; totals?: unknown }
+    return ok(res, {
+      period_from: from, period_to: to,
+      can_edit_shared: scope === null,
+      items,
+      rows: d.rows ?? [],
+      total: d.total ?? 0,
+      totals: d.totals ?? { amount: 0, labor: 0, lines: 0, vouchers: 0 },
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+/** Một phiếu: mọi dòng của (kho, kỳ) + danh mục khoản mục + trạng thái chốt. */
+export async function getVoucher(req: Request, res: Response) {
+  try {
+    const q = req.query as { warehouse_id?: string; period?: string }
+    const period = monthOf(q.period)
+    if (!period) return fail(res, 'Tham số period (YYYY-MM) là bắt buộc', 400, 'BAD_PERIOD')
+    const wid = q.warehouse_id && q.warehouse_id !== '__shared__' ? String(q.warehouse_id) : null
+    const scope = scopeWhIds(req)
+    if (wid === null && scope !== null)
+      return fail(res, 'Chi phí CHUNG cần quyền toàn bộ kho', 403, 'SHARED_FORBIDDEN')
+    if (wid !== null && scope !== null && !scope.includes(wid))
+      return fail(res, 'Kho nằm ngoài phạm vi được gán', 403, 'FORBIDDEN')
+
+    let sel = supabase.from('warehouse_costs')
+      .select('id, warehouse_id, period, cost_item, amount, note, updated_at, updated_by')
+      .eq('period', period).order('id')
+    sel = wid === null ? sel.is('warehouse_id', null) : sel.eq('warehouse_id', wid)
+    const [items, rowsRes, names, locked] = await Promise.all([
+      costItems(), sel, wid ? whNames([wid]) : Promise.resolve(new Map<string, string>()), lockedKeys(period),
+    ])
+    if (rowsRes.error) return fail(res, rowsRes.error.message)
+    const itemBy = new Map(items.map(i => [i.code, i]))
+    const rows = ((rowsRes.data ?? []) as CostRow[]).map(r => ({
+      id: r.id, cost_item: r.cost_item,
+      item_label: itemBy.get(r.cost_item)?.label ?? r.cost_item,
+      is_labor: itemBy.get(r.cost_item)?.is_labor === true,
+      amount: Number(r.amount) || 0, note: r.note,
+      updated_at: r.updated_at, updated_by: r.updated_by,
+    }))
+    rows.sort((a, b) => (itemBy.get(a.cost_item)?.sort_order ?? 0) - (itemBy.get(b.cost_item)?.sort_order ?? 0)
+      || a.item_label.localeCompare(b.item_label, 'vi'))
+    return ok(res, {
+      period,
+      warehouse_id: wid,
+      warehouse_name: wid ? names.get(wid) ?? '(kho đã xoá)' : 'Chi phí chung (toàn công ty)',
+      locked: locked.has(wid ?? '*'),
+      items, rows,
+      totals: {
+        amount: rows.reduce((s, r) => s + r.amount, 0),
+        labor: rows.filter(r => r.is_labor).reduce((s, r) => s + r.amount, 0),
+        lines: rows.length,
+      },
+    })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+/**
+ * Lưu TRỌN phiếu (thêm/sửa/xoá dòng trong một lần bấm — giống form nhập/xuất, dán từ Excel xong
+ * bấm Lưu một phát). Ghi theo LÔ; XOÁ TRƯỚC rồi mới upsert vì đổi khoản mục của dòng A thành
+ * khoản mục của dòng B (đang bị xoá) sẽ đụng unique (kho, kỳ, khoản mục) nếu làm ngược thứ tự.
+ */
+export async function saveVoucher(req: Request, res: Response) {
+  try {
+    const b = req.body as {
+      period?: string; warehouse_id?: string | null
+      lines?: Array<{ id?: string; cost_item?: string; amount?: number | string; note?: string | null }>
+    }
+    const period = monthOf(b.period)
+    if (!period) return fail(res, 'Chưa chọn kỳ (tháng)', 400, 'BAD_PERIOD')
+    const wid = b.warehouse_id && b.warehouse_id !== '__shared__' ? String(b.warehouse_id) : null
+    const scope = scopeWhIds(req)
+    const g = writeGuard(wid, scope, await lockedKeys(period), period)
+    if (g) return fail(res, g.msg, g.status, g.code)
+
+    const codes = new Map((await costItems()).map(i => [i.code, i]))
+    const seen = new Set<string>()
+    type Line = { id?: string; cost_item: string; amount: number; note: string | null }
+    const lines: Line[] = []
+    for (const raw of b.lines ?? []) {
+      const item = String(raw.cost_item ?? '').trim()
+      if (!item) continue                                    // dòng trống (người dùng thêm rồi bỏ)
+      const it = codes.get(item)
+      if (!it) return fail(res, `Khoản mục không có trong danh mục: ${item}`, 400, 'BAD_ITEM')
+      if (seen.has(item)) return fail(res, `Khoản mục "${it.label}" bị khai 2 lần trong phiếu — gộp lại thành một dòng`, 400, 'DUPLICATE_ITEM')
+      seen.add(item)
+      const amount = parseAmount(raw.amount)
+      if (amount == null || amount < 0) return fail(res, `Số tiền của "${it.label}" không hợp lệ`, 400, 'BAD_AMOUNT')
+      lines.push({ id: raw.id ? String(raw.id) : undefined, cost_item: item, amount, note: raw.note ? String(raw.note) : null })
+    }
+
+    let cur = supabase.from('warehouse_costs').select('*').eq('period', period)
+    cur = wid === null ? cur.is('warehouse_id', null) : cur.eq('warehouse_id', wid)
+    const { data: exRows, error: exErr } = await cur
+    if (exErr) return fail(res, exErr.message)
+    const ex = (exRows ?? []) as Array<Record<string, unknown> & { id: string }>
+    const exById = new Map(ex.map(r => [r.id, r]))
+
+    const keep = new Set(lines.map(l => l.id).filter((x): x is string => !!x && exById.has(x)))
+    const toDelete = ex.filter(r => !keep.has(r.id)).map(r => r.id)
+    const now = new Date().toISOString(), who = userName(req)
+    // Ô trống giữ giá trị cũ: dựng bản ghi ĐẦY ĐỦ từ dòng cũ rồi mới đắp — upsert thiếu cột
+    // NOT NULL là 23502, mà thiếu cột thường thì bị ghi NULL đè (bài học chuẩn upload).
+    const payload = lines.map(l => {
+      const old = l.id ? exById.get(l.id) : undefined
+      return {
+        ...(old ?? { created_at: now, created_by: who }),
+        id: old?.id ?? randomUUID(),
+        warehouse_id: wid, period, cost_item: l.cost_item, amount: l.amount, note: l.note,
+        updated_at: now, updated_by: who,
+      }
+    })
+
+    for (let i = 0; i < toDelete.length; i += 300) {
+      const { error } = await supabase.from('warehouse_costs').delete().in('id', toDelete.slice(i, i + 300))
+      if (error) return fail(res, error.message)
+    }
+    for (let i = 0; i < payload.length; i += 500) {
+      const { error } = await supabase.from('warehouse_costs').upsert(payload.slice(i, i + 500), { onConflict: 'id' })
+      if (error?.code === '23505')
+        return fail(res, 'Có khoản mục bị trùng trong phiếu — mỗi khoản mục chỉ một dòng', 409, 'DUPLICATE')
+      if (error) return fail(res, error.message)
+    }
+    return ok(res, {
+      period, warehouse_id: wid,
+      saved: payload.length, deleted: toDelete.length,
+      amount: payload.reduce((s, p) => s + p.amount, 0),
     })
   } catch (e) { return fail(res, String(e)) }
 }

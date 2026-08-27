@@ -352,7 +352,9 @@ interface ReconcileFilters {
 }
 /** Chi phí kho — sổ kê khai theo KỲ THÁNG (period rỗng = tháng này, không ghim tháng cứng). */
 interface WarehouseCostFilters {
-  period: string       // 'YYYY-MM'; '' = tháng hiện tại
+  view: 'voucher' | 'line'   // Phiếu (kho × kỳ) | Dòng chi phí (xem 1 khoản mục qua nhiều tháng)
+  periodFrom: string   // 'YYYY-MM'; '' = tháng hiện tại
+  periodTo: string     // '' = bằng periodFrom (một kỳ)
   warehouseId: string  // '' tất cả | '__shared__' chi phí chung | id kho
   items: string[]
   search: string
@@ -443,7 +445,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 function initialFilters() {
   return {
     dashboard: { warehouseId: '', prodFrom: '', prodTo: '' },
-    warehouseCost: { period: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
+    warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),

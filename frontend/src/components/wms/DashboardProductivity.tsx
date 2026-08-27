@@ -7,8 +7,9 @@
 // TẤN = chứng từ, cộng CẢ nhập lẫn xuất (bốc hàng nhập cũng là công). CÔNG = module Chấm công.
 // Mọi tỷ số lấy từ `utils/productivity.ts` (một nguồn), thiếu mẫu số thì hiện "—" chứ không hiện 0.
 import { useMemo, useState } from 'react'
-import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet } from 'lucide-react'
+import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet, Warehouse } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { DashPanel, DashTile, DASH_SK } from '@/components/wms/DashboardPanel'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useProductivity, type ProductivityRow } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -35,23 +36,9 @@ function dayCount(from: string, to: string): number {
   return isNaN(a) || isNaN(b) ? 0 : Math.floor((b - a) / 86400000) + 1
 }
 
-const sk = 'bg-slate-200 dark:bg-slate-700/50'
-
-function Tile({ icon: Icon, tone, label, value, sub, danger }: {
-  icon: typeof Gauge; tone: string; label: string; value: string; sub?: string; danger?: boolean
-}) {
-  return (
-    <div className="rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 px-3 py-2">
-      <div className="text-[9px] uppercase tracking-wide text-slate-500 dark:text-slate-400 flex items-center gap-1">
-        <Icon className={`h-3 w-3 ${tone}`} /> {label}
-      </div>
-      <div className={`text-2xl font-semibold tabular-nums leading-tight ${danger ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>
-        {value}
-      </div>
-      {sub && <div className="text-[9px] text-slate-500">{sub}</div>}
-    </div>
-  )
-}
+// Khối card + ô KPI dùng CHUNG với các tab khác của Dashboard (một khuôn, không tự dựng lại)
+const sk = DASH_SK
+const Tile = DashTile
 
 // ── XEM THEO THÁNG ────────────────────────────────────────────────────────────────────────────
 // Cột = tháng, chọn được CHỈ SỐ muốn nhìn. Mỗi cột kèm ▲▼ % so THÁNG LIỀN TRƯỚC — không có mũi
@@ -93,15 +80,11 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
   const last = vals[vals.length - 1], prev = vals[vals.length - 2]
 
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 flex-wrap">
-        <span className="w-1 h-3.5 rounded bg-sky-500" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Xem theo tháng</span>
-        <span className="text-[9px] text-slate-500">{rows.length} tháng · ▲▼ so tháng liền trước</span>
-        <span className="flex-1" />
-        <button type="button" onClick={onPick12} className="text-[10px] text-sky-600 hover:text-sky-700">12 tháng</button>
-      </div>
-
+    <DashPanel title="Xem theo tháng" icon={TrendingUp} extra={<>
+      <span className="text-[9px] text-slate-500">{rows.length} tháng · ▲▼ so tháng liền trước</span>
+      <span className="flex-1" />
+      <button type="button" onClick={onPick12} className="text-[10px] text-sky-600 hover:text-sky-700">12 tháng</button>
+    </>}>
       <div className="px-2.5 py-1.5 flex items-center gap-1 flex-wrap border-b border-slate-100 dark:border-slate-700/60">
         {METRICS.map(m => (
           <button key={m.key} type="button" onClick={() => setMetric(m.key)}
@@ -139,7 +122,7 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
           Cột đứt nét = tháng chưa có dữ liệu để tính chỉ số này (thường là chưa chấm công).
         </div>
       </div>
-    </div>
+    </DashPanel>
   )
 }
 
@@ -316,15 +299,11 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
       ))}
 
       {/* Bảng theo kho */}
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700">
-          <span className="w-1 h-3.5 rounded bg-sky-500" />
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">Năng suất theo kho</span>
-          <span className="text-[9px] text-slate-500">
-            {fmtNum(rows.length, 0)} kho có phát sinh{hiddenRows > 0 ? ` · ẩn ${fmtNum(hiddenRows, 0)} kho không phát sinh` : ''}
-            {!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
-          </span>
-        </div>
+      <DashPanel title="Năng suất theo kho" icon={Warehouse} extra={
+        <span className="text-[9px] text-slate-500">
+          {fmtNum(rows.length, 0)} kho có phát sinh{hiddenRows > 0 ? ` · ẩn ${fmtNum(hiddenRows, 0)} kho không phát sinh` : ''}
+          {!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
+        </span>}>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left">
             <thead>
@@ -371,7 +350,7 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
             </tbody>
           </table>
         </div>
-      </div>
+      </DashPanel>
     </div>
   )
 }

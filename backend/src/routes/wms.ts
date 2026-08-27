@@ -64,6 +64,9 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 // Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
 // Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.
 router.get   ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'),        warehouseCost.listCosts)
+router.get   ('/warehouse-costs/vouchers',      requirePerm('warehouse_cost', 'view'),        warehouseCost.listVouchers)
+router.get   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'view'),        warehouseCost.getVoucher)
+router.put   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'edit'),        warehouseCost.saveVoucher)
 router.post  ('/warehouse-costs/copy-previous', requirePerm('warehouse_cost', 'edit'),        warehouseCost.copyPreviousMonth)
 router.post  ('/warehouse-costs/upload',        requirePerm('warehouse_cost', 'edit'),        upload.single('file'), warehouseCost.uploadCostExcel)
 router.post  ('/warehouse-costs/lock',          requirePerm('warehouse_cost', 'lock'),        warehouseCost.setCostLock)

@@ -14,6 +14,7 @@ import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { DashboardProductivity } from '@/components/wms/DashboardProductivity'
+import { DashPanel } from '@/components/wms/DashboardPanel'
 import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
 
 type ZoneCap = NonNullable<DashboardStats['zones']>[number]
@@ -29,22 +30,9 @@ const MODE_BADGE: Record<string, string> = {
   NONE:     'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
 }
 
-// Khối card console (khớp Block bên Giám sát vận hành)
-function Panel({ title, icon: Icon, extra, children, className = '' }: {
-  title: string; icon: typeof Package; extra?: React.ReactNode; children: React.ReactNode; className?: string
-}) {
-  return (
-    <div className={`rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 flex flex-col min-h-0 ${className}`}>
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 shrink-0">
-        <span className="w-1 h-3.5 rounded bg-sky-500 shrink-0" />
-        <Icon className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">{title}</span>
-        {extra}
-      </div>
-      <div className="flex-1 min-h-0">{children}</div>
-    </div>
-  )
-}
+// Khối card console (khớp Block bên Giám sát vận hành) — nay ở components/wms/DashboardPanel
+// để MỌI tab (kể cả tab Năng suất) dùng chung một khuôn.
+const Panel = DashPanel
 
 export default function Dashboard() {
   const { data: scopedWhs = [] } = useScopedWarehouses(true)

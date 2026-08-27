@@ -2185,24 +2185,25 @@ export type CostLine = {
   locked: boolean
 }
 export type CostBook = {
-  period: string
+  period: string; period_from: string; period_to: string
   can_edit_shared: boolean
   items: CostItem[]
   rows: CostLine[]
   total: number; page: number; pageSize: number
-  totals: { amount: number; labor: number; warehouses: number; lines: number }
-  locks: Array<{ warehouse_id: string | null; locked_at: string; locked_by: string | null }>
+  totals: { amount: number; labor: number; warehouses: number; lines: number; vouchers: number }
+  locks: Array<{ warehouse_id: string | null; period: string; locked_at: string; locked_by: string | null }>
 }
 
 export function useCostBook(params: {
-  period: string; warehouseId?: string; items?: string[]; search?: string; page: number; pageSize: number
+  periodFrom: string; periodTo: string
+  warehouseId?: string; items?: string[]; search?: string; page: number; pageSize: number
 }) {
   return useQuery<CostBook>({
-    queryKey: ['warehouse-costs', params],
-    enabled: !!params.period,
+    queryKey: ['warehouse-costs', 'lines', params],
+    enabled: !!params.periodFrom,
     queryFn: () => apiClient.get('/wms/warehouse-costs', {
       params: {
-        period: params.period,
+        period_from: params.periodFrom, period_to: params.periodTo || params.periodFrom,
         ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
         ...(params.items?.length ? { items: params.items.join(',') } : {}),
         ...(params.search ? { search: params.search } : {}),
@@ -2212,31 +2213,72 @@ export function useCostBook(params: {
   })
 }
 
-export type CostLineInput = {
-  period: string; warehouse_id: string | null; cost_item: string; amount: number; note?: string | null
+// ── PHIẾU chi phí = (Kho × Kỳ tháng) — mở phiếu ra để thêm/sửa các khoản trong đó ─────────────
+export type CostVoucher = {
+  warehouse_id: string | null; warehouse_name: string
+  period: string
+  lines: number; amount: number; labor: number
+  updated_at: string | null; updated_by: string | null
+  locked: boolean
 }
-export function useCreateCost() {
+export type CostVoucherList = {
+  period_from: string; period_to: string
+  can_edit_shared: boolean
+  items: CostItem[]
+  rows: CostVoucher[]
+  total: number
+  totals: { amount: number; labor: number; lines: number; vouchers: number }
+}
+export function useCostVouchers(params: {
+  periodFrom: string; periodTo: string; warehouseId?: string; search?: string; page: number; pageSize: number
+}) {
+  return useQuery<CostVoucherList>({
+    queryKey: ['warehouse-costs', 'vouchers', params],
+    enabled: !!params.periodFrom,
+    queryFn: () => apiClient.get('/wms/warehouse-costs/vouchers', {
+      params: {
+        period_from: params.periodFrom, period_to: params.periodTo || params.periodFrom,
+        ...(params.warehouseId ? { warehouse_id: params.warehouseId } : {}),
+        ...(params.search ? { search: params.search } : {}),
+        page: params.page, pageSize: params.pageSize,
+      },
+    }).then(r => r.data.data),
+  })
+}
+
+export type CostVoucherLine = {
+  id: string; cost_item: string; item_label: string; is_labor: boolean
+  amount: number; note: string | null; updated_at: string | null; updated_by: string | null
+}
+export type CostVoucherDetail = {
+  period: string; warehouse_id: string | null; warehouse_name: string; locked: boolean
+  items: CostItem[]; rows: CostVoucherLine[]
+  totals: { amount: number; labor: number; lines: number }
+}
+export function useCostVoucher(warehouseKey: string, period: string) {
+  return useQuery<CostVoucherDetail>({
+    queryKey: ['warehouse-costs', 'voucher', warehouseKey, period],
+    enabled: !!warehouseKey && !!period,
+    queryFn: () => apiClient.get('/wms/warehouse-costs/voucher', {
+      params: { warehouse_id: warehouseKey, period },
+    }).then(r => r.data.data),
+  })
+}
+/** Lưu TRỌN phiếu trong một lần bấm (thêm/sửa/xoá dòng) — giống form nhập/xuất. */
+export function useSaveCostVoucher() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: CostLineInput) => apiClient.post('/wms/warehouse-costs', body).then(r => r.data.data),
+    mutationFn: (body: {
+      period: string; warehouse_id: string | null
+      lines: Array<{ id?: string; cost_item: string; amount: number; note: string | null }>
+    }) => apiClient.put('/wms/warehouse-costs/voucher', body).then(r => r.data.data),
     onSuccess: () => invalidateCost(qc),
   })
 }
-export function useUpdateCost() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, ...body }: Partial<CostLineInput> & { id: string }) =>
-      apiClient.patch(`/wms/warehouse-costs/${id}`, body).then(r => r.data.data),
-    onSuccess: () => invalidateCost(qc),
-  })
-}
-export function useDeleteCost() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/wms/warehouse-costs/${id}`).then(r => r.data.data),
-    onSuccess: () => invalidateCost(qc),
-  })
-}
+
+// Thêm/sửa/xoá TỪNG dòng vẫn còn ở BE (POST/PATCH/DELETE /wms/warehouse-costs) cho tích hợp,
+// nhưng màn hình chỉ còn MỘT cửa sửa: mở phiếu ra sửa cả cụm rồi Lưu (useSaveCostVoucher).
+
 /** Danh mục khoản mục — kế toán tự thêm "Thuê pallet"… (quyền `warehouse_cost.manage_item`). */
 export function useSaveCostItem() {
   const qc = useQueryClient()

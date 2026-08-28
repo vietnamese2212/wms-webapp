@@ -122,6 +122,24 @@ const VOUCHER_FUZZ = [
   [`/wms/warehouse-costs/voucher?warehouse_id=00000000-0000-4000-8000-000000000000&period=2026-08`, 404],
   [`/wms/warehouse-costs/voucher?warehouse_id=x&period=xx`, 400],
 ]
+// ── Truy xuất lô (28/08): tham số rác phải 400 CÓ THÔNG BÁO, không 500 và không quét cả bảng ──
+const TRACE_FUZZ = [
+  [`/wms/trace?kind=pallet&value=19`, 400],                       // tiền tố quá ngắn → quét gần cả kho
+  [`/wms/trace?kind=xxx&value=abc`, 400],                         // kiểu tìm bịa
+  [`/wms/trace?kind=pallet&value=`, 400],                         // thiếu giá trị
+  [`/wms/trace?kind=material&value=X&prod_from=hom-qua`, 400],    // ngày rác (đừng để Postgres ném 22007)
+  [`/wms/trace?kind=material&value=KHONG_CO_MA_NAY_1234`, 200],   // không khớp gì → rỗng, KHÔNG lỗi
+  [`/wms/trace?kind=plate&value=51D-446.57`, 200],                // biển gõ có dấu vẫn khớp dạng chuẩn
+  // Chất lượng phục vụ: khoảng ngày đảo/rác phải 400
+  [`/wms/service-level?from=2026-08-28&to=2026-08-01`, 400],
+  [`/wms/service-level?from=abc&to=2026-08-28`, 400],
+  [`/wms/service-level?from=2026-08-01&to=2026-08-28`, 200],
+]
+for (const [path, want] of TRACE_FUZZ) {
+  const r = await api(path)
+  chk(r.s === want, `fuzz truy xuất ${path.replace('/wms/', '').slice(0, 60)}`, `HTTP ${r.s} (mong ${want})`)
+}
+
 for (const [path, want] of VOUCHER_FUZZ) {
   const r = await api(path)
   chk(r.s === want, `fuzz phiếu ${path.replace('/wms/warehouse-costs', '').slice(0, 64)}`, `HTTP ${r.s} (mong ${want})`)

@@ -51,8 +51,11 @@ export default function LotTrace() {
   const filterDefs: FilterDef[] = useMemo(() => [
     { key: 'kind', label: 'Tìm theo', type: 'single', pinned: true, options: KINDS.map(k => ({ value: k.value, label: k.label })),
       value: f.kind, allLabel: undefined, onChange: v => setF({ kind: (v || 'pallet') as TraceKind }) },
-    { key: 'value', label: kindDef.label, type: 'text', pinned: true, placeholder: kindDef.hint,
-      value: f.value, onChange: v => setF({ value: v }) },
+    // ⚠️ Nhãn phải KHÁC hẳn chip "Tìm theo" ở trên. Bản đầu để nhãn = tên kiểu tìm nên hai chip
+    // đọc gần giống nhau ("Tìm theo Mã pallet (tem)" vs "Mã pallet (tem)") — chính tôi gõ nhầm
+    // giá trị vào ô CHỌN KIỂU ngay lần thử đầu tiên.
+    { key: 'value', label: 'Giá trị cần tìm', type: 'text', pinned: true,
+      placeholder: kindDef.hint, value: f.value, onChange: v => setF({ value: v }) },
     // Ngày SX chỉ có nghĩa khi truy TỪ LÔ; ngày giao chỉ có nghĩa khi truy TỪ KHÁCH — ẩn cái không dùng
     ...(kindDef.reverse ? [] : [{
       key: 'prod', label: 'Ngày sản xuất', type: 'daterange' as const,

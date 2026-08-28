@@ -2219,7 +2219,7 @@ export type ServiceLevel = {
     trips: number; lines: number; lines_short: number
     demand: number; shipped: number
     fill_rate: number | null; on_time_pct: number | null; in_full_pct: number | null; otif_pct: number | null
-    avg_stars: number | null; rated_trips: number
+    avg_stars: number | null; rated_trips: number; ratable_trips: number
   }
   by_warehouse: Array<{
     warehouse_id: string | null; warehouse_name: string; trips: number
@@ -2244,7 +2244,7 @@ export type ReceiptRating = {
   rated_by_name: string | null; rated_at: string
 }
 export function useReceiptRating(orderId: string | null | undefined) {
-  return useQuery<{ mode: ReceiptRatingMode; rating: ReceiptRating | null }>({
+  return useQuery<{ mode: ReceiptRatingMode; ratable: boolean; rating: ReceiptRating | null }>({
     queryKey: ['receipt-rating', orderId],
     enabled: !!orderId,
     queryFn: () => apiClient.get(`/tms/orders/${orderId}/receipt-rating`).then(r => r.data.data),

@@ -1805,11 +1805,21 @@ export async function deleteOrder(req: Request, res: Response) {
 const RATING_REASONS = ['SHORT', 'WRONG', 'DAMAGED', 'LATE', 'DOC', 'OTHER'] as const
 type RatingReason = typeof RATING_REASONS[number]
 
-/** Lệnh chuyển kho → (gdo_id, kho gửi, kho nhận). null nếu không phải lệnh chuyển kho. */
+/**
+ * Lệnh chuyển kho → (gdo_id, kho gửi, kho nhận, có ai để chấm không).
+ * null nếu không phải lệnh chuyển kho.
+ *
+ * ⚠️ `ratable=false` khi kho nhận KHÔNG tích nhận (`delivery_mode='SELF'` — kho nhận hình thức
+ * NONE/OTHER, tài xế tự bấm hoàn thành). Ở những chuyến đó KHÔNG AI mở hàng ra xem trong app:
+ * người bấm là bên gửi/điều vận, chấm sao là TỰ CHẤM MÌNH. Đo staging 28/08: 30 chuyến SELF đã
+ * DELIVERED — bản đầu của tính năng cho chấm hết 30 chuyến đó (user hỏi đúng chỗ này).
+ */
 async function transferPartiesOf(orderId: string) {
   const { data } = await supabase.from('TmsOrder')
-    .select('id, transfer_gdo_id, destination_warehouse_id').eq('id', orderId).maybeSingle()
-  const o = data as { transfer_gdo_id: string | null; destination_warehouse_id: string | null } | null
+    .select('id, transfer_gdo_id, destination_warehouse_id, delivery_mode').eq('id', orderId).maybeSingle()
+  const o = data as {
+    transfer_gdo_id: string | null; destination_warehouse_id: string | null; delivery_mode: string | null
+  } | null
   if (!o?.transfer_gdo_id) return null
   const { data: g } = await supabase.from('GroupDeliveryOrder')
     .select('warehouse_id').eq('id', o.transfer_gdo_id).maybeSingle()
@@ -1817,6 +1827,7 @@ async function transferPartiesOf(orderId: string) {
     gdoId: o.transfer_gdo_id,
     fromWh: (g as { warehouse_id: string | null } | null)?.warehouse_id ?? null,
     toWh: o.destination_warehouse_id,
+    ratable: o.delivery_mode !== 'SELF',
   }
 }
 
@@ -1826,10 +1837,10 @@ export async function getReceiptRating(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
     const cfg = await getReceiptRatingCfg()
     const parties = await transferPartiesOf(id)
-    if (!parties) return ok(res, { mode: cfg.mode, rating: null })
+    if (!parties) return ok(res, { mode: cfg.mode, ratable: false, rating: null })
     const { data } = await supabase.from('receipt_ratings')
       .select('stars, reason_code, note, rated_by_name, rated_at').eq('gdo_id', parties.gdoId).maybeSingle()
-    return ok(res, { mode: cfg.mode, rating: data ?? null })
+    return ok(res, { mode: cfg.mode, ratable: parties.ratable, rating: data ?? null })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -1853,6 +1864,11 @@ export async function rateTransferReceipt(req: Request, res: Response) {
 
     const parties = await transferPartiesOf(id)
     if (!parties) return fail(res, 'Lệnh này không phải lệnh chuyển kho — không có chuyến giao để đánh giá', 400, 'NOT_TRANSFER')
+    // Kho nhận không tích nhận (tài xế tự hoàn thành) ⇒ không ai xem hàng trong app để mà chấm.
+    // Chặn ở BE chứ không chỉ ẩn nút: ẩn nút chỉ là gợi ý, gọi thẳng API vẫn ghi được điểm vô nghĩa.
+    if (!parties.ratable)
+      return fail(res, 'Chuyến này kho nhận KHÔNG tích nhận (tài xế tự hoàn thành) — không có người nhận để chấm sao',
+        422, 'NOT_RATABLE')
 
     const t = new Date().toISOString()
     const { data: existing } = await supabase.from('receipt_ratings')

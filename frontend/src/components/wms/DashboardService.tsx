@@ -52,6 +52,8 @@ export function DashboardService() {
           Chỉ số <b>giao đủ</b> chỉ có nghĩa từ <b>{TRACKING_SINCE}</b> — mốc app bắt đầu ghi vết mỗi
           lần hạ số lượng đơn. Chuyến trước mốc đó luôn hiện 100% vì số kế hoạch đã bị sửa xuống bằng
           thực xuất, không còn dấu để so. Chỉ số <b>đúng hạn</b> và <b>sao</b> không bị ảnh hưởng.
+          Ô <b>sao</b> chỉ đếm chuyến CHUYỂN KHO mà kho nhận có tích nhận — giao khách ngoài và kho
+          nhận không tích nhận thì không có ai trong app để chấm.
         </div>
       )}
 
@@ -64,9 +66,14 @@ export function DashboardService() {
               sub={`${nf(s?.trips)} chuyến trong kỳ`} />
             <DashTile icon={Truck} tone="text-blue-500" label="OTIF (đúng hạn + đủ)" value={pct(s?.otif_pct)}
               sub={`${nf(s?.lines_short)} dòng giao thiếu`} />
+            {/* Mẫu số là chuyến THUỘC DIỆN CHẤM (chuyển kho mà kho nhận có tích nhận), KHÔNG phải
+                mọi chuyến — kho nhận không tích nhận và giao khách ngoài thì không ai xem hàng
+                trong app để chấm. Lấy mọi chuyến làm mẫu số là vu oan cho kho lười chấm. */}
             <DashTile icon={Star} tone="text-amber-500" label="Sao kho nhận chấm"
               value={s?.avg_stars != null ? `${Number(s.avg_stars).toFixed(2)} ★` : '—'}
-              sub={s?.rated_trips ? `${nf(s.rated_trips)} chuyến đã chấm` : 'chưa có đánh giá nào'} />
+              sub={!s?.ratable_trips
+                ? 'không chuyến nào thuộc diện chấm'
+                : `${nf(s.rated_trips)}/${nf(s.ratable_trips)} chuyến thuộc diện chấm`} />
           </>
         )}
       </div>

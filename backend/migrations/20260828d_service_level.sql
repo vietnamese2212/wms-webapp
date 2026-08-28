@@ -73,7 +73,16 @@ BEGIN
         -- Sao trung bình của các chuyến giao trong kỳ (kho nhận chấm lúc xác nhận đơn)
         'avg_stars',    (SELECT round(avg(rr.stars)::numeric, 2) FROM receipt_ratings rr
                           JOIN trips t2 ON t2.id = rr.gdo_id),
-        'rated_trips',  (SELECT count(*) FROM receipt_ratings rr JOIN trips t2 ON t2.id = rr.gdo_id)
+        'rated_trips',  (SELECT count(*) FROM receipt_ratings rr JOIN trips t2 ON t2.id = rr.gdo_id),
+        -- Chuyến THUỘC DIỆN CHẤM = chuyển kho mà kho nhận có TÍCH NHẬN. Kho nhận không tích nhận
+        -- (`delivery_mode='SELF'`, tài xế tự hoàn thành) và chuyến giao khách ngoài thì KHÔNG ai
+        -- mở hàng ra xem trong app ⇒ không có người chấm. Phải tách con số này ra, nếu không mẫu
+        -- số là "mọi chuyến" và tỷ lệ phủ trông như kho lười chấm (đo staging: 30/33 chuyến
+        -- chuyển kho là SELF).
+        'ratable_trips', (SELECT count(*) FROM trips t3
+                           WHERE EXISTS (SELECT 1 FROM "TmsOrder" o
+                                          WHERE o.transfer_gdo_id = t3.id
+                                            AND coalesce(o.delivery_mode, '') <> 'SELF'))
       ) FROM by_trip
     ),
     'by_warehouse', coalesce((

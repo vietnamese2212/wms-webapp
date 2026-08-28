@@ -140,6 +140,24 @@ for (const [path, want] of TRACE_FUZZ) {
   chk(r.s === want, `fuzz truy xuất ${path.replace('/wms/', '').slice(0, 60)}`, `HTTP ${r.s} (mong ${want})`)
 }
 
+// ── Chấm sao chuyến giao: KHO NHẬN KHÔNG TÍCH NHẬN thì không có ai để chấm (28/08) ──
+// Bản đầu của tính năng cho chấm cả chuyến `delivery_mode='SELF'` (tài xế tự hoàn thành) — người
+// bấm là bên GỬI, tức tự chấm mình. Ẩn nút là chưa đủ: gọi thẳng API vẫn ghi được điểm vô nghĩa.
+{
+  const r = await api('/tms/orders?page=1&page_size=200&transfer=1')
+  const orders = rowsOf(r.j) ?? []
+  const self = orders.find(o => o.delivery_mode === 'SELF' && o.transfer_gdo_id)
+  if (!self) {
+    console.log('  ⊘ chấm sao chuyến SELF: không có lệnh chuyển kho SELF nào — bỏ qua')
+  } else {
+    const p = await api(`/tms/orders/${self.id}/receipt-rating`, 'POST', { stars: 5 })
+    chk(p.s === 422, 'chấm sao chuyến kho nhận KHÔNG tích nhận bị chặn', `HTTP ${p.s} (mong 422)`)
+    const g = await api(`/tms/orders/${self.id}/receipt-rating`)
+    chk(g.s === 200 && g.j?.data?.ratable === false, 'GET trả cờ ratable=false cho chuyến SELF',
+      `HTTP ${g.s} · ratable=${g.j?.data?.ratable}`)
+  }
+}
+
 for (const [path, want] of VOUCHER_FUZZ) {
   const r = await api(path)
   chk(r.s === want, `fuzz phiếu ${path.replace('/wms/warehouse-costs', '').slice(0, 64)}`, `HTTP ${r.s} (mong ${want})`)

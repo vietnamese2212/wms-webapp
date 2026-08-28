@@ -2492,6 +2492,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     order?.id && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') ? order.id : null)
   const ratingMode = ratingQ.data?.mode ?? 'optional'
   const ratedStars = ratingQ.data?.rating?.stars ?? 0
+  // Kho nhận KHÔNG tích nhận (tài xế tự hoàn thành) thì không có ai xem hàng để chấm — BE cũng
+  // chặn 422 NOT_RATABLE, đây chỉ là ẩn nút cho khỏi mời gọi bấm.
+  const ratable = ratingQ.data?.ratable !== false
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActions: ActionItem[] = []
@@ -2522,7 +2525,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     })
   // Chấm sao: hiện từ lúc BẮT ĐẦU NHẬN trở đi (đã thấy hàng) và cả sau khi đã giao xong — người
   // nhận thường phát hiện hàng móp/thiếu chứng từ lúc đang xếp, không phải lúc bấm xác nhận.
-  if (canConfirmReceipt && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') && ratingMode !== 'off')
+  if (canConfirmReceipt && ratable && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') && ratingMode !== 'off')
     headerActions.push({
       key: 'rate', icon: Star,
       label: ratedStars ? `${ratedStars}★` : 'Đánh giá',

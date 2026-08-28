@@ -2228,12 +2228,13 @@ export type ServiceLevel = {
   }>
   top_short: Array<{ material_code: string | null; lines: number; missing: number; demand: number }>
 }
-export function useServiceLevel(p: { from: string; to: string }) {
+export function useServiceLevel(p: { from: string; to: string; warehouseId?: string }) {
   return useQuery<ServiceLevel>({
     queryKey: ['service-level', p],
     enabled: !!p.from && !!p.to,
-    queryFn: () => apiClient.get('/wms/service-level', { params: { from: p.from, to: p.to } })
-      .then(r => r.data.data),
+    queryFn: () => apiClient.get('/wms/service-level', {
+      params: { from: p.from, to: p.to, ...(p.warehouseId ? { warehouse_id: p.warehouseId } : {}) },
+    }).then(r => r.data.data),
   })
 }
 

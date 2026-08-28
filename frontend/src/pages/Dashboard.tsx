@@ -157,7 +157,7 @@ export default function Dashboard() {
         )}
 
         {tab === 'prod' && <DashboardProductivity warehouseId={effWhId} />}
-        {tab === 'svc'  && <DashboardService />}
+        {tab === 'svc'  && <DashboardService warehouseId={effWhId} />}
 
         {/* KPI tồn kho (data thật) — tile console */}
         {!isReport && (

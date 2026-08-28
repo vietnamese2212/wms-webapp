@@ -134,10 +134,35 @@ const TRACE_FUZZ = [
   [`/wms/service-level?from=2026-08-28&to=2026-08-01`, 400],
   [`/wms/service-level?from=abc&to=2026-08-28`, 400],
   [`/wms/service-level?from=2026-08-01&to=2026-08-28`, 200],
+  [`/wms/service-level?from=2026-08-01&to=2026-08-28&warehouse_id=undefined`, 400], // id rác → 400, không 22P02/500
 ]
 for (const [path, want] of TRACE_FUZZ) {
   const r = await api(path)
   chk(r.s === want, `fuzz truy xuất ${path.replace('/wms/', '').slice(0, 60)}`, `HTTP ${r.s} (mong ${want})`)
+}
+
+// ── Tab Dịch vụ phải NGHE ô chọn Kho của Dashboard (28/08) ──
+// Bản đầu bỏ qua tham số kho: người dùng chọn "Kho Ba Vì" mà bảng vẫn liệt kê mọi kho — sai âm
+// thầm, vì màn hình KHÔNG báo lỗi, chỉ đơn giản trả lời câu hỏi khác câu người ta hỏi.
+{
+  const all = await api('/wms/service-level?from=2026-08-01&to=2026-08-28')
+  const rows = all.j?.data?.by_warehouse ?? []
+  if (!rows.length) {
+    console.log(`  ⊘ lọc kho tab Dịch vụ: kỳ 08 không có chuyến hoàn thành nào — bỏ qua (đọc ${rows.length} kho)`)
+  } else {
+    const whs = await api('/masterdata/warehouses?limit=200')
+    const list = whs.j?.data?.items ?? whs.j?.data ?? []
+    const hit = list.find(w => rows.some(r => r.warehouse_name === w.name))
+    if (!hit) {
+      console.log(`  ⊘ lọc kho tab Dịch vụ: không khớp được tên kho (${rows.length} kho báo cáo / ${list.length} kho danh mục)`)
+    } else {
+      const one = await api(`/wms/service-level?from=2026-08-01&to=2026-08-28&warehouse_id=${hit.id}`)
+      const got = one.j?.data?.by_warehouse ?? []
+      chk(one.s === 200 && got.length === 1 && got[0].warehouse_name === hit.name,
+        'tab Dịch vụ lọc đúng 1 kho khi Dashboard chọn kho',
+        `HTTP ${one.s} · ${rows.length} kho khi không lọc → ${got.length} kho khi lọc "${hit.name}"`)
+    }
+  }
 }
 
 // ── Chấm sao chuyến giao: KHO NHẬN KHÔNG TÍCH NHẬN thì không có ai để chấm (28/08) ──

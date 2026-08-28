@@ -22,12 +22,13 @@ const TRACKING_SINCE = '2026-08-28'
 const nf = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('vi-VN')
 const pct = (n: number | null | undefined) => n == null ? '—' : `${Number(n).toFixed(1)}%`
 
-export function DashboardService() {
+/** `warehouseId` = ô chọn Kho của Dashboard (rỗng = tất cả kho trong phạm vi được phân quyền). */
+export function DashboardService({ warehouseId }: { warehouseId?: string }) {
   const f = useWmsFilterStore(s => s.dashboard)
   const setDashboard = useWmsFilterStore(s => s.setDashboard)
   const from = f.svcFrom || MONTH_START()
   const to = f.svcTo || TODAY()
-  const q = useServiceLevel({ from, to })
+  const q = useServiceLevel({ from, to, warehouseId })
   const s = q.data?.summary
 
   const defs: FilterDef[] = useMemo(() => [

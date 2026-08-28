@@ -8,6 +8,7 @@ import type { Request, Response } from 'express'
 import { supabase } from '../../lib/supabase'
 import { maskServerMessage } from '../../utils/response'
 import { scopeCategoriesOf } from '../../utils/categoryScope'
+import { isUuid } from '../../utils/ids'
 
 const ok = (res: Response, data: unknown) => res.json({ success: true, data })
 const fail = (res: Response, message: string, status = 500, code = 'TRACE_ERROR') =>
@@ -74,8 +75,16 @@ export async function serviceLevel(req: Request, res: Response) {
     if (!from || !to) return fail(res, 'Thiếu khoảng ngày (from, to)', 400, 'BAD_RANGE')
     if (to < from) return fail(res, 'Ngày "đến" phải sau ngày "từ"', 400, 'BAD_RANGE')
 
+    // Ô chọn Kho của Dashboard phải ăn vào tab này như các tab khác — nhưng LỌC LÀ LỌC, không
+    // được nới scope: kho ngoài phạm vi được phân quyền là 403, không âm thầm trả dữ liệu kho khác.
+    const scope = scopeWhIds(req)
+    const wh = String(q.warehouse_id ?? '').trim()
+    if (wh && !isUuid(wh)) return fail(res, 'Mã kho không hợp lệ', 400, 'BAD_WAREHOUSE')
+    if (wh && scope !== null && !scope.includes(wh))
+      return fail(res, 'Kho không thuộc phạm vi được phân quyền', 403, 'WAREHOUSE_OUT_OF_SCOPE')
+
     const { data, error } = await supabase.rpc('service_level', {
-      p_from: from, p_to: to, p_wh_ids: scopeWhIds(req), p_limit: 20,
+      p_from: from, p_to: to, p_wh_ids: wh ? [wh] : scope, p_limit: 20,
     })
     if (error) return fail(res, error.message)
     return ok(res, data ?? {})

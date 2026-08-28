@@ -42,6 +42,7 @@ const stocktakeCycle     = () => import('@/pages/wms/StocktakeCycle')
 const slotting           = () => import('@/pages/wms/Slotting')
 const slottingPlanDetail = () => import('@/pages/wms/SlottingPlanDetail')
 const warehouseCosts     = () => import('@/pages/wms/WarehouseCosts')
+const lotTrace           = () => import('@/pages/wms/LotTrace')
 const warehouseCostVoucher = () => import('@/pages/wms/WarehouseCostVoucher')
 const forklift           = () => import('@/pages/wms/Forklift')
 const packing            = () => import('@/pages/wms/Packing')
@@ -90,6 +91,7 @@ export const Pages = {
   Slotting: lazyRetry(slotting),
   SlottingPlanDetail: lazyRetry(slottingPlanDetail),
   WarehouseCosts: lazyRetry(warehouseCosts),
+  LotTrace: lazyRetry(lotTrace),
   WarehouseCostVoucher: lazyRetry(warehouseCostVoucher),
   Forklift: lazyRetry(forklift),
   Packing: lazyRetry(packing),

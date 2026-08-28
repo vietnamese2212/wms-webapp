@@ -2213,6 +2213,49 @@ export function useCostBook(params: {
   })
 }
 
+// ── TRUY XUẤT LÔ (28/08) — 1 lời gọi trả cả "đã giao đi đâu" lẫn "còn trong kho" ───────────────
+export type TraceKind = 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
+export type TraceShipment = {
+  pallet_code: string; cartons_scanned: number; scanned_at: string | null; pct_date: number | null
+  production_date: string | null; expiry_date: string | null; batch: string | null
+  material_code: string | null; short_name: string | null
+  group_code: string; delivery_date: string | null; license_plate: string | null; trip_status: string
+  delivery_code: string | null; distributor_name: string | null; warehouse_name: string | null
+}
+export type TraceStock = {
+  pallet_code: string; cartons_remaining: number; status: string
+  production_date: string | null; expiry_date: string | null; batch: string | null; import_date: string | null
+  material_code: string | null; short_name: string | null
+  warehouse_name: string | null; location_code: string | null
+}
+export type TraceResult = {
+  codes: number
+  shipments: TraceShipment[]
+  stock: TraceStock[]
+  summary: {
+    pallets: number; shipments: number; stock_rows: number; customers: number; trips: number
+    qty_shipped: number; qty_on_hand: number; truncated: boolean
+  }
+}
+export function useLotTrace(p: {
+  kind: TraceKind; value: string
+  prodFrom?: string; prodTo?: string; shipFrom?: string; shipTo?: string
+}) {
+  // Tiền tố quá ngắn quét ra gần cả kho — BE cũng chặn, đây chỉ là khỏi bắn request vô ích
+  const enough = p.value.trim().length >= (p.kind === 'pallet' ? 4 : 2)
+  return useQuery<TraceResult>({
+    queryKey: ['lot-trace', p],
+    enabled: enough,
+    queryFn: () => apiClient.get('/wms/trace', {
+      params: {
+        kind: p.kind, value: p.value.trim(),
+        ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
+        ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
+      },
+    }).then(r => r.data.data),
+  })
+}
+
 // ── PHIẾU chi phí = (Kho × Kỳ tháng) — mở phiếu ra để thêm/sửa các khoản trong đó ─────────────
 export type CostVoucher = {
   warehouse_id: string | null; warehouse_name: string

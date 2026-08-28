@@ -19,6 +19,7 @@ import * as forklift from '../controllers/wms/forkliftController'
 import * as packing from '../controllers/wms/packingController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as warehouseCost from '../controllers/wms/warehouseCostController'
+import * as trace from '../controllers/wms/traceController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
 import * as integrationKeys from '../controllers/integration/keyController'
 import * as vision from '../controllers/integration/visionController'
@@ -63,6 +64,11 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 
 // Chi phí kho — SỔ KÊ KHAI: 1 dòng = (Kho · Kỳ tháng · Khoản mục · Số tiền); mỗi việc 1 quyền riêng.
 // Route tĩnh (/items, /upload…) phải đứng TRƯỚC /:id, không thì 'items' bị nuốt làm id.
+// Truy xuất lô 2 chiều (28/08): lô → đã giao đi đâu · khách/chuyến/biển số → đã nhận lô nào.
+// Chỉ ĐỌC, nhưng là quyền RIÊNG: nó ghép tồn kho + xuất hàng + khách hàng vào một chỗ, rộng hơn
+// bất kỳ trang đơn lẻ nào — ai xem được Tồn kho không mặc nhiên được xem "hàng đã đi tới NPP nào".
+router.get   ('/trace',                         requirePerm('traceability', 'view'),          trace.lotTrace)
+
 router.get   ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'),        warehouseCost.listCosts)
 router.get   ('/warehouse-costs/vouchers',      requirePerm('warehouse_cost', 'view'),        warehouseCost.listVouchers)
 router.get   ('/warehouse-costs/voucher',       requirePerm('warehouse_cost', 'view'),        warehouseCost.getVoucher)

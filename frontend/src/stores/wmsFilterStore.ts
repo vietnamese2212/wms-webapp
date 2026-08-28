@@ -361,7 +361,15 @@ interface WarehouseCostFilters {
   page: number
   pageSize: number
 }
+/** Truy xuất lô — 2 khoảng ngày TÁCH BẠCH: ngày SX (truy từ lô) ≠ ngày giao (truy từ khách). */
+interface LotTraceFilters {
+  kind: 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
+  value: string
+  prodFrom: string; prodTo: string
+  shipFrom: string; shipTo: string
+}
 interface WmsFilterState {
+  lotTrace:          LotTraceFilters
   warehouseCost:     WarehouseCostFilters
   dashboard:         DashboardFilters
   assignment:        AssignmentFilters
@@ -401,6 +409,7 @@ interface WmsFilterState {
   setReconcile:         (f: Partial<ReconcileFilters>)         => void
   setDashboard:         (f: Partial<DashboardFilters>)         => void
   setWarehouseCost:     (f: Partial<WarehouseCostFilters>)     => void
+  setLotTrace:          (f: Partial<LotTraceFilters>)          => void
   setUserAdmin:         (f: Partial<UserAdminFilters>)         => void
   setAttendanceTeam:    (f: Partial<AttendanceTeamFilters>)    => void
   setAttendanceMy:      (f: Partial<AttendanceMyFilters>)      => void
@@ -446,6 +455,7 @@ function initialFilters() {
   return {
     dashboard: { warehouseId: '', prodFrom: '', prodTo: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
+    lotTrace: { kind: 'pallet' as const, value: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '' },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },
     outbound: {
       search: '', dateFrom: today(), dateTo: today(),
@@ -517,6 +527,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       ...initialFilters(),
       setDashboard:        (f) => set(s => ({ dashboard:        { ...s.dashboard,        ...f } })),
       setWarehouseCost:    (f) => set(s => ({ warehouseCost:    { ...s.warehouseCost,    ...f } })),
+      setLotTrace:         (f) => set(s => ({ lotTrace:         { ...s.lotTrace,         ...f } })),
       setOutbound:         (f) => set(s => ({ outbound:         { ...s.outbound,         ...f } })),
       setOutboundPrepare:  (f) => set(s => ({ outboundPrepare:  { ...s.outboundPrepare,  ...f } })),
       setInbound:          (f) => set(s => ({ inbound:          { ...INBOUND_DEFAULT, ...s.inbound, ...f } })),

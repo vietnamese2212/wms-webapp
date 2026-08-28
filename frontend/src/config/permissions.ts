@@ -69,6 +69,13 @@ export const MODULES = {
       export: 'Xuất Excel lịch sử quét',
     },
   },
+  traceability: {
+    page: 'Truy xuất lô',
+    actions: {
+      view:   'Truy xuất lô 2 chiều — lô/mã hàng/ngày SX đã giao tới NPP nào, và NPP/chuyến/biển số đã nhận lô nào',
+      export: 'Xuất Excel kết quả truy xuất (hồ sơ thu hồi)',
+    },
+  },
   loosepicking: {
     page: 'Nhặt lẻ',
     actions: {

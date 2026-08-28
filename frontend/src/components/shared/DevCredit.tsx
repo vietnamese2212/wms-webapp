@@ -67,7 +67,7 @@ export function DevCredit({ tone = 'light', className = '' }: { tone?: 'light' |
 
   const done = n >= FULL.length
   const typed = FULL.slice(0, n)
-  const base = tone === 'dark' ? 'text-slate-500' : 'text-muted-foreground'
+  const base = tone === 'dark' ? 'text-slate-400' : 'text-muted-foreground'
   const link = tone === 'dark' ? 'text-sky-400' : 'text-sky-600'
   const p = 'text-center text-[10px] leading-relaxed'
 
@@ -85,7 +85,9 @@ export function DevCredit({ tone = 'light', className = '' }: { tone?: 'light' |
         {done ? (
           <>
             {HEAD}{MID}
-            <a href={`mailto:${DEV_CREDIT.email}`} className={`${link} underline underline-offset-2 break-all`}>
+            {/* break-words chứ KHÔNG break-all: cột sidebar hẹp, break-all cắt email thành
+                "lam.tranhoang@m / al.com.vn" — đọc/copy đều khó */}
+            <a href={`mailto:${DEV_CREDIT.email}`} className={`${link} underline underline-offset-2 break-words`}>
               {DEV_CREDIT.email}
             </a>
           </>

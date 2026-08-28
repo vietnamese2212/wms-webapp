@@ -144,11 +144,14 @@ for (const [path, want] of TRACE_FUZZ) {
 // Bản đầu của tính năng cho chấm cả chuyến `delivery_mode='SELF'` (tài xế tự hoàn thành) — người
 // bấm là bên GỬI, tức tự chấm mình. Ẩn nút là chưa đủ: gọi thẳng API vẫn ghi được điểm vô nghĩa.
 {
-  const r = await api('/tms/orders?page=1&page_size=200&transfer=1')
+  // `source_type=TRANSFER` là đúng tham số của danh sách lệnh chuyển kho (khớp useTransferOrders).
+  // KHÔNG lọc ngày: lệnh SELF có thể cũ hơn cửa sổ mặc định — lọc ngày làm phép kiểm im lặng bỏ qua.
+  const r = await api('/tms/orders?source_type=TRANSFER')
   const orders = rowsOf(r.j) ?? []
   const self = orders.find(o => o.delivery_mode === 'SELF' && o.transfer_gdo_id)
   if (!self) {
-    console.log('  ⊘ chấm sao chuyến SELF: không có lệnh chuyển kho SELF nào — bỏ qua')
+    // Im lặng KHÔNG phải là đạt: nói rõ đã đọc bao nhiêu lệnh mà vẫn không thấy ca cần kiểm
+    console.log(`  ⊘ chấm sao chuyến SELF: đọc ${orders.length} lệnh chuyển kho, không có lệnh SELF nào — bỏ qua`)
   } else {
     const p = await api(`/tms/orders/${self.id}/receipt-rating`, 'POST', { stars: 5 })
     chk(p.s === 422, 'chấm sao chuyến kho nhận KHÔNG tích nhận bị chặn', `HTTP ${p.s} (mong 422)`)

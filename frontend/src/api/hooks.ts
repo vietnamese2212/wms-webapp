@@ -2213,6 +2213,30 @@ export function useCostBook(params: {
   })
 }
 
+// ── CHẤT LƯỢNG PHỤC VỤ (28/08) — giao đủ / đúng hạn / sao, theo khoảng ngày ───────────────────
+export type ServiceLevel = {
+  summary: {
+    trips: number; lines: number; lines_short: number
+    demand: number; shipped: number
+    fill_rate: number | null; on_time_pct: number | null; in_full_pct: number | null; otif_pct: number | null
+    avg_stars: number | null; rated_trips: number
+  }
+  by_warehouse: Array<{
+    warehouse_id: string | null; warehouse_name: string; trips: number
+    on_time_pct: number | null; in_full_pct: number | null
+    demand: number; shipped: number; fill_rate: number | null
+  }>
+  top_short: Array<{ material_code: string | null; lines: number; missing: number; demand: number }>
+}
+export function useServiceLevel(p: { from: string; to: string }) {
+  return useQuery<ServiceLevel>({
+    queryKey: ['service-level', p],
+    enabled: !!p.from && !!p.to,
+    queryFn: () => apiClient.get('/wms/service-level', { params: { from: p.from, to: p.to } })
+      .then(r => r.data.data),
+  })
+}
+
 // ── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) — kho nhận chấm lúc xác nhận đơn ─────────────────────────
 export type ReceiptRatingMode = 'off' | 'optional' | 'required'
 export type ReceiptRating = {

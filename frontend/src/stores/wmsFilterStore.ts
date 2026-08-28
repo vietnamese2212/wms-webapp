@@ -256,6 +256,10 @@ interface DashboardFilters {
   // Không lưu sẵn ngày cụ thể: app mở qua tháng mới mà nhớ tháng cũ thì user tưởng mất số liệu.
   prodFrom: string
   prodTo: string
+  // Khoảng ngày của tab DỊCH VỤ (28/08) — để RIÊNG với tab Năng suất: hai tab hỏi hai câu khác
+  // nhau, dùng chung một khoảng thì đổi bên này lại đổi luôn bên kia mà người dùng không ngờ.
+  svcFrom: string
+  svcTo: string
 }
 // Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
 interface FillFilters {
@@ -453,7 +457,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
-    dashboard: { warehouseId: '', prodFrom: '', prodTo: '' },
+    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     lotTrace: { kind: 'pallet' as const, value: '', prodFrom: '', prodTo: '', shipFrom: '', shipTo: '' },
     assignment: { search: '', warehouseId: '', layoutId: '', dateFrom: today().slice(0, 8) + '01' },

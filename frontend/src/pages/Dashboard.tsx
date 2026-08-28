@@ -14,6 +14,7 @@ import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { DashboardProductivity } from '@/components/wms/DashboardProductivity'
+import { DashboardService } from '@/components/wms/DashboardService'
 import { DashPanel } from '@/components/wms/DashboardPanel'
 import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, unitLabel } from '@/utils/qtyUnits'
 
@@ -102,10 +103,14 @@ export default function Dashboard() {
     { key: 'out',   label: 'Xuất' },
     { key: 'stock', label: 'Tồn kho' },
     { key: 'prod',  label: 'Năng suất' },
+    { key: 'svc',   label: 'Dịch vụ' },
   ] as const
   type TabKey = typeof TABS[number]['key']
   const [tab, setTab] = useState<TabKey>('all')
-  const show = (k: Exclude<TabKey, 'all' | 'prod'>) => tab !== 'prod' && (tab === 'all' || tab === k)
+  // Hai tab BÁO CÁO (Năng suất, Dịch vụ) chạy theo khoảng ngày riêng và thay CẢ trang — các
+  // khối "ảnh chụp hôm nay" bên dưới không hiện ở đó.
+  const isReport = tab === 'prod' || tab === 'svc'
+  const show = (k: Exclude<TabKey, 'all' | 'prod' | 'svc'>) => !isReport && (tab === 'all' || tab === k)
 
   return (
     <div className="flex flex-col h-full bg-slate-100 dark:bg-slate-900">
@@ -152,6 +157,7 @@ export default function Dashboard() {
         )}
 
         {tab === 'prod' && <DashboardProductivity warehouseId={effWhId} />}
+        {tab === 'svc'  && <DashboardService />}
 
         {/* KPI tồn kho (data thật) — tile console */}
         {tab !== 'prod' && (

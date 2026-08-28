@@ -68,6 +68,8 @@ router.get('/dashboard/productivity', requirePerm('dashboard', 'view'), dashboar
 // Chỉ ĐỌC, nhưng là quyền RIÊNG: nó ghép tồn kho + xuất hàng + khách hàng vào một chỗ, rộng hơn
 // bất kỳ trang đơn lẻ nào — ai xem được Tồn kho không mặc nhiên được xem "hàng đã đi tới NPP nào".
 router.get   ('/trace',                         requirePerm('traceability', 'view'),          trace.lotTrace)
+// Chất lượng phục vụ (giao đủ / đúng hạn / sao) — tab của trang Tổng quan, đi theo quyền Dashboard
+router.get   ('/service-level',                 requirePerm('dashboard', 'view'),             trace.serviceLevel)
 
 router.get   ('/warehouse-costs',               requirePerm('warehouse_cost', 'view'),        warehouseCost.listCosts)
 router.get   ('/warehouse-costs/vouchers',      requirePerm('warehouse_cost', 'view'),        warehouseCost.listVouchers)

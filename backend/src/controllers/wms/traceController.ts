@@ -61,3 +61,23 @@ export async function lotTrace(req: Request, res: Response) {
     return ok(res, data ?? {})
   } catch (e) { return fail(res, String(e)) }
 }
+
+// ─── CHẤT LƯỢNG PHỤC VỤ: giao ĐỦ và giao ĐÚNG HẠN (28/08) ──────────────────────────────────────
+// App đo rất kỹ sản lượng/năng suất/chi phí — toàn chỉ số NỘI BỘ — mà không đo cái KHÁCH HÀNG
+// nhìn thấy. Toàn bộ phép tính nằm trong RPC `service_level` (migration 20260828d).
+export async function serviceLevel(req: Request, res: Response) {
+  try {
+    const q = req.query as Record<string, string | undefined>
+    const from = dayOf(q.from), to = dayOf(q.to)
+    if (from === undefined || to === undefined)
+      return fail(res, 'Ngày không hợp lệ (cần YYYY-MM-DD)', 400, 'BAD_DATE')
+    if (!from || !to) return fail(res, 'Thiếu khoảng ngày (from, to)', 400, 'BAD_RANGE')
+    if (to < from) return fail(res, 'Ngày "đến" phải sau ngày "từ"', 400, 'BAD_RANGE')
+
+    const { data, error } = await supabase.rpc('service_level', {
+      p_from: from, p_to: to, p_wh_ids: scopeWhIds(req), p_limit: 20,
+    })
+    if (error) return fail(res, error.message)
+    return ok(res, data ?? {})
+  } catch (e) { return fail(res, String(e)) }
+}

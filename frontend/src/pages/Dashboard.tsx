@@ -150,7 +150,7 @@ export default function Dashboard() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto p-3 pb-20 lg:pb-4 space-y-3">
-        {isError && tab !== 'prod' && (
+        {isError && !isReport && (
           <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
             Không tải được số liệu dashboard — thử tải lại trang.
           </div>
@@ -160,7 +160,7 @@ export default function Dashboard() {
         {tab === 'svc'  && <DashboardService />}
 
         {/* KPI tồn kho (data thật) — tile console */}
-        {tab !== 'prod' && (
+        {!isReport && (
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className={`h-[84px] rounded-lg ${sk}`} />)
@@ -217,7 +217,7 @@ export default function Dashboard() {
         )}
 
         {/* Hoạt động hôm nay */}
-        {tab !== 'prod' && (
+        {!isReport && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {[
             { icon: PackagePlus, ic: 'text-green-600 dark:text-green-400 bg-green-500/15', value: t?.inbound_orders, label: 'Phiếu nhập hôm nay', topic: 'in' as const },
@@ -370,7 +370,7 @@ export default function Dashboard() {
           </div>
 
           {/* Thao tác nhanh — ẩn ở tab Năng suất (tab đó là một báo cáo, không phải bàn điều khiển) */}
-          <div className={`space-y-3 ${tab === 'prod' ? 'hidden' : ''}`}>
+          <div className={`space-y-3 ${isReport ? 'hidden' : ''}`}>
             <Panel title="Thao tác nhanh" icon={Clock}>
               <div className="p-3 space-y-2">
                 {[

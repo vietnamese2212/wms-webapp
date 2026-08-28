@@ -2244,7 +2244,7 @@ export type ReceiptRating = {
   rated_by_name: string | null; rated_at: string
 }
 export function useReceiptRating(orderId: string | null | undefined) {
-  return useQuery<{ mode: ReceiptRatingMode; ratable: boolean; rating: ReceiptRating | null }>({
+  return useQuery<{ mode: ReceiptRatingMode; ratable: boolean; can_rate: boolean; rating: ReceiptRating | null }>({
     queryKey: ['receipt-rating', orderId],
     enabled: !!orderId,
     queryFn: () => apiClient.get(`/tms/orders/${orderId}/receipt-rating`).then(r => r.data.data),

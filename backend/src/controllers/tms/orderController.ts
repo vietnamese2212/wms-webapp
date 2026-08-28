@@ -1837,10 +1837,17 @@ export async function getReceiptRating(req: Request, res: Response) {
     if (!(await guardOrderScope(req, res, id))) return
     const cfg = await getReceiptRatingCfg()
     const parties = await transferPartiesOf(id)
-    if (!parties) return ok(res, { mode: cfg.mode, ratable: false, rating: null })
+    if (!parties) return ok(res, { mode: cfg.mode, ratable: false, can_rate: false, rating: null })
     const { data } = await supabase.from('receipt_ratings')
       .select('stars, reason_code, note, rated_by_name, rated_at').eq('gdo_id', parties.gdoId).maybeSingle()
-    return ok(res, { mode: cfg.mode, ratable: parties.ratable, rating: data ?? null })
+    // `can_rate` = MỘT nguồn cho FE ẩn/hiện nút: gộp cả "chuyến có người nhận" lẫn "mình có phải
+    // kho nhận không" — để FE khỏi tự suy luận lại rồi lệch với luật của BE.
+    const scope = scopeWhIds(req)
+    const isReceiver = scope === null || !parties.toWh || scope.includes(parties.toWh)
+    return ok(res, {
+      mode: cfg.mode, ratable: parties.ratable, can_rate: parties.ratable && isReceiver,
+      rating: data ?? null,
+    })
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -1869,6 +1876,16 @@ export async function rateTransferReceipt(req: Request, res: Response) {
     if (!parties.ratable)
       return fail(res, 'Chuyến này kho nhận KHÔNG tích nhận (tài xế tự hoàn thành) — không có người nhận để chấm sao',
         422, 'NOT_RATABLE')
+    // CHỈ KHO NHẬN được chấm (user chốt 28/08: "NPP xác nhận sao thôi"). `guardOrderScope` ở trên
+    // cho qua khi user thuộc kho GỬI *hoặc* kho nhận — đủ để thao tác lệnh, nhưng KHÔNG đủ để chấm:
+    // bên gửi chấm chuyến của chính mình thì con số sao mất sạch ý nghĩa. Scope null (superadmin /
+    // NATIONAL) vẫn được — cần đường sửa khi kho nhận chấm nhầm.
+    {
+      const scope = scopeWhIds(req)
+      if (scope !== null && parties.toWh && !scope.includes(parties.toWh))
+        return fail(res, 'Chỉ KHO NHẬN mới chấm sao chuyến giao — bạn không thuộc kho nhận của chuyến này',
+          403, 'RATER_NOT_RECEIVER')
+    }
 
     const t = new Date().toISOString()
     const { data: existing } = await supabase.from('receipt_ratings')

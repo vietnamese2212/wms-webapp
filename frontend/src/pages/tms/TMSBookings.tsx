@@ -2492,9 +2492,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
     order?.id && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') ? order.id : null)
   const ratingMode = ratingQ.data?.mode ?? 'optional'
   const ratedStars = ratingQ.data?.rating?.stars ?? 0
-  // Kho nhận KHÔNG tích nhận (tài xế tự hoàn thành) thì không có ai xem hàng để chấm — BE cũng
-  // chặn 422 NOT_RATABLE, đây chỉ là ẩn nút cho khỏi mời gọi bấm.
-  const ratable = ratingQ.data?.ratable !== false
+  // MỘT nguồn từ BE: gộp "chuyến có người nhận tích nhận" + "mình có phải kho nhận không".
+  // FE tự suy luận lại là chắc chắn có ngày lệch với luật của BE.
+  const ratable = ratingQ.data?.can_rate !== false
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActions: ActionItem[] = []

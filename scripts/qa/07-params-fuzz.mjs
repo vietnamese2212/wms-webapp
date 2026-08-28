@@ -156,8 +156,19 @@ for (const [path, want] of TRACE_FUZZ) {
     const p = await api(`/tms/orders/${self.id}/receipt-rating`, 'POST', { stars: 5 })
     chk(p.s === 422, 'chấm sao chuyến kho nhận KHÔNG tích nhận bị chặn', `HTTP ${p.s} (mong 422)`)
     const g = await api(`/tms/orders/${self.id}/receipt-rating`)
-    chk(g.s === 200 && g.j?.data?.ratable === false, 'GET trả cờ ratable=false cho chuyến SELF',
-      `HTTP ${g.s} · ratable=${g.j?.data?.ratable}`)
+    chk(g.s === 200 && g.j?.data?.ratable === false && g.j?.data?.can_rate === false,
+      'GET trả ratable=false + can_rate=false cho chuyến SELF',
+      `HTTP ${g.s} · ratable=${g.j?.data?.ratable} · can_rate=${g.j?.data?.can_rate}`)
+    // Chuyến CÓ tích nhận: `can_rate` phải BẬT với tài khoản không giới hạn kho — nếu cờ luôn false
+    // thì nút chấm biến mất khỏi mọi màn mà không ai biết vì sao (im lặng lại trông như bình thường)
+    const scan = orders.find(o => o.delivery_mode !== 'SELF' && o.transfer_gdo_id)
+    if (scan) {
+      const g2 = await api(`/tms/orders/${scan.id}/receipt-rating`)
+      chk(g2.s === 200 && g2.j?.data?.can_rate === true, 'GET can_rate=true cho chuyến kho nhận CÓ tích nhận',
+        `HTTP ${g2.s} · can_rate=${g2.j?.data?.can_rate}`)
+    } else {
+      console.log(`  ⊘ can_rate=true: đọc ${orders.length} lệnh, không có lệnh chuyển kho nào CÓ tích nhận — bỏ qua`)
+    }
   }
 }
 

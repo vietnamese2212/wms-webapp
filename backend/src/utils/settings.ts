@@ -182,3 +182,19 @@ export function parseVnHolidays(raw: unknown): VnHolidays | null {
   return out
 }
 export const getVnHolidays = () => readSetting('vn_holidays', VN_HOLIDAYS_DEFAULT, parseVnHolidays)
+
+// ── receipt_rating — kho nhận CHẤM SAO chuyến giao lúc xác nhận đơn (28/08) ────
+// off = tắt hẳn · optional = có ô chấm nhưng không bắt buộc · required = chưa chấm thì chưa cho
+// hoàn thành phiếu nhận. Mặc định `optional`: hiện tính năng ra cho người dùng thấy nhưng KHÔNG
+// chặn luồng nhận hàng — chặn là việc đơn vị phải chủ động bật.
+export type ReceiptRatingMode = 'off' | 'optional' | 'required'
+export interface ReceiptRatingCfg { mode: ReceiptRatingMode }
+export const RECEIPT_RATING_DEFAULT: ReceiptRatingCfg = { mode: 'optional' }
+export function parseReceiptRating(raw: unknown): ReceiptRatingCfg | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (Object.keys(o).some(k => k !== 'mode')) return null
+  return o.mode === 'off' || o.mode === 'optional' || o.mode === 'required'
+    ? { mode: o.mode } : null
+}
+export const getReceiptRatingCfg = () => readSetting('receipt_rating', RECEIPT_RATING_DEFAULT, parseReceiptRating)

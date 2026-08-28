@@ -14,7 +14,7 @@ import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTy
 import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
-import { getInboundEditWindowDays } from '../../utils/settings'
+import { getInboundEditWindowDays, getReceiptRatingCfg } from '../../utils/settings'
 import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
 import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
@@ -948,6 +948,26 @@ export async function completeOrder(req: Request, res: Response) {
       .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
+
+    // Kho nhận phải CHẤM SAO chuyến giao trước khi chốt phiếu (chỉ khi đơn vị bật `required`).
+    // Chặn ở bước HOÀN THÀNH chứ không ở bước xác nhận: lúc xác nhận người ta chưa mở hàng ra xem,
+    // chấm lúc đó là chấm mò. Chỉ áp cho phiếu SINH RA TỪ CHUYỂN KHO — nhập NCC/sản xuất không có
+    // ai để chấm.
+    if (existing.source_type === 'TRANSFER' && existing.tms_order_id) {
+      const { mode } = await getReceiptRatingCfg()
+      if (mode === 'required') {
+        const { data: tmsOrder } = await supabase.from('TmsOrder')
+          .select('transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
+        const gdoId = (tmsOrder as { transfer_gdo_id: string | null } | null)?.transfer_gdo_id
+        if (gdoId) {
+          const { count } = await supabase.from('receipt_ratings')
+            .select('id', { count: 'exact', head: true }).eq('gdo_id', gdoId)
+          if (!count)
+            return fail(res, 422, 'RATING_REQUIRED',
+              'Cần đánh giá chuyến giao (chấm sao) trước khi hoàn thành phiếu nhận')
+        }
+      }
+    }
 
     const nowTs = new Date().toISOString()
     // CAS: chỉ đổi nếu CHƯA completed → 2 lượt "hoàn thành" cùng lúc thì chỉ 1 thắng,

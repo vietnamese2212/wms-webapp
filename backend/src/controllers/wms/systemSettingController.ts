@@ -5,7 +5,7 @@ import { ALERT_TH_CONFIG_KEYS, invalidateAlertThresholdsCache } from '../../serv
 import { syncVapidSubject } from '../../services/pushService'
 import {
   invalidateSettingsCache, parseRetention, parseCycleCount,
-  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays,
+  parseInboundEditWindow, parsePackingMaxMaterials, parseOrgProfile, parseVnHolidays, parseReceiptRating,
   parseDashboardCacheSeconds,
   parseStandardWorkHours,
 } from '../../utils/settings'
@@ -144,6 +144,10 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   vn_holidays: {
     validate: v => parseVnHolidays(v) !== null,
     hint: '{ "2026": [{ date: "2026-01-01", name: "Tết Dương lịch" }] } — năm KHÔNG khai thì dùng lịch tự tính (âm lịch + 4 lễ dương)',
+  },
+  receipt_rating: {
+    validate: v => parseReceiptRating(v) !== null,
+    hint: "{ mode: 'off' | 'optional' | 'required' } — kho nhận chấm sao chuyến giao lúc xác nhận đơn; required = chưa chấm thì chưa hoàn thành được phiếu nhận",
   },
   org_profile: {
     validate: v => parseOrgProfile(v) !== null,

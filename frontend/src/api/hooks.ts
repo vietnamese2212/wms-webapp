@@ -2213,6 +2213,32 @@ export function useCostBook(params: {
   })
 }
 
+// ── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) — kho nhận chấm lúc xác nhận đơn ─────────────────────────
+export type ReceiptRatingMode = 'off' | 'optional' | 'required'
+export type ReceiptRating = {
+  stars: number; reason_code: string | null; note: string | null
+  rated_by_name: string | null; rated_at: string
+}
+export function useReceiptRating(orderId: string | null | undefined) {
+  return useQuery<{ mode: ReceiptRatingMode; rating: ReceiptRating | null }>({
+    queryKey: ['receipt-rating', orderId],
+    enabled: !!orderId,
+    queryFn: () => apiClient.get(`/tms/orders/${orderId}/receipt-rating`).then(r => r.data.data),
+  })
+}
+export function useRateReceipt() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (p: { orderId: string; stars: number; reason_code?: string | null; note?: string | null }) =>
+      apiClient.post(`/tms/orders/${p.orderId}/receipt-rating`,
+        { stars: p.stars, reason_code: p.reason_code ?? null, note: p.note ?? null }).then(r => r.data.data),
+    onSettled: (_d, _e, p) => {
+      qc.invalidateQueries({ queryKey: ['receipt-rating', p.orderId] })
+      qc.invalidateQueries({ queryKey: ['tms-orders-transfer'] })
+    },
+  })
+}
+
 // ── TRUY XUẤT LÔ (28/08) — 1 lời gọi trả cả "đã giao đi đâu" lẫn "còn trong kho" ───────────────
 export type TraceKind = 'pallet' | 'material' | 'batch' | 'npp' | 'trip' | 'plate'
 export type TraceShipment = {

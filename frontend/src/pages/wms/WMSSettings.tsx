@@ -288,6 +288,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const orgRow   = settings.find(s => s.key === 'org_profile')
   const holRow   = settings.find(s => s.key === 'vn_holidays')
   const stdRow   = settings.find(s => s.key === 'standard_work_hours')
+  const rateRow  = settings.find(s => s.key === 'receipt_rating')
   const srvLabel = typeof labelRow?.value === 'string' ? labelRow.value : 'underscore'
   const srvDc    = parseDc(dcRow?.value)
   const srvDec   = decRow?.value === 'comma' ? 'comma' : 'dot'
@@ -302,6 +303,11 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const srvHol   = parseHolidays(holRow?.value)
   // giờ công chuẩn: mặc định 8 = mirror STANDARD_WORK_HOURS_DEFAULT của BE
   const srvStd   = typeof stdRow?.value === 'number' && stdRow.value >= 1 && stdRow.value <= 24 ? stdRow.value : 8
+  // Chấm sao chuyến giao: mặc định 'optional' = mirror RECEIPT_RATING_DEFAULT của BE
+  const srvRate  = (() => {
+    const m = (rateRow?.value as { mode?: unknown } | null | undefined)?.mode
+    return m === 'off' || m === 'required' ? m : 'optional'
+  })()
 
   // Draft (nháp) — thay đổi được STAGE tại chỗ, chỉ bấm "Lưu thay đổi" mới áp dụng.
   const [draftLabel, setDraftLabel] = useState(srvLabel)
@@ -319,13 +325,14 @@ function SystemTab({ canManage }: { canManage: boolean }) {
   const [draftOrg, setDraftOrg] = useState<OrgProfileDraft>(orgToDraft(srvOrg))
   const [draftHol, setDraftHol] = useState<HolidayMap>(srvHol)
   const [draftStd, setDraftStd] = useState(String(srvStd))
-  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash])
+  const [draftRate, setDraftRate] = useState<string>(srvRate)
+  const srvKey = JSON.stringify([srvLabel, srvDc, srvDec, srvRet, srvCyc, srvInb, srvPack, srvOrg, srvHol, srvStd, srvDash, srvRate])
   const [baseKey, setBaseKey] = useState(srvKey)
   const syncDrafts = () => {
     setDraftLabel(srvLabel); setDraftDc(srvDc); setDraftDec(srvDec)
     setDraftRet(recToStr(srvRet)); setDraftCyc(recToStr(srvCyc))
     setDraftInb(String(srvInb)); setDraftPack(String(srvPack)); setDraftOrg(orgToDraft(srvOrg)); setDraftHol(srvHol)
-    setDraftStd(String(srvStd)); setDraftDash(String(srvDash))
+    setDraftStd(String(srvStd)); setDraftDash(String(srvDash)); setDraftRate(srvRate)
   }
   useEffect(() => {
     if (srvKey !== baseKey) { syncDrafts(); setBaseKey(srvKey) }
@@ -413,6 +420,7 @@ function SystemTab({ canManage }: { canManage: boolean }) {
       if (std)        await save({ key: 'standard_work_hours', value: std })
       if (org)        await save({ key: 'org_profile', value: org })
       if (hol)        await save({ key: 'vn_holidays', value: hol })
+      if (draftRate !== srvRate) await save({ key: 'receipt_rating', value: { mode: draftRate } })
       toast({ title: 'Đã lưu cấu hình hệ thống' })
     } catch (e) { setErr(apiMsg(e)) }
   }
@@ -504,6 +512,23 @@ function SystemTab({ canManage }: { canManage: boolean }) {
             <SettingField label="Tuổi số liệu tối đa"
               tip="Số liệu trang chủ là tổng hợp toàn công ty (quét cả tồn kho + chuyến xuất) nên rất nặng khi nhiều người cùng mở. App dùng lại kết quả trong khoảng thời gian này thay vì tính lại mỗi lần. Đặt 0 = luôn tính sống (chậm khi đông người dùng).">
               <div className="w-24"><SettingNum unit="giây" value={draftDash} onChange={setDraftDash} /></div>
+            </SettingField>
+          </SettingGroup>
+
+          {/* Kho NHẬN chấm sao chuyến giao lúc xác nhận đơn — thước đo chất lượng phục vụ mà
+              fill rate không nói được (hàng móp, chứng từ thiếu, xe trễ). */}
+          <SettingGroup readOnly={!canManage} title="Đánh giá chuyến giao" meta={rateRow}>
+            <SettingField label="Kho nhận chấm sao"
+              tip="Hiện ô chấm sao (1–5) trên panel nhận hàng chuyển kho. 'Bắt buộc' = chưa chấm thì chưa hoàn thành được phiếu nhận. Chấm từ 3 sao trở xuống phải chọn lý do (thiếu hàng / sai hàng / hư hỏng / trễ giờ / chứng từ / khác).">
+              <div className="w-48">
+                <SingleSelect searchable={false} disabled={!canManage} triggerClassName="w-full"
+                  options={[
+                    { value: 'off', label: 'Tắt' },
+                    { value: 'optional', label: 'Có, không bắt buộc' },
+                    { value: 'required', label: 'Bắt buộc trước khi hoàn thành' },
+                  ]}
+                  value={draftRate} onChange={setDraftRate} />
+              </div>
             </SettingField>
           </SettingGroup>
 

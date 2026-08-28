@@ -40,11 +40,13 @@ import {
   fetchMaterialsByCodes, type MaterialLite,
   useBulkCreatePlanLines, useUpdatePlanLine, useDeletePlanLine,
   useTransferOrders, useConfirmTransferReceipt, useCancelTransferReceipt, useSelfCompleteTransfer, useTransferGoods,
+  useReceiptRating,
   useActiveImportsByGdo, useCreateOneInbound,
   useCompleteInboundOrder, useScanManualPallet, useMaterialSummary, useMaterialSummaryByFilter,
   useCancelInboundOrder, useDeletePalletEntry,
   type TransferOrder,
 } from '@/api/hooks'
+import { ReceiptRatingDialog } from '@/components/tms/ReceiptRatingDialog'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -2296,6 +2298,7 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   const [expandedMats, setExpandedMats] = useState<Set<string>>(new Set())
   const [showUpdate, setShowUpdate]     = useState(false)
   const [confirmErr, setConfirmErr]     = useState('')
+  const [showRate, setShowRate]         = useState(false)
   const { mutateAsync: confirmReceipt, isPending: confirming } = useConfirmTransferReceipt()
   const { mutateAsync: selfComplete,   isPending: selfCompleting } = useSelfCompleteTransfer()
   const { mutateAsync: cancelReceipt,  isPending: cancelling } = useCancelTransferReceipt()
@@ -2484,6 +2487,12 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
   })
   const dvvtDisplay = order?.ncc?.name ?? order?.transfer_gdo?.dvvt ?? null
 
+  // Đánh giá sao chuyến giao — chỉ hỏi khi lệnh là CHUYỂN KHO và đơn vị không tắt tính năng
+  const ratingQ = useReceiptRating(
+    order?.id && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') ? order.id : null)
+  const ratingMode = ratingQ.data?.mode ?? 'optional'
+  const ratedStars = ratingQ.data?.rating?.stars ?? 0
+
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActions: ActionItem[] = []
   if (canConfirmReceipt && tStatus === 'IN_TRANSIT')
@@ -2510,6 +2519,18 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
           setConfirmErr(msg ?? (isSelf ? 'Lỗi hoàn thành giao hàng' : 'Lỗi xác nhận nhận hàng'))
         }
       },
+    })
+  // Chấm sao: hiện từ lúc BẮT ĐẦU NHẬN trở đi (đã thấy hàng) và cả sau khi đã giao xong — người
+  // nhận thường phát hiện hàng móp/thiếu chứng từ lúc đang xếp, không phải lúc bấm xác nhận.
+  if (canConfirmReceipt && (tStatus === 'RECEIVING' || tStatus === 'DELIVERED') && ratingMode !== 'off')
+    headerActions.push({
+      key: 'rate', icon: Star,
+      label: ratedStars ? `${ratedStars}★` : 'Đánh giá',
+      tip: ratedStars
+        ? `Đã chấm ${ratedStars} sao — bấm để sửa`
+        : 'Chấm sao chuyến giao (hàng · chứng từ · giờ xe)' + (ratingMode === 'required' ? ' — bắt buộc trước khi hoàn thành phiếu nhận' : ''),
+      className: ratedStars ? 'border-amber-300 text-amber-600 hover:bg-amber-50' : undefined,
+      onClick: () => setShowRate(true),
     })
   if (canConfirmReceipt && tStatus === 'RECEIVING') {
     // Kho nhận QTY/QTY_DATE: nhận nhanh cả lô theo đúng số xuất (NSX kế thừa từ tem quét ở kho nguồn)
@@ -2612,6 +2633,9 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
           </Dialog>
         )
       })()}
+      {order && showRate && (
+        <ReceiptRatingDialog orderId={order.id} open={showRate} onClose={() => setShowRate(false)} />
+      )}
       {bulkConfirm && (() => {
         const targets = activeImports.filter(ai => ai.status === 'OPEN')
         const matName = new Map(goods.map(g => [g.material_id, g.material_code ?? '—']))

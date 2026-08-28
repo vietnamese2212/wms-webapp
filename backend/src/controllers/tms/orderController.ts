@@ -10,6 +10,7 @@ import { fetchUpTo, LIST_TOO_LARGE_MSG, LIST_ROW_CAP, isQueryTimeout, QUERY_TIME
 import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { heldSlotsByOrderId, slotHeldBlockingDate } from '../../utils/bookingGuards'
+import { getReceiptRatingCfg } from '../../utils/settings'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -1792,5 +1793,82 @@ export async function deleteOrder(req: Request, res: Response) {
     if (error) return fail(res, error.message)
 
     return ok(res, { id })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+// ─── ĐÁNH GIÁ SAO CHUYẾN GIAO (28/08) ──────────────────────────────────────────────────────────
+// Kho NHẬN chấm chất lượng lô hàng vừa nhận. Fill rate đo được "đủ hay thiếu", còn "giao có tử tế
+// không" (hàng móp, chứng từ thiếu, xe tới trễ) thì chỉ người nhận biết — nên chỗ hỏi phải nằm
+// ngay trong luồng họ đang làm, không phải một biểu mẫu riêng ai đó nhớ thì điền.
+//
+// Gate quyền = `tms_plan.confirm_receipt`: ai xác nhận nhận hàng thì người đó chấm, không đẻ quyền mới.
+const RATING_REASONS = ['SHORT', 'WRONG', 'DAMAGED', 'LATE', 'DOC', 'OTHER'] as const
+type RatingReason = typeof RATING_REASONS[number]
+
+/** Lệnh chuyển kho → (gdo_id, kho gửi, kho nhận). null nếu không phải lệnh chuyển kho. */
+async function transferPartiesOf(orderId: string) {
+  const { data } = await supabase.from('TmsOrder')
+    .select('id, transfer_gdo_id, destination_warehouse_id').eq('id', orderId).maybeSingle()
+  const o = data as { transfer_gdo_id: string | null; destination_warehouse_id: string | null } | null
+  if (!o?.transfer_gdo_id) return null
+  const { data: g } = await supabase.from('GroupDeliveryOrder')
+    .select('warehouse_id').eq('id', o.transfer_gdo_id).maybeSingle()
+  return {
+    gdoId: o.transfer_gdo_id,
+    fromWh: (g as { warehouse_id: string | null } | null)?.warehouse_id ?? null,
+    toWh: o.destination_warehouse_id,
+  }
+}
+
+export async function getReceiptRating(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return
+    const cfg = await getReceiptRatingCfg()
+    const parties = await transferPartiesOf(id)
+    if (!parties) return ok(res, { mode: cfg.mode, rating: null })
+    const { data } = await supabase.from('receipt_ratings')
+      .select('stars, reason_code, note, rated_by_name, rated_at').eq('gdo_id', parties.gdoId).maybeSingle()
+    return ok(res, { mode: cfg.mode, rating: data ?? null })
+  } catch (e) { return fail(res, String(e)) }
+}
+
+export async function rateTransferReceipt(req: Request, res: Response) {
+  try {
+    const { id } = req.params
+    if (!(await guardOrderScope(req, res, id))) return
+    const cfg = await getReceiptRatingCfg()
+    if (cfg.mode === 'off') return fail(res, 'Đơn vị đang TẮT tính năng đánh giá chuyến giao', 400, 'RATING_OFF')
+
+    const body = req.body as { stars?: unknown; reason_code?: unknown; note?: unknown }
+    const stars = Number(body.stars)
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5)
+      return fail(res, 'Số sao phải là số nguyên 1–5', 400, 'BAD_STARS')
+    const reason = body.reason_code == null || body.reason_code === '' ? null : String(body.reason_code)
+    if (reason !== null && !RATING_REASONS.includes(reason as RatingReason))
+      return fail(res, `Lý do không hợp lệ (${RATING_REASONS.join(' | ')})`, 400, 'BAD_REASON')
+    // Chấm thấp mà không nêu lý do thì kho gửi không sửa được gì — DB cũng có CHECK cùng luật
+    if (stars <= 3 && !reason)
+      return fail(res, 'Chấm từ 3 sao trở xuống phải chọn lý do', 422, 'REASON_REQUIRED')
+
+    const parties = await transferPartiesOf(id)
+    if (!parties) return fail(res, 'Lệnh này không phải lệnh chuyển kho — không có chuyến giao để đánh giá', 400, 'NOT_TRANSFER')
+
+    const t = new Date().toISOString()
+    const { data: existing } = await supabase.from('receipt_ratings')
+      .select('id').eq('gdo_id', parties.gdoId).maybeSingle()
+    const row = {
+      gdo_id: parties.gdoId, tms_order_id: id,
+      from_warehouse_id: parties.fromWh, to_warehouse_id: parties.toWh,
+      stars, reason_code: reason, note: String(body.note ?? '').trim() || null,
+      rated_by: req.user?.sub ?? null, rated_by_name: req.user?.name ?? req.user?.email ?? null,
+      rated_at: t, updated_at: t,
+    }
+    // Chấm lại là SỬA, không đẻ dòng mới — nếu không, ai bấm nhiều lần sẽ kéo lệch trung bình sao
+    const { error } = existing
+      ? await supabase.from('receipt_ratings').update(row).eq('id', (existing as { id: string }).id)
+      : await supabase.from('receipt_ratings').insert({ id: randomUUID(), created_at: t, ...row })
+    if (error) return fail(res, error.message)
+    return ok(res, { gdo_id: parties.gdoId, stars, reason_code: reason })
   } catch (e) { return fail(res, String(e)) }
 }

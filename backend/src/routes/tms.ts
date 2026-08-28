@@ -43,6 +43,9 @@ router.patch('/orders/bulk-date',              requirePerm('tms_plan', 'change_d
 router.get('/orders/:id/transfer-goods',       requirePerm('tms_plan', 'view'),          order.getTransferGoods)
 router.get('/orders/:id/plan-goods',           requirePerm('tms_plan', 'view'),          order.getPlanGoods)     // dòng hàng lệnh xuất (KH xuất + VL06O) — read-only cho booking
 router.post('/orders/:id/confirm-receipt',      requirePerm('tms_plan', 'confirm_receipt'), order.confirmTransferReceipt)
+// Chấm sao chuyến giao: ai xác nhận nhận hàng thì người đó chấm — không đẻ quyền mới
+router.get ('/orders/:id/receipt-rating',       requirePerm('tms_plan', 'confirm_receipt'), order.getReceiptRating)
+router.post('/orders/:id/receipt-rating',       requirePerm('tms_plan', 'confirm_receipt'), order.rateTransferReceipt)
 router.post('/orders/:id/cancel-receipt',       requirePerm('tms_plan', 'confirm_receipt'), order.cancelTransferReceipt)
 router.post('/orders/:id/create-one-inbound',   requirePerm('tms_plan', 'confirm_receipt'), order.createOneInbound)
 router.post('/orders/:id/self-complete',        requirePerm('tms_plan', 'confirm_receipt'), order.selfCompleteTransfer)

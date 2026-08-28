@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { NAV_GROUPS } from '@/config/navigation'
+import { DevCredit } from '@/components/shared/DevCredit'
 
 export function MobileNav() {
   const { user } = useAuthStore()
@@ -105,6 +106,7 @@ export function MobileNav() {
             </div>
           </div>
         )}
+        <DevCredit tone="dark" className="pt-1" />
       </div>
     </div>
   )

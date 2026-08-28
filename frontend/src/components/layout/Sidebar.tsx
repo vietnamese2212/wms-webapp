@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { can, canAccess, canAccessAny, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { NAV_GROUPS, type NavItem } from '@/config/navigation'
+import { DevCredit } from '@/components/shared/DevCredit'
 
 function NavItemComponent({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const location = useLocation()
@@ -126,6 +127,8 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-white/10 p-2">
+          {/* Ghi công tác giả — ẩn khi thu gọn rail (chỗ đó chỉ vừa icon) */}
+          {!sidebarCollapsed && <DevCredit tone="dark" className="px-1 pb-1" />}
           {/* Collapse toggle */}
           <button
             onClick={toggleSidebar}

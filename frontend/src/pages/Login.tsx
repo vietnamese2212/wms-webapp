@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuthStore } from '@/stores/authStore'
+import { DevCredit } from '@/components/shared/DevCredit'
 import type { AxiosError } from 'axios'
 
 export default function Login() {
@@ -103,6 +104,7 @@ export default function Login() {
         <p className="text-center text-xs text-muted-foreground">
           Tài khoản do quản trị viên cấp. Liên hệ admin nếu quên mật khẩu.
         </p>
+        <DevCredit className="pt-1" />
       </div>
     </div>
   )

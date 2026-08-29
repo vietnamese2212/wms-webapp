@@ -391,6 +391,49 @@ async function addItemScanned(itemId: string, delta: number, statusOf: (total: n
   return null
 }
 
+/**
+ * ĐẶT GẠCH hạn mức của dòng hàng NGUYÊN TỬ — trả SỐ THỰC ĐƯỢC CẤP (có thể nhỏ hơn số muốn).
+ *
+ * VÌ SAO (bug thật, tái hiện 100% ngày 29/08): trần "còn được quét bao nhiêu" được tính từ bản
+ * chụp `item` đọc ở ĐẦU hàm, còn việc cộng dồn thì mãi cuối hàm mới làm ⇒ check-then-act. Ba người
+ * cùng quét MỘT dòng hàng đặt 240: cả ba đều thấy "còn 240", cả ba đều được cấp ⇒ dòng hàng ghi
+ * **720/240** và tồn bị trừ 720 — tức là **xuất thừa 3 lần lên xe**. Chạy tuần tự thì hai lượt sau
+ * bị chặn đúng, nên lỗi chỉ hiện khi đông người — đúng cảnh ca cao điểm.
+ * `addItemScanned` (CAS trên TỔNG) không cứu được: nó bảo đảm không MẤT cộng dồn, nhưng không hề
+ * kiểm trần ⇒ vẫn cộng vượt.
+ *
+ * ⇒ Hạn mức phải được ĐẶT GẠCH TRƯỚC mọi thao tác khác. Đặt gạch trước được vì hạn mức là bộ đếm
+ * thuần — nhả lại luôn thành công; còn tồn kho và vị trí thì nhả lại có thể HỎNG (ô đã bị người
+ * khác lấp đầy), nên không được phép làm chúng trước rồi mới biết mình không có quyền.
+ *
+ * Trả: số được cấp (>0) · 'FULL' nếu dòng hàng đã đủ · null nếu tranh chấp quá 15 lượt.
+ */
+async function claimItemQuota(
+  itemId: string, want: number, ceiling: number, statusOf: (total: number) => string,
+): Promise<number | 'FULL' | null> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const { data: it } = await supabase.from('OutboundItem')
+      .select('cartons_scanned').eq('id', itemId).single()
+    if (!it) return null
+    const cur = Number(it.cartons_scanned ?? 0)
+    const grant = Math.min(want, ceiling - cur)
+    if (grant <= 0) return 'FULL'
+    const next = cur + grant
+    const { data: applied } = await supabase.from('OutboundItem')
+      .update({ cartons_scanned: next, status: statusOf(next), updated_at: now() })
+      .eq('id', itemId).eq('cartons_scanned', cur).select('id')
+    if (applied?.length) return grant
+    await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
+  }
+  return null
+}
+
+/** Đọc lại TỔNG đã quét của dòng hàng (sau khi hạn mức đã đặt gạch) — chỉ để trả về màn quét. */
+async function currentItemScanned(itemId: string): Promise<number | null> {
+  const { data } = await supabase.from('OutboundItem').select('cartons_scanned').eq('id', itemId).maybeSingle()
+  return data ? Number(data.cartons_scanned ?? 0) : null
+}
+
 function parsePlannedDate(group_code: string): string | null {
   const parts = group_code.split('_')
   // New format: warehouseCode_X|N_ddmmyy_stt  (parts[1] is 'X' or 'N')
@@ -5166,7 +5209,23 @@ export async function scanItem(req: Request, res: Response) {
       const ie = qtyIntegerError(Number(cartons_override), (shelfMat ?? null) as MatUnitsQ | null)
       if (ie) return fail(res, ie, 422)
     }
-    const to_take = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
+    const wanted = cartons_override ? Math.min(Math.max(1, Number(cartons_override)), cap) : cap
+
+    // ── ĐẶT GẠCH HẠN MỨC DÒNG HÀNG (nguyên tử) TRƯỚC KHI GHI BẤT CỨ THỨ GÌ ──────────
+    // Nhặt lẻ chưa xác nhận thì dòng hàng KHÔNG được tự COMPLETE dù đủ số — hỏi trước vì trạng thái
+    // mới được chốt ngay trong lượt đặt gạch này.
+    const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
+      .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
+    const blockComplete = (unconfirmedLoose ?? []).length > 0
+    const ordered = Number(item.cartons_ordered)
+    const claimed = await claimItemQuota(itemId, wanted, ordered,
+      loose_picking_mode ? () => 'IN_PROGRESS' : n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS')
+    if (claimed === 'FULL') return fail(res, 'Mặt hàng đã đủ số lượng — người khác vừa quét xong', 400)
+    if (claimed === null)   return fail(res, 'Dòng hàng này đang có nhiều người cùng quét — thử lại', 409)
+    const to_take = claimed
+    // Từ đây trở đi hạn mức đã là CỦA MÌNH: mọi đường thoát lỗi phải NHẢ lại, nếu không dòng hàng
+    // sẽ kẹt "đã quét" số hàng chưa hề rời kệ.
+    const releaseQuota = () => addItemScanned(itemId, -to_take, n => n >= ordered ? 'COMPLETED' : n > 0 ? 'IN_PROGRESS' : 'PENDING')
 
     // ── PALLET ĐI KHÔNG HẾT → BẮT KHAI VỊ TRÍ CHO PHẦN CÒN LẠI (user chốt 30/07) ──
     // Nhặt lẻ chỉ GIỮ hàng (reserve), remaining không đổi ⇒ pallet luôn còn hàng trên đó.
@@ -5185,10 +5244,12 @@ export async function scanItem(req: Request, res: Response) {
         // bản cũ (không khai cờ, không gửi vị trí) → GIỮ CHỖ CŨ y như trước, KHÔNG lỗi.
         // Phải thoát hẳn khối này: pick rỗng mà chạy tiếp sẽ tra Location id='' → 422 "không tồn tại".
       } else if (!pick) {
+        await releaseQuota()
         return fail(res, `Pallet còn ${qtyLabel(leftoverQty, (shelfMat ?? null) as MatUnitsQ | null)} chưa xuất — phải chọn vị trí để phần còn lại (giữ chỗ cũ hoặc chọn vị trí khác)`, 422)
       } else if (pick !== KEEP_LOCATION && pick !== inv.location_id) {
         const { data: loc } = await supabase.from('Location')
           .select('id, location_code, is_active, warehouse_id').eq('id', pick).maybeSingle()
+        if (!loc || !loc.is_active || loc.warehouse_id !== gdo?.warehouse_id) await releaseQuota()
         if (!loc)           return fail(res, 'Vị trí đã chọn không tồn tại', 422)
         if (!loc.is_active) return fail(res, `Vị trí ${loc.location_code} đang ngưng sử dụng — chọn vị trí khác`, 422)
         if (loc.warehouse_id !== gdo?.warehouse_id)
@@ -5218,7 +5279,10 @@ export async function scanItem(req: Request, res: Response) {
         canOverride:    canPutawayOverride(req),
         material:       shelfMat as MaterialShelfInfo | null,
       })
-      if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      if (put.error) {
+        await releaseQuota()
+        return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+      }
       putLeftoverWarn = put.warning
     }
 
@@ -5246,9 +5310,13 @@ export async function scanItem(req: Request, res: Response) {
       scanned_by: resolved_employee_id, scanned_at: t,
       created_at: t, updated_at: t,
     })
-    if (insertErr) return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500)
+    if (insertErr) {
+      await releaseQuota()
+      return fail(res, `Lỗi lưu scan entry: ${insertErr.message}`, 500, req.originalUrl)
+    }
 
-    let new_scanned = Number(item.cartons_scanned) + to_take
+    // Hạn mức đã đặt gạch ở trên ⇒ tổng mới là con số CHÍNH THỨC, không đọc lại bản chụp cũ.
+    let new_scanned = to_take
 
     // Chuyển vị trí phần dư NGAY SAU khi trừ/giữ tồn, TRƯỚC khi cộng dồn item: hỏng (vị trí vừa
     // bị người khác lấp đầy) thì hoàn nguyên đúng thao tác vừa làm + xóa scan entry rồi báo 409 —
@@ -5271,11 +5339,12 @@ export async function scanItem(req: Request, res: Response) {
       const reserved_ok = await adjustInventoryAtomic(inv.id, 0, to_take)
       if (!reserved_ok) {
         await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
+        await releaseQuota()
         return fail(res, 'Tồn kho mã này vừa thay đổi (thao tác khác) — thử lại', 409)
       }
       const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, 0, -to_take))
-      if (moveErr) return fail(res, moveErr, 409)
-      const cum = await addItemScanned(itemId, to_take, () => 'IN_PROGRESS')
+      if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
+      const cum = await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
     } else {
       // Trừ tồn NGUYÊN TỬ chống đua + chống xuất-quá-tồn (trước đây ghi mù remaining=available-to_take
@@ -5283,20 +5352,16 @@ export async function scanItem(req: Request, res: Response) {
       const consumed = await consumeInventoryExact(inv.id, to_take)
       if (consumed !== true) {
         await supabase.from('OutboundScanEntry').delete().eq('id', scanId)
+        await releaseQuota()
         return fail(res, consumed === false
           ? `Pallet "${qr}" vừa được người khác xuất bớt — tồn không đủ, quét lại`
           : 'Tồn kho mã này đang bận (nhiều người thao tác) — thử lại', 409)
       }
       const moveErr = await applyLeftoverMove(() => adjustInventoryAtomic(inv.id, to_take, 0))
-      if (moveErr) return fail(res, moveErr, 409)
-      // Nhặt lẻ chưa xác nhận → KHÔNG cho complete dù đủ số
-      const { data: unconfirmedLoose } = await supabase.from('OutboundScanEntry')
-        .select('id').eq('item_id', itemId).eq('is_loose_picking', true).eq('loose_confirmed', false)
-      const blockComplete = (unconfirmedLoose ?? []).length > 0
-      const ordered = Number(item.cartons_ordered)
-      // Cộng dồn cartons_scanned NGUYÊN TỬ + set status theo TỔNG thật (chống mất cộng dồn khi nhiều
-      // người quét cùng item → item kẹt IN_PROGRESS / đơn không tự hoàn thành dù đã quét đủ).
-      const cum = await addItemScanned(itemId, to_take, n => (n >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS')
+      if (moveErr) { await releaseQuota(); return fail(res, moveErr, 409) }
+      // Tổng + trạng thái đã được chốt NGUYÊN TỬ lúc đặt gạch hạn mức; ở đây chỉ đọc lại con số
+      // thật để trả về cho màn quét (người khác có thể vừa quét thêm dòng này).
+      const cum = await currentItemScanned(itemId)
       if (cum != null) new_scanned = cum
       new_item_status = (new_scanned >= ordered && !blockComplete) ? 'COMPLETED' : 'IN_PROGRESS'
     }
